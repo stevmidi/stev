@@ -145,6 +145,7 @@ pub(crate) fn start_plugin_host(
     let transport = TransportState {
         running: Arc::clone(&atomics.running),
         tempo_us: Arc::clone(&atomics.tempo),
+        meter: Arc::clone(&atomics.meter),
         playback_tick: Arc::clone(&atomics.playback_tick),
         region_start: Arc::clone(&atomics.region_start),
         region_end: Arc::clone(&atomics.region_end),

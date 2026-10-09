@@ -336,8 +336,8 @@ fn process_context(t: &BlockTransport, sample_rate: f64) -> ProcessContext {
     context.cycleStartMusic = ticks_to_beats_f64(t.region_start);
     context.cycleEndMusic = ticks_to_beats_f64(t.region_end);
     context.tempo = t.bpm();
-    context.timeSigNumerator = 4;
-    context.timeSigDenominator = 4;
+    context.timeSigNumerator = t.meter.numerator().into();
+    context.timeSigDenominator = t.meter.denominator().into();
     context
 }
 
@@ -358,7 +358,7 @@ fn may_sleep(silent_samples: u64, tail_samples: u32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::time::PPQN;
+    use crate::core::time::{Meter, PPQN};
 
     #[test]
     fn fill_buses_packs_each_bus_into_the_flat_pointer_array() {
@@ -438,6 +438,7 @@ mod tests {
             running: true,
             looping: true,
             tempo_us: 500_000,
+            meter: Meter::FOUR_FOUR,
             playback_tick: PPQN * 8,
             region_start: PPQN * 4,
             region_end: PPQN * 8,
@@ -453,11 +454,30 @@ mod tests {
     }
 
     #[test]
+    fn the_process_context_carries_the_project_meter() {
+        // Bar 2 of 7/8 starts 7 quarters in.
+        let t = BlockTransport {
+            running: true,
+            looping: false,
+            tempo_us: 500_000,
+            meter: Meter::new(7, 8).unwrap(),
+            playback_tick: PPQN * 8,
+            region_start: 0,
+            region_end: PPQN * 8,
+        };
+        let c = process_context(&t, 48_000.0);
+        assert_eq!(c.timeSigNumerator, 7);
+        assert_eq!(c.timeSigDenominator, 8);
+        assert!((c.barPositionMusic - 7.0).abs() < 1e-9);
+    }
+
+    #[test]
     fn process_context_state_flags_follow_running_and_looping() {
         let base = BlockTransport {
             running: false,
             looping: false,
             tempo_us: 500_000,
+            meter: Meter::FOUR_FOUR,
             playback_tick: 0,
             region_start: 0,
             region_end: 1920,

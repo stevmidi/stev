@@ -31,7 +31,7 @@ impl Sequencer {
     /// The lead clip as a `.mid` ([`write_smf`]): the whole clip, whatever
     /// part of it the marquee or the note selection covers, as it plays
     /// ([`Clip::exported_events`](crate::models::clip::Clip::exported_events)),
-    /// at the project tempo. Refused when `marquee` (the arranger's, `None`
+    /// at the project tempo and meter. Refused when `marquee` (the arranger's, `None`
     /// from the clip view) spans more than one clip on its tracks — the
     /// export never silently picks one of them.
     pub(crate) fn export_lead_clip(
@@ -55,6 +55,7 @@ impl Sequencer {
                 &clip.exported_events(),
                 clip.region_length(),
                 self.tempo_us(),
+                self.meter(),
             ),
         })
     }
@@ -93,7 +94,12 @@ mod tests {
         assert_eq!((export.track_idx, export.start_tick), (0, 1920));
         assert_eq!(
             export.bytes,
-            write_smf(&clip.exported_events(), 3840, sequencer.tempo_us())
+            write_smf(
+                &clip.exported_events(),
+                3840,
+                sequencer.tempo_us(),
+                sequencer.meter()
+            )
         );
     }
 

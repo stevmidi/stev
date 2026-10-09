@@ -3,34 +3,49 @@
 //!
 //! - **Write** — the clip export (`⌘/Ctrl+⇧+E`, `060-persistence.md` § MIDI
 //!   clip export): one Type 0 file with the app's `PPQN` as its division, a
-//!   tempo and a 4/4 time signature up front, the channel messages, and the
+//!   tempo and the project's time signature up front, the channel messages, and the
 //!   end-of-track at the clip's length so another DAW imports the loop at its
 //!   full length.
 //! - **Read** — the clip import (`060` § MIDI clip import): every track of a
 //!   Type 0/1/2 file merged into one stream of channel messages, timed in the
-//!   app's `PPQN`. Meta events (tempo included — the project's tempo stays)
-//!   and sysex are skipped.
+//!   app's `PPQN`. Meta events (tempo and time signature included — the
+//!   project's own stay) and sysex are skipped.
 
 use std::fmt;
 
 use crate::{
-    core::{midi::message::is_channel_message, time::PPQN},
+    core::{
+        midi::message::is_channel_message,
+        time::{Meter, PPQN},
+    },
     models::event::Event,
 };
 
 /// The bytes of a Type 0 SMF holding `events` (sorted by tick, ticks from
-/// the file start) at `tempo_us` microseconds per beat, its end-of-track at
-/// `length` ticks (or the last event, if later). Only channel messages are
-/// written: system messages (sysex, realtime) have no place in a clip export.
-pub(crate) fn write_smf(events: &[Event], length: i32, tempo_us: i32) -> Vec<u8> {
+/// the file start) at `tempo_us` microseconds per beat in `meter`, its
+/// end-of-track at `length` ticks (or the last event, if later). Only channel
+/// messages are written: system messages (sysex, realtime) have no place in a
+/// clip export.
+pub(crate) fn write_smf(events: &[Event], length: i32, tempo_us: i32, meter: Meter) -> Vec<u8> {
     let mut track = Vec::new();
 
     // Tempo: FF 51 03 tt tt tt (24-bit µs per quarter note).
     let tempo = tempo_us.clamp(1, 0xFF_FFFF).to_be_bytes();
     track.extend_from_slice(&[0x00, 0xFF, 0x51, 0x03, tempo[1], tempo[2], tempo[3]]);
-    // Time signature 4/4: FF 58 04 nn dd cc bb — numerator, denominator as
-    // a power of two, 24 MIDI clocks per click, 8 32nds per quarter.
-    track.extend_from_slice(&[0x00, 0xFF, 0x58, 0x04, 4, 2, 24, 8]);
+    // Time signature: FF 58 04 nn dd cc bb — numerator, denominator as a
+    // power of two, MIDI clocks per click (one counted beat: 24 per quarter,
+    // so 24 for x/4 and 12 for x/8), 8 32nds per quarter.
+    let denominator = meter.denominator();
+    track.extend_from_slice(&[
+        0x00,
+        0xFF,
+        0x58,
+        0x04,
+        meter.numerator(),
+        denominator.trailing_zeros() as u8,
+        96 / denominator,
+        8,
+    ]);
 
     let mut last_tick = 0;
     for event in events {
@@ -327,7 +342,7 @@ mod tests {
 
     #[test]
     fn header_is_type_0_one_track_at_ppqn() {
-        let file = write_smf(&[], PPQN * 4, 500_000);
+        let file = write_smf(&[], PPQN * 4, 500_000, Meter::FOUR_FOUR);
         assert_eq!(&file[0..4], b"MThd");
         assert_eq!(&file[4..8], &[0, 0, 0, 6]);
         assert_eq!(&file[8..10], &[0, 0]);
@@ -340,12 +355,28 @@ mod tests {
 
     #[test]
     fn empty_clip_writes_tempo_time_signature_and_end_at_its_length() {
-        let file = write_smf(&[], PPQN * 4, 500_000);
+        let file = write_smf(&[], PPQN * 4, 500_000, Meter::FOUR_FOUR);
         let mut expected = vec![0x00, 0xFF, 0x51, 0x03, 0x07, 0xA1, 0x20];
         expected.extend_from_slice(&[0x00, 0xFF, 0x58, 0x04, 4, 2, 24, 8]);
         expected.extend_from_slice(&vlq(PPQN * 4));
         expected.extend_from_slice(&[0xFF, 0x2F, 0x00]);
         assert_eq!(track_body(&file), expected);
+    }
+
+    #[test]
+    fn the_time_signature_follows_the_meter() {
+        let time_signature = |meter| {
+            let file = write_smf(&[], 0, 500_000, meter);
+            track_body(&file)[7..15].to_vec()
+        };
+        assert_eq!(
+            time_signature(Meter::new(7, 8).unwrap()),
+            [0x00, 0xFF, 0x58, 0x04, 7, 3, 12, 8]
+        );
+        assert_eq!(
+            time_signature(Meter::new(3, 4).unwrap()),
+            [0x00, 0xFF, 0x58, 0x04, 3, 2, 24, 8]
+        );
     }
 
     #[test]
@@ -356,7 +387,7 @@ mod tests {
             Event::new(PPQN, 0, vec![0x91, 64, 90]),
             Event::new(PPQN * 2, 0, vec![0x81, 64, 0]),
         ];
-        let file = write_smf(&events, PPQN * 4, 500_000);
+        let file = write_smf(&events, PPQN * 4, 500_000, Meter::FOUR_FOUR);
         let notes = after_meta(&file);
         let mut expected = vec![0x00, 0x90, 60, 100];
         expected.extend(vlq(PPQN));
@@ -372,7 +403,7 @@ mod tests {
     #[test]
     fn end_of_track_never_precedes_the_last_event() {
         let events = [Event::new(PPQN * 8, 0, vec![0x80, 60, 0])];
-        let file = write_smf(&events, PPQN * 4, 500_000);
+        let file = write_smf(&events, PPQN * 4, 500_000, Meter::FOUR_FOUR);
         assert!(track_body(&file).ends_with(&[0x00, 0xFF, 0x2F, 0x00]));
     }
 
@@ -385,7 +416,7 @@ mod tests {
             Event::new(0, 0, vec![0xB0, 64, 127]),
             Event::new(0, 0, vec![0xC0, 5]),
         ];
-        let file = write_smf(&events, 0, 500_000);
+        let file = write_smf(&events, 0, 500_000, Meter::FOUR_FOUR);
         let notes = after_meta(&file);
         assert_eq!(
             notes,
@@ -395,7 +426,7 @@ mod tests {
 
     #[test]
     fn tempo_is_written_as_24_bit_microseconds() {
-        let file = write_smf(&[], 0, 600_000);
+        let file = write_smf(&[], 0, 600_000, Meter::FOUR_FOUR);
         assert_eq!(&track_body(&file)[4..7], &[0x09, 0x27, 0xC0]);
     }
 
@@ -433,7 +464,7 @@ mod tests {
             Event::new(PPQN, 0, vec![0xB0, 64, 127]),
             Event::new(PPQN * 2, 0, vec![0x80, 60, 0]),
         ];
-        let (read, end) = read_ticks(&write_smf(&events, PPQN * 4, 500_000));
+        let (read, end) = read_ticks(&write_smf(&events, PPQN * 4, 500_000, Meter::FOUR_FOUR));
         assert_eq!(
             read,
             vec![

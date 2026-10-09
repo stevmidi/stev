@@ -53,10 +53,9 @@ pub(crate) enum ClockCommand {
 /// of the timer firing that produced it, so a burst of ticks from one firing
 /// carries distinct, correctly-spaced timestamps rather than collapsing onto a
 /// single instant. The plugin host turns `at` into a sample-accurate block
-/// offset; `is_beat` and `tick` drive the metronome.
+/// offset; `tick` drives the metronome, which finds the beats in it itself
+/// (the clock knows nothing of the meter).
 pub(crate) struct ClockTick {
-    /// True on a quarter-note boundary — drives the metronome click.
-    pub(crate) is_beat: bool,
     /// The [`Instant`] this tick was *intended* to occur at.
     pub(crate) at: Instant,
     /// The absolute clock-tick counter value this tick carries. Normally steps
@@ -228,8 +227,7 @@ impl Clock {
                 // Publish when the counter reached this value, for the
                 // MIDI-input callback's fractional-tick interpolation.
                 tick_instant_nanos.store(time::monotonic_nanos_at(at), Ordering::Relaxed);
-                let is_beat = tick % PPQN == 0;
-                callback(ClockTick { is_beat, at, tick });
+                callback(ClockTick { at, tick });
             }
         });
     }

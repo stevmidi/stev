@@ -196,9 +196,10 @@ methods take a track's position and look the slot up in its `tracks` mirror
   `SharedAtomics` (`TransportState` in `mixer.rs`): tempo (exact, from the
   `tempo` µs-per-quarter atomic), playhead (`song_pos_beats` /`bar_number`,
   tick-granular — `playback_tick` only advances once per sequencer tick),
-  `IS_PLAYING`, and the loop region as `IS_LOOP_ACTIVE` + `loop_*_beats`. 4/4 is
-  assumed (the project has no time-signature model). So a plugin's tempo-synced
-  arpeggiator / delay / LFO follows the sequencer and start/stop.
+  `IS_PLAYING`, the loop region as `IS_LOOP_ACTIVE` + `loop_*_beats`, and the
+  project's meter (`time_signature_*`, with `bar_number` / `bar_start` in its
+  bars; positions stay in quarter notes in every meter). So a plugin's
+  tempo-synced arpeggiator / delay / LFO follows the sequencer and start/stop.
 > All the plugin-host fields on the `Display` side are grouped into one
 > `InstrumentHost` struct (`view/display/instrument.rs`), held as
 > `Display::instruments` behind `#[cfg(target_os = "macos")]`. The methods that
@@ -268,7 +269,7 @@ methods take a track's position and look the slot up in its `tracks` mirror
 | `editor.rs` | The `InstrumentEditor` trait - the `!Send` main-thread half. `close` (= `teardown_gui`) and `toggle` (on `is_open`) are default methods, so a format supplies only `is_open`. |
 | `buffers.rs` | `AudioIoLayout` (a plugin's declared channels per input/output port or bus; `new` applies the one-stereo-output fallback) and `PortBuffers` - the `[port][channel]` buffer set every voice renders into: silent input feed, capacity-reserved outputs, `prepare_outputs(frames)`, `main_sample` (port-0-only, mono/empty/out-of-range-safe - what the mixer sums) and `main_output_silent`. Each format builds its own FFI view over it. Unit-tested. |
 | `mixer.rs` | `InstrumentMixer` (`impl AudioSource` - the audio-callback state: `[Option<Box<dyn InstrumentVoice>>; MAX_TRACKS]`, the `pending` scheduling buffer and per-block dispatch, the render/sum two-pass split, the per-track gain ramp, summed into the engine's `mix`), `PluginHostCommand`, `within_block_offset`. `AudioClock` lives in `core::audio`. Unit-tested: the pending sort's note-off/note-on ordering, `within_block_offset` clamping, the partition-point sub-block selection. |
-| `transport.rs` | `TransportState` (the shared atomics) and `BlockTransport` (the plain `Copy` snapshot taken once per block and handed to every voice, in app-native units - ticks and microseconds-per-quarter - plus `bpm()`, `bar_number()` and `bar_start_beats()` - the 4/4 bar maths, floored for a pre-roll playhead). Each format converts it in its own `render_block`; that conversion is a handful of float ops, so doing it per voice rather than once per block costs nothing and keeps every plugin type out of the mixer. Unit-tested. |
+| `transport.rs` | `TransportState` (the shared atomics) and `BlockTransport` (the plain `Copy` snapshot taken once per block and handed to every voice, in app-native units - ticks and microseconds-per-quarter - plus `bpm()`, `bar_number()` and `bar_start_beats()` - the bar maths in the project's `Meter`, carried in the snapshot from the `SharedAtomics.meter` atomic, floored for a pre-roll playhead; `bar_start_beats` is in quarter notes). Each format converts it in its own `render_block`; that conversion is a handful of float ops, so doing it per voice rather than once per block costs nothing and keeps every plugin type out of the mixer. Unit-tested. |
 | `catalog.rs` | `PluginFormat` (label - which is also its `Audio/Plug-Ins` subdirectory - and bundle extension), `ALL_FORMATS`, `PluginCatalogEntry { format, bundle_path, plugin_id, name }`, `installed_bundles` (the shared depth-capped bundle walk over the install roots - what each format's scan calls), `scan_catalog` (runs every format's scan and reports the merged, name-sorted list **once per format** — VST3 is slow enough that waiting for it would hide the CLAP plugins too; `merge_scans` takes the scans as functions so each only starts after the previous one's delivery), `available_bundles_hint`. Runs on the background `"plugin-catalog-scan"` thread, result held in `Display::plugin_catalog`. Unit-tested. |
 | `shutdown.rs` | `HostShutdown` - app-exit coordination (`requested` + `in_process`), one instance shared by the mixer and the reclaim thread. Unit-tested. |
 | `window.rs` | `PluginWindow` - a minimal native `NSWindow` parent for an embedded plugin GUI; `show` (`orderFront:`), `is_visible`, `frame_top_left` / a `top_left` argument to `new` (position carried across a close/reopen), `set_content_size` (anchored at the top-left corner); registers/deregisters itself with `key_guard` on construction/`Drop`. It is closed by `Drop`, not hidden - there is no `hide`. Format-agnostic. |
@@ -364,7 +365,7 @@ boundary.
    the mach timer's period was stretched to ~1.016 ms. Each tick a firing
    produces gets an intended `Instant`, linearly interpolated across the firing's
    elapsed span (`Clock::tick_offset_ns`), and rides `tick_tx` as
-   `ClockTick { is_beat, at, tick }`. A firing's elapsed time is clamped
+   `ClockTick { at, tick }`. A firing's elapsed time is clamped
    (`MAX_ELAPSED_NS`, 100 ms) so a debugger pause can't dump a huge tick burst.
 2. **`Sequencer::tick(at)`** stamps each `Instrument` track's clip events with
    `EventTime::At(at)` onto the `rtrb` clip ring.

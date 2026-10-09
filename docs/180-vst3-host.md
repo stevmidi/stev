@@ -57,7 +57,7 @@ obligation. Most advice online predates this and should be disregarded.
 | `host.rs` | The COM objects handed *to* a plugin: `Vst3Host` (`IHostApplication`, including `createInstance`), `ComponentHandler`, `HostEventList` (`IEventList`). |
 | `params.rs` | The UI→processor parameter bridge: `ParamSender`/`ParamReceiver` over an `rtrb` ring, and the `IParameterChanges` / `IParamValueQueue` the plugin reads. |
 | `message.rs` | `HostMessage` (`IMessage`) and `HostAttributeList` (`IAttributeList`) — the objects a plugin asks the host to create so its two halves can exchange messages. |
-| `voice.rs` | `Vst3Voice` — `impl InstrumentVoice`; the `ProcessData` assembly over the shared `PortBuffers` (`../buffers.rs`), the `ProcessContext` translation, and the observed-silence idle rule. |
+| `voice.rs` | `Vst3Voice` — `impl InstrumentVoice`; the `ProcessData` assembly over the shared `PortBuffers` (`../buffers.rs`), the `ProcessContext` translation (tempo, positions in quarter notes, the cycle, and the project's meter as `timeSigNumerator`/`Denominator` with `barPositionMusic` from `BlockTransport`), and the observed-silence idle rule. |
 | `editor.rs` | `Vst3Editor` — `impl InstrumentEditor`; the `IPlugView` lifecycle, `HostPlugFrame` (the `IPlugFrame` a view resizes itself through), the `!Send` half's ownership and teardown ordering. |
 | `events.rs` | MIDI → VST3: `translate` (the three-way split), `NoteIds` (note-on ↔ note-off id pairing), `MidiMap` (the `IMidiMapping` table). |
 | `state.rs` | Preset capture and restore: the two-half container format, `capture`, `apply`. |

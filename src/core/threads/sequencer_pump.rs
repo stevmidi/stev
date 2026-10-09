@@ -82,7 +82,7 @@ pub(crate) fn start_sequencer_thread(
                                     event_handlers.end_live_recording_workflow(&mut sequencer, &mut undo_record);
                                 }
                             }
-                            metronome.on_tick(&tick, transport.is_running());
+                            metronome.on_tick(&tick, sequencer.meter(), transport.is_running());
                         }
                     }
 

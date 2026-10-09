@@ -129,6 +129,19 @@ impl Meter {
         PPQN * 4 * self.numerator as i32 / self.denominator as i32
     }
 
+    /// One counted beat — a `denominator` note — in ticks (an amount): 960
+    /// for x/4, 480 for x/8. The click sounds on each one.
+    pub(crate) const fn beat_ticks(self) -> i32 {
+        PPQN * 4 / self.denominator as i32
+    }
+
+    /// Where bar `bar` (zero-based, may be negative) starts, in quarter
+    /// notes — the unit plugins are told positions in, whatever the meter.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pub(crate) fn bar_quarters_f64(self, bar: i32) -> f64 {
+        f64::from(bar) * f64::from(self.numerator) * 4.0 / f64::from(self.denominator)
+    }
+
     /// Bars → ticks (an amount).
     pub(crate) const fn bars_to_ticks(self, bars: i32) -> i32 {
         self.bar_ticks() * bars
@@ -439,6 +452,23 @@ mod tests {
             m.bar_ticks() * 2
         );
         assert_eq!(m.next_bar_boundary_after(-1), 0);
+    }
+
+    #[test]
+    fn the_counted_beat_is_one_denominator_note() {
+        assert_eq!(Meter::FOUR_FOUR.beat_ticks(), PPQN);
+        assert_eq!(meter(3, 4).beat_ticks(), PPQN);
+        assert_eq!(meter(6, 8).beat_ticks(), PPQN / 2);
+        assert_eq!(meter(7, 8).beat_ticks(), PPQN / 2);
+    }
+
+    #[test]
+    fn bar_starts_are_counted_in_quarter_notes() {
+        assert_eq!(Meter::FOUR_FOUR.bar_quarters_f64(2), 8.0);
+        assert_eq!(meter(3, 4).bar_quarters_f64(2), 6.0);
+        assert_eq!(meter(6, 8).bar_quarters_f64(2), 6.0);
+        assert_eq!(meter(7, 8).bar_quarters_f64(2), 7.0);
+        assert_eq!(meter(3, 4).bar_quarters_f64(-1), -3.0);
     }
 
     #[test]

@@ -171,8 +171,8 @@ impl InstrumentVoice for ClapVoice {
 }
 
 /// Builds the CLAP transport info for a block — tempo, playhead (tick-granular:
-/// `playback_tick` only moves once per sequencer tick) and loop bounds. 4/4 is
-/// assumed, matching the rest of the app.
+/// `playback_tick` only moves once per sequencer tick), loop bounds and the
+/// project's meter.
 fn transport_event(t: &BlockTransport) -> TransportEvent {
     let mut flags = TransportFlags::HAS_TEMPO
         | TransportFlags::HAS_BEATS_TIMELINE
@@ -197,8 +197,8 @@ fn transport_event(t: &BlockTransport) -> TransportEvent {
         loop_end_seconds: SecondsTime::default(),
         bar_start: BeatTime::from_float(t.bar_start_beats()),
         bar_number: t.bar_number(),
-        time_signature_numerator: 4,
-        time_signature_denominator: 4,
+        time_signature_numerator: t.meter.numerator().into(),
+        time_signature_denominator: t.meter.denominator().into(),
     }
 }
 
@@ -220,13 +220,14 @@ fn midi_bytes_to_clap_event(bytes: Midi3, time: u32) -> Option<MidiEvent> {
 mod tests {
     use super::*;
     use crate::core::plugin_host::voice::note_reset_messages;
-    use crate::core::time::PPQN;
+    use crate::core::time::{Meter, PPQN};
 
     fn transport(running: bool, looping: bool, tick: i32) -> BlockTransport {
         BlockTransport {
             running,
             looping,
             tempo_us: 500_000,
+            meter: Meter::FOUR_FOUR,
             playback_tick: tick,
             region_start: PPQN * 4,
             region_end: PPQN * 8,
@@ -245,6 +246,20 @@ mod tests {
         assert!((ev.loop_end_beats.to_float() - 8.0).abs() < 1e-9);
         assert_eq!(ev.time_signature_numerator, 4);
         assert_eq!(ev.time_signature_denominator, 4);
+    }
+
+    #[test]
+    fn transport_event_carries_the_project_meter() {
+        // Two bars of 6/8 are six quarters.
+        let t = BlockTransport {
+            meter: Meter::new(6, 8).unwrap(),
+            ..transport(true, false, PPQN * 6 + 1)
+        };
+        let ev = transport_event(&t);
+        assert_eq!(ev.time_signature_numerator, 6);
+        assert_eq!(ev.time_signature_denominator, 8);
+        assert_eq!(ev.bar_number, 2);
+        assert!((ev.bar_start.to_float() - 6.0).abs() < 1e-9);
     }
 
     #[test]
