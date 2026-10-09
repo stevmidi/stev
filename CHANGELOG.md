@@ -19,6 +19,26 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ## [Unreleased]
 
+### Added
+
+- **Time signature.** A `METER` chip beside the BPM chip in the header:
+  double-click it and type a meter (`3/4`, `6/8`, `7/8` …, 1–16 beats over 4
+  or 8), Enter to set it. One meter per project, undoable. The bar lines, the
+  grid, the ruler, the position readout, the click (every counted beat,
+  strong on the downbeat), capture's whole-bar windows, the plugin transport
+  and exported MIDI files all follow it. Changing it moves no notes, clips or
+  loop region, so they may stop sitting on bar lines. The tempo stays quarter
+  notes per minute in every meter.
+- Project files gain a `meter` field. Files without one open in 4/4; Stev
+  0.1.0 opens a newer file with it and ignores it, playing it in 4/4.
+
+### Fixed
+
+- **The click's downbeat drifted on a loop that isn't whole bars.** With a
+  2½-bar loop the strong click landed off the bar line on every other pass,
+  and starting playback could put the click off the beat. The click now
+  counts from the playhead while playing.
+
 ## [0.1.0] - 2026-10-09
 
 The first public release. Stev is a capture-first MIDI sequencer for macOS:

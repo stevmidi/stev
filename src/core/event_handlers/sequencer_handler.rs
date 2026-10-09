@@ -13,7 +13,7 @@ use crate::core::sequencer::{
     DragNotesEdit, DuplicateClipsEdit, DuplicateTimeEdit, InsertCaptureEdit, InsertNotesEdit,
     InsertSilenceEdit, MoveClipEdit, MoveRangeEdit, MuteInRangeEdit, MuteSelectedEventsEdit,
     NudgeSelectedEventsEdit, NudgeSelectedEventsLengthEdit, PasteClipsEdit, QuantizeEventsEdit,
-    RenameTrackEdit, SequencerEdit, SetTempoEdit, SplitClipsEdit, TempoGesture,
+    RenameTrackEdit, SequencerEdit, SetMeterEdit, SetTempoEdit, SplitClipsEdit, TempoGesture,
     TransposeSelectedEventsEdit,
 };
 use crate::core::time::TapTempo;
@@ -528,6 +528,11 @@ impl EventHandlers {
                 self.record_edit(sequencer, undo_record, edit);
             }
 
+            SequencerCommand::SetMeter { meter } => {
+                let edit = SetMeterEdit::new(sequencer, *meter);
+                self.record_edit(sequencer, undo_record, edit);
+            }
+
             SequencerCommand::SetTrackOutput { track, output } => {
                 sequencer.set_track_output(*track, output.clone());
                 self.emit_tracks(sequencer, None);
@@ -588,6 +593,7 @@ mod tests {
     use crate::core::midi::input::InputTicks;
     use crate::core::project::ProjectAction;
     use crate::core::sequencer::{SequencerCommand, SequencerEdit};
+    use crate::core::time::Meter;
     use crate::core::view_state::ViewState;
     use crate::models::{
         clip::NoteDrag::{self, Move, ResizeEnd, ResizeStart},
@@ -659,6 +665,25 @@ mod tests {
 
         run_command(&mut h, &mut record, SequencerCommand::Undo);
         assert_eq!(h.sequencer.tempo_us(), start);
+        run_command(&mut h, &mut record, quit());
+        assert_eq!(last_project_reply(&h), Some(None));
+    }
+
+    /// The header's meter field sets the meter as one undo step, and the
+    /// change counts as unsaved.
+    #[test]
+    fn set_meter_is_undoable_and_unsaved() {
+        let mut h = harness();
+        let mut record = Record::new();
+        let six_eight = Meter::new(6, 8).unwrap();
+        let set_meter = SequencerCommand::SetMeter { meter: six_eight };
+        run_command(&mut h, &mut record, set_meter);
+        assert_eq!(h.sequencer.meter(), six_eight);
+        run_command(&mut h, &mut record, quit());
+        assert_eq!(last_project_reply(&h), Some(Some(ProjectAction::Quit)));
+
+        run_command(&mut h, &mut record, SequencerCommand::Undo);
+        assert_eq!(h.sequencer.meter(), Meter::FOUR_FOUR);
         run_command(&mut h, &mut record, quit());
         assert_eq!(last_project_reply(&h), Some(None));
     }

@@ -30,6 +30,7 @@ use super::Sequencer;
 
 mod clip_edits;
 mod event_edits;
+mod meter_edit;
 mod tempo_edit;
 mod track_edits;
 
@@ -43,6 +44,7 @@ pub(crate) use event_edits::{
     InsertNotesEdit, MuteSelectedEventsEdit, NudgeSelectedEventsEdit,
     NudgeSelectedEventsLengthEdit, QuantizeEventsEdit, TransposeSelectedEventsEdit,
 };
+pub(crate) use meter_edit::SetMeterEdit;
 pub(crate) use tempo_edit::{SetTempoEdit, TempoGesture};
 pub(crate) use track_edits::{AddTrackEdit, RemoveTrackEdit, RenameTrackEdit};
 
@@ -498,6 +500,9 @@ pub(crate) enum EditResult {
     /// The project tempo changed (`SetTempoEdit`'s edit and undo). The view
     /// reads the tempo from its atomic, so the handler only wakes it.
     TempoChanged,
+    /// The project's meter changed (`SetMeterEdit`'s edit and undo). The
+    /// view reads the meter from its atomic, so the handler only wakes it.
+    MeterChanged,
     /// The edit turned out to be a no-op — nothing for the handler to do.
     NoOp,
 }
@@ -669,6 +674,7 @@ sequencer_edit_dispatch!(
     RemoveTrack(RemoveTrackEdit),
     RenameTrack(RenameTrackEdit),
     SetTempo(SetTempoEdit),
+    SetMeter(SetMeterEdit),
 );
 
 #[cfg(test)]

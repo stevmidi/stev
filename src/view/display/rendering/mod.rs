@@ -1137,6 +1137,7 @@ impl eframe::App for Display {
                 self.draw_status_bar(painter, rect);
                 self.show_track_rename(ui);
                 self.show_tempo_field(ui, Self::header_value_font());
+                self.show_meter_field(ui, Self::header_value_font());
                 self.draw_output_menu(painter);
 
                 match self.overlay {

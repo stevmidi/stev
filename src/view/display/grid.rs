@@ -287,8 +287,8 @@ mod tests {
     /// grid, and what the piano roll shows for a short clip.
     fn bar_beat_sixteenth() -> GridTiers {
         GridTiers {
-            label_ticks: FOUR_FOUR.bars_to_ticks(1),
-            bar_ticks: FOUR_FOUR.bars_to_ticks(1),
+            label_ticks: FOUR_FOUR.bar_ticks(),
+            bar_ticks: FOUR_FOUR.bar_ticks(),
             beat_ticks: Some(beats_to_ticks(1.0)),
             snap_ticks: FLOOR,
             ruler_ticks: FLOOR,
@@ -304,7 +304,7 @@ mod tests {
 
     #[test]
     fn ladder_runs_a_256th_to_64_bars_doubling() {
-        let bar = FOUR_FOUR.bars_to_ticks(1);
+        let bar = FOUR_FOUR.bar_ticks();
         let rungs: Vec<i32> = ladder(FOUR_FOUR).collect();
         assert_eq!(rungs.first(), Some(&(bar / 256)));
         assert_eq!(bar % 256, 0, "the finest rung is a whole tick count");
@@ -314,13 +314,13 @@ mod tests {
 
     #[test]
     fn default_arranger_view_is_todays_bar_and_beat_grid() {
-        let ppt = 1274.0 / BARS_IN_VIEWPORT as f32 / FOUR_FOUR.bars_to_ticks(1) as f32;
+        let ppt = 1274.0 / BARS_IN_VIEWPORT as f32 / FOUR_FOUR.bar_ticks() as f32;
         let beat = beats_to_ticks(1.0);
         assert_eq!(
             grid_tiers(ppt, FLOOR, GridSurface::Arranger, FOUR_FOUR),
             GridTiers {
-                label_ticks: FOUR_FOUR.bars_to_ticks(1),
-                bar_ticks: FOUR_FOUR.bars_to_ticks(1),
+                label_ticks: FOUR_FOUR.bar_ticks(),
+                bar_ticks: FOUR_FOUR.bar_ticks(),
                 beat_ticks: Some(beat),
                 snap_ticks: beat,
                 ruler_ticks: beat,
@@ -369,7 +369,7 @@ mod tests {
             }
             // And the bar tier is always whole bars.
             assert_eq!(
-                t.bar_ticks % FOUR_FOUR.bars_to_ticks(1),
+                t.bar_ticks % FOUR_FOUR.bar_ticks(),
                 0,
                 "{px_per_beat}: {t:?}"
             );
@@ -417,9 +417,9 @@ mod tests {
             GridSurface::Arranger,
             FOUR_FOUR,
         );
-        assert_eq!(t.bar_ticks, FOUR_FOUR.bars_to_ticks(1));
+        assert_eq!(t.bar_ticks, FOUR_FOUR.bar_ticks());
         assert_eq!(t.beat_ticks, None);
-        assert_eq!(t.snap_ticks, FOUR_FOUR.bars_to_ticks(1) / 2);
+        assert_eq!(t.snap_ticks, FOUR_FOUR.bar_ticks() / 2);
     }
 
     #[test]
@@ -428,7 +428,7 @@ mod tests {
         // so on a wide window too the finest step must not go below the beat
         // (a narrow one may go coarser — half-bars below 8 px/beat).
         for content_w in [900.0, 1274.0, 1800.0, 2400.0, 3400.0] {
-            let ppt = content_w / BARS_IN_VIEWPORT as f32 / FOUR_FOUR.bars_to_ticks(1) as f32;
+            let ppt = content_w / BARS_IN_VIEWPORT as f32 / FOUR_FOUR.bar_ticks() as f32;
             let t = grid_tiers(ppt, FLOOR, GridSurface::Arranger, FOUR_FOUR);
             assert!(
                 t.snap_ticks >= beats_to_ticks(1.0),
@@ -438,7 +438,7 @@ mod tests {
         }
         // From the reference width up it is exactly the beat.
         for content_w in [1274.0, 2400.0, 3400.0] {
-            let ppt = content_w / BARS_IN_VIEWPORT as f32 / FOUR_FOUR.bars_to_ticks(1) as f32;
+            let ppt = content_w / BARS_IN_VIEWPORT as f32 / FOUR_FOUR.bar_ticks() as f32;
             assert_eq!(
                 grid_tiers(ppt, FLOOR, GridSurface::Arranger, FOUR_FOUR).snap_ticks,
                 beats_to_ticks(1.0)
@@ -481,7 +481,7 @@ mod tests {
 
     #[test]
     fn a_line_is_drawn_as_its_coarsest_tier() {
-        let bar = FOUR_FOUR.bars_to_ticks(1);
+        let bar = FOUR_FOUR.bar_ticks();
         let beat = beats_to_ticks(1.0);
         let tiers = bar_beat_sixteenth();
         assert_eq!(tiers.role_at(0), GridRole::Bar);
@@ -495,7 +495,7 @@ mod tests {
     fn coarsened_bar_tier_demotes_odd_bars_to_snap_and_thins_labels() {
         // Zoomed out: structural tier every 2 bars, snap every bar, labels
         // every 4 — bar 2 (tick = 1 bar) is a snap line, unlabelled.
-        let bar = FOUR_FOUR.bars_to_ticks(1);
+        let bar = FOUR_FOUR.bar_ticks();
         let tiers = GridTiers {
             label_ticks: 4 * bar,
             bar_ticks: 2 * bar,
@@ -512,7 +512,7 @@ mod tests {
 
     #[test]
     fn default_arranger_beats_are_the_finest_tier() {
-        let ppt = 1274.0 / BARS_IN_VIEWPORT as f32 / FOUR_FOUR.bars_to_ticks(1) as f32;
+        let ppt = 1274.0 / BARS_IN_VIEWPORT as f32 / FOUR_FOUR.bar_ticks() as f32;
         assert!(!grid_tiers(ppt, FLOOR, GridSurface::Arranger, FOUR_FOUR).has_tier_below_beat());
     }
 
@@ -548,7 +548,7 @@ mod tests {
 
     #[test]
     fn beats_that_are_the_finest_tier_draw_at_snap_strength() {
-        let ppt = 1274.0 / BARS_IN_VIEWPORT as f32 / FOUR_FOUR.bars_to_ticks(1) as f32;
+        let ppt = 1274.0 / BARS_IN_VIEWPORT as f32 / FOUR_FOUR.bar_ticks() as f32;
         let tiers = grid_tiers(ppt, FLOOR, GridSurface::Arranger, FOUR_FOUR);
         assert_eq!(
             tiers.line_strength(GridRole::Beat, true),
@@ -670,7 +670,7 @@ mod tests {
             GridSurface::PianoRoll,
             FOUR_FOUR,
         );
-        assert_eq!(t.snap_ticks, FOUR_FOUR.bars_to_ticks(1) / 256);
+        assert_eq!(t.snap_ticks, FOUR_FOUR.bar_ticks() / 256);
         assert_eq!(
             GridSurface::Arranger.snap_floor_ticks(),
             FLOOR,

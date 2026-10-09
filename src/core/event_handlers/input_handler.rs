@@ -641,6 +641,10 @@ impl EventHandlers {
                 });
             }
 
+            InputEvent::SetMeter { meter } => {
+                self.send_sequencer(SequencerCommand::SetMeter { meter: *meter });
+            }
+
             InputEvent::SetTrackPan { track_idx, pan } => {
                 self.send_sequencer(SequencerCommand::SetTrackPan {
                     track_idx: *track_idx,

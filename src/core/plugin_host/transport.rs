@@ -13,7 +13,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU16, Ordering};
 
-use crate::core::time::{MICROSECONDS_PER_MINUTE, Meter};
+use crate::core::time::{MICROSECONDS_PER_MINUTE, Meter, ticks_to_beats_f64};
 
 /// The transport atomics the mixer reads (once per sub-block). All live in
 /// `SharedAtomics`; cloned in here so the audio thread never locks.
@@ -88,7 +88,7 @@ impl BlockTransport {
     /// Where [`bar_number`](Self::bar_number)'s bar starts, in quarter notes
     /// (the "beats" every plugin format counts positions in).
     pub(crate) fn bar_start_beats(&self) -> f64 {
-        self.meter.bar_quarters_f64(self.bar_number())
+        ticks_to_beats_f64(self.meter.bars_to_ticks(self.bar_number()))
     }
 }
 

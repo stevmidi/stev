@@ -6,13 +6,12 @@
 //! away commits. Each typed value or drag is one undoable `SetTempoEdit` on
 //! the sequencer thread. See `030-ui-design.md` § Header & Footer.
 //!
-//! The text editing itself is an egui [`TextEdit`], shown the way the track
-//! rename field is ([`show_name_field`], [`field_event`]); the drag maths is
-//! [`dragged_bpm_tenths`], unit-tested.
+//! The text field is the header chips' shared one ([`show_header_field`],
+//! [`field_event`]); the drag maths is [`dragged_bpm_tenths`], unit-tested.
 
 use std::sync::atomic::Ordering;
 
-use egui::{FontId, Id, Margin, Rect, TextEdit, Ui, pos2};
+use egui::{FontId, Ui};
 
 use crate::core::input_event::InputEvent;
 use crate::core::time::{
@@ -20,23 +19,11 @@ use crate::core::time::{
 };
 
 use super::Display;
-use super::track_rename::{FieldEvent, field_event, show_name_field};
+use super::header_chip::{HeaderChipRects, HeaderTextField, show_header_field};
+use super::track_rename::{FieldEvent, field_event};
 
 /// Vertical pixels of drag per tempo step.
 const DRAG_PX_PER_STEP: f32 = 3.0;
-
-/// The longest text the BPM field takes — `300.0` and a spare.
-const FIELD_MAX_CHARS: usize = 6;
-
-/// Where the BPM chip was painted this frame, for the pointer and the field.
-#[derive(Clone, Copy)]
-pub(super) struct TempoChipRects {
-    /// The whole chip, label and value — what a press or a double-click hits.
-    pub(super) chip: Rect,
-    /// The value's part of it — where the field goes, the `BPM` label left
-    /// showing.
-    pub(super) value: Rect,
-}
 
 /// A drag on the BPM chip, `Some` while the button is held.
 struct TempoDrag {
@@ -59,27 +46,18 @@ struct TempoDrag {
     last_tenths: i32,
 }
 
-/// The open BPM field.
-struct TempoTextField {
-    /// The text as typed so far — the tempo to start with, selected whole.
-    text: String,
-    /// Whether the field has shown yet: its first frame takes the egui focus
-    /// and selects the text.
-    shown: bool,
-}
-
 /// The BPM chip's state: where it is, what the pointer is doing on it, and
 /// the open field.
 #[derive(Default)]
 pub(super) struct TempoChip {
     /// Where it was painted last frame; `None` before the first frame.
-    pub(super) rects: Option<TempoChipRects>,
+    pub(super) rects: Option<HeaderChipRects>,
     /// The pointer is over it with no button held — the resize cursor icon.
     pub(super) hover: bool,
     /// The drag in progress.
     drag: Option<TempoDrag>,
     /// The open field.
-    field: Option<TempoTextField>,
+    field: Option<HeaderTextField>,
 }
 
 impl TempoChip {
@@ -95,8 +73,7 @@ impl TempoChip {
 
     /// Whether `(x, y)` is on the chip.
     pub(super) fn contains(&self, x: f32, y: f32) -> bool {
-        self.rects
-            .is_some_and(|rects| rects.chip.contains(pos2(x, y)))
+        self.rects.is_some_and(|rects| rects.contains(x, y))
     }
 }
 
@@ -200,10 +177,7 @@ impl Display {
     pub(super) fn open_tempo_field(&mut self) {
         self.tempo_chip.drag = None;
         self.close_output_menu();
-        self.tempo_chip.field = Some(TempoTextField {
-            text: format_bpm(self.tempo_us()),
-            shown: false,
-        });
+        self.tempo_chip.field = Some(HeaderTextField::new(format_bpm(self.tempo_us())));
     }
 
     /// Closes the field, setting the tempo to what was typed. Nothing when it
@@ -245,23 +219,9 @@ impl Display {
     /// the header's value font. Its first frame takes the egui focus and
     /// selects the text.
     pub(super) fn show_tempo_field(&mut self, ui: &mut Ui, font: FontId) {
-        let Some(rects) = self.tempo_chip.rects else {
-            return;
-        };
-        let Some(field) = self.tempo_chip.field.as_mut() else {
-            return;
-        };
-        let edit = TextEdit::singleline(&mut field.text)
-            .char_limit(FIELD_MAX_CHARS)
-            .font(font);
-        show_name_field(
-            ui,
-            edit,
-            Id::new("tempo-field"),
-            rects.value,
-            Margin::symmetric(4, 0),
-            &mut field.shown,
-        );
+        if let Some(field) = self.tempo_chip.field.as_mut() {
+            show_header_field(ui, font, self.tempo_chip.rects, field, "tempo-field");
+        }
     }
 }
 

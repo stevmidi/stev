@@ -53,8 +53,9 @@ pub(crate) enum ClockCommand {
 /// of the timer firing that produced it, so a burst of ticks from one firing
 /// carries distinct, correctly-spaced timestamps rather than collapsing onto a
 /// single instant. The plugin host turns `at` into a sample-accurate block
-/// offset; `tick` drives the metronome, which finds the beats in it itself
-/// (the clock knows nothing of the meter).
+/// offset; `tick` is what the metronome counts in on while stopped (running,
+/// it counts from playback), finding the beats itself — the clock knows
+/// nothing of the meter.
 pub(crate) struct ClockTick {
     /// The [`Instant`] this tick was *intended* to occur at.
     pub(crate) at: Instant,

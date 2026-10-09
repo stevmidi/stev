@@ -23,7 +23,7 @@ use egui::{Key, Modifiers};
 use uuid::Uuid;
 
 use crate::{
-    core::{project::ProjectAction, view_state::Pane},
+    core::{project::ProjectAction, time::Meter, view_state::Pane},
     models::{
         clip::{Clip, NoteDrag},
         track::TrackOutput,
@@ -547,6 +547,12 @@ pub(crate) enum InputEvent {
         /// The drag this step belongs to (`GestureState::take_drag_id`);
         /// `None` for a typed value.
         drag_id: Option<u64>,
+    },
+    /// The header's meter chip: a typed meter (Enter in its field). One undo
+    /// step per typed value (`SetMeterEdit`).
+    SetMeter {
+        /// The new meter.
+        meter: Meter,
     },
     /// Arranger track-header volume/pan bar drag: the view resolves the target
     /// track and the absolute value for the current pointer position and

@@ -63,7 +63,18 @@ pub(crate) fn start_sequencer_thread(
                         // taken off the channel.
                         let drained = iter::from_fn(|| tick_rx.try_recv().ok());
                         for tick in iter::once(first).chain(drained) {
-                            if transport.is_running() {
+                            // The click counts from playback while running —
+                            // read before the advance, so the start tick and
+                            // a wrap's region start are each counted once —
+                            // and from the free-running clock while stopped
+                            // (`Metronome`'s module docs).
+                            let running = transport.is_running();
+                            let click_tick = if running {
+                                sequencer.playback_tick()
+                            } else {
+                                tick.tick
+                            };
+                            if running {
                                 // A loop wrap must be re-anchored here, before
                                 // this tick reaches the sequencer — deferring it
                                 // to `transport_event_rx` lets a burst of ticks
@@ -82,7 +93,7 @@ pub(crate) fn start_sequencer_thread(
                                     event_handlers.end_live_recording_workflow(&mut sequencer, &mut undo_record);
                                 }
                             }
-                            metronome.on_tick(&tick, sequencer.meter(), transport.is_running());
+                            metronome.on_tick(tick.at, click_tick, sequencer.meter(), running);
                         }
                     }
 

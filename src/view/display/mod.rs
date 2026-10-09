@@ -44,10 +44,12 @@
 mod browser;
 mod gesture_state;
 mod grid;
+mod header_chip;
 mod help_overlay;
 mod input;
 #[cfg(target_os = "macos")]
 mod instrument;
+mod meter_field;
 mod midi_state;
 mod modal_focus;
 mod output_menu;
@@ -71,6 +73,7 @@ use self::help_overlay::HelpOverlay;
 use self::input::DragPointer;
 #[cfg(target_os = "macos")]
 use self::instrument::InstrumentHost;
+use self::meter_field::MeterChip;
 use self::midi_state::MidiSettingsState;
 use self::output_menu::OutputMenuHit;
 use self::pane::{
@@ -221,6 +224,9 @@ pub(crate) struct Display {
     /// The header's BPM chip as a control: its drag and its field (which has
     /// the keyboard while open). See `tempo_field.rs`.
     tempo_chip: TempoChip,
+    /// The header's meter chip as a control: its field (which has the
+    /// keyboard while open). See `meter_field.rs`.
+    meter_chip: MeterChip,
     /// The open Save As field or unsaved-changes prompt, if any — it has the
     /// keyboard while open. See `project_dialog.rs`.
     project_dialog: Option<ProjectDialog>,
@@ -406,6 +412,7 @@ impl Display {
             key_focus: KeyFocus::Pane,
             track_rename: None,
             tempo_chip: TempoChip::default(),
+            meter_chip: MeterChip::default(),
             project_dialog: None,
             project_dialog_shown: false,
             raise_main_window: false,

@@ -1,4 +1,4 @@
-//! Painting the always-on overlays: the header info panel (tempo, position,
+//! Painting the always-on overlays: the header info panel (tempo, meter, position,
 //! DSP/OVR chips, the help overlay's `?` chip), the footer's passing message, the dim in-lane cursor line,
 //! and the playhead. See
 //! `030-ui-design.md`.
@@ -8,7 +8,7 @@ use std::time::Instant;
 use egui::{Align2, Color32, CornerRadius, FontId, Galley, Painter, Rect, Stroke, pos2, vec2};
 
 use crate::core::time::{Meter, format_bpm, sixteenth_straight_ticks};
-use crate::view::display::tempo_field::TempoChipRects;
+use crate::view::display::header_chip::HeaderChipRects;
 
 use super::*;
 
@@ -30,8 +30,9 @@ impl Display {
         FontId::proportional((theme::FONT_SIZE_HEADER * 0.75).clamp(16.0, 24.0))
     }
 
-    /// Paints the header info panel (tempo, transport, position, DSP / OVR
-    /// chips), and notes where the BPM chip went (`tempo_field.rs`).
+    /// Paints the header info panel (tempo, meter, position, DSP / OVR
+    /// chips), and notes where the BPM and meter chips went
+    /// (`tempo_field.rs`, `meter_field.rs`).
     pub(super) fn draw_header(&mut self, painter: &Painter, rect: Rect) {
         let h = theme::HEADER_H;
         let sw = rect.width();
@@ -60,11 +61,13 @@ impl Display {
         // BPM then song position, each a small dim `LABEL` next to its value,
         // in the same borderless `bg@0.40` chip language as the footer hints.
         // The group is centred in the header so the row stays balanced as more
-        // readouts (time signature, loop, …) get appended here later. BPM is
-        // a control too (`tempo_field.rs`) and stays first: the paint loop
-        // below records where its chip went.
+        // readouts (loop, …) get appended here later. BPM is
+        // a control too (`tempo_field.rs`) and stays first, the meter (also a
+        // control, `meter_field.rs`) second: the paint loop below records
+        // where their chips went.
         let mut readouts: Vec<(&str, String, Color32)> = vec![
             ("BPM", format_bpm(self.tempo_us()), theme::fg()),
+            ("METER", self.meter().to_string(), theme::fg()),
             (
                 "POS",
                 format!("{bar:03}:{beat:02}:{sixteenth:02}"),
@@ -157,9 +160,14 @@ impl Display {
         for (idx, (label, value, value_color, cw)) in chips.into_iter().enumerate() {
             let label_w = label.size().x;
             let chip = Rect::from_min_size(pos2(cx, chip_y), vec2(cw, chip_h));
-            if idx == 0 {
+            let control = match idx {
+                0 => Some(&mut self.tempo_chip.rects),
+                1 => Some(&mut self.meter_chip.rects),
+                _ => None,
+            };
+            if let Some(rects) = control {
                 let value_x = cx + chip_pad_x + label_w + label_value_gap * 0.5;
-                self.tempo_chip.rects = Some(TempoChipRects {
+                *rects = Some(HeaderChipRects {
                     chip,
                     value: Rect::from_min_max(pos2(value_x, chip.min.y), chip.max),
                 });

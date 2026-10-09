@@ -9,6 +9,7 @@
 //! at the bottom. `150-clock-position-sync.md` explains the timing model these
 //! feed.
 
+use std::fmt;
 use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 
@@ -135,13 +136,6 @@ impl Meter {
         PPQN * 4 / self.denominator as i32
     }
 
-    /// Where bar `bar` (zero-based, may be negative) starts, in quarter
-    /// notes — the unit plugins are told positions in, whatever the meter.
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-    pub(crate) fn bar_quarters_f64(self, bar: i32) -> f64 {
-        f64::from(bar) * f64::from(self.numerator) * 4.0 / f64::from(self.denominator)
-    }
-
     /// Bars → ticks (an amount).
     pub(crate) const fn bars_to_ticks(self, bars: i32) -> i32 {
         self.bar_ticks() * bars
@@ -175,11 +169,23 @@ impl Meter {
             None => Meter::FOUR_FOUR,
         }
     }
+
+    /// A typed meter — `7/8`, spaces allowed around the parts — or `None`
+    /// when it isn't one [`new`](Self::new) accepts. The header's meter field
+    /// reads its text with this.
+    pub(crate) fn parse(text: &str) -> Option<Meter> {
+        let (numerator, denominator) = text.split_once('/')?;
+        Meter::new(
+            numerator.trim().parse().ok()?,
+            denominator.trim().parse().ok()?,
+        )
+    }
 }
 
-impl Default for Meter {
-    fn default() -> Self {
-        Meter::FOUR_FOUR
+/// `7/8` — how the header shows the meter, and what [`Meter::parse`] reads.
+impl fmt::Display for Meter {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}/{}", self.numerator, self.denominator)
     }
 }
 
@@ -414,7 +420,6 @@ mod tests {
         assert_eq!(Meter::new(4, 3), None);
         assert_eq!(Meter::new(4, 16), None);
         assert_eq!(Meter::new(4, 4), Some(Meter::FOUR_FOUR));
-        assert_eq!(Meter::default(), Meter::FOUR_FOUR);
     }
 
     #[test]
@@ -440,15 +445,6 @@ mod tests {
     }
 
     #[test]
-    fn bar_starts_are_counted_in_quarter_notes() {
-        assert_eq!(Meter::FOUR_FOUR.bar_quarters_f64(2), 8.0);
-        assert_eq!(meter(3, 4).bar_quarters_f64(2), 6.0);
-        assert_eq!(meter(6, 8).bar_quarters_f64(2), 6.0);
-        assert_eq!(meter(7, 8).bar_quarters_f64(2), 7.0);
-        assert_eq!(meter(3, 4).bar_quarters_f64(-1), -3.0);
-    }
-
-    #[test]
     fn a_meter_round_trips_through_its_bits() {
         for m in [
             Meter::FOUR_FOUR,
@@ -458,6 +454,24 @@ mod tests {
             meter(1, 4),
         ] {
             assert_eq!(Meter::from_bits(m.to_bits()), m);
+        }
+    }
+
+    #[test]
+    fn a_meter_reads_back_what_it_shows() {
+        for m in [Meter::FOUR_FOUR, meter(3, 4), meter(7, 8), meter(16, 8)] {
+            assert_eq!(Meter::parse(&m.to_string()), Some(m));
+        }
+        assert_eq!(meter(6, 8).to_string(), "6/8");
+        assert_eq!(Meter::parse(" 5 / 4 "), Some(meter(5, 4)));
+    }
+
+    #[test]
+    fn a_typed_meter_outside_the_scope_is_rejected() {
+        for text in [
+            "", "4", "4/", "/4", "4/4/4", "0/4", "17/4", "4/2", "4/16", "-3/4", "three/4",
+        ] {
+            assert_eq!(Meter::parse(text), None, "{text:?}");
         }
     }
 

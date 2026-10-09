@@ -7,6 +7,7 @@ use uuid::Uuid;
 use crate::core::input_event::TimeSelectionRect;
 use crate::core::project::ProjectAction;
 use crate::core::sequencer::TempoGesture;
+use crate::core::time::Meter;
 use crate::core::view_state::Pane;
 use crate::models::clip::{Clip, ClipEdge, NoteDrag};
 use crate::models::track::TrackOutput;
@@ -551,5 +552,11 @@ pub(crate) enum SequencerCommand {
         tempo_us: i32,
         /// The drag this step belongs to; `None` for a typed value.
         gesture: Option<TempoGesture>,
+    },
+    /// The header's meter field: set the project's time signature, one undo
+    /// step per typed value (`SetMeterEdit`).
+    SetMeter {
+        /// The new meter.
+        meter: Meter,
     },
 }

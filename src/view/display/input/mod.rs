@@ -384,6 +384,7 @@ impl Display {
             let ok = self.handle_project_dialog_input_event(&event)
                 || self.handle_track_rename_input_event(&event)
                 || self.handle_tempo_field_input_event(&event)
+                || self.handle_meter_field_input_event(&event)
                 || self.handle_output_menu_input_event(&event)
                 || self.handle_theme_input_event(&event)
                 || self.handle_project_input_event(&event)
@@ -750,6 +751,12 @@ impl Display {
                     self.begin_tempo_drag();
                     return true;
                 }
+                // The meter chip: only its double-click does anything, but a
+                // press on it is the header's, not a pane's.
+                if self.meter_chip.contains(x, y) {
+                    self.key_focus = KeyFocus::Pane;
+                    return true;
+                }
                 let Some(pane) = self.pane_at(x, y) else {
                     return true;
                 };
@@ -767,6 +774,8 @@ impl Display {
             InputEvent::MouseDoubleClicked { x, y } => {
                 if self.tempo_chip.contains(x, y) {
                     self.open_tempo_field();
+                } else if self.meter_chip.contains(x, y) {
+                    self.open_meter_field();
                 } else if Self::is_over_browser(x) {
                     self.handle_browser_click(x, y, true);
                 } else if self.pane_at(x, y) == Some(Pane::Clip) {

@@ -22,9 +22,13 @@ odometer* below.
 ### Why two counters, not one
 
 - The **free-running** counter is required while the transport is stopped — the
-  metronome clicks while stopped (`metronome.on_tick` is called outside the
-  `is_running()` guard in `start_sequencer_thread`), and capture needs a live
-  coordinate with the transport stopped.
+  metronome counts in on it while stopped (`metronome.on_tick` is called outside
+  the `is_running()` guard in `start_sequencer_thread`), and capture needs a live
+  coordinate with the transport stopped. While **running** the metronome counts
+  from `playback_tick` instead (read before `Transport::tick` advances it): the
+  invariant holds only modulo the region length, so a clock-counted downbeat
+  moves at every wrap of a region that isn't whole bars (a 2½-bar loop struck
+  every other pass off the bar line — fixed 2026-10-09).
 - The **playback** counter must freeze while stopped and resume from the cursor —
   the playhead reads it (`Display::render_playback_tick`) and the plugin
   transport is built from it.
@@ -131,7 +135,9 @@ Alignment jumps still happen; they are merely well defined. Two consumers absorb
 them and both stay:
 
 1. `Metronome::on_tick` (`src/core/metronome.rs`) carries `prev_tick`/`last_beat`
-   bookkeeping to re-arm the click after a non-unit step in the counter.
+   bookkeeping to re-arm the click after a non-unit step in the position it
+   counts from — a clock realignment while stopped; a wrap or jump while
+   running; the clock ↔ playback switch on a start or stop.
 2. `last_inserted_event_tick` (`src/core/sequencer/region/window.rs`) anchors the
    capture window on insertion order rather than tick magnitude, so events left
    from a pre-snap clock context can't displace it (regression test
@@ -181,7 +187,7 @@ Structural results that show the split holds:
   duration.
 - **`Display` holds no `clock_tick`** — the live-rec overlay measures a span.
 - `clock_tick` is read in exactly two places: the MIDI-input position stamp and
-  `ClockTick.tick` (metronome beat and discontinuity logic).
+  `ClockTick.tick` (the metronome's count-in while stopped).
 
 Ticks stay `i32` like every other tick in the codebase; they wrap after ~12.9
 days of uptime at 120 BPM.
