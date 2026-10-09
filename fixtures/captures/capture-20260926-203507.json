@@ -1,0 +1,19 @@
+{
+  "description": "122 bpm, 4-bar loop. Very sparse single line (10 notes), ~10 beats of pre-roll. The phrase starts on its lowest note (D#3) after a ~3-beat rest.",
+  "tempo_us": 492372,
+  "loop_reference_length": 15360,
+  "detected_start": 548335,
+  "picked_start": 548335,
+  "notes": [
+    [539064, 1365, 57, 72],
+    [540306, 821, 70, 65],
+    [543324, 985, 58, 44],
+    [544667, 644, 66, 37],
+    [548335, 1757, 51, 67],
+    [550208, 1422, 63, 69],
+    [551768, 852, 61, 80],
+    [552811, 1718, 56, 37],
+    [554913, 858, 66, 35],
+    [555982, 758, 65, 66]
+  ]
+}

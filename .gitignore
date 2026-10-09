@@ -1,0 +1,15 @@
+target/
+.DS_Store
+
+# Local-only sample content; commercial samples must never be committed
+# (see `docs/080-conventions.md` § Licensing).
+assets/instruments/
+
+# Editor and IDE settings stay per-developer.
+.vscode/
+.zed/
+.idea/
+
+# Per-developer Claude Code state; `.claude/settings.json` and the hooks are shared.
+.claude/settings.local.json
+.claude/worktrees/

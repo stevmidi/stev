@@ -1,0 +1,71 @@
+# `cargo about generate about.hbs -o THIRD-PARTY-NOTICES.md` writes the notices
+# file that ships with every binary (docs/080-conventions.md § Licensing). The
+# template adds the two notices cargo can't see: the VST 3 SDK and the CLAP
+# headers that the `vst3` and `clap-sys` bindings are generated from.
+
+# Licences the notices file may contain, in order of preference: for a crate
+# offering a choice (`Apache-2.0 OR GPL-2.0-only`), the first one listed here
+# is the one we take. The same families as deny.toml, plus the font licences
+# of egui's bundled fonts.
+accepted = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "0BSD",
+    "Unlicense",
+    "Unicode-3.0",
+    "BSL-1.0",
+    "MPL-2.0",
+    "OFL-1.1",
+    "Ubuntu-font-1.0",
+    "Bitstream-Vera",
+]
+
+# Binaries ship for macOS only (docs/240-release-plan.md § B).
+targets = ["aarch64-apple-darwin", "x86_64-apple-darwin"]
+
+# Not linked into the binary.
+ignore-build-dependencies = true
+ignore-dev-dependencies = true
+
+# Stev itself (`publish = false` in Cargo.toml) isn't a third party.
+private = { ignore = true }
+
+# egui's bundled fonts. The crate's licence field names OFL and the Ubuntu Font
+# Licence but not the Hack font's MIT + Bitstream Vera, and its MIT file is only
+# the emoji font's. Each file is pinned by checksum, so an egui upgrade that
+# changes the fonts fails here until someone looks.
+[epaint_default_fonts.clarify]
+license = "MIT AND OFL-1.1 AND Ubuntu-font-1.0 AND Bitstream-Vera"
+
+[[epaint_default_fonts.clarify.files]]
+path = "fonts/emoji-icon-font-mit-license.txt"
+license = "MIT"
+checksum = "b9d2c1d909aa149996fd4c91dcb92b2362a04431640c1d200959da94caf8cde1"
+
+[[epaint_default_fonts.clarify.files]]
+path = "fonts/Hack-Regular.txt"
+license = "MIT"
+start = "The work in the Hack project"
+end = "DEALINGS IN THE SOFTWARE."
+checksum = "0a3a32afbdf4e819812135f5fa523498f3f8abdd5a262fc07bee14dd44b58a24"
+
+[[epaint_default_fonts.clarify.files]]
+path = "fonts/Hack-Regular.txt"
+license = "Bitstream-Vera"
+start = "BITSTREAM VERA LICENSE"
+checksum = "c3f7268ffd19b6fedc97d1cfb21b11ca81acd238bff23a7923c2ebb5eb131170"
+
+[[epaint_default_fonts.clarify.files]]
+path = "fonts/OFL.txt"
+license = "OFL-1.1"
+checksum = "6a73f9541c2de74158c0e7cf6b0a58ef774f5a780bf191f2d7ec9cc53efe2bf2"
+
+[[epaint_default_fonts.clarify.files]]
+path = "fonts/UFL.txt"
+license = "Ubuntu-font-1.0"
+checksum = "2f0015108d68627bd788d313f529c21ff4da2c2c42a5e1f3883acc83480f9002"

@@ -1,0 +1,6 @@
+# The Rust version CI and local builds use (rustup reads this file), so a new
+# stable's lints can't fail the build on code that didn't change. Upgrading is
+# a deliberate one-line change. See `docs/000-architecture.md` § CI.
+[toolchain]
+channel = "1.98"
+components = ["clippy", "rustfmt"]

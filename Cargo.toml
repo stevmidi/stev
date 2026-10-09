@@ -1,0 +1,116 @@
+[package]
+name = "stev"
+version = "0.1.0"
+edition = "2024"
+# Dual-licensed, the Rust ecosystem default — see `LICENSE-MIT`, `LICENSE-APACHE`
+# and `docs/080-conventions.md` § Licensing for what that asks of new
+# dependencies and assets.
+license = "MIT OR Apache-2.0"
+# An app, not a library: never `cargo publish`ed. Also keeps Stev's own licence
+# out of the third-party notices (`about.toml`).
+publish = false
+
+[lints.clippy]
+# Every item — including struct fields and enum-variant fields — carries a doc
+# comment. Combined with the zero-warning `cargo clippy --all-targets` gate this
+# makes an undocumented item a build failure, the same ratchet `cargo doc` gives
+# broken intra-doc links. See `docs/080-conventions.md` § Documentation.
+missing_docs_in_private_items = "warn"
+
+[dependencies]
+crossbeam-channel = "0.5.15"
+eframe = { version = "0.36", default-features = false, features = ["glow"] }
+egui = "0.36"
+midir = "0.11.0"
+uuid = { version = "1.18.0", features = ["v4"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Base64 for the per-track CLAP plugin-state blob embedded in the `.stev` project
+# file (`TrackOutputData::Instrument.state`). See `130-clap-host.md`.
+base64 = "0.23"
+dirs = "7"
+hound = "3.5"
+undo = "0.52"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+# Built-in audio metronome click (all platforms). See core::audio_metronome.
+cpal = "0.18"
+# Realtime-safe SPSC ring buffer for the plugin host's audio-callback-side MIDI
+# feeds and command channel (macOS only, but the producer halves are held by
+# cross-platform Sequencer/MidiInputForwarder code). See core::plugin_host.
+rtrb = "0.4"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# `default-features = false` above also drops eframe's window-system backends,
+# which Linux needs at least one of (macOS and Windows have only one, built in).
+# These are eframe's own default pair, so a plain `cargo build` works on Linux.
+eframe = { version = "0.36", default-features = false, features = [
+    "glow",
+    "x11",
+    "wayland",
+] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+mach2 = "0.7"
+# macOS-only CLAP instrument hosting. See core::plugin_host::clap /
+# docs/130-plugin-host.md.
+clack-host = "0.2"
+clack-extensions = { version = "0.2", features = [
+    "clack-host",
+    "audio-ports",
+    "note-ports",
+    "gui",
+    "timer",
+    "log",
+    "state",
+    "thread-check",
+] }
+# Native NSWindow for the (embedded) plugin editor, and the app menu's Quit
+# item (`view/appkit.rs`). Versions already in the tree via
+# eframe/arboard/clack-host, so this pulls no new crates.
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", features = [
+    "NSApplication",
+    "NSWindow",
+    "NSView",
+    "NSResponder",
+    "NSGraphics",
+    "NSEvent",
+    "NSMenu",
+    "NSMenuItem",
+    "block2",
+] }
+objc2-foundation = { version = "0.3", features = [
+    "NSArray",
+    "NSGeometry",
+    "NSString",
+    "objc2-core-foundation",
+] }
+# The native view behind eframe's window, to read the pointer while files
+# are dragged in from Finder (winit reports no positions during a drag —
+# `view/display/input/midi_drag.rs`). Already in the tree via eframe/winit, so this
+# pulls no new crates.
+raw-window-handle = "0.6"
+# For the app-wide Space/`v` key guard (core::plugin_host::key_guard) — an
+# NSEvent local monitor handler is an Objective-C block. Already in the tree
+# transitively via objc2-app-kit's own "block2" feature; declared directly
+# since we construct one ourselves.
+block2 = "0.6"
+# macOS-only VST3 instrument hosting: raw bindings to the VST 3 API, generated
+# from Steinberg's headers (MIT-licensed since SDK 3.8). This is the `clap-sys`
+# layer, not the `clack-host` layer — the host itself is `core::plugin_host::vst3`.
+# See `docs/180-vst3-host.md`.
+vst3 = "0.3"
+# `CFBundle` for loading a `.vst3` bundle the way the VST3 spec wants on macOS —
+# `bundleEntry` is handed the `CFBundleRef` so the plugin can find its own
+# resources. Already in the tree transitively via objc2-foundation, so this
+# pulls no new crates; declared directly since we call it ourselves.
+objc2-core-foundation = { version = "0.3", default-features = false, features = [
+    "CFBundle",
+    "CFString",
+    "CFURL",
+    "std",
+] }
+libc = "0.2.189"
+
+[workspace.metadata.cross.target.aarch64-unknown-linux-gnu]
+image = "aarch64-unknown-linux-gnu:tmjorud"

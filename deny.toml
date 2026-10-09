@@ -1,0 +1,30 @@
+# `cargo deny check licenses` (CI runs it on every push): every dependency,
+# direct or transitive, on every platform, must carry a licence listed here.
+# This is the machine form of docs/080-conventions.md § Licensing. A licence
+# that isn't listed fails CI until someone decides; add it only if that
+# section's rules allow it.
+
+[licenses]
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "0BSD",
+    "Unlicense",
+    "Unicode-3.0",
+    "BSL-1.0",
+    # Tolerated: file-level copyleft (via `dirs` → `option-ext`).
+    "MPL-2.0",
+]
+confidence-threshold = 0.9
+
+# egui's bundled fonts: OFL-1.1 + the Ubuntu Font Licence, which only ask for
+# attribution notices once binaries ship (the notices file, `240` § C). Allowed
+# for this crate alone, so no other crate can bring them in unnoticed.
+[[licenses.exceptions]]
+crate = "epaint_default_fonts"
+allow = ["OFL-1.1", "Ubuntu-font-1.0"]

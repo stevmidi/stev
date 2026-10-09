@@ -1,0 +1,102 @@
+# The build gate from AGENTS.md, on macOS, Linux and Windows. Design and the
+# reasons behind it: docs/000-architecture.md § CI.
+name: CI
+
+on:
+  # After each merge: the author merges locally and pushes `main`, so this is
+  # where their changes are checked.
+  push:
+    branches: [main]
+    # A change that only touches docs has nothing to build. No code includes a
+    # Markdown file; if one ever does (e.g. `include_str!("../README.md")`),
+    # drop the `**.md` line here and below. A change mixing docs and code
+    # still runs.
+    paths-ignore:
+      - "docs/**"
+      - "**.md"
+  # Every pull request, contributors' from forks included, before it's merged.
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "**.md"
+  # The "Run workflow" button in the Actions tab: run any branch before merging.
+  workflow_dispatch:
+
+# A newer push to the same branch makes an older, still-running run pointless.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # The gate is zero warnings, not just zero errors.
+  RUSTFLAGS: -D warnings
+  RUSTDOCFLAGS: -D warnings
+
+jobs:
+  gate:
+    name: Build gate (${{ matrix.os }})
+    strategy:
+      # Let every platform finish, so one run shows all that's broken.
+      fail-fast: false
+      matrix:
+        # Pinned like the toolchain: a `-latest` label moves to a new OS on
+        # GitHub's schedule and can fail CI on a day nothing changed. Bump these
+        # on purpose when GitHub announces a retirement. ubuntu-24.04 matches
+        # the live USB used for the Linux smoke test; macos-26 is Apple Silicon.
+        os: [ubuntu-24.04, windows-2025, macos-26]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+
+      # Installs the version pinned in rust-toolchain.toml, with clippy and rustfmt.
+      - name: Install Rust
+        run: rustup toolchain install
+
+      # ALSA headers, for cpal (audio) and midir (MIDI).
+      - name: Install Linux packages
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev pkg-config
+
+      - uses: Swatinem/rust-cache@v2
+
+      # Formatting is the same on every platform, so it runs once.
+      - name: cargo fmt --check
+        if: runner.os == 'Linux'
+        run: cargo fmt --check
+
+      - name: cargo check
+        run: cargo check --all-targets
+
+      - name: cargo clippy
+        run: cargo clippy --all-targets
+
+      - name: cargo test
+        run: cargo test
+
+      - name: cargo doc
+        run: cargo doc --no-deps --document-private-items
+
+  # Every dependency, direct or transitive, carries a licence deny.toml allows,
+  # and THIRD-PARTY-NOTICES.md matches Cargo.lock (docs/080-conventions.md
+  # § Licensing).
+  licences:
+    name: Licence check
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Rust
+        run: rustup toolchain install
+      # Prebuilt binaries, rather than compiling them each run. cargo-about is
+      # pinned: another version can word the generated file differently.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny,cargo-about@0.9.2
+      - name: cargo deny check licenses
+        run: cargo deny check licenses
+      # Fails when a dependency change wasn't followed by a regenerate.
+      - name: Third-party notices up to date
+        run: |
+          cargo about generate about.hbs -o THIRD-PARTY-NOTICES.md
+          git diff --exit-code THIRD-PARTY-NOTICES.md

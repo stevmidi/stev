@@ -1,0 +1,2 @@
+# Project Rules
+@AGENTS.md
