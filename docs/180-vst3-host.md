@@ -356,7 +356,10 @@ The open sequence, in the order the spec requires:
    during attach has somewhere to say so.
 6. `attached(content_view, "NSView")`.
 7. `getSize` **again** — some plugins only report a meaningful size once
-   attached — and resize the window to match.
+   attached — and, if it changed, resize the window to match and tell the view
+   with `onSize`. Skipping the `onSize` left Kontakt laid out at the 900-point
+   fallback width inside its wider window until a mouse move made it look
+   again.
 
 Closing runs it backwards: `removed()`, then `setFrame(null)`, then drop the
 window. **Closing destroys the view; it is never merely hidden.** A
@@ -369,18 +372,20 @@ idle CPU — the lesson from the CLAP host, and it applies identically here.
   many do; a VST3 view is always parented into one of ours. That makes this the
   simpler of the two paths — no `create_floating` branch, no plugin-initiated
   window close to detect.
-- **Resize requests arrive synchronously on this thread.** CLAP's
-  `request_resize` can be called from anywhere (including the audio thread) and
-  is stashed in atomics. `IPlugFrame::resizeView` is specified as a UI-thread
-  call, so it only has to cross from the COM object to the editor — a plain
-  `Rc<Cell<...>>`.
+- **Resize requests are answered on the spot.** CLAP's `request_resize` can
+  be called from anywhere (including the audio thread), so it is stashed in
+  atomics and applied by the next `pump`. `IPlugFrame::resizeView` is a
+  UI-thread call, and the plugin expects it carried out by the time it returns:
+  `HostPlugFrame` resizes the window, then calls `onSize` on the view — the
+  order the spec gives, and what Steinberg's editor host does.
 
-  It is still *recorded* rather than applied on the spot. The plugin calls
-  `resizeView` from inside its own code, so re-entering the editor — which owns
-  the window the frame would have to touch — at that exact moment is the kind of
-  aliasing worth not having. `pump` drains it on the next frame, resizes the
-  window, then calls `onSize` to acknowledge, which is the order `IPlugFrame`
-  specifies.
+  The frame reaches the window through a `Weak<PluginWindow>` set just before
+  `attached`; the editor holds the only strong `Rc`, so closing still drops the
+  window, and a request with no live window returns `kResultFalse`. A request
+  made from inside the plugin's own `onSize` is refused rather than recursed
+  into. An earlier version deferred the whole thing to the next frame to avoid
+  re-entering the editor; sharing the window instead of borrowing it removes
+  that concern, and the deferral is what plugins are entitled not to expect.
 - **`pump` returns `None`, always.** CLAP has a host timer extension whose
   callbacks the host must drive, and the returned interval is what schedules
   them. VST3 has no equivalent — the view animates off the AppKit run loop — so
@@ -614,7 +619,7 @@ The rest map the full set.
 - **Three plugins report a degenerate `0x0` view size** before attach —
   Kontakt 8 (whose `getSize` fails outright), Omnisphere and Spire. They open at
   the 900×600 fallback and are resized by the post-attach `getSize`, which is
-  why that second query is not optional.
+  why that second query — and the `onSize` after it — is not optional.
 - **Massive X's `createView` did not return** within 25 s in a bare test process
   with no `NSApplication`. Whether that reproduces inside the running app is
   unknown — the app does have a live `NSApp`, but `show()` is called

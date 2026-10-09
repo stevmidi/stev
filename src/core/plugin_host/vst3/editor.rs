@@ -14,15 +14,16 @@
 //! - **There is no floating option.** CLAP plugins may own their own OS window;
 //!   a VST3 view is always parented into one of ours, which makes this the
 //!   simpler of the two paths.
-//! - **Resize requests arrive synchronously on this thread.** CLAP's
-//!   `request_resize` can come from anywhere and is stashed in atomics; VST3's
-//!   `IPlugFrame::resizeView` is specified as a UI-thread call, so it only has
-//!   to cross from the COM object to the editor — a plain `Cell`.
+//! - **Resize requests are answered on the spot.** CLAP's `request_resize` can
+//!   come from anywhere and is stashed in atomics for the next frame; VST3's
+//!   `IPlugFrame::resizeView` is a UI-thread call the plugin expects to have
+//!   been carried out — window resized, `onSize` delivered — by the time it
+//!   returns.
 //!
 //! See `docs/180-vst3-host.md`.
 
-use std::cell::Cell;
-use std::rc::Rc;
+use std::cell::{Cell, RefCell};
+use std::rc::{Rc, Weak};
 use std::time::Duration;
 
 use objc2_foundation::NSPoint;
@@ -33,9 +34,9 @@ use vst3::Steinberg::Vst::{
 };
 use vst3::Steinberg::{
     IPlugFrame, IPlugFrameTrait, IPlugView, IPlugViewTrait, IPluginBaseTrait, ViewRect,
-    kPlatformTypeNSView, kResultOk, tresult,
+    kInvalidArgument, kPlatformTypeNSView, kResultFalse, kResultOk, tresult,
 };
-use vst3::{Class, ComPtr, ComWrapper};
+use vst3::{Class, ComPtr, ComRef, ComWrapper};
 
 use crate::core::plugin_host::editor::InstrumentEditor;
 use crate::core::plugin_host::window::{FALLBACK_SIZE, PluginWindow, editor_level, editor_title};
@@ -43,22 +44,26 @@ use crate::core::plugin_host::window::{FALLBACK_SIZE, PluginWindow, editor_level
 use super::component::MainThreadHalf;
 use super::state;
 
-/// The size a plugin has asked to be resized to, handed from
-/// [`HostPlugFrame`] to the editor's `pump`.
-type PendingResize = Rc<Cell<Option<(f64, f64)>>>;
-
 /// The `IPlugFrame` a plugin view is given, so it can ask its host to resize
-/// the window around it (an editor zoom control, typically).
+/// the window around it (an editor zoom control, a Kontakt instrument with a
+/// wider panel, ...).
 ///
-/// The request is *recorded*, not applied here. Applying it would mean this
-/// object owning — or borrowing — the `PluginWindow` that the editor also owns,
-/// and the plugin calls `resizeView` from inside its own code, so re-entering
-/// the editor at that moment is exactly the kind of aliasing worth avoiding.
-/// The editor's `pump` drains it on the next frame, which is also where the
-/// matching `onSize` acknowledgement goes.
+/// The request is carried out **before `resizeView` returns**: the window is
+/// resized, then the view is told what it got with `onSize` — the order the
+/// spec gives, and what Steinberg's own editor host does. Plugins rely on it.
+/// Deferring both to the next frame left Kontakt drawing at its old width in
+/// the newly widened window until a mouse move made it lay out again.
+///
+/// The frame only holds a [`Weak`] handle to the window: the editor owns it,
+/// and the window is shared rather than borrowed so the plugin calling in from
+/// inside its own code never aliases the editor.
 struct HostPlugFrame {
-    /// The size most recently requested, if any.
-    pending: PendingResize,
+    /// The window the view is parented into, set just before `attached`.
+    /// Dead whenever the editor is closed.
+    window: RefCell<Weak<PluginWindow>>,
+    /// Set while a resize is being applied, so a plugin that asks again from
+    /// inside its own `onSize` is refused rather than recursing.
+    resizing: Cell<bool>,
 }
 
 impl Class for HostPlugFrame {
@@ -66,14 +71,30 @@ impl Class for HostPlugFrame {
 }
 
 impl IPlugFrameTrait for HostPlugFrame {
-    unsafe fn resizeView(&self, _view: *mut IPlugView, new_size: *mut ViewRect) -> tresult {
+    unsafe fn resizeView(&self, view: *mut IPlugView, new_size: *mut ViewRect) -> tresult {
         if new_size.is_null() {
-            return kResultOk;
+            return kInvalidArgument;
         }
+        if self.resizing.get() {
+            return kResultFalse;
+        }
+        let Some(window) = self.window.borrow().upgrade() else {
+            return kResultFalse;
+        };
         // SAFETY: the plugin passes a `ViewRect` it owns for the duration of
         // this call; it is only read here, and the values are copied out.
-        let rect = unsafe { *new_size };
-        self.pending.set(Some(rect_size(&rect)));
+        let (width, height) = rect_size(&unsafe { *new_size });
+        dprintln!("vst3: plugin asked to resize to {width:.0}x{height:.0}");
+
+        self.resizing.set(true);
+        window.set_content_size(width, height);
+        // SAFETY: `view` is the plugin's own view, live for the duration of
+        // the call it is making; `rect` is a local of the matching type.
+        if let Some(view) = unsafe { ComRef::from_raw(view) } {
+            let mut rect = size_rect(width, height);
+            unsafe { view.onSize(&mut rect) };
+        }
+        self.resizing.set(false);
         kResultOk
     }
 }
@@ -91,13 +112,12 @@ pub(super) struct Vst3Editor {
     /// measurably raises idle CPU (learned the hard way with CLAP).
     view: Option<ComPtr<IPlugView>>,
     /// The native window the view is parented into, alive exactly as long as
-    /// [`view`](Self::view).
-    window: Option<PluginWindow>,
+    /// [`view`](Self::view). Shared only with [`frame`](Self::frame), weakly,
+    /// so dropping it here still closes the window.
+    window: Option<Rc<PluginWindow>>,
     /// The `IPlugFrame` handed to the view. Held for the view's lifetime
     /// because the plugin keeps a raw pointer to it.
     frame: ComWrapper<HostPlugFrame>,
-    /// Resize requests from [`HostPlugFrame`], drained each `pump`.
-    pending_resize: PendingResize,
     /// Where the window's title bar was when it was last closed, so the next
     /// open lands in the same place instead of re-centering.
     window_top_left: Option<NSPoint>,
@@ -110,16 +130,15 @@ impl Vst3Editor {
     /// Wraps the main-thread half of a freshly loaded plugin. The editor itself
     /// is not created until the first [`show`](InstrumentEditor::show).
     pub(super) fn new(plugin: MainThreadHalf, plugin_name: &str, track: usize) -> Self {
-        let pending_resize: PendingResize = Rc::new(Cell::new(None));
         Self {
             plugin,
             title: editor_title(plugin_name, track),
             view: None,
             window: None,
             frame: ComWrapper::new(HostPlugFrame {
-                pending: Rc::clone(&pending_resize),
+                window: RefCell::new(Weak::new()),
+                resizing: Cell::new(false),
             }),
-            pending_resize,
             window_top_left: None,
             finished: false,
         }
@@ -156,6 +175,8 @@ impl Vst3Editor {
                 dprintln!("vst3: plugin window has no content view");
                 return;
             };
+            let window = Rc::new(window);
+            *self.frame.window.borrow_mut() = Rc::downgrade(&window);
 
             // `setFrame` before `attached`, so a view that wants to resize
             // itself during attach has somewhere to say so.
@@ -172,14 +193,21 @@ impl Vst3Editor {
                 return;
             }
 
-            // Some plugins only report a meaningful size once attached.
-            if let Some((w, h)) = view_size(&view) {
-                window.set_content_size(w, h);
+            // Some plugins only report a meaningful size once attached. The
+            // view is told what it got, just as after a `resizeView`.
+            let attached_size = view_size(&view);
+            if let Some((aw, ah)) = attached_size
+                && (aw, ah) != (w, h)
+            {
+                window.set_content_size(aw, ah);
+                view.onSize(&mut size_rect(aw, ah));
             }
 
             self.window = Some(window);
             self.view = Some(view);
-            dprintln!("vst3: plugin editor created ({w:.0}x{h:.0})");
+            dprintln!(
+                "vst3: plugin editor created ({w:.0}x{h:.0}, {attached_size:?} once attached)"
+            );
         }
     }
 
@@ -253,7 +281,6 @@ impl InstrumentEditor for Vst3Editor {
         }
         // Dropping the window closes it; it is never merely hidden.
         self.window = None;
-        self.pending_resize.set(None);
     }
 
     fn save_state(&mut self) -> Option<Vec<u8>> {
@@ -274,20 +301,9 @@ impl InstrumentEditor for Vst3Editor {
     }
 
     fn pump(&mut self, yield_to_main: bool) -> Option<Duration> {
-        let (Some(view), Some(window)) = (&self.view, &self.window) else {
+        let Some(window) = &self.window else {
             return None;
         };
-
-        // A resize the plugin asked for since the last frame. The window is
-        // resized first, then the view is told what it ended up with — the
-        // order `IPlugFrame` specifies.
-        if let Some((width, height)) = self.pending_resize.take() {
-            window.set_content_size(width, height);
-            let mut rect = size_rect(width, height);
-            // SAFETY: `view` is live and attached; `rect` is a local of the
-            // matching type, only read by the call.
-            unsafe { view.onSize(&mut rect) };
-        }
 
         // Closing our window with its title-bar button never reaches the
         // plugin, so reconcile: a window that is no longer visible means the
@@ -420,45 +436,39 @@ mod tests {
         assert_eq!((r.left, r.top), (0, 0));
     }
 
+    fn frame() -> HostPlugFrame {
+        HostPlugFrame {
+            window: RefCell::new(Weak::new()),
+            resizing: Cell::new(false),
+        }
+    }
+
     #[test]
-    fn a_resize_request_is_recorded_and_taken_once() {
-        let pending: PendingResize = Rc::new(Cell::new(None));
-        let frame = HostPlugFrame {
-            pending: Rc::clone(&pending),
-        };
+    fn a_resize_request_without_a_window_is_refused() {
+        // The editor is closed (or not yet open): there is nothing to resize,
+        // and saying so beats pretending the view got its size.
         let mut r = rect(0, 0, 640, 480);
         // SAFETY: `r` is a valid local `ViewRect`, as the plugin would pass.
-        unsafe { frame.resizeView(std::ptr::null_mut(), &mut r) };
-        assert_eq!(pending.get(), Some((640.0, 480.0)));
-        assert_eq!(pending.take(), Some((640.0, 480.0)));
-        // Draining leaves nothing to re-apply next frame.
-        assert_eq!(pending.get(), None);
+        let result = unsafe { frame().resizeView(std::ptr::null_mut(), &mut r) };
+        assert_eq!(result, kResultFalse);
     }
 
     #[test]
-    fn the_latest_resize_request_wins() {
-        let pending: PendingResize = Rc::new(Cell::new(None));
-        let frame = HostPlugFrame {
-            pending: Rc::clone(&pending),
-        };
-        // SAFETY: both are valid local `ViewRect`s.
-        unsafe {
-            let mut a = rect(0, 0, 640, 480);
-            frame.resizeView(std::ptr::null_mut(), &mut a);
-            let mut b = rect(0, 0, 1280, 720);
-            frame.resizeView(std::ptr::null_mut(), &mut b);
-        }
-        assert_eq!(pending.get(), Some((1280.0, 720.0)));
+    fn a_resize_request_from_inside_on_size_is_refused() {
+        let frame = frame();
+        frame.resizing.set(true);
+        let mut r = rect(0, 0, 640, 480);
+        // SAFETY: `r` is a valid local `ViewRect`.
+        let result = unsafe { frame.resizeView(std::ptr::null_mut(), &mut r) };
+        assert_eq!(result, kResultFalse);
+        // The guard belongs to the outer resize, which clears it.
+        assert!(frame.resizing.get());
     }
 
     #[test]
-    fn a_null_resize_request_is_ignored_not_dereferenced() {
-        let pending: PendingResize = Rc::new(Cell::new(None));
-        let frame = HostPlugFrame {
-            pending: Rc::clone(&pending),
-        };
+    fn a_null_resize_request_is_rejected_not_dereferenced() {
         // SAFETY: passing null is exactly the case under test.
-        unsafe { frame.resizeView(std::ptr::null_mut(), std::ptr::null_mut()) };
-        assert_eq!(pending.get(), None);
+        let result = unsafe { frame().resizeView(std::ptr::null_mut(), std::ptr::null_mut()) };
+        assert_eq!(result, kInvalidArgument);
     }
 }

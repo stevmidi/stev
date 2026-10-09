@@ -34,6 +34,11 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ### Fixed
 
+- **A VST3 editor showed only part of its interface when it opened.**
+  Kontakt with a wide instrument such as Lunaris 2 stayed cut off until the
+  mouse reached the window's right edge, and resizing the editor made its
+  scrolling jitter. Stev now tells the plugin its new size immediately, as
+  VST3 requires.
 - **The click's downbeat drifted on a loop that isn't whole bars.** With a
   2½-bar loop the strong click landed off the bar line on every other pass,
   and starting playback could put the click off the beat. The click now

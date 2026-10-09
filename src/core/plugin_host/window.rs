@@ -5,11 +5,11 @@
 //! ones, so the host has to provide a parent view. This is the smallest thing
 //! that works: a plain titled window whose `contentView` is handed to the
 //! plugin (CLAP `gui.set_parent`, VST3 `IPlugView::attached`). Plugin-initiated
-//! resizes (e.g. zooming the editor) are forwarded here via `set_content_size`,
-//! called from the format's editor `pump` when the plugin asks for one (CLAP
-//! `request_resize`, VST3 `IPlugFrame::resizeView`). Still no delegate / the other direction: the window is not
-//! user-resizable (no `Resizable` style mask), so there is nothing to forward
-//! back to the plugin.
+//! resizes (e.g. zooming the editor) are forwarded here via `set_content_size`
+//! when the plugin asks for one — from the CLAP editor's `pump` after
+//! `request_resize`, from inside VST3's `IPlugFrame::resizeView`. Still no
+//! delegate / the other direction: the window is not user-resizable (no
+//! `Resizable` style mask), so there is nothing to forward back to the plugin.
 //!
 //! The window floats above the main app window ([`PluginWindow::set_level`],
 //! driven from each editor's `pump` through [`editor_level`]) while Stev
@@ -167,9 +167,8 @@ impl PluginWindow {
     }
 
     /// Resizes the content area to match the plugin's requested size. Called
-    /// once right after parenting (the plugin's initial size) and again by the
-    /// editor's `pump` whenever the plugin later asks for a resize (e.g. on
-    /// zoom).
+    /// once right after parenting (the plugin's initial size) and again
+    /// whenever the plugin later asks for a resize (e.g. on zoom).
     ///
     /// The window's top-left corner is held fixed across the resize, so a
     /// zooming editor grows downward from where the user put it instead of
