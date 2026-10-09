@@ -330,6 +330,18 @@ the CLAP path:
   bound (tens of seconds of continuous digital silence) is the knob to reach
   for, and would be a one-line change in `may_sleep`.
 
+  **A sleeping voice still gets a heartbeat**: one `process` call with
+  nothing in it every `HEARTBEAT_SAMPLES` (4096, ~85 ms at 48 kHz), checked in
+  `wake_on_request`. Its silence count is left alone, so a silent heartbeat
+  goes straight back to sleep and one that made sound keeps the voice awake.
+  A plugin may advance internal state one `process` call at a time (smoothing
+  toward a freshly loaded patch, setup handed over from its loading thread),
+  and a voice that is never called freezes that mid-way, to be finished under
+  the next note. Without the heartbeat, Omnisphere's first load in a session
+  played its first key with a short high-pitched burst over the patch (and,
+  before an intermediate fix, on all eight parts). DAWs call `process` every
+  block, so they never show it.
+
 `HostEventList` holds its events in an `UnsafeCell` and is `unsafe impl Sync`.
 The invariant is ownership, not synchronisation: one list belongs to one voice,
 every access is on the audio thread inside one `render_into`, and the VST3 spec

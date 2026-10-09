@@ -349,7 +349,7 @@ impl AudioSource for InstrumentMixer {
         // `170-multicore-scheduling.md`.
         let mut awake = 0;
         for voice in self.voices.iter_mut().flatten() {
-            voice.wake_on_request();
+            voice.wake_on_request(frames);
             awake += usize::from(!voice.mix().sleeping);
         }
         ctx.pool

@@ -150,7 +150,7 @@ impl InstrumentVoice for ClapVoice {
 
     /// Wakes the voice when the plugin called `request_process` — e.g. to
     /// apply a knob turned in its own editor while it was asleep.
-    fn wake_on_request(&mut self) {
+    fn wake_on_request(&mut self, _frames: usize) {
         if self
             .processor
             .access_shared_handler(|shared| shared.take_process_request())

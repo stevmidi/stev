@@ -99,10 +99,11 @@ pub(crate) trait InstrumentVoice: Send {
     fn clear_events(&mut self);
 
     /// Clears [`VoiceMix::sleeping`] if the plugin has work waiting that no
-    /// MIDI event will deliver: a CLAP `request_process`, or VST3 UI parameter
-    /// changes still in the ring. Called once per block, before the render
-    /// pass decides which voices to call into. The default does nothing.
-    fn wake_on_request(&mut self) {}
+    /// MIDI event will deliver: a CLAP `request_process`, VST3 UI parameter
+    /// changes still in the ring, or a VST3 voice's idle heartbeat. Called once
+    /// per block of `frames`, before the render pass decides which voices to
+    /// call into. The default does nothing.
+    fn wake_on_request(&mut self, _frames: usize) {}
 
     /// The mixer-owned render flags and gain ramp for this voice.
     fn mix(&self) -> &VoiceMix;

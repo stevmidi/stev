@@ -34,6 +34,11 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ### Fixed
 
+- **Omnisphere's first note could come out distorted.** After the first
+  Omnisphere load in a session, the first key played came with a short
+  high-pitched burst over the sound. A silent VST3 instrument is now still
+  called about ten times a second, so work it does in the background keeps
+  moving instead of piling up for the next note.
 - **Closing a plugin editor with its close button hid it before the plugin
   had finished.** A plugin that takes a while to close its interface, such as
   Kontakt, left Stev frozen for seconds with no window and no sign why. The

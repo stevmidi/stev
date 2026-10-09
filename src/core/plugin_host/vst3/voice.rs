@@ -70,6 +70,20 @@ const EMPTY_BUS: AudioBusBuffers = AudioBusBuffers {
 /// estimate — [`Vst3Voice::tail_samples`] is.
 const MIN_SILENT_SAMPLES: u64 = 10_240;
 
+/// How long a sleeping voice goes between heartbeat blocks — one `process`
+/// call with nothing in it, after which it goes straight back to sleep unless
+/// that block made sound. About 85 ms at 48 kHz.
+///
+/// A plugin may keep advancing internal state one `process` call at a time —
+/// a parameter smoothed toward a freshly loaded patch, setup handed over from
+/// its loading thread — and a voice that is never called freezes all of that
+/// mid-way, to be finished under the next note. Omnisphere showed it: after
+/// its first load in a session the first key played came out with a short
+/// high-pitched burst over the saw, which a never-sleeping voice did not have.
+/// DAWs call `process` every block, so they never show it; the heartbeat keeps
+/// that work moving at a fraction of the cost.
+const HEARTBEAT_SAMPLES: u64 = 4_096;
+
 /// `getTailSamples`' sentinel for "this never settles" — a plugin with an
 /// infinite reverb or a self-oscillating filter. Such a voice is never slept.
 const INFINITE_TAIL: u32 = u32::MAX;
@@ -102,6 +116,9 @@ pub(super) struct Vst3Voice {
     /// [`tail_samples`](Self::tail_samples) directly, and so a changed buffer
     /// size does not change the timing.
     silent_samples: u64,
+    /// Samples slept since the last wake or heartbeat. See
+    /// [`HEARTBEAT_SAMPLES`].
+    asleep_samples: u64,
     /// How much output the plugin says it may still produce after its last
     /// input (`getTailSamples`), and therefore how long it must stay awake
     /// after falling silent. [`INFINITE_TAIL`] means never sleep.
@@ -134,6 +151,7 @@ impl Vst3Voice {
             note_ids: NoteIds::default(),
             midi_map,
             silent_samples: 0,
+            asleep_samples: 0,
             tail_samples,
             mix: VoiceMix::default(),
             sample_rate,
@@ -222,9 +240,21 @@ impl InstrumentVoice for Vst3Voice {
     /// turned in a dual-component plugin's editor, or the rest of a preset
     /// burst `drain_ui` carried over — so they reach the processor without
     /// waiting for the next note.
-    fn wake_on_request(&mut self) {
+    ///
+    /// Otherwise a sleeping voice gets one heartbeat block every
+    /// [`HEARTBEAT_SAMPLES`]. Its silence count is left as it was, so
+    /// [`update_idle_state`](Self::update_idle_state) puts it straight back to
+    /// sleep after a silent heartbeat, and keeps it awake if the plugin made
+    /// sound.
+    fn wake_on_request(&mut self, frames: usize) {
         if self.params.ui_pending() {
             self.wake();
+        } else if self.mix.sleeping {
+            self.asleep_samples = self.asleep_samples.saturating_add(frames as u64);
+            if self.asleep_samples >= HEARTBEAT_SAMPLES {
+                self.asleep_samples = 0;
+                self.mix.sleeping = false;
+            }
         }
     }
 
@@ -243,6 +273,7 @@ impl Vst3Voice {
     fn wake(&mut self) {
         self.mix.sleeping = false;
         self.silent_samples = 0;
+        self.asleep_samples = 0;
     }
 
     /// Decides whether this voice may sleep, from what it just rendered.
@@ -357,8 +388,155 @@ fn may_sleep(silent_samples: u64, tail_samples: u32) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use vst3::Steinberg::Vst::{
+        BusDirection, IAudioProcessorTrait, IEventListTrait, ProcessSetup, SpeakerArrangement,
+    };
+    use vst3::Steinberg::{TBool, int32, tresult, uint32};
+    use vst3::{Class, ComRef};
+
     use super::*;
+    use crate::core::plugin_host::vst3::params::bridge;
     use crate::core::time::{Meter, PPQN};
+
+    /// Block size the fake-processor tests render at.
+    const FRAMES: usize = 512;
+
+    /// A silent stand-in processor that logs how many events each `process`
+    /// call was handed.
+    struct FakeProcessor {
+        /// One entry per `process` call: that call's event count.
+        calls: Arc<Mutex<Vec<i32>>>,
+    }
+
+    impl Class for FakeProcessor {
+        type Interfaces = (IAudioProcessor,);
+    }
+
+    impl IAudioProcessorTrait for FakeProcessor {
+        unsafe fn setBusArrangements(
+            &self,
+            _inputs: *mut SpeakerArrangement,
+            _num_ins: int32,
+            _outputs: *mut SpeakerArrangement,
+            _num_outs: int32,
+        ) -> tresult {
+            kResultOk
+        }
+        unsafe fn getBusArrangement(
+            &self,
+            _dir: BusDirection,
+            _index: int32,
+            _arr: *mut SpeakerArrangement,
+        ) -> tresult {
+            kResultOk
+        }
+        unsafe fn canProcessSampleSize(&self, _size: int32) -> tresult {
+            kResultOk
+        }
+        unsafe fn getLatencySamples(&self) -> uint32 {
+            0
+        }
+        unsafe fn setupProcessing(&self, _setup: *mut ProcessSetup) -> tresult {
+            kResultOk
+        }
+        unsafe fn setProcessing(&self, _state: TBool) -> tresult {
+            kResultOk
+        }
+        unsafe fn process(&self, data: *mut ProcessData) -> tresult {
+            // SAFETY: the voice hands a valid `ProcessData` whose event list
+            // outlives this call.
+            let count = unsafe {
+                ComRef::from_raw((*data).inputEvents).map_or(-1, |events| events.getEventCount())
+            };
+            self.calls.lock().unwrap().push(count);
+            kResultOk
+        }
+        unsafe fn getTailSamples(&self) -> uint32 {
+            0
+        }
+    }
+
+    /// A stereo voice around a [`FakeProcessor`], plus that processor's log.
+    fn fake_voice() -> (Vst3Voice, Arc<Mutex<Vec<i32>>>) {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let processor = ComWrapper::new(FakeProcessor {
+            calls: Arc::clone(&calls),
+        })
+        .to_com_ptr::<IAudioProcessor>()
+        .unwrap();
+        let (_tx, rx) = bridge();
+        let voice = Vst3Voice::new(
+            processor,
+            FRAMES,
+            &AudioIoLayout::new(Vec::new(), vec![2]),
+            rx,
+            MidiMap::empty(),
+            0,
+            48_000.0,
+        );
+        (voice, calls)
+    }
+
+    /// One block the way the mixer runs it: the wake check, a render if the
+    /// voice is awake, then clear.
+    fn run_block(voice: &mut Vst3Voice) {
+        voice.wake_on_request(FRAMES);
+        if voice.mix().sleeping {
+            return;
+        }
+        let stopped = BlockTransport {
+            running: false,
+            looping: false,
+            tempo_us: 500_000,
+            meter: Meter::FOUR_FOUR,
+            playback_tick: 0,
+            region_start: 0,
+            region_end: PPQN * 4,
+        };
+        assert!(voice.render_block(FRAMES, 0, &stopped));
+        voice.clear_events();
+    }
+
+    /// Renders silent blocks until the voice falls asleep.
+    fn sleep(voice: &mut Vst3Voice) {
+        while !voice.mix().sleeping {
+            run_block(voice);
+        }
+    }
+
+    #[test]
+    fn a_sleeping_voice_gets_a_silent_heartbeat_and_sleeps_again() {
+        // Omnisphere's first load in a session: work it advances per `process`
+        // call must keep moving while the voice is silent, or the first note
+        // plays the rest of it (a short high-pitched burst).
+        let (mut voice, calls) = fake_voice();
+        sleep(&mut voice);
+        calls.lock().unwrap().clear();
+
+        let per_beat = (HEARTBEAT_SAMPLES as usize).div_ceil(FRAMES);
+        for _ in 0..per_beat * 3 {
+            run_block(&mut voice);
+        }
+        assert_eq!(*calls.lock().unwrap(), vec![0, 0, 0]);
+        assert!(
+            voice.mix().sleeping,
+            "a silent heartbeat goes back to sleep"
+        );
+    }
+
+    #[test]
+    fn a_note_wakes_a_sleeping_voice_in_a_single_call() {
+        let (mut voice, calls) = fake_voice();
+        sleep(&mut voice);
+        calls.lock().unwrap().clear();
+
+        voice.queue_midi([0x90, 60, 100], 0);
+        run_block(&mut voice);
+        assert_eq!(*calls.lock().unwrap(), vec![1]);
+        assert!(!voice.mix().sleeping);
+    }
 
     #[test]
     fn fill_buses_packs_each_bus_into_the_flat_pointer_array() {
