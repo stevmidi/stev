@@ -38,6 +38,15 @@ Breaking entries are marked **Breaking** and say what to do about them.
   2½-bar loop the strong click landed off the bar line on every other pass,
   and starting playback could put the click off the beat. The click now
   counts from the playhead while playing.
+- **The main window went black with a Native Instruments plugin loaded.**
+  Kontakt 8, FM8 and other plugins whose editors draw with OpenGL left their
+  own drawing context active, and Stev kept painting into it: the window
+  flickered or went black and seemed frozen (⌘Q's save prompt opened unseen).
+  Stev now takes its drawing context back every frame.
+- **Quitting with a Native Instruments plugin loaded crashed.** With Kontakt 8
+  or FM8 on a track, every quit ended in a segfault inside the plugin's own
+  Qt shutdown code. Stev now exits without running loaded plugins' static
+  teardown code.
 
 ## [0.1.0] - 2026-10-09
 

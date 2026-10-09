@@ -109,6 +109,8 @@ use crate::core::plugin_host::PluginAudioHandle;
 #[cfg(target_os = "macos")]
 use crate::core::plugin_host::catalog::PluginCatalogEntry;
 use crate::core::time::{Meter, pixels_to_ticks, px_per_beat_to_ppt, snap_to_grid};
+#[cfg(target_os = "macos")]
+use crate::view::appkit::MainGlContext;
 use crate::{
     core::{
         event_handlers::EventHandlers,
@@ -297,6 +299,9 @@ pub(crate) struct Display {
     /// `self.instruments`.
     #[cfg(target_os = "macos")]
     instruments: InstrumentHost,
+    /// eframe's GL context, restored every frame; see [`MainGlContext`].
+    #[cfg(target_os = "macos")]
+    main_gl_context: Option<MainGlContext>,
 
     // --- Communication ---
     /// The stateless bridge to the `"sequencer"` thread.
@@ -436,6 +441,8 @@ impl Display {
             input_poller: InputPoller::new(),
             #[cfg(target_os = "macos")]
             instruments: InstrumentHost::new(),
+            #[cfg(target_os = "macos")]
+            main_gl_context: None,
             event_handlers,
             input_event_rx,
             input_event_tx,
@@ -469,6 +476,13 @@ impl Display {
     #[cfg(target_os = "macos")]
     pub(crate) fn attach_plugin_catalog_rx(&mut self, rx: Receiver<Vec<PluginCatalogEntry>>) {
         self.instruments.plugin_catalog_rx = Some(rx);
+    }
+
+    /// Keeps eframe's GL context (current while eframe's app-creation
+    /// closure runs) to restore each frame. Called once from `main`.
+    #[cfg(target_os = "macos")]
+    pub(crate) fn attach_main_gl_context(&mut self) {
+        self.main_gl_context = MainGlContext::capture_current();
     }
 
     // --- Core state accessors / mutators ---

@@ -488,6 +488,47 @@ thread). `Display::on_exit`:
      `PluginInstance` (see the per-track teardown-ordering note above), and
      `exit()` follows immediately, so there is nothing gained by destroying it
      here.
+3. The process ends with **`exit_without_destructors(0)`** (`libc::_exit`)
+   after flushing stdout/stderr,
+   never returning to AppKit's `exit()` (nor, on a window close, to `main`'s
+   `process::exit`, now only a fallback). `exit()` runs every loaded module's
+   static destructors, and with the instances leaked those tear down plugin
+   runtimes still in use: Native Instruments' Qt-based plugins (Kontakt 8,
+   FM8) segfaulted in `QApplication::~QApplication` → `qAccessibleCleanup` on
+   every quit. `_exit` skips static destructors and `atexit` handlers
+   altogether; the OS reclaims everything the process owns. Anything that must
+   reach disk at quit has to be written before this point.
+
+## Main-thread GL context (`view::appkit::MainGlContext`)
+
+Stev's window is drawn with OpenGL (eframe's glow backend), on the main
+thread — the same thread every plugin editor runs on. A plugin that renders
+its own UI with OpenGL makes *its* context current there and may leave it
+current: Native Instruments' Qt Quick editors (Kontakt 8, FM8) do, from
+inside our editor pump, while their view is being opened, and on mouse-overs
+between frames.
+
+eframe does not recover from that. Before each paint it makes its context
+current only if glutin's `Surface::is_current` says it isn't, and on macOS
+that only checks that the context is attached to our view, which is always
+true, never which context is current on the thread. Egui then paints into
+the plugin's context (`GL_INVALID_FRAMEBUFFER_OPERATION`), and the main
+window turns black — even with the editor closed — while the app keeps running
+underneath — input is handled, ⌘Q's unsaved-changes prompt opens, none of
+it visible. The plugin's own window looks fine.
+
+So `main` captures eframe's `NSOpenGLContext` in the app-creation closure
+(where it is current), and the **last thing `Display::ui` does** is make it
+current again if anything else is. Last, because `ui` itself can call into a
+plugin (opening an editor), and nothing between the end of `ui` and eframe's
+paint runs plugin code. One `+currentContext` query per frame when nothing
+changed.
+
+The root cause is upstream, in glutin's CGL backend (`api/cgl/surface.rs`,
+`Surface::is_current`). Once that compares against `+currentContext`, this
+restore can go. eframe's wgpu (Metal) renderer has no current-context state
+at all and would sidestep the whole class of clash — a much bigger change,
+worth weighing only if other GL-drawing plugins turn up new ones.
 
 ## Project persistence
 

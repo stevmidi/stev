@@ -45,6 +45,8 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
+use crate::core::plugin_host::exit_without_destructors;
+
 use super::cache::CachedClass;
 use super::discovery::classes_in_bundle;
 
@@ -101,19 +103,6 @@ pub(crate) fn run_if_scan_child() {
         }
     };
     exit_without_destructors(code);
-}
-
-/// Ends the child immediately, skipping the loaded plugin's static destructors.
-///
-/// Running them is not merely wasteful — it is a reliable way to abort, because
-/// they tear down the plugin's statics underneath its own still-running worker
-/// threads (see `180-vst3-host.md`). The result file is already written and
-/// closed by the time this is called, so there is nothing to flush.
-fn exit_without_destructors(code: i32) -> ! {
-    // SAFETY: `_exit` is async-signal-safe and always valid to call. It ends
-    // the process without unwinding, running `atexit` handlers, or invoking
-    // static destructors — which is precisely why it is used here.
-    unsafe { libc::_exit(code) }
 }
 
 /// Scans one bundle in a child process. `Ok(classes)` on a clean scan (an empty

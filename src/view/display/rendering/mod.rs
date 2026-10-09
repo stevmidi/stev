@@ -15,6 +15,8 @@ mod overlays;
 mod piano_keys;
 mod timeline;
 
+#[cfg(target_os = "macos")]
+use std::io::Write;
 use std::time::{Duration, Instant};
 
 use egui::{
@@ -25,6 +27,8 @@ use egui::{
 use super::state::scrolled_offset;
 use super::*;
 use crate::core::config::MAX_TRACKS;
+#[cfg(target_os = "macos")]
+use crate::core::plugin_host::exit_without_destructors;
 
 /// `theme::accent()` when `highlighted` (the focused section, the row under
 /// the cursor), else `idle`. Shared by the modals and the browser panel.
@@ -1183,10 +1187,20 @@ impl eframe::App for Display {
                 None => self.render.status = None,
             }
         }
+        // Last, after everything this frame that can call into a plugin (the
+        // editor pump in `logic`, an editor opened from a key press here):
+        // eframe paints next and would not notice a plugin's GL context
+        // left current (`MainGlContext`).
+        #[cfg(target_os = "macos")]
+        if let Some(gl) = &self.main_gl_context {
+            gl.restore();
+        }
     }
 
-    /// On macOS, `eframe::run_native` never returns (AppKit `terminate:` calls
-    /// `exit()` right after this), and this whole call is itself nested inside
+    /// On macOS this is the last thing the process does: it ends with
+    /// [`exit_without_destructors`] rather than returning to AppKit's
+    /// `terminate:` (which would call `exit()`) or to `main`. When reached
+    /// via `terminate:` (Dock Quit, logout) the whole call is nested inside
     /// AppKit's own `-[NSApplication terminate:]` notification post (it runs
     /// off winit's `app_will_terminate`, an observer callback for that same
     /// post). Stopping the audio thread here is required — otherwise the
@@ -1208,8 +1222,11 @@ impl eframe::App for Display {
     ///   reentering CoreFoundation's notification-registrar machinery while
     ///   it is already mid-iteration on this same thread, which segfaults
     ///   (observed with Surge XT). `clack` already tolerates a leaked,
-    ///   never-destroyed `PluginInstance` (see `130-plugin-host.md`), and the
-    ///   process calls `exit()` right after this anyway.
+    ///   never-destroyed `PluginInstance` (see `130-plugin-host.md`).
+    ///
+    /// Ending without `exit()` matters because `exit()` runs every loaded
+    /// module's static destructors, which tear down the leaked instances'
+    /// runtimes still in use (Kontakt 8 and FM8 segfaulted on every quit).
     #[cfg(target_os = "macos")]
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         if let Some(handle) = &self.instruments.audio {
@@ -1225,6 +1242,10 @@ impl eframe::App for Display {
             editor.teardown_gui();
             std::mem::forget(editor);
         }
+        // `_exit` flushes nothing, so anything still buffered goes now.
+        let _ = std::io::stdout().flush();
+        let _ = std::io::stderr().flush();
+        exit_without_destructors(0)
     }
 }
 

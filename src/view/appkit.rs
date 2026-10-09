@@ -12,10 +12,17 @@
 //! Dock, or by logging out, still calls `terminate:` and skips the check —
 //! winit's app delegate implements no `applicationShouldTerminate:` to
 //! intercept it. See `060-persistence.md` § Unsaved changes.
+//!
+//! Also [`MainGlContext`]: eframe's OpenGL context, kept so it can be made
+//! current again after plugin code has made its own current.
 
 use eframe::CreationContext;
 use objc2::rc::Retained;
 use objc2::{MainThreadMarker, sel};
+// Deprecated by Apple in favour of Metal, but it is what eframe's glow
+// renderer draws with.
+#[allow(deprecated)]
+use objc2_app_kit::NSOpenGLContext;
 use objc2_app_kit::{NSApplication, NSView};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
@@ -56,6 +63,34 @@ pub(crate) fn route_quit_through_window_close(cc: &CreationContext<'_>) {
         unsafe {
             item.setTarget(Some(&window));
             item.setAction(Some(sel!(performClose:)));
+        }
+    }
+}
+
+/// eframe's own `NSOpenGLContext`, made current again at the end of every
+/// frame: plugin code (Qt-based editors such as Kontakt's) leaves its own
+/// context current, and eframe never notices. See `130-plugin-host.md`
+/// § Main-thread GL context.
+pub(crate) struct MainGlContext {
+    /// The context, retained.
+    #[allow(deprecated)]
+    context: Retained<NSOpenGLContext>,
+}
+
+#[allow(deprecated)]
+impl MainGlContext {
+    /// The context current right now, which inside eframe's app-creation
+    /// closure is eframe's own. `None` if none is current.
+    pub(crate) fn capture_current() -> Option<Self> {
+        NSOpenGLContext::currentContext().map(|context| Self { context })
+    }
+
+    /// Makes the context current again if something else is. One query when
+    /// nothing changed.
+    pub(crate) fn restore(&self) {
+        let current = NSOpenGLContext::currentContext();
+        if current.is_none_or(|c| Retained::as_ptr(&c) != Retained::as_ptr(&self.context)) {
+            self.context.makeCurrentContext();
         }
     }
 }

@@ -78,7 +78,7 @@ pub(crate) use catalog::scan_catalog;
 pub(crate) use editor::InstrumentEditor;
 pub(crate) use key_guard::{install_key_guard, take_toggle_editor_pending};
 pub(crate) use mixer::PluginHostCommand;
-pub(crate) use shutdown::HostShutdown;
+pub(crate) use shutdown::{HostShutdown, exit_without_destructors};
 pub(crate) use vst3::child::run_if_scan_child;
 
 /// The two halves one loaded plugin splits into: the `Send` voice the mixer

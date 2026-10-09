@@ -275,6 +275,11 @@ fn main() {
             let mut display = display;
             repaint_ctx.set(cc.egui_ctx.clone()).ok();
             display.attach_drag_pointer(cc);
+            // eframe's GL context is current here; kept so each frame can
+            // take it back from plugin code that switched to its own
+            // (`view::appkit::MainGlContext`).
+            #[cfg(target_os = "macos")]
+            display.attach_main_gl_context();
             // Must run after AppKit/NSApplication is up, which this creation
             // closure guarantees — installing it any earlier is unsafe. See
             // `core::plugin_host::key_guard`.
@@ -302,11 +307,8 @@ fn main() {
         }),
     )
     .unwrap();
-    // A window close — the close button, or ⌘Q (`view::appkit`) — returns
-    // here, where AppKit's `terminate:` would have called `exit()` straight
-    // after `App::on_exit`. Exit the same way: dropping `main`'s locals would
-    // drop the audio engine and with it the plugin voices the shutdown
-    // deliberately leaves to leak (`plugin_host::shutdown`).
+    // Fallback only: `App::on_exit` normally ends the process itself. Dropping
+    // `main`'s locals would drop the plugin voices left to leak on purpose.
     #[cfg(target_os = "macos")]
     std::process::exit(0);
 }

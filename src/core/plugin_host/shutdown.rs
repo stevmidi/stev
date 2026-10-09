@@ -69,6 +69,23 @@ impl HostShutdown {
     }
 }
 
+/// Ends the process immediately, skipping every loaded plugin's static
+/// destructors (and all `atexit` handlers). Flushes nothing — a caller with
+/// buffered output flushes it first.
+///
+/// Running those destructors is not merely wasteful — it is a reliable way to
+/// crash, because they tear down a plugin's runtime underneath its own
+/// still-running threads, or underneath the instances this module leaves
+/// leaked: Native Instruments' Qt plugins segfault in
+/// `QApplication::~QApplication`. Used by the app on quit (`on_exit`) and by a
+/// VST3 scan child (`vst3::child`).
+pub(crate) fn exit_without_destructors(code: i32) -> ! {
+    // SAFETY: `_exit` is async-signal-safe and always valid to call. It ends
+    // the process without unwinding, running `atexit` handlers, or invoking
+    // static destructors — which is precisely why it is used here.
+    unsafe { libc::_exit(code) }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
