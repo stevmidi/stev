@@ -391,9 +391,10 @@ idle CPU — the lesson from the CLAP host, and it applies identically here.
   them. VST3 has no equivalent — the view animates off the AppKit run loop — so
   there is nothing to schedule.
 
-`pump` also reconciles visibility (closing our window with its title-bar button
-never reaches the plugin, so a no-longer-visible window means "closed", and
-closing destroys) and keeps the editor floating above the main window while
+`pump` also acts on the title-bar close button (it never reaches the plugin:
+`PluginWindow`'s delegate refuses the close and records it, so the view is torn
+down with the window still on screen and the window dropped after, just as
+with `v`; a no-longer-visible window counts as closed too) and keeps the editor floating above the main window while
 Stev is active and no project dialog is open (`editor_level`), both
 exactly as the CLAP editor does.
 

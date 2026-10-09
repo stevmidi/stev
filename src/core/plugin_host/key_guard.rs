@@ -216,11 +216,19 @@ fn handle_key_event(event: NonNull<NSEvent>) -> *mut NSEvent {
     // move over the main window, say — happens to trigger a frame. Request
     // one explicitly instead of leaving that to chance; this is exactly what
     // `repaint_ctx` exists for (see `EventHandlers::request_repaint`).
+    wake_ui();
+
+    std::ptr::null_mut()
+}
+
+/// Requests a frame from the eframe render loop, for work queued from outside
+/// its own input pipeline — an intercepted key here, a close-button click on
+/// an editor window (`window::CloseInterceptor`). A no-op until
+/// [`install_key_guard`] runs.
+pub(super) fn wake_ui() {
     REPAINT_CTX.with(|ctx| {
         if let Some(ctx) = ctx.borrow().as_ref().and_then(|c| c.get()) {
             ctx.request_repaint();
         }
     });
-
-    std::ptr::null_mut()
 }

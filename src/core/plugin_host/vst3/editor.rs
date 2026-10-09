@@ -306,9 +306,11 @@ impl InstrumentEditor for Vst3Editor {
         };
 
         // Closing our window with its title-bar button never reaches the
-        // plugin, so reconcile: a window that is no longer visible means the
-        // editor was closed, and closing destroys.
-        if !window.is_visible() {
+        // plugin, so reconcile: a close request (or a window that is somehow
+        // no longer visible) means the editor was closed, and closing
+        // destroys. The window is still up while the plugin tears down, and
+        // goes with it — as with `v`.
+        if window.take_close_request() || !window.is_visible() {
             self.teardown_gui();
             return None;
         }

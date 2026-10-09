@@ -34,6 +34,11 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ### Fixed
 
+- **Closing a plugin editor with its close button hid it before the plugin
+  had finished.** A plugin that takes a while to close its interface, such as
+  Kontakt, left Stev frozen for seconds with no window and no sign why. The
+  window now stays up, with the busy cursor, until the plugin is done, as it
+  already did when closing with `v`.
 - **A VST3 editor showed only part of its interface when it opened.**
   Kontakt with a wide instrument such as Lunaris 2 stayed cut off until the
   mouse reached the window's right edge, and resizing the editor made its

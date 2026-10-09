@@ -191,7 +191,14 @@ impl InstrumentEditor for ClapEditor {
 
         // Embedded case: closing our `NSWindow` with its title-bar button never
         // reaches the plugin, so reconcile our `visible` flag with the window.
-        if self.visible && self.window.as_ref().is_some_and(|w| !w.is_visible()) {
+        // The window stays up while the plugin tears down and goes with it —
+        // as with `v`.
+        if self.visible
+            && self
+                .window
+                .as_ref()
+                .is_some_and(|w| w.take_close_request() || !w.is_visible())
+        {
             self.teardown_gui();
             return None;
         }

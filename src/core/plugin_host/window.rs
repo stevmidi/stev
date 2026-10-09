@@ -33,11 +33,12 @@
 use core::ffi::c_void;
 use std::cell::Cell;
 
-use objc2::MainThreadMarker;
 use objc2::rc::Retained;
+use objc2::runtime::{NSObject, NSObjectProtocol, ProtocolObject};
+use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{
     NSApplication, NSBackingStoreType, NSFloatingWindowLevel, NSNormalWindowLevel, NSWindow,
-    NSWindowStyleMask,
+    NSWindowDelegate, NSWindowStyleMask,
 };
 use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
 
@@ -87,10 +88,55 @@ pub(super) fn editor_level(shown: bool, yield_to_main: bool) -> EditorLevel {
     }
 }
 
+define_class!(
+    /// The editor window's delegate, there only to turn the title-bar close
+    /// button (and ⌘W) into a request: it records the click and answers "not
+    /// yet", and the editor's `pump` tears the plugin's GUI down while the
+    /// window is still on screen, then drops it.
+    ///
+    /// Letting AppKit close the window outright took it off screen at once and
+    /// left a slow plugin (Kontakt takes seconds) tearing down behind an
+    /// invisible window, with Stev frozen and no sign why. This way the click
+    /// behaves like `v`: the window stays up, with the busy cursor, until the
+    /// plugin is done.
+    // SAFETY: `NSObject` has no subclassing requirements, and this class
+    // implements no `Drop`.
+    #[unsafe(super(NSObject))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "StevPluginWindowCloseInterceptor"]
+    #[ivars = Cell<bool>]
+    struct CloseInterceptor;
+
+    unsafe impl NSObjectProtocol for CloseInterceptor {}
+
+    unsafe impl NSWindowDelegate for CloseInterceptor {
+        #[unsafe(method(windowShouldClose:))]
+        fn window_should_close(&self, _sender: &NSWindow) -> bool {
+            self.ivars().set(true);
+            // The click arrived in the editor window, which eframe never
+            // hears about, so nothing else would run the pump that acts on it.
+            key_guard::wake_ui();
+            false
+        }
+    }
+);
+
+impl CloseInterceptor {
+    /// A fresh delegate with no close requested.
+    fn new(mtm: MainThreadMarker) -> Retained<Self> {
+        let this = Self::alloc(mtm).set_ivars(Cell::new(false));
+        // SAFETY: `init` is `NSObject`'s designated initializer.
+        unsafe { msg_send![super(this), init] }
+    }
+}
+
 /// Owns a native window for the plugin's embedded editor view.
 pub(super) struct PluginWindow {
     /// The native window the plugin view is parented into.
     window: Retained<NSWindow>,
+    /// The window's delegate. `NSWindow` holds its delegate weakly, so this is
+    /// what keeps it alive.
+    close_interceptor: Retained<CloseInterceptor>,
     /// Last level applied by [`set_level`](Self::set_level), so the per-frame
     /// pump only calls into AppKit when it actually changes.
     level: Cell<EditorLevel>,
@@ -136,6 +182,8 @@ impl PluginWindow {
         // The plugin owns the view lifecycle via `gui.destroy`; keep the Rust
         // `Retained` as the sole owner of the window itself.
         unsafe { window.setReleasedWhenClosed(false) };
+        let close_interceptor = CloseInterceptor::new(mtm);
+        window.setDelegate(Some(ProtocolObject::from_ref(&*close_interceptor)));
 
         // Registers this window with the Space/`v` key guard (see
         // `key_guard`) so those keys stay reserved for the app even once the
@@ -144,6 +192,7 @@ impl PluginWindow {
 
         Some(Self {
             window,
+            close_interceptor,
             level: Cell::new(EditorLevel::Normal),
         })
     }
@@ -208,18 +257,26 @@ impl PluginWindow {
         self.window.orderFront(None);
     }
 
-    /// Whether the window is currently on screen. Goes `false` when the user
-    /// clicks its close button — the editor uses it (together with its own
-    /// `visible` flag) to notice a user-initiated close, since closing our
-    /// `NSWindow` doesn't notify the plugin.
+    /// Whether the window is currently on screen. The title-bar close button
+    /// no longer takes it off (see [`take_close_request`](Self::take_close_request)),
+    /// but the editors still treat a window gone from screen by any other
+    /// route as closed.
     pub(super) fn is_visible(&self) -> bool {
         self.window.isVisible()
+    }
+
+    /// Whether the user has clicked the title-bar close button since the last
+    /// call. The window is still on screen: the caller tears the plugin's GUI
+    /// down and then drops this, which closes it. See [`CloseInterceptor`].
+    pub(super) fn take_close_request(&self) -> bool {
+        self.close_interceptor.ivars().replace(false)
     }
 }
 
 impl Drop for PluginWindow {
     fn drop(&mut self) {
         key_guard::unregister_window(Retained::as_ptr(&self.window) as usize);
+        self.window.setDelegate(None);
         self.window.close();
     }
 }
