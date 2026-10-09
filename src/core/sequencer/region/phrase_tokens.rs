@@ -136,7 +136,13 @@ impl Sequencer {
         time::beats_to_ticks(1.5)
     }
 
-    /// Shortest span a detected token is allowed to cover.
+    /// Shortest span a token must cover for the snap to reach back to it:
+    /// clearly longer than one bar. The bar follows the meter; the margin is
+    /// a quarter note in every meter, like the module's other silence and
+    /// span thresholds. It is a stretch of time, not a metric position, and
+    /// a quarter is a fixed slice of it at a given tempo. The counted beat
+    /// would shrink it to an eighth in x/8, where the felt pulse (6/8's
+    /// dotted quarter) is slower still.
     fn phrase_min_token_length_ticks(meter: Meter) -> i32 {
         meter.bar_ticks() + time::beats_to_ticks(1.0)
     }
@@ -497,10 +503,13 @@ impl Sequencer {
             return latest_candidate;
         }
 
-        let eligible: Vec<i32> = candidates
+        // Every candidate starts before `region_start` here: reach back to the
+        // latest one long enough to be a phrase.
+        candidates
             .iter()
+            .rev()
             .copied()
-            .filter(|&start| {
+            .find(|&start| {
                 let next_boundary = starts
                     .iter()
                     .copied()
@@ -508,21 +517,7 @@ impl Sequencer {
                     .unwrap_or(last_tick);
                 next_boundary - start >= Self::phrase_min_token_length_ticks(meter)
             })
-            .collect();
-
-        let Some(&latest_eligible) = eligible.last() else {
-            return latest_candidate;
-        };
-        if latest_eligible == latest_candidate {
-            return latest_candidate;
-        }
-
-        eligible
-            .iter()
-            .rev()
-            .copied()
-            .find(|&start| start >= region_start)
-            .unwrap_or(latest_eligible)
+            .unwrap_or(latest_candidate)
     }
 }
 
