@@ -193,12 +193,7 @@ impl InstrumentEditor for ClapEditor {
         // reaches the plugin, so reconcile our `visible` flag with the window.
         // The window stays up while the plugin tears down and goes with it —
         // as with `v`.
-        if self.visible
-            && self
-                .window
-                .as_ref()
-                .is_some_and(|w| w.take_close_request() || !w.is_visible())
-        {
+        if self.visible && self.window.as_ref().is_some_and(PluginWindow::take_closed) {
             self.teardown_gui();
             return None;
         }

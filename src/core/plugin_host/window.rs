@@ -258,18 +258,18 @@ impl PluginWindow {
     }
 
     /// Whether the window is currently on screen. The title-bar close button
-    /// no longer takes it off (see [`take_close_request`](Self::take_close_request)),
-    /// but the editors still treat a window gone from screen by any other
-    /// route as closed.
+    /// doesn't take it off — see [`take_closed`](Self::take_closed).
     pub(super) fn is_visible(&self) -> bool {
         self.window.isVisible()
     }
 
-    /// Whether the user has clicked the title-bar close button since the last
-    /// call. The window is still on screen: the caller tears the plugin's GUI
-    /// down and then drops this, which closes it. See [`CloseInterceptor`].
-    pub(super) fn take_close_request(&self) -> bool {
-        self.close_interceptor.ivars().replace(false)
+    /// Whether the user has closed the editor since the last call, so its GUI
+    /// should be torn down: the title-bar close button was clicked — the
+    /// window is then still on screen, and the caller tears the plugin's GUI
+    /// down before dropping this, which closes it (see [`CloseInterceptor`])
+    /// — or the window left the screen by some other route.
+    pub(super) fn take_closed(&self) -> bool {
+        self.close_interceptor.ivars().replace(false) || !self.is_visible()
     }
 }
 

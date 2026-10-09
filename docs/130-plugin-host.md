@@ -221,13 +221,13 @@ methods take a track's position and look the slot up in its `tracks` mirror
   keeps toggling — see the caveat about focus below. The window's title-bar
   close button (and ⌘W) doesn't close it: its delegate, `CloseInterceptor`,
   refuses and records the click, wakes the UI, and `pump` picks it up
-  (`PluginWindow::take_close_request`) and tears the GUI down with the window
+  (`PluginWindow::take_closed`) and tears the GUI down with the window
   still on screen, then drops the window — the same order as `v`. Letting
   AppKit close it took the window away at once and left a slow plugin (Kontakt
   takes seconds) tearing down behind nothing, with Stev frozen and no sign
-  why. `pump` still reconciles `ClapEditor::visible` with
-  `PluginWindow::is_visible` too, so `v` reopens a window that went away by
-  any other route.
+  why. `take_closed` also reports a window gone from screen by any other
+  route, so `pump` still reconciles `ClapEditor::visible` with the window and
+  `v` reopens it.
 - **Closing an editor destroys it.** `InstrumentEditor::close` (bare `v` on a shown
   editor, the window's title-bar button, or the plugin closing its own floating
   window) runs the same `teardown_gui` as a per-track plugin remove: GUI
@@ -279,7 +279,7 @@ methods take a track's position and look the slot up in its `tracks` mirror
 | `transport.rs` | `TransportState` (the shared atomics) and `BlockTransport` (the plain `Copy` snapshot taken once per block and handed to every voice, in app-native units - ticks and microseconds-per-quarter - plus `bpm()`, `bar_number()` and `bar_start_beats()` - the bar maths in the project's `Meter`, carried in the snapshot from the `SharedAtomics.meter` atomic, floored for a pre-roll playhead; `bar_start_beats` is in quarter notes). Each format converts it in its own `render_block`; that conversion is a handful of float ops, so doing it per voice rather than once per block costs nothing and keeps every plugin type out of the mixer. Unit-tested. |
 | `catalog.rs` | `PluginFormat` (label - which is also its `Audio/Plug-Ins` subdirectory - and bundle extension), `ALL_FORMATS`, `PluginCatalogEntry { format, bundle_path, plugin_id, name }`, `installed_bundles` (the shared depth-capped bundle walk over the install roots - what each format's scan calls), `scan_catalog` (runs every format's scan and reports the merged, name-sorted list **once per format** — VST3 is slow enough that waiting for it would hide the CLAP plugins too; `merge_scans` takes the scans as functions so each only starts after the previous one's delivery), `available_bundles_hint`. Runs on the background `"plugin-catalog-scan"` thread, result held in `Display::plugin_catalog`. Unit-tested. |
 | `shutdown.rs` | `HostShutdown` - app-exit coordination (`requested` + `in_process`), one instance shared by the mixer and the reclaim thread. Unit-tested. |
-| `window.rs` | `PluginWindow` - a minimal native `NSWindow` parent for an embedded plugin GUI; `show` (`orderFront:`), `is_visible`, `frame_top_left` / a `top_left` argument to `new` (position carried across a close/reopen), `set_content_size` (anchored at the top-left corner), `take_close_request` (the title-bar close button, refused by the `CloseInterceptor` delegate so the editor can tear down first); registers/deregisters itself with `key_guard` on construction/`Drop`. It is closed by `Drop`, not hidden - there is no `hide`. Format-agnostic. |
+| `window.rs` | `PluginWindow` - a minimal native `NSWindow` parent for an embedded plugin GUI; `show` (`orderFront:`), `is_visible`, `frame_top_left` / a `top_left` argument to `new` (position carried across a close/reopen), `set_content_size` (anchored at the top-left corner), `take_closed` (the title-bar close button, refused by the `CloseInterceptor` delegate so the editor can tear down first, or the window off screen by any other route); registers/deregisters itself with `key_guard` on construction/`Drop`. It is closed by `Drop`, not hidden - there is no `hide`. Format-agnostic. |
 | `key_guard.rs` | App-wide `NSEvent` local monitor reserving bare `Space`/`v`/`.`/`0` even while an embedded editor window has OS keyboard focus - `install_key_guard`, `take_toggle_editor_pending`, `register_window` / `unregister_window`. See the module doc and the caveat below. Format-agnostic. |
 
 ### `clap/` - the CLAP format

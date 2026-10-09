@@ -310,7 +310,7 @@ impl InstrumentEditor for Vst3Editor {
         // no longer visible) means the editor was closed, and closing
         // destroys. The window is still up while the plugin tears down, and
         // goes with it — as with `v`.
-        if window.take_close_request() || !window.is_visible() {
+        if window.take_closed() {
             self.teardown_gui();
             return None;
         }
