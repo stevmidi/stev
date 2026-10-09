@@ -5,7 +5,7 @@
 //!
 //! The `080-conventions.md` `tick`/`ticks` rule applies to every helper name
 //! here: `bars_to_ticks`, `sixteenth_straight_ticks` etc. all return *amounts*;
-//! `next_bar_boundary_after` returns a *position*. Pure functions, unit-tested
+//! [`Meter::next_bar_boundary_after`] returns a *position*. Pure functions, unit-tested
 //! at the bottom. `150-clock-position-sync.md` explains the timing model these
 //! feed.
 
@@ -174,13 +174,6 @@ impl Default for Meter {
 /// [`Meter::bars_to_ticks`] (`270-time-signature.md` phase 2).
 pub const fn bars_to_ticks(bars: i32) -> i32 {
     Meter::FOUR_FOUR.bars_to_ticks(bars)
-}
-
-/// The first whole-bar tick *strictly* after `tick`, 4/4 assumed — see
-/// [`Meter::next_bar_boundary_after`]. Used to bar-align a capture window's
-/// end and to size a content-derived running-capture clip.
-pub fn next_bar_boundary_after(tick: i32) -> i32 {
-    Meter::FOUR_FOUR.next_bar_boundary_after(tick)
 }
 
 /// Bars → beats. 4/4 assumed.
@@ -492,24 +485,24 @@ mod tests {
     #[test]
     fn next_bar_boundary_after_on_boundary_advances_one_bar() {
         let bar = bars_to_ticks(1);
-        assert_eq!(next_bar_boundary_after(0), bar);
-        assert_eq!(next_bar_boundary_after(bar), bar * 2);
-        assert_eq!(next_bar_boundary_after(bar * 3), bar * 4);
+        assert_eq!(Meter::FOUR_FOUR.next_bar_boundary_after(0), bar);
+        assert_eq!(Meter::FOUR_FOUR.next_bar_boundary_after(bar), bar * 2);
+        assert_eq!(Meter::FOUR_FOUR.next_bar_boundary_after(bar * 3), bar * 4);
     }
 
     #[test]
     fn next_bar_boundary_after_mid_bar_rounds_up() {
         let bar = bars_to_ticks(1);
-        assert_eq!(next_bar_boundary_after(1), bar);
-        assert_eq!(next_bar_boundary_after(bar + 600), bar * 2);
+        assert_eq!(Meter::FOUR_FOUR.next_bar_boundary_after(1), bar);
+        assert_eq!(Meter::FOUR_FOUR.next_bar_boundary_after(bar + 600), bar * 2);
     }
 
     #[test]
     fn next_bar_boundary_after_negative_input() {
         let bar = bars_to_ticks(1);
-        assert_eq!(next_bar_boundary_after(-1), 0);
-        assert_eq!(next_bar_boundary_after(-bar), 0);
-        assert_eq!(next_bar_boundary_after(-bar - 1), -bar);
+        assert_eq!(Meter::FOUR_FOUR.next_bar_boundary_after(-1), 0);
+        assert_eq!(Meter::FOUR_FOUR.next_bar_boundary_after(-bar), 0);
+        assert_eq!(Meter::FOUR_FOUR.next_bar_boundary_after(-bar - 1), -bar);
     }
 
     #[test]

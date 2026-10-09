@@ -23,6 +23,7 @@ use objc2::rc::Retained;
 use objc2_app_kit::NSView;
 
 use crate::core::project::{is_midi_file, load_midi_clip};
+use crate::core::time::Meter;
 use crate::metadata::clip_metadata::ClipMetadata;
 use crate::models::clip::Clip;
 use crate::shapes::clip_shape::ClipShape;
@@ -41,10 +42,10 @@ impl MidiDrag {
     /// Reads the `.mid` at `path` for a drag, with no target yet. Anything
     /// not named like a MIDI file is refused unread — a dragged-in video
     /// isn't loaded into memory to find that out.
-    fn load(path: &Path) -> Self {
+    fn load(path: &Path, meter: Meter) -> Self {
         let name = file_stem(path);
         let loaded = if is_midi_file(path) {
-            load_midi_clip(path).map(|clip| LoadedMidi {
+            load_midi_clip(path, meter).map(|clip| LoadedMidi {
                 ghost: ClipShape::from_metadata(ClipMetadata::from_clip(0, &clip)),
                 clip,
             })
@@ -72,7 +73,7 @@ impl Display {
     /// the window, or a browser row dragged out of the panel): reads it, and
     /// aims the ghost at the pointer.
     pub(super) fn begin_midi_drag(&mut self, path: &Path) {
-        self.gesture.midi_drag = Some(MidiDrag::load(path));
+        self.gesture.midi_drag = Some(MidiDrag::load(path, self.meter()));
         if let Some(pos) = self.canvas_pointer() {
             self.update_midi_drag_target(pos.x, pos.y);
         }
@@ -127,7 +128,7 @@ impl Display {
     /// the cursor (the handler resolves both).
     pub(in crate::view::display) fn import_midi_file(&mut self, path: &Path) {
         let name = file_stem(path);
-        match load_midi_clip(path) {
+        match load_midi_clip(path, self.meter()) {
             Ok(clip) => self.send_midi_import(clip, name, None),
             Err(e) => self.report_unreadable_midi(&name, &e),
         }

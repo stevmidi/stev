@@ -13,7 +13,7 @@ use std::{
 };
 
 use crate::{
-    core::{config::PROJECT_NAME_MAX_CHARS, paths::project_dir, time::ticks_to_bars},
+    core::{config::PROJECT_NAME_MAX_CHARS, paths::project_dir, time::Meter},
     models::clip::Clip,
 };
 
@@ -166,10 +166,13 @@ pub(crate) fn save_clip_export(
     base: &str,
     track_idx: usize,
     start_tick: i32,
+    meter: Meter,
 ) -> io::Result<String> {
     let dir = resolve_dir(folder);
     fs::create_dir_all(&dir)?;
-    let name = clip_export_name(base, track_idx, start_tick, |name| dir.join(name).exists());
+    let name = clip_export_name(base, track_idx, start_tick, meter, |name| {
+        dir.join(name).exists()
+    });
     fs::write(dir.join(&name), bytes)?;
     Ok(name)
 }
@@ -192,26 +195,30 @@ pub(crate) fn is_midi_file(path: &Path) -> bool {
 
 /// Reads the `.mid` at `path` as a clip ([`read_smf`], then
 /// [`Clip::imported`]) — every track and channel merged, the file's tempo
-/// ignored. The error says why not, for the footer.
-pub(crate) fn load_midi_clip(path: &Path) -> Result<Clip, String> {
+/// ignored, its length rounded up to whole bars of `meter`. The error says
+/// why not, for the footer.
+pub(crate) fn load_midi_clip(path: &Path, meter: Meter) -> Result<Clip, String> {
     let bytes = fs::read(path).map_err(|e| e.to_string())?;
     let contents = read_smf(&bytes).map_err(|e| e.to_string())?;
-    Clip::imported(contents.events, contents.end_tick).ok_or_else(|| "it has no notes".to_owned())
+    Clip::imported(contents.events, contents.end_tick, meter)
+        .ok_or_else(|| "it has no notes".to_owned())
 }
 
 /// `<base>_T<track>_B<bar>.mid` for a clip on track `track_idx` starting at
-/// arrangement tick `start_tick` (both 1-based in the name, as on screen);
-/// while `taken` says a name is in use, `_2`, `_3`, … before the extension.
+/// arrangement tick `start_tick`, in bars of `meter` (both 1-based in the
+/// name, as on screen); while `taken` says a name is in use, `_2`, `_3`, …
+/// before the extension.
 fn clip_export_name(
     base: &str,
     track_idx: usize,
     start_tick: i32,
+    meter: Meter,
     taken: impl Fn(&str) -> bool,
 ) -> String {
     let stem = format!(
         "{base}_T{}_B{}",
         track_idx + 1,
-        ticks_to_bars(start_tick) + 1
+        meter.ticks_to_bars(start_tick) + 1
     );
     once(format!("{stem}.{MIDI_EXTENSION}"))
         .chain((2..).map(|n| format!("{stem}_{n}.{MIDI_EXTENSION}")))
@@ -221,8 +228,6 @@ fn clip_export_name(
 
 #[cfg(test)]
 mod tests {
-    use crate::core::time::bars_to_ticks;
-
     use super::*;
 
     #[test]
@@ -259,20 +264,38 @@ mod tests {
 
     #[test]
     fn clip_export_name_counts_track_and_bar_from_one() {
-        let name = clip_export_name("song", 1, bars_to_ticks(4), |_| false);
+        let four_four = Meter::FOUR_FOUR;
+        let name = clip_export_name("song", 1, four_four.bars_to_ticks(4), four_four, |_| false);
         assert_eq!(name, "song_T2_B5.mid");
     }
 
     #[test]
     fn clip_export_name_rounds_a_mid_bar_start_down_to_its_bar() {
-        let name = clip_export_name("song", 0, bars_to_ticks(2) + 100, |_| false);
+        let four_four = Meter::FOUR_FOUR;
+        let name = clip_export_name(
+            "song",
+            0,
+            four_four.bars_to_ticks(2) + 100,
+            four_four,
+            |_| false,
+        );
         assert_eq!(name, "song_T1_B3.mid");
+    }
+
+    /// Bars count in the project's meter: four bars of 3/4 in is bar 5.
+    #[test]
+    fn clip_export_name_counts_bars_in_the_meter() {
+        let three_four = Meter::new(3, 4).unwrap();
+        let name = clip_export_name("song", 0, three_four.bars_to_ticks(4), three_four, |_| {
+            false
+        });
+        assert_eq!(name, "song_T1_B5.mid");
     }
 
     #[test]
     fn clip_export_name_never_reuses_a_taken_name() {
         let taken = ["song_T1_B1.mid", "song_T1_B1_2.mid"];
-        let name = clip_export_name("song", 0, 0, |name| taken.contains(&name));
+        let name = clip_export_name("song", 0, 0, Meter::FOUR_FOUR, |name| taken.contains(&name));
         assert_eq!(name, "song_T1_B1_3.mid");
     }
 }

@@ -24,6 +24,7 @@ impl Display {
     /// the window plus its headroom.
     pub(super) fn clip_reach_of(&self, region: (i32, i32)) -> (i32, i32) {
         reach_over(
+            self.meter(),
             region,
             self.render
                 .event_shapes

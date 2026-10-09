@@ -93,7 +93,7 @@ pub(crate) use ui_event::{TrackLane, TrackRoute, UiEvent};
 
 use std::sync::{
     Arc,
-    atomic::{AtomicBool, AtomicI32, AtomicU8, Ordering},
+    atomic::{AtomicBool, AtomicI32, AtomicU8, AtomicU16, Ordering},
 };
 
 use crossbeam_channel::{Receiver, Sender};
@@ -105,7 +105,7 @@ use crate::core::audio::AudioLoad;
 use crate::core::plugin_host::PluginAudioHandle;
 #[cfg(target_os = "macos")]
 use crate::core::plugin_host::catalog::PluginCatalogEntry;
-use crate::core::time::{pixels_to_ticks, px_per_beat_to_ppt, snap_to_grid};
+use crate::core::time::{Meter, pixels_to_ticks, px_per_beat_to_ppt, snap_to_grid};
 use crate::{
     core::{
         event_handlers::EventHandlers,
@@ -151,6 +151,9 @@ pub(crate) struct Display {
     // --- State ---
     /// Shared tempo (µs per quarter), for the header readout.
     tempo: Arc<AtomicI32>,
+    /// The project's time signature, packed by [`Meter::to_bits`]. Read
+    /// through [`meter`](Self::meter).
+    meter: Arc<AtomicU16>,
     /// Shared "transport running" flag.
     running: Arc<AtomicBool>,
     /// The transport odometer — the only clock the renderer needs, since the
@@ -368,6 +371,7 @@ impl Display {
         last_project_folder: Option<String>,
         midi_out_offset_ms: i32,
         tempo: Arc<AtomicI32>,
+        meter: Arc<AtomicU16>,
         running: Arc<AtomicBool>,
         elapsed_ticks: Arc<AtomicI32>,
         playback_tick: Arc<AtomicI32>,
@@ -382,6 +386,7 @@ impl Display {
     ) -> Self {
         Display {
             tempo,
+            meter,
             running,
             elapsed_ticks,
             playback_tick,
@@ -934,6 +939,11 @@ impl Display {
     /// pointer.
     fn cursor_grid_ticks(&self) -> i32 {
         self.grid_tiers().snap_ticks
+    }
+
+    /// The project's time signature.
+    fn meter(&self) -> Meter {
+        Meter::from_bits(self.meter.load(Ordering::Relaxed))
     }
 
     /// The transport odometer value.

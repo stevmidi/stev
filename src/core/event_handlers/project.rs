@@ -209,6 +209,7 @@ impl EventHandlers {
                 name,
                 export.track_idx,
                 export.start_tick,
+                sequencer.meter(),
             ) {
                 Ok(name) => format!("Exported {name}"),
                 Err(e) => format!("Export failed: {e}"),

@@ -15,7 +15,7 @@
 //! `stopped_capture.rs` and `capture.rs` are the callers; the region/cursor
 //! mutators that consume the results live in `mod.rs`.
 
-use crate::core::time;
+use crate::core::time::{self, Meter};
 use crate::models::clip::Clip;
 use crate::models::event::{Event, EventType};
 
@@ -107,23 +107,19 @@ impl Sequencer {
         )
     }
 
-    /// Widens `region_end` so the phrase window is at least one bar.
+    /// Widens `region_end` so the phrase window is at least one bar of `meter`.
     pub(in crate::core::sequencer) fn clamp_phrase_end_to_min_window(
         region_start: i32,
         region_end: i32,
+        meter: Meter,
     ) -> i32 {
-        region_end.max(region_start + Self::phrase_min_window_ticks())
+        region_end.max(region_start + meter.bar_ticks())
     }
 
     /// Default tail added past the last `NoteOff` for a phrase window — two
     /// beats.
     fn phrase_default_tail_ticks() -> i32 {
         time::beats_to_ticks(2.0)
-    }
-
-    /// Minimum phrase window — one bar.
-    fn phrase_min_window_ticks() -> i32 {
-        time::bars_to_ticks(1)
     }
 
     /// Highest tick among a slice's events of `event_type` (`0` if none).
@@ -216,14 +212,21 @@ mod tests {
 
     #[test]
     fn clamp_phrase_end_to_min_window_extends_short_window() {
-        let end = Sequencer::clamp_phrase_end_to_min_window(11_000, 11_960);
+        let end = Sequencer::clamp_phrase_end_to_min_window(11_000, 11_960, Meter::FOUR_FOUR);
 
         assert_eq!(end, 14_840);
     }
 
     #[test]
+    fn clamp_phrase_end_to_min_window_is_a_bar_of_the_meter() {
+        let seven_eight = Meter::new(7, 8).unwrap();
+        let end = Sequencer::clamp_phrase_end_to_min_window(1000, 1100, seven_eight);
+        assert_eq!(end, 1000 + seven_eight.bar_ticks());
+    }
+
+    #[test]
     fn clamp_phrase_end_to_min_window_preserves_longer_window() {
-        let end = Sequencer::clamp_phrase_end_to_min_window(11_000, 15_400);
+        let end = Sequencer::clamp_phrase_end_to_min_window(11_000, 15_400, Meter::FOUR_FOUR);
 
         assert_eq!(end, 15_400);
     }

@@ -6,7 +6,7 @@
 //! constants that are a position vs. an amount follow `080-conventions.md`'s
 //! `tick`/`ticks` rule.
 
-use crate::core::time::{bars_to_ticks, bpm_to_tempo_us, sixteenth_straight_ticks};
+use crate::core::time::{Meter, bpm_to_tempo_us, sixteenth_straight_ticks};
 
 /// Tempo a brand-new project starts at, in BPM. `TEMPO_*` are the same value
 /// expressed as microseconds per quarter note, which is what the clock and the
@@ -17,7 +17,7 @@ pub const BPM_DEFAULT: i32 = 90;
 pub const TEMPO_US_DEFAULT: i32 = bpm_to_tempo_us(BPM_DEFAULT);
 /// Loop-region length a fresh project / clip starts with, in ticks (an amount).
 /// Two bars.
-pub const REGION_LENGTH_DEFAULT: i32 = bars_to_ticks(2);
+pub const REGION_LENGTH_DEFAULT: i32 = Meter::FOUR_FOUR.bars_to_ticks(2);
 /// First-clip tempo detection octave-corrects an implausible result: a tempo
 /// detected at or slower than this (µs-per-quarter, ~50 BPM) is reinterpreted
 /// as an octave up — tempo halved-in-µs (BPM doubled) and the clip's bar count

@@ -222,6 +222,7 @@ pub(crate) fn setup_display(
         last_project_folder,
         midi_out_offset_ms,
         shared_atomics.tempo.clone(),
+        shared_atomics.meter.clone(),
         shared_atomics.running.clone(),
         shared_atomics.elapsed_ticks.clone(),
         shared_atomics.playback_tick.clone(),

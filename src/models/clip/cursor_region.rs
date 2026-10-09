@@ -13,7 +13,7 @@ use std::sync::{
     atomic::{AtomicI32, Ordering},
 };
 
-use crate::core::time::{self, bars_to_ticks};
+use crate::core::time::{self, Meter};
 
 use super::Clip;
 
@@ -85,10 +85,11 @@ const CLIP_END_HEADROOM_BARS: i32 = 1;
 /// it over the clip's events; the clip view's scroll range over its note
 /// shapes.
 pub(crate) fn reach_over(
+    meter: Meter,
     (window_start, window_end): (i32, i32),
     spans: impl Iterator<Item = (i32, i32)>,
 ) -> (i32, i32) {
-    let end_with_headroom = window_end + bars_to_ticks(CLIP_END_HEADROOM_BARS);
+    let end_with_headroom = window_end + meter.bars_to_ticks(CLIP_END_HEADROOM_BARS);
     spans.fold(
         (window_start, end_with_headroom),
         |(lo, hi), (start, end)| (lo.min(start), hi.max(end)),
@@ -137,8 +138,8 @@ impl Clip {
     /// [`reach`](Self::reach) — the window plus any material kept outside it,
     /// so the cursor can get to notes a trim or a stopped capture commit left
     /// outside the window (`220-capture-without-pending-view.md`).
-    pub(crate) fn nudge_cursor_by_ticks(&mut self, nudge: i32) {
-        let (reach_start, reach_end) = self.reach();
+    pub(crate) fn nudge_cursor_by_ticks(&mut self, nudge: i32, meter: Meter) {
+        let (reach_start, reach_end) = self.reach(meter);
         let new_cursor = (self.cursor_tick() + nudge).clamp(reach_start, reach_end);
 
         self.cursor_tick.store(new_cursor, Ordering::Relaxed);
@@ -149,8 +150,9 @@ impl Clip {
     /// widened to the first note and the last note's end when notes lie
     /// further out. A wheel move never widens it — the clip view draws only
     /// notes, and its scroll range is the same [`reach_over`] of them.
-    pub(crate) fn reach(&self) -> (i32, i32) {
+    pub(crate) fn reach(&self, meter: Meter) -> (i32, i32) {
         reach_over(
+            meter,
             (self.region.start(), self.region.end()),
             self.events
                 .iter()
@@ -229,6 +231,7 @@ impl Clip {
         &mut self,
         clip_tempo: i32,
         current_tempo: i32,
+        meter: Meter,
     ) -> EventSpaceRetime {
         let region_start =
             Self::adjust_tick_to_tempo(self.region.start(), clip_tempo, current_tempo);
@@ -236,8 +239,8 @@ impl Clip {
 
         self.region.set_region(Some(region_start), Some(region_end));
 
-        // Snap to the nearest whole bar, never below one
-        let bar = bars_to_ticks(1);
+        // Snap to the nearest whole bar of `meter`, never below one
+        let bar = meter.bar_ticks();
         let target_length = time::snap_to_grid(self.region_length(), bar).max(bar);
         self.region
             .set_region(None, Some(self.region.start() + target_length));
@@ -298,7 +301,7 @@ mod tests {
 
     use super::{CLIP_END_HEADROOM_BARS, EventSpaceRetime, reach_over};
 
-    use crate::core::time::bars_to_ticks;
+    use crate::core::time::{Meter, bars_to_ticks};
     use crate::models::{
         clip::{Clip, ClipBounds},
         event::Event,
@@ -416,14 +419,14 @@ mod tests {
     #[test]
     fn nudge_cursor_by_ticks_clamps_below_region_start() {
         let mut clip = make_clip(0, 100, 500);
-        clip.nudge_cursor_by_ticks(-999); // cursor starts at 0 (< region_start=100), clamps to 100
+        clip.nudge_cursor_by_ticks(-999, Meter::FOUR_FOUR); // cursor starts at 0 (< region_start=100), clamps to 100
         assert_eq!(clip.cursor_tick(), 100);
     }
 
     #[test]
     fn nudge_cursor_by_ticks_clamps_a_bar_past_the_region_end() {
         let mut clip = make_clip(0, 0, 500);
-        clip.nudge_cursor_by_ticks(99_999);
+        clip.nudge_cursor_by_ticks(99_999, Meter::FOUR_FOUR);
         assert_eq!(
             clip.cursor_tick(),
             500 + bars_to_ticks(CLIP_END_HEADROOM_BARS)
@@ -433,7 +436,7 @@ mod tests {
     #[test]
     fn nudge_cursor_by_ticks_normal_movement() {
         let mut clip = make_clip(0, 0, 960);
-        clip.nudge_cursor_by_ticks(240);
+        clip.nudge_cursor_by_ticks(240, Meter::FOUR_FOUR);
         assert_eq!(clip.cursor_tick(), 240);
     }
 
@@ -449,12 +452,12 @@ mod tests {
         clip.add_event(Event::new(2500, 0, vec![0x80, 62, 0]));
         clip.nudge_cursor_to_region_start();
 
-        clip.nudge_cursor_by_ticks(-9999);
+        clip.nudge_cursor_by_ticks(-9999, Meter::FOUR_FOUR);
         assert_eq!(clip.cursor_tick(), 100, "down to the first kept note");
-        clip.nudge_cursor_by_ticks(9999);
+        clip.nudge_cursor_by_ticks(9999, Meter::FOUR_FOUR);
         let headroom_end = 1920 + bars_to_ticks(CLIP_END_HEADROOM_BARS);
         assert_eq!(clip.cursor_tick(), headroom_end, "a bar past the end");
-        assert_eq!(clip.reach(), (100, headroom_end));
+        assert_eq!(clip.reach(Meter::FOUR_FOUR), (100, headroom_end));
         assert!(!clip.is_in_window(100));
         assert!(clip.is_in_window(960));
         assert!(!clip.is_in_window(1920), "the window is half-open");
@@ -464,17 +467,29 @@ mod tests {
     fn reach_over_widens_the_window_and_its_headroom_to_spans_outside() {
         let window = (bars_to_ticks(4), bars_to_ticks(6));
         assert_eq!(
-            reach_over(window, std::iter::empty()),
+            reach_over(Meter::FOUR_FOUR, window, std::iter::empty()),
             (bars_to_ticks(4), bars_to_ticks(7)),
             "a bar of headroom after the end"
         );
         assert_eq!(
             reach_over(
+                Meter::FOUR_FOUR,
                 window,
-                [(100, 400), (bars_to_ticks(5), bars_to_ticks(9))].into_iter()
+                [(100, 400), (bars_to_ticks(5), bars_to_ticks(9))].into_iter(),
             ),
             (100, bars_to_ticks(9)),
             "spans further out widen it"
+        );
+    }
+
+    /// The headroom after the end is one bar of the project's meter.
+    #[test]
+    fn the_reach_headroom_is_a_bar_of_the_meter() {
+        let three_four = Meter::new(3, 4).unwrap();
+        let bar = three_four.bar_ticks();
+        assert_eq!(
+            reach_over(three_four, (0, bar * 2), std::iter::empty()),
+            (0, bar * 3)
         );
     }
 
@@ -482,18 +497,22 @@ mod tests {
     fn the_reach_reaches_past_a_late_note_and_a_bar_past_an_empty_end() {
         let bar = bars_to_ticks(1);
         let mut clip = make_clip(0, 0, bar);
-        assert_eq!(clip.reach(), (0, bar * 2), "a bar of room after the end");
+        assert_eq!(
+            clip.reach(Meter::FOUR_FOUR),
+            (0, bar * 2),
+            "a bar of room after the end"
+        );
         clip.add_event(Event::new(bar * 3, 0, vec![0x90, 60, 100]));
         clip.add_event(Event::new(bar * 3 + 100, 0, vec![0x80, 60, 0]));
         assert_eq!(
-            clip.reach(),
+            clip.reach(Meter::FOUR_FOUR),
             (0, bar * 3 + 100),
             "a later note reaches further"
         );
         clip.add_event(Event::new(bar * 5, 0, vec![0xE0, 0x00, 0x40]));
         clip.sort_events_by_tick();
         assert_eq!(
-            clip.reach(),
+            clip.reach(Meter::FOUR_FOUR),
             (0, bar * 3 + 100),
             "a wheel move doesn't, as the view can't show it"
         );
@@ -504,14 +523,25 @@ mod tests {
         let bar = bars_to_ticks(1);
         let mut clip = make_clip(0, 0, bar * 2);
         clip.add_event(Event::new(bar, 0, vec![0x90, 60, 100]));
-        clip.nudge_cursor_by_ticks(bar);
+        clip.nudge_cursor_by_ticks(bar, Meter::FOUR_FOUR);
         // 120 → 60 BPM: every tick position halves.
-        clip.adjust_to_tempo(1_000_000, 500_000);
+        clip.adjust_to_tempo(1_000_000, 500_000, Meter::FOUR_FOUR);
         assert_eq!(
             clip.events()[0].tick(),
             clip.cursor_tick(),
             "still on the note"
         );
+    }
+
+    /// A tempo retime snaps the window to whole bars of the project's
+    /// meter: 3.4 bars of 3/4 land on 3 bars of 3/4, not on 4/4 bars.
+    #[test]
+    fn a_tempo_retime_snaps_to_bars_of_the_meter() {
+        let three_four = Meter::new(3, 4).unwrap();
+        let bar = three_four.bar_ticks();
+        let mut clip = make_clip(0, 0, bar * 34 / 10);
+        clip.adjust_to_tempo(500_000, 500_000, three_four);
+        assert_eq!(clip.region_length(), bar * 3);
     }
 
     #[test]
@@ -533,7 +563,7 @@ mod tests {
     #[test]
     fn nudge_cursor_to_region_start_sets_cursor_to_region_start() {
         let mut clip = make_clip(0, 480, 960);
-        clip.nudge_cursor_by_ticks(100); // move to 100 (clamped to 480)
+        clip.nudge_cursor_by_ticks(100, Meter::FOUR_FOUR); // move to 100 (clamped to 480)
         clip.nudge_cursor_to_region_start();
         assert_eq!(clip.cursor_tick(), 480);
     }
@@ -551,8 +581,8 @@ mod tests {
         }
 
         let retime = clip
-            .adjust_to_tempo(450_000, 500_000)
-            .then(clip.align_window_start_to_bar());
+            .adjust_to_tempo(450_000, 500_000, Meter::FOUR_FOUR)
+            .then(clip.align_window_start_to_bar(Meter::FOUR_FOUR));
 
         let new_ticks: Vec<i32> = clip.events().iter().map(Event::tick).collect();
         for (&old, &new) in old_ticks.iter().zip(&new_ticks) {

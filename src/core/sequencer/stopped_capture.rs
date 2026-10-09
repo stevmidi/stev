@@ -7,7 +7,10 @@
 //! `220-capture-without-pending-view.md` and `040-phrase-detection.md`.
 
 use crate::{
-    core::{config, time},
+    core::{
+        config,
+        time::{self, Meter},
+    },
     models::{clip::Clip, event::EventType},
 };
 
@@ -39,7 +42,7 @@ impl Sequencer {
         // throw away what the user sets by ear. Every later clip is nearest
         // whole bars, but never past the next clip: floored to the bars that fit
         // there, or the bare gap when not even one bar does.
-        let bar = time::bars_to_ticks(1);
+        let bar = self.meter().bar_ticks();
         let raw = clip.region_length();
         let length = if self.number_of_clips() == 0 {
             raw
@@ -53,7 +56,7 @@ impl Sequencer {
 
         // Put the window start on a bar line in event space, so the clip's
         // grid (quantize, swing, the clip view) is the phrase's.
-        clip.align_window_start_to_bar();
+        clip.align_window_start_to_bar(self.meter());
         clip.nudge_cursor_to_region_start();
 
         clip.sort_events_by_tick();
@@ -82,7 +85,7 @@ impl Sequencer {
         }
 
         let capture = self.detection_capture_source();
-        let (start, end) = Self::detected_insert_window(&capture)?;
+        let (start, end) = Self::detected_insert_window(&capture, self.meter())?;
         let length = (end - start).min(room);
         let mut phrase = Self::framed(capture, start, start + length);
         phrase.crop(length);
@@ -106,10 +109,13 @@ impl Sequencer {
         }
 
         let loop_reference_length = self.loop_reference_length();
-        let (detected_start, _) = Self::detected_phrase_window(&capture, loop_reference_length);
+        let meter = self.meter();
+        let (detected_start, _) =
+            Self::detected_phrase_window(&capture, loop_reference_length, meter);
         CaptureFixture::from_capture(
             &capture,
             self.tempo_us(),
+            meter,
             loop_reference_length,
             detected_start,
         )
@@ -125,7 +131,7 @@ impl Sequencer {
         let mut capture = Clip::new();
         capture.restore_events(self.capture_clip.events().to_vec());
         // Pairs the note lengths, over the trimmed buffer only.
-        Self::trim_capture_source(&mut capture);
+        Self::trim_capture_source(&mut capture, self.meter());
         capture
     }
 
@@ -134,13 +140,14 @@ impl Sequencer {
     /// the window ending at the last `NoteOff`, as long as the played span but
     /// at most a bar, its start snapped to a phrase start. `None` on a capture
     /// without notes.
-    fn detected_insert_window(capture: &Clip) -> Option<(i32, i32)> {
+    fn detected_insert_window(capture: &Clip, meter: Meter) -> Option<(i32, i32)> {
         let (start, end) = note_tick_bounds(capture)?;
-        let length = (end - start).min(time::bars_to_ticks(1));
+        let length = (end - start).min(meter.bar_ticks());
         Some(Self::snapped_window_from_last(
             capture,
             EventType::NoteOff,
             length,
+            meter,
         ))
     }
 
@@ -149,13 +156,15 @@ impl Sequencer {
     /// last `NoteOff` plus two beats (at least a bar), placed at the cursor.
     fn build_detected_phrase_clip(&self) -> Clip {
         let capture = self.detection_capture_source();
+        let meter = self.meter();
         let (region_start_tick, end) =
-            Self::detected_phrase_window(&capture, self.loop_reference_length());
+            Self::detected_phrase_window(&capture, self.loop_reference_length(), meter);
         let maybe_default_tail_end =
             Self::phrase_end_from_last_note_off_with_tail(&capture, region_start_tick);
         let region_end_tick = Self::clamp_phrase_end_to_min_window(
             region_start_tick,
             maybe_default_tail_end.unwrap_or(end),
+            meter,
         );
 
         let mut clip = Self::framed(capture, region_start_tick, region_end_tick);
@@ -177,7 +186,7 @@ impl Sequencer {
     /// later than its own note-off, so the cutoff needs no lengths paired
     /// first; a wheel moved after the last note (a bend easing back) doesn't
     /// move it.
-    fn trim_capture_source(capture: &mut Clip) {
+    fn trim_capture_source(capture: &mut Clip, meter: Meter) {
         let Some(capture_end_tick) = capture
             .events()
             .iter()
@@ -188,7 +197,7 @@ impl Sequencer {
             return;
         };
 
-        let buffer_ticks = time::bars_to_ticks(config::CAPTURE_BUFFER_BARS);
+        let buffer_ticks = meter.bars_to_ticks(config::CAPTURE_BUFFER_BARS);
         let cutoff_tick = (capture_end_tick - buffer_ticks).max(0);
         capture.trim_before_tick(cutoff_tick);
     }
@@ -339,6 +348,35 @@ mod tests {
         assert_eq!(clip.region_length(), bar * 2);
         assert_eq!(window_note_ons(&clip), vec![0, 960, 1920, 2880, 3840, 4800]);
         assert_eq!(seq.tempo_us(), config::TEMPO_US_DEFAULT);
+    }
+
+    /// In 3/4 a later clip is whole 3/4 bars with its window on a 3/4 bar
+    /// line, and Enter fits the first clip to whole 3/4 bars.
+    #[test]
+    fn stopped_commit_and_enter_count_bars_in_the_meter() {
+        let three_four = Meter::new(3, 4).unwrap();
+        let bar = three_four.bar_ticks();
+
+        let mut seq = make_seq();
+        seq.set_meter(three_four);
+        add_clip(&mut seq, bar * 20, bar);
+        fill_capture_roughly(&mut seq, bar * 3 / 2);
+        seq.cursor_tick.store(0, Ordering::Relaxed);
+        let (_, clip) = seq.build_stopped_capture_clip().unwrap();
+        assert_eq!(clip.region_length(), bar * 2);
+        assert_eq!(clip.region().start() % bar, 0);
+
+        let mut seq = make_seq();
+        seq.set_meter(three_four);
+        seq.region_end.store(bar * 8, Ordering::Relaxed);
+        fill_capture_roughly(&mut seq, bar * 5 / 2);
+        seq.cursor_tick.store(0, Ordering::Relaxed);
+        let mut record: Record<SequencerEdit> = Record::new();
+        commit_stopped(&mut seq, &mut record);
+        fit_tempo(&mut seq, &mut record);
+        let fitted = seq.selected_clip().unwrap();
+        assert_eq!(fitted.region_length() % bar, 0, "whole 3/4 bars");
+        assert_eq!(fitted.region().start() % bar, 0, "on a 3/4 bar line");
     }
 
     /// The project's first clip keeps the exact detected window and leaves

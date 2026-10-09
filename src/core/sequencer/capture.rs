@@ -232,7 +232,10 @@ impl Sequencer {
     /// rounded up to the next bar, at least one bar.
     fn linear_content_length(&self, cursor_tick: i32) -> i32 {
         let last_on = Self::last_inserted_event_tick(self.capture_clip.events(), EventType::NoteOn);
-        time::next_bar_boundary_after(last_on - cursor_tick).max(time::bars_to_ticks(1))
+        let meter = self.meter();
+        meter
+            .next_bar_boundary_after(last_on - cursor_tick)
+            .max(meter.bar_ticks())
     }
 
     /// Converts a live MIDI capture into a finalized, clip-local form ready for
@@ -282,7 +285,7 @@ impl Sequencer {
         target: RunningCaptureTarget,
     ) -> Option<Clip> {
         let mut capture = self.capture_clip.clone();
-        let bar = time::bars_to_ticks(1);
+        let bar = self.meter().bar_ticks();
 
         let transport_loop = self
             .playback_is_looping()
@@ -425,7 +428,7 @@ mod tests {
                 CommitClipEdit, EditResult, InsertCaptureEdit, ResizeClipEdit, SequencerEdit,
             },
             sequencer::test_support::{clip_at, note_off, note_on, sequencer_with_outputs},
-            time,
+            time::{self, Meter},
         },
         metadata::clip_metadata::ClipMetadata,
         models::{
@@ -947,6 +950,22 @@ mod tests {
         let track = seq.selected_track().unwrap();
         let clip = track.clips().last().unwrap();
         assert_eq!(clip.region_length(), bar);
+    }
+
+    /// The one-bar floor is a bar of the project's meter.
+    #[test]
+    fn commit_clip_to_track_loop_disabled_floor_is_a_bar_of_the_meter() {
+        let three_four = Meter::new(3, 4).unwrap();
+        let mut seq = make_sequencer(0, three_four.bar_ticks() * 8);
+        seq.set_meter(three_four);
+        seq.loop_enabled.store(false, Ordering::Relaxed);
+
+        seq.capture_clip.add_event(note_on(100));
+        seq.capture_clip.add_event(note_off(200));
+        seq.commit_clip_to_track().unwrap();
+
+        let clip = seq.selected_track().unwrap().clips().last().unwrap();
+        assert_eq!(clip.region_length(), three_four.bar_ticks());
     }
 
     /// All NoteOn ticks of `clip`, sorted — retained pre-roll / post-window

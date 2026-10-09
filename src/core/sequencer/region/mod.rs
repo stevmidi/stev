@@ -247,7 +247,7 @@ impl Sequencer {
     /// when not even one bar does. Shared by the stopped capture commit and
     /// the clip view's `]`.
     pub(crate) fn fit_length_before_next_clip(&self, start_tick: i32, length: i32) -> i32 {
-        let bar = time::bars_to_ticks(1);
+        let bar = self.meter().bar_ticks();
         let Some(available) = self
             .selected_track()
             .and_then(|track| track.next_clip_start_after(start_tick))
@@ -279,13 +279,14 @@ impl Sequencer {
         event_tick: i32,
         whole_bars: bool,
     ) -> Option<ClipBounds> {
-        let bar = time::bars_to_ticks(1);
+        let meter = self.meter();
+        let bar = meter.bar_ticks();
         let clip = self.selected_clip()?;
         let region_start = clip.region().start();
 
         let raw = event_tick - region_start;
         let length = if whole_bars {
-            time::next_bar_boundary_after(raw - 1).max(bar)
+            meter.next_bar_boundary_after(raw - 1).max(bar)
         } else {
             raw.max(time::min_clip_length_ticks())
         };
@@ -308,10 +309,11 @@ impl Sequencer {
     /// Moves the selected clip's cursor to `target_tick` (clamped by the clip).
     /// Returns the signed distance actually moved.
     pub(crate) fn set_selected_clip_cursor_tick(&mut self, target_tick: i32) -> i32 {
+        let meter = self.meter();
         if let Some(clip) = self.selected_clip_mut() {
             let before = clip.cursor_tick();
             let delta = target_tick - before;
-            clip.nudge_cursor_by_ticks(delta);
+            clip.nudge_cursor_by_ticks(delta, meter);
             let after = clip.cursor_tick();
             after - before
         } else {

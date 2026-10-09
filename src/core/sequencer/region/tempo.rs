@@ -11,7 +11,7 @@
 //! `Clip::adjust_to_tempo`. See `040-phrase-detection.md`.
 
 use crate::core::config;
-use crate::core::time;
+use crate::core::time::{self, Meter};
 use crate::models::clip::{Clip, EventSpaceRetime};
 
 use super::Sequencer;
@@ -29,8 +29,9 @@ impl Sequencer {
     pub(in crate::core::sequencer) fn fit_first_clip_tempo(
         clip: &mut Clip,
         current_tempo: i32,
+        meter: Meter,
     ) -> Option<(i32, EventSpaceRetime)> {
-        let bar = time::bars_to_ticks(1);
+        let bar = meter.bar_ticks();
         let played = clip.region_length();
         let target_length = time::snap_to_grid(played, bar).max(bar);
 
@@ -39,12 +40,14 @@ impl Sequencer {
             return None;
         }
 
-        let retime = clip.adjust_to_tempo(next_tempo, current_tempo);
+        let retime = clip.adjust_to_tempo(next_tempo, current_tempo, meter);
 
-        Some(match Self::octave_correct_clip_tempo(clip, next_tempo) {
-            Some((octaved, octave_retime)) => (octaved, retime.then(octave_retime)),
-            None => (next_tempo, retime),
-        })
+        Some(
+            match Self::octave_correct_clip_tempo(clip, next_tempo, meter) {
+                Some((octaved, octave_retime)) => (octaved, retime.then(octave_retime)),
+                None => (next_tempo, retime),
+            },
+        )
     }
 
     /// Reinterprets an implausibly slow/fast just-detected first-clip `tempo`
@@ -57,7 +60,11 @@ impl Sequencer {
     /// out of band after it is left for the user to rescale by hand. Returns
     /// the corrected tempo and the clip's retime, `None` when `tempo` is in
     /// band.
-    fn octave_correct_clip_tempo(clip: &mut Clip, tempo: i32) -> Option<(i32, EventSpaceRetime)> {
+    fn octave_correct_clip_tempo(
+        clip: &mut Clip,
+        tempo: i32,
+        meter: Meter,
+    ) -> Option<(i32, EventSpaceRetime)> {
         let octaved = if tempo >= config::FIRST_CLIP_TEMPO_US_SLOW {
             tempo / 2
         } else if tempo <= config::FIRST_CLIP_TEMPO_US_FAST {
@@ -66,14 +73,18 @@ impl Sequencer {
             return None;
         };
 
-        Some((octaved, clip.adjust_to_tempo(octaved, tempo)))
+        Some((octaved, clip.adjust_to_tempo(octaved, tempo, meter)))
     }
 
     /// The length `⌥=`/`⌥-` stretch a clip of `length` ticks to: `direction`
     /// bars longer/shorter, never below one bar. `None` when that changes
     /// nothing (a one-bar clip can't shrink) or the clip is empty.
-    pub(in crate::core::sequencer) fn rescaled_length(length: i32, direction: i32) -> Option<i32> {
-        let bar = time::bars_to_ticks(1);
+    pub(in crate::core::sequencer) fn rescaled_length(
+        length: i32,
+        direction: i32,
+        meter: Meter,
+    ) -> Option<i32> {
+        let bar = meter.bar_ticks();
         let target = (length + direction * bar).max(bar);
         (length > 0 && target != length).then_some(target)
     }
@@ -89,18 +100,22 @@ impl Sequencer {
         clip: &mut Clip,
         current_tempo: i32,
         target_length: i32,
+        meter: Meter,
     ) -> Option<(i32, EventSpaceRetime)> {
         let current_length = clip.region_length();
         let next_tempo = time::scaled_tempo_us(current_tempo, current_length, target_length)?;
 
-        Some((next_tempo, clip.adjust_to_tempo(next_tempo, current_tempo)))
+        Some((
+            next_tempo,
+            clip.adjust_to_tempo(next_tempo, current_tempo, meter),
+        ))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::core::sequencer::test_support::{clip_at, note_off, note_on};
-    use crate::core::time;
+    use crate::core::time::{self, Meter};
     use crate::models::clip::Clip;
 
     use super::Sequencer;
@@ -113,6 +128,22 @@ mod tests {
         clip
     }
 
+    /// `⌥=`/`⌥-` step and floor in bars of the project's meter.
+    #[test]
+    fn rescaled_length_steps_in_bars_of_the_meter() {
+        let three_four = Meter::new(3, 4).unwrap();
+        let bar = three_four.bar_ticks();
+        assert_eq!(
+            Sequencer::rescaled_length(bar * 2, 1, three_four),
+            Some(bar * 3)
+        );
+        assert_eq!(
+            Sequencer::rescaled_length(bar * 2 + 100, -1, three_four),
+            Some(bar + 100)
+        );
+        assert_eq!(Sequencer::rescaled_length(bar, -1, three_four), None);
+    }
+
     /// A fitted tempo at/below ~50 BPM is octaved up: tempo ×2, clip length
     /// ×2 (the automatic `⌥=`).
     #[test]
@@ -120,9 +151,13 @@ mod tests {
         let bar = time::bars_to_ticks(1);
         let mut clip = first_clip(bar);
 
-        let tempo = Sequencer::octave_correct_clip_tempo(&mut clip, time::bpm_to_tempo_us(40))
-            .unwrap()
-            .0;
+        let tempo = Sequencer::octave_correct_clip_tempo(
+            &mut clip,
+            time::bpm_to_tempo_us(40),
+            Meter::FOUR_FOUR,
+        )
+        .unwrap()
+        .0;
 
         let bpm = time::tempo_us_to_bpm(tempo);
         assert!((bpm - 80.0).abs() < 0.5, "40 -> 80 BPM, got {bpm}");
@@ -135,9 +170,13 @@ mod tests {
         let bar = time::bars_to_ticks(1);
         let mut clip = first_clip(bar * 2);
 
-        let tempo = Sequencer::octave_correct_clip_tempo(&mut clip, time::bpm_to_tempo_us(160))
-            .unwrap()
-            .0;
+        let tempo = Sequencer::octave_correct_clip_tempo(
+            &mut clip,
+            time::bpm_to_tempo_us(160),
+            Meter::FOUR_FOUR,
+        )
+        .unwrap()
+        .0;
 
         let bpm = time::tempo_us_to_bpm(tempo);
         assert!((bpm - 80.0).abs() < 0.5, "160 -> 80 BPM, got {bpm}");
@@ -151,7 +190,11 @@ mod tests {
         let mut clip = first_clip(bar);
 
         assert_eq!(
-            Sequencer::octave_correct_clip_tempo(&mut clip, time::bpm_to_tempo_us(100)),
+            Sequencer::octave_correct_clip_tempo(
+                &mut clip,
+                time::bpm_to_tempo_us(100),
+                Meter::FOUR_FOUR
+            ),
             None
         );
         assert_eq!(clip.region_length(), bar);
@@ -162,9 +205,13 @@ mod tests {
     fn octave_correct_is_a_single_step() {
         let mut clip = first_clip(time::bars_to_ticks(1));
 
-        let tempo = Sequencer::octave_correct_clip_tempo(&mut clip, time::bpm_to_tempo_us(30))
-            .unwrap()
-            .0;
+        let tempo = Sequencer::octave_correct_clip_tempo(
+            &mut clip,
+            time::bpm_to_tempo_us(30),
+            Meter::FOUR_FOUR,
+        )
+        .unwrap()
+        .0;
 
         let bpm = time::tempo_us_to_bpm(tempo);
         assert!((bpm - 60.0).abs() < 0.5, "one step: 30 -> 60, got {bpm}");

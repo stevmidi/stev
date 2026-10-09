@@ -40,7 +40,7 @@ impl EventHandlers {
 
                 sequencer.performance_lane_mut().begin_live_trigger(note);
 
-                let target_tick = time::bars_to_ticks(bar_index);
+                let target_tick = sequencer.meter().bars_to_ticks(bar_index);
                 transport.suspend_loop_wrap();
                 if !transport.is_running() {
                     transport.start();

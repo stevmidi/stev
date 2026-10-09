@@ -17,7 +17,7 @@
 use crate::{
     core::{
         config::{PHRASE_DETECTION_WINDOW_BARS, PHRASE_LAST_TOKEN_REFINE_MIN_BARS},
-        time,
+        time::{self, Meter},
     },
     models::{
         clip::Clip,
@@ -65,16 +65,16 @@ impl Sequencer {
     }
 
     /// Start of the phrase-analysis window: `PHRASE_DETECTION_WINDOW_BARS` before the window end, floored at 0.
-    fn phrase_token_window_start_tick(clip: &Clip) -> i32 {
-        let window_ticks = time::bars_to_ticks(PHRASE_DETECTION_WINDOW_BARS);
+    fn phrase_token_window_start_tick(clip: &Clip, meter: Meter) -> i32 {
+        let window_ticks = meter.bars_to_ticks(PHRASE_DETECTION_WINDOW_BARS);
         (Self::phrase_token_window_end_tick(clip) - window_ticks).max(0)
     }
 
     /// The `NoteOn` events inside the phrase-analysis window, anchored to the capture-buffer end so a held final note can't drag older material in.
-    fn note_on_events_in_window(clip: &Clip) -> Vec<Event> {
+    fn note_on_events_in_window(clip: &Clip, meter: Meter) -> Vec<Event> {
         // Anchor the analysis window to the actual capture-buffer end so a held
         // final note does not drag older phrase material back into tokenization.
-        let window_start = Self::phrase_token_window_start_tick(clip);
+        let window_start = Self::phrase_token_window_start_tick(clip, meter);
 
         Self::all_note_on_events(clip)
             .into_iter()
@@ -85,8 +85,8 @@ impl Sequencer {
     /// Returns the deduplicated, sorted NoteOn ticks within the last
     /// `PHRASE_DETECTION_WINDOW_BARS` of the clip. Shared by phrase-token
     /// detection and `region_start` snap.
-    fn note_on_ticks_in_window(clip: &Clip) -> Vec<i32> {
-        Self::note_on_events_in_window(clip)
+    fn note_on_ticks_in_window(clip: &Clip, meter: Meter) -> Vec<i32> {
+        Self::note_on_events_in_window(clip, meter)
             .into_iter()
             .map(|event| event.tick())
             .collect()
@@ -137,13 +137,13 @@ impl Sequencer {
     }
 
     /// Shortest span a detected token is allowed to cover.
-    fn phrase_min_token_length_ticks() -> i32 {
-        time::bars_to_ticks(1) + time::beats_to_ticks(1.0)
+    fn phrase_min_token_length_ticks(meter: Meter) -> i32 {
+        meter.bar_ticks() + time::beats_to_ticks(1.0)
     }
 
     /// `PHRASE_LAST_TOKEN_REFINE_MIN_BARS` in ticks — the last token must be at least this long before the extra split pass runs.
-    fn phrase_last_token_refine_min_ticks() -> i32 {
-        time::bars_to_ticks(PHRASE_LAST_TOKEN_REFINE_MIN_BARS)
+    fn phrase_last_token_refine_min_ticks(meter: Meter) -> i32 {
+        meter.bars_to_ticks(PHRASE_LAST_TOKEN_REFINE_MIN_BARS)
     }
 
     /// Total score at which a boundary candidate is accepted.
@@ -206,10 +206,14 @@ impl Sequencer {
     }
 
     /// Combined score for a candidate: silence + metric position + span shape, relative to `token_start`.
-    fn phrase_boundary_score(candidate: PhraseBoundaryCandidate, token_start: i32) -> i32 {
+    fn phrase_boundary_score(
+        candidate: PhraseBoundaryCandidate,
+        token_start: i32,
+        meter: Meter,
+    ) -> i32 {
         Self::silence_boundary_score(candidate)
-            + Self::metric_boundary_score(candidate.tick)
-            + Self::span_boundary_score(candidate.tick - token_start)
+            + Self::metric_boundary_score(candidate.tick, meter)
+            + Self::span_boundary_score(candidate.tick - token_start, meter)
     }
 
     /// Score contribution from how long the silence before the candidate is.
@@ -236,8 +240,8 @@ impl Sequencer {
     }
 
     /// Score contribution from how near the candidate sits to a beat or bar line.
-    fn metric_boundary_score(tick: i32) -> i32 {
-        let bar_ticks = time::bars_to_ticks(1);
+    fn metric_boundary_score(tick: i32, meter: Meter) -> i32 {
+        let bar_ticks = meter.bar_ticks();
         let beat_ticks = time::beats_to_ticks(1.0);
         let half_bar_ticks = bar_ticks / 2;
         let tolerance_ticks = Self::metric_tolerance_ticks();
@@ -264,12 +268,12 @@ impl Sequencer {
     }
 
     /// Score contribution from whether the resulting phrase span is a plausible length.
-    fn span_boundary_score(span_ticks: i32) -> i32 {
+    fn span_boundary_score(span_ticks: i32, meter: Meter) -> i32 {
         if span_ticks < Self::phrase_boundary_min_span_ticks() {
             return -30;
         }
 
-        let bar_ticks = time::bars_to_ticks(1);
+        let bar_ticks = meter.bar_ticks();
         let half_bar_ticks = bar_ticks / 2;
         let tolerance_ticks = Self::metric_tolerance_ticks();
         let preferred_spans = [bar_ticks, bar_ticks * 2, bar_ticks * 4];
@@ -290,8 +294,12 @@ impl Sequencer {
     }
 
     /// Whether a candidate's combined score clears [`phrase_boundary_accept_score`](Self::phrase_boundary_accept_score).
-    fn phrase_boundary_is_accepted(candidate: PhraseBoundaryCandidate, token_start: i32) -> bool {
-        let score = Self::phrase_boundary_score(candidate, token_start);
+    fn phrase_boundary_is_accepted(
+        candidate: PhraseBoundaryCandidate,
+        token_start: i32,
+        meter: Meter,
+    ) -> bool {
+        let score = Self::phrase_boundary_score(candidate, token_start, meter);
         if score < Self::phrase_boundary_accept_score() {
             return false;
         }
@@ -302,19 +310,23 @@ impl Sequencer {
     }
 
     /// Token-start ticks for `note_on_events`: the first note, then each accepted boundary.
-    fn phrase_token_starts_from_events(clip: &Clip, note_on_events: &[Event]) -> Vec<i32> {
+    fn phrase_token_starts_from_events(
+        clip: &Clip,
+        note_on_events: &[Event],
+        meter: Meter,
+    ) -> Vec<i32> {
         let Some(first) = note_on_events.first() else {
             return Vec::new();
         };
 
-        let window_start = Self::phrase_token_window_start_tick(clip);
+        let window_start = Self::phrase_token_window_start_tick(clip, meter);
         let first_start = Self::backtrack_token_start(clip, first.tick(), window_start);
         let mut token_starts = vec![first_start];
         let mut token_start = first_start;
 
         for candidate in Self::phrase_boundary_candidates(note_on_events) {
             if candidate.tick > token_start
-                && Self::phrase_boundary_is_accepted(candidate, token_start)
+                && Self::phrase_boundary_is_accepted(candidate, token_start, meter)
             {
                 token_starts.push(candidate.tick);
                 token_start = candidate.tick;
@@ -325,7 +337,11 @@ impl Sequencer {
     }
 
     /// If the final token is long enough, the best extra split point inside it, else `None`.
-    fn refine_last_phrase_token_start(clip: &Clip, token_starts: &[i32]) -> Option<i32> {
+    fn refine_last_phrase_token_start(
+        clip: &Clip,
+        token_starts: &[i32],
+        meter: Meter,
+    ) -> Option<i32> {
         let &last_token_start = token_starts.last()?;
         let last_token_events: Vec<Event> = Self::all_note_on_events(clip)
             .into_iter()
@@ -337,21 +353,27 @@ impl Sequencer {
         }
 
         let last_token_span = last_token_events.last()?.tick() - last_token_start;
-        if last_token_span < Self::phrase_last_token_refine_min_ticks() {
+        if last_token_span < Self::phrase_last_token_refine_min_ticks(meter) {
             return None;
         }
 
         Self::phrase_boundary_candidates(&last_token_events)
             .into_iter()
             .rev()
-            .find(|&candidate| Self::phrase_boundary_is_accepted(candidate, last_token_start))
+            .find(|&candidate| {
+                Self::phrase_boundary_is_accepted(candidate, last_token_start, meter)
+            })
             .map(|candidate| candidate.tick)
     }
 
     /// Appends [`refine_last_phrase_token_start`](Self::refine_last_phrase_token_start)'s split to `token_starts` when the last token qualifies.
-    fn refine_last_phrase_token_if_needed(clip: &Clip, mut token_starts: Vec<i32>) -> Vec<i32> {
+    fn refine_last_phrase_token_if_needed(
+        clip: &Clip,
+        mut token_starts: Vec<i32>,
+        meter: Meter,
+    ) -> Vec<i32> {
         if let Some(refined_last_token_start) =
-            Self::refine_last_phrase_token_start(clip, &token_starts)
+            Self::refine_last_phrase_token_start(clip, &token_starts, meter)
             && token_starts.last().copied() != Some(refined_last_token_start)
         {
             token_starts.push(refined_last_token_start);
@@ -376,11 +398,11 @@ impl Sequencer {
     ///
     /// With no accepted boundaries, returns a single token start or an empty
     /// vector when the clip has no NoteOn events.
-    pub(in crate::core::sequencer) fn phrase_token_starts(clip: &Clip) -> Vec<i32> {
-        let note_on_events = Self::note_on_events_in_window(clip);
-        let token_starts = Self::phrase_token_starts_from_events(clip, &note_on_events);
+    pub(in crate::core::sequencer) fn phrase_token_starts(clip: &Clip, meter: Meter) -> Vec<i32> {
+        let note_on_events = Self::note_on_events_in_window(clip, meter);
+        let token_starts = Self::phrase_token_starts_from_events(clip, &note_on_events, meter);
 
-        Self::refine_last_phrase_token_if_needed(clip, token_starts)
+        Self::refine_last_phrase_token_if_needed(clip, token_starts, meter)
     }
 
     /// Where a new clip framed from `capture` (sorted, lengths calculated,
@@ -392,8 +414,9 @@ impl Sequencer {
     pub(in crate::core::sequencer) fn detected_phrase_window(
         capture: &Clip,
         loop_reference_length: i32,
+        meter: Meter,
     ) -> (i32, i32) {
-        Self::snapped_window_from_last(capture, EventType::NoteOn, loop_reference_length)
+        Self::snapped_window_from_last(capture, EventType::NoteOn, loop_reference_length, meter)
     }
 
     /// The `(start, end)` window of `length` ending at `capture`'s last event
@@ -404,10 +427,14 @@ impl Sequencer {
         capture: &Clip,
         event_type: EventType,
         length: i32,
+        meter: Meter,
     ) -> (i32, i32) {
         let (start, end) =
             Self::calculate_phrase_window_from_last_note(capture, event_type, length);
-        (Self::snap_region_start_to_note_on(capture, start), end)
+        (
+            Self::snap_region_start_to_note_on(capture, start, meter),
+            end,
+        )
     }
 
     /// Snaps `region_start` to the selected phrase-token start within the last
@@ -429,14 +456,15 @@ impl Sequencer {
     pub(in crate::core::sequencer) fn snap_region_start_to_note_on(
         clip: &Clip,
         region_start: i32,
+        meter: Meter,
     ) -> i32 {
-        let note_on_ticks = Self::note_on_ticks_in_window(clip);
+        let note_on_ticks = Self::note_on_ticks_in_window(clip, meter);
         let Some(&last_tick) = note_on_ticks.last() else {
             return region_start;
         };
 
         // Never empty here: the window's first note-on opens a token.
-        let starts = Self::phrase_token_starts(clip);
+        let starts = Self::phrase_token_starts(clip, meter);
         let mut candidates = match starts.as_slice() {
             [] => return region_start,
             [only] => return *only,
@@ -478,7 +506,7 @@ impl Sequencer {
                     .copied()
                     .find(|&next_start| next_start > start)
                     .unwrap_or(last_tick);
-                next_boundary - start >= Self::phrase_min_token_length_ticks()
+                next_boundary - start >= Self::phrase_min_token_length_ticks(meter)
             })
             .collect();
 
@@ -524,6 +552,25 @@ mod tests {
 
     const BAR: i32 = 3840;
 
+    /// A boundary on a 3/4 bar line scores as a bar line in 3/4, but only as
+    /// a beat in 4/4.
+    #[test]
+    fn metric_score_reads_bar_lines_of_the_meter() {
+        let three_four = Meter::new(3, 4).unwrap();
+        let tick = three_four.bar_ticks();
+        assert_eq!(Sequencer::metric_boundary_score(tick, three_four), 25);
+        assert_eq!(Sequencer::metric_boundary_score(tick, Meter::FOUR_FOUR), 10);
+    }
+
+    /// A phrase one 6/8 bar long is a preferred span in 6/8, not in 4/4.
+    #[test]
+    fn span_score_prefers_whole_bars_of_the_meter() {
+        let six_eight = Meter::new(6, 8).unwrap();
+        let span = six_eight.bar_ticks();
+        assert_eq!(Sequencer::span_boundary_score(span, six_eight), 20);
+        assert!(Sequencer::span_boundary_score(span, Meter::FOUR_FOUR) < 20);
+    }
+
     #[test]
     fn snap_uses_first_note_of_last_token() {
         // Three tokens separated by ≥ 1.5-beat gaps. Should snap to the first note of
@@ -535,7 +582,7 @@ mod tests {
         let token_c = vec![token_c_start, token_c_start + 240, token_c_start + 480];
         let ticks: Vec<i32> = token_a.into_iter().chain(token_b).chain(token_c).collect();
         let clip = clip_with_note_ons(&ticks);
-        let result = Sequencer::snap_region_start_to_note_on(&clip, 0);
+        let result = Sequencer::snap_region_start_to_note_on(&clip, 0, Meter::FOUR_FOUR);
         assert_eq!(result, token_c_start);
     }
 
@@ -550,7 +597,7 @@ mod tests {
             .chain(std::iter::once(downbeat))
             .collect();
         let clip = clip_with_note_ons(&ticks);
-        let result = Sequencer::snap_region_start_to_note_on(&clip, 0);
+        let result = Sequencer::snap_region_start_to_note_on(&clip, 0, Meter::FOUR_FOUR);
         assert_ne!(result, downbeat);
         // After the marker token is removed, the phrase start is the only usable
         // candidate left.
@@ -571,7 +618,7 @@ mod tests {
             .chain(std::iter::once(downbeat))
             .collect();
         let clip = clip_with_note_ons(&ticks);
-        let result = Sequencer::snap_region_start_to_note_on(&clip, 0);
+        let result = Sequencer::snap_region_start_to_note_on(&clip, 0, Meter::FOUR_FOUR);
         assert_eq!(result, token_b_start);
         assert_ne!(result, downbeat);
     }
@@ -581,14 +628,14 @@ mod tests {
         // All notes stay in one token. Keep the token start instead of trimming inward.
         let ticks = vec![0, 240, 480, 720, 960];
         let clip = clip_with_note_ons(&ticks);
-        let result = Sequencer::snap_region_start_to_note_on(&clip, 500);
+        let result = Sequencer::snap_region_start_to_note_on(&clip, 500, Meter::FOUR_FOUR);
         assert_eq!(result, 0);
     }
 
     #[test]
     fn snap_no_events_returns_region_start() {
         let clip = Clip::new();
-        let result = Sequencer::snap_region_start_to_note_on(&clip, 1234);
+        let result = Sequencer::snap_region_start_to_note_on(&clip, 1234, Meter::FOUR_FOUR);
         assert_eq!(result, 1234);
     }
 
@@ -602,7 +649,7 @@ mod tests {
         let phrase_b: Vec<i32> = (0..6).map(|i| phrase_b_start + i * 200).collect();
         let ticks: Vec<i32> = phrase_a.into_iter().chain(phrase_b).collect();
         let clip = clip_with_note_ons(&ticks);
-        let result = Sequencer::snap_region_start_to_note_on(&clip, 0);
+        let result = Sequencer::snap_region_start_to_note_on(&clip, 0, Meter::FOUR_FOUR);
         assert_eq!(result, phrase_b_start);
     }
 
@@ -621,7 +668,7 @@ mod tests {
             .chain(std::iter::once(downbeat))
             .collect();
         let clip = clip_with_note_ons(&ticks);
-        let result = Sequencer::snap_region_start_to_note_on(&clip, 0);
+        let result = Sequencer::snap_region_start_to_note_on(&clip, 0, Meter::FOUR_FOUR);
         assert_eq!(result, phrase_b_start);
         assert_ne!(result, downbeat);
     }
@@ -641,7 +688,7 @@ mod tests {
             .chain(phrase_c)
             .collect();
         let clip = clip_with_note_ons(&ticks);
-        let result = Sequencer::snap_region_start_to_note_on(&clip, 0);
+        let result = Sequencer::snap_region_start_to_note_on(&clip, 0, Meter::FOUR_FOUR);
         assert_eq!(result, phrase_c_start);
     }
 
@@ -650,7 +697,7 @@ mod tests {
         // No outlier gap and no phrase-shape cue — keep the first token start.
         let ticks: Vec<i32> = (0..10).map(|i| i * 240).collect();
         let clip = clip_with_note_ons(&ticks);
-        let result = Sequencer::snap_region_start_to_note_on(&clip, 1000);
+        let result = Sequencer::snap_region_start_to_note_on(&clip, 1000, Meter::FOUR_FOUR);
         assert_eq!(result, 0);
     }
 
@@ -670,14 +717,14 @@ mod tests {
             ])
             .collect();
         let clip = clip_with_note_ons(&ticks);
-        let starts = Sequencer::phrase_token_starts(&clip);
+        let starts = Sequencer::phrase_token_starts(&clip, Meter::FOUR_FOUR);
         assert_eq!(starts, vec![token_a_start, token_b_start, token_c_start]);
     }
 
     #[test]
     fn phrase_token_starts_empty_for_no_events() {
         let clip = Clip::new();
-        let starts = Sequencer::phrase_token_starts(&clip);
+        let starts = Sequencer::phrase_token_starts(&clip, Meter::FOUR_FOUR);
         assert!(starts.is_empty());
     }
 
@@ -686,7 +733,7 @@ mod tests {
         // No qualifying gaps — returns just the first note.
         let ticks = vec![100, 240, 480, 720];
         let clip = clip_with_note_ons(&ticks);
-        let starts = Sequencer::phrase_token_starts(&clip);
+        let starts = Sequencer::phrase_token_starts(&clip, Meter::FOUR_FOUR);
         assert_eq!(starts, vec![100]);
     }
 
@@ -699,7 +746,7 @@ mod tests {
         let phrase_b: Vec<i32> = (0..5).map(|i| phrase_b_start + i * 200).collect();
         let ticks: Vec<i32> = phrase_a.into_iter().chain(phrase_b).collect();
         let clip = clip_with_note_ons(&ticks);
-        let starts = Sequencer::phrase_token_starts(&clip);
+        let starts = Sequencer::phrase_token_starts(&clip, Meter::FOUR_FOUR);
         assert_eq!(starts, vec![0, phrase_b_start]);
     }
 
@@ -717,7 +764,7 @@ mod tests {
             .collect();
 
         let clip = clip_with_note_ons(&ticks);
-        let starts = Sequencer::phrase_token_starts(&clip);
+        let starts = Sequencer::phrase_token_starts(&clip, Meter::FOUR_FOUR);
 
         assert_eq!(starts, vec![0, phrase_b_start, phrase_c_start]);
     }
@@ -736,7 +783,7 @@ mod tests {
             .collect();
 
         let clip = clip_with_note_ons(&ticks);
-        let starts = Sequencer::phrase_token_starts(&clip);
+        let starts = Sequencer::phrase_token_starts(&clip, Meter::FOUR_FOUR);
 
         assert_eq!(starts, vec![0, prominent_gap_start]);
     }
@@ -750,7 +797,7 @@ mod tests {
         let ticks: Vec<i32> = token_a.into_iter().chain(token_b).collect();
         let clip = clip_with_note_ons(&ticks);
 
-        let starts = Sequencer::phrase_token_starts(&clip);
+        let starts = Sequencer::phrase_token_starts(&clip, Meter::FOUR_FOUR);
         let window_ticks = time::bars_to_ticks(PHRASE_DETECTION_WINDOW_BARS);
         let last_tick = *ticks.iter().max().unwrap();
 
@@ -769,7 +816,7 @@ mod tests {
         let ticks: Vec<i32> = token_a.into_iter().chain(token_b).chain(token_c).collect();
 
         let clip = clip_with_note_ons(&ticks);
-        let starts = Sequencer::phrase_token_starts(&clip);
+        let starts = Sequencer::phrase_token_starts(&clip, Meter::FOUR_FOUR);
 
         assert_eq!(starts, vec![0, token_b_start, refined_last_start]);
     }
@@ -788,7 +835,7 @@ mod tests {
         let ticks: Vec<i32> = token_a.into_iter().chain(token_b).chain(token_c).collect();
 
         let clip = clip_with_note_ons(&ticks);
-        let starts = Sequencer::phrase_token_starts(&clip);
+        let starts = Sequencer::phrase_token_starts(&clip, Meter::FOUR_FOUR);
 
         assert_eq!(starts, vec![0, token_b_start]);
     }
@@ -804,7 +851,7 @@ mod tests {
         ];
 
         let clip = clip_with_note_pairs(&pairs);
-        let starts = Sequencer::phrase_token_starts(&clip);
+        let starts = Sequencer::phrase_token_starts(&clip, Meter::FOUR_FOUR);
 
         assert_eq!(starts, vec![0, 4_200]);
     }
@@ -824,7 +871,7 @@ mod tests {
         ];
 
         let clip = clip_with_note_pairs(&pairs);
-        let starts = Sequencer::phrase_token_starts(&clip);
+        let starts = Sequencer::phrase_token_starts(&clip, Meter::FOUR_FOUR);
 
         assert_eq!(starts, vec![100]);
     }
@@ -849,7 +896,7 @@ mod tests {
         assert!(current_phrase_start >= window_start);
 
         let clip = clip_with_note_pairs(&pairs);
-        let starts = Sequencer::phrase_token_starts(&clip);
+        let starts = Sequencer::phrase_token_starts(&clip, Meter::FOUR_FOUR);
 
         assert_eq!(starts, vec![current_phrase_start, held_marker_start]);
     }
@@ -871,7 +918,7 @@ mod tests {
             .collect();
         let clip = clip_with_note_ons(&ticks);
 
-        let result = Sequencer::snap_region_start_to_note_on(&clip, 5800);
+        let result = Sequencer::snap_region_start_to_note_on(&clip, 5800, Meter::FOUR_FOUR);
 
         assert_eq!(result, token_c_start);
     }
@@ -893,7 +940,7 @@ mod tests {
             .collect();
         let clip = clip_with_note_ons(&ticks);
 
-        let result = Sequencer::snap_region_start_to_note_on(&clip, 7000);
+        let result = Sequencer::snap_region_start_to_note_on(&clip, 7000, Meter::FOUR_FOUR);
 
         assert_eq!(result, token_c_start);
     }
@@ -913,7 +960,11 @@ mod tests {
         ];
         let clip = clip_with_note_pairs(&pairs);
 
-        let result = Sequencer::snap_region_start_to_note_on(&clip, held_marker_start - BAR * 4);
+        let result = Sequencer::snap_region_start_to_note_on(
+            &clip,
+            held_marker_start - BAR * 4,
+            Meter::FOUR_FOUR,
+        );
 
         assert_eq!(result, current_phrase_start);
     }

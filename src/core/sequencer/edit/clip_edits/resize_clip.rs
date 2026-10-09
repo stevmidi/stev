@@ -117,7 +117,7 @@ mod tests {
 
     use crate::core::sequencer::SequencerEdit;
 
-    use crate::core::time;
+    use crate::core::time::{self, Meter};
     use crate::models::clip::{Clip, ClipEdge};
     use crate::models::event::Event;
 
@@ -250,6 +250,20 @@ mod tests {
             .selected_clip_end_marker_at(bar * 10, true)
             .unwrap();
         assert_eq!(after.region_end - after.region_start, bar * 6);
+    }
+
+    #[test]
+    fn end_marker_rounds_up_to_whole_bars_of_the_meter() {
+        let sequencer = sequencer_with_clip();
+        let seven_eight = Meter::new(7, 8).unwrap();
+        sequencer.set_meter(seven_eight);
+        let bar = seven_eight.bar_ticks();
+        let window_start = sequencer.selected_clip().unwrap().region().start();
+
+        let after = sequencer
+            .selected_clip_end_marker_at(window_start + bar * 24 / 10, true)
+            .unwrap();
+        assert_eq!(after.region_end - after.region_start, bar * 3);
     }
 
     /// In the arranger `[`/`]` act on the clip under the cursor, else the

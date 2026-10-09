@@ -37,7 +37,7 @@ impl PasteClipsEdit {
 mod tests {
     use crate::core::sequencer::edit::EditResult;
     use crate::core::sequencer::test_support::{clip_at, test_sequencer};
-    use crate::core::time::{PPQN, bars_to_ticks};
+    use crate::core::time::{Meter, PPQN, bars_to_ticks};
     use crate::models::event::Event;
 
     use super::*;
@@ -48,7 +48,7 @@ mod tests {
             Event::new(0, 0, vec![0x90, 60, 100]),
             Event::new(PPQN, 0, vec![0x80, 60, 0]),
         ];
-        Clip::imported(events, 0).unwrap()
+        Clip::imported(events, 0, Meter::FOUR_FOUR).unwrap()
     }
 
     fn spans(sequencer: &Sequencer, track_idx: usize) -> Vec<(i32, i32)> {

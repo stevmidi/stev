@@ -9,7 +9,6 @@
 
 use uuid::Uuid;
 
-use crate::core::time;
 use crate::metadata::clip_metadata::ClipMetadata;
 use crate::models::{
     clip::{Clip, ClipBounds, EventSpaceRetime},
@@ -91,7 +90,7 @@ impl RetimeClipEdit {
             .iter()
             .enumerate()
             .find_map(|(idx, track)| track.clips().first().map(|clip| (idx, clip)))?;
-        let bar = time::bars_to_ticks(1);
+        let bar = sequencer.meter().bar_ticks();
         if clip.region_length() % bar == 0 && clip.region().start() % bar == 0 {
             return None;
         }
@@ -104,7 +103,8 @@ impl RetimeClipEdit {
     pub(crate) fn rescale_selected(sequencer: &Sequencer, direction: i32) -> Option<Self> {
         let track_idx = sequencer.selected_track_index()?;
         let clip = sequencer.selected_clip()?;
-        let target_length = Sequencer::rescaled_length(clip.region_length(), direction)?;
+        let target_length =
+            Sequencer::rescaled_length(clip.region_length(), direction, sequencer.meter())?;
 
         Some(Self::new(
             sequencer,
@@ -144,16 +144,17 @@ impl RetimeClipEdit {
         }
 
         let current_tempo = sequencer.tempo_us();
+        let meter = sequencer.meter();
         let Some((after, metadata)) =
             sequencer.edit_clip_events(self.track_idx, self.clip_id, |clip| {
                 let (tempo_us, retime) = match self.retime_kind {
-                    Retime::FitTempo => Sequencer::fit_first_clip_tempo(clip, current_tempo),
+                    Retime::FitTempo => Sequencer::fit_first_clip_tempo(clip, current_tempo, meter),
                     Retime::Rescale(target_length) => {
-                        Sequencer::rescale_clip_tempo(clip, current_tempo, target_length)
+                        Sequencer::rescale_clip_tempo(clip, current_tempo, target_length, meter)
                     }
                 }
                 .unwrap_or((current_tempo, EventSpaceRetime::IDENTITY));
-                self.retime = retime.then(clip.align_window_start_to_bar());
+                self.retime = retime.then(clip.align_window_start_to_bar(meter));
                 let after = RetimedState {
                     bounds: clip.bounds(),
                     events: clip.events().to_vec(),

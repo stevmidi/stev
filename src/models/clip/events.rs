@@ -15,7 +15,7 @@
 //! Selected-event editing is in `edits.rs`; quantize and swing detection in
 //! `quantize.rs`.
 
-use crate::core::time;
+use crate::core::time::Meter;
 use crate::models::{
     event::{Event, EventType},
     wheels::{NEUTRAL_WHEELS, WheelValues, apply_wheel_move},
@@ -168,13 +168,13 @@ impl Clip {
     }
 
     /// Shifts the event space (see [`shift_event_space`](Self::shift_event_space))
-    /// so the window starts on the next bar line at or after where it starts
-    /// now — the grid a crop's rebase to 0 used to give quantize, swing and
+    /// so the window starts on the next bar line of `meter` at or after where
+    /// it starts now — the grid a crop's rebase to 0 used to give quantize, swing and
     /// the clip view, kept without dropping what lies outside the window.
     /// Rounding up keeps every tick `>= 0`. Returns the shift as a retime.
-    pub(crate) fn align_window_start_to_bar(&mut self) -> EventSpaceRetime {
+    pub(crate) fn align_window_start_to_bar(&mut self, meter: Meter) -> EventSpaceRetime {
         let region_start = self.region.start();
-        let shift = time::next_bar_boundary_after(region_start - 1) - region_start;
+        let shift = meter.next_bar_boundary_after(region_start - 1) - region_start;
         self.shift_event_space(shift);
         EventSpaceRetime {
             scale: 1.0,
@@ -319,7 +319,7 @@ impl Clip {
 #[cfg(test)]
 mod tests {
     use crate::{
-        core::time,
+        core::time::{self, Meter},
         models::{
             clip::Clip,
             event::{Event, EventType},
@@ -368,13 +368,22 @@ mod tests {
         let bar = time::bars_to_ticks(1);
         let mut clip = clip_with_region(bar + 100, bar * 3);
         clip.add_event(on(50, 60));
-        clip.align_window_start_to_bar();
+        clip.align_window_start_to_bar(Meter::FOUR_FOUR);
         assert_eq!(clip.region().start(), bar * 2);
         assert_eq!(clip.region_length(), bar * 2 - 100, "length unchanged");
         assert_eq!(clip.events()[0].tick(), 50 + bar - 100);
 
-        clip.align_window_start_to_bar();
+        clip.align_window_start_to_bar(Meter::FOUR_FOUR);
         assert_eq!(clip.region().start(), bar * 2, "already aligned: no-op");
+    }
+
+    #[test]
+    fn align_window_start_to_bar_uses_the_meters_bar_lines() {
+        let three_four = Meter::new(3, 4).unwrap();
+        let bar = three_four.bar_ticks();
+        let mut clip = clip_with_region(bar + 100, bar * 3);
+        clip.align_window_start_to_bar(three_four);
+        assert_eq!(clip.region().start(), bar * 2);
     }
 
     // --- crop ---

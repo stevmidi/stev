@@ -27,7 +27,7 @@ use crate::{
         metronome::Metronome,
         note_logger::NoteLoggerCommand,
         sequencer::{Sequencer, SequencerCommand},
-        time::{self, sixteenth_straight_ticks},
+        time::sixteenth_straight_ticks,
         transport::{Transport, TransportCommand, TransportEvent},
         view_state::{Pane, ViewState},
     },

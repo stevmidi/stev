@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(test)]
 use std::path::Path;
 
+use crate::core::time::Meter;
 use crate::models::{clip::Clip, event::EventType};
 
 #[cfg(test)]
@@ -39,6 +40,10 @@ pub(crate) struct CaptureFixture {
     pub(crate) description: String,
     /// Tempo at capture time, µs per quarter note.
     pub(crate) tempo_us: i32,
+    /// The project's meter at capture time, `[numerator, denominator]`.
+    /// Absent in fixtures recorded before time signatures: 4/4.
+    #[serde(default = "four_four")]
+    pub(crate) meter: [u8; 2],
     /// `Sequencer::loop_reference_length` at capture time — the detection
     /// window's raw length.
     pub(crate) loop_reference_length: i32,
@@ -50,12 +55,18 @@ pub(crate) struct CaptureFixture {
     pub(crate) notes: Vec<FixtureNote>,
 }
 
+/// The meter of a fixture recorded before time signatures.
+fn four_four() -> [u8; 2] {
+    [4, 4]
+}
+
 impl CaptureFixture {
     /// Snapshots `capture` (sorted, lengths calculated, trimmed to the
     /// buffer) with the start the detection picked from it.
     pub(crate) fn from_capture(
         capture: &Clip,
         tempo_us: i32,
+        meter: Meter,
         loop_reference_length: i32,
         detected_start: i32,
     ) -> Self {
@@ -75,6 +86,7 @@ impl CaptureFixture {
         Self {
             description: String::new(),
             tempo_us,
+            meter: [meter.numerator(), meter.denominator()],
             loop_reference_length,
             detected_start,
             picked_start: detected_start,
@@ -129,6 +141,12 @@ impl CaptureFixture {
             }
         }
         Ok(out)
+    }
+
+    /// The meter the take was played in; an unsupported one reads as 4/4.
+    #[cfg(test)]
+    pub(crate) fn meter(&self) -> Meter {
+        Meter::new(self.meter[0], self.meter[1]).unwrap_or(Meter::FOUR_FOUR)
     }
 
     /// The take as a capture clip: note pairs, sorted, lengths calculated —
@@ -194,6 +212,7 @@ mod tests {
             let (start, _) = Sequencer::detected_phrase_window(
                 &fixture.to_clip(),
                 fixture.loop_reference_length,
+                fixture.meter(),
             );
             assert_eq!(start, fixture.picked_start, "{}", path.display());
         }
@@ -279,13 +298,14 @@ mod tests {
         let fixture = CaptureFixture {
             description: String::new(),
             tempo_us: 500_000,
+            meter: [4, 4],
             loop_reference_length: 7680,
             detected_start: 960,
             picked_start: 960,
             notes: vec![FixtureNote(0, 400, 60, 100), FixtureNote(960, 200, 62, 90)],
         };
         let clip = fixture.to_clip();
-        let again = CaptureFixture::from_capture(&clip, 500_000, 7680, 960);
+        let again = CaptureFixture::from_capture(&clip, 500_000, Meter::FOUR_FOUR, 7680, 960);
         assert_eq!(again.notes, fixture.notes);
 
         let json = fixture.to_json().unwrap();
@@ -302,6 +322,7 @@ mod tests {
         let fixture = CaptureFixture {
             description: String::new(),
             tempo_us: 500_000,
+            meter: [4, 4],
             loop_reference_length: 7680,
             detected_start: 1000,
             picked_start: 1000,

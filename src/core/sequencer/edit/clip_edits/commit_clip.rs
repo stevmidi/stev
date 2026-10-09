@@ -6,7 +6,6 @@
 use uuid::Uuid;
 
 use crate::core::input_event::TimeSelectionRect;
-use crate::core::time;
 use crate::metadata::clip_metadata::ClipMetadata;
 use crate::models::clip::Clip;
 
@@ -96,7 +95,7 @@ impl CommitClipEdit {
     ) -> Option<Self> {
         let (start, length) = match time_bounds {
             Some(rect) if rect.has_tick_range() => (rect.start, rect.end - rect.start),
-            _ => (sequencer.cursor_tick(), time::bars_to_ticks(1)),
+            _ => (sequencer.cursor_tick(), sequencer.meter().bar_ticks()),
         };
         let track_idx = sequencer.selected_track_index()?;
         let mut clip = Clip::new();
@@ -183,6 +182,7 @@ mod tests {
     use rtrb::Consumer;
 
     use crate::core::sequencer::ClipInstrumentEvent;
+    use crate::core::time::{self, Meter};
 
     use crate::core::sequencer::test_support::{
         clip_at, instrument_track_0, note_off, note_on, sequencer_with,
@@ -363,6 +363,17 @@ mod tests {
         assert_eq!(
             empty_clip_span(&sequencer, marquee(bar * 3, bar * 3)),
             (bar, bar * 2)
+        );
+    }
+
+    #[test]
+    fn from_empty_clip_is_one_bar_of_the_meter() {
+        let sequencer = test_sequencer();
+        let three_four = Meter::new(3, 4).unwrap();
+        sequencer.set_meter(three_four);
+        assert_eq!(
+            empty_clip_span(&sequencer, None),
+            (0, three_four.bar_ticks())
         );
     }
 
