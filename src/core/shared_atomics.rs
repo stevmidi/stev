@@ -146,7 +146,7 @@ pub(crate) struct SharedAtomics {
     /// The project's time signature, as [`Meter::to_bits`](crate::core::time::Meter::to_bits).
     /// Written by the `"sequencer"` thread (`Sequencer::set_meter`), the
     /// atomic being the source of truth as `tempo` is. One meter per project
-    /// (`270-time-signature.md`).
+    /// (`archive/270-time-signature.md`).
     pub(crate) meter: Arc<AtomicU16>,
     /// Free-running musical tick counter. Written by the `"clock"` thread; held
     /// to `clock_tick ≡ playback_tick (mod region_length)` — *not* absolute

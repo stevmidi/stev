@@ -40,7 +40,6 @@ These guidelines are split into focused topic files. All of them live in [`docs/
 | 240 | [240-release-plan.md](docs/240-release-plan.md) | Pre-open-source plan: the principle (an opinionated, capture-first app), the features still needed, platforms (macOS first; CI on all three), packaging, and what's not planned |
 | 250 | [250-first-feature.md](docs/250-first-feature.md) | Walkthrough for a first change: one real key press (`M`, mute notes) traced from `InputEvent` through `SequencerCommand`, the undoable `SequencerEdit` and `EditResult` to the UI, then the tests, docs and gate it needs; how to drive a coding agent through it and review the result; ends in a checklist. Start here before adding a feature |
 | 260 | [260-porting.md](docs/260-porting.md) | Porting to Linux and Windows: what's macOS-only today (sound, timers, virtual port, file drag, quit), priorities (MIDI Out timing first), the `"midiout"` / clock timing analysis, the timing-probe design and fixes, a smoke test, rules for keeping a port behind `cfg` |
-| 270 | [270-time-signature.md](docs/270-time-signature.md) | Build plan for the project meter (planned, not started): one meter per project stored as a one-entry list, the `Meter` type, where it lives (sequencer field, `SharedAtomics` atomic, DTO), click / grid / zoom / plugin / SMF decisions, five phases |
 
 ## Archived
 
@@ -51,5 +50,6 @@ These guidelines are split into focused topic files. All of them live in [`docs/
 - `archive/140-device-frame-clock.md` — deferred, unimplemented proposal to credit musical time from the audio device frame count; its real trigger would be external-timeline sync.
 - `archive/190-arranger-zoom.md`, `archive/200-clip-view-zoom.md` — zoom + adaptive grid design briefs (phases 1–3 built; as-built in `030`). Optional phase 4 never started.
 - `archive/210-docked-clip-panel.md` — docked clip panel design brief (all phases built; as-built in `020` § Views and `030` § Panes).
+- `archive/270-time-signature.md` — the project-meter build plan (all five phases built 2026-10-09); as-built in `030`, `040`, `050`, `060`, `130`, `150`.
 - `archive/230-simplify-pass.md` — the completed whole-codebase `/simplify` pass (2026-09-30): per-area record and findings deliberately left.
 - `archive/NNN-*-history.md` (`010`, `020`, `030`, `050`, `100`, `150`, `220`) — full snapshots of those docs taken 2026-09-30, before their phase narratives, bug stories, superseded designs and dated decisions were trimmed out. The live doc names its snapshot at the top where one exists. Not maintained.

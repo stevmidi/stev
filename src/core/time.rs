@@ -82,7 +82,7 @@ pub const fn step_to_grid(tick: i32, grid_ticks: i32, direction: i32) -> i32 {
 /// note to the bar. Only the meters Stev supports can be built — numerator
 /// 1–16 over 4 or 8 ([`new`](Self::new)) — so every bar length is a whole
 /// number of ticks. The tempo stays quarter notes per minute in every meter.
-/// One meter per project (`270-time-signature.md`).
+/// One meter per project (`archive/270-time-signature.md`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Meter {
     /// Counted beats per bar, 1–16.

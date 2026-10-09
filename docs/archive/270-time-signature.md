@@ -1,6 +1,6 @@
 # 270 — Time Signature: Build Plan
 
-**Status: built — phases 1–5 done (2026-10-09), awaiting the author's test in use before merge.** Branch `feature/time-signature`. The scope was decided in `240-release-plan.md` § Post-launch candidates (the first post-launch item); this file is how it gets built. When it lands, the as-built behaviour moves into the topic docs listed per phase and this file goes to `archive/`.
+**Status: complete — phases 1–5 built and user-tested 2026-10-09, merged to `main`; archived.** Branch `feature/time-signature`. The scope was decided in `240-release-plan.md` § Post-launch candidates (the first post-launch item); this file is how it gets built. When it lands, the as-built behaviour moves into the topic docs listed per phase and this file goes to `archive/` (done).
 
 ## Scope (decided 2026-10-09)
 

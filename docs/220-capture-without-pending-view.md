@@ -11,7 +11,7 @@ Keep the valuable part of the retired modal `PendingClip` view, the phrase **det
 1. **Everything is an edit.** Every change is a `SequencerEdit`: it lands in the arranger and one ⌘Z takes it back.
 2. **Edits never move the transport**, with one exception (below). No edit changes the loop region, the loop flag or the playhead. If an edit changes the music under a running playhead, the current pass plays out and the next loop wrap's seek picks up the change. New transport behaviour during edits is added only when the user asks for it. **The exception, asked for by the user (2026-09-26): while the project has exactly one clip, the loop region is that clip**, so its end can be judged against the wrap before Enter sets the tempo.
 3. **While a project has one clip, that clip's length is the tempo reference, so it is never rounded.** The tempo changes only when the user asks for it (Enter). Nothing about this is stored: every rule reads what's there at the moment of the action.
-4. **Once there's more than one clip, loops are whole bars** (of the project's meter, `270`) unless the user places an edge exactly. A loop that isn't whole bars drifts against the metronome click (`150`). Adapting the clock to arbitrary loop lengths is out of scope, for a later thread.
+4. **Once there's more than one clip, loops are whole bars** (of the project's meter, `archive/270`) unless the user places an edge exactly. A loop that isn't whole bars drifts against the metronome click (`150`). Adapting the clock to arbitrary loop lengths is out of scope, for a later thread.
 
 ## The design
 

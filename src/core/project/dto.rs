@@ -151,7 +151,7 @@ impl Write for HashWriter {
 /// zero-based bar `bar_index` on. A project holds a list of these so meter
 /// changes along the timeline could come later without a format change, but
 /// today it is exactly one entry at bar 0 and loading reads only the first
-/// (`270-time-signature.md`).
+/// (`archive/270-time-signature.md`).
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub(crate) struct MeterData {
     /// Zero-based bar the meter starts on.

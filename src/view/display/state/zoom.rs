@@ -472,7 +472,7 @@ fn centred_scroll_x(start: i32, end: i32, ppt: f32, content_w: f32) -> f32 {
 
 /// The default arranger view's width in quarter notes: `BARS_IN_VIEWPORT`
 /// bars of 4/4 in every meter. Zoom is pixels per quarter, so a meter change
-/// never refits or rescrolls the view (`270-time-signature.md`).
+/// never refits or rescrolls the view (`archive/270-time-signature.md`).
 const DEFAULT_VIEW_QUARTERS: i32 = BARS_IN_VIEWPORT * 4;
 
 /// The default arranger scale for a `content_w`-wide content area:

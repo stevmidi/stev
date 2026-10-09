@@ -279,7 +279,7 @@ impl Sequencer {
     }
 
     /// Sets the project's time signature. Moves nothing: notes, clips and
-    /// the loop region keep their ticks (`270-time-signature.md`).
+    /// the loop region keep their ticks (`archive/270-time-signature.md`).
     pub(crate) fn set_meter(&self, meter: Meter) {
         self.meter.store(meter.to_bits(), Ordering::Relaxed);
     }

@@ -1,6 +1,6 @@
 //! [`SetMeterEdit`]: the project's time signature as one undo step, typed
 //! into the header's meter field. A plain value swap: notes, clips and the
-//! loop region keep their ticks (`270-time-signature.md`).
+//! loop region keep their ticks (`archive/270-time-signature.md`).
 
 use crate::core::time::Meter;
 
