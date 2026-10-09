@@ -2,7 +2,7 @@
 
 use std::sync::{
     Arc, Mutex,
-    atomic::{AtomicBool, AtomicI32, AtomicU8, Ordering},
+    atomic::{AtomicBool, AtomicI32, AtomicU8, AtomicU16, Ordering},
 };
 
 use crossbeam_channel::{Receiver, unbounded};
@@ -13,6 +13,7 @@ use crate::core::{
     input_event::TimeSelectionRect,
     midi::out_queue::MidiOutMessage,
     shared_atomics::{LiveRecState, TrackMixAtomics},
+    time::Meter,
 };
 use crate::models::{
     clip::Clip,
@@ -46,6 +47,7 @@ pub(super) fn sequencer_with_outputs(
         Arc::new(AtomicBool::new(loop_enabled)),
         Arc::new(AtomicBool::new(false)), // running
         Arc::new(AtomicI32::new(config::TEMPO_US_DEFAULT)),
+        Arc::new(AtomicU16::new(Meter::FOUR_FOUR.to_bits())),
         Arc::new(AtomicU8::new(0)),
         Arc::new(AtomicBool::new(false)),
         Arc::new(TrackMixAtomics::new()),

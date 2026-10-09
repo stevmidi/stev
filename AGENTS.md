@@ -40,6 +40,7 @@ These guidelines are split into focused topic files. All of them live in [`docs/
 | 240 | [240-release-plan.md](docs/240-release-plan.md) | Pre-open-source plan: the principle (an opinionated, capture-first app), the features still needed, platforms (macOS first; CI on all three), packaging, and what's not planned |
 | 250 | [250-first-feature.md](docs/250-first-feature.md) | Walkthrough for a first change: one real key press (`M`, mute notes) traced from `InputEvent` through `SequencerCommand`, the undoable `SequencerEdit` and `EditResult` to the UI, then the tests, docs and gate it needs; how to drive a coding agent through it and review the result; ends in a checklist. Start here before adding a feature |
 | 260 | [260-porting.md](docs/260-porting.md) | Porting to Linux and Windows: what's macOS-only today (sound, timers, virtual port, file drag, quit), priorities (MIDI Out timing first), the `"midiout"` / clock timing analysis, the timing-probe design and fixes, a smoke test, rules for keeping a port behind `cfg` |
+| 270 | [270-time-signature.md](docs/270-time-signature.md) | Build plan for the project meter (planned, not started): one meter per project stored as a one-entry list, the `Meter` type, where it lives (sequencer field, `SharedAtomics` atomic, DTO), click / grid / zoom / plugin / SMF decisions, five phases |
 
 ## Archived
 

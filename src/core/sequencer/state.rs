@@ -13,7 +13,7 @@
 
 use std::sync::{
     Arc,
-    atomic::{AtomicBool, AtomicI32, AtomicU8, Ordering},
+    atomic::{AtomicBool, AtomicI32, AtomicU8, AtomicU16, Ordering},
 };
 
 use crossbeam_channel::Sender;
@@ -28,6 +28,7 @@ use crate::{
     core::{
         config,
         shared_atomics::{LiveRecState, TrackMixAtomics},
+        time::Meter,
     },
     metadata::clip_metadata::ClipMetadata,
     models::selection::Selection,
@@ -132,6 +133,8 @@ pub(crate) struct Sequencer {
     pub(super) loop_enabled: Arc<AtomicBool>,
     /// Tempo in µs per quarter note, shared.
     pub(super) tempo: Arc<AtomicI32>,
+    /// The project's time signature, shared (packed by [`Meter::to_bits`]).
+    pub(super) meter: Arc<AtomicU16>,
     /// Whether the transport is running, shared.
     pub(super) running: Arc<AtomicBool>,
 
@@ -190,6 +193,7 @@ impl Sequencer {
         loop_enabled: Arc<AtomicBool>,
         running: Arc<AtomicBool>,
         tempo: Arc<AtomicI32>,
+        meter: Arc<AtomicU16>,
         arm_channel: Arc<AtomicU8>,
         performance_lane_armed: Arc<AtomicBool>,
         track_mix: Arc<TrackMixAtomics>,
@@ -214,6 +218,7 @@ impl Sequencer {
             region_end,
             loop_enabled,
             tempo,
+            meter,
             running,
             capture_clip: Clip::new(),
             capture_clock_offset: None,
@@ -273,6 +278,12 @@ impl Sequencer {
         self.tempo.store(value, Ordering::Relaxed);
     }
 
+    /// Sets the project's time signature. Moves nothing: notes, clips and
+    /// the loop region keep their ticks (`270-time-signature.md`).
+    pub(crate) fn set_meter(&self, meter: Meter) {
+        self.meter.store(meter.to_bits(), Ordering::Relaxed);
+    }
+
     /// Sets both loop-region bounds directly (no normalization / clock realign
     /// — the transport owns that path).
     pub(crate) fn set_global_region(&mut self, start: i32, end: i32) {
@@ -301,6 +312,11 @@ impl Sequencer {
     /// Tempo in µs per quarter note.
     pub(crate) fn tempo_us(&self) -> i32 {
         self.tempo.load(Ordering::Relaxed)
+    }
+
+    /// The project's time signature.
+    pub(crate) fn meter(&self) -> Meter {
+        Meter::from_bits(self.meter.load(Ordering::Relaxed))
     }
 
     /// Loop-region start tick.
@@ -386,7 +402,7 @@ impl Sequencer {
 
     /// Wipes the session back to an empty project: clears every track, the
     /// capture buffer, selections, the clipboard and the
-    /// performance lane; resets position, region, tempo and the mixer to
+    /// performance lane; resets position, region, tempo, meter and the mixer to
     /// defaults. See `060-persistence.md`.
     pub(crate) fn new_project(&mut self) {
         // Back to slot = position: the loaded project's plugins are all
@@ -410,6 +426,7 @@ impl Sequencer {
             .store(config::REGION_LENGTH_DEFAULT, Ordering::Relaxed);
         self.tempo
             .store(config::TEMPO_US_DEFAULT, Ordering::Relaxed);
+        self.set_meter(Meter::FOUR_FOUR);
         self.performance_lane.clear();
         self.performance_lane_armed.store(false, Ordering::Relaxed);
         self.clip_clipboard = None;

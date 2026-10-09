@@ -18,7 +18,7 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    core::{config, sequencer::Sequencer},
+    core::{config, sequencer::Sequencer, time::Meter},
     metadata::clip_metadata::ClipMetadata,
     models::{
         clip::Clip,
@@ -147,11 +147,62 @@ impl Write for HashWriter {
     }
 }
 
+/// One time-signature entry, on disk: `numerator` / `denominator` from the
+/// zero-based bar `bar_index` on. A project holds a list of these so meter
+/// changes along the timeline could come later without a format change, but
+/// today it is exactly one entry at bar 0 and loading reads only the first
+/// (`270-time-signature.md`).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub(crate) struct MeterData {
+    /// Zero-based bar the meter starts on.
+    pub(crate) bar_index: i32,
+    /// Counted beats per bar.
+    pub(crate) numerator: u8,
+    /// The counted beat's note value.
+    pub(crate) denominator: u8,
+}
+
+impl MeterData {
+    /// The one-entry list a project stores for `meter`.
+    fn list_for(meter: Meter) -> Vec<MeterData> {
+        vec![MeterData {
+            bar_index: 0,
+            numerator: meter.numerator(),
+            denominator: meter.denominator(),
+        }]
+    }
+}
+
+/// The `meter` a project saved before time signatures existed: 4/4.
+fn default_meter_list() -> Vec<MeterData> {
+    MeterData::list_for(Meter::FOUR_FOUR)
+}
+
+/// The project meter a saved list means: its first entry, or 4/4 when the
+/// list is empty or that entry isn't a supported meter (a hand-edited file).
+fn meter_from_list(list: &[MeterData]) -> Meter {
+    let Some(first) = list.first() else {
+        return Meter::FOUR_FOUR;
+    };
+    Meter::new(first.numerator, first.denominator).unwrap_or_else(|| {
+        dprintln!(
+            "Unsupported meter {}/{} in project, using 4/4",
+            first.numerator,
+            first.denominator
+        );
+        Meter::FOUR_FOUR
+    })
+}
+
 /// A whole project, on disk — the root of the `.stev` JSON.
 #[derive(Serialize, Deserialize, Clone)]
 pub(crate) struct ProjectData {
     /// Tempo in microseconds per quarter note.
     pub(crate) tempo_us: i32,
+    /// The time signature, as a list of changes ([`MeterData`]). Absent in
+    /// projects saved before time signatures, which load as 4/4.
+    #[serde(default = "default_meter_list")]
+    pub(crate) meter: Vec<MeterData>,
     /// Loop-region start tick.
     pub(crate) region_start: i32,
     /// Loop-region end tick.
@@ -164,6 +215,7 @@ impl Default for ProjectData {
     fn default() -> Self {
         ProjectData {
             tempo_us: config::TEMPO_US_DEFAULT,
+            meter: default_meter_list(),
             region_start: 0,
             region_end: config::REGION_LENGTH_DEFAULT,
             // One empty MIDI-Out track per slot, channel = track index —
@@ -270,6 +322,7 @@ impl ProjectData {
 
         ProjectData {
             tempo_us: sequencer.tempo_us(),
+            meter: MeterData::list_for(sequencer.meter()),
             region_start: sequencer.region_start(),
             region_end: sequencer.region_end(),
             tracks,
@@ -285,6 +338,7 @@ impl ProjectData {
         sequencer.set_track_count(self.tracks.len());
 
         sequencer.set_tempo(self.tempo_us);
+        sequencer.set_meter(meter_from_list(&self.meter));
         sequencer.set_global_region(self.region_start, self.region_end);
 
         let mut all_metadata = Vec::new();
@@ -427,6 +481,68 @@ mod tests {
 
         let names: Vec<Option<&str>> = sequencer.tracks().iter().map(|t| t.name()).collect();
         assert_eq!(names, vec![None, Some("Bass"), None, None]);
+    }
+
+    #[test]
+    fn a_meter_survives_a_save_and_load() {
+        let seven_eight = Meter::new(7, 8).unwrap();
+        let mut sequencer = test_sequencer();
+        sequencer.set_meter(seven_eight);
+        let json = serde_json::to_string(&ProjectData::from_sequencer(&sequencer)).unwrap();
+
+        sequencer.new_project();
+        assert_eq!(sequencer.meter(), Meter::FOUR_FOUR, "a new project is 4/4");
+        let data: ProjectData = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            data.meter,
+            MeterData::list_for(seven_eight),
+            "one entry at bar 0"
+        );
+        data.apply_to_sequencer(&mut sequencer);
+
+        assert_eq!(sequencer.meter(), seven_eight);
+    }
+
+    /// A project saved before time signatures has no `meter` key: it loads
+    /// as 4/4, even over a session in another meter.
+    #[test]
+    fn a_project_without_a_meter_loads_as_four_four() {
+        let mut json = serde_json::to_value(ProjectData::default()).unwrap();
+        json.as_object_mut().unwrap().remove("meter");
+        let data: ProjectData = serde_json::from_value(json).unwrap();
+        assert_eq!(data.meter, default_meter_list());
+
+        let mut sequencer = test_sequencer();
+        sequencer.set_meter(Meter::new(3, 4).unwrap());
+        data.apply_to_sequencer(&mut sequencer);
+        assert_eq!(sequencer.meter(), Meter::FOUR_FOUR);
+    }
+
+    /// A hand-edited meter Stev can't play, or an empty list, falls back to
+    /// 4/4 instead of failing the load; only the first entry is read.
+    #[test]
+    fn a_meter_list_reads_its_first_supported_entry_or_four_four() {
+        let entry = |numerator, denominator| MeterData {
+            bar_index: 0,
+            numerator,
+            denominator,
+        };
+        assert_eq!(meter_from_list(&[]), Meter::FOUR_FOUR);
+        assert_eq!(meter_from_list(&[entry(5, 16)]), Meter::FOUR_FOUR);
+        assert_eq!(meter_from_list(&[entry(0, 4)]), Meter::FOUR_FOUR);
+        assert_eq!(
+            meter_from_list(&[entry(6, 8), entry(4, 4)]),
+            Meter::new(6, 8).unwrap()
+        );
+    }
+
+    #[test]
+    fn a_fingerprint_changes_with_the_meter() {
+        let data = ProjectData {
+            meter: MeterData::list_for(Meter::new(3, 4).unwrap()),
+            ..ProjectData::default()
+        };
+        assert_ne!(data.fingerprint(), ProjectData::default().fingerprint());
     }
 
     #[test]

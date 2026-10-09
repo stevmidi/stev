@@ -15,7 +15,7 @@
 
 use std::sync::{
     Arc, Mutex,
-    atomic::{AtomicBool, AtomicI32, AtomicU8, AtomicU32, AtomicU64, Ordering},
+    atomic::{AtomicBool, AtomicI32, AtomicU8, AtomicU16, AtomicU32, AtomicU64, Ordering},
 };
 
 use crate::core::config::MAX_TRACKS;
@@ -143,6 +143,11 @@ pub(crate) struct SharedAtomics {
     /// Current tempo, microseconds per quarter note. Read by the `"clock"`
     /// thread every firing to size the next tick.
     pub(crate) tempo: Arc<AtomicI32>,
+    /// The project's time signature, as [`Meter::to_bits`](crate::core::time::Meter::to_bits).
+    /// Written by the `"sequencer"` thread (`Sequencer::set_meter`), the
+    /// atomic being the source of truth as `tempo` is. One meter per project
+    /// (`270-time-signature.md`).
+    pub(crate) meter: Arc<AtomicU16>,
     /// Free-running musical tick counter. Written by the `"clock"` thread; held
     /// to `clock_tick ≡ playback_tick (mod region_length)` — *not* absolute
     /// equality — via [`ClockCommand::AlignToPlayback`](crate::core::clock::ClockCommand).

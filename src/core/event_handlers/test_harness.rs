@@ -6,7 +6,7 @@
 
 use std::sync::{
     Arc, Mutex, OnceLock,
-    atomic::{AtomicBool, AtomicI32, AtomicU8},
+    atomic::{AtomicBool, AtomicI32, AtomicU8, AtomicU16},
 };
 
 use crossbeam_channel::{Receiver, unbounded};
@@ -17,7 +17,7 @@ use uuid::Uuid;
 use crate::core::sequencer::test_support::{clip_at, note_off, note_on};
 use crate::core::sequencer::{Sequencer, SequencerCommand, SequencerEdit};
 use crate::core::shared_atomics::{LiveRecState, TrackMixAtomics};
-use crate::core::time::TapTempo;
+use crate::core::time::{Meter, TapTempo};
 use crate::core::transport::TransportCommand;
 use crate::view::display::UiEvent;
 
@@ -90,6 +90,7 @@ pub(crate) fn harness() -> Harness {
         Arc::new(AtomicBool::new(true)), // loop_enabled
         running.clone(),
         Arc::new(AtomicI32::new(500_000)),
+        Arc::new(AtomicU16::new(Meter::FOUR_FOUR.to_bits())),
         Arc::new(AtomicU8::new(0)),
         Arc::new(AtomicBool::new(false)),
         Arc::new(TrackMixAtomics::new()),

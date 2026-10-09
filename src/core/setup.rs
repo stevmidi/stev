@@ -4,7 +4,7 @@
 
 use std::sync::{
     Arc, Mutex, OnceLock,
-    atomic::{AtomicBool, AtomicI32, AtomicU8, AtomicU64},
+    atomic::{AtomicBool, AtomicI32, AtomicU8, AtomicU16, AtomicU64},
 };
 
 use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
@@ -17,6 +17,7 @@ use crate::core::config::{
 };
 use crate::core::{
     shared_atomics::{LiveRecState, TrackMixAtomics},
+    time::Meter,
     timer::Timer,
 };
 use crate::{
@@ -46,6 +47,7 @@ pub(crate) fn setup_shared_atomics() -> SharedAtomics {
     SharedAtomics {
         running: Arc::new(AtomicBool::new(false)),
         tempo: Arc::new(AtomicI32::new(TEMPO_US_DEFAULT)),
+        meter: Arc::new(AtomicU16::new(Meter::FOUR_FOUR.to_bits())),
         clock_tick: Arc::new(AtomicI32::new(0)),
         clock_tick_instant_nanos: Arc::new(AtomicU64::new(0)),
         elapsed_ticks: Arc::new(AtomicI32::new(0)),
@@ -251,6 +253,7 @@ pub(crate) fn setup_sequencer(
         shared_atomics.loop_enabled.clone(),
         shared_atomics.running.clone(),
         shared_atomics.tempo.clone(),
+        shared_atomics.meter.clone(),
         shared_atomics.arm_channel.clone(),
         shared_atomics.performance_lane_armed.clone(),
         shared_atomics.track_mix.clone(),

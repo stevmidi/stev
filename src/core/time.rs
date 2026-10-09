@@ -77,18 +77,110 @@ pub const fn step_to_grid(tick: i32, grid_ticks: i32, direction: i32) -> i32 {
     }
 }
 
-/// Bars → ticks (an amount). 4/4 assumed.
-pub const fn bars_to_ticks(bars: i32) -> i32 {
-    PPQN * 4 * bars
+/// A project's time signature: `numerator` counted beats of a `denominator`
+/// note to the bar. Only the meters Stev supports can be built — numerator
+/// 1–16 over 4 or 8 ([`new`](Self::new)) — so every bar length is a whole
+/// number of ticks. The tempo stays quarter notes per minute in every meter.
+/// One meter per project (`270-time-signature.md`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Meter {
+    /// Counted beats per bar, 1–16.
+    numerator: u8,
+    /// The counted beat's note value: 4 (a quarter) or 8 (an eighth).
+    denominator: u8,
 }
 
-/// The first whole-bar tick *strictly* after `tick`: a tick already sitting on a
-/// bar boundary advances a full bar. `rem_euclid`-based, so negative input works
-/// (`next_bar_boundary_after(-1)` is `0`). Used to bar-align a capture window's
+impl Meter {
+    /// Common time — what a project without a meter means.
+    pub(crate) const FOUR_FOUR: Meter = Meter {
+        numerator: 4,
+        denominator: 4,
+    };
+
+    /// The largest numerator a meter may have.
+    const MAX_NUMERATOR: u8 = 16;
+
+    /// A meter of `numerator` over `denominator`, or `None` outside the
+    /// supported range (numerator 1–16, denominator 4 or 8).
+    pub(crate) const fn new(numerator: u8, denominator: u8) -> Option<Meter> {
+        if numerator >= 1 && numerator <= Self::MAX_NUMERATOR && matches!(denominator, 4 | 8) {
+            Some(Meter {
+                numerator,
+                denominator,
+            })
+        } else {
+            None
+        }
+    }
+
+    /// Counted beats per bar.
+    pub(crate) const fn numerator(self) -> u8 {
+        self.numerator
+    }
+
+    /// The counted beat's note value (4 or 8).
+    pub(crate) const fn denominator(self) -> u8 {
+        self.denominator
+    }
+
+    /// One bar, in ticks (an amount): `PPQN × 4 × numerator / denominator`.
+    /// Exact for every meter [`new`](Self::new) accepts.
+    pub(crate) const fn bar_ticks(self) -> i32 {
+        PPQN * 4 * self.numerator as i32 / self.denominator as i32
+    }
+
+    /// Bars → ticks (an amount).
+    pub(crate) const fn bars_to_ticks(self, bars: i32) -> i32 {
+        self.bar_ticks() * bars
+    }
+
+    /// Ticks → whole bars (truncating).
+    pub(crate) const fn ticks_to_bars(self, ticks: i32) -> i32 {
+        ticks / self.bar_ticks()
+    }
+
+    /// The first whole-bar tick *strictly* after `tick`: a tick already
+    /// sitting on a bar line advances a full bar. `rem_euclid`-based, so
+    /// negative input works (`-1` → `0`). Bars count from tick 0.
+    pub(crate) const fn next_bar_boundary_after(self, tick: i32) -> i32 {
+        let bar = self.bar_ticks();
+        tick + (bar - tick.rem_euclid(bar))
+    }
+
+    /// Packs the meter into one `u16` for a shared atomic: numerator in the
+    /// high byte, denominator in the low one.
+    pub(crate) const fn to_bits(self) -> u16 {
+        (self.numerator as u16) << 8 | self.denominator as u16
+    }
+
+    /// Unpacks [`to_bits`](Self::to_bits). Anything that isn't a supported
+    /// meter reads as 4/4 — only `to_bits` ever writes the atomic, so that
+    /// is a guard, not a path.
+    pub(crate) const fn from_bits(bits: u16) -> Meter {
+        match Meter::new((bits >> 8) as u8, bits as u8) {
+            Some(meter) => meter,
+            None => Meter::FOUR_FOUR,
+        }
+    }
+}
+
+impl Default for Meter {
+    fn default() -> Self {
+        Meter::FOUR_FOUR
+    }
+}
+
+/// Bars → ticks (an amount). 4/4 assumed — being retired for
+/// [`Meter::bars_to_ticks`] (`270-time-signature.md` phase 2).
+pub const fn bars_to_ticks(bars: i32) -> i32 {
+    Meter::FOUR_FOUR.bars_to_ticks(bars)
+}
+
+/// The first whole-bar tick *strictly* after `tick`, 4/4 assumed — see
+/// [`Meter::next_bar_boundary_after`]. Used to bar-align a capture window's
 /// end and to size a content-derived running-capture clip.
 pub fn next_bar_boundary_after(tick: i32) -> i32 {
-    let bar = bars_to_ticks(1);
-    tick + (bar - tick.rem_euclid(bar))
+    Meter::FOUR_FOUR.next_bar_boundary_after(tick)
 }
 
 /// Bars → beats. 4/4 assumed.
@@ -96,9 +188,10 @@ pub const fn bars_to_beats(bars: i32) -> i32 {
     bars * 4
 }
 
-/// Ticks → whole bars (truncating).
+/// Ticks → whole bars (truncating). 4/4 assumed — being retired for
+/// [`Meter::ticks_to_bars`].
 pub const fn ticks_to_bars(ticks: i32) -> i32 {
-    ticks / (PPQN * 4)
+    Meter::FOUR_FOUR.ticks_to_bars(ticks)
 }
 
 /// Ticks → whole beats (truncating).
@@ -314,6 +407,66 @@ impl TapTempo {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Builds a meter the test knows is supported.
+    fn meter(numerator: u8, denominator: u8) -> Meter {
+        Meter::new(numerator, denominator).unwrap()
+    }
+
+    #[test]
+    fn a_bar_is_numerator_notes_of_the_denominator() {
+        assert_eq!(Meter::FOUR_FOUR.bar_ticks(), PPQN * 4);
+        assert_eq!(meter(3, 4).bar_ticks(), PPQN * 3);
+        assert_eq!(meter(6, 8).bar_ticks(), PPQN * 3);
+        assert_eq!(meter(7, 8).bar_ticks(), PPQN * 7 / 2);
+        assert_eq!(meter(1, 8).bar_ticks(), PPQN / 2);
+        assert_eq!(meter(16, 4).bar_ticks(), PPQN * 16);
+    }
+
+    #[test]
+    fn only_supported_meters_can_be_built() {
+        assert_eq!(Meter::new(0, 4), None);
+        assert_eq!(Meter::new(17, 4), None);
+        assert_eq!(Meter::new(4, 2), None);
+        assert_eq!(Meter::new(4, 3), None);
+        assert_eq!(Meter::new(4, 16), None);
+        assert_eq!(Meter::new(4, 4), Some(Meter::FOUR_FOUR));
+        assert_eq!(Meter::default(), Meter::FOUR_FOUR);
+    }
+
+    #[test]
+    fn meter_bar_conversions_follow_the_meter() {
+        let m = meter(7, 8);
+        assert_eq!(m.bars_to_ticks(3), m.bar_ticks() * 3);
+        assert_eq!(m.ticks_to_bars(m.bars_to_ticks(5)), 5);
+        assert_eq!(m.ticks_to_bars(m.bar_ticks() - 1), 0);
+        assert_eq!(m.next_bar_boundary_after(0), m.bar_ticks());
+        assert_eq!(
+            m.next_bar_boundary_after(m.bar_ticks() + 1),
+            m.bar_ticks() * 2
+        );
+        assert_eq!(m.next_bar_boundary_after(-1), 0);
+    }
+
+    #[test]
+    fn a_meter_round_trips_through_its_bits() {
+        for m in [
+            Meter::FOUR_FOUR,
+            meter(3, 4),
+            meter(6, 8),
+            meter(16, 8),
+            meter(1, 4),
+        ] {
+            assert_eq!(Meter::from_bits(m.to_bits()), m);
+        }
+    }
+
+    #[test]
+    fn unsupported_bits_read_as_four_four() {
+        assert_eq!(Meter::from_bits(0), Meter::FOUR_FOUR);
+        assert_eq!(Meter::from_bits(17 << 8 | 4), Meter::FOUR_FOUR);
+        assert_eq!(Meter::from_bits(3 << 8 | 2), Meter::FOUR_FOUR);
+    }
 
     #[test]
     fn bars_to_ticks_one_bar_equals_four_beats() {
