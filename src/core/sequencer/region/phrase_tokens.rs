@@ -645,7 +645,7 @@ mod tests {
         // larger sub-beat gap into a half-bar boundary. The gap alone is not
         // decisive, but silence + metric placement + span shape is.
         let phrase_a: Vec<i32> = (0..6).map(|i| i * 200).collect();
-        let phrase_b_start = time::bars_to_ticks(1) / 2;
+        let phrase_b_start = Meter::FOUR_FOUR.bar_ticks() / 2;
         let phrase_b: Vec<i32> = (0..6).map(|i| phrase_b_start + i * 200).collect();
         let ticks: Vec<i32> = phrase_a.into_iter().chain(phrase_b).collect();
         let clip = clip_with_note_ons(&ticks);
@@ -659,9 +659,9 @@ mod tests {
         // separated by another scored gap. The marker is a valid boundary candidate,
         // but snap should step back from that single-note marker to the phrase.
         let phrase_a: Vec<i32> = (0..5).map(|i| i * 200).collect();
-        let phrase_b_start = time::bars_to_ticks(1) / 2;
+        let phrase_b_start = Meter::FOUR_FOUR.bar_ticks() / 2;
         let phrase_b: Vec<i32> = (0..5).map(|i| phrase_b_start + i * 200).collect();
-        let downbeat = time::bars_to_ticks(1);
+        let downbeat = Meter::FOUR_FOUR.bar_ticks();
         let ticks: Vec<i32> = phrase_a
             .into_iter()
             .chain(phrase_b)
@@ -680,7 +680,7 @@ mod tests {
         let phrase_a: Vec<i32> = (0..5).map(|i| i * 200).collect();
         let phrase_b_start = phrase_a.last().unwrap() + 700;
         let phrase_b: Vec<i32> = (0..5).map(|i| phrase_b_start + i * 200).collect();
-        let phrase_c_start = time::bars_to_ticks(1);
+        let phrase_c_start = Meter::FOUR_FOUR.bar_ticks();
         let phrase_c: Vec<i32> = (0..5).map(|i| phrase_c_start + i * 200).collect();
         let ticks: Vec<i32> = phrase_a
             .into_iter()
@@ -742,7 +742,7 @@ mod tests {
         // Sub-1-beat phrase boundary into a half-bar position should be detected
         // when silence, metric strength, and span shape agree.
         let phrase_a: Vec<i32> = (0..5).map(|i| i * 200).collect();
-        let phrase_b_start = time::bars_to_ticks(1) / 2;
+        let phrase_b_start = Meter::FOUR_FOUR.bar_ticks() / 2;
         let phrase_b: Vec<i32> = (0..5).map(|i| phrase_b_start + i * 200).collect();
         let ticks: Vec<i32> = phrase_a.into_iter().chain(phrase_b).collect();
         let clip = clip_with_note_ons(&ticks);
@@ -753,9 +753,9 @@ mod tests {
     #[test]
     fn phrase_token_starts_marks_each_scored_phrase_boundary() {
         let phrase_a: Vec<i32> = (0..6).map(|i| i * 200).collect();
-        let phrase_b_start = time::bars_to_ticks(1) / 2;
+        let phrase_b_start = Meter::FOUR_FOUR.bar_ticks() / 2;
         let phrase_b: Vec<i32> = (0..5).map(|i| phrase_b_start + i * 200).collect();
-        let phrase_c_start = time::bars_to_ticks(1);
+        let phrase_c_start = Meter::FOUR_FOUR.bar_ticks();
         let phrase_c: Vec<i32> = (0..5).map(|i| phrase_c_start + i * 200).collect();
         let ticks: Vec<i32> = phrase_a
             .into_iter()
@@ -774,7 +774,7 @@ mod tests {
         let phrase_a: Vec<i32> = (0..5).map(|i| i * 200).collect();
         let modest_gap_start = phrase_a.last().unwrap() + 700;
         let phrase_b: Vec<i32> = (0..5).map(|i| modest_gap_start + i * 200).collect();
-        let prominent_gap_start = time::bars_to_ticks(1);
+        let prominent_gap_start = Meter::FOUR_FOUR.bar_ticks();
         let phrase_c: Vec<i32> = (0..5).map(|i| prominent_gap_start + i * 200).collect();
         let ticks: Vec<i32> = phrase_a
             .into_iter()
@@ -798,7 +798,7 @@ mod tests {
         let clip = clip_with_note_ons(&ticks);
 
         let starts = Sequencer::phrase_token_starts(&clip, Meter::FOUR_FOUR);
-        let window_ticks = time::bars_to_ticks(PHRASE_DETECTION_WINDOW_BARS);
+        let window_ticks = Meter::FOUR_FOUR.bars_to_ticks(PHRASE_DETECTION_WINDOW_BARS);
         let last_tick = *ticks.iter().max().unwrap();
 
         assert!(token_a_start < last_tick - window_ticks);
@@ -810,7 +810,7 @@ mod tests {
         let token_a = vec![0, 240, 480];
         let token_b_start = 2_000;
         let token_b = vec![token_b_start, token_b_start + 200, token_b_start + 400];
-        let refined_last_start = time::bars_to_ticks(1);
+        let refined_last_start = Meter::FOUR_FOUR.bar_ticks();
         let mut token_c: Vec<i32> = vec![refined_last_start, refined_last_start + 200];
         token_c.extend((0..35).map(|i| refined_last_start + 400 + i * 200));
         let ticks: Vec<i32> = token_a.into_iter().chain(token_b).chain(token_c).collect();
@@ -880,7 +880,8 @@ mod tests {
     fn phrase_token_starts_uses_last_note_end_for_windowing() {
         let held_marker_start = BAR * 5;
         let held_marker_end = held_marker_start + time::beats_to_ticks(1.0);
-        let window_start = held_marker_end - time::bars_to_ticks(PHRASE_DETECTION_WINDOW_BARS);
+        let window_start =
+            held_marker_end - Meter::FOUR_FOUR.bars_to_ticks(PHRASE_DETECTION_WINDOW_BARS);
         let previous_tail_start = 4_140;
         let current_phrase_start = 4_920;
         let pairs = vec![

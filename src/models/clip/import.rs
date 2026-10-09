@@ -41,7 +41,7 @@ impl Clip {
 
 #[cfg(test)]
 mod tests {
-    use crate::core::time::{PPQN, bars_to_ticks};
+    use crate::core::time::{Meter, PPQN};
 
     use super::*;
 
@@ -70,7 +70,7 @@ mod tests {
 
     #[test]
     fn length_is_the_end_of_track_rounded_up_to_whole_bars() {
-        let bar = bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let notes = || vec![on(0, 60), off(PPQN, 60)];
 
         let clip = Clip::imported(notes(), bar, Meter::FOUR_FOUR).unwrap();
@@ -86,7 +86,7 @@ mod tests {
 
     #[test]
     fn a_note_on_a_bar_line_at_the_end_gets_its_bar() {
-        let bar = bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let clip = Clip::imported(vec![on(bar, 60), off(bar, 60)], bar, Meter::FOUR_FOUR).unwrap();
         assert_eq!(clip.region_length(), bar * 2);
     }
@@ -102,7 +102,7 @@ mod tests {
 
     #[test]
     fn open_notes_close_at_the_end_and_orphan_offs_are_dropped() {
-        let bar = bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let clip = Clip::imported(
             vec![off(0, 62), on(PPQN, 61), on(PPQN, 60)],
             bar,

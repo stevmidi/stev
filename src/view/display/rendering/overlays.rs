@@ -7,9 +7,7 @@ use std::time::Instant;
 
 use egui::{Align2, Color32, CornerRadius, FontId, Galley, Painter, Rect, Stroke, pos2, vec2};
 
-use crate::core::time::{
-    PPQN, bars_to_beats, format_bpm, sixteenth_straight_ticks, ticks_to_bars, ticks_to_beats,
-};
+use crate::core::time::{Meter, format_bpm, sixteenth_straight_ticks};
 use crate::view::display::tempo_field::TempoChipRects;
 
 use super::*;
@@ -56,10 +54,7 @@ impl Display {
 
         // --- Data ---
 
-        let playback_tick = self.playback_tick();
-        let bar = ticks_to_bars(playback_tick) + 1;
-        let beat = (ticks_to_beats(playback_tick) % bars_to_beats(1)) + 1;
-        let sixteenth = ((playback_tick % PPQN) / sixteenth_straight_ticks()) + 1;
+        let (bar, beat, sixteenth) = song_position(self.playback_tick(), self.meter());
 
         // --- Readout chips, centred as a group ---
         // BPM then song position, each a small dim `LABEL` next to its value,
@@ -466,11 +461,41 @@ fn unfocused_tone(fg: Color32, bg: Color32) -> Color32 {
 /// `CLIP_V_INSET`'s inset-from-lane-bounds precedent.
 const SELECTED_TRACK_CURSOR_MARGIN_Y: f32 = 2.0;
 
+/// The header's `POS` readout for `tick`, one-based: bar, counted beat
+/// within it (an eighth in x/8), and the 16th within that beat.
+fn song_position(tick: i32, meter: Meter) -> (i32, i32, i32) {
+    let in_bar = tick % meter.bar_ticks();
+    let bar = meter.ticks_to_bars(tick) + 1;
+    let beat = in_bar / meter.beat_ticks() + 1;
+    let sixteenth = (in_bar % meter.beat_ticks()) / sixteenth_straight_ticks() + 1;
+    (bar, beat, sixteenth)
+}
+
 #[cfg(test)]
 mod tests {
     use egui::Color32;
 
-    use super::{track_row_y_range, unfocused_tone};
+    use super::{song_position, track_row_y_range, unfocused_tone};
+    use crate::core::time::{Meter, PPQN};
+
+    #[test]
+    fn song_position_counts_bars_beats_and_sixteenths() {
+        assert_eq!(song_position(0, Meter::FOUR_FOUR), (1, 1, 1));
+        let tick = 4 * PPQN + 2 * PPQN + 3 * PPQN / 4;
+        assert_eq!(song_position(tick, Meter::FOUR_FOUR), (2, 3, 4));
+    }
+
+    #[test]
+    fn song_position_counts_the_meters_beats() {
+        // 3/4: bar 2 starts on quarter 3.
+        let three_four = Meter::new(3, 4).unwrap();
+        assert_eq!(song_position(3 * PPQN, three_four), (2, 1, 1));
+        // 6/8: beats are eighths, two 16ths each; quarter 2 is beat 3.
+        let six_eight = Meter::new(6, 8).unwrap();
+        assert_eq!(song_position(PPQN, six_eight), (1, 3, 1));
+        assert_eq!(song_position(PPQN + PPQN / 4, six_eight), (1, 3, 2));
+        assert_eq!(song_position(3 * PPQN + PPQN / 2, six_eight), (2, 2, 1));
+    }
 
     #[test]
     fn track_row_y_range_is_the_lane_slice_at_its_track_index() {

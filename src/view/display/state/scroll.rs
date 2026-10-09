@@ -358,10 +358,10 @@ mod tests {
         arranger_max_scroll_x, clip_scroll_range, followed_scroll_x, rescaled_clip_scroll_x,
         scrolled_offset,
     };
-    use crate::core::time::bars_to_ticks;
+    use crate::core::time::Meter;
     use crate::view::display::state::zoom::zoomed_scroll_x;
 
-    const TWO_BARS: i32 = bars_to_ticks(2);
+    const TWO_BARS: i32 = Meter::FOUR_FOUR.bars_to_ticks(2);
 
     #[test]
     fn scroll_left_advances_and_right_rewinds() {
@@ -412,7 +412,7 @@ mod tests {
         // Zoomed out, the page is two 4-bar structural units: every paged
         // offset is a whole multiple of 8 bars, i.e. on a visible bar line.
         let ppt = 0.001;
-        let page = bars_to_ticks(8);
+        let page = Meter::FOUR_FOUR.bars_to_ticks(8);
         let scrolled = followed_scroll_x(0.0, 500_000.0, ppt, 400.0, (0.0, 1e9), page);
         let ticks = (scrolled / ppt).round() as i32;
         assert_eq!(ticks % page, 0, "{ticks}");
@@ -433,7 +433,10 @@ mod tests {
         // A 4-bar clip at bar 9, zoomed so 1 bar = 960px (exact in f32) on
         // a 1920px view: two bars on screen.
         let ppt = 0.25;
-        let (start, end) = (bars_to_ticks(8), bars_to_ticks(12));
+        let (start, end) = (
+            Meter::FOUR_FOUR.bars_to_ticks(8),
+            Meter::FOUR_FOUR.bars_to_ticks(12),
+        );
         let (min, max) = clip_scroll_range(start, end, ppt, 1920.0);
         assert_eq!(min, 8.0 * 960.0);
         assert_eq!(max, 10.0 * 960.0);

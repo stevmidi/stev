@@ -261,7 +261,7 @@ mod tests {
 
     fn make_seq_with_rx() -> (Sequencer, Consumer<ClipInstrumentEvent>) {
         let (mut seq, plugin_rx) = sequencer_with(true);
-        seq.set_global_region(0, time::bars_to_ticks(2));
+        seq.set_global_region(0, Meter::FOUR_FOUR.bars_to_ticks(2));
         let track_id = seq.track_id_by_index(0).unwrap();
         seq.select_track(Some(track_id));
         (seq, plugin_rx)
@@ -313,7 +313,7 @@ mod tests {
     /// buffer (which is measured back from the last note edge).
     #[test]
     fn a_wheel_moved_after_the_last_note_does_not_move_the_take() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut seq = make_seq();
         add_clip(&mut seq, bar * 40, bar);
         fill_capture_roughly(&mut seq, bar * 3 / 2);
@@ -321,7 +321,7 @@ mod tests {
         let (_, plain) = seq.build_stopped_capture_clip().unwrap();
 
         let last = seq.capture_clip.events().last().unwrap().tick();
-        let late = last + time::bars_to_ticks(config::CAPTURE_BUFFER_BARS) + bar;
+        let late = last + Meter::FOUR_FOUR.bars_to_ticks(config::CAPTURE_BUFFER_BARS) + bar;
         seq.capture_clip
             .add_event(Event::new(late, 0, vec![0xE0, 0x00, 0x40]));
         let (_, with_bend) = seq.build_stopped_capture_clip().unwrap();
@@ -336,7 +336,7 @@ mod tests {
     /// note, the tempo untouched.
     #[test]
     fn stopped_commit_window_is_the_retired_confirms() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut seq = make_seq();
         add_clip(&mut seq, bar * 20, bar);
         fill_capture_roughly(&mut seq, bar * 3 / 2);
@@ -385,7 +385,7 @@ mod tests {
     /// existed).
     #[test]
     fn stopped_first_clip_is_exact_and_enter_fits_it() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut seq = make_seq();
         seq.region_end.store(bar * 8, Ordering::Relaxed);
         fill_capture_roughly(&mut seq, bar * 5 / 2);
@@ -415,7 +415,7 @@ mod tests {
     /// *played* — not to the loop region, which here is far larger.
     #[test]
     fn enter_fits_the_first_clip_to_played_bars_not_the_loop() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut seq = make_seq();
         seq.region_end.store(bar * 8, Ordering::Relaxed); // 8-bar loop
         let start_tempo = seq.tempo_us();
@@ -440,7 +440,7 @@ mod tests {
     /// still lands the project tempo in a plausible band.
     #[test]
     fn enter_keeps_a_first_clip_tempo_in_band_from_a_fast_project() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut seq = make_seq();
         seq.set_tempo(time::bpm_to_tempo_us(175)); // 175 BPM project
         fill_capture_roughly(&mut seq, bar * 3 / 2);
@@ -461,7 +461,7 @@ mod tests {
     /// detected window holds its notes.
     #[test]
     fn stopped_commit_window_covers_the_phrase_with_a_large_loop() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut seq = make_seq();
         seq.region_start.store(0, Ordering::Relaxed);
         seq.region_end.store(bar * 16, Ordering::Relaxed);
@@ -487,7 +487,7 @@ mod tests {
     /// clip must play its notes into the instrument bus.
     #[test]
     fn stopped_commit_from_a_long_session_plays_its_notes() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let (mut seq, mut rx) = make_seq_with_rx();
         instrument_track_0(&mut seq);
 
@@ -522,7 +522,7 @@ mod tests {
     /// line in event space, and the cursor sits on it.
     #[test]
     fn stopped_commit_keeps_the_capture_outside_the_window() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut seq = make_seq();
         add_clip(&mut seq, bar * 20, bar);
         // An early phrase, a two-bar silence, then the phrase detection keeps.
@@ -558,7 +558,7 @@ mod tests {
     /// bars that fit instead.
     #[test]
     fn stopped_commit_floors_to_the_bars_before_the_next_clip() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut seq = make_seq();
         add_clip(&mut seq, bar, bar); // one bar of room at the cursor
         fill_capture_roughly(&mut seq, bar * 5 / 2);
@@ -574,7 +574,7 @@ mod tests {
     /// clears the buffer, undo lifts it, redo restores the same id and window.
     #[test]
     fn stopped_commit_is_undoable() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut seq = make_seq();
         add_clip(&mut seq, bar * 20, bar);
         fill_capture_roughly(&mut seq, bar * 3 / 2);
@@ -603,7 +603,7 @@ mod tests {
     /// clip sounds only the phrase detection framed.
     #[test]
     fn stopped_commit_plays_only_its_window() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let (mut seq, mut rx) = make_seq_with_rx();
         instrument_track_0(&mut seq);
         // An early note 50, two bars of silence, then a phrase of note 60.
@@ -661,7 +661,7 @@ mod tests {
     /// next loop wrap's seek picks up the new start.
     #[test]
     fn a_start_moved_while_playing_is_heard_from_the_next_wrap() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let (mut seq, mut rx) = make_seq_with_rx();
         instrument_track_0(&mut seq);
         let mut clip = Clip::new();
@@ -706,7 +706,7 @@ mod tests {
         clip_cursor: i32,
         fill: impl Fn(&mut Sequencer),
     ) -> Uuid {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         add_clip(seq, bar * 4, bar * 4);
         let id = seq.selected_track().unwrap().clips()[0].id();
         seq.select_clip(Some(id));
@@ -743,7 +743,7 @@ mod tests {
     /// out, and a phrase running past the clip's end is cut there.
     #[test]
     fn stopped_insert_lands_the_detected_phrase_at_the_clip_cursor() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let notes_after = |clip_cursor: i32, fill: &dyn Fn(&mut Sequencer)| {
             let mut seq = make_seq();
             lead_clip_with_capture(&mut seq, clip_cursor, fill);
@@ -794,7 +794,7 @@ mod tests {
     /// the buffer left cleared; the event selection is never changed.
     #[test]
     fn stopped_insert_is_undoable_and_keeps_the_selection() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut seq = make_seq();
         lead_clip_with_capture(&mut seq, bar, |seq| fill_capture_roughly(seq, bar));
         let existing = note_on(bar * 3);
@@ -837,7 +837,7 @@ mod tests {
     /// undo reports none.
     #[test]
     fn stopped_insert_reports_its_take_on_edit_and_redo_only() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut seq = make_seq();
         lead_clip_with_capture(&mut seq, bar, |seq| fill_capture_roughly(seq, bar));
         let take = |result: EditResult| match result {
@@ -860,7 +860,7 @@ mod tests {
     /// builds no edit, so nothing enters the undo record.
     #[test]
     fn stopped_insert_with_nothing_to_insert_builds_no_edit() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut seq = make_seq();
         lead_clip_with_capture(&mut seq, bar, |_| {});
         assert!(InsertCaptureEdit::from_stopped_capture(&seq).is_none());

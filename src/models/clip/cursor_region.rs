@@ -301,7 +301,7 @@ mod tests {
 
     use super::{CLIP_END_HEADROOM_BARS, EventSpaceRetime, reach_over};
 
-    use crate::core::time::{Meter, bars_to_ticks};
+    use crate::core::time::Meter;
     use crate::models::{
         clip::{Clip, ClipBounds},
         event::Event,
@@ -429,7 +429,7 @@ mod tests {
         clip.nudge_cursor_by_ticks(99_999, Meter::FOUR_FOUR);
         assert_eq!(
             clip.cursor_tick(),
-            500 + bars_to_ticks(CLIP_END_HEADROOM_BARS)
+            500 + Meter::FOUR_FOUR.bars_to_ticks(CLIP_END_HEADROOM_BARS)
         );
     }
 
@@ -455,7 +455,7 @@ mod tests {
         clip.nudge_cursor_by_ticks(-9999, Meter::FOUR_FOUR);
         assert_eq!(clip.cursor_tick(), 100, "down to the first kept note");
         clip.nudge_cursor_by_ticks(9999, Meter::FOUR_FOUR);
-        let headroom_end = 1920 + bars_to_ticks(CLIP_END_HEADROOM_BARS);
+        let headroom_end = 1920 + Meter::FOUR_FOUR.bars_to_ticks(CLIP_END_HEADROOM_BARS);
         assert_eq!(clip.cursor_tick(), headroom_end, "a bar past the end");
         assert_eq!(clip.reach(Meter::FOUR_FOUR), (100, headroom_end));
         assert!(!clip.is_in_window(100));
@@ -465,19 +465,32 @@ mod tests {
 
     #[test]
     fn reach_over_widens_the_window_and_its_headroom_to_spans_outside() {
-        let window = (bars_to_ticks(4), bars_to_ticks(6));
+        let window = (
+            Meter::FOUR_FOUR.bars_to_ticks(4),
+            Meter::FOUR_FOUR.bars_to_ticks(6),
+        );
         assert_eq!(
             reach_over(Meter::FOUR_FOUR, window, std::iter::empty()),
-            (bars_to_ticks(4), bars_to_ticks(7)),
+            (
+                Meter::FOUR_FOUR.bars_to_ticks(4),
+                Meter::FOUR_FOUR.bars_to_ticks(7)
+            ),
             "a bar of headroom after the end"
         );
         assert_eq!(
             reach_over(
                 Meter::FOUR_FOUR,
                 window,
-                [(100, 400), (bars_to_ticks(5), bars_to_ticks(9))].into_iter(),
+                [
+                    (100, 400),
+                    (
+                        Meter::FOUR_FOUR.bars_to_ticks(5),
+                        Meter::FOUR_FOUR.bars_to_ticks(9)
+                    )
+                ]
+                .into_iter(),
             ),
-            (100, bars_to_ticks(9)),
+            (100, Meter::FOUR_FOUR.bars_to_ticks(9)),
             "spans further out widen it"
         );
     }
@@ -495,7 +508,7 @@ mod tests {
 
     #[test]
     fn the_reach_reaches_past_a_late_note_and_a_bar_past_an_empty_end() {
-        let bar = bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut clip = make_clip(0, 0, bar);
         assert_eq!(
             clip.reach(Meter::FOUR_FOUR),
@@ -520,7 +533,7 @@ mod tests {
 
     #[test]
     fn a_tempo_rescale_moves_the_cursor_with_the_notes() {
-        let bar = bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut clip = make_clip(0, 0, bar * 2);
         clip.add_event(Event::new(bar, 0, vec![0x90, 60, 100]));
         clip.nudge_cursor_by_ticks(bar, Meter::FOUR_FOUR);
@@ -573,7 +586,7 @@ mod tests {
     /// on its new one (to rounding), and the inverse takes it back.
     #[test]
     fn the_returned_retimes_map_every_tick() {
-        let bar = bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut clip = make_clip(0, bar * 4 + 300, bar * 6 + 300);
         let old_ticks = [12, bar * 4 + 300, bar * 5, bar * 7 + 17];
         for &tick in &old_ticks {

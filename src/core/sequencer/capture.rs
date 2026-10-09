@@ -550,7 +550,7 @@ mod tests {
     /// A bar-1 note in the capture buffer lands in bar 1 of the normalized clip.
     #[test]
     fn normalize_running_capture_bar1_note_stays_in_bar1() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut seq = make_sequencer(0, bar * 2);
 
         seq.capture_clip.add_event(note_on(600));
@@ -576,7 +576,7 @@ mod tests {
     /// A bar-2 note in the capture buffer lands in bar 2 of the normalized clip.
     #[test]
     fn normalize_running_capture_bar2_note_lands_in_bar2() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut seq = make_sequencer(0, bar * 2);
 
         let note_tick = bar + 600; // bar 2
@@ -603,7 +603,7 @@ mod tests {
     /// An empty capture buffer produces `None`.
     #[test]
     fn normalize_running_capture_returns_none_on_empty_buffer() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let seq = make_sequencer(0, bar * 2);
         assert!(
             seq.normalize_running_capture(0, bar * 2, RunningCaptureTarget::InsertFromArranger)
@@ -614,7 +614,7 @@ mod tests {
     /// After crop, all event ticks are within `[0, region_length)`.
     #[test]
     fn normalize_running_capture_events_are_within_region_length() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let region_len = bar * 2;
         let mut seq = make_sequencer(0, region_len);
 
@@ -639,7 +639,7 @@ mod tests {
     /// The new clip is placed at `cursor_tick` in the arrangement.
     #[test]
     fn commit_clip_to_track_places_clip_at_cursor_tick() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut seq = make_sequencer(0, bar * 2);
         seq.cursor_tick.store(bar * 2, Ordering::Relaxed);
 
@@ -655,7 +655,7 @@ mod tests {
     /// leaves the track and the capture buffer exactly as they were.
     #[test]
     fn build_committed_capture_clip_does_not_touch_the_track_or_buffer() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut seq = make_sequencer(0, bar * 2);
         seq.capture_clip.add_event(note_on(600));
         seq.capture_clip.add_event(note_off(900));
@@ -672,7 +672,7 @@ mod tests {
     /// — the clip's event space is the loop's phase circle.
     #[test]
     fn commit_clip_to_track_events_are_within_one_loop() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut seq = make_sequencer(0, bar * 2);
 
         seq.capture_clip.add_event(note_on(600));
@@ -696,7 +696,7 @@ mod tests {
     /// Capture buffer is cleared after a successful commit.
     #[test]
     fn commit_clip_to_track_clears_capture_buffer() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut seq = make_sequencer(0, bar * 2);
 
         seq.capture_clip.add_event(note_on(600));
@@ -722,7 +722,7 @@ mod tests {
     /// only the last pass.
     #[test]
     fn commit_clip_to_track_keeps_only_the_last_loop_of_a_multi_cycle_take() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let loop_len = bar * 2;
         let mut seq = make_sequencer(0, loop_len);
 
@@ -751,7 +751,7 @@ mod tests {
     /// assuming the capture buffer starts at the region.
     #[test]
     fn commit_clip_to_track_keeps_one_cycle_many_loops_into_a_take() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let loop_len = bar * 2;
         let mut seq = make_sequencer(0, loop_len);
 
@@ -781,7 +781,7 @@ mod tests {
     /// Returns `None` and does not panic when capture buffer is empty.
     #[test]
     fn commit_clip_to_track_returns_none_on_empty_capture() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut seq = make_sequencer(0, bar * 2);
         assert!(seq.commit_clip_to_track().is_none());
     }
@@ -790,7 +790,7 @@ mod tests {
     /// exactly the loop region length — regardless of how little was played.
     #[test]
     fn commit_clip_to_track_loop_enabled_clip_matches_loop_region_length() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut seq = make_sequencer(0, bar * 3);
 
         seq.capture_clip.add_event(note_on(600));
@@ -807,7 +807,7 @@ mod tests {
     /// of the loop cycle, not the whole loop.
     #[test]
     fn commit_clip_to_track_looping_sizes_to_remainder_of_loop_from_cursor() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut seq = make_sequencer(bar, bar * 2); // loop [bar, bar*3]
         seq.cursor_tick.store(bar * 2, Ordering::Relaxed);
 
@@ -829,7 +829,7 @@ mod tests {
     /// instead of failing to place (what the placeholder's auto-shrink did).
     #[test]
     fn commit_clip_to_track_shrinks_to_fit_before_next_clip() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut seq = make_sequencer(bar, bar * 2); // loop [bar, bar*3]
         add_and_select_clip(&mut seq, bar * 2, bar); // existing clip [bar*2, bar*3]
         seq.cursor_tick.store(bar, Ordering::Relaxed);
@@ -854,7 +854,7 @@ mod tests {
     /// the last note-on.
     #[test]
     fn commit_clip_to_track_loop_disabled_is_content_sized_to_next_bar() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut seq = make_sequencer(0, bar * 8);
         seq.loop_enabled.store(false, Ordering::Relaxed);
 
@@ -874,7 +874,7 @@ mod tests {
     /// in `Region::snap_to_grid`.
     #[test]
     fn commit_clip_to_track_zero_width_loop_region_does_not_panic() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut seq = make_sequencer(bar * 4, 0); // region [bar*4, bar*4]
         seq.cursor_tick.store(bar * 4, Ordering::Relaxed);
 
@@ -893,7 +893,7 @@ mod tests {
     /// floor. (A bar floor used to push the clip past the loop end.)
     #[test]
     fn commit_clip_to_track_looping_remainder_can_be_shorter_than_a_bar() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let min_len = time::min_clip_length_ticks();
         let mut seq = make_sequencer(0, bar * 2);
         seq.cursor_tick.store(bar * 2 - min_len, Ordering::Relaxed);
@@ -916,7 +916,7 @@ mod tests {
     /// commit into (it used to no-op below a bar); half of one still is not.
     #[test]
     fn commit_clip_to_track_fits_a_gap_of_the_minimum_clip_length() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let min_len = time::min_clip_length_ticks();
         let mut seq = make_sequencer(0, bar * 2);
         add_and_select_clip(&mut seq, min_len, bar);
@@ -938,7 +938,7 @@ mod tests {
     /// With looping off, a single short note still yields a one-bar clip.
     #[test]
     fn commit_clip_to_track_loop_disabled_short_note_gets_one_bar_floor() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut seq = make_sequencer(0, bar * 8);
         seq.loop_enabled.store(false, Ordering::Relaxed);
 
@@ -1007,7 +1007,7 @@ mod tests {
     /// left edge to reveal, not shifted into the clip and not dropped.
     #[test]
     fn commit_clip_to_track_mid_loop_cursor_keeps_events_at_their_region_phase() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut seq = make_sequencer(0, bar * 2);
         seq.cursor_tick.store(bar, Ordering::Relaxed);
 
@@ -1033,7 +1033,7 @@ mod tests {
     /// previous wrap's bar-1 note is not carried along.
     #[test]
     fn commit_clip_to_track_post_wrap_note_selects_the_next_region_pass() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut seq = make_sequencer(0, bar * 2);
         seq.cursor_tick.store(bar, Ordering::Relaxed);
 
@@ -1054,7 +1054,7 @@ mod tests {
     /// played at — nothing shifts by the cursor's offset into the bar.
     #[test]
     fn commit_clip_to_track_mid_bar_cursor_keeps_events_at_their_region_phase() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let beat = time::beats_to_ticks(1.0);
         let mut seq = make_sequencer(0, bar * 2);
         seq.cursor_tick.store(beat, Ordering::Relaxed);
@@ -1085,7 +1085,7 @@ mod tests {
     /// content slid into place; the rest is retained past the region end.
     #[test]
     fn commit_clip_to_track_loop_disabled_available_clamp_keeps_the_first_bar() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut seq = make_sequencer(0, bar * 8);
         seq.loop_enabled.store(false, Ordering::Relaxed);
         add_and_select_clip(&mut seq, bar, bar); // next clip at bar 1
@@ -1118,7 +1118,7 @@ mod tests {
     /// not played, never teleported to the cursor.
     #[test]
     fn commit_clip_to_track_late_note_is_not_relocated_to_a_mid_loop_cursor() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut seq = make_sequencer(0, bar * 2);
         seq.cursor_tick.store(bar, Ordering::Relaxed);
 
@@ -1141,7 +1141,7 @@ mod tests {
     /// end, not the (shorter) window end.
     #[test]
     fn commit_clip_to_track_late_note_relocates_to_clip_start_when_window_is_clamped() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut seq = make_sequencer(0, bar * 2);
         add_and_select_clip(&mut seq, bar, bar); // next clip at bar 1
 
@@ -1166,7 +1166,7 @@ mod tests {
     /// stays where it was played instead of being relocated to tick 0.
     #[test]
     fn commit_clip_to_track_loop_disabled_does_not_relocate_a_note_near_the_content_end() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut seq = make_sequencer(0, bar * 8);
         seq.loop_enabled.store(false, Ordering::Relaxed);
 
@@ -1184,7 +1184,7 @@ mod tests {
     /// even though more than a loop length was played.
     #[test]
     fn commit_clip_to_track_start_after_the_region_is_a_linear_take() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut seq = make_sequencer(0, bar * 2);
         seq.cursor_tick.store(bar * 4, Ordering::Relaxed);
         seq.playback_tick.store(bar * 4, Ordering::Relaxed);
@@ -1206,7 +1206,7 @@ mod tests {
     /// the last pass at its region phase; the lead-in and earlier pass go.
     #[test]
     fn commit_clip_to_track_start_before_the_region_commits_the_last_pass_at_its_phase() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut seq = make_sequencer(bar * 2, bar * 2); // loop [2b, 4b)
         seq.cursor_tick.store(0, Ordering::Relaxed);
         seq.playback_tick.store(bar * 2 + 700, Ordering::Relaxed);
@@ -1232,7 +1232,7 @@ mod tests {
     /// every note is at its played arrangement tick.
     #[test]
     fn commit_clip_to_track_retains_pre_cursor_notes_the_left_edge_can_reveal() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut seq = make_sequencer(0, bar * 2);
         seq.cursor_tick.store(bar, Ordering::Relaxed);
 
@@ -1262,7 +1262,7 @@ mod tests {
     /// to commit nothing at all.
     #[test]
     fn commit_clip_to_track_commits_a_silent_region_when_all_notes_precede_the_cursor() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut seq = make_sequencer(0, bar * 2);
         seq.cursor_tick.store(bar, Ordering::Relaxed);
 
@@ -1292,7 +1292,7 @@ mod tests {
     /// workflow, 2026-09-19.)
     #[test]
     fn commit_clip_to_track_mid_pass_commit_keeps_the_last_pass_only() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut seq = make_sequencer(0, bar * 2);
 
         seq.capture_clip.add_event(note_on(600));
@@ -1321,7 +1321,7 @@ mod tests {
     /// late-note tolerance, so no relocation is in play.)
     #[test]
     fn commit_clip_to_track_note_held_across_the_wrap_is_closed_at_the_loop_end() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut seq = make_sequencer(0, bar * 2);
         let on_tick = bar * 2 - config::LATE_NOTE_TOLERANCE_TICKS * 2;
 
@@ -1344,7 +1344,7 @@ mod tests {
     /// reveals it.
     #[test]
     fn commit_clip_to_track_linear_take_retains_notes_before_a_moved_cursor() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut seq = make_sequencer(0, bar * 8);
         seq.loop_enabled.store(false, Ordering::Relaxed);
         seq.cursor_tick.store(bar, Ordering::Relaxed);
@@ -1377,7 +1377,7 @@ mod tests {
     /// later drag must still get its note-off.
     #[test]
     fn left_edge_drag_during_playback_keeps_phase_and_releases_notes() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let (mut seq, midi_out_rx) = make_sequencer_with_midi_out(0, bar * 2);
         seq.cursor_tick.store(bar, Ordering::Relaxed);
 
@@ -1448,7 +1448,7 @@ mod tests {
     /// drag on a finer grid.
     #[test]
     fn edge_resize_clamps_clip_length_to_the_minimum() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let min_len = time::min_clip_length_ticks();
         let mut seq = make_sequencer(0, bar * 4);
         let clip_id = add_and_select_clip(&mut seq, bar, bar * 2);
@@ -1494,7 +1494,7 @@ mod tests {
     /// with its notes, as a new clip keeps them.
     #[test]
     fn insert_running_capture_carries_the_wheels_played_with_the_notes() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut seq = make_sequencer(0, bar * 2);
         add_and_select_clip(&mut seq, 0, bar * 2);
 
@@ -1518,7 +1518,7 @@ mod tests {
     /// clip and inserts nothing, running or stopped.
     #[test]
     fn a_capture_of_wheel_moves_alone_commits_nothing() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut seq = make_sequencer(0, bar * 2);
         for tick in [100, 400, 700] {
             seq.capture_clip
@@ -1535,7 +1535,7 @@ mod tests {
     /// Both recorders take a wheel move off the input like a note.
     #[test]
     fn a_wheel_move_reaches_both_recorders() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut seq = make_sequencer(0, bar * 2);
         seq.start_live_recording(0).unwrap();
 
@@ -1560,7 +1560,7 @@ mod tests {
     /// case the old code fired in.
     #[test]
     fn insert_running_capture_selects_nothing_when_nothing_was_selected() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut seq = make_sequencer(0, bar * 2);
         add_and_select_clip(&mut seq, 0, bar * 2);
 
@@ -1578,7 +1578,7 @@ mod tests {
     /// stays selected after it, and only that.
     #[test]
     fn insert_running_capture_keeps_an_existing_selection() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut seq = make_sequencer(0, bar * 2);
         add_and_select_clip(&mut seq, 0, bar * 2);
         let existing = note_on(bar);
@@ -1607,7 +1607,7 @@ mod tests {
     /// Cursor at clip start: a bar-1 note is inserted at bar 1 (clip_offset = 0).
     #[test]
     fn insert_running_capture_bar1_note_at_clip_start() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let clip_start = bar * 3; // clip at bar 4
         let mut seq = make_sequencer(clip_start, bar * 2);
         add_and_select_clip(&mut seq, clip_start, bar * 2);
@@ -1642,7 +1642,7 @@ mod tests {
     /// them *before* the region — kept, but never played or drawn.
     #[test]
     fn insert_running_capture_lands_inside_a_left_trimmed_region() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         // Was bar 2..4 (region 0..2 bars); the left edge dragged in a bar
         // leaves bar 3..4 with region 1..2 bars.
         let clip_start = bar * 2;
@@ -1663,7 +1663,7 @@ mod tests {
     /// Cursor at clip start: a bar-2 note is inserted at bar 2 of a 2-bar clip.
     #[test]
     fn insert_running_capture_bar2_note_at_clip_start() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let clip_start = bar * 3; // clip at bar 4
         let mut seq = make_sequencer(clip_start, bar * 2);
         add_and_select_clip(&mut seq, clip_start, bar * 2);
@@ -1695,7 +1695,7 @@ mod tests {
     /// the clip end where it would resurface on a later region extend.
     #[test]
     fn insert_running_capture_drops_post_wrap_notes_before_cursor_phase() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let clip_start = bar * 3;
         let mut seq = make_sequencer(clip_start, bar * 2);
         add_and_select_clip(&mut seq, clip_start, bar * 2);
@@ -1723,7 +1723,7 @@ mod tests {
     /// dropped, not slid back into the clip.
     #[test]
     fn insert_running_capture_drops_notes_played_past_the_clip_span() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut seq = make_sequencer(0, bar * 4);
         add_and_select_clip(&mut seq, 0, bar * 2);
         seq.cursor_tick.store(0, Ordering::Relaxed);
@@ -1741,7 +1741,7 @@ mod tests {
     /// Returns `None` when cursor is before the clip start.
     #[test]
     fn insert_running_capture_returns_none_when_cursor_before_clip() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let clip_start = bar * 2;
         let mut seq = make_sequencer(0, bar * 2);
         add_and_select_clip(&mut seq, clip_start, bar * 2);
@@ -1761,7 +1761,7 @@ mod tests {
     /// Returns `None` when cursor is at or after the clip end.
     #[test]
     fn insert_running_capture_returns_none_when_cursor_after_clip() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let clip_start = bar * 2;
         let mut seq = make_sequencer(0, bar * 4);
         add_and_select_clip(&mut seq, clip_start, bar * 2);
@@ -1782,7 +1782,7 @@ mod tests {
     /// Returns `None` on empty capture buffer.
     #[test]
     fn insert_running_capture_returns_none_on_empty_capture() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let clip_start = bar * 3;
         let mut seq = make_sequencer(clip_start, bar * 2);
         add_and_select_clip(&mut seq, clip_start, bar * 2);
@@ -1795,7 +1795,7 @@ mod tests {
     /// Capture buffer is cleared after a successful commit.
     #[test]
     fn insert_running_capture_clears_capture_buffer() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let clip_start = bar * 3;
         let mut seq = make_sequencer(clip_start, bar * 2);
         add_and_select_clip(&mut seq, clip_start, bar * 2);
@@ -1817,7 +1817,7 @@ mod tests {
     /// redo puts the same ones back, and the buffer stays cleared.
     #[test]
     fn insert_running_capture_is_undoable() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let clip_start = bar * 3;
         let mut seq = make_sequencer(clip_start, bar * 2);
         add_and_select_clip(&mut seq, clip_start, bar * 2);
@@ -1866,7 +1866,7 @@ mod tests {
     /// clip, this is any take in a clip the loop doesn't cover.
     #[test]
     fn insert_running_capture_outside_the_loop_finds_the_take() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut seq = make_sequencer(0, bar * 2); // loop [0, 2b)
         let clip_start = bar * 2; // the clip at bar 3..5, past the loop
         add_and_select_clip(&mut seq, clip_start, bar * 2);
@@ -1886,7 +1886,7 @@ mod tests {
     /// happens to be.
     #[test]
     fn commit_clip_to_track_outside_the_loop_finds_the_take() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut seq = make_sequencer(0, bar * 2); // loop [0, 2b)
         seq.cursor_tick.store(bar * 4, Ordering::Relaxed);
 
@@ -1901,7 +1901,7 @@ mod tests {
     /// Clearing the buffer forgets the offset: the next take measures its own.
     #[test]
     fn reset_capture_forgets_the_clock_offset() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut seq = make_sequencer(0, bar * 2);
         play_note_with_clock_ahead(&mut seq, bar * 4, bar * 2 * 3);
         assert_eq!(seq.capture_clock_shift(), bar * 2 * 3);
@@ -1933,7 +1933,7 @@ mod tests {
     /// values are deliberately incoherent; only `elapsed` may be consulted.
     #[test]
     fn live_rec_note_placement_survives_a_clock_position_snap() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut seq = make_sequencer(0, bar * 2);
         seq.start_live_recording(5_000).unwrap();
 
@@ -1974,7 +1974,7 @@ mod tests {
     /// so the two recorders genuinely read different coordinates.
     #[test]
     fn running_capture_still_stamps_the_position_coordinate() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut seq = make_sequencer(0, bar * 2);
 
         seq.handle_midi_input_dispatch(
@@ -1994,7 +1994,7 @@ mod tests {
     /// trigger it early.
     #[test]
     fn should_end_live_recording_fires_on_odometer_distance() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut seq = make_sequencer(0, bar * 2);
         seq.elapsed_ticks.store(5_000, Ordering::Relaxed);
         seq.start_live_recording(5_000).unwrap();
@@ -2021,7 +2021,7 @@ mod tests {
     /// Positive offset shifts events correctly into clip-local space.
     #[test]
     fn capture_events_to_insert_positive_offset_shifts_into_clip_space() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
 
         // Capture: note-on at 600, note-off at 900 (both relative to region_start after crop).
         let mut capture = Clip::new();
@@ -2050,7 +2050,7 @@ mod tests {
     /// Zero offset (region_start == clip.start_tick()) must leave event ticks unchanged.
     #[test]
     fn capture_events_to_insert_zero_offset_preserves_ticks() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
 
         let mut capture = Clip::new();
         capture.add_event(note_on(600));

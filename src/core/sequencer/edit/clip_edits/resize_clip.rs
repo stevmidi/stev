@@ -135,7 +135,7 @@ mod tests {
     /// A selected 2-bar clip at bar 4 whose window starts a bar into its
     /// events (a bar of material hidden before it), plus a clip at bar 10.
     fn sequencer_with_clip() -> Sequencer {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut sequencer = test_sequencer();
 
         let mut clip = Clip::new();
@@ -180,7 +180,7 @@ mod tests {
     /// clip grows left, its content stays put in time, and undo restores it.
     #[test]
     fn arranger_start_trim_reveals_hidden_material_and_undoes() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut sequencer = sequencer_with_clip();
         let original = bounds(&sequencer);
         let mut record = Record::new();
@@ -207,7 +207,7 @@ mod tests {
     /// keeps its arrangement start, and the length follows.
     #[test]
     fn start_marker_moves_only_the_start() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let sequencer = sequencer_with_clip(); // window [bar, 3 bars) at bar 4
 
         let after = sequencer.selected_clip_start_marker_at(bar / 2).unwrap();
@@ -230,7 +230,7 @@ mod tests {
 
     #[test]
     fn end_marker_rounds_up_to_whole_bars_and_stops_at_the_next_clip() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let sequencer = sequencer_with_clip();
 
         // Rounds up: 0.6 bars from the window start → 1 bar, exactly on a
@@ -270,7 +270,7 @@ mod tests {
     /// nearest one on the side the edge faces — so they can grow a clip.
     #[test]
     fn arranger_edge_clip_is_under_the_cursor_or_the_nearest_on_that_side() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let sequencer = sequencer_with_clip(); // clips at bars 4–6 and 10–11
         let first = clip_id(&sequencer);
         let at = |tick: i32, edge: ClipEdge| {
@@ -296,7 +296,7 @@ mod tests {
     /// One mouse drag is one undo step, however many moves it sent.
     #[test]
     fn one_drag_merges_into_one_undo_step() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut sequencer = sequencer_with_clip();
         let original = bounds(&sequencer);
         let mut record = Record::new();
@@ -316,7 +316,7 @@ mod tests {
     /// Keyboard edits and separate drags stay separate steps.
     #[test]
     fn keyboard_edits_and_separate_drags_do_not_merge() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut sequencer = sequencer_with_clip();
         let mut record = Record::new();
 

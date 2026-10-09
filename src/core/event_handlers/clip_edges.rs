@@ -173,7 +173,7 @@ mod tests {
         Harness, add_clip, harness, run_command as run,
     };
     use crate::core::sequencer::SequencerCommand;
-    use crate::core::time;
+    use crate::core::time::Meter;
     use crate::core::transport::TransportCommand;
     use crate::core::view_state::ViewState;
     use crate::models::clip::ClipEdge;
@@ -183,7 +183,7 @@ mod tests {
     /// clip view focused — the setting where an edit is most tempted to
     /// touch the transport.
     fn playing_a_looped_clip() -> Harness {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut h = harness();
         add_clip(&mut h.sequencer, 0);
         h.handlers
@@ -266,7 +266,7 @@ mod tests {
     /// loop stays where the user put it.
     #[test]
     fn with_two_clips_an_edge_edit_sends_nothing_to_the_transport() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut h = playing_a_looped_clip();
         add_clip(&mut h.sequencer, bar * 8);
         let mut record = Record::new();
@@ -287,7 +287,7 @@ mod tests {
     /// no-op, stored nowhere and recorded nowhere.
     #[test]
     fn enter_does_nothing_with_more_than_one_clip() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut h = harness();
         add_clip(&mut h.sequencer, 0);
         add_clip(&mut h.sequencer, bar * 4);

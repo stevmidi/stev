@@ -222,7 +222,7 @@ mod tests {
     #[test]
     fn running_commit_places_the_clip_and_clears_the_buffer_undo_lifts_it_redo_restores_it() {
         let mut sequencer = test_sequencer();
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let bystander = clip_at(bar * 4, bar);
         sequencer.tracks_mut()[0].add_clip(&bystander);
         capture_note(&mut sequencer, 600, 900);
@@ -356,7 +356,7 @@ mod tests {
     #[test]
     fn from_empty_clip_without_a_tick_range_is_one_bar_at_the_cursor() {
         let sequencer = test_sequencer();
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         sequencer.cursor_tick.store(bar, Ordering::Relaxed);
 
         assert_eq!(empty_clip_span(&sequencer, None), (bar, bar * 2));

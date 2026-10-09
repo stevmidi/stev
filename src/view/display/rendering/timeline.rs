@@ -4,7 +4,6 @@
 
 use egui::{Align2, CornerRadius, FontId, Painter, Rect, Shape, Stroke, pos2, vec2};
 
-use crate::core::time::bars_to_ticks;
 use crate::view::display::grid::GridRole;
 
 use super::*;
@@ -94,7 +93,7 @@ impl Display {
         };
 
         let tl_font = FontId::proportional(theme::FONT_SIZE_TL);
-        let ticks_per_bar = bars_to_ticks(1);
+        let ticks_per_bar = self.meter().bar_ticks();
 
         for i in first_visible..(first_visible + num_visible) {
             let tick = i * step_ticks;
@@ -385,19 +384,19 @@ fn region_band_span(
 #[cfg(test)]
 mod tests {
     use super::{grid_line_x, region_band_span, region_bound_x, timeline_step_span};
-    use crate::core::time;
+    use crate::core::time::{self, Meter};
 
     const CONTENT_X: f32 = 118.0;
 
     /// Pixels-per-tick at arranger zoom (~32 bars across the content width).
     fn arranger_ppt() -> f32 {
-        (1274.0 / 128.0) / time::bars_to_ticks(1) as f32
+        (1274.0 / 128.0) / Meter::FOUR_FOUR.bar_ticks() as f32
     }
 
     /// The rounded screen-x of the ruler's bar tick for a 0-based `bar`, via
     /// the same `grid_line_x` call `draw_timeline`'s grid loop makes.
     fn bar_tick_x(bar: i32, ppt: f32, scroll_x: f32) -> f32 {
-        let step = bar * time::bars_to_beats(1);
+        let step = bar * 4;
         grid_line_x(step, time::beats_to_ticks(1.0), ppt, CONTENT_X, scroll_x)
     }
 
@@ -405,14 +404,14 @@ mod tests {
     /// prove the zoom-sweep regression test below isn't vacuous.
     fn old_bar_tick_x(bar: i32, ppt: f32, scroll_x: f32) -> f32 {
         let pixels_per_step = ppt * time::beats_to_ticks(1.0) as f32;
-        let step = bar * time::bars_to_beats(1);
+        let step = bar * 4;
         (pixels_per_step * step as f32 + CONTENT_X - scroll_x).round()
     }
 
     #[test]
     fn region_bound_sits_exactly_on_its_bar_tick_at_every_scroll() {
         let ppt = arranger_ppt();
-        let ticks_per_bar = time::bars_to_ticks(1);
+        let ticks_per_bar = Meter::FOUR_FOUR.bar_ticks();
         // Bars 5, 10, 13, 18 (0-based 4, 9, 12, 17) were the reported blurry
         // ones; sweep sub-pixel scroll offsets so the fractional parts land all
         // over [0, 1).
@@ -434,7 +433,7 @@ mod tests {
         // The arranger zoom only changes the `ppt` fed to the one formula, so
         // the bound and the ruler tick must agree at any scale, not just the
         // default — sweep the zoom range (px per beat) with sub-pixel scrolls.
-        let ticks_per_bar = time::bars_to_ticks(1);
+        let ticks_per_bar = Meter::FOUR_FOUR.bar_ticks();
         let mut old_formula_drifted = false;
         for px_per_beat in [0.5, 0.8, 3.3, 9.953_125, 12.44, 47.1, 160.0] {
             let ppt = time::px_per_beat_to_ppt(px_per_beat);
@@ -465,7 +464,7 @@ mod tests {
         // Prove it actually drifts (or this regression test is vacuous) and that
         // `region_bound_x` never does.
         let ppt = arranger_ppt();
-        let ticks_per_bar = time::bars_to_ticks(1);
+        let ticks_per_bar = Meter::FOUR_FOUR.bar_ticks();
         let mut saw_divergence = false;
         for bar in 1..40 {
             for k in 0..50 {

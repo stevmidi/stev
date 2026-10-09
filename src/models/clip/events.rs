@@ -319,7 +319,7 @@ impl Clip {
 #[cfg(test)]
 mod tests {
     use crate::{
-        core::time::{self, Meter},
+        core::time::Meter,
         models::{
             clip::Clip,
             event::{Event, EventType},
@@ -365,7 +365,7 @@ mod tests {
 
     #[test]
     fn align_window_start_to_bar_rounds_up_to_the_next_bar_line() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut clip = clip_with_region(bar + 100, bar * 3);
         clip.add_event(on(50, 60));
         clip.align_window_start_to_bar(Meter::FOUR_FOUR);
@@ -395,7 +395,7 @@ mod tests {
         clip.add_event(on(100, 61)); // at region_start — included
         clip.add_event(on(300, 62)); // in region — included
         clip.add_event(on(500, 63)); // at region_end — excluded (half-open)
-        clip.crop(time::bars_to_ticks(1));
+        clip.crop(Meter::FOUR_FOUR.bar_ticks());
 
         let note_numbers: Vec<u8> = clip
             .events()
@@ -414,7 +414,7 @@ mod tests {
         let mut clip = clip_with_region(100, 500);
         clip.add_event(on(200, 60));
         clip.add_event(off(400, 60));
-        clip.crop(time::bars_to_ticks(1));
+        clip.crop(Meter::FOUR_FOUR.bar_ticks());
 
         let note_on_tick = clip
             .events()
@@ -429,7 +429,7 @@ mod tests {
     fn crop_closes_open_notes_at_clip_boundary() {
         let mut clip = clip_with_region(0, 960);
         clip.add_event(on(0, 60)); // no matching note-off
-        clip.crop(time::bars_to_ticks(1));
+        clip.crop(Meter::FOUR_FOUR.bar_ticks());
 
         let note_offs: Vec<_> = clip
             .events()
@@ -445,7 +445,7 @@ mod tests {
     #[test]
     fn crop_empty_clip_does_not_panic() {
         let mut clip = clip_with_region(0, 960);
-        clip.crop(time::bars_to_ticks(1));
+        clip.crop(Meter::FOUR_FOUR.bar_ticks());
     }
 
     // --- trim_before_tick ---

@@ -224,7 +224,7 @@ fn quantize_strength(dist: i32, grid_resolution: i32) -> f32 {
 #[cfg(test)]
 mod tests {
     use crate::{
-        core::time,
+        core::time::{self, Meter},
         models::{
             clip::Clip,
             event::{Event, EventType},
@@ -358,7 +358,7 @@ mod tests {
     fn quantize_anchors_grid_to_clip_origin_not_region_start() {
         // Region starts at 200 (off-beat). A note exactly on beat 1 (tick 960)
         // should be recognised as on-grid, not pulled because of the region offset.
-        let mut clip = clip_with_region(200, 200 + time::bars_to_ticks(1));
+        let mut clip = clip_with_region(200, 200 + Meter::FOUR_FOUR.bar_ticks());
         clip.add_event(on(960, 60));
         clip.add_event(off(1200, 60));
 
@@ -386,7 +386,7 @@ mod tests {
     fn quantize_with_a_selection_moves_only_the_selected_notes() {
         // Both notes sit at the worked-example 100 (→ 129 on the triplet
         // grid, see above) a bar apart; only the second is selected.
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut clip = clip_with_region(0, bar * 2);
         clip.add_event(on(100, 60));
         clip.add_event(off(200, 60));
@@ -409,7 +409,7 @@ mod tests {
     fn quantize_without_a_selection_leaves_material_outside_the_window() {
         // The window is the first bar; the note in the second bar is
         // retained capture material and must stay put.
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut clip = clip_with_region(0, bar);
         clip.add_event(on(100, 60));
         clip.add_event(off(200, 60));
@@ -476,7 +476,7 @@ mod tests {
         //   Swung grid dist = 10 → inside dead zone (30) → no movement.
         //   Straight grid dist = |312-240| = 72 → outside dead zone → would pull to 240.
         // Test verifies the swung grid wins the vote so notes stay at 312.
-        let mut clip = clip_with_region(0, time::bars_to_ticks(2));
+        let mut clip = clip_with_region(0, Meter::FOUR_FOUR.bars_to_ticks(2));
         clip.set_swing_pct(67);
         clip.add_event(on(312, 62));
         clip.add_event(on(1272, 62)); // beat 1 (960) + 312

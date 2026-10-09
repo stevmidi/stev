@@ -12,7 +12,7 @@ use crate::core::config::{
     ARRANGER_MIN_PX_PER_BEAT, ARRANGER_ZOOM_OUT_HEADROOM, BARS_IN_VIEWPORT, MAX_PX_PER_BEAT,
     ZOOM_FIT_MARGIN,
 };
-use crate::core::time::{bars_to_beats, beats_to_ticks, px_per_beat_to_ppt};
+use crate::core::time::{beats_to_ticks, px_per_beat_to_ppt};
 use crate::models::clip::EventSpaceRetime;
 use crate::view::display::render_state::Framing;
 
@@ -470,12 +470,17 @@ fn centred_scroll_x(start: i32, end: i32, ppt: f32, content_w: f32) -> f32 {
     (start + end) as f32 / 2.0 * ppt - content_w / 2.0
 }
 
+/// The default arranger view's width in quarter notes: `BARS_IN_VIEWPORT`
+/// bars of 4/4 in every meter. Zoom is pixels per quarter, so a meter change
+/// never refits or rescrolls the view (`270-time-signature.md`).
+const DEFAULT_VIEW_QUARTERS: i32 = BARS_IN_VIEWPORT * 4;
+
 /// The default arranger scale for a `content_w`-wide content area:
-/// `BARS_IN_VIEWPORT` bars across it. `pixels_per_tick` built from this is
+/// [`DEFAULT_VIEW_QUARTERS`] across it. `pixels_per_tick` built from this is
 /// bit-identical to the old fixed `content_w / BARS_IN_VIEWPORT /
-/// bars_to_ticks(1)` — the two differ only by power-of-two factors.
+/// Meter::FOUR_FOUR.bar_ticks()` — the two differ only by power-of-two factors.
 fn default_arranger_px_per_beat(content_w: f32) -> f32 {
-    content_w / (BARS_IN_VIEWPORT * bars_to_beats(1)) as f32
+    content_w / DEFAULT_VIEW_QUARTERS as f32
 }
 
 /// The zoom-out limit for a `content_w`-wide view of an arrangement ending at
@@ -486,7 +491,7 @@ fn default_arranger_px_per_beat(content_w: f32) -> f32 {
 /// Capped at `MAX_PX_PER_BEAT` so the range is never inverted.
 fn min_arranger_px_per_beat(content_w: f32, last_content_tick: i32) -> f32 {
     let content_beats = last_content_tick.max(0) as f32 / beats_to_ticks(1.0) as f32;
-    let default_beats = (BARS_IN_VIEWPORT * bars_to_beats(1)) as f32;
+    let default_beats = DEFAULT_VIEW_QUARTERS as f32;
     let span_beats = (content_beats * ARRANGER_ZOOM_OUT_HEADROOM).max(default_beats);
     (content_w / span_beats).clamp(ARRANGER_MIN_PX_PER_BEAT, MAX_PX_PER_BEAT)
 }
@@ -581,13 +586,22 @@ mod tests {
         ZOOM_FIT_MARGIN, ZOOM_KEY_STEP,
     };
     use crate::core::input_event::TimeSelectionRect;
-    use crate::core::time::{bars_to_ticks, beats_to_ticks, px_per_beat_to_ppt};
+    use crate::core::time::{Meter, beats_to_ticks, px_per_beat_to_ppt};
     use crate::models::clip::EventSpaceRetime;
+
+    #[test]
+    fn the_default_view_is_128_quarters_wide_whatever_the_meter() {
+        // It takes no meter: a meter change never refits the view. 32 bars of
+        // 4/4, 42⅔ of 3/4, 36.6 of 7/8.
+        for content_w in [1274.0_f32, 2100.0] {
+            assert_eq!(content_w / default_arranger_px_per_beat(content_w), 128.0);
+        }
+    }
 
     #[test]
     fn default_scale_is_bit_identical_to_the_old_fixed_viewport() {
         for content_w in [1.0, 640.0, 1274.0, 1382.0, 1917.5, 3000.25] {
-            let old_ppt = content_w / BARS_IN_VIEWPORT as f32 / bars_to_ticks(1) as f32;
+            let old_ppt = content_w / BARS_IN_VIEWPORT as f32 / Meter::FOUR_FOUR.bar_ticks() as f32;
             let new_ppt = px_per_beat_to_ppt(default_arranger_px_per_beat(content_w));
             assert_eq!(
                 old_ppt.to_bits(),
@@ -652,7 +666,7 @@ mod tests {
     fn floor_fits_the_arrangement_plus_headroom() {
         // 200 bars of material: 200 * 4 * 1.25 = 1000 beats across the width.
         let content_w = 3000.0;
-        let floor = min_arranger_px_per_beat(content_w, bars_to_ticks(200));
+        let floor = min_arranger_px_per_beat(content_w, Meter::FOUR_FOUR.bars_to_ticks(200));
         assert_eq!(
             floor,
             content_w / (200.0 * 4.0 * ARRANGER_ZOOM_OUT_HEADROOM)
@@ -662,7 +676,11 @@ mod tests {
     #[test]
     fn floor_never_tighter_than_the_default_view() {
         // Empty and short projects can still zoom out to the default 32 bars.
-        for last_tick in [0, bars_to_ticks(2), bars_to_ticks(20)] {
+        for last_tick in [
+            0,
+            Meter::FOUR_FOUR.bars_to_ticks(2),
+            Meter::FOUR_FOUR.bars_to_ticks(20),
+        ] {
             assert_eq!(
                 min_arranger_px_per_beat(1274.0, last_tick),
                 default_arranger_px_per_beat(1274.0)
@@ -673,7 +691,7 @@ mod tests {
     #[test]
     fn floor_bottoms_out_at_the_hard_minimum() {
         assert_eq!(
-            min_arranger_px_per_beat(1274.0, bars_to_ticks(5_000)),
+            min_arranger_px_per_beat(1274.0, Meter::FOUR_FOUR.bars_to_ticks(5_000)),
             ARRANGER_MIN_PX_PER_BEAT
         );
     }
@@ -706,9 +724,16 @@ mod tests {
     #[test]
     fn fit_frames_the_span_centred_with_equal_margins() {
         let content_w = 1200.0;
-        let px_per_beat = fit_px_per_beat(bars_to_ticks(8), content_w, ARRANGER_MIN_PX_PER_BEAT);
+        let px_per_beat = fit_px_per_beat(
+            Meter::FOUR_FOUR.bars_to_ticks(8),
+            content_w,
+            ARRANGER_MIN_PX_PER_BEAT,
+        );
         let ppt = px_per_beat_to_ppt(px_per_beat);
-        let (start, end) = (bars_to_ticks(20), bars_to_ticks(28));
+        let (start, end) = (
+            Meter::FOUR_FOUR.bars_to_ticks(20),
+            Meter::FOUR_FOUR.bars_to_ticks(28),
+        );
         let scroll_x = centred_scroll_x(start, end, ppt, content_w);
         let left_px = start as f32 * ppt - scroll_x;
         let right_px = end as f32 * ppt - scroll_x;
@@ -733,7 +758,10 @@ mod tests {
             MAX_PX_PER_BEAT
         );
         // 5000 bars would want far below the floor: held at the floor.
-        assert_eq!(fit_px_per_beat(bars_to_ticks(5_000), 1200.0, 3.0), 3.0);
+        assert_eq!(
+            fit_px_per_beat(Meter::FOUR_FOUR.bars_to_ticks(5_000), 1200.0, 3.0),
+            3.0
+        );
         // A degenerate span never divides by zero.
         assert!(fit_px_per_beat(0, 1200.0, 2.0).is_finite());
     }
@@ -795,7 +823,7 @@ mod tests {
         // centred with equal margins, while at bar 1 it sits flush left (the
         // view can't scroll before bar 1 — by decision, no lead-in).
         let content_w = 1700.0;
-        let bar = bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let expected = content_w * ZOOM_FIT_MARGIN;
         let framed_w = content_w - 2.0 * expected;
         let clips_end = 16 * bar;
@@ -918,7 +946,7 @@ mod tests {
     fn clip_z_centres_the_selection_with_the_arranger_margins() {
         // An 8-bar clip at bar 5 on a 2000pt view, one bar selected mid-clip.
         let content_w = 2000.0;
-        let bar = bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let region = (4 * bar, 12 * bar);
         let fit = content_w / (8.0 * 4.0);
         let (start, end) = (7 * bar, 8 * bar);
@@ -936,7 +964,7 @@ mod tests {
         // A selection at the clip start can't be centred without showing
         // time before the clip: it sits flush left instead.
         let content_w = 2000.0;
-        let bar = bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let region = (4 * bar, 12 * bar);
         let fit = content_w / (8.0 * 4.0);
         let framing = clip_fit_framing((4 * bar, 5 * bar), region, content_w, fit);
@@ -947,7 +975,7 @@ mod tests {
     #[test]
     fn clip_z_on_the_whole_clip_lands_on_the_whole_clip() {
         let content_w = 2000.0;
-        let bar = bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let region = (0, 8 * bar);
         let fit = content_w / (8.0 * 4.0);
         let framing = clip_fit_framing(region, region, content_w, fit);
@@ -980,7 +1008,7 @@ mod tests {
         };
         let before = Framing {
             px_per_beat: 40.0,
-            scroll_x: bars_to_ticks(29) as f32 * px_per_beat_to_ppt(40.0),
+            scroll_x: Meter::FOUR_FOUR.bars_to_ticks(29) as f32 * px_per_beat_to_ppt(40.0),
         };
         let after = retimed_framing(before, retime);
         let (old_ppt, new_ppt) = (
@@ -989,9 +1017,9 @@ mod tests {
         );
 
         for tick in [
-            bars_to_ticks(29) + 7,
-            bars_to_ticks(30) + 250,
-            bars_to_ticks(31),
+            Meter::FOUR_FOUR.bars_to_ticks(29) + 7,
+            Meter::FOUR_FOUR.bars_to_ticks(30) + 250,
+            Meter::FOUR_FOUR.bars_to_ticks(31),
         ] {
             let old_x = tick as f32 * old_ppt - before.scroll_x;
             let new_x = retime.map_tick(tick) as f32 * new_ppt - after.scroll_x;

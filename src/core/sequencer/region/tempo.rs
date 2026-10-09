@@ -148,7 +148,7 @@ mod tests {
     /// ×2 (the automatic `⌥=`).
     #[test]
     fn octave_correct_doubles_a_too_slow_first_clip() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut clip = first_clip(bar);
 
         let tempo = Sequencer::octave_correct_clip_tempo(
@@ -167,7 +167,7 @@ mod tests {
     /// A fitted tempo at/above ~140 BPM is octaved down.
     #[test]
     fn octave_correct_halves_a_too_fast_first_clip() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut clip = first_clip(bar * 2);
 
         let tempo = Sequencer::octave_correct_clip_tempo(
@@ -186,7 +186,7 @@ mod tests {
     /// An in-band tempo is left untouched.
     #[test]
     fn octave_correct_leaves_an_in_band_first_clip_alone() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut clip = first_clip(bar);
 
         assert_eq!(
@@ -203,7 +203,7 @@ mod tests {
     /// Single step only — 30 BPM is octaved once to 60, not iterated into band.
     #[test]
     fn octave_correct_is_a_single_step() {
-        let mut clip = first_clip(time::bars_to_ticks(1));
+        let mut clip = first_clip(Meter::FOUR_FOUR.bar_ticks());
 
         let tempo = Sequencer::octave_correct_clip_tempo(
             &mut clip,

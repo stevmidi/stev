@@ -223,7 +223,7 @@ mod tests {
 
     use crate::core::sequencer::{ClipInstrumentEvent, SequencerEdit};
 
-    use crate::core::time;
+    use crate::core::time::Meter;
     use crate::models::clip::{Clip, ClipEdge};
 
     use crate::core::sequencer::test_support::{
@@ -242,7 +242,7 @@ mod tests {
     /// The project's only clip: at bar 1, a 2½-bar window starting 4 bars
     /// into its events, with a note per beat.
     fn sequencer_with_first_clip() -> (Sequencer, Uuid) {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut sequencer = test_sequencer();
         let mut clip = Clip::new();
         clip.region_mut()
@@ -268,7 +268,7 @@ mod tests {
     /// together, and redo replays the fit.
     #[test]
     fn enter_fits_the_tempo_to_the_only_clip_and_undoes_with_it() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let (mut sequencer, clip_id) = sequencer_with_first_clip();
         let mut target = clip(&sequencer).bounds();
         target.region_end = target.region_start + bar * 9 / 4;
@@ -313,7 +313,7 @@ mod tests {
     /// the window start onto the new one and back.
     #[test]
     fn the_fit_and_its_undo_report_the_retime() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let (mut sequencer, clip_id) = sequencer_with_first_clip();
         let mut target = clip(&sequencer).bounds();
         target.region_end = target.region_start + bar * 9 / 4;
@@ -347,7 +347,7 @@ mod tests {
     /// project with a second clip.
     #[test]
     fn nothing_to_fit_on_a_whole_bar_clip_or_with_a_second_clip() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let (mut sequencer, clip_id) = sequencer_with_first_clip();
         let mut whole = clip(&sequencer).bounds();
         whole.region_end = whole.region_start + bar * 2;
@@ -377,7 +377,7 @@ mod tests {
     /// clip view's `]` rounds up to the bar the cursor is in.
     #[test]
     fn the_end_is_exact_with_one_clip_and_rounds_up_with_more() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let (mut sequencer, clip_id) = sequencer_with_first_clip();
         let length = bar * 2 + 123;
         let region_start = clip(&sequencer).region().start();
@@ -412,7 +412,7 @@ mod tests {
     /// instrument track, holds one short note at bar 3 — Enter fits it to 2
     /// bars, pulling the note earlier by 1/9.
     fn running_with_unfitted_clip() -> (Sequencer, Consumer<ClipInstrumentEvent>) {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let (mut sequencer, plugin_rx) = sequencer_with(true);
         instrument_track_0(&mut sequencer);
         let mut clip = clip_at(0, bar * 9 / 4);
@@ -428,7 +428,7 @@ mod tests {
     #[test]
     fn the_fit_releases_a_note_it_moves_out_from_under_the_playhead() {
         let (mut sequencer, mut plugin_rx) = running_with_unfitted_clip();
-        sequencer.reset_to_tick(time::bars_to_ticks(2));
+        sequencer.reset_to_tick(Meter::FOUR_FOUR.bars_to_ticks(2));
         sequencer.tick(Instant::now());
         assert_eq!(drain(&mut plugin_rx), vec![[0x90, 60, 100]]);
 
@@ -477,7 +477,7 @@ mod tests {
     /// replays it.
     #[test]
     fn rescale_moves_the_tempo_and_undoes_with_it() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let (mut sequencer, _) = sequencer_with(false);
         let mut take = clip_at(0, bar * 2);
         take.add_event(note_on(bar));
@@ -517,7 +517,7 @@ mod tests {
     /// clip can't shrink, so `⌥-` on it is no edit.
     #[test]
     fn rescale_leaves_the_tempo_with_a_second_clip_and_skips_a_one_bar_shrink() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let (mut sequencer, _) = sequencer_with(false);
         let mut other = clip_at(0, bar);
         other.set_start_tick(bar * 20);
@@ -546,7 +546,7 @@ mod tests {
     /// ends before the playhead, where the walk would never meet its off.
     #[test]
     fn rescale_releases_a_note_it_moves_out_from_under_the_playhead() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let (mut sequencer, mut plugin_rx) = sequencer_with(true);
         instrument_track_0(&mut sequencer);
         let mut clip = clip_at(0, bar * 2);
@@ -572,7 +572,7 @@ mod tests {
     /// to do.
     #[test]
     fn rescale_keeps_the_window_on_a_bar_line_so_enter_has_nothing_to_fit() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let (mut sequencer, _) = sequencer_with(false);
         let mut fitted = Clip::new();
         fitted.region_mut().set_region(Some(bar * 3), Some(bar * 5));

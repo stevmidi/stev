@@ -321,6 +321,7 @@ impl Clock {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::time::Meter;
 
     // 120 BPM.
     const TEMPO_120: i64 = 500_000;
@@ -385,8 +386,8 @@ mod tests {
         // free-ran one whole loop past it and sits at the same phase. Snapping
         // here would drag the clock back a loop every wrap and break
         // live-recording length, which measures a clock-tick difference.
-        let start = time::bars_to_ticks(4);
-        let len = time::bars_to_ticks(2);
+        let start = Meter::FOUR_FOUR.bars_to_ticks(4);
+        let len = Meter::FOUR_FOUR.bars_to_ticks(2);
         assert_eq!(
             Clock::aligned_tick(start + len + 1, start + 1, start, len),
             None
@@ -405,8 +406,8 @@ mod tests {
         // different coordinate space than playback. It is corrected now — but
         // by moving the clock the three ticks it is out, staying in the loop it
         // had free-run to.
-        let start = time::bars_to_ticks(4);
-        let len = time::bars_to_ticks(2);
+        let start = Meter::FOUR_FOUR.bars_to_ticks(4);
+        let len = Meter::FOUR_FOUR.bars_to_ticks(2);
         assert_eq!(
             Clock::aligned_tick(start + len + 100, start + 103, start, len),
             Some(start + len + 103)
@@ -417,12 +418,12 @@ mod tests {
     fn aligned_tick_corrects_a_real_seek_by_the_shorter_way_round() {
         // Half a region away: the correction takes the near side of the circle
         // and still lands on playback's phase, three loops in.
-        let start = time::bars_to_ticks(4);
-        let len = time::bars_to_ticks(2);
-        let target = start + time::bars_to_ticks(1);
+        let start = Meter::FOUR_FOUR.bars_to_ticks(4);
+        let len = Meter::FOUR_FOUR.bars_to_ticks(2);
+        let target = start + Meter::FOUR_FOUR.bar_ticks();
         let aligned = Clock::aligned_tick(start + len * 3 + 5, target, start, len).unwrap();
 
-        assert_eq!(aligned, start + len * 3 + time::bars_to_ticks(1));
+        assert_eq!(aligned, start + len * 3 + Meter::FOUR_FOUR.bar_ticks());
         assert_eq!(
             (aligned - start).rem_euclid(len),
             (target - start).rem_euclid(len)
@@ -439,8 +440,8 @@ mod tests {
         // into the region's first iteration on every single wrap, so every
         // cycle of a take would be stamped into the same tick span and the
         // capture crop window would keep all of them. Only the phase may move.
-        let start = time::bars_to_ticks(4);
-        let len = time::bars_to_ticks(2);
+        let start = Meter::FOUR_FOUR.bars_to_ticks(4);
+        let len = Meter::FOUR_FOUR.bars_to_ticks(2);
 
         for lag in 1..=8 {
             let clock = start + len * 3 + lag;
@@ -471,8 +472,8 @@ mod tests {
     fn aligned_tick_handles_a_position_before_region_start() {
         // `rem_euclid` keeps the phase non-negative on either side of the
         // region, so a clock or cursor behind `region_start` still compares.
-        let start = time::bars_to_ticks(4);
-        let len = time::bars_to_ticks(2);
+        let start = Meter::FOUR_FOUR.bars_to_ticks(4);
+        let len = Meter::FOUR_FOUR.bars_to_ticks(2);
         assert_eq!(
             Clock::aligned_tick(start - len + 7, start + 7, start, len),
             None

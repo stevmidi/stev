@@ -446,8 +446,9 @@ fn default_track(idx: usize) -> Track {
 mod tests {
     use std::sync::atomic::Ordering;
 
+    use crate::core::config;
     use crate::core::sequencer::test_support::sequencer_at_tempo;
-    use crate::core::{config, time};
+    use crate::core::time::Meter;
 
     #[test]
     fn new_project_resets_tempo_to_default() {
@@ -496,7 +497,7 @@ mod tests {
     #[test]
     fn loop_reference_length_tracks_the_loop_region_with_a_default_floor() {
         let mut seq = sequencer_at_tempo(config::TEMPO_US_DEFAULT).0;
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
 
         // Fresh sequencer: region is the default window.
         assert_eq!(seq.loop_reference_length(), config::REGION_LENGTH_DEFAULT);
@@ -516,7 +517,7 @@ mod tests {
     #[test]
     fn playback_is_looping_requires_the_flag_and_playback_inside_the_region() {
         let mut seq = sequencer_at_tempo(config::TEMPO_US_DEFAULT).0;
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         seq.set_global_region(bar * 2, bar * 4);
         seq.loop_enabled.store(true, Ordering::Relaxed);
 

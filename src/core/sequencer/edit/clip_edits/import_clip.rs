@@ -37,7 +37,7 @@ impl PasteClipsEdit {
 mod tests {
     use crate::core::sequencer::edit::EditResult;
     use crate::core::sequencer::test_support::{clip_at, test_sequencer};
-    use crate::core::time::{Meter, PPQN, bars_to_ticks};
+    use crate::core::time::{Meter, PPQN};
     use crate::models::event::Event;
 
     use super::*;
@@ -62,7 +62,7 @@ mod tests {
     #[test]
     fn lands_on_the_track_at_the_tick_and_names_itself_the_lead_span() {
         let mut sequencer = test_sequencer();
-        let bar = bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
 
         let mut edit = PasteClipsEdit::importing(&sequencer, 2, bar, imported()).unwrap();
         let EditResult::ClipsPasted { pasted, lead, .. } = edit.edit(&mut sequencer) else {
@@ -83,7 +83,7 @@ mod tests {
     #[test]
     fn carves_what_it_lands_on_and_undo_puts_it_back() {
         let mut sequencer = test_sequencer();
-        let bar = bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let existing = clip_at(0, bar * 4);
         sequencer.tracks_mut()[0].add_clip(&existing);
 
@@ -110,7 +110,7 @@ mod tests {
     #[test]
     fn importing_the_same_file_twice_gives_two_clips() {
         let mut sequencer = test_sequencer();
-        let bar = bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let clip = imported();
         PasteClipsEdit::importing(&sequencer, 0, 0, clip.clone())
             .unwrap()

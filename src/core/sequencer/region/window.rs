@@ -233,7 +233,7 @@ mod tests {
 
     #[test]
     fn calculate_running_region_first_bar_note_keeps_two_bar_window_at_loop_start() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let clip = clip_with_note_on(600);
 
         let (start, end) = Sequencer::calculate_running_region(&clip, 0, bar * 2, Some(bar * 3));
@@ -247,7 +247,7 @@ mod tests {
     /// the material is placed at the anchor, so a slide would shift it.
     #[test]
     fn calculate_running_region_window_stays_pinned_at_anchor_when_last_note_is_past_it() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let clip = clip_with_note_on(bar * 2 + 600);
 
         let (start, end) = Sequencer::calculate_running_region(&clip, 0, bar * 2, Some(bar * 3));
@@ -262,7 +262,7 @@ mod tests {
     #[test]
     fn calculate_running_region_loop_shorter_than_window_starts_at_the_pass_holding_the_last_note()
     {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let clip = clip_with_note_on(bar * 2 + bar + 500); // pass 1 of a 2-bar loop
 
         let (start, end) = Sequencer::calculate_running_region(&clip, 0, bar * 3, Some(bar * 2));
@@ -276,7 +276,7 @@ mod tests {
     /// remainder that note followed, not slid forward onto it.
     #[test]
     fn calculate_running_region_note_before_anchor_phase_keeps_the_previous_remainder() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let clip = clip_with_note_on(bar * 2 + 100);
 
         let (start, end) = Sequencer::calculate_running_region(&clip, bar, bar, Some(bar * 2));
@@ -289,7 +289,7 @@ mod tests {
     /// the last note is past the window.
     #[test]
     fn calculate_running_region_linear_take_starts_at_the_anchor() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let clip = clip_with_note_on(bar * 7 + 600);
 
         let (start, end) = Sequencer::calculate_running_region(&clip, bar, bar * 2, None);
@@ -300,7 +300,7 @@ mod tests {
 
     #[test]
     fn calculate_running_region_same_phrase_on_successive_loops_keeps_relative_window_phase() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let loop_len = bar * 3;
         let region_len = bar * 2;
 
@@ -334,7 +334,7 @@ mod tests {
     /// one), not the max-tick stale one, so the window stays in loop 0.
     #[test]
     fn calculate_running_region_stale_high_tick_event_does_not_displace_window() {
-        let bar = time::bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let loop_len = bar * 2;
         let region_len = bar * 2;
 

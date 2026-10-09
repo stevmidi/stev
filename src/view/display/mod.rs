@@ -914,7 +914,7 @@ impl Display {
     }
 
     /// The grid visible in the active pane: zoom-adaptive everywhere
-    /// (`grid_tiers` at the pane's scale) — the arranger's surface in the
+    /// (`grid_tiers` at the pane's scale, in the project's meter) — the arranger's surface in the
     /// arranger (never finer than a 16th), the piano roll's in the clip view
     /// (Ableton-Narrowest density, down to a 256th zoomed in; see
     /// `GridSurface`). Drives the grid
@@ -925,7 +925,12 @@ impl Display {
             Pane::Clip => GridSurface::PianoRoll,
             Pane::Arranger => GridSurface::Arranger,
         };
-        grid_tiers(self.pixels_per_tick(), surface.snap_floor_ticks(), surface)
+        grid_tiers(
+            self.pixels_per_tick(),
+            surface.snap_floor_ticks(),
+            surface,
+            self.meter(),
+        )
     }
 
     /// Grid resolution (in ticks) that every mouse gesture snaps to for the

@@ -4,7 +4,7 @@
 //! `u64`.
 //!
 //! The `080-conventions.md` `tick`/`ticks` rule applies to every helper name
-//! here: `bars_to_ticks`, `sixteenth_straight_ticks` etc. all return *amounts*;
+//! here: [`Meter::bars_to_ticks`], `sixteenth_straight_ticks` etc. all return *amounts*;
 //! [`Meter::next_bar_boundary_after`] returns a *position*. Pure functions, unit-tested
 //! at the bottom. `150-clock-position-sync.md` explains the timing model these
 //! feed.
@@ -183,31 +183,8 @@ impl Default for Meter {
     }
 }
 
-/// Bars → ticks (an amount). 4/4 assumed — being retired for
-/// [`Meter::bars_to_ticks`] (`270-time-signature.md` phase 2).
-pub const fn bars_to_ticks(bars: i32) -> i32 {
-    Meter::FOUR_FOUR.bars_to_ticks(bars)
-}
-
-/// Bars → beats. 4/4 assumed.
-pub const fn bars_to_beats(bars: i32) -> i32 {
-    bars * 4
-}
-
-/// Ticks → whole bars (truncating). 4/4 assumed — being retired for
-/// [`Meter::ticks_to_bars`].
-pub const fn ticks_to_bars(ticks: i32) -> i32 {
-    Meter::FOUR_FOUR.ticks_to_bars(ticks)
-}
-
-/// Ticks → whole beats (truncating).
-pub const fn ticks_to_beats(ticks: i32) -> i32 {
-    ticks / PPQN
-}
-
-/// Fractional beat position of `ticks`, e.g. for a CLAP transport's
-/// `song_pos_beats`. Unlike [`ticks_to_beats`] this keeps the sub-beat part,
-/// and unlike [`ticks_to_microseconds`] it does not truncate before dividing.
+/// Fractional beat (quarter-note) position of `ticks`, e.g. for a CLAP
+/// transport's `song_pos_beats`. Keeps the sub-beat part, and unlike [`ticks_to_microseconds`] it does not truncate before dividing.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub fn ticks_to_beats_f64(ticks: i32) -> f64 {
     f64::from(ticks) / f64::from(PPQN)
@@ -492,29 +469,8 @@ mod tests {
     }
 
     #[test]
-    fn bars_to_ticks_one_bar_equals_four_beats() {
-        assert_eq!(bars_to_ticks(1), PPQN * 4);
-    }
-
-    #[test]
-    fn bars_to_ticks_zero_bars_is_zero() {
-        assert_eq!(bars_to_ticks(0), 0);
-    }
-
-    #[test]
-    fn ticks_to_bars_round_trips_whole_bars() {
-        assert_eq!(ticks_to_bars(bars_to_ticks(4)), 4);
-    }
-
-    #[test]
-    fn ticks_to_bars_truncates_partial_bars() {
-        // Half a bar should still be 0 complete bars
-        assert_eq!(ticks_to_bars(bars_to_ticks(1) / 2), 0);
-    }
-
-    #[test]
     fn next_bar_boundary_after_on_boundary_advances_one_bar() {
-        let bar = bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         assert_eq!(Meter::FOUR_FOUR.next_bar_boundary_after(0), bar);
         assert_eq!(Meter::FOUR_FOUR.next_bar_boundary_after(bar), bar * 2);
         assert_eq!(Meter::FOUR_FOUR.next_bar_boundary_after(bar * 3), bar * 4);
@@ -522,14 +478,14 @@ mod tests {
 
     #[test]
     fn next_bar_boundary_after_mid_bar_rounds_up() {
-        let bar = bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         assert_eq!(Meter::FOUR_FOUR.next_bar_boundary_after(1), bar);
         assert_eq!(Meter::FOUR_FOUR.next_bar_boundary_after(bar + 600), bar * 2);
     }
 
     #[test]
     fn next_bar_boundary_after_negative_input() {
-        let bar = bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         assert_eq!(Meter::FOUR_FOUR.next_bar_boundary_after(-1), 0);
         assert_eq!(Meter::FOUR_FOUR.next_bar_boundary_after(-bar), 0);
         assert_eq!(Meter::FOUR_FOUR.next_bar_boundary_after(-bar - 1), -bar);
@@ -542,7 +498,7 @@ mod tests {
 
     #[test]
     fn snap_to_grid_rounds_to_nearest_multiple() {
-        let bar = bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         assert_eq!(snap_to_grid(bar - 1, bar), bar);
         assert_eq!(snap_to_grid(bar / 2 - 1, bar), 0);
         assert_eq!(snap_to_grid(0, bar), 0);
@@ -550,7 +506,7 @@ mod tests {
 
     #[test]
     fn snap_to_grid_rounds_negative_values_like_positive_ones() {
-        let bar = bars_to_ticks(1);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         assert_eq!(snap_to_grid(-bar - 5, bar), -bar);
         assert_eq!(snap_to_grid(-bar / 2 - 1, bar), -bar);
         assert_eq!(snap_to_grid(-bar / 2, bar), 0, "halves round up");
