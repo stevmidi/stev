@@ -525,8 +525,10 @@ paint runs plugin code. One `+currentContext` query per frame when nothing
 changed.
 
 The root cause is upstream, in glutin's CGL backend (`api/cgl/surface.rs`,
-`Surface::is_current`). Once that compares against `+currentContext`, this
-restore can go. eframe's wgpu (Metal) renderer has no current-context state
+`Surface::is_current`), reported as
+[glutin#1766](https://github.com/rust-windowing/glutin/issues/1766). Once that
+compares against `+currentContext` and eframe picks it up, this restore can
+go. eframe's wgpu (Metal) renderer has no current-context state
 at all and would sidestep the whole class of clash — a much bigger change,
 worth weighing only if other GL-drawing plugins turn up new ones.
 
