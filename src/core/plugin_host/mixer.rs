@@ -334,8 +334,8 @@ impl AudioSource for InstrumentMixer {
         // shared (the mix accumulator, the gain ramp) is deliberately left to
         // the summing pass below.
         //
-        // A sleeping voice with nothing newly queued (and no process request,
-        // see `wake_on_request`) is silent by definition — its contribution is
+        // A sleeping voice with nothing newly queued (and no process request
+        // or VST3 heartbeat, see `wake_on_request`) is silent by definition — its contribution is
         // correctly zero without ever calling into the plugin — and a plugin
         // whose process call failed is treated as silent for this block. Both
         // record `rendered = false` for the summing pass.

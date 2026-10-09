@@ -334,6 +334,9 @@ the CLAP path:
   nothing in it every `HEARTBEAT_SAMPLES` (4096, ~85 ms at 48 kHz), checked in
   `wake_on_request`. Its silence count is left alone, so a silent heartbeat
   goes straight back to sleep and one that made sound keeps the voice awake.
+  Each voice's count restarts at a phase spread by track (`staggered_for`),
+  so voices that fall asleep together after a transport stop don't all beat in
+  the same block and wake the worker pool for nothing.
   A plugin may advance internal state one `process` call at a time (smoothing
   toward a freshly loaded patch, setup handed over from its loading thread),
   and a voice that is never called freezes that mid-way, to be finished under

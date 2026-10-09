@@ -27,6 +27,7 @@ use vst3::Steinberg::Vst::{
 use vst3::Steinberg::Vst::{ProcessModes_::kRealtime, SymbolicSampleSizes_::kSample32};
 use vst3::Steinberg::kResultOk;
 
+use crate::core::config::MAX_TRACKS;
 use crate::core::midi::message::Midi3;
 use crate::core::plugin_host::buffers::{AudioIoLayout, PortBuffers, channel_total};
 use crate::core::plugin_host::transport::BlockTransport;
@@ -70,18 +71,10 @@ const EMPTY_BUS: AudioBusBuffers = AudioBusBuffers {
 /// estimate — [`Vst3Voice::tail_samples`] is.
 const MIN_SILENT_SAMPLES: u64 = 10_240;
 
-/// How long a sleeping voice goes between heartbeat blocks — one `process`
-/// call with nothing in it, after which it goes straight back to sleep unless
-/// that block made sound. About 85 ms at 48 kHz.
-///
-/// A plugin may keep advancing internal state one `process` call at a time —
-/// a parameter smoothed toward a freshly loaded patch, setup handed over from
-/// its loading thread — and a voice that is never called freezes all of that
-/// mid-way, to be finished under the next note. Omnisphere showed it: after
-/// its first load in a session the first key played came out with a short
-/// high-pitched burst over the saw, which a never-sleeping voice did not have.
-/// DAWs call `process` every block, so they never show it; the heartbeat keeps
-/// that work moving at a fraction of the cost.
+/// Sleeping samples between heartbeats — one empty `process` call, so a
+/// plugin that advances internal state per call does not freeze mid-way and
+/// finish under the next note. About 85 ms at 48 kHz. See "There is no
+/// `ProcessStatus::Sleep`" in `180-vst3-host.md`.
 const HEARTBEAT_SAMPLES: u64 = 4_096;
 
 /// `getTailSamples`' sentinel for "this never settles" — a plugin with an
@@ -116,9 +109,12 @@ pub(super) struct Vst3Voice {
     /// [`tail_samples`](Self::tail_samples) directly, and so a changed buffer
     /// size does not change the timing.
     silent_samples: u64,
-    /// Samples slept since the last wake or heartbeat. See
-    /// [`HEARTBEAT_SAMPLES`].
+    /// Samples slept towards the next heartbeat. See [`HEARTBEAT_SAMPLES`].
     asleep_samples: u64,
+    /// Where [`asleep_samples`](Self::asleep_samples) restarts on a wake,
+    /// spread by track so voices that fall asleep together (every one, after
+    /// a transport stop) don't all beat in the same block.
+    heartbeat_phase: u64,
     /// How much output the plugin says it may still produce after its last
     /// input (`getTailSamples`), and therefore how long it must stay awake
     /// after falling silent. [`INFINITE_TAIL`] means never sleep.
@@ -152,10 +148,19 @@ impl Vst3Voice {
             midi_map,
             silent_samples: 0,
             asleep_samples: 0,
+            heartbeat_phase: 0,
             tail_samples,
             mix: VoiceMix::default(),
             sample_rate,
         }
+    }
+
+    /// Spreads this voice's heartbeats by `track` — see
+    /// [`heartbeat_phase`](Self::heartbeat_phase).
+    pub(super) fn staggered_for(mut self, track: usize) -> Self {
+        self.heartbeat_phase = (track % MAX_TRACKS) as u64 * HEARTBEAT_SAMPLES / MAX_TRACKS as u64;
+        self.asleep_samples = self.heartbeat_phase;
+        self
     }
 }
 
@@ -239,13 +244,9 @@ impl InstrumentVoice for Vst3Voice {
     /// Wakes the voice while UI parameter changes wait in the ring — a knob
     /// turned in a dual-component plugin's editor, or the rest of a preset
     /// burst `drain_ui` carried over — so they reach the processor without
-    /// waiting for the next note.
-    ///
-    /// Otherwise a sleeping voice gets one heartbeat block every
-    /// [`HEARTBEAT_SAMPLES`]. Its silence count is left as it was, so
-    /// [`update_idle_state`](Self::update_idle_state) puts it straight back to
-    /// sleep after a silent heartbeat, and keeps it awake if the plugin made
-    /// sound.
+    /// waiting for the next note. Otherwise a sleeping voice gets its
+    /// [heartbeat](HEARTBEAT_SAMPLES), with the silence count left alone so
+    /// [`update_idle_state`](Self::update_idle_state) decides afresh.
     fn wake_on_request(&mut self, frames: usize) {
         if self.params.ui_pending() {
             self.wake();
@@ -273,7 +274,7 @@ impl Vst3Voice {
     fn wake(&mut self) {
         self.mix.sleeping = false;
         self.silent_samples = 0;
-        self.asleep_samples = 0;
+        self.asleep_samples = self.heartbeat_phase;
     }
 
     /// Decides whether this voice may sleep, from what it just rendered.
@@ -479,14 +480,9 @@ mod tests {
         (voice, calls)
     }
 
-    /// One block the way the mixer runs it: the wake check, a render if the
-    /// voice is awake, then clear.
-    fn run_block(voice: &mut Vst3Voice) {
-        voice.wake_on_request(FRAMES);
-        if voice.mix().sleeping {
-            return;
-        }
-        let stopped = BlockTransport {
+    /// A stopped 4/4 transport at 120 BPM, one bar of loop region.
+    fn stopped_transport() -> BlockTransport {
+        BlockTransport {
             running: false,
             looping: false,
             tempo_us: 500_000,
@@ -494,8 +490,17 @@ mod tests {
             playback_tick: 0,
             region_start: 0,
             region_end: PPQN * 4,
-        };
-        assert!(voice.render_block(FRAMES, 0, &stopped));
+        }
+    }
+
+    /// One block the way the mixer runs it: the wake check, a render if the
+    /// voice is awake, then clear.
+    fn run_block(voice: &mut Vst3Voice) {
+        voice.wake_on_request(FRAMES);
+        if voice.mix().sleeping {
+            return;
+        }
+        assert!(voice.render_block(FRAMES, 0, &stopped_transport()));
         voice.clear_events();
     }
 
@@ -527,15 +532,27 @@ mod tests {
     }
 
     #[test]
-    fn a_note_wakes_a_sleeping_voice_in_a_single_call() {
-        let (mut voice, calls) = fake_voice();
-        sleep(&mut voice);
-        calls.lock().unwrap().clear();
-
-        voice.queue_midi([0x90, 60, 100], 0);
-        run_block(&mut voice);
-        assert_eq!(*calls.lock().unwrap(), vec![1]);
-        assert!(!voice.mix().sleeping);
+    fn voices_that_fall_asleep_together_beat_in_different_blocks() {
+        // After a transport stop every voice sleeps in the same block; their
+        // heartbeats must not all land in one block and wake the worker pool.
+        let beat_blocks = |track| {
+            let (voice, calls) = fake_voice();
+            let mut voice = voice.staggered_for(track);
+            sleep(&mut voice);
+            calls.lock().unwrap().clear();
+            let mut beats = Vec::new();
+            for block in 0..(HEARTBEAT_SAMPLES as usize).div_ceil(FRAMES) * 2 {
+                let before = calls.lock().unwrap().len();
+                run_block(&mut voice);
+                if calls.lock().unwrap().len() > before {
+                    beats.push(block);
+                }
+            }
+            beats
+        };
+        let (a, b) = (beat_blocks(0), beat_blocks(MAX_TRACKS / 2));
+        assert_eq!((a.len(), b.len()), (2, 2));
+        assert!(a.iter().all(|block| !b.contains(block)), "{a:?} vs {b:?}");
     }
 
     #[test]
@@ -651,15 +668,7 @@ mod tests {
 
     #[test]
     fn process_context_state_flags_follow_running_and_looping() {
-        let base = BlockTransport {
-            running: false,
-            looping: false,
-            tempo_us: 500_000,
-            meter: Meter::FOUR_FOUR,
-            playback_tick: 0,
-            region_start: 0,
-            region_end: 1920,
-        };
+        let base = stopped_transport();
         let stopped = process_context(&base, 48_000.0);
         assert_eq!(stopped.state & kPlaying, 0);
         assert_eq!(stopped.state & kCycleActive, 0);

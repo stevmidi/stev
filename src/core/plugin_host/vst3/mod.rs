@@ -59,7 +59,8 @@ pub(super) fn load(
         loaded.midi_map,
         loaded.tail_samples,
         handle.sample_rate,
-    );
+    )
+    .staggered_for(track);
     let editor = Vst3Editor::new(loaded.main, &entry.name, track);
     Ok((Box::new(voice), Box::new(editor)))
 }
