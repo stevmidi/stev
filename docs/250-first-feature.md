@@ -15,7 +15,7 @@ Stev is built with coding agents, and the repo is set up for them. Claude Code l
   Asking for the key first matters: the agent checks `010` and comes back before writing anything, so you choose the binding instead of finding it in the diff.
 - **Review against the checklist** at the end of this file. Where an agent is most likely to slip: the key is free in one view but taken in the other; the rule is written inside the edit instead of on `Clip`; the tests cover `edit()` but not undo and redo; `010` changed and the `HELP` table didn't. Ask for the gate's output too: zero warnings, not just a build.
 - **Then try it yourself.** `AGENTS.md` tells agents not to launch the app, so playing the feature is always your part. If something's off, describe what you did and what happened, and ask for the fix with a regression test.
-- **Before merging**, ask for the `/simplify` pass (`080` § Agentic Editing), then the gate once more.
+- **Before merging**, once it works, ask for the `/simplify` pass (`080` § Agentic Editing): the agent applies it and runs the gate once more, and you retest if it changed anything.
 
 The rest of this file is the same path read by hand. It's worth skimming even when an agent writes the code: it's how you'll know whether the diff is shaped right.
 
@@ -153,7 +153,7 @@ Before taking a new key, check that `010` doesn't already use it, including in t
 
 ### 7. Done means the gate is clean
 
-Run the build gate from `AGENTS.md` (`cargo check`, `cargo clippy --all-targets`, `cargo fmt --check`, `cargo test`, `cargo doc --no-deps --document-private-items`) with zero warnings. The clippy run includes `missing_docs_in_private_items`, so every new item, field and variant needs a doc comment. Then `/simplify` over the branch's diff (`080` § Agentic Editing), and try the feature in the app yourself: no test covers how it feels.
+Run the build gate from `AGENTS.md` (`cargo check`, `cargo clippy --all-targets`, `cargo fmt --check`, `cargo test`, `cargo doc --no-deps --document-private-items`) with zero warnings. The clippy run includes `missing_docs_in_private_items`, so every new item, field and variant needs a doc comment. Then try the feature in the app yourself: no test covers how it feels. Once it works, run `/simplify` over the branch's diff (`080` § Agentic Editing), run the gate again, and retest if the pass changed anything.
 
 ## Checklist
 

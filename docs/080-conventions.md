@@ -79,7 +79,14 @@
 
 ## Agentic Editing
 
-- **`/simplify` before merge**: every branch gets a `/simplify` pass over its diff (`git diff main...HEAD` plus uncommitted work) before it is merged to `main`. Apply the fixes, re-run the full build gate, then hand it over for manual testing. Dedup findings across the review angles, and **skip** (noting why) any finding that:
+- **`/simplify` after testing, before merge**: every branch gets a `/simplify` pass over its diff (`git diff main...HEAD` plus uncommitted work) before it is merged to `main`. The order is:
+  1. The agent implements the change and runs the build gate.
+  2. The user tests it by hand.
+  3. Once it works, the user runs `/simplify`. The agent doesn't start it on its own, so cleanup is never spent on code that testing sends back.
+  4. The agent applies the fixes and re-runs the full build gate.
+  5. If the pass changed anything, the user retests where needed, then commits, and the agent merges and pushes.
+
+  A one-line fix with its regression test skips the pass. Dedup findings across the review angles, and **skip** (noting why) any finding that:
   - reorders reads or adds work on the render path or the sequencer/audio hot path — these can't be verified without running the app;
   - collapses an explicit exhaustive `match` into a wildcard arm — listing every variant is deliberate, so a new variant fails to compile at each site (e.g. the `ClipContext` matches);
   - changes behaviour (e.g. selection lead, event order, when the transport moves) rather than structure;
