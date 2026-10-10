@@ -102,16 +102,12 @@ impl UnsavedButton {
         }
     }
 
-    /// The button beside it, one step `rightward` or leftward; the end
-    /// buttons stay put rather than wrap.
-    fn step(self, rightward: bool) -> UnsavedButton {
-        let idx = Self::ALL.iter().position(|&b| b == self).unwrap_or(0);
-        let idx = if rightward {
-            (idx + 1).min(Self::ALL.len() - 1)
-        } else {
-            idx.saturating_sub(1)
-        };
-        Self::ALL[idx]
+    /// The button `step` places along the row, stopping at either end
+    /// rather than wrapping (cf. `SettingsTab::stepped`).
+    fn stepped(self, step: isize) -> UnsavedButton {
+        let last = Self::ALL.len() as isize - 1;
+        let idx = Self::ALL.iter().position(|&b| b == self).unwrap_or(0) as isize;
+        Self::ALL[(idx + step).clamp(0, last) as usize]
     }
 
     /// What clicking it does — the same as its key.
@@ -139,9 +135,8 @@ fn save_as_key(key: Key) -> DialogKey {
 /// sheet — doesn't save, Esc cancels; nothing else does anything.
 fn unsaved_key(key: Key, modifiers: KeyModifiers, selected: UnsavedButton) -> DialogKey {
     match key {
-        Key::ArrowLeft | Key::ArrowRight => {
-            DialogKey::Select(selected.step(key == Key::ArrowRight))
-        }
+        Key::ArrowLeft => DialogKey::Select(selected.stepped(-1)),
+        Key::ArrowRight => DialogKey::Select(selected.stepped(1)),
         Key::Enter => selected.key(),
         Key::D if !modifiers.shift && !modifiers.alt => DialogKey::Discard,
         Key::Escape => DialogKey::Cancel,
@@ -355,24 +350,15 @@ mod tests {
         }
     }
 
+    /// Enter presses whichever button is selected; `D` — bare or ⌘/Ctrl+D —
+    /// and Esc don't care which.
     #[test]
-    fn the_prompt_saves_on_enter_discards_on_d_and_cancels_on_escape() {
+    fn enter_presses_the_selected_button() {
         let none = KeyModifiers::default();
         let command = KeyModifiers {
             command: true,
             ..KeyModifiers::default()
         };
-        let save = UnsavedButton::Save;
-        assert_eq!(unsaved_key(Key::Enter, none, save), DialogKey::Confirm);
-        assert_eq!(unsaved_key(Key::D, none, save), DialogKey::Discard);
-        assert_eq!(unsaved_key(Key::D, command, save), DialogKey::Discard);
-        assert_eq!(unsaved_key(Key::Escape, none, save), DialogKey::Cancel);
-    }
-
-    /// Enter presses whichever button is selected; `D` and Esc don't care.
-    #[test]
-    fn enter_presses_the_selected_button() {
-        let none = KeyModifiers::default();
         for (selected, pressed) in [
             (UnsavedButton::Cancel, DialogKey::Cancel),
             (UnsavedButton::DontSave, DialogKey::Discard),
@@ -380,6 +366,7 @@ mod tests {
         ] {
             assert_eq!(unsaved_key(Key::Enter, none, selected), pressed);
             assert_eq!(unsaved_key(Key::D, none, selected), DialogKey::Discard);
+            assert_eq!(unsaved_key(Key::D, command, selected), DialogKey::Discard);
             assert_eq!(unsaved_key(Key::Escape, none, selected), DialogKey::Cancel);
         }
     }
@@ -387,29 +374,20 @@ mod tests {
     /// ←/→ step through the buttons left to right and stop at either end.
     #[test]
     fn arrows_step_the_selection_without_wrapping() {
-        let none = KeyModifiers::default();
-        let left = |b| unsaved_key(Key::ArrowLeft, none, b);
-        let right = |b| unsaved_key(Key::ArrowRight, none, b);
-        assert_eq!(
-            left(UnsavedButton::Save),
-            DialogKey::Select(UnsavedButton::DontSave)
-        );
-        assert_eq!(
-            left(UnsavedButton::DontSave),
-            DialogKey::Select(UnsavedButton::Cancel)
-        );
-        assert_eq!(
-            left(UnsavedButton::Cancel),
-            DialogKey::Select(UnsavedButton::Cancel)
-        );
-        assert_eq!(
-            right(UnsavedButton::Cancel),
-            DialogKey::Select(UnsavedButton::DontSave)
-        );
-        assert_eq!(
-            right(UnsavedButton::Save),
-            DialogKey::Select(UnsavedButton::Save)
-        );
+        use UnsavedButton::{Cancel, DontSave, Save};
+        for (key, from, to) in [
+            (Key::ArrowLeft, Save, DontSave),
+            (Key::ArrowLeft, DontSave, Cancel),
+            (Key::ArrowLeft, Cancel, Cancel),
+            (Key::ArrowRight, Cancel, DontSave),
+            (Key::ArrowRight, DontSave, Save),
+            (Key::ArrowRight, Save, Save),
+        ] {
+            assert_eq!(
+                unsaved_key(key, KeyModifiers::default(), from),
+                DialogKey::Select(to)
+            );
+        }
     }
 
     /// A stray key does nothing — above all no other key discards the
