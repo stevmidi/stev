@@ -44,7 +44,7 @@ fn disclosure_triangle(centre: Pos2, expanded: bool) -> [Pos2; 3] {
 impl Display {
     /// The layer the panel paints on: above the canvas's (background) layer,
     /// which carries the shift, so the panel itself stays put.
-    pub(super) fn browser_layer() -> LayerId {
+    pub(in crate::view::display) fn browser_layer() -> LayerId {
         LayerId::new(Order::Middle, Id::new("browser-panel"))
     }
 

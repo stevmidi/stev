@@ -364,7 +364,8 @@ impl Display {
     /// they have the keyboard, or the main `forward_input_event` dispatch. An
     /// open project dialog gets first look at every event
     /// (`handle_project_dialog_input_event`), then an open rename field
-    /// (`handle_track_rename_input_event`), then an open output menu
+    /// (`handle_track_rename_input_event`,
+    /// `handle_browser_rename_input_event`), then an open output menu
     /// (`handle_output_menu_input_event`).
     pub(super) fn handle_input_events(&mut self, ctx: &egui::Context) {
         self.input_poller.poll(ctx, self.browser_width());
@@ -375,6 +376,7 @@ impl Display {
         let in_clip_view = self.view_state().is_clip_view();
         let left_arranger = in_clip_view && !self.input_was_clip_view;
         self.drop_stale_track_rename(left_arranger);
+        self.drop_stale_browser_rename();
         if left_arranger && self.key_focus == KeyFocus::TrackHeaders {
             self.key_focus = KeyFocus::Pane;
         }
@@ -383,6 +385,7 @@ impl Display {
         for event in events.drain(..) {
             let ok = self.handle_project_dialog_input_event(&event)
                 || self.handle_track_rename_input_event(&event)
+                || self.handle_browser_rename_input_event(&event)
                 || self.handle_tempo_field_input_event(&event)
                 || self.handle_meter_field_input_event(&event)
                 || self.handle_output_menu_input_event(&event)

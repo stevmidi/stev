@@ -1122,6 +1122,7 @@ impl eframe::App for Display {
         );
         if self.browser.visible {
             self.draw_browser(&ctx.layer_painter(Self::browser_layer()), window);
+            self.show_browser_rename(ui);
         }
 
         CentralPanel::default()

@@ -42,6 +42,7 @@
 //! the layout.
 
 mod browser;
+mod browser_rename;
 mod gesture_state;
 mod grid;
 mod header_chip;

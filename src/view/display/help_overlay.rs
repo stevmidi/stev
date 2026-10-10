@@ -67,6 +67,7 @@ pub(super) const HELP: [&[HelpSection]; 3] = [
                 ("⌘N", "New project"),
                 ("⌘O", "Open (the browser)"),
                 ("⌘⌥B", "Browser panel on / off"),
+                ("⌘R", "Rename the file (browser)"),
                 ("⌘Z", "Undo"),
                 ("⌘⇧Z", "Redo"),
                 ("⇧Tab", "Clip panel on / off"),

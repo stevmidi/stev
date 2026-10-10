@@ -131,6 +131,45 @@ pub(crate) fn delete_project(folder: Option<&str>, name: &str) -> io::Result<()>
     fs::remove_file(stev_path(&resolve_dir(folder), name))
 }
 
+/// Renames project `old` to `new` in `folder` (`None`: the projects root),
+/// refusing to replace another file ([`rename_no_replace`]).
+pub(crate) fn rename_project(folder: Option<&str>, old: &str, new: &str) -> io::Result<()> {
+    let dir = resolve_dir(folder);
+    rename_no_replace(&stev_path(&dir, old), &stev_path(&dir, new))
+}
+
+/// Renames the `.mid` file `old` (its stem) to `new` in `folder` (`None`:
+/// the projects root), refusing to replace another file
+/// ([`rename_no_replace`]).
+pub(crate) fn rename_midi_file(folder: Option<&str>, old: &str, new: &str) -> io::Result<()> {
+    rename_no_replace(&midi_file_path(folder, old), &midi_file_path(folder, new))
+}
+
+/// Moves `from` to `to` in the same folder unless that would replace another
+/// file: `to` is taken when an entry of exactly its name exists, or when it
+/// exists at all and isn't `from` under a different case (a case-only rename
+/// on a case-insensitive volume, where `to` "exists" because it is `from`).
+fn rename_no_replace(from: &Path, to: &Path) -> io::Result<()> {
+    let same_but_case = matches!(
+        (from.file_name().and_then(|n| n.to_str()), to.file_name().and_then(|n| n.to_str())),
+        (Some(a), Some(b)) if a.to_lowercase() == b.to_lowercase()
+    );
+    let exact = to.parent().is_some_and(|dir| {
+        fs::read_dir(dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .any(|entry| Some(entry.file_name().as_os_str()) == to.file_name())
+    });
+    if exact || (to.exists() && !same_but_case) {
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "that name is taken",
+        ));
+    }
+    fs::rename(from, to)
+}
+
 /// Characters a project name may not hold: path separators (`/`, and `\` /
 /// `:` for Windows and the classic Mac), and the rest of what Windows refuses
 /// in a file name, so a project saved on one platform opens on every other.
@@ -251,6 +290,57 @@ mod tests {
         }
         let longest = "a".repeat(PROJECT_NAME_MAX_CHARS);
         assert_eq!(project_name_from_input(&longest), Some(longest.clone()));
+    }
+
+    /// A fresh, empty scratch folder for one test.
+    fn scratch_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("stev-rename-{}-{tag}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// The file names in `dir`, sorted.
+    fn names_in(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_str().unwrap().to_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn a_rename_moves_the_file() {
+        let dir = scratch_dir("moves");
+        fs::write(dir.join("a.stev"), "a").unwrap();
+        rename_no_replace(&dir.join("a.stev"), &dir.join("b.stev")).unwrap();
+        assert_eq!(names_in(&dir), ["b.stev"]);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_rename_never_replaces_another_file() {
+        let dir = scratch_dir("taken");
+        fs::write(dir.join("a.stev"), "a").unwrap();
+        fs::write(dir.join("b.stev"), "b").unwrap();
+        let err = rename_no_replace(&dir.join("a.stev"), &dir.join("b.stev")).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+        // Nor one that differs only in case, on a case-insensitive volume.
+        assert!(rename_no_replace(&dir.join("a.stev"), &dir.join("B.stev")).is_err());
+        assert_eq!(fs::read_to_string(dir.join("b.stev")).unwrap(), "b");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// On a case-insensitive volume `Song.stev` "exists" as soon as
+    /// `song.stev` does — it is the same file, and the rename goes ahead.
+    #[test]
+    fn a_case_only_rename_goes_ahead() {
+        let dir = scratch_dir("case");
+        fs::write(dir.join("song.stev"), "a").unwrap();
+        rename_no_replace(&dir.join("song.stev"), &dir.join("Song.stev")).unwrap();
+        assert_eq!(names_in(&dir), ["Song.stev"]);
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

@@ -31,6 +31,7 @@ use crate::core::{
     settings::update_settings,
 };
 
+use super::browser_rename::BrowserRename;
 use super::*;
 
 /// The panel's width, in points. Whole points, so the shifted canvas keeps
@@ -148,6 +149,31 @@ impl BrowserItem {
             BrowserItem::Plugin(_) | BrowserItem::Scanning => {
                 Some(BrowserItem::Category(BrowserCategory::Plugins))
             }
+        }
+    }
+
+    /// A project's or `.mid` file's name (its file stem) — the rows ⌘R
+    /// renames; `None` for anything else.
+    pub(super) fn file_name(&self) -> Option<&str> {
+        match self {
+            BrowserItem::Project { name, .. } | BrowserItem::MidiFile { name, .. } => Some(name),
+            _ => None,
+        }
+    }
+
+    /// The same file under `new_name` — what a rename leaves behind; `None`
+    /// for a row that isn't a file.
+    pub(super) fn renamed(&self, new_name: String) -> Option<BrowserItem> {
+        match self {
+            BrowserItem::Project { folder, .. } => Some(BrowserItem::Project {
+                folder: folder.clone(),
+                name: new_name,
+            }),
+            BrowserItem::MidiFile { folder, .. } => Some(BrowserItem::MidiFile {
+                folder: folder.clone(),
+                name: new_name,
+            }),
+            _ => None,
         }
     }
 }
@@ -532,6 +558,9 @@ pub(super) struct BrowserPanel {
     /// becomes the import drag (`GestureState::midi_drag`) or the plugin
     /// drag (`GestureState::plugin_drag`).
     pub(super) press: Option<BrowserPress>,
+    /// The open rename field (⌘R on a project or `.mid` row), see
+    /// `browser_rename.rs`.
+    pub(super) rename: Option<BrowserRename>,
 }
 
 /// A draggable browser row under the held primary button, before it leaves
@@ -576,7 +605,7 @@ impl Display {
     }
 
     /// How many rows fit in the panel this frame.
-    fn browser_visible_rows(&self) -> usize {
+    pub(super) fn browser_visible_rows(&self) -> usize {
         let list_h = self.render.canvas_rect.height() - BROWSER_LIST_TOP - theme::STATUS_H;
         (list_h / BROWSER_ROW_H).floor().max(1.0) as usize
     }
@@ -664,9 +693,15 @@ impl Display {
     /// underneath. Every arrow is consumed, whatever its modifiers, so the
     /// arrows never act on two panes at once.
     pub(super) fn handle_browser_key(&mut self, event: &InputEvent) -> bool {
-        let InputEvent::KeyPressed { key, .. } = event else {
+        let InputEvent::KeyPressed { key, modifiers } = event else {
             return false;
         };
+        // ⌘/Ctrl+R — rename the selected project or `.mid`, as it renames
+        // the selected track over the lanes. Exact chord.
+        if *key == Key::R && modifiers.command && !modifiers.shift && !modifiers.alt {
+            self.open_browser_rename();
+            return true;
+        }
         let tree = &mut self.browser.tree;
         match key {
             Key::ArrowUp => tree.move_selection(-1),
@@ -1131,6 +1166,35 @@ mod tests {
         fresh.select(folder("b"));
         fresh.select_initial(Some("a"), None);
         assert_eq!(fresh.selected(), Some(&folder("b")));
+    }
+
+    #[test]
+    fn only_projects_and_midi_files_are_renamed() {
+        let midi = BrowserItem::MidiFile {
+            folder: Some("a".into()),
+            name: "riff".into(),
+        };
+        assert_eq!(midi.file_name(), Some("riff"));
+        assert_eq!(
+            midi.renamed("lick".into()),
+            Some(BrowserItem::MidiFile {
+                folder: Some("a".into()),
+                name: "lick".into()
+            })
+        );
+        assert_eq!(
+            project(None, "loose").renamed("tight".into()),
+            Some(project(None, "tight"))
+        );
+        for item in [
+            projects(),
+            folder("a"),
+            BrowserItem::Plugin(plugin("Diva", "CLAP")),
+            BrowserItem::Scanning,
+        ] {
+            assert_eq!(item.file_name(), None);
+            assert_eq!(item.renamed("x".into()), None);
+        }
     }
 
     #[test]

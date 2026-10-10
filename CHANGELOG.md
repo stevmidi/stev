@@ -31,6 +31,10 @@ Breaking entries are marked **Breaking** and say what to do about them.
   notes per minute in every meter.
 - Project files gain a `meter` field. Files without one open in 4/4; Stev
   0.1.0 opens a newer file with it and ignores it, playing it in 4/4.
+- **Rename files in the browser.** ⌘R on a project or `.mid` row opens a
+  name field over it: Enter renames the file, Esc cancels. A name that is
+  already taken is refused. Renaming the open project makes ⌘S save under
+  the new name.
 
 ### Fixed
 
