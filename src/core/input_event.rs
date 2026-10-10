@@ -766,9 +766,19 @@ impl From<Modifiers> for KeyModifiers {
     }
 }
 
+/// Plain `Tab`, no modifier at all: moves the keyboard to the other pane —
+/// in place when both are on screen (`ClipPanel::tab_moves_focus_only`),
+/// otherwise as `Shift+Tab` does. `Ctrl+Tab` is the settings modal's tab
+/// step. See `010-keybindings.md`.
+pub(crate) fn is_pane_focus_key(key: Key, modifiers: KeyModifiers) -> bool {
+    key == Key::Tab && !modifiers.shift && !modifiers.command && !modifiers.alt && !modifiers.ctrl
+}
+
 #[cfg(test)]
 mod tests {
-    use super::TimeSelectionRect;
+    use egui::Key;
+
+    use super::{KeyModifiers, TimeSelectionRect, is_pane_focus_key};
 
     fn rect(start: i32, end: i32) -> TimeSelectionRect {
         TimeSelectionRect {
@@ -796,5 +806,34 @@ mod tests {
     #[test]
     fn has_tick_range_is_true_for_a_real_span() {
         assert!(rect(0, 480).has_tick_range());
+    }
+
+    /// Only a bare Tab swaps panes: `Shift+Tab` shows/hides the panel and
+    /// `Ctrl+Tab` steps the settings tabs.
+    #[test]
+    fn only_a_bare_tab_is_the_pane_focus_key() {
+        assert!(is_pane_focus_key(Key::Tab, KeyModifiers::default()));
+        let held = [
+            KeyModifiers {
+                shift: true,
+                ..KeyModifiers::default()
+            },
+            KeyModifiers {
+                command: true,
+                ..KeyModifiers::default()
+            },
+            KeyModifiers {
+                alt: true,
+                ..KeyModifiers::default()
+            },
+            KeyModifiers {
+                ctrl: true,
+                ..KeyModifiers::default()
+            },
+        ];
+        for modifiers in held {
+            assert!(!is_pane_focus_key(Key::Tab, modifiers));
+        }
+        assert!(!is_pane_focus_key(Key::Enter, KeyModifiers::default()));
     }
 }

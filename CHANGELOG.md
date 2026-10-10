@@ -28,6 +28,14 @@ Breaking entries are marked **Breaking** and say what to do about them.
   stays on screen, untouched, until the new one replaces it whole once every
   plugin is in. Input waits until then. A plugin the background scan hasn't
   found yet is waited for rather than skipped as not installed.
+- **Tab moves the keyboard between the arranger and the clip view.** With
+  the clip panel docked, Tab hands the keyboard to the other pane and leaves
+  the layout alone, like a click in it. With the panel hidden or maximized it
+  does what Shift+Tab does, since the other pane isn't on screen. With the
+  browser panel focused, Tab hands the keyboard back to the pane you were in.
+- **The browser shows when it has the keyboard.** The accent edge that marks
+  the focused pane now moves to the top of the browser panel while it has
+  the keyboard, so only one edge is ever lit.
 
 ## [0.2.0] - 2026-10-10
 

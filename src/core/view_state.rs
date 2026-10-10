@@ -21,6 +21,16 @@ pub(crate) enum Pane {
     Clip,
 }
 
+impl Pane {
+    /// The pane that isn't this one — where plain `Tab` moves the keyboard.
+    pub(crate) fn other(self) -> Pane {
+        match self {
+            Pane::Arranger => Pane::Clip,
+            Pane::Clip => Pane::Arranger,
+        }
+    }
+}
+
 /// Which view is on screen: the arranger or the clip view (piano roll). The
 /// settings modal is not a view: it is an overlay `Display` owns and draws
 /// over whichever view is on screen, which stays its value meanwhile — so
@@ -60,7 +70,13 @@ impl ViewState {
 
 #[cfg(test)]
 mod tests {
-    use super::ViewState;
+    use super::{Pane, ViewState};
+
+    #[test]
+    fn other_names_the_opposite_pane() {
+        assert_eq!(Pane::Arranger.other(), Pane::Clip);
+        assert_eq!(Pane::Clip.other(), Pane::Arranger);
+    }
 
     #[test]
     fn every_view_round_trips_through_its_discriminant() {

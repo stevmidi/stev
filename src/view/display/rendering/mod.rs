@@ -45,8 +45,9 @@ const DSP_IDLE_REFRESH: Duration = Duration::from_millis(250);
 const FOCUS_EDGE_W: f32 = 2.0;
 
 /// The keyboard-focus edge: along the top of the focused docked pane
-/// (`draw_pane_split`), or of the track-header column while it has the
-/// keyboard (`draw_arranger_backgrounds`); and the rename field's outline.
+/// (`draw_pane_split`), or of the track-header column or the browser panel
+/// while it has the keyboard (`draw_arranger_backgrounds`, `draw_browser`);
+/// and the rename field's outline.
 pub(super) fn focus_edge_stroke() -> Stroke {
     Stroke::new(FOCUS_EDGE_W, theme::accent().gamma_multiply(0.7))
 }
@@ -585,7 +586,7 @@ impl Display {
 
     /// With the clip view docked: the split line in the gap between the two
     /// panes, and a thin accent along the top of the pane with the keyboard
-    /// (unless the track headers have it).
+    /// (unless the track headers or the browser panel have it).
     /// Nothing with one pane showing — it has the whole lane area and the
     /// keyboard both.
     fn draw_pane_split(&self, painter: &Painter, panes: PaneRects, rect: Rect) {
@@ -599,9 +600,10 @@ impl Display {
             split_y,
             Stroke::new(1.0, theme::separator()),
         );
-        // The header column with the keyboard draws its own edge, over the
-        // column alone (`draw_arranger_backgrounds`).
-        if self.track_headers_have_keyboard() {
+        // The header column and the browser panel draw their own edge while
+        // they have the keyboard (`draw_arranger_backgrounds`,
+        // `draw_browser`): one edge, on what the keys act on.
+        if self.track_headers_have_keyboard() || self.key_focus == KeyFocus::Browser {
             return;
         }
         let focused = if self.focused_pane() == Pane::Clip {

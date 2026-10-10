@@ -9,7 +9,7 @@
 use egui::Key;
 
 use crate::core::config::ZOOM_KEY_STEP;
-use crate::core::input_event::KeyModifiers;
+use crate::core::input_event::{KeyModifiers, is_pane_focus_key};
 use crate::core::project::{ProjectAction, midi_file_path};
 use crate::core::time::PPQN;
 
@@ -41,15 +41,17 @@ enum TrackHeaderKey {
 }
 
 /// The track-header column's keymap: plain Delete/Backspace removes the
-/// selected track, Esc leaves, Shift+Tab leaves and still shows/hides the
-/// clip panel. `None` — every other key, a modified Delete included — falls
-/// through to the arranger.
+/// selected track, Esc leaves, Shift+Tab and plain Tab leave and still do
+/// their usual pane work. `None` — every other key, a modified Delete
+/// included — falls through to the arranger.
 fn track_header_key(key: Key, modifiers: KeyModifiers) -> Option<TrackHeaderKey> {
     let plain = !modifiers.command && !modifiers.alt && !modifiers.shift;
     match key {
         Key::Delete | Key::Backspace if plain => Some(TrackHeaderKey::RemoveTrack),
         Key::Escape => Some(TrackHeaderKey::Leave { consumed: true }),
-        Key::Tab if modifiers.shift => Some(TrackHeaderKey::Leave { consumed: false }),
+        Key::Tab if modifiers.shift || is_pane_focus_key(key, modifiers) => {
+            Some(TrackHeaderKey::Leave { consumed: false })
+        }
         _ => None,
     }
 }
@@ -586,6 +588,23 @@ impl Display {
                 modifiers,
             } if modifiers.command && modifiers.alt && !modifiers.shift => {
                 self.toggle_clip_panel_size();
+                true
+            }
+            // Plain Tab with both panes on screen moves the keyboard to the
+            // other one and shows or hides nothing — the same `FocusPane` a
+            // click in it sends. Hidden or maximized, it falls through to the
+            // handler and does what Shift+Tab does.
+            InputEvent::KeyPressed { key, modifiers }
+                if is_pane_focus_key(key, modifiers)
+                    && self.render.clip_panel.tab_moves_focus_only() =>
+            {
+                let pane = self.focused_pane().other();
+                self.input_event_tx
+                    .send(InputEvent::FocusPane { pane })
+                    .ok();
+                if pane == Pane::Clip {
+                    self.clear_time_selection();
+                }
                 true
             }
             // Shift+Tab shows and hides the clip panel. From a docked arranger
@@ -1343,16 +1362,18 @@ mod tests {
     }
 
     #[test]
-    fn escape_leaves_and_shift_tab_leaves_and_passes_on() {
+    fn escape_leaves_and_both_tabs_leave_and_pass_on() {
         assert_eq!(
             track_header_key(Key::Escape, KeyModifiers::default()),
             Some(TrackHeaderKey::Leave { consumed: true })
         );
-        assert_eq!(
-            track_header_key(Key::Tab, mods(false, true, false)),
-            Some(TrackHeaderKey::Leave { consumed: false })
-        );
-        assert_eq!(track_header_key(Key::Tab, KeyModifiers::default()), None);
+        for modifiers in [mods(false, true, false), KeyModifiers::default()] {
+            assert_eq!(
+                track_header_key(Key::Tab, modifiers),
+                Some(TrackHeaderKey::Leave { consumed: false })
+            );
+        }
+        assert_eq!(track_header_key(Key::Tab, mods(true, false, false)), None);
     }
 
     #[test]

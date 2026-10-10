@@ -24,6 +24,7 @@ use std::{collections::HashSet, path::PathBuf};
 use egui::{Key, Pos2};
 
 use crate::core::{
+    input_event::is_pane_focus_key,
     project::{
         FolderListing, ProjectAction, delete_project, list_folder, list_project_folders,
         midi_file_path,
@@ -704,7 +705,9 @@ impl Display {
     /// A key press while the panel has the keyboard. Returns `true` when the
     /// panel consumed it; everything else falls through to the view
     /// underneath. Every arrow is consumed, whatever its modifiers, so the
-    /// arrows never act on two panes at once.
+    /// arrows never act on two panes at once. Plain Tab gives the keyboard
+    /// back to the focused pane — and only that: the pane focus stays where
+    /// it was, so done-with-the-browser is one press.
     pub(super) fn handle_browser_key(&mut self, event: &InputEvent) -> bool {
         let InputEvent::KeyPressed { key, modifiers } = event else {
             return false;
@@ -713,6 +716,12 @@ impl Display {
         // the selected track over the lanes. Exact chord.
         if *key == Key::R && modifiers.command && !modifiers.shift && !modifiers.alt {
             self.open_browser_rename();
+            return true;
+        }
+        if is_pane_focus_key(*key, *modifiers) {
+            // A delete armed and left behind must not fire on a later Enter.
+            self.browser.tree.delete_armed = false;
+            self.key_focus = KeyFocus::Pane;
             return true;
         }
         let tree = &mut self.browser.tree;

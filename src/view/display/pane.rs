@@ -68,6 +68,14 @@ impl ClipPanel {
             (true, PanelSize::Docked) => PaneLayout::Docked,
         }
     }
+
+    /// Whether plain `Tab` only moves the keyboard to the other pane: both
+    /// panes are on screen, so nothing needs showing or hiding. Hidden or
+    /// maximized, the other pane is off screen and `Tab` does what
+    /// `Shift+Tab` does.
+    pub(super) fn tab_moves_focus_only(self) -> bool {
+        self.layout() == PaneLayout::Docked
+    }
 }
 
 /// Which panes the lane area shows.
@@ -193,6 +201,15 @@ mod tests {
         assert_eq!(clip_pane_frame_value(Pane::Clip, snapshot), snapshot);
         assert_eq!(clip_pane_frame_value(Pane::Arranger, snapshot), None);
         assert_eq!(clip_pane_frame_value::<i32>(Pane::Clip, None), None);
+    }
+
+    #[test]
+    fn tab_moves_focus_only_while_both_panes_show() {
+        let panel = |visible, size| ClipPanel { visible, size };
+        assert!(panel(true, PanelSize::Docked).tab_moves_focus_only());
+        assert!(!panel(true, PanelSize::Maximized).tab_moves_focus_only());
+        assert!(!panel(false, PanelSize::Docked).tab_moves_focus_only());
+        assert!(!panel(false, PanelSize::Maximized).tab_moves_focus_only());
     }
 
     #[test]

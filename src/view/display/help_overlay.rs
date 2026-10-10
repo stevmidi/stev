@@ -70,6 +70,7 @@ pub(super) const HELP: [&[HelpSection]; 3] = [
                 ("⌘R", "Rename the file (browser)"),
                 ("⌘Z", "Undo"),
                 ("⌘⇧Z", "Redo"),
+                ("Tab", "Arranger / clip view focus"),
                 ("⇧Tab", "Clip panel on / off"),
                 ("⌘⌥E", "Dock / maximize the clip panel"),
                 ("+  -", "Zoom in / out"),

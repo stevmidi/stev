@@ -12,7 +12,7 @@ use egui::Key;
 
 use crate::core::sequencer::TempoGesture;
 use crate::core::{
-    input_event::{InputEvent, KeyModifiers},
+    input_event::{InputEvent, KeyModifiers, is_pane_focus_key},
     settings::{clamp_midi_out_offset_ms, update_settings},
 };
 use crate::models::clip::ClipEdge;
@@ -218,10 +218,12 @@ impl EventHandlers {
                 self.send_sequencer(SequencerCommand::DuplicateSelectedEvents);
             }
 
-            InputEvent::KeyPressed {
-                key: Key::Tab,
-                modifiers,
-            } if modifiers.shift => {
+            // Shift+Tab, and a plain Tab the view didn't take as a pure focus
+            // move (the clip panel hidden or maximized, so the other pane is
+            // off screen).
+            InputEvent::KeyPressed { key, modifiers }
+                if *key == Key::Tab && (modifiers.shift || is_pane_focus_key(*key, *modifiers)) =>
+            {
                 self.handle_shift_tab();
             }
 
@@ -812,7 +814,8 @@ impl EventHandlers {
         }
     }
 
-    /// `Shift+Tab`: toggles between the arranger and the clip view. Enters
+    /// `Shift+Tab` (and plain `Tab` with the clip panel hidden or
+    /// maximized): toggles between the arranger and the clip view. Enters
     /// the selected clip from `Arranger` (`EnterClip`, moved off bare
     /// `Enter`); from `Clip` it exits to `Arranger` (`ExitClip`; edits there
     /// are already committed). Moved off

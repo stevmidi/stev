@@ -67,6 +67,15 @@ impl Display {
             font.clone(),
             accent_if(focused, theme::fg_dim()),
         );
+        // With the keyboard: the panes' focus edge (`draw_pane_split`), at
+        // the panes' top, so it reads as the same mark moving over.
+        if focused {
+            painter.hline(
+                panel.min.x..=(panel.max.x - 1.0),
+                panel.min.y + theme::HEADER_H + Self::HEADER_TIMELINE_GAP_Y,
+                focus_edge_stroke(),
+            );
+        }
 
         let list = Rect::from_min_max(
             pos2(panel.min.x, panel.min.y + BROWSER_LIST_TOP),
