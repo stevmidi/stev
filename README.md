@@ -16,9 +16,9 @@ anywhere, it can drive a DAW or external gear over MIDI.
 
 ![Stev: six tracks of captured clips in the arranger, with the clip panel open on a bass line](docs/images/arranger.png)
 
-> **Status:** not yet released. Developed and tested on macOS. Linux and
-> Windows build in CI and may work (MIDI Out only, no plugin host), but are
-> untested; ports welcome.
+> **Status:** 0.1.0, source releases only (no prebuilt app yet). Developed and
+> tested on macOS. Linux and Windows build in CI and may work (MIDI Out only, no
+> plugin host), but are untested; ports welcome.
 
 ## Quickstart
 
