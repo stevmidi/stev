@@ -305,8 +305,8 @@ impl EventHandlers {
                 });
             }
 
-            InputEvent::ApplyStagedProject(project) => {
-                self.send_sequencer(SequencerCommand::ApplyStagedProject(project.clone()));
+            InputEvent::ApplyStagedProject => {
+                self.send_sequencer(SequencerCommand::ApplyStagedProject);
             }
 
             InputEvent::SetTrackOutput { track, output } => {

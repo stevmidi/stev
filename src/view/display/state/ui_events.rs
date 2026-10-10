@@ -158,9 +158,14 @@ impl Display {
                 }
                 UiEvent::ProjectLoaded {
                     clips,
+                    instruments,
                     filename,
                     folder,
                 } => {
+                    #[cfg(target_os = "macos")]
+                    self.sync_instruments_to_tracks(&instruments);
+                    #[cfg(not(target_os = "macos"))]
+                    let _ = instruments;
                     // A new or loaded project is a fresh start: it lands in
                     // the arranger with no modal overlay up.
                     self.close_overlay();
@@ -220,24 +225,21 @@ impl Display {
                     instrument,
                 } => {
                     #[cfg(target_os = "macos")]
-                    self.restore_slot_instrument(slot, Some(track_id), &instrument);
+                    self.restore_slot_instrument(slot, track_id, &instrument);
                     #[cfg(not(target_os = "macos"))]
                     let _ = (slot, track_id, instrument);
                 }
-                UiEvent::StageProject(project) => {
+                UiEvent::StageProject { name, specs } => {
                     #[cfg(target_os = "macos")]
-                    self.stage_project(project);
+                    self.stage_project(name, specs);
                     // No plugin host: nothing to load first.
                     #[cfg(not(target_os = "macos"))]
-                    self.input_event_tx
-                        .send(InputEvent::ApplyStagedProject(project))
-                        .ok();
-                }
-                UiEvent::TrackInstrumentsChanged { specs } => {
-                    #[cfg(target_os = "macos")]
-                    self.sync_instruments_to_tracks(&specs);
-                    #[cfg(not(target_os = "macos"))]
-                    let _ = specs;
+                    {
+                        let _ = (name, specs);
+                        self.input_event_tx
+                            .send(InputEvent::ApplyStagedProject)
+                            .ok();
+                    }
                 }
             }
         }

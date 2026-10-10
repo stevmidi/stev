@@ -17,28 +17,12 @@ use crate::{
 use super::*;
 
 impl EventHandlers {
-    /// Tells `Display` which tracks host CLAP instruments, so it can rebuild its
-    /// editors after a project load / new-project.
-    fn emit_track_instruments(&self, sequencer: &Sequencer) {
-        let specs: Vec<_> = sequencer
-            .tracks()
-            .iter()
-            .filter_map(|track| match track.output() {
-                TrackOutput::Instrument(r) => Some((track.slot(), r.clone())),
-                TrackOutput::MidiOut { .. } => None,
-            })
-            .collect();
-        self.ui_event_tx
-            .send(UiEvent::TrackInstrumentsChanged { specs })
-            .ok();
-    }
-
     /// Applies already-loaded `ProjectData` to the sequencer (`filename` is
     /// `None` for a new project; `folder` is where it was loaded from), fans
-    /// out the instrument list + `ProjectLoaded`, and returns to the Arranger
-    /// with track 0 selected. The instrument list goes first, so a staged
-    /// load's plugins are swapped in no later than the new clips arrive. A project with
-    /// more than `MAX_TRACKS` tracks loads the first ones and the footer says so.
+    /// out `ProjectLoaded` — the clips and the plugin tracks, so the view
+    /// swaps both in at once — and returns to the Arranger with track 0
+    /// selected. A project with more than `MAX_TRACKS` tracks loads the first
+    /// ones and the footer says so.
     /// Clears `undo_record`: its edits name tracks and clips of the project
     /// being replaced, so undoing one would replay it against the new one.
     /// The loaded project becomes `saved`.
@@ -57,10 +41,18 @@ impl EventHandlers {
         let saved_tracks = data.tracks.len();
         let clips = data.apply_to_sequencer(sequencer);
         *saved = SavedProject::of(sequencer);
-        self.emit_track_instruments(sequencer);
+        let instruments = sequencer
+            .tracks()
+            .iter()
+            .filter_map(|track| match track.output() {
+                TrackOutput::Instrument(r) => Some((track.slot(), r.clone())),
+                TrackOutput::MidiOut { .. } => None,
+            })
+            .collect();
         self.ui_event_tx
             .send(UiEvent::ProjectLoaded {
                 clips,
+                instruments,
                 filename,
                 folder,
             })
@@ -87,6 +79,7 @@ impl EventHandlers {
         sequencer: &mut Sequencer,
         undo_record: &mut Record<SequencerEdit>,
         saved: &mut SavedProject,
+        staged: &mut Option<StagedProject>,
         folder: Option<&str>,
         filename: &str,
     ) {
@@ -101,35 +94,43 @@ impl EventHandlers {
                     filename: filename.to_owned(),
                     folder: folder.map(str::to_owned),
                 };
-                self.open_read_project_workflow(sequencer, undo_record, saved, project);
+                self.open_read_project_workflow(sequencer, undo_record, saved, staged, project);
             }
         }
     }
 
-    /// A project just read from disk: with plugins on its tracks, stops the
-    /// transport and stages it with the view (`UiEvent::StageProject`), which
-    /// loads them while the open project stays as it is and sends it back to
-    /// `apply_staged_project_workflow`; without, applies it at once.
+    /// A project just read from disk: without plugins, applies it at once.
+    /// With, stops the transport, keeps it in `staged` and asks the view to
+    /// load its plugins (`UiEvent::StageProject`) while the open project
+    /// stays as it is; the view's `ApplyStagedProject` then applies it
+    /// (`apply_staged_project_workflow`).
     fn open_read_project_workflow(
         &self,
         sequencer: &mut Sequencer,
         undo_record: &mut Record<SequencerEdit>,
         saved: &mut SavedProject,
+        staged: &mut Option<StagedProject>,
         project: StagedProject,
     ) {
-        if project.data.instrument_specs().is_empty() {
-            self.apply_staged_project_workflow(sequencer, undo_record, saved, project);
+        let specs = project.data.instrument_specs();
+        if specs.is_empty() {
+            *staged = Some(project);
+            self.apply_staged_project_workflow(sequencer, undo_record, saved, staged);
             return;
         }
         self.send_transport(TransportCommand::Stop);
         self.ui_event_tx
-            .send(UiEvent::StageProject(Box::new(project)))
+            .send(UiEvent::StageProject {
+                name: project.filename.clone(),
+                specs,
+            })
             .ok();
+        *staged = Some(project);
         self.request_repaint();
     }
 
-    /// Applies a project read from disk — at once, or once the view has
-    /// loaded the plugins of a staged one (`open_read_project_workflow`). No
+    /// Applies the project in `staged`, if any — at once, or once the view
+    /// has loaded its plugins (`open_read_project_workflow`). No
     /// unsaved-changes check: it ran before the project was read, and the
     /// view takes no input while a staged one loads.
     pub(super) fn apply_staged_project_workflow(
@@ -137,14 +138,16 @@ impl EventHandlers {
         sequencer: &mut Sequencer,
         undo_record: &mut Record<SequencerEdit>,
         saved: &mut SavedProject,
-        project: StagedProject,
+        staged: &mut Option<StagedProject>,
     ) {
-        let StagedProject {
+        if let Some(StagedProject {
             data,
             filename,
             folder,
-        } = project;
-        self.load_project_workflow(sequencer, undo_record, saved, data, Some(filename), folder);
+        }) = staged.take()
+        {
+            self.load_project_workflow(sequencer, undo_record, saved, data, Some(filename), folder);
+        }
     }
 
     /// Runs `action` — unless `discard_changes` is false and the project
@@ -152,12 +155,14 @@ impl EventHandlers {
     /// (`UiEvent::UnsavedChanges`) and nothing else happens. A new project or
     /// a load becomes the new `saved`; quitting tells the view to close the
     /// window (`UiEvent::QuitApproved`). Both replies wake the view, which
-    /// may be waiting on no input of its own (a window close).
+    /// may be waiting on no input of its own (a window close). An open with
+    /// plugins is held in `staged` until the view has loaded them.
     pub(super) fn project_action_workflow(
         &self,
         sequencer: &mut Sequencer,
         undo_record: &mut Record<SequencerEdit>,
         saved: &mut SavedProject,
+        staged: &mut Option<StagedProject>,
         action: &ProjectAction,
         discard_changes: bool,
     ) {
@@ -186,6 +191,7 @@ impl EventHandlers {
                     sequencer,
                     undo_record,
                     saved,
+                    staged,
                     folder.as_deref(),
                     filename,
                 );
@@ -325,13 +331,23 @@ mod tests {
     use undo::Record;
 
     use crate::core::event_handlers::test_harness::harness;
-    use crate::core::project::{ProjectData, StagedProject};
+    use crate::core::project::{ProjectData, StagedProject, TrackOutputData};
     use crate::core::sequencer::SequencerEdit;
     use crate::core::transport::TransportCommand;
     use crate::models::track::{InstrumentRef, TrackOutput};
     use crate::view::display::UiEvent;
 
-    /// A two-track project at 90 BPM, with a plugin on track 1 when
+    /// The plugin `project(true)` puts on track 1.
+    fn synth() -> InstrumentRef {
+        InstrumentRef {
+            bundle_path: "/Synth.clap".into(),
+            plugin_id: "synth".to_owned(),
+            display_name: "Synth".to_owned(),
+            state: Vec::new(),
+        }
+    }
+
+    /// A two-track project at 90 BPM, with [`synth`] on track 1 when
     /// `plugin`.
     fn project(plugin: bool) -> StagedProject {
         let mut data = ProjectData {
@@ -340,10 +356,12 @@ mod tests {
         };
         data.tracks.truncate(2);
         if plugin {
-            data.tracks[1].output = serde_json::from_str(
-                r#"{"type":"Instrument","bundle_path":"/Synth.clap","plugin_id":"synth","display_name":"Synth"}"#,
-            )
-            .unwrap();
+            data.tracks[1].output = TrackOutputData::Instrument {
+                bundle_path: "/Synth.clap".to_owned(),
+                plugin_id: "synth".to_owned(),
+                display_name: "Synth".to_owned(),
+                state: String::new(),
+            };
         }
         StagedProject {
             data,
@@ -352,70 +370,51 @@ mod tests {
         }
     }
 
-    /// An open with plugins leaves the open project alone and hands the
-    /// read one to the view; handed back, it is applied, the plugin list
-    /// reaching the view before the new clips.
+    /// An open with plugins leaves the open project alone, keeps the read
+    /// one and asks the view for its plugins; applied, its `ProjectLoaded`
+    /// names them.
     #[test]
     fn a_project_with_plugins_is_staged_before_it_is_applied() {
         let mut h = harness();
         let mut record: Record<SequencerEdit> = Record::new();
+        let mut staged = None;
         let tempo = h.sequencer.tempo_us();
 
         h.handlers.open_read_project_workflow(
             &mut h.sequencer,
             &mut record,
             &mut h.saved,
+            &mut staged,
             project(true),
         );
         assert_eq!(h.sequencer.tempo_us(), tempo);
         assert_eq!(h.sequencer.tracks().len(), 4);
+        assert!(staged.is_some());
         assert!(
             h.transport_commands
                 .try_iter()
                 .any(|cmd| matches!(cmd, TransportCommand::Stop))
         );
-        let staged = h
-            .ui_events
-            .try_iter()
-            .find_map(|event| match event {
-                UiEvent::StageProject(project) => Some(project),
-                _ => None,
-            })
-            .expect("staged with the view");
-        assert_eq!(staged.filename, "Song");
+        let asked = h.ui_events.try_iter().find_map(|event| match event {
+            UiEvent::StageProject { name, specs } => Some((name, specs)),
+            _ => None,
+        });
+        assert_eq!(asked, Some(("Song".to_owned(), vec![(1, synth())])));
 
         h.handlers.apply_staged_project_workflow(
             &mut h.sequencer,
             &mut record,
             &mut h.saved,
-            *staged,
+            &mut staged,
         );
+        assert!(staged.is_none());
         assert_eq!(h.sequencer.tempo_us(), 666_667);
         assert_eq!(h.sequencer.tracks().len(), 2);
-        let order: Vec<_> = h
-            .ui_events
-            .try_iter()
-            .filter_map(|event| match event {
-                UiEvent::TrackInstrumentsChanged { specs } => Some(Some(specs)),
-                UiEvent::ProjectLoaded { .. } => Some(None),
-                _ => None,
-            })
-            .collect();
-        let [Some(specs), None] = order.as_slice() else {
-            panic!("plugin list, then the project: {order:?}");
-        };
-        assert_eq!(
-            specs.as_slice(),
-            [(
-                1,
-                InstrumentRef {
-                    bundle_path: "/Synth.clap".into(),
-                    plugin_id: "synth".to_owned(),
-                    display_name: "Synth".to_owned(),
-                    state: Vec::new(),
-                }
-            )]
-        );
+        let loaded = h.ui_events.try_iter().find_map(|event| match event {
+            UiEvent::ProjectLoaded { instruments, .. } => Some(instruments),
+            _ => None,
+        });
+        assert_eq!(loaded, Some(vec![(1, synth())]));
         assert!(matches!(
             h.sequencer.tracks()[1].output(),
             TrackOutput::Instrument(_)
@@ -427,18 +426,21 @@ mod tests {
     fn a_project_without_plugins_is_applied_at_once() {
         let mut h = harness();
         let mut record: Record<SequencerEdit> = Record::new();
+        let mut staged = None;
 
         h.handlers.open_read_project_workflow(
             &mut h.sequencer,
             &mut record,
             &mut h.saved,
+            &mut staged,
             project(false),
         );
+        assert!(staged.is_none());
         assert_eq!(h.sequencer.tempo_us(), 666_667);
         assert!(
             !h.ui_events
                 .try_iter()
-                .any(|event| matches!(event, UiEvent::StageProject(_)))
+                .any(|event| matches!(event, UiEvent::StageProject { .. }))
         );
     }
 }

@@ -146,5 +146,6 @@ pub(crate) fn run_command(
         record,
         &mut TapTempo::default(),
         &mut h.saved,
+        &mut None,
     );
 }

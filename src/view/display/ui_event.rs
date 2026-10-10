@@ -10,10 +10,7 @@
 use uuid::Uuid;
 
 use crate::{
-    core::{
-        config::DEFAULT_TRACK_COUNT,
-        project::{ProjectAction, StagedProject},
-    },
+    core::{config::DEFAULT_TRACK_COUNT, project::ProjectAction},
     metadata::clip_metadata::ClipMetadata,
     metadata::clip_view::ClipView,
     models::clip::EventSpaceRetime,
@@ -167,16 +164,25 @@ pub(crate) enum UiEvent {
         pitch_range: (u8, u8),
     },
     /// A project was read from disk with plugins on its tracks and is not
-    /// applied yet: `Display` loads its plugins behind the restore panel, the
-    /// open project left as it is, then sends it back
-    /// (`InputEvent::ApplyStagedProject`). See `130-plugin-host.md`
+    /// applied yet: `Display` loads them behind the restore panel, the open
+    /// project left as it is, then says so (`InputEvent::ApplyStagedProject`)
+    /// for the sequencer to apply it. See `130-plugin-host.md`
     /// § Project persistence.
-    StageProject(Box<StagedProject>),
+    StageProject {
+        /// The project's name — the panel's title.
+        name: String,
+        /// `(engine slot, plugin reference)` for every plugin track it will
+        /// have.
+        specs: Vec<(usize, InstrumentRef)>,
+    },
     /// A project finished loading (or a new one was created) — rebuild the
-    /// render-side clip list.
+    /// render-side clip list and, on macOS, the hosted plugins.
     ProjectLoaded {
         /// Render-side snapshots of every clip in the project.
         clips: Vec<ClipMetadata>,
+        /// `(engine slot, plugin reference)` for every plugin track — what
+        /// `Display` swaps in from a staged load.
+        instruments: Vec<(usize, InstrumentRef)>,
         /// The project's saved name, or `None` for a freshly created (unnamed)
         /// project — sets `Display::project`'s `project_current_name` so a later
         /// ⌘/Ctrl+S doesn't overwrite whatever was previously open.
@@ -239,14 +245,6 @@ pub(crate) enum UiEvent {
         track_id: Uuid,
         /// The plugin to reload, state blob included.
         instrument: InstrumentRef,
-    },
-    /// A project was loaded or created — `Display` should rebuild its hosted
-    /// plugin editors to match (`specs` = the `Instrument` tracks, by engine
-    /// slot, and their plugin references). Emitted on macOS only; harmless
-    /// elsewhere.
-    TrackInstrumentsChanged {
-        /// `(engine slot, plugin reference)` for every instrument track.
-        specs: Vec<(usize, InstrumentRef)>,
     },
     /// The arranger performance lane was armed (selected) — mutually
     /// exclusive with `TrackSelected`, which implicitly deselects it.

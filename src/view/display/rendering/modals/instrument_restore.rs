@@ -37,21 +37,17 @@ impl Display {
             Self::draw_modal_frame(painter, rect, Self::RESTORE_W, Self::RESTORE_H, &title);
 
         let (step, total) = restore.step();
-        let count = format!("{step} of {total}");
-        let count_font = FontId::proportional(Self::FONT_HINT);
-        let count_w = painter
-            .layout_no_wrap(count.clone(), count_font.clone(), theme::fg_dim())
-            .size()
-            .x;
         let right = px + Self::RESTORE_W - Self::RESTORE_PAD;
         let line_y = py + Self::RESTORE_LINE_Y;
-        painter.text(
-            pos2(right, line_y),
-            Align2::RIGHT_CENTER,
-            count,
-            count_font,
-            theme::fg_dim(),
-        );
+        let count_w = painter
+            .text(
+                pos2(right, line_y),
+                Align2::RIGHT_CENTER,
+                format!("{step} of {total}"),
+                FontId::proportional(Self::FONT_HINT),
+                theme::fg_dim(),
+            )
+            .width();
         let left = px + Self::RESTORE_PAD;
         Self::draw_modal_text(
             painter,
@@ -66,7 +62,7 @@ impl Display {
             pos2(left, py + Self::RESTORE_BAR_Y),
             vec2(right - left, Self::RESTORE_BAR_H),
         );
-        painter.rect_filled(bar, CornerRadius::ZERO, theme::separator());
+        painter.rect_filled(bar, CornerRadius::ZERO, grid_seam_color());
         let mut done = bar;
         done.set_width(bar.width() * restore.fraction());
         painter.rect_filled(done, CornerRadius::ZERO, theme::accent());

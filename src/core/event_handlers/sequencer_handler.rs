@@ -8,6 +8,7 @@ use std::time::Instant;
 
 use undo::Record;
 
+use crate::core::project::StagedProject;
 use crate::core::sequencer::{
     CommitClipEdit, DeleteSelectedEventsEdit, DeleteTimeEdit, DragEventsVelocityEdit,
     DragNotesEdit, DuplicateClipsEdit, DuplicateTimeEdit, InsertCaptureEdit, InsertNotesEdit,
@@ -24,8 +25,9 @@ use super::*;
 impl EventHandlers {
     /// Applies one [`SequencerCommand`]
     /// against `sequencer`, recording undoable ones on `undo_record`, keeping
-    /// `tap_tempo` for tap-tempo and `saved` for the unsaved-changes
-    /// check. Called from the `"sequencer"` thread's `select!` loop.
+    /// `tap_tempo` for tap-tempo, `saved` for the unsaved-changes check and
+    /// `staged` for a project waiting on the view to load its plugins. Called
+    /// from the `"sequencer"` thread's `select!` loop.
     pub(crate) fn handle_sequencer_command(
         &self,
         cmd: &SequencerCommand,
@@ -33,6 +35,7 @@ impl EventHandlers {
         undo_record: &mut Record<SequencerEdit>,
         tap_tempo: &mut TapTempo,
         saved: &mut SavedProject,
+        staged: &mut Option<StagedProject>,
     ) {
         match cmd {
             SequencerCommand::Commit => {
@@ -482,18 +485,14 @@ impl EventHandlers {
                     sequencer,
                     undo_record,
                     saved,
+                    staged,
                     action,
                     *discard_changes,
                 );
             }
 
-            SequencerCommand::ApplyStagedProject(project) => {
-                self.apply_staged_project_workflow(
-                    sequencer,
-                    undo_record,
-                    saved,
-                    project.as_ref().clone(),
-                );
+            SequencerCommand::ApplyStagedProject => {
+                self.apply_staged_project_workflow(sequencer, undo_record, saved, staged);
             }
 
             SequencerCommand::SaveProject { filename, folder } => {

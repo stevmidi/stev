@@ -382,6 +382,13 @@ impl Display {
         }
         self.input_was_clip_view = in_clip_view;
         let mut events = self.input_poller.take_input_events();
+        // Nothing acts while a project being opened loads its plugins — not
+        // even the handlers ahead of the overlay below (project chords,
+        // theme keys): the open project must stay exactly as it is.
+        #[cfg(target_os = "macos")]
+        if self.overlay == Some(Overlay::RestoringInstruments) {
+            events.clear();
+        }
         for event in events.drain(..) {
             let ok = self.handle_project_dialog_input_event(&event)
                 || self.handle_track_rename_input_event(&event)
@@ -464,12 +471,6 @@ impl Display {
         let InputEvent::KeyPressed { key, modifiers } = input_event else {
             return false;
         };
-        // Neither a save nor a new project while another project's plugins
-        // load: the overlay below swallows them.
-        #[cfg(target_os = "macos")]
-        if self.overlay == Some(Overlay::RestoringInstruments) {
-            return false;
-        }
         if !modifiers.command {
             return false;
         }
@@ -488,7 +489,8 @@ impl Display {
         match self.overlay {
             Some(Overlay::Settings) => self.handle_settings_input_event(event),
             Some(Overlay::Help) => self.handle_help_input_event(event),
-            // Nothing to do but wait for the last plugin.
+            // Nothing to do but wait for the last plugin (keys from a
+            // plugin window, `try_consume_as_modal`).
             #[cfg(target_os = "macos")]
             Some(Overlay::RestoringInstruments) => {}
             None => return false,

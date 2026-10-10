@@ -21,12 +21,12 @@ pub(super) struct InstrumentRestore {
 }
 
 impl InstrumentRestore {
-    /// A restore of `specs` in order; `None` when there is nothing to load.
-    pub(super) fn new(specs: &[(usize, InstrumentRef)]) -> Option<Self> {
-        (!specs.is_empty()).then(|| InstrumentRestore {
-            queue: specs.iter().cloned().collect(),
+    /// A restore of `specs`, in order.
+    pub(super) fn new(specs: Vec<(usize, InstrumentRef)>) -> Self {
+        InstrumentRestore {
             total: specs.len(),
-        })
+            queue: VecDeque::from(specs),
+        }
     }
 
     /// The plugin to load next and the slot it goes into.
@@ -53,10 +53,7 @@ impl InstrumentRestore {
 
     /// How much of the restore is done, `0.0..=1.0` — the progress bar.
     pub(super) fn fraction(&self) -> f32 {
-        if self.total == 0 {
-            return 1.0;
-        }
-        (self.total - self.queue.len()) as f32 / self.total as f32
+        (self.total - self.queue.len()) as f32 / self.total.max(1) as f32
     }
 }
 
@@ -77,15 +74,9 @@ mod tests {
     }
 
     #[test]
-    fn nothing_to_load_is_no_restore() {
-        assert!(InstrumentRestore::new(&[]).is_none());
-    }
-
-    #[test]
     fn loads_in_order_and_counts_the_steps() {
         let mut restore =
-            InstrumentRestore::new(&[(0, plugin("a")), (2, plugin("b")), (3, plugin("c"))])
-                .expect("three plugins");
+            InstrumentRestore::new(vec![(0, plugin("a")), (2, plugin("b")), (3, plugin("c"))]);
         assert_eq!(restore.step(), (1, 3));
         assert_eq!(restore.fraction(), 0.0);
         assert_eq!(restore.next().map(|(slot, _)| *slot), Some(0));

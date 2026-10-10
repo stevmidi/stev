@@ -31,7 +31,6 @@ use crate::core::plugin_host::{
     InstrumentEditor, PluginAudioHandle, PluginHostCommand, PreparedInstrument, load_instrument,
     prepare_instrument, take_toggle_editor_pending,
 };
-use crate::core::project::StagedProject;
 use crate::models::track::{InstrumentRef, TrackOutput};
 
 use super::browser::BrowserPlugin;
@@ -93,14 +92,11 @@ pub(super) struct InstrumentHost {
 }
 
 /// A project load's plugins, prepared before the project replaces the open
-/// one (`Display::stage_project`).
+/// one (`Display::stage_project`). Once the queue is done the sequencer has
+/// been told to apply the project, and its `ProjectLoaded` swaps them in.
 pub(super) struct ProjectStaging {
     /// The project's name — the panel's title.
     name: String,
-    /// The project, until its last plugin is ready and it goes back to the
-    /// sequencer; `None` from then until its `TrackInstrumentsChanged`
-    /// swaps the plugins in.
-    project: Option<Box<StagedProject>>,
     /// The plugins still to prepare, and the count.
     restore: InstrumentRestore,
     /// The plugins prepared so far.
@@ -111,8 +107,6 @@ pub(super) struct ProjectStaging {
 struct StagedInstrument {
     /// The engine slot it goes into.
     slot: usize,
-    /// What the project asked for — matched against `TrackInstrumentsChanged`.
-    want: InstrumentRef,
     /// The catalog entry it was loaded from.
     entry: PluginCatalogEntry,
     /// The plugin itself.
@@ -120,6 +114,13 @@ struct StagedInstrument {
 }
 
 impl ProjectStaging {
+    /// Drops every prepared plugin (`PreparedInstrument::discard`).
+    fn discard(self) {
+        for staged in self.prepared {
+            staged.prepared.discard();
+        }
+    }
+
     /// Leaks every prepared plugin — app exit, where dropping one races its
     /// bundle's static destructors (`Display::on_exit`).
     pub(super) fn leak(self) {
@@ -416,17 +417,16 @@ impl Display {
         self.remove_slot_instrument(slot);
     }
 
-    /// Reloads `want` into engine slot `slot`, editor closed — a project load
-    /// (`track_id` `None`), or a plugin track coming back into the
-    /// arrangement (`UiEvent::TrackInstrumentRestored`), which prefers the
-    /// live state parked for `track_id` over `want`'s blob.
+    /// Reloads `want` into engine slot `slot`, editor closed — a plugin track
+    /// coming back into the arrangement (`UiEvent::TrackInstrumentRestored`),
+    /// which prefers the live state parked for `track_id` over `want`'s blob.
     pub(super) fn restore_slot_instrument(
         &mut self,
         slot: usize,
-        track_id: Option<Uuid>,
+        track_id: Uuid,
         want: &InstrumentRef,
     ) {
-        let parked = track_id.and_then(|id| self.instruments.parked_states.remove(&id));
+        let parked = self.instruments.parked_states.remove(&track_id);
         match self.catalog_index_of(&want.bundle_path, &want.plugin_id) {
             Some(idx) => {
                 let state = parked.as_deref().unwrap_or(&want.state);
@@ -470,35 +470,25 @@ impl Display {
 
     /// Rebuilds the loaded editors for a freshly loaded/created project: every
     /// current editor is torn down and every parked state dropped, then each
-    /// `Instrument` track named in `specs` gets an editor-less plugin — the
-    /// one a staged load prepared for it (`stage_project`), swapped in here
-    /// in the same frame as the old ones go, or, with none prepared, loaded
-    /// now.
+    /// plugin a staged load prepared (`stage_project`) is swapped into its
+    /// slot, in the same frame as the old ones go. `specs` is the project's
+    /// plugin tracks: a slot it names that has nothing prepared stays silent —
+    /// its plugin wasn't installed or failed to load, which staging already
+    /// reported.
     pub(super) fn sync_instruments_to_tracks(&mut self, specs: &[(usize, InstrumentRef)]) {
         for slot in 0..self.instruments.track_instruments.len() {
             self.remove_slot_instrument(slot);
         }
         self.instruments.parked_states.clear();
-        let mut prepared = self
-            .instruments
-            .staging
-            .take()
-            .map(|staging| staging.prepared)
-            .unwrap_or_default();
-        for (slot, want) in specs {
-            match prepared
-                .iter()
-                .position(|staged| staged.slot == *slot && staged.want == *want)
-            {
-                Some(pos) => self.install_staged_instrument(prepared.swap_remove(pos)),
-                None => self.restore_slot_instrument(*slot, None, want),
+        let Some(mut staging) = self.instruments.staging.take() else {
+            return;
+        };
+        for staged in std::mem::take(&mut staging.prepared) {
+            if specs.iter().any(|(slot, _)| *slot == staged.slot) {
+                self.install_staged_instrument(staged);
+            } else {
+                staged.prepared.discard();
             }
-        }
-        for staged in prepared {
-            staged.prepared.discard();
-        }
-        if self.overlay == Some(Overlay::RestoringInstruments) {
-            self.close_overlay();
         }
         self.sync_live_instrument_target();
     }
@@ -510,7 +500,6 @@ impl Display {
             slot,
             entry,
             prepared,
-            ..
         } = staged;
         let Some(handle) = self.instruments.audio.as_mut() else {
             prepared.discard();
@@ -525,46 +514,38 @@ impl Display {
     }
 
     /// A project read from disk with plugins on its tracks
-    /// (`UiEvent::StageProject`): queues its plugins for
-    /// `restore_next_instrument` to prepare, one per frame, under the
-    /// `RestoringInstruments` overlay. The open project and its plugins stay
-    /// as they are until the last one is ready and the project goes back to
-    /// the sequencer to be applied.
-    pub(super) fn stage_project(&mut self, project: Box<StagedProject>) {
+    /// (`UiEvent::StageProject`): queues `specs` for `restore_next_instrument`
+    /// to prepare, one per frame, under the `RestoringInstruments` overlay.
+    /// The open project and its plugins stay as they are until the last one
+    /// is ready and the sequencer applies the project.
+    pub(super) fn stage_project(&mut self, name: String, specs: Vec<(usize, InstrumentRef)>) {
+        // Only a project with plugins is staged; an empty queue would never
+        // send `ApplyStagedProject`.
+        debug_assert!(!specs.is_empty());
         if let Some(old) = self.instruments.staging.take() {
-            for staged in old.prepared {
-                staged.prepared.discard();
-            }
+            old.discard();
         }
-        let Some(restore) = InstrumentRestore::new(&project.data.instrument_specs()) else {
-            self.input_event_tx
-                .send(InputEvent::ApplyStagedProject(project))
-                .ok();
-            return;
-        };
         self.instruments.staging = Some(ProjectStaging {
-            name: project.filename.clone(),
-            project: Some(project),
-            restore,
+            name,
+            restore: InstrumentRestore::new(specs),
             prepared: Vec::new(),
         });
         self.overlay = Some(Overlay::RestoringInstruments);
     }
 
     /// Per-frame, from `logic`: prepares the next plugin of a staged project
-    /// and asks for the frame that paints the panel's next step — the first
-    /// waits a frame, so the panel is up before anything blocks. A plugin
+    /// and asks for the frame that paints the panel's next step. A plugin
     /// missing from the catalog while the background scan is still running
     /// waits for it, rather than reading as not installed. Once the last is
-    /// ready the project goes back to the sequencer
-    /// (`InputEvent::ApplyStagedProject`); its `TrackInstrumentsChanged`
-    /// swaps the plugins in (`sync_instruments_to_tracks`).
+    /// ready it tells the sequencer to apply the project
+    /// (`InputEvent::ApplyStagedProject`); its `ProjectLoaded` swaps the
+    /// plugins in (`sync_instruments_to_tracks`).
     pub(super) fn restore_next_instrument(&mut self, ctx: &egui::Context) {
         if self
             .instruments
             .staging
             .as_ref()
-            .is_none_or(|staging| staging.project.is_none())
+            .is_none_or(|staging| staging.restore.is_done())
         {
             return;
         }
@@ -578,14 +559,16 @@ impl Display {
             .as_mut()
             .and_then(|staging| staging.restore.pop());
         if let Some((slot, want)) = next {
-            self.prepare_staged_instrument(slot, want);
+            self.prepare_staged_instrument(slot, &want);
         }
-        if let Some(staging) = &mut self.instruments.staging
-            && staging.restore.is_done()
-            && let Some(project) = staging.project.take()
+        if self
+            .instruments
+            .staging
+            .as_ref()
+            .is_some_and(|staging| staging.restore.is_done())
         {
             self.input_event_tx
-                .send(InputEvent::ApplyStagedProject(project))
+                .send(InputEvent::ApplyStagedProject)
                 .ok();
         }
         ctx.request_repaint();
@@ -594,7 +577,7 @@ impl Display {
     /// Loads `want` for `slot` without putting it in the mixer, and keeps it
     /// with the staging. A plugin that isn't installed or fails to load is
     /// left out: the track stays silent, as with any load.
-    fn prepare_staged_instrument(&mut self, slot: usize, want: InstrumentRef) {
+    fn prepare_staged_instrument(&mut self, slot: usize, want: &InstrumentRef) {
         let Some(entry) = self
             .catalog_index_of(&want.bundle_path, &want.plugin_id)
             .and_then(|idx| self.plugin_catalog().get(idx).cloned())
@@ -610,7 +593,6 @@ impl Display {
                 if let Some(staging) = &mut self.instruments.staging {
                     staging.prepared.push(StagedInstrument {
                         slot,
-                        want,
                         entry,
                         prepared,
                     });

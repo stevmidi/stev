@@ -1026,11 +1026,14 @@ impl eframe::App for Display {
         {
             ctx.request_repaint();
         }
-        self.handle_ui_events();
-        // A project being opened just queued its plugins: the next frame
-        // loads the first, after this one has painted the panel.
         #[cfg(target_os = "macos")]
-        if self.instrument_restore().is_some() {
+        let was_staging = self.instrument_restore().is_some();
+        self.handle_ui_events();
+        // A project being opened just queued its plugins: one more frame, for
+        // `logic` to load the first after this one has painted the panel.
+        // `restore_next_instrument` asks for every frame after that.
+        #[cfg(target_os = "macos")]
+        if !was_staging && self.instrument_restore().is_some() {
             ctx.request_repaint();
         }
         self.sync_window_close(ctx);

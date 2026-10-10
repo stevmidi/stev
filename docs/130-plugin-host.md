@@ -453,8 +453,9 @@ its slot, an added one takes the lowest free one.
   installed is logged and the track stays an italic, not-loaded plugin track.
 - **A project load** puts every track back in slot = position
   (`Sequencer::new_project`), and `sync_instruments_to_tracks` drops every
-  parked state and reloads every plugin into its slot (`TrackInstrumentsChanged`'s
-  specs are `(slot, InstrumentRef)`).
+  parked state and swaps the staged plugins into their slots
+  (`ProjectLoaded`'s `instruments` are `(slot, InstrumentRef)`; § Project
+  persistence).
 
 ## App-exit shutdown (`shutdown::HostShutdown`)
 
@@ -547,12 +548,13 @@ worth weighing only if other GL-drawing plugins turn up new ones.
 empty `bundle_path` (a phase-3 project, or one saved before a plugin was picked)
 falls back to `MidiOut { 0 }`.
 
-On project load / new-project the sequencer thread emits
-`UiEvent::TrackInstrumentsChanged { specs }` (ahead of `ProjectLoaded`);
+On project load / new-project the sequencer thread emits `UiEvent::ProjectLoaded`,
+whose `instruments` are the `(slot, InstrumentRef)` of every plugin track;
 `Display::sync_instruments_to_tracks` tears down every current editor and
-gives each `Instrument` track named in `specs` an **editor-less** plugin. A
-plugin the project wants but that is not installed logs a warning and leaves
-the track silent.
+swaps in the **editor-less** plugins staging prepared for those slots, in the
+same frame as the new clips. A plugin the project wants but that is not
+installed, or that fails to load, is reported while staging and leaves the
+track silent.
 
 **Opening a project with plugins stages it first**, so the screen goes from
 the old project to the new one whole, in one frame, rather than freezing and
@@ -560,45 +562,49 @@ then filling in plugin by plugin:
 
 1. The sequencer reads the file (`open_project_workflow`). If
    `ProjectData::instrument_specs` is empty it applies it at once
-   (`open_read_project_workflow`). Otherwise it stops the transport and hands
-   the read project to the view **unapplied**: `UiEvent::StageProject(StagedProject)`.
+   (`open_read_project_workflow`). Otherwise it stops the transport, keeps
+   the read project (a `StagedProject`) in the `"sequencer"` thread's
+   `staged` local, and sends the view `UiEvent::StageProject { name, specs }`.
    The open project, its plugins and every shared atomic stay as they were.
 2. `Display::stage_project` queues the specs (`InstrumentRestore`,
    `instrument_restore.rs`) and puts up `Overlay::RestoringInstruments`
    (macOS-only variant): a panel over the still-drawn old project, titled
    "Opening <project>", naming the plugin loading next, the step ("3 of 8")
-   and a progress bar (`rendering/modals/instrument_restore.rs`).
+   and a progress bar (`rendering/modals/instrument_restore.rs`). Off macOS
+   the view answers at once.
 3. `restore_next_instrument`, called from `logic` after the editor pump,
    loads one plugin per frame with `prepare_instrument` — loaded, state
    applied, activated, note resets queued, but **not** sent to the mixer
    (`PreparedInstrument`) — and asks for the next frame. A load blocks the
    main thread (below), so the panel moves on between loads rather than
    animating, which is why it counts steps instead of spinning. The first
-   load waits one frame, so the panel is painted before anything blocks.
-4. With the last one ready, the view sends the project back
-   (`InputEvent::ApplyStagedProject` → `SequencerCommand::ApplyStagedProject`
-   → `apply_staged_project_workflow`, no unsaved-changes check: it ran
-   before the read). The sequencer applies it and emits
-   `TrackInstrumentsChanged` + `ProjectLoaded`;
+   load waits one frame (`ui` asks for it on the frame staging starts), so
+   the panel is painted before anything blocks.
+4. With the last one ready, the view says so (`InputEvent::ApplyStagedProject`
+   → `SequencerCommand::ApplyStagedProject` → `apply_staged_project_workflow`,
+   which takes `staged`; no unsaved-changes check: it ran before the read).
+   The sequencer applies it and emits `ProjectLoaded`, and
    `sync_instruments_to_tracks` removes the old plugins and `insert`s each
-   prepared one whose slot and `InstrumentRef` match a spec — a `Remove` and
-   an `Insert` per slot in one frame, which `CMD_RING_CAPACITY` (4 ×
-   `MAX_TRACKS`) has room for. A spec with nothing prepared loads directly;
-   a prepared plugin nothing asks for is `discard`ed.
+   prepared one into its slot — a `Remove` and an `Insert` per slot in one
+   frame, which `CMD_RING_CAPACITY` (4 × `MAX_TRACKS`) has room for. A
+   prepared plugin for a slot the applied project doesn't name is
+   `discard`ed; a slot with nothing prepared stays silent rather than being
+   loaded again with the panel gone.
 
 - **A plugin not in the catalog yet waits for the scan** (`restore_waits_for_scan`):
   while the background scan is still running, the queue holds at that plugin
   (re-checking every `RESTORE_SCAN_POLL`) and the panel says so, so a project
   opened right after launch doesn't lose plugins the scan hasn't reached.
   Once the scan is done a missing plugin is skipped as not installed.
-- **Nothing reaches the old project while it waits**: the overlay swallows
-  every key and pointer event through `handle_overlay_input_event`, and
-  `handle_project_input_event` lets ⌘N / ⌘S fall through to it, so no play,
-  edit, save, new project or plugin pick lands mid-load. Quitting still
-  works: `on_exit` leaks the prepared plugins (`ProjectStaging::leak`) like
-  the loaded ones.
+- **Nothing reaches the old project while it waits**: `handle_input_events`
+  drops every event while the overlay is up — before the project chords and
+  the other handlers ahead of the overlay — and the overlay arm of
+  `handle_overlay_input_event` swallows keys from a plugin window
+  (`try_consume_as_modal`). So no play, edit, save, new project or plugin
+  pick lands mid-load. Quitting still works: `on_exit` leaks the prepared
+  plugins (`ProjectStaging::leak`) like the loaded ones.
 - **⌘N and a project without plugins** take the direct path: their
-  `TrackInstrumentsChanged` finds nothing staged.
+  `ProjectLoaded` finds nothing staged and no plugin to load.
 
 ### Plugin state / presets
 

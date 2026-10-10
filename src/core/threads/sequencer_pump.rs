@@ -6,8 +6,9 @@
 //! MIDI input, and dispatches every [`SequencerCommand`] / [`TransportCommand`]
 //! through `EventHandlers` against the thread-local `Sequencer` / `Transport` /
 //! `Metronome`. It also owns the `Record<SequencerEdit>` undo stack
-//! (`050-undo-redo.md`) and the [`SavedProject`] the unsaved-changes check
-//! compares against (`060-persistence.md`).
+//! (`050-undo-redo.md`), the [`SavedProject`] the unsaved-changes check
+//! compares against (`060-persistence.md`), and a project read from disk
+//! while the view loads its plugins (`130-plugin-host.md`).
 
 use crossbeam_channel::{Receiver, select};
 use undo::Record;
@@ -53,6 +54,9 @@ pub(crate) fn start_sequencer_thread(
             // The empty startup project counts as saved: quitting before
             // touching anything asks nothing.
             let mut saved = SavedProject::of(&sequencer);
+            // A project read from disk, waiting on the view to load its
+            // plugins (`130-plugin-host.md` § Project persistence).
+            let mut staged = None;
 
             loop {
                 select! {
@@ -115,7 +119,7 @@ pub(crate) fn start_sequencer_thread(
 
                     recv(sequencer_command_rx) -> command => {
                         if let Ok(cmd) = command {
-                            event_handlers.handle_sequencer_command(&cmd, &mut sequencer, &mut undo_record, &mut tap_tempo, &mut saved);
+                            event_handlers.handle_sequencer_command(&cmd, &mut sequencer, &mut undo_record, &mut tap_tempo, &mut saved, &mut staged);
                         }
                     }
 

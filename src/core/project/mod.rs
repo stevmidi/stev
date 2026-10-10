@@ -12,6 +12,8 @@ mod storage;
 
 pub(crate) use action::ProjectAction;
 pub(crate) use dto::ProjectData;
+#[cfg(test)]
+pub(crate) use dto::TrackOutputData;
 #[cfg(all(test, debug_assertions))]
 pub(crate) use dto::{ClipData, EventData};
 pub(crate) use smf::write_smf;

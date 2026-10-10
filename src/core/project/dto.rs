@@ -470,7 +470,7 @@ mod tests {
     }
 
     /// What a load stages is what the applied project then asks for
-    /// (`EventHandlers::emit_track_instruments`), past the track cap too.
+    /// (`ProjectLoaded`'s `instruments`), past the track cap too.
     #[test]
     fn the_staged_plugins_match_the_applied_tracks() {
         let mut data = project_with_tracks(config::MAX_TRACKS + 2);
