@@ -330,8 +330,12 @@ mod tests {
         fs::write(dir.join("b.stev"), "b").unwrap();
         let err = rename_no_replace(&dir.join("a.stev"), &dir.join("b.stev")).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
-        // Nor one that differs only in case, on a case-insensitive volume.
-        assert!(rename_no_replace(&dir.join("a.stev"), &dir.join("B.stev")).is_err());
+        // Nor one that differs from it only in case, where the volume is
+        // case-insensitive (macOS by default) — on a case-sensitive one
+        // (Linux) `B.stev` is a free name of its own.
+        if dir.join("B.stev").exists() {
+            assert!(rename_no_replace(&dir.join("a.stev"), &dir.join("B.stev")).is_err());
+        }
         assert_eq!(fs::read_to_string(dir.join("b.stev")).unwrap(), "b");
         fs::remove_dir_all(&dir).unwrap();
     }
