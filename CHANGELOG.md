@@ -34,6 +34,9 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ### Fixed
 
+- **The DSP chip keeps updating while stopped.** It used to freeze until
+  the mouse or a key moved; it now refreshes four times a second, so the load
+  from plugins played live stays visible.
 - **The header chips no longer shift about.** The BPM, meter, position
   and DSP chips each keep a fixed width as their numbers change, so the row
   stays put instead of moving with every tick of the position readout.

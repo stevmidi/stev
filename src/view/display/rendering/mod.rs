@@ -36,6 +36,11 @@ fn accent_if(highlighted: bool, idle: Color32) -> Color32 {
     if highlighted { theme::accent() } else { idle }
 }
 
+/// How often the UI wakes while the transport is stopped, so the header's
+/// DSP chip keeps reading the audio load rather than freezing between input
+/// events. See `030-ui-design.md` § Rendering Performance.
+const DSP_IDLE_REFRESH: Duration = Duration::from_millis(250);
+
 /// Thickness of the accent along the top of the docked pane with the keyboard.
 const FOCUS_EDGE_W: f32 = 2.0;
 
@@ -1178,6 +1183,12 @@ impl eframe::App for Display {
         // site instead of polling for it here.
         if running {
             ctx.request_repaint_after(Duration::from_millis(33));
+        } else if self.audio_load.is_some() {
+            // Stopped, the UI only wakes for input, and the header's DSP
+            // chip would freeze at whatever it read last — while live-played
+            // plugins are still rendering. A slow wake keeps it current;
+            // faster adds nothing readable (the average settles in ~¼ s).
+            ctx.request_repaint_after(DSP_IDLE_REFRESH);
         }
         // The footer message: one wake when its hold ends, then the fade's
         // frames; dropped once it is gone.
