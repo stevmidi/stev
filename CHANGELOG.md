@@ -41,6 +41,12 @@ Breaking entries are marked **Breaking** and say what to do about them.
   the focused pane now moves to the top of the browser panel while it has
   the keyboard, so only one edge is ever lit.
 
+### Changed
+
+- **The footer runs under the browser panel.** The status bar now spans the
+  whole window width and the browser panel stops above it, so the footer and
+  its messages stay put when the panel shows or hides.
+
 ## [0.2.0] - 2026-10-10
 
 ### Added

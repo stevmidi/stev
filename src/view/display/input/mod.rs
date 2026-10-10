@@ -635,7 +635,10 @@ impl Display {
                 pointer_x,
                 pointer_y,
             } => {
-                if pointer_x.is_some_and(Self::is_over_browser) {
+                if pointer_x
+                    .zip(pointer_y)
+                    .is_some_and(|(x, y)| self.is_over_browser(x, y))
+                {
                     self.scroll_browser(delta_y);
                 } else {
                     self.scroll_timeline_by(delta_x, delta_y, pointer_y);
@@ -704,7 +707,7 @@ impl Display {
                     press.dragging |=
                         past_drag_threshold(press.origin, (x, y), Self::DRAG_THRESHOLD_PX);
                 }
-                if !Self::is_over_browser(x)
+                if !self.is_over_browser(x, y)
                     && let Some(BrowserPress { item, .. }) = self.browser.press.take()
                 {
                     if let BrowserItem::Plugin(plugin) = item {
@@ -756,7 +759,7 @@ impl Display {
             InputEvent::MouseClicked { x, y, modifiers } => {
                 // Left of the canvas is the browser panel; a press anywhere
                 // else takes the keyboard back from it.
-                if Self::is_over_browser(x) {
+                if self.is_over_browser(x, y) {
                     self.handle_browser_click(x, y, false);
                     return true;
                 }
@@ -797,7 +800,7 @@ impl Display {
                     self.open_tempo_field();
                 } else if self.meter_chip.contains(x, y) {
                     self.open_meter_field();
-                } else if Self::is_over_browser(x) {
+                } else if self.is_over_browser(x, y) {
                     self.handle_browser_click(x, y, true);
                 } else if self.pane_at(x, y) == Some(Pane::Clip) {
                     self.in_pane(Pane::Clip, |display| display.handle_double_click(x, y));

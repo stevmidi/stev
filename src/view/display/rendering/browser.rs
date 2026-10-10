@@ -6,8 +6,8 @@
 use egui::{Id, LayerId, Order, Pos2, Shape};
 
 use super::super::browser::{
-    BROWSER_DISCLOSURE_W, BROWSER_INDENT_X, BROWSER_LIST_TOP, BROWSER_ROW_H, BROWSER_W,
-    BrowserItem, browser_row_rect, browser_text_x,
+    BROWSER_DISCLOSURE_W, BROWSER_INDENT_X, BROWSER_LIST_PAD_Y, BROWSER_LIST_TOP, BROWSER_ROW_H,
+    BROWSER_W, BrowserItem, browser_row_rect, browser_text_x,
 };
 use super::*;
 
@@ -47,9 +47,13 @@ impl Display {
         LayerId::new(Order::Middle, Id::new("browser-panel"))
     }
 
-    /// Paints the panel along the left of `window`.
+    /// Paints the panel along the left of `window`, down to the footer,
+    /// which runs under it (`draw_status_bar`).
     pub(super) fn draw_browser(&self, painter: &Painter, window: Rect) {
-        let panel = Rect::from_min_max(window.min, pos2(window.min.x + BROWSER_W, window.max.y));
+        let panel = Rect::from_min_max(
+            window.min,
+            pos2(window.min.x + BROWSER_W, self.footer_top()),
+        );
         let painter = painter.with_clip_rect(panel);
         painter.rect_filled(panel, CornerRadius::ZERO, theme::bg_panel());
         painter.vline(
@@ -79,7 +83,7 @@ impl Display {
 
         let list = Rect::from_min_max(
             pos2(panel.min.x, panel.min.y + BROWSER_LIST_TOP),
-            pos2(panel.max.x - 1.0, panel.max.y - theme::STATUS_H),
+            pos2(panel.max.x - 1.0, panel.max.y - BROWSER_LIST_PAD_Y),
         );
         let painter = painter.with_clip_rect(list);
         let tree = &self.browser.tree;

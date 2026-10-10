@@ -665,11 +665,14 @@ impl Display {
                 self.render.canvas_rect.min.x,
                 theme::HEADER_H + Self::HEADER_TIMELINE_GAP_Y,
             ),
-            pos2(
-                self.render.canvas_rect.max.x,
-                self.render.canvas_rect.max.y - theme::STATUS_H - Self::VIEW_BOTTOM_MARGIN_Y,
-            ),
+            pos2(self.render.canvas_rect.max.x, self.footer_top()),
         )
+    }
+
+    /// The top of the footer band: the status bar and the inset below it.
+    /// The browser panel stops here too.
+    fn footer_top(&self) -> f32 {
+        self.render.canvas_rect.max.y - theme::STATUS_H - Self::VIEW_BOTTOM_MARGIN_Y
     }
 
     /// The active pane's rect. Falls back to the whole lane area for a

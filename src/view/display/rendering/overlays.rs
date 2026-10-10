@@ -382,38 +382,24 @@ impl Display {
         );
     }
 
-    /// Reserved footer band. It carries no content of its own any more — the
-    /// old per-view key-hint chip system was removed — but the panel, its inset
-    /// fill and its top seam stay so the layout keeps a framed bottom edge and
-    /// the space is held for a future status readout.
-    pub(super) fn draw_status_bar(&self, painter: &Painter, rect: Rect) {
-        let h = theme::STATUS_H;
-        let sw = rect.width();
-        let y_top = rect.max.y - h - Self::VIEW_BOTTOM_MARGIN_Y;
-
-        // Bottom inset fill
-        painter.rect_filled(
-            Rect::from_min_size(
-                pos2(rect.min.x, y_top + h),
-                vec2(sw, Self::VIEW_BOTTOM_MARGIN_Y),
-            ),
-            CornerRadius::ZERO,
-            theme::bg_panel(),
-        );
-
-        // Status bar background
-        painter.rect_filled(
-            Rect::from_min_size(pos2(rect.min.x, y_top), vec2(sw, h)),
-            CornerRadius::ZERO,
-            theme::bg_panel(),
-        );
+    /// The footer band: a framed bottom edge across the whole window, under
+    /// the browser panel too, holding the passing message. It is painted on
+    /// the canvas's layer but reaches left of the canvas by the panel's
+    /// width (`footer_rect`), so it doesn't move when the panel shows or
+    /// hides.
+    pub(super) fn draw_status_bar(&self, painter: &Painter) {
+        let rect = self.footer_rect();
+        let mut painter = painter.clone();
+        painter.set_clip_rect(rect);
+        // The status bar and the inset below it, one panel fill.
+        painter.rect_filled(rect, CornerRadius::ZERO, theme::bg_panel());
 
         // Top edge — `grid_seam_color()` groove tone, matching the header and
         // timeline dividers so every horizontal edge in the view reads as one
         // recessed system rather than this line being brighter.
         painter.hline(
-            rect.min.x..=(rect.min.x + sw),
-            y_top,
+            rect.x_range(),
+            rect.min.y,
             Stroke::new(1.0_f32, grid_seam_color()),
         );
 
@@ -423,7 +409,10 @@ impl Display {
             && let Some(opacity) = status.opacity(Instant::now())
         {
             painter.text(
-                pos2(rect.min.x + Self::STATUS_TEXT_X, y_top + h * 0.5),
+                pos2(
+                    rect.min.x + Self::STATUS_TEXT_X,
+                    rect.min.y + theme::STATUS_H * 0.5,
+                ),
                 Align2::LEFT_CENTER,
                 &status.text,
                 FontId::proportional(theme::FONT_SIZE_LABEL),

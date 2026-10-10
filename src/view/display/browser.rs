@@ -40,8 +40,11 @@ use super::*;
 pub(super) const BROWSER_W: f32 = 260.0;
 /// Height of one row of the tree.
 pub(super) const BROWSER_ROW_H: f32 = 22.0;
+/// The list's gap below the header band and above the footer: a row the
+/// list cuts off is clipped this far short of the footer's edge.
+pub(super) const BROWSER_LIST_PAD_Y: f32 = 6.0;
 /// Top of the first row, below the category heading.
-pub(super) const BROWSER_LIST_TOP: f32 = theme::HEADER_H + 6.0;
+pub(super) const BROWSER_LIST_TOP: f32 = theme::HEADER_H + BROWSER_LIST_PAD_Y;
 /// Width of the disclosure triangle's hit zone, from a folder or category
 /// row's indent — a click there toggles it rather than only selecting it.
 pub(super) const BROWSER_DISCLOSURE_W: f32 = 26.0;
@@ -57,6 +60,15 @@ pub(super) fn browser_row_rect(origin: Pos2, shown: usize) -> Rect {
         pos2(origin.x, top),
         pos2(origin.x + BROWSER_W - 1.0, top + BROWSER_ROW_H),
     )
+}
+
+/// The footer band in canvas space, given the `canvas` rect, the footer's
+/// top and the panel's width this frame: from the window's left edge (canvas
+/// x `-browser_w`, the canvas being drawn shifted right by the panel) to the
+/// canvas's right, so it spans the whole window under the panel and doesn't
+/// move when the panel shows or hides.
+pub(super) fn footer_rect(canvas: Rect, footer_top: f32, browser_w: f32) -> Rect {
+    Rect::from_min_max(pos2(canvas.min.x - browser_w, footer_top), canvas.max)
 }
 
 /// Where the text of a row at `depth` starts, from the row's left edge: past
@@ -612,15 +624,27 @@ impl Display {
         self.input_poller.pointer_pos()
     }
 
-    /// Whether canvas-space `x` is over the panel: everything left of the
-    /// canvas is.
-    pub(super) fn is_over_browser(x: f32) -> bool {
-        x < 0.0
+    /// The footer band this frame, in canvas space (see [`footer_rect`]).
+    pub(super) fn footer_rect(&self) -> Rect {
+        footer_rect(
+            self.render.canvas_rect,
+            self.footer_top(),
+            self.browser_width(),
+        )
     }
 
-    /// How many rows fit in the panel this frame.
+    /// Whether canvas-space `(x, y)` is over the panel: left of the canvas
+    /// and above the footer, which runs under it.
+    pub(super) fn is_over_browser(&self, x: f32, y: f32) -> bool {
+        x < 0.0 && y < self.footer_top()
+    }
+
+    /// How many whole rows fit in the panel's list this frame.
     pub(super) fn browser_visible_rows(&self) -> usize {
-        let list_h = self.render.canvas_rect.height() - BROWSER_LIST_TOP - theme::STATUS_H;
+        let list_h = self.footer_top()
+            - self.render.canvas_rect.min.y
+            - BROWSER_LIST_TOP
+            - BROWSER_LIST_PAD_Y;
         (list_h / BROWSER_ROW_H).floor().max(1.0) as usize
     }
 
@@ -854,6 +878,8 @@ impl Display {
 
 #[cfg(test)]
 mod tests {
+    use egui::vec2;
+
     use super::*;
 
     fn listing(projects: &[&str], midi_files: &[&str]) -> FolderListing {
@@ -1225,5 +1251,19 @@ mod tests {
         assert_eq!(scroll_to_show(0, 12, 10), 3);
         assert_eq!(scroll_to_show(5, 2, 10), 2);
         assert_eq!(scroll_to_show(5, 14, 10), 5);
+    }
+
+    #[test]
+    fn footer_spans_the_window_whether_the_panel_shows_or_not() {
+        let window = Rect::from_min_max(pos2(0.0, 0.0), pos2(1200.0, 800.0));
+        for browser_w in [0.0, BROWSER_W] {
+            let mut canvas = window;
+            canvas.max.x -= browser_w;
+            let footer = footer_rect(canvas, 760.0, browser_w);
+            // Drawn shifted right by the panel's width: the window's edges.
+            let on_screen = footer.translate(vec2(browser_w, 0.0));
+            assert_eq!((on_screen.min.x, on_screen.max.x), (0.0, 1200.0));
+            assert_eq!((footer.min.y, footer.max.y), (760.0, 800.0));
+        }
     }
 }
