@@ -187,6 +187,11 @@ impl Display {
                 }
                 UiEvent::UnsavedChanges { action } => self.open_unsaved_prompt(action),
                 UiEvent::QuitApproved => self.quit_approved = true,
+                UiEvent::ProjectFilesChanged => {
+                    if self.browser.visible {
+                        self.reload_browser();
+                    }
+                }
                 UiEvent::MidiPortsRefreshed {
                     in_ports,
                     out_ports,

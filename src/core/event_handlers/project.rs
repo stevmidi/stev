@@ -158,7 +158,8 @@ impl EventHandlers {
     }
 
     /// Writes the project to `folder/filename.stev`, which on success becomes
-    /// `saved`, and says how it went in the footer.
+    /// `saved` and has the browser re-read the tree, and says how it went in
+    /// the footer.
     pub(super) fn save_project_workflow(
         &self,
         sequencer: &Sequencer,
@@ -172,6 +173,7 @@ impl EventHandlers {
                 *saved = SavedProject {
                     fingerprint: data.fingerprint(),
                 };
+                self.ui_event_tx.send(UiEvent::ProjectFilesChanged).ok();
                 format!("Saved {filename}")
             }
             Err(e) => format!("Could not save {filename}: {e}"),
@@ -190,8 +192,8 @@ impl EventHandlers {
         self.send_lead_clip_changed_ui_event(sequencer.current_clip_view());
     }
 
-    /// `⌘/Ctrl+⇧+E`: writes the lead clip to a `.mid` next to the project and
-    /// says so in the footer — the file name, why nothing was exported, or
+    /// `⌘/Ctrl+⇧+E`: writes the lead clip to a `.mid` next to the project
+    /// (a shown browser re-reads the tree) and says so in the footer — the file name, why nothing was exported, or
     /// the write error. Never silent.
     pub(super) fn export_clip_workflow(
         &self,
@@ -211,7 +213,10 @@ impl EventHandlers {
                 export.start_tick,
                 sequencer.meter(),
             ) {
-                Ok(name) => format!("Exported {name}"),
+                Ok(name) => {
+                    self.ui_event_tx.send(UiEvent::ProjectFilesChanged).ok();
+                    format!("Exported {name}")
+                }
                 Err(e) => format!("Export failed: {e}"),
             },
         };

@@ -604,7 +604,7 @@ impl Display {
     }
 
     /// Re-reads the projects tree from disk.
-    fn reload_browser(&mut self) {
+    pub(super) fn reload_browser(&mut self) {
         let folders = list_project_folders()
             .into_iter()
             .map(|name| {

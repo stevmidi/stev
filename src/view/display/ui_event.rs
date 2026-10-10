@@ -264,6 +264,9 @@ pub(crate) enum UiEvent {
     /// since the marquee's tick range no longer corresponds to any real
     /// content (see `delete_time_workflow`).
     TimeSelectionCleared,
+    /// A project or `.mid` was written into the projects tree (a save, a
+    /// clip export): a shown browser panel re-reads it from disk.
+    ProjectFilesChanged,
     /// A passing message for the footer — what an action did, or why it did
     /// nothing (the MIDI clip export). Replaces any message still showing.
     Status {

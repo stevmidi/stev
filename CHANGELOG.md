@@ -34,6 +34,9 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ### Fixed
 
+- **The browser shows what you just saved.** A save, Save As or clip export
+  while the browser panel is open now re-reads it, so the new project or
+  `.mid` appears without hiding and reopening the panel.
 - **The DSP chip keeps updating while stopped.** It used to freeze until
   the mouse or a key moved; it now refreshes four times a second, so the load
   from plugins played live stays visible.
