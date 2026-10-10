@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security problem
+    url: https://github.com/stevmidi/stev/security/advisories/new
+    about: Report it privately, not as a public issue. See SECURITY.md.
+  - name: Before you suggest a feature
+    url: https://github.com/stevmidi/stev/blob/main/CONTRIBUTING.md#what-fits
+    about: Read what fits and what's not planned, then open a blank issue to talk it through.

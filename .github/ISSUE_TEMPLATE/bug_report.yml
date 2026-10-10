@@ -1,0 +1,74 @@
+name: Bug report
+description: Something in Stev doesn't work the way it should.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Steps that reproduce the bug are worth more than anything else.
+        A security problem goes through a [private report](https://github.com/stevmidi/stev/security/advisories/new) instead, not an issue.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open a new project
+        2. Play a phrase and press /
+        3. …
+    validations:
+      required: false
+
+  - type: input
+    id: version
+    attributes:
+      label: Stev version
+      description: The release tag, or the commit if you built from source.
+      placeholder: v0.2.0
+    validations:
+      required: true
+
+  - type: input
+    id: system
+    attributes:
+      label: System
+      description: macOS version and Mac (Intel or Apple Silicon). On Linux or Windows, the distribution or Windows version.
+      placeholder: macOS 15.6, Apple Silicon (M2)
+    validations:
+      required: true
+
+  - type: textarea
+    id: setup
+    attributes:
+      label: MIDI and sound setup
+      description: Your MIDI keyboard or interface, and where the sound goes. Which plugin and its format (CLAP or VST3), or which MIDI Out device or DAW.
+      placeholder: |
+        Keyboard: Arturia KeyStep 37 over USB
+        Sound: Surge XT (CLAP)
+    validations:
+      required: false
+
+  - type: textarea
+    id: overruns
+    attributes:
+      label: Audio overrun log
+      description: For audio dropouts or crackle, paste the tail of `~/Library/Logs/stev/audio-overruns.log`.
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: If the bug depends on a particular project, attach the `.stev` file here, as long as it holds nothing you'd rather not share.
+    validations:
+      required: false
