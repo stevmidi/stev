@@ -3,8 +3,8 @@
 **Play freely, and keep what you just played.**
 
 Stev is a capture-first MIDI sequencer for the desktop, written in Rust. It is
-always listening: there is no record button to remember. When you play
-something worth keeping, one key turns it into a clip, framed and in time,
+always listening: you never have to press record before you play. When
+something is worth keeping, one key turns it into a clip, framed and in time,
 whether the transport was running or not. Then you loop it, arrange it across
 tracks, and play the next part on top.
 
