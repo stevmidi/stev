@@ -142,6 +142,10 @@ dual licensed as above, without any additional terms or conditions.
 
 ## Trademarks
 
+Forks are welcome, but a modified version needs its own name. Packaging Stev
+unchanged, and saying a fork is "based on Stev", are fine.
+[TRADEMARKS.md](TRADEMARKS.md) has the details.
+
 VST is a registered trademark of Steinberg Media Technologies GmbH. The VST
 Compatible logo is used under Steinberg's
 [usage guidelines](https://steinbergmedia.github.io/vst3_dev_portal/pages/VST+3+Licensing/Usage+guidelines.html)
