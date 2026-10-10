@@ -154,14 +154,18 @@ fn rename_no_replace(from: &Path, to: &Path) -> io::Result<()> {
         (from.file_name().and_then(|n| n.to_str()), to.file_name().and_then(|n| n.to_str())),
         (Some(a), Some(b)) if a.to_lowercase() == b.to_lowercase()
     );
-    let exact = to.parent().is_some_and(|dir| {
-        fs::read_dir(dir)
-            .into_iter()
-            .flatten()
-            .flatten()
-            .any(|entry| Some(entry.file_name().as_os_str()) == to.file_name())
-    });
-    if exact || (to.exists() && !same_but_case) {
+    // Only a case-only rename needs the folder read: there `to` "exists"
+    // whether or not it is another file.
+    let exact_entry = || {
+        to.parent().is_some_and(|dir| {
+            fs::read_dir(dir)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .any(|entry| Some(entry.file_name().as_os_str()) == to.file_name())
+        })
+    };
+    if to.exists() && (!same_but_case || exact_entry()) {
         return Err(io::Error::new(
             io::ErrorKind::AlreadyExists,
             "that name is taken",

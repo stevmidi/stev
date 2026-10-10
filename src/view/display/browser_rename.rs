@@ -19,9 +19,7 @@ use crate::core::project::{project_name_from_input, rename_midi_file, rename_pro
 use crate::view::theme;
 
 use super::Display;
-use super::browser::{
-    BROWSER_DISCLOSURE_W, BROWSER_INDENT_X, BROWSER_LIST_TOP, BROWSER_ROW_H, BROWSER_W, BrowserItem,
-};
+use super::browser::{BrowserItem, browser_row_rect, browser_text_x};
 use super::status_message::StatusMessage;
 use super::track_rename::{FieldEvent, field_event, show_name_field};
 
@@ -44,13 +42,15 @@ impl Display {
     /// a project or a `.mid` file; nothing on any other row.
     pub(super) fn open_browser_rename(&mut self) {
         let tree = &mut self.browser.tree;
-        let Some(item) = tree.selected().filter(|item| item.file_name().is_some()) else {
+        let Some(item) = tree.selected().cloned() else {
             return;
         };
-        let item = item.clone();
+        let Some(text) = item.file_name().map(str::to_owned) else {
+            return;
+        };
         tree.delete_armed = false;
         self.browser.rename = Some(BrowserRename {
-            text: item.file_name().unwrap_or_default().to_owned(),
+            text,
             item,
             shown: false,
         });
@@ -72,15 +72,13 @@ impl Display {
         if shown >= self.browser_visible_rows() {
             return None;
         }
-        let origin = self.render.canvas_rect.min;
-        let top = origin.y + BROWSER_LIST_TOP + shown as f32 * BROWSER_ROW_H;
-        let left = origin.x + f32::from(rows[idx].depth) * BROWSER_INDENT_X + BROWSER_DISCLOSURE_W;
+        let row = browser_row_rect(self.render.canvas_rect.min, shown);
         Some(Rect::from_min_max(
-            pos2(left - 4.0, top + 1.0),
             pos2(
-                origin.x + BROWSER_W - FIELD_RIGHT_X,
-                top + BROWSER_ROW_H - 1.0,
+                row.min.x + browser_text_x(rows[idx].depth) - 4.0,
+                row.min.y + 1.0,
             ),
+            pos2(row.max.x - FIELD_RIGHT_X, row.max.y - 1.0),
         ))
     }
 
@@ -102,7 +100,7 @@ impl Display {
         // Events are in canvas space, where the panel sits left of x = 0.
         let field = self
             .browser_rename_rect()
-            .map(|rect| rect.translate(vec2(-BROWSER_W, 0.0)));
+            .map(|rect| rect.translate(vec2(-self.browser_width(), 0.0)));
         let action = field_event(event, field);
         match action {
             FieldEvent::Commit | FieldEvent::CommitAndPass => self.commit_browser_rename(),
@@ -120,8 +118,12 @@ impl Display {
         let Some(rename) = self.browser.rename.take() else {
             return;
         };
-        let old = rename.item.file_name().unwrap_or_default().to_owned();
-        if rename.text.trim().is_empty() || rename.text.trim() == old {
+        let (BrowserItem::Project { folder, name: old }
+        | BrowserItem::MidiFile { folder, name: old }) = &rename.item
+        else {
+            return;
+        };
+        if rename.text.trim().is_empty() {
             return;
         }
         let Some(new) = project_name_from_input(&rename.text) else {
@@ -130,16 +132,20 @@ impl Display {
             )));
             return;
         };
-        let result = match &rename.item {
-            BrowserItem::Project { folder, .. } => rename_project(folder.as_deref(), &old, &new),
-            BrowserItem::MidiFile { folder, .. } => rename_midi_file(folder.as_deref(), &old, &new),
-            _ => return,
+        if new == *old {
+            return;
+        }
+        let is_project = matches!(rename.item, BrowserItem::Project { .. });
+        let result = if is_project {
+            rename_project(folder.as_deref(), old, &new)
+        } else {
+            rename_midi_file(folder.as_deref(), old, &new)
         };
         let message = match result {
             Ok(()) => {
-                if let BrowserItem::Project { folder, .. } = &rename.item
+                if is_project
                     && *folder == self.project.project_current_folder
-                    && self.project.project_current_name.as_deref() == Some(old.as_str())
+                    && self.project.project_current_name.as_ref() == Some(old)
                 {
                     self.project.project_current_name = Some(new.clone());
                 }

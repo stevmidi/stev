@@ -47,6 +47,23 @@ pub(super) const BROWSER_DISCLOSURE_W: f32 = 26.0;
 /// Indent per tree depth.
 pub(super) const BROWSER_INDENT_X: f32 = 14.0;
 
+/// Row `shown` of the list, counted from the first visible row, in a panel
+/// whose top-left corner is `origin`: the panel's width less its separator.
+/// Where the rows are drawn and the rename field sits.
+pub(super) fn browser_row_rect(origin: Pos2, shown: usize) -> Rect {
+    let top = origin.y + BROWSER_LIST_TOP + shown as f32 * BROWSER_ROW_H;
+    Rect::from_min_max(
+        pos2(origin.x, top),
+        pos2(origin.x + BROWSER_W - 1.0, top + BROWSER_ROW_H),
+    )
+}
+
+/// Where the text of a row at `depth` starts, from the row's left edge: past
+/// its indent and the disclosure triangle's zone.
+pub(super) fn browser_text_x(depth: u8) -> f32 {
+    f32::from(depth) * BROWSER_INDENT_X + BROWSER_DISCLOSURE_W
+}
+
 /// A top-level category of the tree.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(super) enum BrowserCategory {
@@ -164,17 +181,13 @@ impl BrowserItem {
     /// The same file under `new_name` — what a rename leaves behind; `None`
     /// for a row that isn't a file.
     pub(super) fn renamed(&self, new_name: String) -> Option<BrowserItem> {
-        match self {
-            BrowserItem::Project { folder, .. } => Some(BrowserItem::Project {
-                folder: folder.clone(),
-                name: new_name,
-            }),
-            BrowserItem::MidiFile { folder, .. } => Some(BrowserItem::MidiFile {
-                folder: folder.clone(),
-                name: new_name,
-            }),
-            _ => None,
-        }
+        let mut item = self.clone();
+        let (BrowserItem::Project { name, .. } | BrowserItem::MidiFile { name, .. }) = &mut item
+        else {
+            return None;
+        };
+        *name = new_name;
+        Some(item)
     }
 }
 

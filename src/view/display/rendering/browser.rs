@@ -6,12 +6,11 @@
 use egui::{Id, LayerId, Order, Pos2, Shape};
 
 use super::super::browser::{
-    BROWSER_DISCLOSURE_W, BROWSER_INDENT_X, BROWSER_LIST_TOP, BROWSER_ROW_H, BROWSER_W, BrowserItem,
+    BROWSER_DISCLOSURE_W, BROWSER_INDENT_X, BROWSER_LIST_TOP, BROWSER_ROW_H, BROWSER_W,
+    BrowserItem, browser_row_rect, browser_text_x,
 };
 use super::*;
 
-/// Left inset of a row's text, past the disclosure triangle.
-const TEXT_X: f32 = BROWSER_DISCLOSURE_W;
 /// Right inset of a plugin row's format label.
 const FORMAT_RIGHT_X: f32 = 10.0;
 /// Width of the current-folder / open-project marker bar.
@@ -81,12 +80,11 @@ impl Display {
         let current_name = self.project.project_current_name.as_deref();
         let selected = tree.selected();
         for (i, row) in rows.iter().skip(self.browser.scroll).enumerate() {
-            let top = list.min.y + i as f32 * BROWSER_ROW_H;
+            let row_rect = browser_row_rect(panel.min, i);
+            let top = row_rect.min.y;
             if top > list.max.y {
                 break;
             }
-            let row_rect =
-                Rect::from_min_max(pos2(list.min.x, top), pos2(list.max.x, top + BROWSER_ROW_H));
             let mid_y = row_rect.center().y;
             let indent = f32::from(row.depth) * BROWSER_INDENT_X;
             let is_selected = selected == Some(&row.item);
@@ -156,7 +154,7 @@ impl Display {
                 (label, accent_if(is_selected && focused, theme::fg()))
             };
             painter.text(
-                pos2(row_rect.min.x + indent + TEXT_X, mid_y),
+                pos2(row_rect.min.x + browser_text_x(row.depth), mid_y),
                 Align2::LEFT_CENTER,
                 text,
                 font.clone(),
