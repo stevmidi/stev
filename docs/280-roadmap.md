@@ -30,10 +30,22 @@ Comes with it:
 - **Architectures:** a universal binary (`x86_64` + `aarch64`, joined with `lipo`), so one download serves every Mac. Only Intel can be tested today, since the author's one machine is an Intel Mac. Either ship Intel-only until an Apple Silicon Mac is available, or ship universal and say the Apple Silicon build is untested.
 - **Test the bundle by hand once.** The macOS-only paths (CoreAudio, the mach timer, the virtual MIDI port, Finder file drag, quit) have only ever run as a bare `cargo run` binary, never from inside a `.app`.
 - **An About box** (or a settings tab) with the VST Compatible logo and the trademark sentence. Steinberg's guidelines say the logo should appear there (`080` § Licensing).
-- **stevmidi.com** pointed at GitHub Pages or the repo, carrying the logo on its pages; then set it as the repo's website.
+- **stevmidi.com** carrying the logo on its pages, and set as the repo's website (§ A website at stevmidi.com).
 - **A log file** in `~/Library/Logs/stev/` behind the `log` facade, replacing `dprintln!` where a user's bug report needs it. Deferred until now on purpose: it matters once strangers run a build they didn't compile.
 
 Suggested start: level 1, when there's a release worth handing to non-developers.
+
+### A website at stevmidi.com
+
+The domain is held but points nowhere yet (added 2026-10-10). Today the GitHub README is the only front page, which suits developers but not the musicians a downloadable app (§ above) is for. Open questions for its design:
+
+- **What it's for.** A front page that says what Stev is in one screen: the capture workflow (play freely, keep what you just played), a short screen recording or a few screenshots, a download button once there's a binary, and links to the repo, the changelog and the licence. Not a second copy of the docs: the `docs/` files are written for contributors and coding agents, and the site links to them rather than republishing them.
+- **The look.** It borrows the app's own theme (`030` § Theme & Contrast: the palette, the grid, the clip colours), so the site and the app read as one thing. A logo and an icon are needed for the `.app` bundle anyway; the site is where they're designed first.
+- **Hosting.** GitHub Pages from the repo (a `site/` folder or a `gh-pages` branch, deployed by an Actions job), with stevmidi.com as its custom domain over HTTPS. Free, and no server to keep. A static page with no build step (plain HTML/CSS) unless it grows enough to need one.
+- **What it promises.** The same as the README: macOS supported, Linux and Windows build-only (§ Platforms), and the § Not planned list, so the site never promises more than the repo does. Any VST3 mention carries the trademark sentence and logo rules (`080` § Licensing).
+- **Assets.** Screenshots and recordings are the author's own; fonts and images follow the same licence rule as the repo (`080` § Licensing), with any third-party font licence committed beside it.
+
+Suggested start: a single static page on GitHub Pages, ahead of the first binary, so the download button has somewhere to live when level 1 lands.
 
 ### Export to audio
 
