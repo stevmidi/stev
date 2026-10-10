@@ -1,6 +1,6 @@
 # Project Guidelines — Master Index
 
-Stev (`stev`, formerly `midi-seq`) is a real-time MIDI sequencer written in Rust. It is a desktop application rendered with `egui`/`eframe` and driven by egui's native keyboard/mouse input. **macOS is the supported platform.** Linux and Windows build and pass the tests in CI but are otherwise untested, and the plugin host is macOS-only (`240` § B). It records, loops, and arranges MIDI clips across multiple tracks.
+Stev (`stev`, formerly `midi-seq`) is a real-time MIDI sequencer written in Rust. It is a desktop application rendered with `egui`/`eframe` and driven by egui's native keyboard/mouse input. **macOS is the supported platform.** Linux and Windows build and pass the tests in CI but are otherwise untested, and the plugin host is macOS-only (`280` § Platforms). It records, loops, and arranges MIDI clips across multiple tracks.
 
 These guidelines are split into focused topic files. All of them live in [`docs/`](docs/).
 
@@ -37,9 +37,9 @@ These guidelines are split into focused topic files. All of them live in [`docs/
 | 170 | [170-multicore-scheduling.md](docs/170-multicore-scheduling.md) | `WorkerPool`: per-voice render across cores, the handshake that makes its unsafe sound, outstanding macOS audio-workgroup work, deferred look-ahead rendering |
 | 180 | [180-vst3-host.md](docs/180-vst3-host.md) | macOS-only VST3 module of the plugin host: raw `vst3` bindings, out-of-process bundle scanning + mtime cache, COM load lifecycle, `Send` split, `ProcessData`, idle rule, `IPlugView` editor, state persistence, teardown order, MIDI/`IMidiMapping`. Read `130` first |
 | 220 | [220-capture-without-pending-view.md](docs/220-capture-without-pending-view.md) | Capture as undoable edits (no `PendingClip`): the stopped `/` commit/insert, Enter's tempo fit, `[`/`]` edges, and the principles — edits never move the transport (except the one-clip loop), no stored mode-like state, the clip view never auto-zooms/scrolls. Open: adjusting the detected phrase after commit |
-| 240 | [240-release-plan.md](docs/240-release-plan.md) | Pre-open-source plan: the principle (an opinionated, capture-first app), the features still needed, platforms (macOS first; CI on all three), packaging, and what's not planned |
 | 250 | [250-first-feature.md](docs/250-first-feature.md) | Walkthrough for a first change: one real key press (`M`, mute notes) traced from `InputEvent` through `SequencerCommand`, the undoable `SequencerEdit` and `EditResult` to the UI, then the tests, docs and gate it needs; how to drive a coding agent through it and review the result; ends in a checklist. Start here before adding a feature |
 | 260 | [260-porting.md](docs/260-porting.md) | Porting to Linux and Windows: what's macOS-only today (sound, timers, virtual port, file drag, quit), priorities (MIDI Out timing first), the `"midiout"` / clock timing analysis, the timing-probe design and fixes, a smoke test, rules for keeping a port behind `cfg` |
+| 280 | [280-roadmap.md](docs/280-roadmap.md) | What may come next: the principle (an opinionated, capture-first app), platforms (macOS first; CI on all three), candidates (a downloadable macOS app, export to audio, meter detection, rebinding, …) and what's not planned |
 
 ## Archived
 
@@ -51,5 +51,6 @@ These guidelines are split into focused topic files. All of them live in [`docs/
 - `archive/190-arranger-zoom.md`, `archive/200-clip-view-zoom.md` — zoom + adaptive grid design briefs (phases 1–3 built; as-built in `030`). Optional phase 4 never started.
 - `archive/210-docked-clip-panel.md` — docked clip panel design brief (all phases built; as-built in `020` § Views and `030` § Panes).
 - `archive/270-time-signature.md` — the project-meter build plan (all five phases built 2026-10-09); as-built in `030`, `040`, `050`, `060`, `130`, `150`.
+- `archive/240-release-plan.md` — the pre-open-source release plan (complete 2026-10-09, archived 2026-10-10): the core features, CI, packaging and publication-day steps behind `v0.1.0`, with each item's design as agreed. Its forward-looking parts (principle, platforms, not planned, post-launch candidates) moved to `280-roadmap.md`. Commit hashes in it are from the private pre-publication history.
 - `archive/230-simplify-pass.md` — the completed whole-codebase `/simplify` pass (2026-09-30): per-area record and findings deliberately left.
 - `archive/NNN-*-history.md` (`010`, `020`, `030`, `050`, `100`, `150`, `220`) — full snapshots of those docs taken 2026-09-30, before their phase narratives, bug stories, superseded designs and dated decisions were trimmed out. The live doc names its snapshot at the top where one exists. Not maintained.

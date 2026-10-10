@@ -1,6 +1,6 @@
 # Porting to Linux and Windows
 
-macOS is the supported platform (`240` § B). Linux and Windows build and pass the tests in CI on every push to `main`, but nobody has checked that they *play* correctly, and Stev is a timing-critical app. This file is for anyone who wants to change that: what is macOS-only today, what matters most off macOS, and how to measure it. Ports are welcome (`CONTRIBUTING.md`).
+macOS is the supported platform (`280` § Platforms). Linux and Windows build and pass the tests in CI on every push to `main`, but nobody has checked that they *play* correctly, and Stev is a timing-critical app. This file is for anyone who wants to change that: what is macOS-only today, what matters most off macOS, and how to measure it. Ports are welcome (`CONTRIBUTING.md`).
 
 ## What differs off macOS today
 
@@ -58,7 +58,7 @@ In this order, each measured with the probe:
 - **Raise the clock and `"midiout"` threads' priority**, best effort: Windows MMCSS "Pro Audio" (`AvSetMmThreadCharacteristics`) plus `timeBeginPeriod(1)` while the transport runs; Linux rtkit, with a silent fallback when refused; macOS's time-constraint policy. The `audio_thread_priority` crate covers all three (MPL-2.0, tolerated by `080` § Licensing), or hand-roll it and skip the dependency.
 - **Same change**: `000` (the clock and `"midiout"` rows of the thread table), `160`'s jitter claim, and this file.
 
-**Out of scope**: driver-timestamped MIDI output (CoreMIDI timestamps, Windows MIDI Services, ALSA sequencer queues). That's a per-platform rewrite of the output path, and belongs with external sync, which isn't planned (`240` § D).
+**Out of scope**: driver-timestamped MIDI output (CoreMIDI timestamps, Windows MIDI Services, ALSA sequencer queues). That's a per-platform rewrite of the output path, and belongs with external sync, which isn't planned (`280` § Not planned).
 
 ## Smoke test
 

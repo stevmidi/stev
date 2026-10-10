@@ -25,7 +25,7 @@ accepted = [
     "Bitstream-Vera",
 ]
 
-# Binaries ship for macOS only (docs/240-release-plan.md § B).
+# Binaries ship for macOS only (docs/280-roadmap.md § Platforms).
 targets = ["aarch64-apple-darwin", "x86_64-apple-darwin"]
 
 # Not linked into the binary.

@@ -81,7 +81,7 @@ its notes to one of two places:
 ## Not planned
 
 Stev grows toward its capture workflow, not toward a full DAW. These are not on
-the roadmap:
+the [roadmap](docs/280-roadmap.md):
 
 - tempo or meter changes along the timeline (one tempo and one meter per
   project)

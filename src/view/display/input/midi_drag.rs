@@ -186,7 +186,7 @@ impl DragPointer {
 }
 
 /// Off macOS there is no native pointer read: during a file drag the pointer
-/// is whatever the windowing layer reports (see `docs/240` § B's smoke tests).
+/// is whatever the windowing layer reports (see `docs/260-porting.md` § Smoke test).
 #[cfg(not(target_os = "macos"))]
 pub(crate) struct DragPointer;
 

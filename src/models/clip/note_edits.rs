@@ -12,7 +12,7 @@
 //! anything, because a transient same-pitch overlap would make
 //! [`pair_note_events`](Clip::pair_note_events)'s per-pitch stack match the
 //! wrong `NoteOff`. The undoable wrappers live in
-//! `core/sequencer/edit/event_edits.rs`; see `240-release-plan.md` § A1.
+//! `core/sequencer/edit/event_edits.rs`; see `docs/030-ui-design.md` § Piano Roll.
 
 use std::collections::HashSet;
 

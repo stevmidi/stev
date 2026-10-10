@@ -23,7 +23,7 @@ allow = [
 confidence-threshold = 0.9
 
 # egui's bundled fonts: OFL-1.1 + the Ubuntu Font Licence, which only ask for
-# attribution notices once binaries ship (the notices file, `240` § C). Allowed
+# attribution notices once binaries ship (`THIRD-PARTY-NOTICES.md`). Allowed
 # for this crate alone, so no other crate can bring them in unnoticed.
 [[licenses.exceptions]]
 crate = "epaint_default_fonts"

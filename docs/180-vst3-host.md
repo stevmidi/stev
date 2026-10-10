@@ -7,7 +7,7 @@ the audio path, the event scheduler, the mixer, the transport snapshot, the
 editor window and the key guard is shared and lives there. This file is only
 about what VST3 does differently.
 
-**VST3 and newer only — never VST2.** The VST2 SDK is no longer licensed by Steinberg and can't be redistributed under the project's `MIT OR Apache-2.0`, so no VST2 (or older) hosting, headers or bindings enter the repo. Using the "VST" name follows Steinberg's trademark guidelines; see `240-release-plan.md` § C.
+**VST3 and newer only — never VST2.** The VST2 SDK is no longer licensed by Steinberg and can't be redistributed under the project's `MIT OR Apache-2.0`, so no VST2 (or older) hosting, headers or bindings enter the repo. Using the "VST" name follows Steinberg's trademark guidelines; see `080` § Licensing.
 
 ## Status
 
