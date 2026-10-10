@@ -2,9 +2,10 @@
 
 What changes between Stev's versions, newest first. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
-[Semantic Versioning](https://semver.org/) as it applies before 1.0: a change
-that breaks something bumps the minor version (0.1 → 0.2), anything else the
-patch version (0.1.0 → 0.1.1).
+[Semantic Versioning](https://semver.org/) as it applies before 1.0: a release
+with a new feature (anything under **Added**) or a breaking change bumps the
+minor version (0.1 → 0.2); a release of fixes only bumps the patch version
+(0.1.0 → 0.1.1).
 
 **Breaking** means one of:
 
