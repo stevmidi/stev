@@ -757,6 +757,11 @@ impl Display {
             // the press's own events on the same channel), so the keys that
             // follow act on what was clicked.
             InputEvent::MouseClicked { x, y, modifiers } => {
+                // The footer's panel toggle: `⌘⌥B`'s mouse twin.
+                if self.is_on_browser_toggle(x, y) {
+                    self.toggle_browser();
+                    return true;
+                }
                 // Left of the canvas is the browser panel; a press anywhere
                 // else takes the keyboard back from it.
                 if self.is_over_browser(x, y) {

@@ -8,6 +8,7 @@ use std::time::Instant;
 use egui::{Align2, Color32, CornerRadius, FontId, Galley, Painter, Rect, Stroke, pos2, vec2};
 
 use crate::core::time::{Meter, format_bpm, sixteenth_straight_ticks};
+use crate::view::display::browser::browser_toggle_rect;
 use crate::view::display::header_chip::HeaderChipRects;
 
 use super::*;
@@ -403,15 +404,17 @@ impl Display {
             Stroke::new(1.0_f32, grid_seam_color()),
         );
 
-        // The passing message (`UiEvent::Status`): left-aligned, dim, fading
-        // out once its time is up.
+        self.draw_browser_toggle(&painter);
+
+        // The passing message (`UiEvent::Status`): left-aligned past the
+        // toggle and on its centre line, dim, fading out once its time is up.
         if let Some(status) = &self.render.status
             && let Some(opacity) = status.opacity(Instant::now())
         {
             painter.text(
                 pos2(
-                    rect.min.x + Self::STATUS_TEXT_X,
-                    rect.min.y + theme::STATUS_H * 0.5,
+                    browser_toggle_rect(rect).max.x + Self::STATUS_TEXT_GAP_X,
+                    rect.center().y,
                 ),
                 Align2::LEFT_CENTER,
                 &status.text,
@@ -421,8 +424,8 @@ impl Display {
         }
     }
 
-    /// The footer message's left inset from the window edge.
-    const STATUS_TEXT_X: f32 = 12.0;
+    /// The footer message's gap from the panel toggle.
+    const STATUS_TEXT_GAP_X: f32 = 4.0;
 }
 
 /// Colour and stroke width of the in-lane cursor line(s) drawn by

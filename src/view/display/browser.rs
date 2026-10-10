@@ -21,7 +21,7 @@
 
 use std::{collections::HashSet, path::PathBuf};
 
-use egui::{Key, Pos2};
+use egui::{Key, Pos2, vec2};
 
 use crate::core::{
     input_event::is_pane_focus_key,
@@ -70,6 +70,25 @@ pub(super) fn browser_row_rect(origin: Pos2, shown: usize) -> Rect {
 pub(super) fn footer_rect(canvas: Rect, footer_top: f32, browser_w: f32) -> Rect {
     Rect::from_min_max(pos2(canvas.min.x - browser_w, footer_top), canvas.max)
 }
+
+/// The footer's panel toggle: a `STATUS_H` square at the footer's left
+/// edge, `BROWSER_TOGGLE_INSET_X` in and centred on the whole band (status
+/// bar and inset read as one panel), in the space of `footer` (see
+/// [`footer_rect`]) — so it sits at the window's left edge either way and a
+/// second click lands on it again.
+pub(super) fn browser_toggle_rect(footer: Rect) -> Rect {
+    let side = theme::STATUS_H;
+    Rect::from_center_size(
+        pos2(
+            footer.min.x + BROWSER_TOGGLE_INSET_X + side * 0.5,
+            footer.center().y,
+        ),
+        vec2(side, side),
+    )
+}
+
+/// The panel toggle's gap from the window's left edge.
+const BROWSER_TOGGLE_INSET_X: f32 = 4.0;
 
 /// Where the text of a row at `depth` starts, from the row's left edge: past
 /// its indent and the disclosure triangle's zone.
@@ -633,6 +652,20 @@ impl Display {
         )
     }
 
+    /// Whether canvas-space `(x, y)` is on the footer's panel toggle.
+    pub(super) fn is_on_browser_toggle(&self, x: f32, y: f32) -> bool {
+        browser_toggle_rect(self.footer_rect()).contains(pos2(x, y))
+    }
+
+    /// Whether the pointer is on the panel toggle with no modal overlay up
+    /// to swallow it — its hover wash and pointing hand.
+    pub(super) fn is_pointer_on_browser_toggle(&self) -> bool {
+        self.overlay.is_none()
+            && self
+                .canvas_pointer()
+                .is_some_and(|p| self.is_on_browser_toggle(p.x, p.y))
+    }
+
     /// Whether canvas-space `(x, y)` is over the panel: left of the canvas
     /// and above the footer, which runs under it.
     pub(super) fn is_over_browser(&self, x: f32, y: f32) -> bool {
@@ -878,8 +911,6 @@ impl Display {
 
 #[cfg(test)]
 mod tests {
-    use egui::vec2;
-
     use super::*;
 
     fn listing(projects: &[&str], midi_files: &[&str]) -> FolderListing {
@@ -1264,6 +1295,21 @@ mod tests {
             let on_screen = footer.translate(vec2(browser_w, 0.0));
             assert_eq!((on_screen.min.x, on_screen.max.x), (0.0, 1200.0));
             assert_eq!((footer.min.y, footer.max.y), (760.0, 800.0));
+        }
+    }
+
+    #[test]
+    fn panel_toggle_sits_at_the_footers_left_edge() {
+        let window = Rect::from_min_max(pos2(0.0, 0.0), pos2(1200.0, 800.0));
+        for browser_w in [0.0, BROWSER_W] {
+            let mut canvas = window;
+            canvas.max.x -= browser_w;
+            let footer = footer_rect(canvas, 760.0, browser_w);
+            let toggle = browser_toggle_rect(footer).translate(vec2(browser_w, 0.0));
+            // The same spot on screen whether the panel shows or not.
+            assert_eq!(toggle.min.x, BROWSER_TOGGLE_INSET_X);
+            assert_eq!(toggle.center().y, 780.0);
+            assert_eq!(toggle.size(), vec2(theme::STATUS_H, theme::STATUS_H));
         }
     }
 }

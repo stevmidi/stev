@@ -22,6 +22,9 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ### Added
 
+- **A button that shows and hides the browser.** A sidebar icon at the left
+  end of the footer does what ⌘⌥B does. It stays in the same place whether
+  the browser is open or not, and fills in while it is open.
 - **Arrow keys in the unsaved-changes prompt.** ← and → move between Cancel,
   Don't Save and Save, and Enter presses the selected button (Save to start
   with).

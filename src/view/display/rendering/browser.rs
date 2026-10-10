@@ -3,11 +3,11 @@
 //! the shifted canvas. The model and
 //! input are `browser.rs`; see `030-ui-design.md` § Browser Panel.
 
-use egui::{Id, LayerId, Order, Pos2, Shape};
+use egui::{Id, LayerId, Order, Pos2, Shape, StrokeKind, Vec2};
 
 use super::super::browser::{
     BROWSER_DISCLOSURE_W, BROWSER_INDENT_X, BROWSER_LIST_PAD_Y, BROWSER_LIST_TOP, BROWSER_ROW_H,
-    BROWSER_W, BrowserItem, browser_row_rect, browser_text_x,
+    BROWSER_W, BrowserItem, browser_row_rect, browser_text_x, browser_toggle_rect,
 };
 use super::*;
 
@@ -17,6 +17,20 @@ const FORMAT_RIGHT_X: f32 = 10.0;
 const MARKER_W: f32 = 3.0;
 /// Half the size of a folder's disclosure triangle.
 const DISCLOSURE_HALF: f32 = 4.0;
+
+/// The panel toggle's icon: a window with a sidebar, as macOS's
+/// `sidebar.left` (Zed, Obsidian), `TOGGLE_ICON_W` × `TOGGLE_ICON_H`.
+const TOGGLE_ICON_W: f32 = 14.0;
+/// See [`TOGGLE_ICON_W`].
+const TOGGLE_ICON_H: f32 = 13.0;
+/// The icon's outline and divider width: 3px on Retina, like the lane seams.
+const TOGGLE_ICON_STROKE: f32 = 1.5;
+/// The icon's corner radius.
+const TOGGLE_ICON_RADIUS: u8 = 2;
+/// Where the sidebar divider sits, as a fraction of the icon's width.
+const TOGGLE_DIVIDER_AT: f32 = 0.4;
+/// Side of the rounded square washed behind the icon under the pointer.
+const TOGGLE_WASH_SIZE: f32 = 22.0;
 
 /// A folder's disclosure triangle centred on `centre`: pointing right when
 /// collapsed, down when expanded (Finder, Ableton). Painted rather than a
@@ -45,6 +59,54 @@ impl Display {
     /// which carries the shift, so the panel itself stays put.
     pub(in crate::view::display) fn browser_layer() -> LayerId {
         LayerId::new(Order::Middle, Id::new("browser-panel"))
+    }
+
+    /// Paints the footer's panel toggle on `painter` (the footer's): the
+    /// sidebar outline in `fg_dim`, its sidebar filled while the panel is
+    /// open; under the pointer, the icon in `fg` on a faint neutral square.
+    /// Neutral throughout — accent means the keyboard here.
+    pub(super) fn draw_browser_toggle(&self, painter: &Painter) {
+        let toggle = browser_toggle_rect(self.footer_rect());
+        let open = self.browser.visible;
+        let hover = self.is_pointer_on_browser_toggle();
+
+        if hover {
+            painter.rect_filled(
+                Rect::from_center_size(toggle.center(), Vec2::splat(TOGGLE_WASH_SIZE)),
+                CornerRadius::same(4),
+                theme::fg().gamma_multiply(0.07),
+            );
+        }
+
+        let color = if hover { theme::fg() } else { theme::fg_dim() };
+        // Whole points, so the inside stroke lands on whole pixels.
+        let size = vec2(TOGGLE_ICON_W, TOGGLE_ICON_H);
+        let outline = Rect::from_min_size((toggle.center() - size * 0.5).round(), size);
+        let divider_x = seam_y(
+            outline.min.x + TOGGLE_ICON_W * TOGGLE_DIVIDER_AT,
+            TOGGLE_ICON_STROKE,
+            painter.pixels_per_point(),
+        );
+        if open {
+            painter.rect_filled(
+                outline.with_max_x(divider_x),
+                CornerRadius {
+                    nw: TOGGLE_ICON_RADIUS,
+                    sw: TOGGLE_ICON_RADIUS,
+                    ne: 0,
+                    se: 0,
+                },
+                color,
+            );
+        }
+        let stroke = Stroke::new(TOGGLE_ICON_STROKE, color);
+        painter.rect_stroke(
+            outline,
+            CornerRadius::same(TOGGLE_ICON_RADIUS),
+            stroke,
+            StrokeKind::Inside,
+        );
+        painter.vline(divider_x, outline.y_range(), stroke);
     }
 
     /// Paints the panel along the left of `window`, down to the footer,
