@@ -22,6 +22,10 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ### Added
 
+- **Arrow keys in the unsaved-changes prompt.** ← and → move between Cancel,
+  Don't Save and Save, and Enter presses the selected button (Save to start
+  with).
+
 - **Progress while a project opens.** Opening a project with plugins on its
   tracks shows a panel naming the plugin it is loading, how many are left
   ("3 of 8") and a progress bar, instead of a frozen window. The open project

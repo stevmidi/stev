@@ -7,9 +7,11 @@
 //!   project; Esc cancels.
 //! - **Unsaved changes**: asked for by the sequencer (`UiEvent::UnsavedChanges`)
 //!   when ⌘/Ctrl+N, opening a project from the browser or quitting would
-//!   throw away changes. Enter saves first (as ⌘/Ctrl+S would — through
-//!   Save As for a project never saved, the action waiting on it), `D` (or
-//!   ⌘/Ctrl+D) goes on without saving, Esc cancels; each is also a button.
+//!   throw away changes. ←/→ move the selection between its buttons (Save
+//!   to start with) and Enter presses the selected one; Save saves first (as
+//!   ⌘/Ctrl+S would — through Save As for a project never saved, the action
+//!   waiting on it). `D` (or ⌘/Ctrl+D) goes on without saving and Esc
+//!   cancels, whatever is selected; each is also a button.
 //!
 //! Quitting goes through the same check: a window close is held
 //! ([`sync_window_close`](Display::sync_window_close)) until the sequencer
@@ -38,6 +40,8 @@ pub(super) enum ProjectDialog {
     Unsaved {
         /// What runs after Save or Don't Save.
         action: ProjectAction,
+        /// The button Enter presses, moved with ←/→.
+        selected: UnsavedButton,
     },
 }
 
@@ -64,6 +68,8 @@ enum DialogKey {
     Discard,
     /// Close the dialog, doing nothing.
     Cancel,
+    /// The prompt: select this button.
+    Select(UnsavedButton),
     /// Typing, or a key with no meaning here: nothing else gets it.
     Swallow,
 }
@@ -96,6 +102,18 @@ impl UnsavedButton {
         }
     }
 
+    /// The button beside it, one step `rightward` or leftward; the end
+    /// buttons stay put rather than wrap.
+    fn step(self, rightward: bool) -> UnsavedButton {
+        let idx = Self::ALL.iter().position(|&b| b == self).unwrap_or(0);
+        let idx = if rightward {
+            (idx + 1).min(Self::ALL.len() - 1)
+        } else {
+            idx.saturating_sub(1)
+        };
+        Self::ALL[idx]
+    }
+
     /// What clicking it does — the same as its key.
     fn key(self) -> DialogKey {
         match self {
@@ -116,11 +134,15 @@ fn save_as_key(key: Key) -> DialogKey {
     }
 }
 
-/// The prompt's keymap: Enter saves, `D` — bare, or ⌘/Ctrl+D as in the
-/// macOS sheet — doesn't, Esc cancels; nothing else does anything.
-fn unsaved_key(key: Key, modifiers: KeyModifiers) -> DialogKey {
+/// The prompt's keymap with `selected` the selected button: ←/→ select the
+/// one beside it, Enter presses it, `D` — bare, or ⌘/Ctrl+D as in the macOS
+/// sheet — doesn't save, Esc cancels; nothing else does anything.
+fn unsaved_key(key: Key, modifiers: KeyModifiers, selected: UnsavedButton) -> DialogKey {
     match key {
-        Key::Enter => DialogKey::Confirm,
+        Key::ArrowLeft | Key::ArrowRight => {
+            DialogKey::Select(selected.step(key == Key::ArrowRight))
+        }
+        Key::Enter => selected.key(),
         Key::D if !modifiers.shift && !modifiers.alt => DialogKey::Discard,
         Key::Escape => DialogKey::Cancel,
         _ => DialogKey::Swallow,
@@ -202,7 +224,10 @@ impl Display {
     /// already open, which can't have asked for it.
     pub(super) fn open_unsaved_prompt(&mut self, action: ProjectAction) {
         if self.project_dialog.is_none() {
-            self.project_dialog = Some(ProjectDialog::Unsaved { action });
+            self.project_dialog = Some(ProjectDialog::Unsaved {
+                action,
+                selected: UnsavedButton::Save,
+            });
         }
     }
 
@@ -248,9 +273,10 @@ impl Display {
         };
         let key = match (event, dialog) {
             (&InputEvent::KeyPressed { key, .. }, ProjectDialog::SaveAs(_)) => save_as_key(key),
-            (&InputEvent::KeyPressed { key, modifiers }, ProjectDialog::Unsaved { .. }) => {
-                unsaved_key(key, modifiers)
-            }
+            (
+                &InputEvent::KeyPressed { key, modifiers },
+                &ProjectDialog::Unsaved { selected, .. },
+            ) => unsaved_key(key, modifiers, selected),
             (&InputEvent::MouseClicked { x, y, .. }, ProjectDialog::Unsaved { .. }) => self
                 .unsaved_button_at(pos2(x, y))
                 .map_or(DialogKey::Swallow, UnsavedButton::key),
@@ -268,6 +294,11 @@ impl Display {
             DialogKey::Confirm => self.confirm_project_dialog(),
             DialogKey::Discard => self.discard_project_changes(),
             DialogKey::Cancel => self.project_dialog = None,
+            DialogKey::Select(button) => {
+                if let Some(ProjectDialog::Unsaved { selected, .. }) = &mut self.project_dialog {
+                    *selected = button;
+                }
+            }
             DialogKey::Swallow => {}
         }
         true
@@ -283,14 +314,14 @@ impl Display {
                 Some(name) => self.save_project_as(name, save_as.then),
                 None => self.project_dialog = Some(ProjectDialog::SaveAs(save_as)),
             },
-            Some(ProjectDialog::Unsaved { action }) => self.save_project(Some(action)),
+            Some(ProjectDialog::Unsaved { action, .. }) => self.save_project(Some(action)),
             None => {}
         }
     }
 
     /// `D`, or the prompt's Don't Save: runs its action, changes and all.
     fn discard_project_changes(&mut self) {
-        if let Some(ProjectDialog::Unsaved { action }) = self.project_dialog.take() {
+        if let Some(ProjectDialog::Unsaved { action, .. }) = self.project_dialog.take() {
             self.input_event_tx
                 .send(InputEvent::ProjectAction {
                     action,
@@ -307,7 +338,7 @@ mod tests {
 
     use crate::core::input_event::KeyModifiers;
 
-    use super::{DialogKey, save_as_key, unsaved_key};
+    use super::{DialogKey, UnsavedButton, save_as_key, unsaved_key};
 
     #[test]
     fn save_as_saves_on_enter_and_cancels_on_escape() {
@@ -331,10 +362,54 @@ mod tests {
             command: true,
             ..KeyModifiers::default()
         };
-        assert_eq!(unsaved_key(Key::Enter, none), DialogKey::Confirm);
-        assert_eq!(unsaved_key(Key::D, none), DialogKey::Discard);
-        assert_eq!(unsaved_key(Key::D, command), DialogKey::Discard);
-        assert_eq!(unsaved_key(Key::Escape, none), DialogKey::Cancel);
+        let save = UnsavedButton::Save;
+        assert_eq!(unsaved_key(Key::Enter, none, save), DialogKey::Confirm);
+        assert_eq!(unsaved_key(Key::D, none, save), DialogKey::Discard);
+        assert_eq!(unsaved_key(Key::D, command, save), DialogKey::Discard);
+        assert_eq!(unsaved_key(Key::Escape, none, save), DialogKey::Cancel);
+    }
+
+    /// Enter presses whichever button is selected; `D` and Esc don't care.
+    #[test]
+    fn enter_presses_the_selected_button() {
+        let none = KeyModifiers::default();
+        for (selected, pressed) in [
+            (UnsavedButton::Cancel, DialogKey::Cancel),
+            (UnsavedButton::DontSave, DialogKey::Discard),
+            (UnsavedButton::Save, DialogKey::Confirm),
+        ] {
+            assert_eq!(unsaved_key(Key::Enter, none, selected), pressed);
+            assert_eq!(unsaved_key(Key::D, none, selected), DialogKey::Discard);
+            assert_eq!(unsaved_key(Key::Escape, none, selected), DialogKey::Cancel);
+        }
+    }
+
+    /// ←/→ step through the buttons left to right and stop at either end.
+    #[test]
+    fn arrows_step_the_selection_without_wrapping() {
+        let none = KeyModifiers::default();
+        let left = |b| unsaved_key(Key::ArrowLeft, none, b);
+        let right = |b| unsaved_key(Key::ArrowRight, none, b);
+        assert_eq!(
+            left(UnsavedButton::Save),
+            DialogKey::Select(UnsavedButton::DontSave)
+        );
+        assert_eq!(
+            left(UnsavedButton::DontSave),
+            DialogKey::Select(UnsavedButton::Cancel)
+        );
+        assert_eq!(
+            left(UnsavedButton::Cancel),
+            DialogKey::Select(UnsavedButton::Cancel)
+        );
+        assert_eq!(
+            right(UnsavedButton::Cancel),
+            DialogKey::Select(UnsavedButton::DontSave)
+        );
+        assert_eq!(
+            right(UnsavedButton::Save),
+            DialogKey::Select(UnsavedButton::Save)
+        );
     }
 
     /// A stray key does nothing — above all no other key discards the
@@ -345,10 +420,11 @@ mod tests {
             shift: true,
             ..KeyModifiers::default()
         };
-        assert_eq!(unsaved_key(Key::D, shift), DialogKey::Swallow);
+        let save = UnsavedButton::Save;
+        assert_eq!(unsaved_key(Key::D, shift, save), DialogKey::Swallow);
         for key in [Key::Space, Key::Delete, Key::N, Key::S] {
             assert_eq!(
-                unsaved_key(key, KeyModifiers::default()),
+                unsaved_key(key, KeyModifiers::default(), save),
                 DialogKey::Swallow
             );
         }

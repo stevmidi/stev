@@ -105,10 +105,11 @@ impl Display {
             Some(ProjectDialog::SaveAs(save_as)) => {
                 Self::show_save_as(ui, rect, save_as, &self.project)
             }
-            Some(ProjectDialog::Unsaved { action }) => Self::draw_unsaved_prompt(
+            Some(ProjectDialog::Unsaved { action, selected }) => Self::draw_unsaved_prompt(
                 ui.painter(),
                 rect,
                 action,
+                *selected,
                 self.project.project_current_name.as_deref(),
             ),
             None => {}
@@ -176,12 +177,13 @@ impl Display {
     }
 
     /// The unsaved-changes prompt: the question, the key hints and the three
-    /// buttons, Save (the default, Enter) in the accent colour.
+    /// buttons, the `selected` one (Enter's) in the accent colour.
     /// `name` is the open project's, `None` for one never saved.
     fn draw_unsaved_prompt(
         painter: &Painter,
         rect: Rect,
         action: &ProjectAction,
+        selected: UnsavedButton,
         name: Option<&str>,
     ) {
         let layout = Self::dialog_layout(rect, true);
@@ -218,22 +220,22 @@ impl Display {
         painter.text(
             layout.note.left_center(),
             Align2::LEFT_CENTER,
-            "Enter save · D don't save · Esc cancel",
+            "←→ choose · Enter press · D don't save · Esc cancel",
             hint_font.clone(),
             theme::fg_dim(),
         );
 
         for (button, button_rect) in UnsavedButton::ALL.into_iter().zip(layout.buttons) {
-            let is_default = button == UnsavedButton::Save;
+            let is_selected = button == selected;
             painter.rect_filled(
                 button_rect,
                 CornerRadius::same(3),
-                accent_if(is_default, theme::fg_dim()).gamma_multiply(0.15),
+                accent_if(is_selected, theme::fg_dim()).gamma_multiply(0.15),
             );
             painter.rect_stroke(
                 button_rect,
                 CornerRadius::same(3),
-                Stroke::new(1.0_f32, accent_if(is_default, theme::separator())),
+                Stroke::new(1.0_f32, accent_if(is_selected, theme::separator())),
                 StrokeKind::Inside,
             );
             painter.text(
@@ -241,7 +243,7 @@ impl Display {
                 Align2::CENTER_CENTER,
                 button.label(),
                 hint_font.clone(),
-                accent_if(is_default, theme::fg()),
+                accent_if(is_selected, theme::fg()),
             );
         }
     }
