@@ -582,10 +582,32 @@ impl Display {
         }
     }
 
+    /// The surface the keys act on — `key_focus`, with a header focus left
+    /// over from before the clip view took the keyboard read as the pane. The
+    /// one owner the focus edge marks (`focus_edge_stroke`).
+    fn key_owner(&self) -> KeyFocus {
+        match self.key_focus {
+            KeyFocus::TrackHeaders if self.view_state() != ViewState::Arranger => KeyFocus::Pane,
+            focus => focus,
+        }
+    }
+
     /// Whether the track-header column has the keyboard: focused by a click,
     /// with the arranger the focused pane.
     fn track_headers_have_keyboard(&self) -> bool {
-        self.key_focus == KeyFocus::TrackHeaders && self.view_state() == ViewState::Arranger
+        self.key_owner() == KeyFocus::TrackHeaders
+    }
+
+    /// Moves the keyboard to `pane` (`FocusPane`), as a click in it or a
+    /// docked plain Tab does. Focusing the clip pane drops the arranger's
+    /// time selection, as entering the clip view does.
+    fn focus_pane(&mut self, pane: Pane) {
+        self.input_event_tx
+            .send(InputEvent::FocusPane { pane })
+            .ok();
+        if pane == Pane::Clip {
+            self.clear_time_selection();
+        }
     }
 
     /// The pane the coordinate helpers answer for: the one an `in_pane`

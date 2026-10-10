@@ -218,12 +218,13 @@ impl EventHandlers {
                 self.send_sequencer(SequencerCommand::DuplicateSelectedEvents);
             }
 
-            // Shift+Tab, and a plain Tab the view didn't take as a pure focus
-            // move (the clip panel hidden or maximized, so the other pane is
-            // off screen).
-            InputEvent::KeyPressed { key, modifiers }
-                if *key == Key::Tab && (modifiers.shift || is_pane_focus_key(*key, *modifiers)) =>
-            {
+            // Shift+Tab, and plain Tab with the clip panel hidden or
+            // maximized: a docked plain Tab is a pure focus move the view
+            // takes (`Display::forward_input_event`) and never reaches here.
+            InputEvent::KeyPressed {
+                key: Key::Tab,
+                modifiers,
+            } if modifiers.shift || is_pane_focus_key(Key::Tab, *modifiers) => {
                 self.handle_shift_tab();
             }
 

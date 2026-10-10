@@ -58,7 +58,7 @@ impl Display {
             Stroke::new(1.0, theme::separator()),
         );
 
-        let focused = self.key_focus == KeyFocus::Browser;
+        let focused = self.key_owner() == KeyFocus::Browser;
         let font = FontId::proportional(theme::FONT_SIZE_LABEL);
         painter.text(
             pos2(panel.min.x + 12.0, panel.min.y + theme::HEADER_H * 0.5),
@@ -72,7 +72,7 @@ impl Display {
         if focused {
             painter.hline(
                 panel.min.x..=(panel.max.x - 1.0),
-                panel.min.y + theme::HEADER_H + Self::HEADER_TIMELINE_GAP_Y,
+                panel.min.y + self.lane_area_rect().min.y,
                 focus_edge_stroke(),
             );
         }

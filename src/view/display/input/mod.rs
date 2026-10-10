@@ -598,13 +598,7 @@ impl Display {
                 if is_pane_focus_key(key, modifiers)
                     && self.render.clip_panel.tab_moves_focus_only() =>
             {
-                let pane = self.focused_pane().other();
-                self.input_event_tx
-                    .send(InputEvent::FocusPane { pane })
-                    .ok();
-                if pane == Pane::Clip {
-                    self.clear_time_selection();
-                }
+                self.focus_pane(self.focused_pane().other());
                 true
             }
             // Shift+Tab shows and hides the clip panel. From a docked arranger
@@ -758,8 +752,7 @@ impl Display {
             // A press goes to the pane it lands in. In the pane without the
             // keyboard it first moves the focus there (`FocusPane`, ahead of
             // the press's own events on the same channel), so the keys that
-            // follow act on what was clicked. Focusing the clip pane drops
-            // the arranger's time selection, as entering the clip view does.
+            // follow act on what was clicked.
             InputEvent::MouseClicked { x, y, modifiers } => {
                 // Left of the canvas is the browser panel; a press anywhere
                 // else takes the keyboard back from it.
@@ -794,12 +787,7 @@ impl Display {
                     return true;
                 };
                 if pane != self.focused_pane() {
-                    self.input_event_tx
-                        .send(InputEvent::FocusPane { pane })
-                        .ok();
-                    if pane == Pane::Clip {
-                        self.clear_time_selection();
-                    }
+                    self.focus_pane(pane);
                 }
                 self.gesture.press_pane = Some(pane);
                 self.in_pane(pane, |display| display.handle_mouse_click(x, y, modifiers))

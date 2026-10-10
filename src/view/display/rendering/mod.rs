@@ -603,7 +603,7 @@ impl Display {
         // The header column and the browser panel draw their own edge while
         // they have the keyboard (`draw_arranger_backgrounds`,
         // `draw_browser`): one edge, on what the keys act on.
-        if self.track_headers_have_keyboard() || self.key_focus == KeyFocus::Browser {
+        if self.key_owner() != KeyFocus::Pane {
             return;
         }
         let focused = if self.focused_pane() == Pane::Clip {
