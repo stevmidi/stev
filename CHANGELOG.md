@@ -34,6 +34,9 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ### Fixed
 
+- **The header chips no longer shift about.** The BPM, meter, position
+  and DSP chips each keep a fixed width as their numbers change, so the row
+  stays put instead of moving with every tick of the position readout.
 - **Omnisphere's first note could come out distorted.** After the first
   Omnisphere load in a session, the first key played came with a short
   high-pitched burst over the sound. A silent VST3 instrument is now still
