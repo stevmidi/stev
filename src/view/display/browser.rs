@@ -643,15 +643,6 @@ impl Display {
         self.input_poller.pointer_pos()
     }
 
-    /// The footer band this frame, in canvas space (see [`footer_rect`]).
-    pub(super) fn footer_rect(&self) -> Rect {
-        footer_rect(
-            self.render.canvas_rect,
-            self.footer_top(),
-            self.browser_width(),
-        )
-    }
-
     /// Whether canvas-space `(x, y)` is on the footer's panel toggle.
     pub(super) fn is_on_browser_toggle(&self, x: f32, y: f32) -> bool {
         browser_toggle_rect(self.footer_rect()).contains(pos2(x, y))
@@ -672,12 +663,15 @@ impl Display {
         x < 0.0 && y < self.footer_top()
     }
 
+    /// Where the list stops: `BROWSER_LIST_PAD_Y` short of the footer, so a
+    /// part-scrolled last row is clipped clear of its edge.
+    pub(super) fn browser_list_bottom(&self) -> f32 {
+        self.footer_top() - BROWSER_LIST_PAD_Y
+    }
+
     /// How many whole rows fit in the panel's list this frame.
     pub(super) fn browser_visible_rows(&self) -> usize {
-        let list_h = self.footer_top()
-            - self.render.canvas_rect.min.y
-            - BROWSER_LIST_TOP
-            - BROWSER_LIST_PAD_Y;
+        let list_h = self.browser_list_bottom() - self.render.canvas_rect.min.y - BROWSER_LIST_TOP;
         (list_h / BROWSER_ROW_H).floor().max(1.0) as usize
     }
 
@@ -1285,28 +1279,19 @@ mod tests {
     }
 
     #[test]
-    fn footer_spans_the_window_whether_the_panel_shows_or_not() {
+    fn footer_and_its_toggle_stay_put_whether_the_panel_shows_or_not() {
         let window = Rect::from_min_max(pos2(0.0, 0.0), pos2(1200.0, 800.0));
         for browser_w in [0.0, BROWSER_W] {
             let mut canvas = window;
             canvas.max.x -= browser_w;
             let footer = footer_rect(canvas, 760.0, browser_w);
             // Drawn shifted right by the panel's width: the window's edges.
-            let on_screen = footer.translate(vec2(browser_w, 0.0));
+            let shift = vec2(browser_w, 0.0);
+            let on_screen = footer.translate(shift);
             assert_eq!((on_screen.min.x, on_screen.max.x), (0.0, 1200.0));
             assert_eq!((footer.min.y, footer.max.y), (760.0, 800.0));
-        }
-    }
-
-    #[test]
-    fn panel_toggle_sits_at_the_footers_left_edge() {
-        let window = Rect::from_min_max(pos2(0.0, 0.0), pos2(1200.0, 800.0));
-        for browser_w in [0.0, BROWSER_W] {
-            let mut canvas = window;
-            canvas.max.x -= browser_w;
-            let footer = footer_rect(canvas, 760.0, browser_w);
-            let toggle = browser_toggle_rect(footer).translate(vec2(browser_w, 0.0));
-            // The same spot on screen whether the panel shows or not.
+            // The toggle at its left edge, centred on the whole band.
+            let toggle = browser_toggle_rect(footer).translate(shift);
             assert_eq!(toggle.min.x, BROWSER_TOGGLE_INSET_X);
             assert_eq!(toggle.center().y, 780.0);
             assert_eq!(toggle.size(), vec2(theme::STATUS_H, theme::STATUS_H));

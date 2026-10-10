@@ -6,8 +6,8 @@
 use egui::{Id, LayerId, Order, Pos2, Shape, StrokeKind, Vec2};
 
 use super::super::browser::{
-    BROWSER_DISCLOSURE_W, BROWSER_INDENT_X, BROWSER_LIST_PAD_Y, BROWSER_LIST_TOP, BROWSER_ROW_H,
-    BROWSER_W, BrowserItem, browser_row_rect, browser_text_x, browser_toggle_rect,
+    BROWSER_DISCLOSURE_W, BROWSER_INDENT_X, BROWSER_LIST_TOP, BROWSER_ROW_H, BROWSER_W,
+    BrowserItem, browser_row_rect, browser_text_x,
 };
 use super::*;
 
@@ -65,8 +65,7 @@ impl Display {
     /// sidebar outline in `fg_dim`, its sidebar filled while the panel is
     /// open; under the pointer, the icon in `fg` on a faint neutral square.
     /// Neutral throughout — accent means the keyboard here.
-    pub(super) fn draw_browser_toggle(&self, painter: &Painter) {
-        let toggle = browser_toggle_rect(self.footer_rect());
+    pub(super) fn draw_browser_toggle(&self, painter: &Painter, toggle: Rect) {
         let open = self.browser.visible;
         let hover = self.is_pointer_on_browser_toggle();
 
@@ -82,6 +81,7 @@ impl Display {
         // Whole points, so the inside stroke lands on whole pixels.
         let size = vec2(TOGGLE_ICON_W, TOGGLE_ICON_H);
         let outline = Rect::from_min_size((toggle.center() - size * 0.5).round(), size);
+        // `seam_y` snaps an x as well as a y.
         let divider_x = seam_y(
             outline.min.x + TOGGLE_ICON_W * TOGGLE_DIVIDER_AT,
             TOGGLE_ICON_STROKE,
@@ -145,7 +145,7 @@ impl Display {
 
         let list = Rect::from_min_max(
             pos2(panel.min.x, panel.min.y + BROWSER_LIST_TOP),
-            pos2(panel.max.x - 1.0, panel.max.y - BROWSER_LIST_PAD_Y),
+            pos2(panel.max.x - 1.0, self.browser_list_bottom()),
         );
         let painter = painter.with_clip_rect(list);
         let tree = &self.browser.tree;

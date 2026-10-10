@@ -70,7 +70,7 @@ mod tempo_field;
 mod track_rename;
 mod ui_event;
 
-use self::browser::{BrowserItem, BrowserPanel, BrowserPlugin};
+use self::browser::{BrowserItem, BrowserPanel, BrowserPlugin, footer_rect};
 use self::gesture_state::GestureState;
 use self::grid::{GridSurface, GridTiers, grid_tiers};
 use self::help_overlay::HelpOverlay;
@@ -673,6 +673,15 @@ impl Display {
     /// The browser panel stops here too.
     fn footer_top(&self) -> f32 {
         self.render.canvas_rect.max.y - theme::STATUS_H - Self::VIEW_BOTTOM_MARGIN_Y
+    }
+
+    /// The footer band this frame, in canvas space (see [`footer_rect`]).
+    fn footer_rect(&self) -> Rect {
+        footer_rect(
+            self.render.canvas_rect,
+            self.footer_top(),
+            self.browser_width(),
+        )
     }
 
     /// The active pane's rect. Falls back to the whole lane area for a

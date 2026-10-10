@@ -390,6 +390,8 @@ impl Display {
     /// hides.
     pub(super) fn draw_status_bar(&self, painter: &Painter) {
         let rect = self.footer_rect();
+        // Set, not `with_clip_rect`: that intersects with the canvas's clip,
+        // which stops at canvas x = 0, short of the band's left part.
         let mut painter = painter.clone();
         painter.set_clip_rect(rect);
         // The status bar and the inset below it, one panel fill.
@@ -404,7 +406,8 @@ impl Display {
             Stroke::new(1.0_f32, grid_seam_color()),
         );
 
-        self.draw_browser_toggle(&painter);
+        let toggle = browser_toggle_rect(rect);
+        self.draw_browser_toggle(&painter, toggle);
 
         // The passing message (`UiEvent::Status`): left-aligned past the
         // toggle and on its centre line, dim, fading out once its time is up.
@@ -412,10 +415,7 @@ impl Display {
             && let Some(opacity) = status.opacity(Instant::now())
         {
             painter.text(
-                pos2(
-                    browser_toggle_rect(rect).max.x + Self::STATUS_TEXT_GAP_X,
-                    rect.center().y,
-                ),
+                pos2(toggle.max.x + Self::STATUS_TEXT_GAP_X, rect.center().y),
                 Align2::LEFT_CENTER,
                 &status.text,
                 FontId::proportional(theme::FONT_SIZE_LABEL),
