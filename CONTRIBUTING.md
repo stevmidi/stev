@@ -50,6 +50,9 @@ Open an issue with:
 
 On Linux or Windows, say so, and include the distribution or Windows version.
 
+A security problem goes through a private report instead, not an issue: see
+[`SECURITY.md`](SECURITY.md).
+
 ## Writing the code
 
 Everything you need is in the repo:
