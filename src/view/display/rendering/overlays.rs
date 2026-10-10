@@ -65,13 +65,20 @@ impl Display {
         // a control too (`tempo_field.rs`) and stays first, the meter (also a
         // control, `meter_field.rs`) second: the paint loop below records
         // where their chips went.
-        let mut readouts: Vec<(&str, String, Color32)> = vec![
-            ("BPM", format_bpm(self.tempo_us()), theme::fg()),
-            ("METER", self.meter().to_string(), theme::fg()),
+        //
+        // Each readout carries a template of its widest everyday value, and
+        // its chip is sized to that rather than to the value it shows: a chip
+        // sized to its value grew and shrank as the digits changed, and with
+        // the row centred that moved every chip in it. A value wider than its
+        // template (a four-digit bar, a peak past 100%) still widens its chip.
+        let mut readouts: Vec<(&str, String, Color32, &str)> = vec![
+            ("BPM", format_bpm(self.tempo_us()), theme::fg(), "000.0"),
+            ("METER", self.meter().to_string(), theme::fg(), "16/8"),
             (
                 "POS",
                 format!("{bar:03}:{beat:02}:{sixteenth:02}"),
                 theme::accent(),
+                "000:00:00",
             ),
         ];
 
@@ -95,6 +102,7 @@ impl Display {
                 "DSP",
                 format!("{:.0}/{:.0}%", average * 100.0, peak * 100.0),
                 color,
+                "100/100%",
             ));
 
             // Blocks that actually missed the deadline — audible glitches, not
@@ -110,7 +118,12 @@ impl Display {
             // keeps it as quiet as the BPM readout; `theme::accent()` is
             // reserved for a count that actually means something.
             let overruns = load.overruns();
-            readouts.push(("OVR", overruns.to_string(), alert_color(overruns > 0)));
+            readouts.push((
+                "OVR",
+                overruns.to_string(),
+                alert_color(overruns > 0),
+                "000",
+            ));
 
             // The backend's own overload count (CoreAudio's
             // `kAudioDeviceProcessorOverload`, via cpal `ErrorKind::Xrun`),
@@ -120,7 +133,7 @@ impl Display {
             // *outside* the render (IO thread pre-empted, device contention) —
             // the case the render-side timer can't see. See `AudioLoad::xruns`.
             let xruns = load.xruns();
-            readouts.push(("XRUN", xruns.to_string(), alert_color(xruns > 0)));
+            readouts.push(("XRUN", xruns.to_string(), alert_color(xruns > 0), "000"));
         }
 
         let value_font = Self::header_value_font();
@@ -132,15 +145,20 @@ impl Display {
         let chip_gap = 8.0;
 
         // Each chip's label and value laid out once, in their paint colours:
-        // the widths centre the row, the galleys are what gets painted.
+        // the widths centre the row, the galleys are what gets painted. The
+        // value's slot is its template's width, or the value's if wider.
         let chips: Vec<_> = readouts
             .into_iter()
-            .map(|(label, value, value_color)| {
+            .map(|(label, value, value_color, template)| {
                 let label =
                     painter.layout_no_wrap(label.to_owned(), label_font.clone(), theme::fg_dim());
                 let value = painter.layout_no_wrap(value, value_font.clone(), value_color);
-                let width =
-                    chip_pad_x + label.size().x + label_value_gap + value.size().x + chip_pad_x;
+                let template_w = painter
+                    .layout_no_wrap(template.to_owned(), value_font.clone(), value_color)
+                    .size()
+                    .x;
+                let value_w = value.size().x.max(template_w);
+                let width = chip_pad_x + label.size().x + label_value_gap + value_w + chip_pad_x;
                 (label, value, value_color, width)
             })
             .collect();
