@@ -16,7 +16,7 @@ anywhere, it can drive a DAW or external gear over MIDI.
 
 ![Stev: six tracks of captured clips in the arranger, with the clip panel open on a bass line](docs/images/arranger.png)
 
-> **Status:** 0.1.0, source releases only (no prebuilt app yet). Developed and
+> **Status:** 0.2.0, source releases only (no prebuilt app yet). Developed and
 > tested on macOS. Linux and Windows build in CI and may work (MIDI Out only, no
 > plugin host), but are untested; ports welcome.
 
@@ -83,7 +83,8 @@ its notes to one of two places:
 Stev grows toward its capture workflow, not toward a full DAW. These are not on
 the roadmap:
 
-- tempo maps and meter changes
+- tempo or meter changes along the timeline (one tempo and one meter per
+  project)
 - audio tracks and audio recording
 - automation lanes and CC lane editing
 - effect plugins, sends, a mixer panel

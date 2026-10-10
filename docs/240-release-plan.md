@@ -263,7 +263,7 @@ Gaps a newcomer hits in the first ten minutes.
 
 List these in the README so nobody expects them. Some may come later if the capture-first workflow needs them, but none is on the roadmap. (Until 2026-10-07 this section was "deliberately out of scope": features left for forks to build.)
 
-- tempo maps and meter changes
+- tempo or meter changes along the timeline (one tempo and one meter per project)
 - audio tracks and audio recording
 - automation lanes and CC lane editing
 - effect plugins, sends, a mixer panel
