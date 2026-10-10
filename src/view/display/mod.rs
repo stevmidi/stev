@@ -15,7 +15,8 @@
 //! - `state/` — reconciling the shape lists against `UiEvent`s, scroll, the
 //!   `UiEvent` drain.
 //! - `instrument.rs` (macOS) — the per-track plugin editor host reached
-//!   through `self.instruments`.
+//!   through `self.instruments`; `instrument_restore.rs` the queue a project
+//!   load restores its plugins from, one per frame.
 //! - `pane.rs` — the arranger / clip-view panes the lane area splits into;
 //!   the coordinate helpers below answer for the *active* one
 //!   (`active_pane`, `in_pane`). See `archive/210-docked-clip-panel.md`.
@@ -50,6 +51,8 @@ mod help_overlay;
 mod input;
 #[cfg(target_os = "macos")]
 mod instrument;
+#[cfg(target_os = "macos")]
+mod instrument_restore;
 mod meter_field;
 mod midi_state;
 mod modal_focus;

@@ -224,6 +224,15 @@ impl Display {
                     #[cfg(not(target_os = "macos"))]
                     let _ = (slot, track_id, instrument);
                 }
+                UiEvent::StageProject(project) => {
+                    #[cfg(target_os = "macos")]
+                    self.stage_project(project);
+                    // No plugin host: nothing to load first.
+                    #[cfg(not(target_os = "macos"))]
+                    self.input_event_tx
+                        .send(InputEvent::ApplyStagedProject(project))
+                        .ok();
+                }
                 UiEvent::TrackInstrumentsChanged { specs } => {
                     #[cfg(target_os = "macos")]
                     self.sync_instruments_to_tracks(&specs);

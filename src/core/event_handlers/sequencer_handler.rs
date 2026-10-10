@@ -487,6 +487,15 @@ impl EventHandlers {
                 );
             }
 
+            SequencerCommand::ApplyStagedProject(project) => {
+                self.apply_staged_project_workflow(
+                    sequencer,
+                    undo_record,
+                    saved,
+                    project.as_ref().clone(),
+                );
+            }
+
             SequencerCommand::SaveProject { filename, folder } => {
                 self.save_project_workflow(sequencer, saved, folder.as_deref(), filename);
             }

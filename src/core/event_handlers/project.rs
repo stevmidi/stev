@@ -8,7 +8,7 @@ use crate::{
     core::{
         config::MAX_TRACKS,
         input_event::TimeSelectionRect,
-        project::{self, ProjectAction, ProjectData},
+        project::{self, ProjectAction, ProjectData, StagedProject},
         sequencer::{ExportRefusal, PasteClipsEdit, SequencerEdit},
     },
     models::{clip::Clip, track::TrackOutput},
@@ -35,8 +35,9 @@ impl EventHandlers {
 
     /// Applies already-loaded `ProjectData` to the sequencer (`filename` is
     /// `None` for a new project; `folder` is where it was loaded from), fans
-    /// out `ProjectLoaded` + the instrument
-    /// list, and returns to the Arranger with track 0 selected. A project with
+    /// out the instrument list + `ProjectLoaded`, and returns to the Arranger
+    /// with track 0 selected. The instrument list goes first, so a staged
+    /// load's plugins are swapped in no later than the new clips arrive. A project with
     /// more than `MAX_TRACKS` tracks loads the first ones and the footer says so.
     /// Clears `undo_record`: its edits name tracks and clips of the project
     /// being replaced, so undoing one would replay it against the new one.
@@ -56,6 +57,7 @@ impl EventHandlers {
         let saved_tracks = data.tracks.len();
         let clips = data.apply_to_sequencer(sequencer);
         *saved = SavedProject::of(sequencer);
+        self.emit_track_instruments(sequencer);
         self.ui_event_tx
             .send(UiEvent::ProjectLoaded {
                 clips,
@@ -63,7 +65,6 @@ impl EventHandlers {
                 folder,
             })
             .ok();
-        self.emit_track_instruments(sequencer);
         self.emit_tracks(sequencer, None);
 
         self.set_view_state(ViewState::Arranger);
@@ -78,9 +79,9 @@ impl EventHandlers {
     }
 
     /// Load a project from disk by folder/filename: on success hand off to
-    /// `load_project_workflow`; on failure say why in the footer and fall
-    /// back to the Arranger, keeping the current project, its undo history
-    /// and `saved`.
+    /// `open_read_project_workflow`; on failure say why in the footer and
+    /// fall back to the Arranger, keeping the current project, its undo
+    /// history and `saved`.
     fn open_project_workflow(
         &self,
         sequencer: &mut Sequencer,
@@ -95,16 +96,55 @@ impl EventHandlers {
                 self.set_view_state(ViewState::Arranger);
             }
             Ok(data) => {
-                self.load_project_workflow(
-                    sequencer,
-                    undo_record,
-                    saved,
+                let project = StagedProject {
                     data,
-                    Some(filename.to_owned()),
-                    folder.map(str::to_owned),
-                );
+                    filename: filename.to_owned(),
+                    folder: folder.map(str::to_owned),
+                };
+                self.open_read_project_workflow(sequencer, undo_record, saved, project);
             }
         }
+    }
+
+    /// A project just read from disk: with plugins on its tracks, stops the
+    /// transport and stages it with the view (`UiEvent::StageProject`), which
+    /// loads them while the open project stays as it is and sends it back to
+    /// `apply_staged_project_workflow`; without, applies it at once.
+    fn open_read_project_workflow(
+        &self,
+        sequencer: &mut Sequencer,
+        undo_record: &mut Record<SequencerEdit>,
+        saved: &mut SavedProject,
+        project: StagedProject,
+    ) {
+        if project.data.instrument_specs().is_empty() {
+            self.apply_staged_project_workflow(sequencer, undo_record, saved, project);
+            return;
+        }
+        self.send_transport(TransportCommand::Stop);
+        self.ui_event_tx
+            .send(UiEvent::StageProject(Box::new(project)))
+            .ok();
+        self.request_repaint();
+    }
+
+    /// Applies a project read from disk — at once, or once the view has
+    /// loaded the plugins of a staged one (`open_read_project_workflow`). No
+    /// unsaved-changes check: it ran before the project was read, and the
+    /// view takes no input while a staged one loads.
+    pub(super) fn apply_staged_project_workflow(
+        &self,
+        sequencer: &mut Sequencer,
+        undo_record: &mut Record<SequencerEdit>,
+        saved: &mut SavedProject,
+        project: StagedProject,
+    ) {
+        let StagedProject {
+            data,
+            filename,
+            folder,
+        } = project;
+        self.load_project_workflow(sequencer, undo_record, saved, data, Some(filename), folder);
     }
 
     /// Runs `action` — unless `discard_changes` is false and the project
@@ -277,5 +317,128 @@ impl SavedProject {
     /// Whether `sequencer`'s project would save differently from this one.
     fn has_changes(&self, sequencer: &Sequencer) -> bool {
         ProjectData::from_sequencer(sequencer).fingerprint() != self.fingerprint
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use undo::Record;
+
+    use crate::core::event_handlers::test_harness::harness;
+    use crate::core::project::{ProjectData, StagedProject};
+    use crate::core::sequencer::SequencerEdit;
+    use crate::core::transport::TransportCommand;
+    use crate::models::track::{InstrumentRef, TrackOutput};
+    use crate::view::display::UiEvent;
+
+    /// A two-track project at 90 BPM, with a plugin on track 1 when
+    /// `plugin`.
+    fn project(plugin: bool) -> StagedProject {
+        let mut data = ProjectData {
+            tempo_us: 666_667,
+            ..ProjectData::default()
+        };
+        data.tracks.truncate(2);
+        if plugin {
+            data.tracks[1].output = serde_json::from_str(
+                r#"{"type":"Instrument","bundle_path":"/Synth.clap","plugin_id":"synth","display_name":"Synth"}"#,
+            )
+            .unwrap();
+        }
+        StagedProject {
+            data,
+            filename: "Song".to_owned(),
+            folder: None,
+        }
+    }
+
+    /// An open with plugins leaves the open project alone and hands the
+    /// read one to the view; handed back, it is applied, the plugin list
+    /// reaching the view before the new clips.
+    #[test]
+    fn a_project_with_plugins_is_staged_before_it_is_applied() {
+        let mut h = harness();
+        let mut record: Record<SequencerEdit> = Record::new();
+        let tempo = h.sequencer.tempo_us();
+
+        h.handlers.open_read_project_workflow(
+            &mut h.sequencer,
+            &mut record,
+            &mut h.saved,
+            project(true),
+        );
+        assert_eq!(h.sequencer.tempo_us(), tempo);
+        assert_eq!(h.sequencer.tracks().len(), 4);
+        assert!(
+            h.transport_commands
+                .try_iter()
+                .any(|cmd| matches!(cmd, TransportCommand::Stop))
+        );
+        let staged = h
+            .ui_events
+            .try_iter()
+            .find_map(|event| match event {
+                UiEvent::StageProject(project) => Some(project),
+                _ => None,
+            })
+            .expect("staged with the view");
+        assert_eq!(staged.filename, "Song");
+
+        h.handlers.apply_staged_project_workflow(
+            &mut h.sequencer,
+            &mut record,
+            &mut h.saved,
+            *staged,
+        );
+        assert_eq!(h.sequencer.tempo_us(), 666_667);
+        assert_eq!(h.sequencer.tracks().len(), 2);
+        let order: Vec<_> = h
+            .ui_events
+            .try_iter()
+            .filter_map(|event| match event {
+                UiEvent::TrackInstrumentsChanged { specs } => Some(Some(specs)),
+                UiEvent::ProjectLoaded { .. } => Some(None),
+                _ => None,
+            })
+            .collect();
+        let [Some(specs), None] = order.as_slice() else {
+            panic!("plugin list, then the project: {order:?}");
+        };
+        assert_eq!(
+            specs.as_slice(),
+            [(
+                1,
+                InstrumentRef {
+                    bundle_path: "/Synth.clap".into(),
+                    plugin_id: "synth".to_owned(),
+                    display_name: "Synth".to_owned(),
+                    state: Vec::new(),
+                }
+            )]
+        );
+        assert!(matches!(
+            h.sequencer.tracks()[1].output(),
+            TrackOutput::Instrument(_)
+        ));
+    }
+
+    /// Without plugins there is nothing to wait for: applied at once.
+    #[test]
+    fn a_project_without_plugins_is_applied_at_once() {
+        let mut h = harness();
+        let mut record: Record<SequencerEdit> = Record::new();
+
+        h.handlers.open_read_project_workflow(
+            &mut h.sequencer,
+            &mut record,
+            &mut h.saved,
+            project(false),
+        );
+        assert_eq!(h.sequencer.tempo_us(), 666_667);
+        assert!(
+            !h.ui_events
+                .try_iter()
+                .any(|event| matches!(event, UiEvent::StageProject(_)))
+        );
     }
 }

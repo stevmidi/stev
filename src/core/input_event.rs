@@ -23,7 +23,11 @@ use egui::{Key, Modifiers};
 use uuid::Uuid;
 
 use crate::{
-    core::{project::ProjectAction, time::Meter, view_state::Pane},
+    core::{
+        project::{ProjectAction, StagedProject},
+        time::Meter,
+        view_state::Pane,
+    },
     models::{
         clip::{Clip, NoteDrag},
         track::TrackOutput,
@@ -629,6 +633,10 @@ pub(crate) enum InputEvent {
         /// Skip the check: the prompt's "Don't Save".
         discard_changes: bool,
     },
+    /// The view has loaded a staged project's plugins (`UiEvent::StageProject`):
+    /// the sequencer applies it now, with no unsaved-changes check — that ran
+    /// before it was staged. See `130-plugin-host.md` § Project persistence.
+    ApplyStagedProject(Box<StagedProject>),
     /// The settings modal's MIDI tab connected a port: save both connected
     /// ports (empty: none).
     ConfirmMidiPorts {

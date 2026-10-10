@@ -548,10 +548,57 @@ empty `bundle_path` (a phase-3 project, or one saved before a plugin was picked)
 falls back to `MidiOut { 0 }`.
 
 On project load / new-project the sequencer thread emits
-`UiEvent::TrackInstrumentsChanged { specs }`; `Display::sync_instruments_to_tracks`
-tears down every current editor and loads an **editor-less** plugin for each
-`Instrument` track named in `specs`. A plugin the project wants but that is not
-installed logs a warning and leaves the track silent.
+`UiEvent::TrackInstrumentsChanged { specs }` (ahead of `ProjectLoaded`);
+`Display::sync_instruments_to_tracks` tears down every current editor and
+gives each `Instrument` track named in `specs` an **editor-less** plugin. A
+plugin the project wants but that is not installed logs a warning and leaves
+the track silent.
+
+**Opening a project with plugins stages it first**, so the screen goes from
+the old project to the new one whole, in one frame, rather than freezing and
+then filling in plugin by plugin:
+
+1. The sequencer reads the file (`open_project_workflow`). If
+   `ProjectData::instrument_specs` is empty it applies it at once
+   (`open_read_project_workflow`). Otherwise it stops the transport and hands
+   the read project to the view **unapplied**: `UiEvent::StageProject(StagedProject)`.
+   The open project, its plugins and every shared atomic stay as they were.
+2. `Display::stage_project` queues the specs (`InstrumentRestore`,
+   `instrument_restore.rs`) and puts up `Overlay::RestoringInstruments`
+   (macOS-only variant): a panel over the still-drawn old project, titled
+   "Opening <project>", naming the plugin loading next, the step ("3 of 8")
+   and a progress bar (`rendering/modals/instrument_restore.rs`).
+3. `restore_next_instrument`, called from `logic` after the editor pump,
+   loads one plugin per frame with `prepare_instrument` — loaded, state
+   applied, activated, note resets queued, but **not** sent to the mixer
+   (`PreparedInstrument`) — and asks for the next frame. A load blocks the
+   main thread (below), so the panel moves on between loads rather than
+   animating, which is why it counts steps instead of spinning. The first
+   load waits one frame, so the panel is painted before anything blocks.
+4. With the last one ready, the view sends the project back
+   (`InputEvent::ApplyStagedProject` → `SequencerCommand::ApplyStagedProject`
+   → `apply_staged_project_workflow`, no unsaved-changes check: it ran
+   before the read). The sequencer applies it and emits
+   `TrackInstrumentsChanged` + `ProjectLoaded`;
+   `sync_instruments_to_tracks` removes the old plugins and `insert`s each
+   prepared one whose slot and `InstrumentRef` match a spec — a `Remove` and
+   an `Insert` per slot in one frame, which `CMD_RING_CAPACITY` (4 ×
+   `MAX_TRACKS`) has room for. A spec with nothing prepared loads directly;
+   a prepared plugin nothing asks for is `discard`ed.
+
+- **A plugin not in the catalog yet waits for the scan** (`restore_waits_for_scan`):
+  while the background scan is still running, the queue holds at that plugin
+  (re-checking every `RESTORE_SCAN_POLL`) and the panel says so, so a project
+  opened right after launch doesn't lose plugins the scan hasn't reached.
+  Once the scan is done a missing plugin is skipped as not installed.
+- **Nothing reaches the old project while it waits**: the overlay swallows
+  every key and pointer event through `handle_overlay_input_event`, and
+  `handle_project_input_event` lets ⌘N / ⌘S fall through to it, so no play,
+  edit, save, new project or plugin pick lands mid-load. Quitting still
+  works: `on_exit` leaks the prepared plugins (`ProjectStaging::leak`) like
+  the loaded ones.
+- **⌘N and a project without plugins** take the direct path: their
+  `TrackInstrumentsChanged` finds nothing staged.
 
 ### Plugin state / presets
 
@@ -714,7 +761,9 @@ positions), persisted base64-encoded in the `.stev` and re-applied on load:
   appear until restart. While the scan runs the browser's Plugins
   category ends in a "Scanning…" row rather than reading as complete.
 - **`instantiate()`/`activate()` still run on the main thread, sequentially,
-  once per instrument track on every project load** (`sync_instruments_to_tracks`).
+  once per instrument track on every project load** (`restore_next_instrument`,
+  one per frame under the restore panel, before the project is applied —
+  see § Project persistence).
   This part can't be backgrounded: the CLAP `instantiate()` call produces a
   `!Send` `PluginInstance` that has to be created on the thread that will host
   its editor, which is the main thread by this app's design. What *is* fixed:

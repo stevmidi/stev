@@ -20,6 +20,15 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ## [Unreleased]
 
+### Added
+
+- **Progress while a project opens.** Opening a project with plugins on its
+  tracks shows a panel naming the plugin it is loading, how many are left
+  ("3 of 8") and a progress bar, instead of a frozen window. The open project
+  stays on screen, untouched, until the new one replaces it whole once every
+  plugin is in. Input waits until then. A plugin the background scan hasn't
+  found yet is waited for rather than skipped as not installed.
+
 ## [0.2.0] - 2026-10-10
 
 ### Added

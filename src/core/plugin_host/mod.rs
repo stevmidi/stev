@@ -83,13 +83,15 @@ pub(crate) use vst3::child::run_if_scan_child;
 
 /// The two halves one loaded plugin splits into: the `Send` voice the mixer
 /// takes and the `!Send` editor the UI keeps. Every format's own `load`
-/// returns this pair, and [`load_instrument`] is what routes them.
+/// returns this pair, and [`prepare_instrument`] is what routes them.
 type LoadedInstrument = (Box<dyn InstrumentVoice>, Box<dyn InstrumentEditor>);
 
 /// Capacity of the `rtrb` ring carrying [`PluginHostCommand`]s from `Display`
 /// to the mixer. Generous headroom over realistic traffic: user-driven track
-/// plugin picks/removals, not a per-block feed.
-const CMD_RING_CAPACITY: usize = 32;
+/// plugin picks/removals, not a per-block feed. The largest burst is a
+/// project load swapping its staged plugins in within one frame — a `Remove`
+/// and an `Insert` per track, `2 * MAX_TRACKS` — so twice that.
+const CMD_RING_CAPACITY: usize = 4 * MAX_TRACKS;
 
 /// Capacity of the `rtrb` ring the mixer hands removed voices back on, for the
 /// reclaim thread to drop off the audio thread. The worst realistic burst is
@@ -232,15 +234,70 @@ pub(crate) fn start_plugin_catalog_scan() -> Receiver<Vec<PluginCatalogEntry>> {
 /// activate it, keep the `!Send` [`InstrumentEditor`] for the UI and send the
 /// voice to the mixer for `track`. `state` is the persisted preset blob from
 /// the project (empty / `None` for a fresh pick), applied before activation.
-///
-/// This is the one place a plugin format is chosen; everything downstream of it
-/// works through the two traits.
 pub(crate) fn load_instrument(
     handle: &mut PluginAudioHandle,
     track: usize,
     entry: &PluginCatalogEntry,
     state: Option<&[u8]>,
 ) -> Result<Box<dyn InstrumentEditor>, String> {
+    prepare_instrument(handle, track, entry, state)?.insert(handle)
+}
+
+/// A plugin loaded and activated for engine slot `track` but not yet in the
+/// mixer — a project load stages its plugins this way while the old project
+/// keeps playing its own, then swaps them all in at once
+/// ([`insert`](Self::insert)).
+pub(crate) struct PreparedInstrument {
+    /// The engine slot the voice goes into.
+    track: usize,
+    /// The audio-thread half, until the mixer takes it.
+    voice: Box<dyn InstrumentVoice>,
+    /// The main-thread half.
+    editor: Box<dyn InstrumentEditor>,
+}
+
+impl PreparedInstrument {
+    /// Sends the voice to the mixer for its slot and hands back the editor —
+    /// the slot must be empty by then (its old voice's `Remove` sent first).
+    pub(crate) fn insert(
+        self,
+        handle: &mut PluginAudioHandle,
+    ) -> Result<Box<dyn InstrumentEditor>, String> {
+        let PreparedInstrument {
+            track,
+            voice,
+            editor,
+        } = self;
+        handle
+            .cmd_tx
+            .push(PluginHostCommand::Insert { track, voice })
+            .map_err(|_| "plugin host audio thread is gone (command ring full)".to_string())?;
+        Ok(editor)
+    }
+
+    /// Drops a plugin that never reached the mixer, in the order a removed
+    /// one goes: the voice first, then the deactivated instance.
+    pub(crate) fn discard(self) {
+        let PreparedInstrument {
+            voice, mut editor, ..
+        } = self;
+        drop(voice);
+        editor.deactivate();
+    }
+}
+
+/// The loading half of [`load_instrument`]: loads and activates `entry`'s
+/// plugin for `track`, with every note reset queued, without sending it to
+/// the mixer.
+///
+/// This is the one place a plugin format is chosen; everything downstream of it
+/// works through the two traits.
+pub(crate) fn prepare_instrument(
+    handle: &mut PluginAudioHandle,
+    track: usize,
+    entry: &PluginCatalogEntry,
+    state: Option<&[u8]>,
+) -> Result<PreparedInstrument, String> {
     let (mut voice, editor) = match entry.format {
         PluginFormat::Clap => clap::load(handle, track, entry, state)?,
         PluginFormat::Vst3 => vst3::load(handle, track, entry, state)?,
@@ -256,11 +313,9 @@ pub(crate) fn load_instrument(
         entry.name,
         track + 1
     );
-
-    handle
-        .cmd_tx
-        .push(PluginHostCommand::Insert { track, voice })
-        .map_err(|_| "plugin host audio thread is gone (command ring full)".to_string())?;
-
-    Ok(editor)
+    Ok(PreparedInstrument {
+        track,
+        voice,
+        editor,
+    })
 }

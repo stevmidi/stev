@@ -16,6 +16,11 @@ pub(crate) enum Overlay {
     Settings,
     /// The keyboard help overlay (`help_overlay.rs`).
     Help,
+    /// A project load restoring its plugins, one per frame
+    /// (`instrument_restore.rs`). Takes no input of its own: it swallows
+    /// every event until the last plugin is in, then closes itself.
+    #[cfg(target_os = "macos")]
+    RestoringInstruments,
 }
 
 /// The settings modal's MIDI tab: which row the arrow keys act on.

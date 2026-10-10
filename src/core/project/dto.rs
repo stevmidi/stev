@@ -98,6 +98,31 @@ pub(crate) enum TrackOutputData {
     },
 }
 
+impl TrackOutputData {
+    /// The runtime routing this loads as.
+    fn into_output(self) -> TrackOutput {
+        match self {
+            TrackOutputData::MidiOut { channel } => TrackOutput::MidiOut { channel },
+            TrackOutputData::Instrument {
+                bundle_path,
+                plugin_id,
+                display_name,
+                state,
+            } if !bundle_path.is_empty() => TrackOutput::Instrument(InstrumentRef {
+                bundle_path: PathBuf::from(bundle_path),
+                plugin_id,
+                display_name,
+                // A corrupt blob just means "load the plugin at its
+                // default" — never fail the whole project load for it.
+                state: BASE64.decode(state).unwrap_or_default(),
+            }),
+            // Instrument track with no plugin reference (phase-3 project
+            // or saved before a plugin was picked) — fall back to MIDI.
+            TrackOutputData::Instrument { .. } => TrackOutput::MidiOut { channel: 0 },
+        }
+    }
+}
+
 /// One track, on disk.
 #[derive(Serialize, Deserialize, Clone)]
 pub(crate) struct TrackData {
@@ -329,6 +354,22 @@ impl ProjectData {
         }
     }
 
+    /// The plugin each track will load, by engine slot, as
+    /// [`apply_to_sequencer`](Self::apply_to_sequencer) sets the tracks up
+    /// (slot = position, the first `MAX_TRACKS` tracks) — what a project load
+    /// stages before it is applied (`130-plugin-host.md`).
+    pub(crate) fn instrument_specs(&self) -> Vec<(usize, InstrumentRef)> {
+        self.tracks
+            .iter()
+            .take(config::MAX_TRACKS)
+            .enumerate()
+            .filter_map(|(slot, track)| match track.output.clone().into_output() {
+                TrackOutput::Instrument(instrument) => Some((slot, instrument)),
+                TrackOutput::MidiOut { .. } => None,
+            })
+            .collect()
+    }
+
     /// Replaces the whole session with this project (starts from
     /// `new_project`, decodes plugin state blobs, rebuilds clips). Returns the
     /// clip metadata for the UI. Consumes the data so event bytes move into
@@ -352,25 +393,7 @@ impl ProjectData {
                 // Through the rename's own rules, so a hand-edited blank name
                 // shows the number.
                 track.set_name(track_data.name.as_deref().and_then(track_name_from_input));
-                track.set_output(match track_data.output {
-                    TrackOutputData::MidiOut { channel } => TrackOutput::MidiOut { channel },
-                    TrackOutputData::Instrument {
-                        bundle_path,
-                        plugin_id,
-                        display_name,
-                        state,
-                    } if !bundle_path.is_empty() => TrackOutput::Instrument(InstrumentRef {
-                        bundle_path: PathBuf::from(bundle_path),
-                        plugin_id,
-                        display_name,
-                        // A corrupt blob just means "load the plugin at its
-                        // default" — never fail the whole project load for it.
-                        state: BASE64.decode(state).unwrap_or_default(),
-                    }),
-                    // Instrument track with no plugin reference (phase-3 project
-                    // or saved before a plugin was picked) — fall back to MIDI.
-                    TrackOutputData::Instrument { .. } => TrackOutput::MidiOut { channel: 0 },
-                });
+                track.set_output(track_data.output.into_output());
 
                 for clip_data in track_data.clips {
                     let mut clip = Clip::new();
@@ -444,6 +467,45 @@ mod tests {
         };
         assert_eq!(with_plugin("a", "AAAA"), with_plugin("a", "BBBB"));
         assert_ne!(with_plugin("a", "AAAA"), with_plugin("b", "AAAA"));
+    }
+
+    /// What a load stages is what the applied project then asks for
+    /// (`EventHandlers::emit_track_instruments`), past the track cap too.
+    #[test]
+    fn the_staged_plugins_match_the_applied_tracks() {
+        let mut data = project_with_tracks(config::MAX_TRACKS + 2);
+        for idx in [1, 3, config::MAX_TRACKS - 1, config::MAX_TRACKS + 1] {
+            data.tracks[idx].output = TrackOutputData::Instrument {
+                bundle_path: format!("/Synth{idx}.vst3"),
+                plugin_id: "synth".to_owned(),
+                display_name: "Synth".to_owned(),
+                state: BASE64.encode([idx as u8]),
+            };
+        }
+        // A plugin track with no plugin named loads as MIDI.
+        data.tracks[5].output = TrackOutputData::Instrument {
+            bundle_path: String::new(),
+            plugin_id: String::new(),
+            display_name: String::new(),
+            state: String::new(),
+        };
+        let staged = data.instrument_specs();
+        assert_eq!(
+            staged.iter().map(|(slot, _)| *slot).collect::<Vec<_>>(),
+            [1, 3, config::MAX_TRACKS - 1]
+        );
+
+        let mut sequencer = test_sequencer();
+        data.apply_to_sequencer(&mut sequencer);
+        let applied: Vec<_> = sequencer
+            .tracks()
+            .iter()
+            .filter_map(|track| match track.output() {
+                TrackOutput::Instrument(r) => Some((track.slot(), r.clone())),
+                TrackOutput::MidiOut { .. } => None,
+            })
+            .collect();
+        assert_eq!(staged, applied);
     }
 
     #[test]

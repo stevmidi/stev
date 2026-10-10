@@ -978,10 +978,15 @@ impl eframe::App for Display {
     /// idles until a plugin wakes it via `request_callback`. Everything that
     /// reads egui input stays in `ui`: a hidden window's `Context::input` is
     /// a stale copy of the last shown frame, so polling it from here would
-    /// replay old key events.
+    /// replay old key events. A project load's plugin restore steps here too,
+    /// one plugin per frame (`restore_next_instrument`), after the pump has
+    /// drained the catalog scan.
     fn logic(&mut self, _ctx: &egui::Context, _frame: &mut eframe::Frame) {
         #[cfg(target_os = "macos")]
-        self.pump_instrument_editors(_ctx);
+        {
+            self.pump_instrument_editors(_ctx);
+            self.restore_next_instrument(_ctx);
+        }
     }
 
     /// While files from the file manager hover (or land), feeds egui the
@@ -1022,6 +1027,12 @@ impl eframe::App for Display {
             ctx.request_repaint();
         }
         self.handle_ui_events();
+        // A project being opened just queued its plugins: the next frame
+        // loads the first, after this one has painted the panel.
+        #[cfg(target_os = "macos")]
+        if self.instrument_restore().is_some() {
+            ctx.request_repaint();
+        }
         self.sync_window_close(ctx);
         self.sync_project_dialog_window(ctx);
         self.in_pane(Pane::Clip, Self::sync_clip_frame);
@@ -1153,6 +1164,10 @@ impl eframe::App for Display {
                 match self.overlay {
                     Some(Overlay::Settings) => self.draw_settings_view(painter, rect),
                     Some(Overlay::Help) => self.draw_help_view(painter, rect),
+                    #[cfg(target_os = "macos")]
+                    Some(Overlay::RestoringInstruments) => {
+                        self.draw_instrument_restore_view(painter, rect);
+                    }
                     None => {}
                 }
                 self.show_project_dialog(ui, rect);
@@ -1253,6 +1268,9 @@ impl eframe::App for Display {
         for (_, mut editor) in self.instruments.pending_instance_drop.drain(..) {
             editor.teardown_gui();
             std::mem::forget(editor);
+        }
+        if let Some(staging) = self.instruments.staging.take() {
+            staging.leak();
         }
         // `_exit` flushes nothing, so anything still buffered goes now.
         let _ = std::io::stdout().flush();

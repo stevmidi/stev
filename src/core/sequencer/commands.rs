@@ -5,7 +5,7 @@
 use uuid::Uuid;
 
 use crate::core::input_event::TimeSelectionRect;
-use crate::core::project::ProjectAction;
+use crate::core::project::{ProjectAction, StagedProject};
 use crate::core::sequencer::TempoGesture;
 use crate::core::time::Meter;
 use crate::core::view_state::Pane;
@@ -500,6 +500,8 @@ pub(crate) enum SequencerCommand {
         /// Skip the check: the prompt's "Don't Save".
         discard_changes: bool,
     },
+    /// Apply a project the view staged (`InputEvent::ApplyStagedProject`).
+    ApplyStagedProject(Box<StagedProject>),
     /// Write the current project to `folder/filename.stev` and say so in the
     /// footer (`UiEvent::Status`) — the save or why it failed.
     SaveProject {

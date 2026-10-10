@@ -28,14 +28,21 @@ use uuid::Uuid;
 use crate::core::input_event::InputEvent;
 use crate::core::plugin_host::catalog::PluginCatalogEntry;
 use crate::core::plugin_host::{
-    InstrumentEditor, PluginAudioHandle, PluginHostCommand, load_instrument,
-    take_toggle_editor_pending,
+    InstrumentEditor, PluginAudioHandle, PluginHostCommand, PreparedInstrument, load_instrument,
+    prepare_instrument, take_toggle_editor_pending,
 };
+use crate::core::project::StagedProject;
 use crate::models::track::{InstrumentRef, TrackOutput};
 
 use super::browser::BrowserPlugin;
+use super::instrument_restore::InstrumentRestore;
+use super::modal_focus::Overlay;
 use super::status_message::StatusMessage;
 use super::{Display, ViewState};
+
+/// How often a project load waiting on the plugin catalog scan looks again
+/// (`restore_next_instrument`).
+const RESTORE_SCAN_POLL: Duration = Duration::from_millis(100);
 
 /// The macOS CLAP instrument host state, grouped out of [`Display`] — the
 /// running audio-thread handle, the per-track `!Send` editor instances, the
@@ -79,6 +86,47 @@ pub(super) struct InstrumentHost {
     /// `attach_plugin_catalog_rx` was never called, e.g. `start_plugin_host`
     /// failed.
     pub(super) plugin_catalog_rx: Option<Receiver<Vec<PluginCatalogEntry>>>,
+    /// A project being opened whose plugins are loading, one per frame
+    /// (`restore_next_instrument`), under the `RestoringInstruments` overlay.
+    /// `None` when no load is staging. See [`ProjectStaging`].
+    pub(super) staging: Option<ProjectStaging>,
+}
+
+/// A project load's plugins, prepared before the project replaces the open
+/// one (`Display::stage_project`).
+pub(super) struct ProjectStaging {
+    /// The project's name — the panel's title.
+    name: String,
+    /// The project, until its last plugin is ready and it goes back to the
+    /// sequencer; `None` from then until its `TrackInstrumentsChanged`
+    /// swaps the plugins in.
+    project: Option<Box<StagedProject>>,
+    /// The plugins still to prepare, and the count.
+    restore: InstrumentRestore,
+    /// The plugins prepared so far.
+    prepared: Vec<StagedInstrument>,
+}
+
+/// One plugin of a [`ProjectStaging`], loaded but not yet in the mixer.
+struct StagedInstrument {
+    /// The engine slot it goes into.
+    slot: usize,
+    /// What the project asked for — matched against `TrackInstrumentsChanged`.
+    want: InstrumentRef,
+    /// The catalog entry it was loaded from.
+    entry: PluginCatalogEntry,
+    /// The plugin itself.
+    prepared: PreparedInstrument,
+}
+
+impl ProjectStaging {
+    /// Leaks every prepared plugin — app exit, where dropping one races its
+    /// bundle's static destructors (`Display::on_exit`).
+    pub(super) fn leak(self) {
+        for staged in self.prepared {
+            std::mem::forget(staged.prepared);
+        }
+    }
 }
 
 /// A track's loaded plugin: its editor and the catalog entry it came from.
@@ -102,6 +150,7 @@ impl InstrumentHost {
             pending_instance_drop: Vec::new(),
             plugin_catalog: None,
             plugin_catalog_rx: None,
+            staging: None,
         }
     }
 }
@@ -420,16 +469,175 @@ impl Display {
     }
 
     /// Rebuilds the loaded editors for a freshly loaded/created project: every
-    /// current editor is torn down and every parked state dropped, then an
-    /// editor-less plugin is loaded into the slot of each `Instrument` track
-    /// named in `specs`.
+    /// current editor is torn down and every parked state dropped, then each
+    /// `Instrument` track named in `specs` gets an editor-less plugin — the
+    /// one a staged load prepared for it (`stage_project`), swapped in here
+    /// in the same frame as the old ones go, or, with none prepared, loaded
+    /// now.
     pub(super) fn sync_instruments_to_tracks(&mut self, specs: &[(usize, InstrumentRef)]) {
         for slot in 0..self.instruments.track_instruments.len() {
             self.remove_slot_instrument(slot);
         }
         self.instruments.parked_states.clear();
+        let mut prepared = self
+            .instruments
+            .staging
+            .take()
+            .map(|staging| staging.prepared)
+            .unwrap_or_default();
         for (slot, want) in specs {
-            self.restore_slot_instrument(*slot, None, want);
+            match prepared
+                .iter()
+                .position(|staged| staged.slot == *slot && staged.want == *want)
+            {
+                Some(pos) => self.install_staged_instrument(prepared.swap_remove(pos)),
+                None => self.restore_slot_instrument(*slot, None, want),
+            }
         }
+        for staged in prepared {
+            staged.prepared.discard();
+        }
+        if self.overlay == Some(Overlay::RestoringInstruments) {
+            self.close_overlay();
+        }
+        self.sync_live_instrument_target();
+    }
+
+    /// Puts a staged plugin into its slot: its voice to the mixer, its editor
+    /// (closed) to the track.
+    fn install_staged_instrument(&mut self, staged: StagedInstrument) {
+        let StagedInstrument {
+            slot,
+            entry,
+            prepared,
+            ..
+        } = staged;
+        let Some(handle) = self.instruments.audio.as_mut() else {
+            prepared.discard();
+            return;
+        };
+        match prepared.insert(handle) {
+            Ok(editor) => {
+                self.instruments.track_instruments[slot] = Some(TrackInstrument { editor, entry });
+            }
+            Err(e) => eprintln!("plugin host: failed to load '{}': {e}", entry.name),
+        }
+    }
+
+    /// A project read from disk with plugins on its tracks
+    /// (`UiEvent::StageProject`): queues its plugins for
+    /// `restore_next_instrument` to prepare, one per frame, under the
+    /// `RestoringInstruments` overlay. The open project and its plugins stay
+    /// as they are until the last one is ready and the project goes back to
+    /// the sequencer to be applied.
+    pub(super) fn stage_project(&mut self, project: Box<StagedProject>) {
+        if let Some(old) = self.instruments.staging.take() {
+            for staged in old.prepared {
+                staged.prepared.discard();
+            }
+        }
+        let Some(restore) = InstrumentRestore::new(&project.data.instrument_specs()) else {
+            self.input_event_tx
+                .send(InputEvent::ApplyStagedProject(project))
+                .ok();
+            return;
+        };
+        self.instruments.staging = Some(ProjectStaging {
+            name: project.filename.clone(),
+            project: Some(project),
+            restore,
+            prepared: Vec::new(),
+        });
+        self.overlay = Some(Overlay::RestoringInstruments);
+    }
+
+    /// Per-frame, from `logic`: prepares the next plugin of a staged project
+    /// and asks for the frame that paints the panel's next step — the first
+    /// waits a frame, so the panel is up before anything blocks. A plugin
+    /// missing from the catalog while the background scan is still running
+    /// waits for it, rather than reading as not installed. Once the last is
+    /// ready the project goes back to the sequencer
+    /// (`InputEvent::ApplyStagedProject`); its `TrackInstrumentsChanged`
+    /// swaps the plugins in (`sync_instruments_to_tracks`).
+    pub(super) fn restore_next_instrument(&mut self, ctx: &egui::Context) {
+        if self
+            .instruments
+            .staging
+            .as_ref()
+            .is_none_or(|staging| staging.project.is_none())
+        {
+            return;
+        }
+        if self.restore_waits_for_scan() {
+            ctx.request_repaint_after(RESTORE_SCAN_POLL);
+            return;
+        }
+        let next = self
+            .instruments
+            .staging
+            .as_mut()
+            .and_then(|staging| staging.restore.pop());
+        if let Some((slot, want)) = next {
+            self.prepare_staged_instrument(slot, want);
+        }
+        if let Some(staging) = &mut self.instruments.staging
+            && staging.restore.is_done()
+            && let Some(project) = staging.project.take()
+        {
+            self.input_event_tx
+                .send(InputEvent::ApplyStagedProject(project))
+                .ok();
+        }
+        ctx.request_repaint();
+    }
+
+    /// Loads `want` for `slot` without putting it in the mixer, and keeps it
+    /// with the staging. A plugin that isn't installed or fails to load is
+    /// left out: the track stays silent, as with any load.
+    fn prepare_staged_instrument(&mut self, slot: usize, want: InstrumentRef) {
+        let Some(entry) = self
+            .catalog_index_of(&want.bundle_path, &want.plugin_id)
+            .and_then(|idx| self.plugin_catalog().get(idx).cloned())
+        else {
+            eprintln!("plugin host: '{}' is not installed", want.display_name);
+            return;
+        };
+        let Some(handle) = self.instruments.audio.as_mut() else {
+            return;
+        };
+        match prepare_instrument(handle, slot, &entry, Some(&want.state)) {
+            Ok(prepared) => {
+                if let Some(staging) = &mut self.instruments.staging {
+                    staging.prepared.push(StagedInstrument {
+                        slot,
+                        want,
+                        entry,
+                        prepared,
+                    });
+                }
+            }
+            Err(e) => eprintln!("plugin host: failed to load '{}': {e}", entry.name),
+        }
+    }
+
+    /// The staged project's plugin restore, while one is loading — what the
+    /// panel draws — and the project's name.
+    pub(super) fn instrument_restore(&self) -> Option<(&InstrumentRestore, &str)> {
+        self.instruments
+            .staging
+            .as_ref()
+            .map(|staging| (&staging.restore, staging.name.as_str()))
+    }
+
+    /// Whether the restore's next plugin isn't in the catalog yet while the
+    /// background scan is still running — the restore waits for it.
+    pub(super) fn restore_waits_for_scan(&self) -> bool {
+        self.instrument_restore()
+            .and_then(|(restore, _)| restore.next())
+            .is_some_and(|(_, want)| {
+                self.catalog_index_of(&want.bundle_path, &want.plugin_id)
+                    .is_none()
+                    && self.plugin_catalog_scanning()
+            })
     }
 }

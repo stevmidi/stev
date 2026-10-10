@@ -10,7 +10,10 @@
 use uuid::Uuid;
 
 use crate::{
-    core::{config::DEFAULT_TRACK_COUNT, project::ProjectAction},
+    core::{
+        config::DEFAULT_TRACK_COUNT,
+        project::{ProjectAction, StagedProject},
+    },
     metadata::clip_metadata::ClipMetadata,
     metadata::clip_view::ClipView,
     models::clip::EventSpaceRetime,
@@ -163,6 +166,12 @@ pub(crate) enum UiEvent {
         /// Lowest and highest pitch of the take's notes.
         pitch_range: (u8, u8),
     },
+    /// A project was read from disk with plugins on its tracks and is not
+    /// applied yet: `Display` loads its plugins behind the restore panel, the
+    /// open project left as it is, then sends it back
+    /// (`InputEvent::ApplyStagedProject`). See `130-plugin-host.md`
+    /// § Project persistence.
+    StageProject(Box<StagedProject>),
     /// A project finished loading (or a new one was created) — rebuild the
     /// render-side clip list.
     ProjectLoaded {

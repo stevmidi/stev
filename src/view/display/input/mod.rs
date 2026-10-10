@@ -464,6 +464,12 @@ impl Display {
         let InputEvent::KeyPressed { key, modifiers } = input_event else {
             return false;
         };
+        // Neither a save nor a new project while another project's plugins
+        // load: the overlay below swallows them.
+        #[cfg(target_os = "macos")]
+        if self.overlay == Some(Overlay::RestoringInstruments) {
+            return false;
+        }
         if !modifiers.command {
             return false;
         }
@@ -482,6 +488,9 @@ impl Display {
         match self.overlay {
             Some(Overlay::Settings) => self.handle_settings_input_event(event),
             Some(Overlay::Help) => self.handle_help_input_event(event),
+            // Nothing to do but wait for the last plugin.
+            #[cfg(target_os = "macos")]
+            Some(Overlay::RestoringInstruments) => {}
             None => return false,
         }
         true

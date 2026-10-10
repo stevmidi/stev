@@ -1,9 +1,12 @@
-//! The modal screens — the settings modal, the help overlay and the project
-//! dialogs (Save As, the unsaved-changes prompt) — overlays `Display` owns, each drawn over the view
+//! The modal screens — the settings modal, the help overlay, the
+//! plugin-restore overlay (macOS) and the project dialogs (Save As, the
+//! unsaved-changes prompt) — overlays `Display` owns, each drawn over the view
 //! underneath. One file per modal; this file holds the shared modal-frame
 //! chrome.
 
 mod help;
+#[cfg(target_os = "macos")]
+mod instrument_restore;
 mod project_dialog;
 mod settings;
 
