@@ -19,7 +19,7 @@ use crate::core::project::{project_name_from_input, rename_midi_file, rename_pro
 use crate::view::theme;
 
 use super::Display;
-use super::browser::{BrowserItem, browser_row_rect, browser_text_x};
+use super::browser::{BROWSER_LIST_TOP, BrowserItem, browser_row_rect, browser_text_x};
 use super::status_message::StatusMessage;
 use super::track_rename::{FieldEvent, field_event, show_name_field};
 
@@ -68,11 +68,12 @@ impl Display {
         }
         let rows = self.browser.tree.rows();
         let idx = rows.iter().position(|row| row.item == rename.item)?;
-        let shown = idx.checked_sub(self.browser.scroll)?;
-        if shown >= self.browser_visible_rows() {
+        // Only while its row is wholly in the list: the field isn't clipped.
+        let row = browser_row_rect(self.render.canvas_rect.min, idx, self.browser.scroll);
+        let list_top = self.render.canvas_rect.min.y + BROWSER_LIST_TOP;
+        if row.min.y < list_top || row.max.y > self.browser_list_bottom() {
             return None;
         }
-        let row = browser_row_rect(self.render.canvas_rect.min, shown);
         Some(Rect::from_min_max(
             pos2(
                 row.min.x + browser_text_x(rows[idx].depth) - 4.0,

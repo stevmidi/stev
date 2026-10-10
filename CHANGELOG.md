@@ -50,6 +50,13 @@ Breaking entries are marked **Breaking** and say what to do about them.
   whole window width and the browser panel stops above it, so the footer and
   its messages stay put when the panel shows or hides.
 
+### Fixed
+
+- **The browser scrolls smoothly.** Trackpad and wheel scrolling over the
+  browser moves the list by the exact amount, like the arranger and clip view,
+  instead of jumping a whole row at a time and dropping slow two-finger
+  scrolls.
+
 ## [0.2.0] - 2026-10-10
 
 ### Added

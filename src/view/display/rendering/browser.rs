@@ -154,8 +154,10 @@ impl Display {
         let current_folder = self.project.project_current_folder.as_deref();
         let current_name = self.project.project_current_name.as_deref();
         let selected = tree.selected();
-        for (i, row) in rows.iter().skip(self.browser.scroll).enumerate() {
-            let row_rect = browser_row_rect(panel.min, i);
+        let scroll = self.browser.scroll;
+        let first = (scroll / BROWSER_ROW_H) as usize;
+        for (i, row) in rows.iter().enumerate().skip(first) {
+            let row_rect = browser_row_rect(panel.min, i, scroll);
             let top = row_rect.min.y;
             if top > list.max.y {
                 break;

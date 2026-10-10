@@ -33,6 +33,7 @@ use crate::core::{
 };
 
 use super::browser_rename::BrowserRename;
+use super::state::scrolled_offset;
 use super::*;
 
 /// The panel's width, in points. Whole points, so the shifted canvas keeps
@@ -51,11 +52,11 @@ pub(super) const BROWSER_DISCLOSURE_W: f32 = 26.0;
 /// Indent per tree depth.
 pub(super) const BROWSER_INDENT_X: f32 = 14.0;
 
-/// Row `shown` of the list, counted from the first visible row, in a panel
+/// Row `idx` of the tree with the list scrolled `scroll` points, in a panel
 /// whose top-left corner is `origin`: the panel's width less its separator.
 /// Where the rows are drawn and the rename field sits.
-pub(super) fn browser_row_rect(origin: Pos2, shown: usize) -> Rect {
-    let top = origin.y + BROWSER_LIST_TOP + shown as f32 * BROWSER_ROW_H;
+pub(super) fn browser_row_rect(origin: Pos2, idx: usize, scroll: f32) -> Rect {
+    let top = origin.y + BROWSER_LIST_TOP + idx as f32 * BROWSER_ROW_H - scroll;
     Rect::from_min_max(
         pos2(origin.x, top),
         pos2(origin.x + BROWSER_W - 1.0, top + BROWSER_ROW_H),
@@ -575,6 +576,20 @@ impl BrowserTree {
     }
 }
 
+/// The browser list's scroll (points) after scrolling so row `selected` is
+/// wholly on screen, moving `scroll` as little as possible; the list is
+/// `list_h` points tall. A list shorter than a row shows the row's top.
+pub(super) fn browser_scroll_to_show(scroll: f32, selected: usize, list_h: f32) -> f32 {
+    let top = selected as f32 * BROWSER_ROW_H;
+    if top < scroll {
+        top
+    } else if top + BROWSER_ROW_H > scroll + list_h {
+        (top + BROWSER_ROW_H - list_h).min(top)
+    } else {
+        scroll
+    }
+}
+
 /// The first visible row after scrolling so the row `selected` is on screen,
 /// moving `scroll` as little as possible; `visible` rows fit.
 pub(super) fn scroll_to_show(scroll: usize, selected: usize, visible: usize) -> usize {
@@ -596,8 +611,9 @@ pub(super) struct BrowserPanel {
     pub(super) visible: bool,
     /// The tree.
     pub(super) tree: BrowserTree,
-    /// The first visible row.
-    pub(super) scroll: usize,
+    /// How far the list is scrolled, in points: a float, so trackpad deltas
+    /// move it smoothly and small ones add up rather than round away.
+    pub(super) scroll: f32,
     /// A draggable row the primary button went down on — a `.mid` file or a
     /// Plugins row — `Some` until the release: dragged out of the panel, it
     /// becomes the import drag (`GestureState::midi_drag`) or the plugin
@@ -669,10 +685,14 @@ impl Display {
         self.footer_top() - BROWSER_LIST_PAD_Y
     }
 
-    /// How many whole rows fit in the panel's list this frame.
-    pub(super) fn browser_visible_rows(&self) -> usize {
-        let list_h = self.browser_list_bottom() - self.render.canvas_rect.min.y - BROWSER_LIST_TOP;
-        (list_h / BROWSER_ROW_H).floor().max(1.0) as usize
+    /// The height of the panel's list this frame, in points.
+    pub(super) fn browser_list_h(&self) -> f32 {
+        self.browser_list_bottom() - self.render.canvas_rect.min.y - BROWSER_LIST_TOP
+    }
+
+    /// The furthest the list scrolls: its last row's bottom at the list's.
+    fn browser_max_scroll(&self) -> f32 {
+        self.browser.tree.rows().len() as f32 * BROWSER_ROW_H - self.browser_list_h()
     }
 
     /// Re-lists the Plugins category from the plugin catalog — on showing
@@ -740,17 +760,17 @@ impl Display {
     fn scroll_browser_to_selection(&mut self) {
         if let Some(selected) = self.browser.tree.selected_index() {
             self.browser.scroll =
-                scroll_to_show(self.browser.scroll, selected, self.browser_visible_rows());
+                browser_scroll_to_show(self.browser.scroll, selected, self.browser_list_h());
         }
+        // A collapse can leave the list scrolled past its new end.
+        self.browser.scroll = self.browser.scroll.min(self.browser_max_scroll()).max(0.0);
     }
 
     /// Scrolls the list by a wheel / two-finger delta (points, positive =
     /// content moves down), clamped to the rows.
     pub(super) fn scroll_browser(&mut self, delta_y: f32) {
-        let rows = self.browser.tree.rows().len();
-        let max = rows.saturating_sub(self.browser_visible_rows());
-        let steps = (-delta_y / BROWSER_ROW_H).round() as i64;
-        self.browser.scroll = (self.browser.scroll as i64 + steps).clamp(0, max as i64) as usize;
+        self.browser.scroll =
+            scrolled_offset(self.browser.scroll, delta_y, self.browser_max_scroll());
     }
 
     /// A key press while the panel has the keyboard. Returns `true` when the
@@ -813,7 +833,7 @@ impl Display {
         if y < BROWSER_LIST_TOP {
             return;
         }
-        let idx = self.browser.scroll + ((y - BROWSER_LIST_TOP) / BROWSER_ROW_H) as usize;
+        let idx = ((y - BROWSER_LIST_TOP + self.browser.scroll) / BROWSER_ROW_H) as usize;
         let Some(item) = self
             .browser
             .tree
@@ -1268,6 +1288,23 @@ mod tests {
             assert_eq!(item.file_name(), None);
             assert_eq!(item.renamed("x".into()), None);
         }
+    }
+
+    #[test]
+    fn browser_scroll_moves_only_as_far_as_needed() {
+        let h = BROWSER_ROW_H;
+        // Already wholly visible: stays put.
+        assert_eq!(browser_scroll_to_show(0.0, 3, 10.0 * h), 0.0);
+        // Below: its bottom lands on the list's bottom.
+        assert_eq!(browser_scroll_to_show(0.0, 12, 10.0 * h), 3.0 * h);
+        // Above: its top lands on the list's top.
+        assert_eq!(browser_scroll_to_show(5.0 * h, 2, 10.0 * h), 2.0 * h);
+        // Part-scrolled off the top: brought fully in.
+        assert_eq!(browser_scroll_to_show(2.5 * h, 2, 10.0 * h), 2.0 * h);
+        // Part-cut at the bottom (list not a whole number of rows tall).
+        assert_eq!(browser_scroll_to_show(0.0, 9, 9.5 * h), 0.5 * h);
+        // A list shorter than a row shows the row's top.
+        assert_eq!(browser_scroll_to_show(0.0, 4, h * 0.5), 4.0 * h);
     }
 
     #[test]
