@@ -147,6 +147,7 @@ Mirrored in the README's *Not planned* list, so nobody expects these. Some may c
 
 - tempo or meter changes along the timeline (one tempo and one meter per project; the meter is stored as a list so changes could extend the format later, `060`)
 - audio tracks and audio recording
+- a built-in sampler or other built-in instrument: sampler and instrument plugins cover it, loaded through the plugin host (`130`)
 - automation lanes and CC lane editing
 - mixing: built-in EQ, compression or other effects, effect plugins, sends, a mixer panel (Stev arranges, a DAW mixes: § Principle; the hand-off is a stem export)
 - MIDI clock / Ableton Link / external sync

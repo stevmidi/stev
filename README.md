@@ -86,6 +86,7 @@ the [roadmap](docs/280-roadmap.md):
 - tempo or meter changes along the timeline (one tempo and one meter per
   project)
 - audio tracks and audio recording
+- a built-in sampler or instrument: plugins cover it
 - automation lanes and CC lane editing
 - mixing: EQ, compression, effect plugins, sends, a mixer panel. Stev arranges;
   a DAW mixes
