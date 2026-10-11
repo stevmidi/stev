@@ -110,10 +110,26 @@ pub(super) fn browser_toggle_rect(footer: Rect) -> Rect {
 /// The panel toggle's gap from the window's left edge.
 const BROWSER_TOGGLE_INSET_X: f32 = 4.0;
 
-/// Where the text of a row at `depth` starts, from the row's left edge: past
-/// its indent and the disclosure triangle's zone.
-pub(super) fn browser_text_x(depth: u8) -> f32 {
+/// Width of the icon column of a row below a category: the icon and its gap
+/// to the text.
+pub(super) const BROWSER_ICON_W: f32 = 22.0;
+
+/// Where the icon column of a row at `depth` starts, from the row's left
+/// edge: past its indent and the disclosure triangle's zone.
+pub(super) fn browser_icon_x(depth: u8) -> f32 {
     f32::from(depth) * BROWSER_INDENT_X + BROWSER_DISCLOSURE_W
+}
+
+/// Where the text of `row` starts, from the row's left edge: past the icon
+/// column, which every row but a category has — iconless "Scanning…" too, so
+/// the names line up.
+pub(super) fn browser_text_x(row: &BrowserRow) -> f32 {
+    let icon = if matches!(row.item, BrowserItem::Category(_)) {
+        0.0
+    } else {
+        BROWSER_ICON_W
+    };
+    browser_icon_x(row.depth) + icon
 }
 
 /// A top-level category of the tree.
@@ -998,6 +1014,19 @@ mod tests {
 
     fn names(names: &[&str]) -> Vec<String> {
         names.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn text_clears_the_icon_column_on_every_row_but_a_category() {
+        let row = |item, depth| BrowserRow { item, depth };
+        let category = row(BrowserItem::Category(BrowserCategory::Clips), 0);
+        assert_eq!(browser_text_x(&category), browser_icon_x(0));
+        for item in [BrowserItem::Clip("riff".to_owned()), BrowserItem::Scanning] {
+            assert_eq!(
+                browser_text_x(&row(item, 1)),
+                browser_icon_x(1) + BROWSER_ICON_W
+            );
+        }
     }
 
     /// `folders` (name, projects), the loose projects `root` and `clips`.

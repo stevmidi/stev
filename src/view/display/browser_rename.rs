@@ -82,7 +82,7 @@ impl Display {
         }
         Some(Rect::from_min_max(
             pos2(
-                row.min.x + browser_text_x(rows[idx].depth) - 4.0,
+                row.min.x + browser_text_x(&rows[idx]) - 4.0,
                 row.min.y + 1.0,
             ),
             pos2(row.max.x - FIELD_RIGHT_X, row.max.y - 1.0),
