@@ -6,7 +6,7 @@
 use egui::{Id, LayerId, Order, Pos2, Shape, StrokeKind, Vec2};
 
 use super::super::browser::{
-    BROWSER_DISCLOSURE_W, BROWSER_INDENT_X, BROWSER_LIST_TOP, BROWSER_ROW_H, BrowserItem,
+    BROWSER_DISCLOSURE_W, BROWSER_INDENT_X, BROWSER_LIST_PAD_Y, BROWSER_ROW_H, BrowserItem,
     browser_row_rect, browser_text_x,
 };
 use super::*;
@@ -140,7 +140,7 @@ impl Display {
         }
 
         let list = Rect::from_min_max(
-            pos2(panel.min.x, panel.min.y + BROWSER_LIST_TOP),
+            pos2(panel.min.x, panel.min.y + BROWSER_LIST_PAD_Y),
             pos2(panel.max.x - 1.0, self.browser_list_bottom()),
         );
         let painter = painter.with_clip_rect(list);

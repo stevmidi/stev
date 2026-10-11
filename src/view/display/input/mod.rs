@@ -689,11 +689,13 @@ impl Display {
                 if self.pointer_held_drag() {
                     return true;
                 }
-                // The browser's edge drag owns the pointer too. `x` is in
-                // the canvas space this frame's poll shifted by the panel's
-                // width, before this move changes it.
+                // The browser's edge drag owns the pointer too. It reads the
+                // pointer in window space, which the width it changes
+                // doesn't shift.
                 if self.browser.resize_grab.is_some() {
-                    self.extend_browser_resize(x + self.browser_width());
+                    if let Some(pos) = ctx.input(|i| i.pointer.latest_pos()) {
+                        self.extend_browser_resize(pos.x);
+                    }
                     return true;
                 }
                 let pane = self.pointer_pane(x, y);
@@ -771,7 +773,7 @@ impl Display {
                 }
                 // The browser panel's right edge drags its width.
                 if self.is_on_browser_edge(x, y) {
-                    self.begin_browser_resize(x);
+                    self.browser.resize_grab = Some(x);
                     return true;
                 }
                 // Left of the canvas is the browser panel; a press anywhere

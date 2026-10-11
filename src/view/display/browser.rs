@@ -46,11 +46,10 @@ const BROWSER_W_MAX: f32 = 600.0;
 const BROWSER_EDGE_GRAB_X: f32 = 4.0;
 /// Height of one row of the tree.
 pub(super) const BROWSER_ROW_H: f32 = 22.0;
-/// The list's gap below the window's top and above the footer: a row the
-/// list cuts off is clipped this far short of the footer's edge.
+/// The list's gap below the window's top (where its first row starts) and
+/// above the footer: a row the list cuts off is clipped this far short of
+/// the footer's edge.
 pub(super) const BROWSER_LIST_PAD_Y: f32 = 6.0;
-/// Top of the first row.
-pub(super) const BROWSER_LIST_TOP: f32 = BROWSER_LIST_PAD_Y;
 /// Width of the disclosure triangle's hit zone, from a folder or category
 /// row's indent — a click there toggles it rather than only selecting it.
 pub(super) const BROWSER_DISCLOSURE_W: f32 = 26.0;
@@ -60,7 +59,7 @@ pub(super) const BROWSER_INDENT_X: f32 = 14.0;
 /// `width` as the panel's width: whole points, so the shifted canvas keeps
 /// its pixel-snapped seams, between [`BROWSER_W_MIN`] and [`BROWSER_W_MAX`].
 /// A width read from `settings.json` passes through here too.
-pub(super) fn clamp_browser_width(width: f32) -> f32 {
+pub(in crate::view::display) fn clamp_browser_width(width: f32) -> f32 {
     if width.is_finite() {
         width.round().clamp(BROWSER_W_MIN, BROWSER_W_MAX)
     } else {
@@ -72,7 +71,7 @@ pub(super) fn clamp_browser_width(width: f32) -> f32 {
 /// `width` wide whose top-left corner is `origin`: the panel's width less its
 /// separator. Where the rows are drawn and the rename field sits.
 pub(super) fn browser_row_rect(origin: Pos2, width: f32, idx: usize, scroll: f32) -> Rect {
-    let top = origin.y + BROWSER_LIST_TOP + idx as f32 * BROWSER_ROW_H - scroll;
+    let top = origin.y + BROWSER_LIST_PAD_Y + idx as f32 * BROWSER_ROW_H - scroll;
     Rect::from_min_max(
         pos2(origin.x, top),
         pos2(origin.x + width - 1.0, top + BROWSER_ROW_H),
@@ -617,6 +616,7 @@ pub(super) fn scroll_to_show(scroll: usize, selected: usize, visible: usize) -> 
 
 /// The panel's view-local state, grouped out of [`Display`] as
 /// `Display::browser`.
+#[derive(Default)]
 pub(super) struct BrowserPanel {
     /// Shown or hidden. Hidden at startup.
     pub(super) visible: bool,
@@ -639,21 +639,6 @@ pub(super) struct BrowserPanel {
     /// The open rename field (⌘R on a project or clip row), see
     /// `browser_rename.rs`.
     pub(super) rename: Option<BrowserRename>,
-}
-
-impl BrowserPanel {
-    /// A hidden panel `width` wide (`settings.json`'s, clamped).
-    pub(super) fn new(width: f32) -> Self {
-        Self {
-            visible: false,
-            width: clamp_browser_width(width),
-            resize_grab: None,
-            tree: BrowserTree::default(),
-            scroll: 0.0,
-            press: None,
-            rename: None,
-        }
-    }
 }
 
 /// A draggable browser row under the held primary button, before it leaves
@@ -699,14 +684,10 @@ impl Display {
                 .is_some_and(|p| self.is_on_browser_edge(p.x, p.y))
     }
 
-    /// A press on the panel's edge at canvas x `x`: starts dragging its
-    /// width.
-    pub(super) fn begin_browser_resize(&mut self, x: f32) {
-        self.browser.resize_grab = Some(x);
-    }
-
     /// The edge drag with the pointer at window-space x `window_x` (not
     /// canvas space, which shifts as the panel's width changes under it).
+    /// `resize_grab` is the press's canvas x, which is its offset from the
+    /// edge.
     pub(super) fn extend_browser_resize(&mut self, window_x: f32) {
         if let Some(grab) = self.browser.resize_grab {
             self.browser.width = clamp_browser_width(window_x - grab);
@@ -767,7 +748,7 @@ impl Display {
 
     /// The height of the panel's list this frame, in points.
     pub(super) fn browser_list_h(&self) -> f32 {
-        self.browser_list_bottom() - self.render.canvas_rect.min.y - BROWSER_LIST_TOP
+        self.browser_list_bottom() - self.render.canvas_rect.min.y - BROWSER_LIST_PAD_Y
     }
 
     /// The furthest the list scrolls: its last row's bottom at the list's.
@@ -914,10 +895,10 @@ impl Display {
     /// toggles a folder or category and acts like Enter on anything else.
     pub(super) fn handle_browser_click(&mut self, x: f32, y: f32, double: bool) {
         self.key_focus = KeyFocus::Browser;
-        if y < BROWSER_LIST_TOP {
+        if y < BROWSER_LIST_PAD_Y {
             return;
         }
-        let idx = ((y - BROWSER_LIST_TOP + self.browser.scroll) / BROWSER_ROW_H) as usize;
+        let idx = ((y - BROWSER_LIST_PAD_Y + self.browser.scroll) / BROWSER_ROW_H) as usize;
         let Some(item) = self
             .browser
             .tree
@@ -929,8 +910,8 @@ impl Display {
         };
         let depth = self.browser.tree.rows()[idx].depth;
         let disclosure_x = f32::from(depth) * BROWSER_INDENT_X;
-        let on_disclosure =
-            (disclosure_x..disclosure_x + BROWSER_DISCLOSURE_W).contains(&(x + self.browser.width));
+        let on_disclosure = (disclosure_x..disclosure_x + BROWSER_DISCLOSURE_W)
+            .contains(&(x + self.browser_width()));
         if !double && matches!(item, BrowserItem::Clip(_) | BrowserItem::Plugin(_)) {
             self.browser.press = Some(BrowserPress {
                 item: item.clone(),

@@ -19,7 +19,7 @@ use crate::core::project::{project_name_from_input, rename_clip, rename_project}
 use crate::view::theme;
 
 use super::Display;
-use super::browser::{BROWSER_LIST_TOP, BrowserItem, browser_row_rect, browser_text_x};
+use super::browser::{BROWSER_LIST_PAD_Y, BrowserItem, browser_row_rect, browser_text_x};
 use super::status_message::StatusMessage;
 use super::track_rename::{FieldEvent, field_event, show_name_field};
 
@@ -75,7 +75,7 @@ impl Display {
             idx,
             self.browser.scroll,
         );
-        let list_top = self.render.canvas_rect.min.y + BROWSER_LIST_TOP;
+        let list_top = self.render.canvas_rect.min.y + BROWSER_LIST_PAD_Y;
         if row.min.y < list_top || row.max.y > self.browser_list_bottom() {
             return None;
         }
@@ -124,8 +124,12 @@ impl Display {
         let Some(rename) = self.browser.rename.take() else {
             return;
         };
-        let (BrowserItem::Project { name: old, .. } | BrowserItem::Clip(old)) = &rename.item else {
-            return;
+        // `folder` is `Some` for a project (its folder, itself an option),
+        // `None` for a clip.
+        let (folder, old) = match &rename.item {
+            BrowserItem::Project { folder, name } => (Some(folder), name),
+            BrowserItem::Clip(name) => (None, name),
+            _ => return,
         };
         if rename.text.trim().is_empty() {
             return;
@@ -139,10 +143,6 @@ impl Display {
         if new == *old {
             return;
         }
-        let folder = match &rename.item {
-            BrowserItem::Project { folder, .. } => Some(folder),
-            _ => None,
-        };
         let result = match folder {
             Some(folder) => rename_project(folder.as_deref(), old, &new),
             None => rename_clip(old, &new),

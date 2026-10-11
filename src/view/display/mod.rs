@@ -70,7 +70,7 @@ mod tempo_field;
 mod track_rename;
 mod ui_event;
 
-use self::browser::{BrowserItem, BrowserPanel, BrowserPlugin, footer_rect};
+use self::browser::{BrowserItem, BrowserPanel, BrowserPlugin, clamp_browser_width, footer_rect};
 use self::gesture_state::GestureState;
 use self::grid::{GridSurface, GridTiers, grid_tiers};
 use self::help_overlay::HelpOverlay;
@@ -416,7 +416,10 @@ impl Display {
             track_mix,
             audio_load: None,
             project: ProjectViewState::new(last_project_folder),
-            browser: BrowserPanel::new(browser_width),
+            browser: BrowserPanel {
+                width: clamp_browser_width(browser_width),
+                ..BrowserPanel::default()
+            },
             drag_pointer: None,
             selected_track_idx: 0,
             key_focus: KeyFocus::Pane,
