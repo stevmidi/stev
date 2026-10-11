@@ -45,7 +45,11 @@ const BROWSER_W_MAX: f32 = 600.0;
 /// How far either side of the panel's right edge a press grabs it.
 const BROWSER_EDGE_GRAB_X: f32 = 4.0;
 /// Height of one row of the tree.
-pub(super) const BROWSER_ROW_H: f32 = 22.0;
+pub(super) const BROWSER_ROW_H: f32 = 26.0;
+/// Size of the tree's text, and of the rename field over a row: what Zed's
+/// project panel draws at its default 16pt UI size (its labels are 14/16 of
+/// it), a point above `theme::FONT_SIZE_LABEL`.
+pub(super) const BROWSER_FONT_SIZE: f32 = 14.0;
 /// The list's gap below the window's top (where its first row starts) and
 /// above the footer: a row the list cuts off is clipped this far short of
 /// the footer's edge.

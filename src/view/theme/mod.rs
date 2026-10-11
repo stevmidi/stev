@@ -10,6 +10,7 @@
 //!
 //! The 30 palettes themselves and the `ThemePalette` shape are in `palettes.rs`.
 
+pub(crate) mod fonts;
 mod palettes;
 
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -135,8 +136,10 @@ pub(crate) const HEADER_H: f32 = 42.0;
 pub(crate) const STATUS_H: f32 = 28.0;
 
 // --- Font sizes ---
-/// Header font size, pixels.
-pub(crate) const FONT_SIZE_HEADER: f32 = 30.0;
+/// Header readout value size (BPM, position, DSP…), pixels. Kept modest so
+/// the values read as information, not headlines, beside their
+/// `FONT_SIZE_LABEL` labels.
+pub(crate) const FONT_SIZE_HEADER_VALUE: f32 = 18.0;
 
 /// Timeline font size, pixels.
 pub(crate) const FONT_SIZE_TL: f32 = 12.0;

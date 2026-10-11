@@ -16,10 +16,11 @@ use egui::{FontId, Id, Margin, Rect, TextEdit, Ui, UiBuilder, pos2, vec2};
 use crate::core::config::PROJECT_NAME_MAX_CHARS;
 use crate::core::input_event::InputEvent;
 use crate::core::project::{project_name_from_input, rename_clip, rename_project};
-use crate::view::theme;
 
 use super::Display;
-use super::browser::{BROWSER_LIST_PAD_Y, BrowserItem, browser_row_rect, browser_text_x};
+use super::browser::{
+    BROWSER_FONT_SIZE, BROWSER_LIST_PAD_Y, BrowserItem, browser_row_rect, browser_text_x,
+};
 use super::status_message::StatusMessage;
 use super::track_rename::{FieldEvent, field_event, show_name_field};
 
@@ -176,7 +177,7 @@ impl Display {
         };
         let field = TextEdit::singleline(&mut rename.text)
             .char_limit(PROJECT_NAME_MAX_CHARS)
-            .font(FontId::proportional(theme::FONT_SIZE_LABEL));
+            .font(FontId::proportional(BROWSER_FONT_SIZE));
         show_name_field(
             &mut ui.new_child(UiBuilder::new().layer_id(Self::browser_layer())),
             field,

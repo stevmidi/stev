@@ -44,6 +44,7 @@ use crate::core::plugin_host::{
 #[cfg(target_os = "macos")]
 use crate::view::appkit::route_quit_through_window_close;
 use crate::view::theme;
+use crate::view::theme::fonts::font_definitions;
 
 /// Pure data — `Clip`, `Event`, `Track`, `Region`, `PerformanceLane`,
 /// `Selection`, `WheelTracker`. No I/O.
@@ -275,6 +276,7 @@ fn main() {
         Box::new(move |cc| {
             let mut display = display;
             repaint_ctx.set(cc.egui_ctx.clone()).ok();
+            cc.egui_ctx.set_fonts(font_definitions());
             display.attach_drag_pointer(cc);
             // eframe's GL context is current here; kept so each frame can
             // take it back from plugin code that switched to its own

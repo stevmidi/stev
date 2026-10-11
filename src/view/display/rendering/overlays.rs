@@ -28,7 +28,7 @@ impl Display {
     /// The header readouts' value font — the BPM field's too, so the text
     /// doesn't jump when it opens.
     pub(super) fn header_value_font() -> FontId {
-        FontId::proportional((theme::FONT_SIZE_HEADER * 0.75).clamp(16.0, 24.0))
+        FontId::proportional(theme::FONT_SIZE_HEADER_VALUE)
     }
 
     /// Paints the header info panel (tempo, meter, position, DSP / OVR

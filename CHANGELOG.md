@@ -53,6 +53,11 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ### Changed
 
+- **A new interface font, IBM Plex Sans.** It replaces egui's Ubuntu Light,
+  which read too thin, across the whole app, and is drawn the way macOS draws
+  text, so it looks as it does in Zed. Its licence is in
+  `THIRD-PARTY-NOTICES.md`. The header's values are smaller, and the
+  browser's text is a point larger, on taller rows.
 - **More room in the browser.** The BROWSER heading is gone, so the list
   starts at the top of the window.
 - **The footer runs under the browser panel.** The status bar now spans the

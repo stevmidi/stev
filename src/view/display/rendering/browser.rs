@@ -6,8 +6,8 @@
 use egui::{Id, LayerId, Order, Pos2, Shape, StrokeKind, Vec2};
 
 use super::super::browser::{
-    BROWSER_DISCLOSURE_W, BROWSER_INDENT_X, BROWSER_LIST_PAD_Y, BROWSER_ROW_H, BrowserItem,
-    browser_row_rect, browser_text_x,
+    BROWSER_DISCLOSURE_W, BROWSER_FONT_SIZE, BROWSER_INDENT_X, BROWSER_LIST_PAD_Y, BROWSER_ROW_H,
+    BrowserItem, browser_row_rect, browser_text_x,
 };
 use super::*;
 
@@ -34,7 +34,7 @@ const TOGGLE_WASH_SIZE: f32 = 22.0;
 
 /// A folder's disclosure triangle centred on `centre`: pointing right when
 /// collapsed, down when expanded (Finder, Ableton). Painted rather than a
-/// `▸`/`▾` glyph, which egui's proportional font doesn't have.
+/// `▸`/`▾` glyph, which the UI font doesn't have.
 fn disclosure_triangle(centre: Pos2, expanded: bool) -> [Pos2; 3] {
     let h = DISCLOSURE_HALF;
     // Slightly narrower than tall, so it reads as a pointer, not a wedge.
@@ -126,7 +126,7 @@ impl Display {
         painter.vline(panel.max.x - 0.5, panel.y_range(), Stroke::new(1.0, edge));
 
         let focused = self.key_owner() == KeyFocus::Browser;
-        let font = FontId::proportional(theme::FONT_SIZE_LABEL);
+        let font = FontId::proportional(BROWSER_FONT_SIZE);
         // With the keyboard: the panes' focus edge (`draw_pane_split`), along
         // the panel's top — one physical pixel down, so the window's edge
         // doesn't clip the stroke's anti-aliased fringe and thin it.

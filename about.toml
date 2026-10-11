@@ -1,7 +1,8 @@
 # `cargo about generate about.hbs -o THIRD-PARTY-NOTICES.md` writes the notices
 # file that ships with every binary (docs/080-conventions.md § Licensing). The
-# template adds the two notices cargo can't see: the VST 3 SDK and the CLAP
-# headers that the `vst3` and `clap-sys` bindings are generated from.
+# template adds the notices cargo can't see: the VST 3 SDK and the CLAP
+# headers that the `vst3` and `clap-sys` bindings are generated from, and the
+# IBM Plex Sans font in `assets/fonts/`.
 
 # Licences the notices file may contain, in order of preference: for a crate
 # offering a choice (`Apache-2.0 OR GPL-2.0-only`), the first one listed here
