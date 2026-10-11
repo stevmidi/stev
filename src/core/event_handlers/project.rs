@@ -238,14 +238,13 @@ impl EventHandlers {
         self.send_lead_clip_changed_ui_event(sequencer.current_clip_view());
     }
 
-    /// `⌘/Ctrl+⇧+E`: writes the lead clip to a `.mid` next to the project
-    /// (a shown browser re-reads the tree) and says so in the footer — the file name, why nothing was exported, or
-    /// the write error. Never silent.
+    /// `⌘/Ctrl+⇧+E`: writes the lead clip to a `.mid` in the `Clips` folder
+    /// (a shown browser re-reads the tree) and says so in the footer — the
+    /// file name, why nothing was exported, or the write error. Never silent.
     pub(super) fn export_clip_workflow(
         &self,
         sequencer: &Sequencer,
         time_bounds: Option<TimeSelectionRect>,
-        folder: Option<&str>,
         name: &str,
     ) {
         let message = match sequencer.export_lead_clip(time_bounds) {
@@ -253,7 +252,6 @@ impl EventHandlers {
             Err(ExportRefusal::NoClip) => "No clip to export".to_owned(),
             Ok(export) => match project::save_clip_export(
                 &export.bytes,
-                folder,
                 name,
                 export.track_idx,
                 export.start_tick,

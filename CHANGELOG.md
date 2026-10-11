@@ -40,12 +40,21 @@ Breaking entries are marked **Breaking** and say what to do about them.
   the layout alone, like a click in it. With the panel hidden or maximized it
   does what Shift+Tab does, since the other pane isn't on screen. With the
   browser panel focused, Tab hands the keyboard back to the pane you were in.
+- **A Clips folder.** Exported clips (⌘⇧E) now go to one `Clips` folder
+  beside the project folders, and the browser lists them under a CLIPS
+  category of their own instead of mixed in with each folder's projects.
+  `.mid` files exported before this stay where they are and no longer show
+  in the browser. Move them into `Clips` to get them back.
+- **The browser panel can be made wider.** Drag its right edge. The width is
+  remembered between sessions.
 - **The browser shows when it has the keyboard.** The accent edge that marks
   the focused pane now moves to the top of the browser panel while it has
   the keyboard, so only one edge is ever lit.
 
 ### Changed
 
+- **More room in the browser.** The BROWSER heading is gone, so the list
+  starts at the top of the window.
 - **The footer runs under the browser panel.** The status bar now spans the
   whole window width and the browser panel stops above it, so the footer and
   its messages stay put when the panel shows or hides.

@@ -19,7 +19,7 @@ pub(crate) use dto::{ClipData, EventData};
 pub(crate) use smf::write_smf;
 pub(crate) use staged::StagedProject;
 pub(crate) use storage::{
-    FolderListing, delete_project, is_midi_file, list_folder, list_project_folders, load_midi_clip,
-    load_project, midi_file_path, project_exists, project_name_from_input, rename_midi_file,
+    clip_path, delete_project, is_midi_file, list_clips, list_project_folders, list_projects,
+    load_midi_clip, load_project, project_exists, project_name_from_input, rename_clip,
     rename_project, save_clip_export, save_project,
 };

@@ -1,5 +1,6 @@
 //! App-wide settings (not project data): the remembered MIDI ports, the
-//! MIDI-out offset, the last project folder and the theme index. Serialized to
+//! MIDI-out offset, the last project folder, the theme index and the browser
+//! panel's width. Serialized to
 //! `settings.json` in the platform config directory (`paths::config_dir`).
 //! Like the project DTOs, a new field must be `#[serde(default)]` — but here
 //! the default is often *not* the zero value, so an upgrading user gets
@@ -9,7 +10,7 @@ use std::{fs, io, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use super::config::{MIDI_OUT_OFFSET_DEFAULT_MS, MIDI_OUT_OFFSET_MAX_MS};
+use super::config::{BROWSER_W_DEFAULT, MIDI_OUT_OFFSET_DEFAULT_MS, MIDI_OUT_OFFSET_MAX_MS};
 use super::paths::{SETTINGS_FILE_NAME, config_dir};
 
 /// The on-disk `settings.json` shape.
@@ -36,6 +37,16 @@ pub(crate) struct SettingsData {
     /// rather than requiring the field.
     #[serde(default)]
     pub(crate) theme_index: usize,
+    /// The browser panel's width in points, as its edge was last dragged
+    /// (clamped where it's read). Absent in settings saved before the edge
+    /// could be dragged: the old fixed width.
+    #[serde(default = "default_browser_width")]
+    pub(crate) browser_width: f32,
+}
+
+/// Serde default for [`SettingsData::browser_width`].
+fn default_browser_width() -> f32 {
+    BROWSER_W_DEFAULT
 }
 
 /// Serde default for [`SettingsData::midi_out_offset_ms`] — the aligned offset,
@@ -55,6 +66,7 @@ impl Default for SettingsData {
             last_project_folder: None,
             midi_out_offset_ms: default_midi_out_offset_ms(),
             theme_index: 0,
+            browser_width: default_browser_width(),
         }
     }
 }

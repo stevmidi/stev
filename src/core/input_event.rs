@@ -592,14 +592,12 @@ pub(crate) enum InputEvent {
         folder: Option<String>,
     },
     /// **⌘/Ctrl+⇧+E** — "Export MIDI Clip": write the lead clip to a `.mid`
-    /// in the project folder (`Sequencer::export_lead_clip`). The view adds
+    /// in the `Clips` folder (`Sequencer::export_lead_clip`). The view adds
     /// what only it knows: the arranger marquee (`None` from the clip view)
-    /// and where the project lives.
+    /// and the name the file starts with.
     ExportClip {
         /// The arranger marquee; `None` in the clip view or without one.
         time_bounds: Option<TimeSelectionRect>,
-        /// Project folder, or the root fallback when `None`.
-        folder: Option<String>,
         /// What the file name starts with: the open project's name, else the
         /// folder's, else `project`.
         name: String,

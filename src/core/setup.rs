@@ -209,6 +209,7 @@ pub(crate) fn setup_display(
     midi_out_current_port: Option<String>,
     last_project_folder: Option<String>,
     midi_out_offset_ms: i32,
+    browser_width: f32,
 ) -> Display {
     Display::new(
         event_handlers,
@@ -221,6 +222,7 @@ pub(crate) fn setup_display(
         midi_out_current_port,
         last_project_folder,
         midi_out_offset_ms,
+        browser_width,
         shared_atomics.tempo.clone(),
         shared_atomics.meter.clone(),
         shared_atomics.running.clone(),

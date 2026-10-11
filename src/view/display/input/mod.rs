@@ -10,7 +10,7 @@ use egui::Key;
 
 use crate::core::config::ZOOM_KEY_STEP;
 use crate::core::input_event::{KeyModifiers, is_pane_focus_key};
-use crate::core::project::{ProjectAction, midi_file_path};
+use crate::core::project::{ProjectAction, clip_path};
 use crate::core::time::PPQN;
 
 mod gestures;
@@ -689,6 +689,13 @@ impl Display {
                 if self.pointer_held_drag() {
                     return true;
                 }
+                // The browser's edge drag owns the pointer too. `x` is in
+                // the canvas space this frame's poll shifted by the panel's
+                // width, before this move changes it.
+                if self.browser.resize_grab.is_some() {
+                    self.extend_browser_resize(x + self.browser_width());
+                    return true;
+                }
                 let pane = self.pointer_pane(x, y);
                 self.in_pane(pane, |display| {
                     display.extend_time_selection(x, y);
@@ -712,10 +719,10 @@ impl Display {
                 {
                     if let BrowserItem::Plugin(plugin) = item {
                         self.begin_plugin_drag(plugin);
-                    } else if let BrowserItem::MidiFile { folder, name } = item
+                    } else if let BrowserItem::Clip(name) = item
                         && self.gesture.midi_drag.is_none()
                     {
-                        self.begin_midi_drag(&midi_file_path(folder.as_deref(), &name));
+                        self.begin_midi_drag(&clip_path(&name));
                     }
                 }
                 self.update_midi_drag_target(x, y);
@@ -760,6 +767,11 @@ impl Display {
                 // The footer's panel toggle: `⌘⌥B`'s mouse twin.
                 if self.is_on_browser_toggle(x, y) {
                     self.toggle_browser();
+                    return true;
+                }
+                // The browser panel's right edge drags its width.
+                if self.is_on_browser_edge(x, y) {
+                    self.begin_browser_resize(x);
                     return true;
                 }
                 // Left of the canvas is the browser panel; a press anywhere
@@ -820,6 +832,7 @@ impl Display {
             }
             InputEvent::MouseReleased => {
                 self.browser.press = None;
+                self.finish_browser_resize();
                 self.finish_midi_drag();
                 self.finish_plugin_drag();
                 self.gesture.time_selection_anchor = None;
@@ -1205,20 +1218,15 @@ impl Display {
                     .gesture
                     .time_selection
                     .filter(|_| self.view_state() == ViewState::Arranger);
-                let folder = self.project.project_current_folder.clone();
                 let name = self
                     .project
                     .project_current_name
                     .as_deref()
-                    .or(folder.as_deref())
+                    .or(self.project.project_current_folder.as_deref())
                     .unwrap_or("project")
                     .to_owned();
                 self.input_event_tx
-                    .send(InputEvent::ExportClip {
-                        time_bounds,
-                        folder,
-                        name,
-                    })
+                    .send(InputEvent::ExportClip { time_bounds, name })
                     .is_ok()
             }
             // Ableton-style split at the cursor: same shape as Delete above,

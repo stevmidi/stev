@@ -278,14 +278,9 @@ impl EventHandlers {
                 });
             }
 
-            InputEvent::ExportClip {
-                time_bounds,
-                folder,
-                name,
-            } => {
+            InputEvent::ExportClip { time_bounds, name } => {
                 self.send_sequencer(SequencerCommand::ExportClip {
                     time_bounds: *time_bounds,
-                    folder: folder.clone(),
                     name: name.clone(),
                 });
             }

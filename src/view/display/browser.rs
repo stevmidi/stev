@@ -1,10 +1,12 @@
-//! The browser side panel: a toggleable, fixed-width panel on the left with
-//! two categories. **Projects** holds the project folders under
-//! `paths::project_dir()`, each expandable to its `.stev` and `.mid` files,
-//! then the loose files at the projects root. **Plugins** (macOS only, where
-//! the plugin host runs) lists every installed instrument plugin: Enter puts
-//! the selected one on the selected track, a drag onto a track puts it there.
-//! The panel replaced the ⌘O Project modal. `⌘⌥B` toggles it, `⌘O` shows it.
+//! The browser side panel: a toggleable panel on the left, its width dragged
+//! by its right edge, with three categories. **Projects** holds the project
+//! folders under `paths::project_dir()`, each expandable to its `.stev`
+//! files, then the loose projects at the projects root. **Clips** lists the
+//! `.mid` files in the `Clips` folder, where a clip export lands: Enter or a
+//! drag imports one. **Plugins** (macOS only, where the plugin host runs)
+//! lists every installed instrument plugin: Enter puts the selected one on
+//! the selected track, a drag onto a track puts it there. The panel replaced
+//! the ⌘O Project modal. `⌘⌥B` toggles it, `⌘O` shows it.
 //!
 //! Its keyboard focus is view-local: while focused it takes the arrows,
 //! Enter, Delete/Backspace and Esc, and every other key falls through to the
@@ -24,10 +26,10 @@ use std::{collections::HashSet, path::PathBuf};
 use egui::{Key, Pos2, vec2};
 
 use crate::core::{
+    config::BROWSER_W_DEFAULT,
     input_event::is_pane_focus_key,
     project::{
-        FolderListing, ProjectAction, delete_project, list_folder, list_project_folders,
-        midi_file_path,
+        ProjectAction, clip_path, delete_project, list_clips, list_project_folders, list_projects,
     },
     settings::update_settings,
 };
@@ -36,30 +38,44 @@ use super::browser_rename::BrowserRename;
 use super::state::scrolled_offset;
 use super::*;
 
-/// The panel's width, in points. Whole points, so the shifted canvas keeps
-/// its pixel-snapped seams.
-pub(super) const BROWSER_W: f32 = 260.0;
+/// The narrowest the panel's edge drags it.
+const BROWSER_W_MIN: f32 = 180.0;
+/// The widest the panel's edge drags it.
+const BROWSER_W_MAX: f32 = 600.0;
+/// How far either side of the panel's right edge a press grabs it.
+const BROWSER_EDGE_GRAB_X: f32 = 4.0;
 /// Height of one row of the tree.
 pub(super) const BROWSER_ROW_H: f32 = 22.0;
-/// The list's gap below the header band and above the footer: a row the
+/// The list's gap below the window's top and above the footer: a row the
 /// list cuts off is clipped this far short of the footer's edge.
 pub(super) const BROWSER_LIST_PAD_Y: f32 = 6.0;
-/// Top of the first row, below the category heading.
-pub(super) const BROWSER_LIST_TOP: f32 = theme::HEADER_H + BROWSER_LIST_PAD_Y;
+/// Top of the first row.
+pub(super) const BROWSER_LIST_TOP: f32 = BROWSER_LIST_PAD_Y;
 /// Width of the disclosure triangle's hit zone, from a folder or category
 /// row's indent — a click there toggles it rather than only selecting it.
 pub(super) const BROWSER_DISCLOSURE_W: f32 = 26.0;
 /// Indent per tree depth.
 pub(super) const BROWSER_INDENT_X: f32 = 14.0;
 
+/// `width` as the panel's width: whole points, so the shifted canvas keeps
+/// its pixel-snapped seams, between [`BROWSER_W_MIN`] and [`BROWSER_W_MAX`].
+/// A width read from `settings.json` passes through here too.
+pub(super) fn clamp_browser_width(width: f32) -> f32 {
+    if width.is_finite() {
+        width.round().clamp(BROWSER_W_MIN, BROWSER_W_MAX)
+    } else {
+        BROWSER_W_DEFAULT
+    }
+}
+
 /// Row `idx` of the tree with the list scrolled `scroll` points, in a panel
-/// whose top-left corner is `origin`: the panel's width less its separator.
-/// Where the rows are drawn and the rename field sits.
-pub(super) fn browser_row_rect(origin: Pos2, idx: usize, scroll: f32) -> Rect {
+/// `width` wide whose top-left corner is `origin`: the panel's width less its
+/// separator. Where the rows are drawn and the rename field sits.
+pub(super) fn browser_row_rect(origin: Pos2, width: f32, idx: usize, scroll: f32) -> Rect {
     let top = origin.y + BROWSER_LIST_TOP + idx as f32 * BROWSER_ROW_H - scroll;
     Rect::from_min_max(
         pos2(origin.x, top),
-        pos2(origin.x + BROWSER_W - 1.0, top + BROWSER_ROW_H),
+        pos2(origin.x + width - 1.0, top + BROWSER_ROW_H),
     )
 }
 
@@ -100,8 +116,10 @@ pub(super) fn browser_text_x(depth: u8) -> f32 {
 /// A top-level category of the tree.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(super) enum BrowserCategory {
-    /// The project folders and their files.
+    /// The project folders and their projects.
     Projects,
+    /// The MIDI clips in the `Clips` folder.
+    Clips,
     /// The installed instrument plugins.
     Plugins,
 }
@@ -111,6 +129,7 @@ impl BrowserCategory {
     pub(super) fn label(self) -> &'static str {
         match self {
             BrowserCategory::Projects => "PROJECTS",
+            BrowserCategory::Clips => "CLIPS",
             BrowserCategory::Plugins => "PLUGINS",
         }
     }
@@ -164,15 +183,10 @@ pub(super) enum BrowserItem {
         /// The project name (file stem).
         name: String,
     },
-    /// A `.mid` file, in `folder` (`None`: the projects root). Enter imports
-    /// it on the selected track at the cursor; dragged out of the panel, it
-    /// imports where it is dropped (`input/midi_drag.rs`).
-    MidiFile {
-        /// Its folder, `None` at the projects root.
-        folder: Option<String>,
-        /// The file stem.
-        name: String,
-    },
+    /// A `.mid` in the `Clips` folder, by its file stem. Enter imports it on
+    /// the selected track at the cursor; dragged out of the panel, it imports
+    /// where it is dropped (`input/midi_drag.rs`).
+    Clip(String),
     /// An installed instrument plugin. Enter puts it on the selected track;
     /// dragged out of the panel, on the track it is dropped on
     /// (`input/plugin_drag.rs`).
@@ -183,30 +197,29 @@ pub(super) enum BrowserItem {
 }
 
 impl BrowserItem {
-    /// The row Left steps out to: a file's folder (or the Projects category
-    /// at the projects root), a folder's or a plugin's category. A category
-    /// has none.
+    /// The row Left steps out to: a project's folder (or the Projects
+    /// category at the projects root), a folder's, a clip's or a plugin's
+    /// category. A category has none.
     fn parent(&self) -> Option<BrowserItem> {
         match self {
             BrowserItem::Category(_) => None,
-            BrowserItem::Project { folder, .. } | BrowserItem::MidiFile { folder, .. } => {
-                Some(folder.clone().map_or(
-                    BrowserItem::Category(BrowserCategory::Projects),
-                    BrowserItem::Folder,
-                ))
-            }
+            BrowserItem::Project { folder, .. } => Some(folder.clone().map_or(
+                BrowserItem::Category(BrowserCategory::Projects),
+                BrowserItem::Folder,
+            )),
             BrowserItem::Folder(_) => Some(BrowserItem::Category(BrowserCategory::Projects)),
+            BrowserItem::Clip(_) => Some(BrowserItem::Category(BrowserCategory::Clips)),
             BrowserItem::Plugin(_) | BrowserItem::Scanning => {
                 Some(BrowserItem::Category(BrowserCategory::Plugins))
             }
         }
     }
 
-    /// A project's or `.mid` file's name (its file stem) — the rows ⌘R
-    /// renames; `None` for anything else.
+    /// A project's or clip's name (its file stem) — the rows ⌘R renames;
+    /// `None` for anything else.
     pub(super) fn file_name(&self) -> Option<&str> {
         match self {
-            BrowserItem::Project { name, .. } | BrowserItem::MidiFile { name, .. } => Some(name),
+            BrowserItem::Project { name, .. } | BrowserItem::Clip(name) => Some(name),
             _ => None,
         }
     }
@@ -215,8 +228,7 @@ impl BrowserItem {
     /// for a row that isn't a file.
     pub(super) fn renamed(&self, new_name: String) -> Option<BrowserItem> {
         let mut item = self.clone();
-        let (BrowserItem::Project { name, .. } | BrowserItem::MidiFile { name, .. }) = &mut item
-        else {
+        let (BrowserItem::Project { name, .. } | BrowserItem::Clip(name)) = &mut item else {
             return None;
         };
         *name = new_name;
@@ -248,13 +260,8 @@ pub(super) enum BrowserAction {
     SetCurrentFolder(String),
     /// Put this plugin on the selected track.
     LoadPlugin(BrowserPlugin),
-    /// Import this `.mid` on the selected track at the cursor.
-    ImportMidi {
-        /// Its folder, `None` at the projects root.
-        folder: Option<String>,
-        /// The file stem.
-        name: String,
-    },
+    /// Import this clip (its file stem) on the selected track at the cursor.
+    ImportClip(String),
     /// Delete this project (the confirmed second Enter).
     DeleteProject {
         /// Its folder, `None` at the projects root.
@@ -264,17 +271,26 @@ pub(super) enum BrowserAction {
     },
 }
 
+/// What [`BrowserTree::reload`] lists from disk.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct DiskListing {
+    /// Each project folder with its projects (newest first), alphabetical.
+    pub(super) folders: Vec<(String, Vec<String>)>,
+    /// The loose projects at the projects root, newest first.
+    pub(super) root: Vec<String>,
+    /// The clips in the `Clips` folder, alphabetical.
+    pub(super) clips: Vec<String>,
+}
+
 /// The tree: what is on disk (refreshed whenever the panel is shown and
 /// after a delete), the plugins (refreshed as the catalog scan reports),
 /// which categories and folders are expanded and which row is selected.
 /// Expansion and selection survive a refresh and hiding the panel; neither is
-/// persisted. Both categories start expanded, every folder collapsed.
+/// persisted. Every category starts expanded, every folder collapsed.
 #[derive(Default)]
 pub(super) struct BrowserTree {
-    /// Each project folder with its listing, alphabetical.
-    folders: Vec<(String, FolderListing)>,
-    /// The loose files at the projects root.
-    root: FolderListing,
+    /// The projects and clips.
+    disk: DiskListing,
     /// The Plugins category's contents; `None` leaves the category out (no
     /// plugin host).
     plugins: Option<PluginListing>,
@@ -293,45 +309,33 @@ pub(super) struct BrowserTree {
     pub(super) delete_armed: bool,
 }
 
-/// Appends `listing`'s projects then MIDI files, in `folder` (`None`: the
-/// projects root), as rows at `depth`.
-fn push_file_rows(
+/// Appends `projects`, in `folder` (`None`: the projects root), as rows at
+/// `depth`.
+fn push_project_rows(
     rows: &mut Vec<BrowserRow>,
     folder: Option<&str>,
-    listing: &FolderListing,
+    projects: &[String],
     depth: u8,
 ) {
     let folder = folder.map(str::to_owned);
-    for name in &listing.projects {
-        rows.push(BrowserRow {
-            item: BrowserItem::Project {
-                folder: folder.clone(),
-                name: name.clone(),
-            },
-            depth,
-        });
-    }
-    for name in &listing.midi_files {
-        rows.push(BrowserRow {
-            item: BrowserItem::MidiFile {
-                folder: folder.clone(),
-                name: name.clone(),
-            },
-            depth,
-        });
-    }
+    rows.extend(projects.iter().map(|name| BrowserRow {
+        item: BrowserItem::Project {
+            folder: folder.clone(),
+            name: name.clone(),
+        },
+        depth,
+    }));
 }
 
 impl BrowserTree {
     /// Replaces what the tree lists, keeping expansion and selection. A
     /// selected item that is gone hands the selection to the row now at its
     /// old index (clamped), so a delete lands on the next row.
-    pub(super) fn reload(&mut self, folders: Vec<(String, FolderListing)>, root: FolderListing) {
+    pub(super) fn reload(&mut self, disk: DiskListing) {
         let old_index = self.selected_index();
-        self.folders = folders;
-        self.root = root;
+        self.disk = disk;
         self.expanded
-            .retain(|name| self.folders.iter().any(|(f, _)| f == name));
+            .retain(|name| self.disk.folders.iter().any(|(f, _)| f == name));
         self.delete_armed = false;
         self.relist(old_index);
     }
@@ -364,26 +368,36 @@ impl BrowserTree {
     }
 
     /// Re-derives [`rows`](Self::rows). Under **Projects** (when expanded):
-    /// each folder, followed (when expanded) by its projects newest first and
-    /// its MIDI files; then the projects root's loose files. Under
-    /// **Plugins** (when listed and expanded): the plugins, then
-    /// "Scanning…" while the scan runs.
+    /// each folder, followed (when expanded) by its projects newest first;
+    /// then the projects root's loose projects. Under **Clips** (when
+    /// expanded): the clips. Under **Plugins** (when listed and expanded):
+    /// the plugins, then "Scanning…" while the scan runs.
     fn rebuild_rows(&mut self) {
         let mut rows = vec![BrowserRow {
             item: BrowserItem::Category(BrowserCategory::Projects),
             depth: 0,
         }];
         if self.is_category_expanded(BrowserCategory::Projects) {
-            for (name, listing) in &self.folders {
+            for (name, projects) in &self.disk.folders {
                 rows.push(BrowserRow {
                     item: BrowserItem::Folder(name.clone()),
                     depth: 1,
                 });
                 if self.expanded.contains(name) {
-                    push_file_rows(&mut rows, Some(name), listing, 2);
+                    push_project_rows(&mut rows, Some(name), projects, 2);
                 }
             }
-            push_file_rows(&mut rows, None, &self.root, 1);
+            push_project_rows(&mut rows, None, &self.disk.root, 1);
+        }
+        rows.push(BrowserRow {
+            item: BrowserItem::Category(BrowserCategory::Clips),
+            depth: 0,
+        });
+        if self.is_category_expanded(BrowserCategory::Clips) {
+            rows.extend(self.disk.clips.iter().map(|name| BrowserRow {
+                item: BrowserItem::Clip(name.clone()),
+                depth: 1,
+            }));
         }
         if let Some(listing) = &self.plugins {
             rows.push(BrowserRow {
@@ -477,7 +491,7 @@ impl BrowserTree {
             return;
         }
         if let Some(folder) = current_folder
-            && self.folders.iter().any(|(f, _)| f == folder)
+            && self.disk.folders.iter().any(|(f, _)| f == folder)
         {
             self.set_item_expanded(&BrowserItem::Folder(folder.to_owned()), true);
         }
@@ -542,7 +556,7 @@ impl BrowserTree {
 
     /// Enter: confirms a pending delete; else opens the selected project,
     /// makes the selected folder current (and expands it), imports the
-    /// selected MIDI file, puts the selected plugin on the selected track,
+    /// selected clip, puts the selected plugin on the selected track,
     /// or expands/collapses a category.
     pub(super) fn activate(&mut self) -> Option<BrowserAction> {
         let armed = std::mem::take(&mut self.delete_armed);
@@ -564,9 +578,7 @@ impl BrowserTree {
             BrowserItem::Project { folder, name } => {
                 Some(BrowserAction::OpenProject { folder, name })
             }
-            BrowserItem::MidiFile { folder, name } => {
-                Some(BrowserAction::ImportMidi { folder, name })
-            }
+            BrowserItem::Clip(name) => Some(BrowserAction::ImportClip(name)),
         }
     }
 
@@ -605,23 +617,43 @@ pub(super) fn scroll_to_show(scroll: usize, selected: usize, visible: usize) -> 
 
 /// The panel's view-local state, grouped out of [`Display`] as
 /// `Display::browser`.
-#[derive(Default)]
 pub(super) struct BrowserPanel {
     /// Shown or hidden. Hidden at startup.
     pub(super) visible: bool,
+    /// The width while shown, in points ([`clamp_browser_width`]), kept in
+    /// `settings.json` once its edge is dragged.
+    pub(super) width: f32,
+    /// While the right edge is dragged: the pointer's offset from the edge
+    /// at the press, so the edge doesn't jump to the pointer.
+    pub(super) resize_grab: Option<f32>,
     /// The tree.
     pub(super) tree: BrowserTree,
     /// How far the list is scrolled, in points: a float, so trackpad deltas
     /// move it smoothly and small ones add up rather than round away.
     pub(super) scroll: f32,
-    /// A draggable row the primary button went down on — a `.mid` file or a
+    /// A draggable row the primary button went down on — a Clips or a
     /// Plugins row — `Some` until the release: dragged out of the panel, it
     /// becomes the import drag (`GestureState::midi_drag`) or the plugin
     /// drag (`GestureState::plugin_drag`).
     pub(super) press: Option<BrowserPress>,
-    /// The open rename field (⌘R on a project or `.mid` row), see
+    /// The open rename field (⌘R on a project or clip row), see
     /// `browser_rename.rs`.
     pub(super) rename: Option<BrowserRename>,
+}
+
+impl BrowserPanel {
+    /// A hidden panel `width` wide (`settings.json`'s, clamped).
+    pub(super) fn new(width: f32) -> Self {
+        Self {
+            visible: false,
+            width: clamp_browser_width(width),
+            resize_grab: None,
+            tree: BrowserTree::default(),
+            scroll: 0.0,
+            press: None,
+            rename: None,
+        }
+    }
 }
 
 /// A draggable browser row under the held primary button, before it leaves
@@ -638,9 +670,57 @@ pub(super) struct BrowserPress {
 }
 
 impl Display {
-    /// The panel's width this frame: [`BROWSER_W`] while shown, else `0`.
+    /// The panel's width this frame: its [`width`](BrowserPanel::width)
+    /// while shown, else `0`.
     pub(super) fn browser_width(&self) -> f32 {
-        if self.browser.visible { BROWSER_W } else { 0.0 }
+        if self.browser.visible {
+            self.browser.width
+        } else {
+            0.0
+        }
+    }
+
+    /// Whether canvas-space `(x, y)` is on the shown panel's right edge (at
+    /// canvas x `0`), where a press drags its width. Not under a modal
+    /// overlay, which swallows the pointer.
+    pub(super) fn is_on_browser_edge(&self, x: f32, y: f32) -> bool {
+        self.browser.visible
+            && self.overlay.is_none()
+            && x.abs() <= BROWSER_EDGE_GRAB_X
+            && y < self.footer_top()
+    }
+
+    /// Whether the pointer is on the panel's edge or dragging it — the
+    /// resize arrows.
+    pub(super) fn is_pointer_on_browser_edge(&self) -> bool {
+        self.browser.resize_grab.is_some()
+            || self
+                .canvas_pointer()
+                .is_some_and(|p| self.is_on_browser_edge(p.x, p.y))
+    }
+
+    /// A press on the panel's edge at canvas x `x`: starts dragging its
+    /// width.
+    pub(super) fn begin_browser_resize(&mut self, x: f32) {
+        self.browser.resize_grab = Some(x);
+    }
+
+    /// The edge drag with the pointer at window-space x `window_x` (not
+    /// canvas space, which shifts as the panel's width changes under it).
+    pub(super) fn extend_browser_resize(&mut self, window_x: f32) {
+        if let Some(grab) = self.browser.resize_grab {
+            self.browser.width = clamp_browser_width(window_x - grab);
+        }
+    }
+
+    /// Releases the edge drag, keeping the width in `settings.json`.
+    pub(super) fn finish_browser_resize(&mut self) {
+        if self.browser.resize_grab.take().is_some() {
+            let width = self.browser.width;
+            update_settings("browser width", |settings| {
+                settings.browser_width = width;
+            });
+        }
     }
 
     /// The canvas: the window less the panel's width, in canvas space (its
@@ -717,16 +797,20 @@ impl Display {
         self.browser.tree.set_plugins(listing);
     }
 
-    /// Re-reads the projects tree from disk.
+    /// Re-reads the projects and clips from disk.
     pub(super) fn reload_browser(&mut self) {
         let folders = list_project_folders()
             .into_iter()
             .map(|name| {
-                let listing = list_folder(Some(&name));
-                (name, listing)
+                let projects = list_projects(Some(&name));
+                (name, projects)
             })
             .collect();
-        self.browser.tree.reload(folders, list_folder(None));
+        self.browser.tree.reload(DiskListing {
+            folders,
+            root: list_projects(None),
+            clips: list_clips(),
+        });
     }
 
     /// Shows the panel with the keyboard (`⌘⌥B` on a hidden panel, `⌘O`),
@@ -846,8 +930,8 @@ impl Display {
         let depth = self.browser.tree.rows()[idx].depth;
         let disclosure_x = f32::from(depth) * BROWSER_INDENT_X;
         let on_disclosure =
-            (disclosure_x..disclosure_x + BROWSER_DISCLOSURE_W).contains(&(x + BROWSER_W));
-        if !double && matches!(item, BrowserItem::MidiFile { .. } | BrowserItem::Plugin(_)) {
+            (disclosure_x..disclosure_x + BROWSER_DISCLOSURE_W).contains(&(x + self.browser.width));
+        if !double && matches!(item, BrowserItem::Clip(_) | BrowserItem::Plugin(_)) {
             self.browser.press = Some(BrowserPress {
                 item: item.clone(),
                 origin: (x, y),
@@ -894,8 +978,8 @@ impl Display {
             BrowserAction::LoadPlugin(plugin) => {
                 self.put_plugin_on_track(self.selected_track_idx, &plugin);
             }
-            BrowserAction::ImportMidi { folder, name } => {
-                self.import_midi_file(&midi_file_path(folder.as_deref(), &name));
+            BrowserAction::ImportClip(name) => {
+                self.import_midi_file(&clip_path(&name));
             }
             BrowserAction::DeleteProject { folder, name } => {
                 let message = match delete_project(folder.as_deref(), &name) {
@@ -927,25 +1011,40 @@ impl Display {
 mod tests {
     use super::*;
 
-    fn listing(projects: &[&str], midi_files: &[&str]) -> FolderListing {
-        FolderListing {
-            projects: projects.iter().map(|s| s.to_string()).collect(),
-            midi_files: midi_files.iter().map(|s| s.to_string()).collect(),
+    fn names(names: &[&str]) -> Vec<String> {
+        names.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// `folders` (name, projects), the loose projects `root` and `clips`.
+    fn disk(folders: &[(&str, &[&str])], root: &[&str], clips: &[&str]) -> DiskListing {
+        DiskListing {
+            folders: folders
+                .iter()
+                .map(|(name, projects)| (name.to_string(), names(projects)))
+                .collect(),
+            root: names(root),
+            clips: names(clips),
         }
     }
 
-    /// Two folders — `a` with two projects and a MIDI file, empty `b` — and a
-    /// loose project at the root.
+    /// Two folders — `a` with two projects, empty `b` — a loose project at
+    /// the root and one clip.
     fn tree() -> BrowserTree {
         let mut tree = BrowserTree::default();
-        tree.reload(
-            vec![
-                ("a".into(), listing(&["a2", "a1"], &["a1_T1_B1"])),
-                ("b".into(), listing(&[], &[])),
-            ],
-            listing(&["loose"], &[]),
-        );
+        tree.reload(disk(
+            &[("a", &["a2", "a1"]), ("b", &[])],
+            &["loose"],
+            &["a1_T1_B1"],
+        ));
         tree
+    }
+
+    fn clips() -> BrowserItem {
+        BrowserItem::Category(BrowserCategory::Clips)
+    }
+
+    fn clip(name: &str) -> BrowserItem {
+        BrowserItem::Clip(name.into())
     }
 
     fn folder(name: &str) -> BrowserItem {
@@ -988,11 +1087,32 @@ mod tests {
     }
 
     #[test]
-    fn collapsed_folders_list_alone_then_the_loose_files() {
+    fn collapsed_folders_list_alone_then_the_loose_projects_then_the_clips() {
         assert_eq!(
             items(&tree()),
-            vec![projects(), folder("a"), folder("b"), project(None, "loose")]
+            vec![
+                projects(),
+                folder("a"),
+                folder("b"),
+                project(None, "loose"),
+                clips(),
+                clip("a1_T1_B1"),
+            ]
         );
+    }
+
+    #[test]
+    fn the_clips_category_shows_when_empty_and_left_steps_out_to_it() {
+        let mut empty = BrowserTree::default();
+        empty.reload(disk(&[], &[], &[]));
+        assert_eq!(items(&empty), vec![projects(), clips()]);
+
+        let mut tree = tree();
+        tree.select(clip("a1_T1_B1"));
+        tree.collapse();
+        assert_eq!(tree.selected(), Some(&clips()));
+        tree.collapse();
+        assert!(!items(&tree).contains(&clip("a1_T1_B1")));
     }
 
     #[test]
@@ -1095,7 +1215,7 @@ mod tests {
     }
 
     #[test]
-    fn an_expanded_folder_lists_projects_then_midi_files_indented() {
+    fn an_expanded_folder_lists_its_projects_indented() {
         let mut tree = tree();
         tree.select(folder("a"));
         tree.expand();
@@ -1107,17 +1227,17 @@ mod tests {
                 folder("a"),
                 project(Some("a"), "a2"),
                 project(Some("a"), "a1"),
-                BrowserItem::MidiFile {
-                    folder: Some("a".into()),
-                    name: "a1_T1_B1".into()
-                },
                 folder("b"),
                 project(None, "loose"),
+                clips(),
+                clip("a1_T1_B1"),
             ]
         );
         assert_eq!(rows[1].depth, 1);
         assert_eq!(rows[2].depth, 2);
-        assert_eq!(rows[6].depth, 1);
+        assert_eq!(rows[5].depth, 1);
+        assert_eq!(rows[6].depth, 0);
+        assert_eq!(rows[7].depth, 1);
     }
 
     #[test]
@@ -1141,7 +1261,7 @@ mod tests {
         tree.move_selection(1);
         assert_eq!(tree.selected(), Some(&projects()));
         tree.move_selection(10);
-        assert_eq!(tree.selected(), Some(&project(None, "loose")));
+        assert_eq!(tree.selected(), Some(&clip("a1_T1_B1")));
         tree.move_selection(-10);
         assert_eq!(tree.selected(), Some(&projects()));
     }
@@ -1166,20 +1286,12 @@ mod tests {
     }
 
     #[test]
-    fn enter_imports_a_midi_file_which_is_never_deleted() {
+    fn enter_imports_a_clip_which_is_never_deleted() {
         let mut tree = tree();
-        tree.select(folder("a"));
-        tree.expand();
-        tree.select(BrowserItem::MidiFile {
-            folder: Some("a".into()),
-            name: "a1_T1_B1".into(),
-        });
+        tree.select(clip("a1_T1_B1"));
         assert_eq!(
             tree.activate(),
-            Some(BrowserAction::ImportMidi {
-                folder: Some("a".into()),
-                name: "a1_T1_B1".into()
-            })
+            Some(BrowserAction::ImportClip("a1_T1_B1".into()))
         );
         tree.arm_delete();
         assert!(!tree.delete_armed);
@@ -1213,13 +1325,7 @@ mod tests {
         tree.select(folder("a"));
         tree.expand();
         tree.select(project(Some("a"), "a2"));
-        tree.reload(
-            vec![
-                ("a".into(), listing(&["a1"], &["a1_T1_B1"])),
-                ("b".into(), listing(&[], &[])),
-            ],
-            listing(&["loose"], &[]),
-        );
+        tree.reload(disk(&[("a", &["a1"]), ("b", &[])], &["loose"], &[]));
         assert!(tree.is_expanded("a"));
         assert_eq!(tree.selected(), Some(&project(Some("a"), "a1")));
     }
@@ -1229,12 +1335,10 @@ mod tests {
         let mut tree = tree();
         tree.select(folder("b"));
         tree.expand();
-        tree.reload(
-            vec![("a".into(), listing(&[], &[]))],
-            FolderListing::default(),
-        );
+        tree.reload(disk(&[("a", &[])], &[], &[]));
         assert!(!tree.is_expanded("b"));
-        assert_eq!(tree.selected(), Some(&folder("a")));
+        // The selection goes to the row now at `b`'s old index.
+        assert_eq!(tree.selected(), Some(&clips()));
     }
 
     #[test]
@@ -1262,25 +1366,16 @@ mod tests {
     }
 
     #[test]
-    fn only_projects_and_midi_files_are_renamed() {
-        let midi = BrowserItem::MidiFile {
-            folder: Some("a".into()),
-            name: "riff".into(),
-        };
-        assert_eq!(midi.file_name(), Some("riff"));
-        assert_eq!(
-            midi.renamed("lick".into()),
-            Some(BrowserItem::MidiFile {
-                folder: Some("a".into()),
-                name: "lick".into()
-            })
-        );
+    fn only_projects_and_clips_are_renamed() {
+        assert_eq!(clip("riff").file_name(), Some("riff"));
+        assert_eq!(clip("riff").renamed("lick".into()), Some(clip("lick")));
         assert_eq!(
             project(None, "loose").renamed("tight".into()),
             Some(project(None, "tight"))
         );
         for item in [
             projects(),
+            clips(),
             folder("a"),
             BrowserItem::Plugin(plugin("Diva", "CLAP")),
             BrowserItem::Scanning,
@@ -1308,6 +1403,14 @@ mod tests {
     }
 
     #[test]
+    fn the_panel_width_is_whole_points_within_its_range() {
+        assert_eq!(clamp_browser_width(300.4), 300.0);
+        assert_eq!(clamp_browser_width(10.0), BROWSER_W_MIN);
+        assert_eq!(clamp_browser_width(5000.0), BROWSER_W_MAX);
+        assert_eq!(clamp_browser_width(f32::NAN), BROWSER_W_DEFAULT);
+    }
+
+    #[test]
     fn scroll_moves_only_as_far_as_needed() {
         assert_eq!(scroll_to_show(0, 3, 10), 0);
         assert_eq!(scroll_to_show(0, 12, 10), 3);
@@ -1318,7 +1421,7 @@ mod tests {
     #[test]
     fn footer_and_its_toggle_stay_put_whether_the_panel_shows_or_not() {
         let window = Rect::from_min_max(pos2(0.0, 0.0), pos2(1200.0, 800.0));
-        for browser_w in [0.0, BROWSER_W] {
+        for browser_w in [0.0, BROWSER_W_DEFAULT, BROWSER_W_MAX] {
             let mut canvas = window;
             canvas.max.x -= browser_w;
             let footer = footer_rect(canvas, 760.0, browser_w);

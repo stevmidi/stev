@@ -190,6 +190,7 @@ fn main() {
         settings.midi_out_port.clone(),
         settings.last_project_folder.clone(),
         midi_out_offset_ms,
+        settings.browser_width,
     );
 
     // The unified audio engine: one cpal output stream, seeded with the

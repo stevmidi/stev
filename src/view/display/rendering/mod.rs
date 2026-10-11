@@ -1108,6 +1108,9 @@ impl eframe::App for Display {
         {
             ctx.set_cursor_icon(CursorIcon::PointingHand);
         }
+        if self.is_pointer_on_browser_edge() {
+            ctx.set_cursor_icon(CursorIcon::ResizeHorizontal);
+        }
         // The octave legend: the magnifying glass (CSS `zoom-in`) on hover;
         // its drag, like the BPM chip's, hides the pointer and holds it
         // (`sync_pointer_grab`). Hidden through the icon, not

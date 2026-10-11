@@ -1,5 +1,5 @@
 //! The browser panel's rename field: an inline text field over a project's
-//! or `.mid` file's row, opened by ⌘R while the panel has the keyboard.
+//! or clip's row, opened by ⌘R while the panel has the keyboard.
 //! While it is open it takes the keyboard — every key, nothing falls
 //! through. Enter renames the file on disk, Esc cancels, a click away
 //! renames (and then acts as usual). A blank or unchanged name renames
@@ -15,7 +15,7 @@ use egui::{FontId, Id, Margin, Rect, TextEdit, Ui, UiBuilder, pos2, vec2};
 
 use crate::core::config::PROJECT_NAME_MAX_CHARS;
 use crate::core::input_event::InputEvent;
-use crate::core::project::{project_name_from_input, rename_midi_file, rename_project};
+use crate::core::project::{project_name_from_input, rename_clip, rename_project};
 use crate::view::theme;
 
 use super::Display;
@@ -69,7 +69,12 @@ impl Display {
         let rows = self.browser.tree.rows();
         let idx = rows.iter().position(|row| row.item == rename.item)?;
         // Only while its row is wholly in the list: the field isn't clipped.
-        let row = browser_row_rect(self.render.canvas_rect.min, idx, self.browser.scroll);
+        let row = browser_row_rect(
+            self.render.canvas_rect.min,
+            self.browser.width,
+            idx,
+            self.browser.scroll,
+        );
         let list_top = self.render.canvas_rect.min.y + BROWSER_LIST_TOP;
         if row.min.y < list_top || row.max.y > self.browser_list_bottom() {
             return None;
@@ -119,9 +124,7 @@ impl Display {
         let Some(rename) = self.browser.rename.take() else {
             return;
         };
-        let (BrowserItem::Project { folder, name: old }
-        | BrowserItem::MidiFile { folder, name: old }) = &rename.item
-        else {
+        let (BrowserItem::Project { name: old, .. } | BrowserItem::Clip(old)) = &rename.item else {
             return;
         };
         if rename.text.trim().is_empty() {
@@ -136,16 +139,17 @@ impl Display {
         if new == *old {
             return;
         }
-        let is_project = matches!(rename.item, BrowserItem::Project { .. });
-        let result = if is_project {
-            rename_project(folder.as_deref(), old, &new)
-        } else {
-            rename_midi_file(folder.as_deref(), old, &new)
+        let folder = match &rename.item {
+            BrowserItem::Project { folder, .. } => Some(folder),
+            _ => None,
+        };
+        let result = match folder {
+            Some(folder) => rename_project(folder.as_deref(), old, &new),
+            None => rename_clip(old, &new),
         };
         let message = match result {
             Ok(()) => {
-                if is_project
-                    && *folder == self.project.project_current_folder
+                if folder == Some(&self.project.project_current_folder)
                     && self.project.project_current_name.as_ref() == Some(old)
                 {
                     self.project.project_current_name = Some(new.clone());

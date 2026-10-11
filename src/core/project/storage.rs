@@ -1,7 +1,7 @@
 //! Filesystem layout for projects: per-project subfolders of the projects
-//! root (`paths::project_dir`), `.stev` file CRUD, project name rules, where
-//! a MIDI clip export lands, and reading a `.mid` for the MIDI clip import
-//! (see `060-persistence.md`).
+//! root (`paths::project_dir`), `.stev` file CRUD, project name rules, the
+//! `Clips` folder a MIDI clip export lands in, and reading a `.mid` for the
+//! MIDI clip import (see `060-persistence.md`).
 
 use std::{
     cmp::Reverse,
@@ -64,9 +64,26 @@ fn list_stev_names(dir: &Path) -> Vec<(String, SystemTime)> {
     list_files_with_extension(dir, "stev")
 }
 
+/// The folder under `project_dir()` that holds the MIDI clips: where a clip
+/// export lands and what the browser's Clips category lists. Not a project
+/// folder, so [`list_project_folders`] leaves it out.
+const CLIPS_FOLDER: &str = "Clips";
+
+/// The clips folder ([`CLIPS_FOLDER`]).
+fn clips_dir() -> PathBuf {
+    project_dir().join(CLIPS_FOLDER)
+}
+
+/// Whether a subdirectory of `project_dir()` named `name` is a project
+/// folder: not hidden and not the clips folder (in any case — the volume may
+/// not tell `clips` from `Clips`).
+fn is_project_folder_name(name: &str) -> bool {
+    !name.starts_with('.') && !name.eq_ignore_ascii_case(CLIPS_FOLDER)
+}
+
 /// Subdirectories of `project_dir()` — each one is a project, created
 /// manually by the user (see `060-persistence.md`). Sorted alphabetically;
-/// hidden (dot) folders are left out.
+/// hidden (dot) folders and the clips folder are left out.
 pub(crate) fn list_project_folders() -> Vec<String> {
     let dir = project_dir();
     let mut names: Vec<String> = fs::read_dir(&dir)
@@ -75,37 +92,30 @@ pub(crate) fn list_project_folders() -> Vec<String> {
         .filter_map(|entry| {
             let entry = entry.ok()?;
             let name = entry.file_name().to_str()?.to_string();
-            (entry.file_type().ok()?.is_dir() && !name.starts_with('.')).then_some(name)
+            (entry.file_type().ok()?.is_dir() && is_project_folder_name(&name)).then_some(name)
         })
         .collect();
     names.sort();
     names
 }
 
-/// What one folder holds, as the browser lists it (see `060-persistence.md`).
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub(crate) struct FolderListing {
-    /// Project names (`.stev` stems), newest first.
-    pub(crate) projects: Vec<String>,
-    /// MIDI file names (`.mid` stems), alphabetical.
-    pub(crate) midi_files: Vec<String>,
+/// The projects (`.stev` stems) directly in `folder` (`None`: the loose ones
+/// at the projects root), newest first.
+pub(crate) fn list_projects(folder: Option<&str>) -> Vec<String> {
+    let mut projects = list_stev_names(&resolve_dir(folder));
+    projects.sort_by_key(|(_, modified)| Reverse(*modified));
+    projects.into_iter().map(|(name, _)| name).collect()
 }
 
-/// The projects and MIDI files directly in `folder` (`None`: the loose files
-/// at the projects root).
-pub(crate) fn list_folder(folder: Option<&str>) -> FolderListing {
-    let dir = resolve_dir(folder);
-    let mut projects = list_stev_names(&dir);
-    projects.sort_by_key(|(_, modified)| Reverse(*modified));
-    let mut midi_files: Vec<String> = list_files_with_extension(&dir, MIDI_EXTENSION)
+/// The MIDI clips (`.mid` stems) in the clips folder, alphabetical; none
+/// before the first export makes the folder.
+pub(crate) fn list_clips() -> Vec<String> {
+    let mut clips: Vec<String> = list_files_with_extension(&clips_dir(), MIDI_EXTENSION)
         .into_iter()
         .map(|(name, _)| name)
         .collect();
-    midi_files.sort();
-    FolderListing {
-        projects: projects.into_iter().map(|(name, _)| name).collect(),
-        midi_files,
-    }
+    clips.sort();
+    clips
 }
 
 /// Writes `data` as pretty JSON to `folder/name.stev` (creating `folder`).
@@ -138,11 +148,10 @@ pub(crate) fn rename_project(folder: Option<&str>, old: &str, new: &str) -> io::
     rename_no_replace(&stev_path(&dir, old), &stev_path(&dir, new))
 }
 
-/// Renames the `.mid` file `old` (its stem) to `new` in `folder` (`None`:
-/// the projects root), refusing to replace another file
-/// ([`rename_no_replace`]).
-pub(crate) fn rename_midi_file(folder: Option<&str>, old: &str, new: &str) -> io::Result<()> {
-    rename_no_replace(&midi_file_path(folder, old), &midi_file_path(folder, new))
+/// Renames the clip `old` (its stem) to `new` in the clips folder, refusing
+/// to replace another file ([`rename_no_replace`]).
+pub(crate) fn rename_clip(old: &str, new: &str) -> io::Result<()> {
+    rename_no_replace(&clip_path(old), &clip_path(new))
 }
 
 /// Moves `from` to `to` in the same folder unless that would replace another
@@ -200,18 +209,17 @@ pub(crate) fn project_exists(folder: Option<&str>, name: &str) -> bool {
     stev_path(&resolve_dir(folder), name).exists()
 }
 
-/// Writes an exported clip's `.mid` bytes into `folder` (the `project_dir()`
-/// root for `None`) under [`clip_export_name`] starting with `base`, never
-/// overwriting a file; returns the file name written.
+/// Writes an exported clip's `.mid` bytes into the clips folder (creating
+/// it) under [`clip_export_name`] starting with `base`, never overwriting a
+/// file; returns the file name written.
 pub(crate) fn save_clip_export(
     bytes: &[u8],
-    folder: Option<&str>,
     base: &str,
     track_idx: usize,
     start_tick: i32,
     meter: Meter,
 ) -> io::Result<String> {
-    let dir = resolve_dir(folder);
+    let dir = clips_dir();
     fs::create_dir_all(&dir)?;
     let name = clip_export_name(base, track_idx, start_tick, meter, |name| {
         dir.join(name).exists()
@@ -220,10 +228,9 @@ pub(crate) fn save_clip_export(
     Ok(name)
 }
 
-/// The `.mid` file `name` (its stem) in `folder` (the `project_dir()` root
-/// for `None`) — a browser row's file.
-pub(crate) fn midi_file_path(folder: Option<&str>, name: &str) -> PathBuf {
-    resolve_dir(folder).join(format!("{name}.{MIDI_EXTENSION}"))
+/// The clip `name` (its stem) in the clips folder — a browser row's file.
+pub(crate) fn clip_path(name: &str) -> PathBuf {
+    clips_dir().join(format!("{name}.{MIDI_EXTENSION}"))
 }
 
 /// Whether `path` names a MIDI file (`.mid` / `.midi`, any case) — the files
@@ -349,6 +356,14 @@ mod tests {
         rename_no_replace(&dir.join("song.stev"), &dir.join("Song.stev")).unwrap();
         assert_eq!(names_in(&dir), ["Song.stev"]);
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_clips_folder_and_hidden_folders_are_no_project_folders() {
+        assert!(is_project_folder_name("Song"));
+        assert!(!is_project_folder_name(CLIPS_FOLDER));
+        assert!(!is_project_folder_name("clips"));
+        assert!(!is_project_folder_name(".git"));
     }
 
     #[test]

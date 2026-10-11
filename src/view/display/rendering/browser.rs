@@ -1,13 +1,13 @@
-//! The browser side panel's painting: the heading and the tree rows (the
-//! **Projects** and **Plugins** categories), on a layer of its own left of
-//! the shifted canvas. The model and
-//! input are `browser.rs`; see `030-ui-design.md` § Browser Panel.
+//! The browser side panel's painting: the tree rows (the **Projects**,
+//! **Clips** and **Plugins** categories), on a layer of its own left of the
+//! shifted canvas. The model and input are `browser.rs`; see
+//! `030-ui-design.md` § Browser Panel.
 
 use egui::{Id, LayerId, Order, Pos2, Shape, StrokeKind, Vec2};
 
 use super::super::browser::{
-    BROWSER_DISCLOSURE_W, BROWSER_INDENT_X, BROWSER_LIST_TOP, BROWSER_ROW_H, BROWSER_W,
-    BrowserItem, browser_row_rect, browser_text_x,
+    BROWSER_DISCLOSURE_W, BROWSER_INDENT_X, BROWSER_LIST_TOP, BROWSER_ROW_H, BrowserItem,
+    browser_row_rect, browser_text_x,
 };
 use super::*;
 
@@ -112,34 +112,30 @@ impl Display {
     /// Paints the panel along the left of `window`, down to the footer,
     /// which runs under it (`draw_status_bar`).
     pub(super) fn draw_browser(&self, painter: &Painter, window: Rect) {
-        let panel = Rect::from_min_max(
-            window.min,
-            pos2(window.min.x + BROWSER_W, self.footer_top()),
-        );
+        let width = self.browser.width;
+        let panel = Rect::from_min_max(window.min, pos2(window.min.x + width, self.footer_top()));
         let painter = painter.with_clip_rect(panel);
         painter.rect_filled(panel, CornerRadius::ZERO, theme::bg_panel());
-        painter.vline(
-            panel.max.x - 0.5,
-            panel.y_range(),
-            Stroke::new(1.0, theme::separator()),
-        );
+        // Under the pointer or dragged, the separator shows its edge can be
+        // dragged.
+        let edge = if self.is_pointer_on_browser_edge() {
+            theme::fg_dim()
+        } else {
+            theme::separator()
+        };
+        painter.vline(panel.max.x - 0.5, panel.y_range(), Stroke::new(1.0, edge));
 
         let focused = self.key_owner() == KeyFocus::Browser;
         let font = FontId::proportional(theme::FONT_SIZE_LABEL);
-        painter.text(
-            pos2(panel.min.x + 12.0, panel.min.y + theme::HEADER_H * 0.5),
-            Align2::LEFT_CENTER,
-            "BROWSER",
-            font.clone(),
-            accent_if(focused, theme::fg_dim()),
-        );
-        // With the keyboard: the panes' focus edge (`draw_pane_split`), at
-        // the panes' top, so it reads as the same mark moving over.
+        // With the keyboard: the panes' focus edge (`draw_pane_split`), along
+        // the panel's top — one physical pixel down, so the window's edge
+        // doesn't clip the stroke's anti-aliased fringe and thin it.
         if focused {
+            let stroke = focus_edge_stroke();
             painter.hline(
                 panel.min.x..=(panel.max.x - 1.0),
-                panel.min.y + self.lane_area_rect().min.y,
-                focus_edge_stroke(),
+                panel.min.y + stroke.width * 0.5 + 1.0 / painter.pixels_per_point(),
+                stroke,
             );
         }
 
@@ -157,7 +153,7 @@ impl Display {
         let scroll = self.browser.scroll;
         let first = (scroll / BROWSER_ROW_H) as usize;
         for (i, row) in rows.iter().enumerate().skip(first) {
-            let row_rect = browser_row_rect(panel.min, i, scroll);
+            let row_rect = browser_row_rect(panel.min, width, i, scroll);
             let top = row_rect.min.y;
             if top > list.max.y {
                 break;
@@ -192,7 +188,7 @@ impl Display {
                     name.clone(),
                     folder.as_deref() == current_folder && Some(name.as_str()) == current_name,
                 ),
-                BrowserItem::MidiFile { name, .. } => (format!("{name}.mid"), false),
+                BrowserItem::Clip(name) => (format!("{name}.mid"), false),
                 BrowserItem::Plugin(plugin) => {
                     // Right-aligned, so no text measurement is needed.
                     painter.text(
@@ -223,7 +219,7 @@ impl Display {
                 (label, theme::region())
             } else if matches!(
                 row.item,
-                BrowserItem::MidiFile { .. } | BrowserItem::Scanning | BrowserItem::Category(_)
+                BrowserItem::Clip(_) | BrowserItem::Scanning | BrowserItem::Category(_)
             ) && !(is_selected && focused)
             {
                 (label, theme::fg_dim())

@@ -517,8 +517,6 @@ pub(crate) enum SequencerCommand {
     ExportClip {
         /// The arranger marquee; `None` in the clip view or without one.
         time_bounds: Option<TimeSelectionRect>,
-        /// `None` means the root fallback — no project folder selected yet.
-        folder: Option<String>,
         /// What the file name starts with (`InputEvent::ExportClip`).
         name: String,
     },

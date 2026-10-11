@@ -499,12 +499,8 @@ impl EventHandlers {
                 self.save_project_workflow(sequencer, saved, folder.as_deref(), filename);
             }
 
-            SequencerCommand::ExportClip {
-                time_bounds,
-                folder,
-                name,
-            } => {
-                self.export_clip_workflow(sequencer, *time_bounds, folder.as_deref(), name);
+            SequencerCommand::ExportClip { time_bounds, name } => {
+                self.export_clip_workflow(sequencer, *time_bounds, name);
             }
 
             SequencerCommand::ImportMidiClip { clip, name, target } => {

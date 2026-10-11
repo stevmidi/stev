@@ -144,6 +144,9 @@ pub const INSTRUMENT_MIDI_RING_CAPACITY: usize = 512;
 /// starting point — the user dials the rest in by ear against the click. See
 /// `160-midi-out-offset.md`.
 pub const MIDI_OUT_OFFSET_DEFAULT_MS: i32 = 5;
+/// The browser panel's width, in points, until its edge is first dragged
+/// (`SettingsData::browser_width`).
+pub const BROWSER_W_DEFAULT: f32 = 260.0;
 /// Upper bound for the MIDI-output offset. Nothing physical needs more, and a
 /// runaway value would park notes in the output queue for an audible age.
 pub const MIDI_OUT_OFFSET_MAX_MS: i32 = 200;
