@@ -1,6 +1,6 @@
 # Porting to Linux and Windows
 
-macOS is the supported platform (`280` § Platforms). Linux and Windows build and pass the tests in CI on every push to `main`, but nobody has checked that they *play* correctly, and Stev is a timing-critical app. This file is for anyone who wants to change that: what is macOS-only today, what matters most off macOS, and how to measure it. Ports are welcome (`CONTRIBUTING.md`).
+macOS is the supported platform (`280` § Platforms). Linux and Windows build and pass the tests in CI on every push to `main`, but nobody has checked that they *play* correctly, and Stev is a timing-critical app. This file is for anyone who wants to change that: what is macOS-only today, what matters most off macOS, and how to measure it. Ports are welcome (`CONTRIBUTING.md`). The roadmap carries full support as a staged candidate (`280` § Linux and Windows support, staged); its stages follow § What matters most below.
 
 ## What differs off macOS today
 

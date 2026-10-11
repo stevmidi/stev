@@ -15,6 +15,8 @@ What Stev may do next, and what it won't. It picks up where the release plan (`a
 
 What a port would need is in `260-porting.md`. Binaries, when they come, are macOS only (§ Candidates, a downloadable macOS app).
 
+Full Linux and Windows support is now a staged candidate (§ Candidates, Linux and Windows support, staged; added 2026-10-11). Until a stage lands, the above holds: nothing beyond CI is promised.
+
 ## Candidates
 
 ### A downloadable macOS app
@@ -92,9 +94,20 @@ Audio meters only mean something on plugin tracks: a MIDI Out track's audio neve
 - **Replacing a track's plugin isn't undoable.** The old plugin's preset state is gone, and the footer says so (`130`).
 - **No hint that a clip carries wheel data.** Pitch bend and mod wheel play back but are invisible in the piano roll and the thumbnails (`090`).
 
+### Linux and Windows support, staged
+
+Added 2026-10-11: everything macOS has today, on Linux and Windows too, built in stages that each stand on their own. It is by far the largest candidate: a second and third platform, not a feature. The ongoing cost matters more than the code. The author doesn't use either OS day to day, so timing and plugin bugs there are found on machines booted only to test, which is the neglect § Platforms warns about. So each stage is a promise made only once it's done, and stopping after any stage leaves an honest state. What's macOS-only today, and why each part matters, is in `260-porting.md`.
+
+1. **Timing: the probe and the fixes** (§ MIDI Out timing below). The timing probe, the precise `"midiout"` deadline wait, one absolute-deadline clock timer, and best-effort thread priority. All of it helps macOS too (its `select!` timeout is imprecise as well, and no thread has real-time priority on any platform), so it can be done as macOS work, ahead of the rest of this candidate and alongside the audio workgroup join (§ Smaller loose ends). It also clears the first and largest porting hurdle.
+2. **MIDI Out parity on Windows 11 and Ubuntu 24.04.** Run the smoke test (`260` § Smoke test) and fix what it finds: no virtual MIDI port on Windows (midir can't create one; at least document loopMIDI or Windows MIDI Services), quit with unsaved changes, `.mid` file drag, MIDI hot-plug, and the library and log folders. When this lands, Stev is a supported MIDI Out sequencer on all three, with plugins on macOS only, and the README, § Platforms and § Not planned say so.
+3. **The plugin host, Windows first.** Windows has far more musicians and VST3 plugins, and the author has a Windows 11 machine. The host core is format-agnostic (`130`); what's needed is the platform glue: plugin search paths per OS, VST3 bundle layout (`180`), editor windows parented to Win32 (and X11 later), MMCSS as the workgroup join's counterpart (`170`), and expect another round of the GL-context clash with plugins that bring their own GL (NI, Qt). Linux CLAP/VST3 follows Windows; its plugin ecosystem is thin. Decide on this stage only after living with stage 2.
+4. **Packaging per OS** (installer or archive per platform, as § A downloadable macOS app does for macOS), only once stage 3 is solid.
+
+Suggested start: stage 1, as macOS timing work. Stages 2–4 come after the downloadable macOS app.
+
 ### MIDI Out timing
 
-Parked 2026-10-07 with the macOS-first decision. The analysis, the timing-probe design and the fixes are in `260-porting.md` § Timing, since they are a port's first job. If picked up here, it starts on macOS alone: the probe measures macOS as well, the precise `"midiout"` wait helps every platform (crossbeam's `select!` timeout is a condvar wait on macOS too), and macOS threads have no real-time priority either. The author's own test plan:
+Stage 1 of § Linux and Windows support, staged. Parked 2026-10-07 with the macOS-first decision. The analysis, the timing-probe design and the fixes are in `260-porting.md` § Timing, since they are a port's first job. If picked up here, it starts on macOS alone: the probe measures macOS as well, the precise `"midiout"` wait helps every platform (crossbeam's `select!` timeout is a condvar wait on macOS too), and macOS threads have no real-time priority either. The author's own test plan:
 
 - **The machines:** the Windows 11 machine, booted both natively and from an **Ubuntu 24.04 live USB stick**, so Windows and Linux are compared on the same hardware; the Intel Mac as the reference (the mach timer path); a **Surface Pro 3 on Windows 10** as the old-laptop worst case (2014 low-power Intel that throttles when hot: run it plugged in, on the *High performance* power plan, cooled between loaded runs; a first release build may need `-j 2` on 4 GB of RAM); and, optionally, the headless Raspberry Pi 4. Windows 11 stays the main Windows machine. Unlike 10, it stops honouring a process's timer-resolution request while that process's window is minimised or hidden, so the `timeBeginPeriod` fix (`260`) must be checked on 11, in the app, with its window minimised. On the live stick nothing persists across a reboot: `apt install build-essential pkg-config libasound2-dev git`, install rustup (the pinned toolchain installs itself), and clone the repo.
 - **Loopback hardware:** a Roland UM-ONE with its Out plugged into its own In, on every machine (the Scarlett 2i2 has no MIDI).
@@ -123,6 +136,5 @@ Mirrored in the README's *Not planned* list, so nobody expects these. Some may c
 - richer piano-roll editing: a draw/pencil mode, paint-drag, erase gestures, ⌥-drag duplicate, unsnapped drawing, drawing velocity in the velocity panel, Shift-click to add to the selection, drawing clips in the arranger
 - more than 16 tracks, track reordering, track groups/folders
 - DAW integration: Mackie Control or other control-surface sync (removed 2026-10-07; `archive/120-daw-track-sync.md`)
-- **official Linux and Windows support** (§ Platforms). They build and pass the tests in CI; nothing more is promised. What a port would need is in `260-porting.md`.
 
 **Never in scope:** VST2 or any VST format older than VST3. The VST2 SDK is no longer licensed by Steinberg and cannot be redistributed under `MIT OR Apache-2.0`; only VST3 (MIT since SDK 3.8) and newer formats. See `180-vst3-host.md`.

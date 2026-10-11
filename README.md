@@ -97,7 +97,6 @@ the [roadmap](docs/280-roadmap.md):
   velocity
 - more than 16 tracks, track reordering, track groups
 - control-surface or DAW sync (Mackie Control and the like)
-- official Linux and Windows support
 - VST2, ever: only VST3 and newer formats
 
 Forks that take it somewhere else are welcome.
