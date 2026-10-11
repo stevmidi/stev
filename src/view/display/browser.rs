@@ -82,6 +82,14 @@ pub(super) fn browser_row_rect(origin: Pos2, width: f32, idx: usize, scroll: f32
     )
 }
 
+/// The row index under `y`, measured from the panel's top, with the list
+/// scrolled `scroll` points — the inverse of [`browser_row_rect`]. `None`
+/// in the pad above the first row; past the last row it is an index the
+/// tree doesn't have.
+pub(super) fn browser_row_at(y: f32, scroll: f32) -> Option<usize> {
+    (y >= BROWSER_LIST_PAD_Y).then(|| ((y - BROWSER_LIST_PAD_Y + scroll) / BROWSER_ROW_H) as usize)
+}
+
 /// The footer band in canvas space, given the `canvas` rect, the footer's
 /// top and the panel's width this frame: from the window's left edge (canvas
 /// x `-browser_w`, the canvas being drawn shifted right by the panel) to the
@@ -754,6 +762,26 @@ impl Display {
                 .is_some_and(|p| self.is_on_browser_toggle(p.x, p.y))
     }
 
+    /// The row under the pointer — its hover wash — while nothing else owns
+    /// the pointer: no modal overlay, edge drag or row drag, and not on the
+    /// edge, whose resize arrows say a press drags rather than selects.
+    pub(super) fn hovered_browser_row(&self) -> Option<usize> {
+        let p = self.canvas_pointer()?;
+        let free = self.overlay.is_none()
+            && self.browser.resize_grab.is_none()
+            && !self
+                .browser
+                .press
+                .as_ref()
+                .is_some_and(|press| press.dragging);
+        (free
+            && self.is_over_browser(p.x, p.y)
+            && p.y < self.browser_list_bottom()
+            && !self.is_on_browser_edge(p.x, p.y))
+        .then(|| browser_row_at(p.y, self.browser.scroll))
+        .flatten()
+    }
+
     /// Whether canvas-space `(x, y)` is over the panel: left of the canvas
     /// and above the footer, which runs under it.
     pub(super) fn is_over_browser(&self, x: f32, y: f32) -> bool {
@@ -915,10 +943,9 @@ impl Display {
     /// toggles a folder or category and acts like Enter on anything else.
     pub(super) fn handle_browser_click(&mut self, x: f32, y: f32, double: bool) {
         self.key_focus = KeyFocus::Browser;
-        if y < BROWSER_LIST_PAD_Y {
+        let Some(idx) = browser_row_at(y, self.browser.scroll) else {
             return;
-        }
-        let idx = ((y - BROWSER_LIST_PAD_Y + self.browser.scroll) / BROWSER_ROW_H) as usize;
+        };
         let Some(item) = self
             .browser
             .tree
@@ -1014,6 +1041,26 @@ mod tests {
 
     fn names(names: &[&str]) -> Vec<String> {
         names.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn row_at_inverts_row_rect() {
+        let origin = pos2(0.0, 0.0);
+        for scroll in [0.0, 13.0, 2.0 * BROWSER_ROW_H] {
+            for idx in 0..5 {
+                let rect = browser_row_rect(origin, 200.0, idx, scroll);
+                for y in [rect.min.y, rect.center().y, rect.max.y - 0.01] {
+                    if y >= BROWSER_LIST_PAD_Y {
+                        assert_eq!(
+                            browser_row_at(y, scroll),
+                            Some(idx),
+                            "y {y} scroll {scroll}"
+                        );
+                    }
+                }
+            }
+        }
+        assert_eq!(browser_row_at(BROWSER_LIST_PAD_Y - 0.5, 0.0), None);
     }
 
     #[test]

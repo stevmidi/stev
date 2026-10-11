@@ -32,6 +32,10 @@ const TOGGLE_DIVIDER_AT: f32 = 0.4;
 /// Side of the rounded square washed behind the icon under the pointer.
 const TOGGLE_WASH_SIZE: f32 = 22.0;
 
+/// Opacity of the `fg` wash behind the row under the pointer: fainter than
+/// the unfocused selection's accent wash, so it never reads as one.
+const HOVER_WASH_ALPHA: f32 = 0.04;
+
 /// Side of the square a row's icon is drawn in.
 const ICON_SIZE: f32 = 14.0;
 // The icon fits its column with a gap before the text, and its row.
@@ -356,6 +360,7 @@ impl Display {
         let current_name = self.project.project_current_name.as_deref();
         let selected = tree.selected();
         let scroll = self.browser.scroll;
+        let hovered = self.hovered_browser_row();
         let first = (scroll / BROWSER_ROW_H) as usize;
         for (i, row) in rows.iter().enumerate().skip(first) {
             let row_rect = browser_row_rect(panel.min, width, i, scroll);
@@ -372,6 +377,14 @@ impl Display {
                     row_rect,
                     CornerRadius::ZERO,
                     theme::accent().gamma_multiply(alpha),
+                );
+            } else if hovered == Some(i) {
+                // Neutral, as the panel toggle's hover: accent means the
+                // keyboard.
+                painter.rect_filled(
+                    row_rect,
+                    CornerRadius::ZERO,
+                    theme::fg().gamma_multiply(HOVER_WASH_ALPHA),
                 );
             }
 

@@ -24,6 +24,8 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 - **Icons in the browser.** Each row shows what it is at a glance: a folder
   (open while expanded), a project, a MIDI clip or a plugin.
+- **Hover highlight in the browser.** The row under the pointer gets a faint
+  background as the pointer moves through the list.
 - **A button that shows and hides the browser.** A sidebar icon at the left
   end of the footer does what ⌘⌥B does. It stays in the same place whether
   the browser is open or not, and fills in while it is open.
