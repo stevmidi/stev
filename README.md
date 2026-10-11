@@ -87,7 +87,8 @@ the [roadmap](docs/280-roadmap.md):
   project)
 - audio tracks and audio recording
 - automation lanes and CC lane editing
-- effect plugins, sends, a mixer panel
+- mixing: EQ, compression, effect plugins, sends, a mixer panel. Stev arranges;
+  a DAW mixes
 - MIDI clock, Ableton Link or other external sync
 - notation
 - whole-arrangement MIDI file export and multi-track import (one clip at a time
