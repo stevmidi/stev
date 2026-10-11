@@ -277,6 +277,8 @@ fn main() {
             let mut display = display;
             repaint_ctx.set(cc.egui_ctx.clone()).ok();
             cc.egui_ctx.set_fonts(font_definitions());
+            // Before the first frame, whose fonts begin with the theme's text curve.
+            theme::pin_egui_theme(&cc.egui_ctx);
             display.attach_drag_pointer(cc);
             // eframe's GL context is current here; kept so each frame can
             // take it back from plugin code that switched to its own

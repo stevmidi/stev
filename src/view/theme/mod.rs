@@ -9,13 +9,16 @@
 //! constants live at the bottom. See `030-ui-design.md`.
 //!
 //! The 30 palettes themselves and the `ThemePalette` shape are in `palettes.rs`.
+//!
+//! egui's own light/dark theme is pinned to the active palette
+//! ([`pin_egui_theme`]), never left to follow the OS appearance.
 
 pub(crate) mod fonts;
 mod palettes;
 
 use std::sync::atomic::{AtomicU8, Ordering};
 
-use egui::Color32;
+use egui::{Color32, Context, Rgba, Theme, ThemePreference};
 
 use palettes::{THEMES, ThemePalette};
 
@@ -120,6 +123,38 @@ pub(crate) fn track_mute() -> Color32 {
     active_palette().track_mute
 }
 
+/// Linear intensity at or above which a background counts as light: about
+/// sRGB mid-grey (`#777777`).
+const LIGHT_BG_INTENSITY: f32 = 0.18;
+
+/// The egui theme a palette with background `bg` wants. It decides more than
+/// widget colours: egui's dark style draws text with a coverage curve that
+/// thickens light text on a dark background
+/// (`FontColorTransferFunction::DARK_MODE_DEFAULT`), its light style with none,
+/// so the wrong one draws Stev's text noticeably thinner. It also picks the
+/// text cursor and selection colours of the `TextEdit` fields and the native
+/// window's title bar.
+fn egui_theme_for(bg: Color32) -> Theme {
+    if Rgba::from(bg).intensity() >= LIGHT_BG_INTENSITY {
+        Theme::Light
+    } else {
+        Theme::Dark
+    }
+}
+
+/// Pins egui's theme to the active palette's, so a change of the OS
+/// appearance can't swap it. Left at egui's default
+/// (`ThemePreference::System`), a Mac in light mode drew Stev's dark themes
+/// with the light style's text curve. Called at startup and every frame, so
+/// a theme change, from anywhere, is followed without each path having to
+/// remember; it writes only when the theme differs.
+pub(crate) fn pin_egui_theme(ctx: &Context) {
+    let preference = ThemePreference::from(egui_theme_for(bg()));
+    if ctx.options(|o| o.theme_preference) != preference {
+        ctx.set_theme(preference);
+    }
+}
+
 // --- Track accent colors ---
 /// The active theme's track colour number `color_slot` (`Track::color_slot`),
 /// cycling past the palette's last.
@@ -146,3 +181,27 @@ pub(crate) const FONT_SIZE_TL: f32 = 12.0;
 
 /// Small dim label font size (header chip labels, the footer message), pixels.
 pub(crate) const FONT_SIZE_LABEL: f32 = 13.0;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dark_and_light_backgrounds_pick_their_theme() {
+        assert_eq!(egui_theme_for(Color32::BLACK), Theme::Dark);
+        assert_eq!(egui_theme_for(Color32::from_gray(0x40)), Theme::Dark);
+        assert_eq!(egui_theme_for(Color32::from_gray(0xC0)), Theme::Light);
+        assert_eq!(egui_theme_for(Color32::WHITE), Theme::Light);
+    }
+
+    /// Every palette today is dark, so egui is pinned to its dark style —
+    /// the one whose text curve suits light text on a dark background. A
+    /// light palette added later lands here on purpose: check its text
+    /// weight, then update this test.
+    #[test]
+    fn every_palette_uses_the_dark_theme() {
+        for palette in &THEMES {
+            assert_eq!(egui_theme_for(palette.bg), Theme::Dark, "{}", palette.name);
+        }
+    }
+}

@@ -66,6 +66,11 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ### Fixed
 
+- **Text keeps its weight when macOS is in light mode.** Stev followed the
+  system appearance for how it draws text, so in light mode its dark themes
+  drew all text noticeably thinner. It now follows Stev's own theme, as do
+  the text fields' cursor and selection colours and the window's title bar,
+  which stays dark.
 - **The browser scrolls smoothly.** Trackpad and wheel scrolling over the
   browser moves the list by the exact amount, like the arranger and clip view,
   instead of jumping a whole row at a time and dropping slow two-finger
