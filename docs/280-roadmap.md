@@ -23,7 +23,7 @@ Listed in priority order, highest first (set 2026-10-11): the capture workflow, 
 
 ### Adjusting the detected phrase after a commit
 
-A stopped `/` commits detection's best guess, and a take framed too long or too short can't be corrected the way the old pending view allowed. To be solved in the clip view, in its own design doc before any code. The gap and the questions for that doc are in `220` § Known gap.
+A stopped `/` commits detection's best guess, and a take framed too long or too short can't be corrected the way the old pending view allowed. **Designed 2026-10-12 in `290-framing-a-take.md`**, in two phases: a window band in the clip view for every clip, then a take session that frames an insert before it lands. Next: phase 1.
 
 ### The audio workgroup join
 

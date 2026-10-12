@@ -114,6 +114,8 @@ Settled with the user (2026-09-26):
 
 ## Known gap: adjusting the detected phrase (found 2026-09-26)
 
+**Designed 2026-10-12 in `290-framing-a-take.md`** (not built yet): a window band in the clip view, and a take session for inserts. The gap as found:
+
 Found by the user after phase 4, on real takes: **a stopped `/` commits detection's best guess, and a take the detection framed too long or too short can't be corrected the way the pending view allowed.** The pending view kept the take open: the user adjusted the phrase's start and end against the whole capture, then confirmed. Now:
 
 - **A new clip** keeps the capture outside its window (the last `CAPTURE_BUFFER_BARS`), so `[`/`]` and the mouse can still move its edges over it. That covers most of it, but there is no view of the capture as a phrase: no token markers, no one-key "end at the last note".

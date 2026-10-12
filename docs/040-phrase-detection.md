@@ -2,7 +2,7 @@
 
 How the stopped `/` finds the phrase to commit. It frames the capture buffer by phrase detection, then either places a new clip (`Sequencer::build_stopped_capture_clip`, recorded by `CommitClipEdit`) or inserts the notes into the lead clip (`Sequencer::build_stopped_capture_insert`, recorded by `InsertCaptureEdit`). Both builders are pure and live in `src/core/sequencer/stopped_capture.rs`. The detection itself is in `region/phrase_tokens.rs` and `region/window.rs`.
 
-The detection rules the stopped `/` uses (`220-capture-without-pending-view.md`). **Known gap:** once the stopped `/` has committed, a phrase detected too long or too short can only be corrected with the clip's edges (`[`/`]`, mouse). For an insert the capture is gone once committed, so the phrase can't be re-framed at all. Adjusting the detected phrase in the clip view is to be scoped in its own design doc (see `220`).
+The detection rules the stopped `/` uses (`220-capture-without-pending-view.md`). **Known gap:** once the stopped `/` has committed, a phrase detected too long or too short can only be corrected with the clip's edges (`[`/`]`, mouse). For an insert the capture is gone once committed, so the phrase can't be re-framed at all. Adjusting it is designed in `290-framing-a-take.md` (not built yet); its take session replaces the insert window below.
 
 ## The capture source
 
