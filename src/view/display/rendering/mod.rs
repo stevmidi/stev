@@ -567,6 +567,7 @@ impl Display {
         }
         self.draw_timeline(painter, rect);
         self.draw_region(painter, rect);
+        self.draw_window_band(painter, rect);
         self.draw_time_selection(painter, rect);
 
         if let Some(geom) = &note_geom {
@@ -1061,13 +1062,18 @@ impl eframe::App for Display {
         if !was_staging && self.instrument_restore().is_some() {
             ctx.request_repaint();
         }
+        self.in_pane(Pane::Clip, Self::settle_window_edge_commit);
         self.sync_window_close(ctx);
         self.sync_project_dialog_window(ctx);
         self.in_pane(Pane::Clip, Self::sync_clip_frame);
         self.in_pane(Pane::Arranger, Self::sync_arranger_scroll);
         self.sync_time_selection_to_cursor();
 
-        if self.gesture.clip_resize_drag.is_some() || self.gesture.clip_resize_hover.is_some() {
+        if self.gesture.clip_resize_drag.is_some()
+            || self.gesture.clip_resize_hover.is_some()
+            || self.gesture.window_edge_drag.is_some()
+            || self.gesture.window_edge_hover.is_some()
+        {
             ctx.set_cursor_icon(CursorIcon::ResizeHorizontal);
         }
         // A note's edge: the resize arrows on hover and through its drag;

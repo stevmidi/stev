@@ -22,7 +22,7 @@ impl Display {
     /// outside the window can be scrolled to, and the end pushed later with
     /// `]` (`220-capture-without-pending-view.md`). The zoom-out floor stays
     /// the window plus its headroom.
-    pub(super) fn clip_reach_of(&self, region: (i32, i32)) -> (i32, i32) {
+    pub(in crate::view::display) fn clip_reach_of(&self, region: (i32, i32)) -> (i32, i32) {
         reach_over(
             self.meter(),
             region,

@@ -371,12 +371,12 @@ mod tests {
         );
     }
 
-    /// While the project has one clip, `]` ends it exactly at the cursor —
-    /// the clip cursor in the clip view, the arranger cursor in the arranger:
-    /// its length is what Enter fits the tempo to. With a second clip, the
-    /// clip view's `]` rounds up to the bar the cursor is in.
+    /// `]` ends the clip exactly at the cursor — the clip cursor in the
+    /// clip view, the arranger cursor in the arranger: while the project has
+    /// one clip, its length is what Enter fits the tempo to. A second clip
+    /// changes nothing: the clip view's `]` stays exact.
     #[test]
-    fn the_end_is_exact_with_one_clip_and_rounds_up_with_more() {
+    fn the_end_is_exact_with_one_clip_and_with_more() {
         let bar = Meter::FOUR_FOUR.bar_ticks();
         let (mut sequencer, clip_id) = sequencer_with_first_clip();
         let length = bar * 2 + 123;
@@ -403,8 +403,8 @@ mod tests {
         let target = sequencer.clip_edge_target(ClipEdge::End, true).unwrap();
         assert_eq!(
             target.bounds.region_end - target.bounds.region_start,
-            bar * 3,
-            "the bar the cursor is in becomes the last"
+            length,
+            "still exact with a second clip"
         );
     }
 

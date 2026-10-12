@@ -473,6 +473,10 @@ impl EventHandlers {
                 );
             }
 
+            SequencerCommand::SetClipWindowEdge { edge, tick } => {
+                self.window_edge_workflow(sequencer, undo_record, *edge, *tick);
+            }
+
             SequencerCommand::SetClipEdgeToCursor(edge) => {
                 self.clip_edge_to_cursor_workflow(sequencer, undo_record, *edge);
             }

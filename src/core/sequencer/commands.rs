@@ -439,6 +439,16 @@ pub(crate) enum SequencerCommand {
         /// The drag gesture.
         drag_id: u64,
     },
+    /// The clip view's window band drag, released: move the lead clip's
+    /// window `edge` to `tick`, in event ticks
+    /// (`Sequencer::selected_clip_window_edge_at`), as one `ResizeClipEdit`.
+    /// `290-framing-a-take.md` § Phase 1.
+    SetClipWindowEdge {
+        /// The edge the band handle moved.
+        edge: ClipEdge,
+        /// Grid-snapped event tick the handle was released at.
+        tick: i32,
+    },
     /// Enter in the arranger or the clip view: fit the tempo to the
     /// project's only clip (`RetimeClipEdit`); a no-op with more than one
     /// clip, or when it's already whole bars. `220-capture-without-pending-view.md`.

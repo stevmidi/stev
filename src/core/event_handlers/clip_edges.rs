@@ -1,5 +1,6 @@
 //! `EventHandlers` workflows for moving one clip's edges through
-//! `ResizeClipEdit` — the arranger edge drag and `[`/`]` in both views — and
+//! `ResizeClipEdit` — the arranger edge drag, the clip view's window band
+//! drag (`290-framing-a-take.md`) and `[`/`]` in both views — and
 //! for fitting the tempo to the project's only clip with Enter
 //! (`220-capture-without-pending-view.md`, `050-undo-redo.md`). An edit never
 //! moves the playhead, and moves the loop region in one case only: while the
@@ -32,6 +33,26 @@ impl EventHandlers {
             ClipEdge::End => sequencer.clip_end_trimmed_to(clip_id, target_tick),
         };
         self.resize_clip_workflow(sequencer, undo_record, clip_id, after, Some(drag_id));
+    }
+
+    /// The clip view's window band drag, released: moves the lead clip's
+    /// window `edge` to the event tick `tick`
+    /// (`Sequencer::selected_clip_window_edge_at`) — the start as `[` does,
+    /// the end as `]` — as one undo step. The drag before it was a view-local
+    /// preview, so nothing is committed until the release.
+    pub(super) fn window_edge_workflow(
+        &self,
+        sequencer: &mut Sequencer,
+        undo_record: &mut Record<SequencerEdit>,
+        edge: ClipEdge,
+        tick: i32,
+    ) {
+        let Some(EdgeTarget { clip_id, bounds }) =
+            sequencer.selected_clip_window_edge_at(edge, tick)
+        else {
+            return;
+        };
+        self.resize_clip_workflow(sequencer, undo_record, clip_id, Some(bounds), None);
     }
 
     /// `[`/`]`: moves `edge` to the cursor, playing or not
@@ -173,7 +194,7 @@ mod tests {
         Harness, add_clip, harness, run_command as run,
     };
     use crate::core::sequencer::SequencerCommand;
-    use crate::core::time::Meter;
+    use crate::core::time::{self, Meter};
     use crate::core::transport::TransportCommand;
     use crate::core::view_state::ViewState;
     use crate::models::clip::ClipEdge;
@@ -298,5 +319,115 @@ mod tests {
 
         assert_eq!(h.sequencer.tempo_us(), tempo_before);
         assert_eq!(record.len(), 0);
+    }
+
+    /// A window band drag released at event tick `tick`.
+    fn band_drag(edge: ClipEdge, tick: i32) -> SequencerCommand {
+        SequencerCommand::SetClipWindowEdge { edge, tick }
+    }
+
+    /// The lead clip's `(start_tick, region_start, region_end)`.
+    fn lead_bounds(h: &Harness) -> (i32, i32, i32) {
+        let clip = h.sequencer.selected_clip().unwrap();
+        (
+            clip.start_tick(),
+            clip.region().start(),
+            clip.region().end(),
+        )
+    }
+
+    /// The start handle is clip-view `[`: dragged to a tick, the window
+    /// starts where `[` at a cursor on that tick starts it, the end and the
+    /// clip's place in the arrangement stay.
+    #[test]
+    fn a_band_start_drag_is_the_start_marker() {
+        let mut by_key = playing_a_looped_clip();
+        let mut by_band = playing_a_looped_clip();
+        let mut record = Record::new();
+
+        by_key.sequencer.set_selected_clip_cursor_tick(480);
+        run(
+            &mut by_key,
+            &mut record,
+            SequencerCommand::SetClipEdgeToCursor(ClipEdge::Start),
+        );
+        run(
+            &mut by_band,
+            &mut Record::new(),
+            band_drag(ClipEdge::Start, 480),
+        );
+
+        assert_eq!(lead_bounds(&by_band), (0, 480, 1920));
+        assert_eq!(lead_bounds(&by_band), lead_bounds(&by_key));
+    }
+
+    /// The end handle lands exactly on the tick it is dragged to, also with
+    /// more than one clip, where `]` rounds up to whole bars: the view's grid
+    /// does the snapping.
+    #[test]
+    fn a_band_end_drag_lands_on_its_tick_with_two_clips() {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        let mut h = playing_a_looped_clip();
+        add_clip(&mut h.sequencer, bar * 8);
+        let mut record = Record::new();
+
+        run(&mut h, &mut record, band_drag(ClipEdge::End, 1440));
+
+        assert_eq!(lead_bounds(&h), (0, 0, 1440));
+    }
+
+    /// A handle stays inside the clip's reach, and the start can't pass the
+    /// end (the minimum window, as for `[`/`]`).
+    #[test]
+    fn band_handles_stay_inside_the_reach_and_apart() {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        let mut h = playing_a_looped_clip();
+        let mut record = Record::new();
+        let (_, reach_end) = h.sequencer.selected_clip().unwrap().reach(Meter::FOUR_FOUR);
+        assert_eq!(reach_end, 1920 + bar, "the window plus a bar of headroom");
+
+        run(&mut h, &mut record, band_drag(ClipEdge::End, bar * 20));
+        assert_eq!(lead_bounds(&h).2, reach_end);
+
+        run(&mut h, &mut record, band_drag(ClipEdge::Start, bar * 20));
+        let (_, start, end) = lead_bounds(&h);
+        assert_eq!(end - start, time::min_clip_length_ticks());
+    }
+
+    /// A released band drag is one undo step, which puts the window back as
+    /// it was before the drag; the next drag is its own step.
+    #[test]
+    fn a_band_drag_is_one_undo_step() {
+        let mut h = playing_a_looped_clip();
+        let mut record = Record::new();
+        let before = lead_bounds(&h);
+
+        run(&mut h, &mut record, band_drag(ClipEdge::End, 1200));
+        assert_eq!(record.len(), 1);
+        run(&mut h, &mut record, band_drag(ClipEdge::Start, 240));
+        assert_eq!(record.len(), 2);
+
+        record.undo(&mut h.sequencer);
+        assert_eq!(lead_bounds(&h), (0, 0, 1200));
+        record.undo(&mut h.sequencer);
+        assert_eq!(lead_bounds(&h), before);
+    }
+
+    /// While the project has one clip the loop follows a band drag, as it
+    /// does every other edge edit; with two it is left alone. Neither moves
+    /// the playhead.
+    #[test]
+    fn the_loop_follows_a_band_drag_only_with_one_clip() {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        let mut h = playing_a_looped_clip();
+        let mut record = Record::new();
+
+        run(&mut h, &mut record, band_drag(ClipEdge::End, 1440));
+        assert_eq!(loop_moves(&h), (vec![(0, 1440)], false));
+
+        add_clip(&mut h.sequencer, bar * 8);
+        run(&mut h, &mut record, band_drag(ClipEdge::End, 1200));
+        assert_eq!(lead_bounds(&h).2, 1200, "the edit happened");
+        assert_eq!(h.transport_commands.try_iter().count(), 0);
     }
 }

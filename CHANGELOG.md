@@ -22,6 +22,14 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ### Added
 
+- **Drag a clip's start and end in the clip view.** The timeline strip above
+  the piano roll shows the clip's window as a band in the clip's colour; drag
+  either end of it to move the start or the end, snapped to the visible grid.
+  The start works like `[`, the end like `]`. The band shows where the edge
+  will land while you drag, and the change is made when you let go, as one
+  undo step; Esc cancels the drag. While the project has one clip the loop
+  follows.
+
 - **Play notes on the computer keyboard.** ⌘K (Ctrl+K on Windows and Linux),
   or the piano chip at the right of the header, turns the letter keys into a
   piano for a machine with no MIDI keyboard: `A` `S` `D` `F` `G` `H` `J` `K`
@@ -69,6 +77,10 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ### Changed
 
+- **`]` in the clip view ends the clip exactly at the cursor.** With more than
+  one clip in the project it used to round up to the next bar line; now it
+  works like `[`, whatever the number of clips, and still stops at the next
+  clip.
 - **A new interface font, IBM Plex Sans.** It replaces egui's Ubuntu Light,
   which read too thin, across the whole app, and is drawn the way macOS draws
   text, so it looks as it does in Zed. Its licence is in
@@ -82,6 +94,15 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ### Fixed
 
+- **Moving a clip's start while it plays is heard at once.** It used to play
+  the rest of that pass from the old point of the take, cut short, until the
+  loop came round. The clip now switches to its new start straight away,
+  without moving the playhead.
+- **A clip's start can go back to the bar it began on.** After moving a clip's
+  start past the silence before its first note, in the clip view, it couldn't
+  be moved back to that bar line other than by undoing: the cursor and the
+  start stopped at the first note. They now reach the bar line at or before
+  the first note.
 - **Text keeps its weight when macOS is in light mode.** Stev followed the
   system appearance for how it draws text, so in light mode its dark themes
   drew all text noticeably thinner. It now follows Stev's own theme, as do

@@ -33,7 +33,7 @@ use uuid::Uuid;
 
 use crate::core::config::TRACK_NAME_MAX_CHARS;
 use crate::models::{
-    clip::Clip,
+    clip::{Clip, ClipBounds},
     event::Event,
     wheels::{NEUTRAL_WHEELS, WheelTracker},
 };
@@ -651,6 +651,57 @@ impl Track {
                 .filter(|off| !still_sounding.iter().any(|still| key(still) == key(off))),
         );
         Some(result)
+    }
+
+    /// Moves `clip_id` to `bounds` — an edge edit (`ResizeClipEdit`) —
+    /// returning the moved clip, `None` if the track has no such clip. While
+    /// playback is inside that clip and still inside it afterwards, the clip
+    /// is re-seeked in place, so the new window is heard from the playhead
+    /// at once: a clip-view start edit maps the same arrangement tick to
+    /// another point of the take, and walking on from the old point until
+    /// the next wrap played the rest of the pass out of phase, cut short by
+    /// the end that moved in (decided with the user 2026-10-12; `220`
+    /// § Playback during edits). The playhead itself never moves. A note
+    /// the switch stops sounding is released; a note sounding at the new
+    /// point that wasn't before is chased in, and the wheels follow — the
+    /// arrival chase's job when the playhead sits exactly on the clip's
+    /// start, so not here then. An edit that leaves the playhead outside the
+    /// clip is left to [`tick`](Self::tick)'s own release and re-seek. The
+    /// caller only calls this while the transport runs; otherwise it just
+    /// sets the bounds.
+    pub(crate) fn set_clip_bounds(&mut self, clip_id: Uuid, bounds: ClipBounds) -> Option<&Clip> {
+        let clip_idx = self.clips.iter().position(|clip| clip.id() == clip_id)?;
+        let playing = self.current_clip_idx == Some(clip_idx) && self.awaiting_start_tick.is_none();
+        let tick = self.current_tick;
+        let clip = &mut self.clips[clip_idx];
+        let sounding = playing.then(|| clip.pending_note_offs());
+        clip.set_bounds(bounds);
+        if let Some(sounding) = sounding
+            && tick >= clip.start_tick()
+            && tick < clip.end_tick()
+        {
+            clip.seek(tick);
+            let key = |event: &Event| (event.midi_channel(), event.note_number());
+            let still_sounding = clip.pending_note_offs();
+            let chase = (tick > clip.start_tick()).then(|| {
+                let ons: Vec<Event> = clip
+                    .chased_note_ons_at(tick)
+                    .into_iter()
+                    .filter(|on| !sounding.iter().any(|off| key(off) == key(on)))
+                    .collect();
+                (ons, clip.wheels_at(tick))
+            });
+            self.queue_note_offs(
+                sounding
+                    .into_iter()
+                    .filter(|off| !still_sounding.iter().any(|still| key(still) == key(off))),
+            );
+            if let Some((ons, wheels)) = chase {
+                self.pending_note_ons.extend(ons);
+                self.wheels.chase(wheels);
+            }
+        }
+        self.clips.get(clip_idx)
     }
 
     /// Repositions the track to `playback_tick`: picks the clip containing it,

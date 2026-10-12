@@ -81,19 +81,59 @@ const CLIP_END_HEADROOM_BARS: i32 = 1;
 
 /// The one definition of a clip's *reach*, the event-tick span its cursor
 /// and its view can get to: `window` plus [`CLIP_END_HEADROOM_BARS`] after
-/// it, widened to any `(start, end)` span further out. [`Clip::reach`] takes
-/// it over the clip's events; the clip view's scroll range over its note
-/// shapes.
+/// it, widened to any `(start, end)` span further out, and its start pulled
+/// back to the bar line at or before it. [`Clip::reach`] takes it over the
+/// clip's events; the clip view's scroll range over its note shapes.
+///
+/// The bar line is the start's counterpart of the end's headroom: a set
+/// start is never a wall either. Without it a start moved past the gap
+/// before the first note couldn't come back — the reach shrank to the first
+/// note, and the bar line the clip began on was out of reach of the cursor
+/// and the window band (found 2026-10-12).
 pub(crate) fn reach_over(
     meter: Meter,
     (window_start, window_end): (i32, i32),
     spans: impl Iterator<Item = (i32, i32)>,
 ) -> (i32, i32) {
     let end_with_headroom = window_end + meter.bars_to_ticks(CLIP_END_HEADROOM_BARS);
-    spans.fold(
+    let (lo, hi) = spans.fold(
         (window_start, end_with_headroom),
         |(lo, hi), (start, end)| (lo.min(start), hi.max(end)),
-    )
+    );
+    (lo - lo.rem_euclid(meter.bar_ticks()), hi)
+}
+
+/// The clip view's start/end marker rule, shared by `[`/`]` and the window
+/// band (`Sequencer::selected_clip_start_marker_at` / `_end_marker_at`, and
+/// the band's drag preview, which must land where the release will):
+/// `window` with `edge` moved to the event tick `tick`. `room` is the
+/// arrangement room the clip has before the next clip on its track, `None`
+/// with none after it.
+///
+/// - **Start**: moves alone, the end stays (the clip keeps its arrangement
+///   start, so its length follows) — at least the minimum clip length before
+///   the end, and no earlier than the room allows, since an earlier start
+///   lengthens the clip; `None` when not even that fits. Never below tick 0.
+/// - **End**: moves alone — at least the minimum clip length after the
+///   start, and no further than the room.
+pub(crate) fn window_with_edge_at(
+    edge: ClipEdge,
+    tick: i32,
+    (start, end): (i32, i32),
+    room: Option<i32>,
+) -> Option<(i32, i32)> {
+    let min_length = time::min_clip_length_ticks();
+    match edge {
+        ClipEdge::Start => {
+            let latest = end - min_length;
+            let earliest = room.map_or(0, |room| end - room).max(0);
+            (earliest <= latest).then(|| (tick.clamp(earliest, latest), end))
+        }
+        ClipEdge::End => {
+            let length = (tick - start).max(min_length).min(room.unwrap_or(i32::MAX));
+            Some((start, start + length))
+        }
+    }
 }
 
 /// Which edge of a clip an edge edit moves.
@@ -299,9 +339,11 @@ impl Clip {
 mod tests {
     use std::sync::atomic::Ordering;
 
-    use super::{CLIP_END_HEADROOM_BARS, EventSpaceRetime, reach_over};
+    use super::{
+        CLIP_END_HEADROOM_BARS, ClipEdge, EventSpaceRetime, reach_over, window_with_edge_at,
+    };
 
-    use crate::core::time::Meter;
+    use crate::core::time::{self, Meter};
     use crate::models::{
         clip::{Clip, ClipBounds},
         event::Event,
@@ -417,10 +459,12 @@ mod tests {
     // --- nudge_cursor_by_ticks ---
 
     #[test]
-    fn nudge_cursor_by_ticks_clamps_below_region_start() {
-        let mut clip = make_clip(0, 100, 500);
-        clip.nudge_cursor_by_ticks(-999, Meter::FOUR_FOUR); // cursor starts at 0 (< region_start=100), clamps to 100
-        assert_eq!(clip.cursor_tick(), 100);
+    fn nudge_cursor_by_ticks_clamps_at_the_bar_line_before_region_start() {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        let mut clip = make_clip(0, bar + 100, bar + 500);
+        clip.set_cursor_tick(bar + 100);
+        clip.nudge_cursor_by_ticks(-9999, Meter::FOUR_FOUR);
+        assert_eq!(clip.cursor_tick(), bar);
     }
 
     #[test]
@@ -453,11 +497,15 @@ mod tests {
         clip.nudge_cursor_to_region_start();
 
         clip.nudge_cursor_by_ticks(-9999, Meter::FOUR_FOUR);
-        assert_eq!(clip.cursor_tick(), 100, "down to the first kept note");
+        assert_eq!(
+            clip.cursor_tick(),
+            0,
+            "down to the first kept note's bar line"
+        );
         clip.nudge_cursor_by_ticks(9999, Meter::FOUR_FOUR);
         let headroom_end = 1920 + Meter::FOUR_FOUR.bars_to_ticks(CLIP_END_HEADROOM_BARS);
         assert_eq!(clip.cursor_tick(), headroom_end, "a bar past the end");
-        assert_eq!(clip.reach(Meter::FOUR_FOUR), (100, headroom_end));
+        assert_eq!(clip.reach(Meter::FOUR_FOUR), (0, headroom_end));
         assert!(!clip.is_in_window(100));
         assert!(clip.is_in_window(960));
         assert!(!clip.is_in_window(1920), "the window is half-open");
@@ -490,8 +538,47 @@ mod tests {
                 ]
                 .into_iter(),
             ),
-            (100, Meter::FOUR_FOUR.bars_to_ticks(9)),
-            "spans further out widen it"
+            (0, Meter::FOUR_FOUR.bars_to_ticks(9)),
+            "spans further out widen it, the start to its bar line"
+        );
+    }
+
+    /// A start moved past the gap before the first note can come back to
+    /// the bar line the clip began on: the reach starts on the bar line at
+    /// or before the window start and the first note, in the meter's bars.
+    #[test]
+    fn the_reach_starts_on_the_bar_line_before_the_window_and_the_first_note() {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        // Window moved from 0 to beat 3; the first note just after beat 1.
+        let mut clip = make_clip(0, bar / 2, bar * 2);
+        clip.add_event(Event::new(30, 0, vec![0x90, 60, 100]));
+        clip.add_event(Event::new(400, 0, vec![0x80, 60, 0]));
+        assert_eq!(clip.reach(Meter::FOUR_FOUR).0, 0);
+
+        let empty = |window_start| {
+            reach_over(
+                Meter::FOUR_FOUR,
+                (window_start, bar * 9),
+                std::iter::empty(),
+            )
+        };
+        assert_eq!(
+            empty(bar * 5 + 960).0,
+            bar * 5,
+            "a window start off the bar line"
+        );
+        assert_eq!(empty(bar * 5).0, bar * 5, "one on it stays");
+
+        let three_four = Meter::new(3, 4).unwrap();
+        let three_four_bar = three_four.bar_ticks();
+        assert_eq!(
+            reach_over(
+                three_four,
+                (three_four_bar + 960, three_four_bar * 4),
+                std::iter::empty()
+            )
+            .0,
+            three_four_bar
         );
     }
 
@@ -606,5 +693,38 @@ mod tests {
             );
         }
         assert_eq!(EventSpaceRetime::IDENTITY.then(retime), retime);
+    }
+
+    /// The marker rule `[`/`]` and the window band's preview share: the
+    /// start moves alone, kept a minimum length before the end, not before
+    /// tick 0 nor earlier than the room lets the clip grow; the end moves
+    /// alone, kept a minimum length after the start and inside the room.
+    #[test]
+    fn window_with_edge_at_moves_one_edge_inside_the_room() {
+        let min = time::min_clip_length_ticks();
+        let window = (960, 3840);
+        let at = |edge, tick, room| window_with_edge_at(edge, tick, window, room);
+
+        assert_eq!(at(ClipEdge::Start, 480, None), Some((480, 3840)));
+        assert_eq!(
+            at(ClipEdge::Start, -500, None),
+            Some((0, 3840)),
+            "not below 0"
+        );
+        assert_eq!(at(ClipEdge::Start, 9999, None), Some((3840 - min, 3840)));
+        assert_eq!(
+            at(ClipEdge::Start, 0, Some(3000)),
+            Some((840, 3840)),
+            "an earlier start lengthens the clip: held to the room"
+        );
+        assert_eq!(
+            at(ClipEdge::Start, 0, Some(min - 1)),
+            None,
+            "no room at all"
+        );
+
+        assert_eq!(at(ClipEdge::End, 2000, None), Some((960, 2000)));
+        assert_eq!(at(ClipEdge::End, 0, None), Some((960, 960 + min)));
+        assert_eq!(at(ClipEdge::End, 9999, Some(4000)), Some((960, 4960)));
     }
 }

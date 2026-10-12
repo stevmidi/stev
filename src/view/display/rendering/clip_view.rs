@@ -218,8 +218,9 @@ impl Display {
         );
         let event_painter = painter.with_clip_rect(note_area_rect);
 
-        // The lead clip's window: shade the grid outside it.
-        let window @ (region_start, region_end) = self.region_bounds_for_render();
+        // The lead clip's window: shade the grid outside it — a window band
+        // drag's preview while one is live.
+        let window @ (region_start, region_end) = self.clip_window_for_render();
         let origin_x = content_x - self.render.clip_scroll_x;
         let window_start_x = region_start as f32 * ppt + origin_x;
         let window_end_x = region_end as f32 * ppt + origin_x;
@@ -413,7 +414,7 @@ impl Display {
         // Draw bars — one per NoteOn event
         const BAR_W: f32 = 4.0;
 
-        let window = self.region_bounds_for_render();
+        let window = self.clip_window_for_render();
         let note_color = self.lead_clip_color();
         for shape in &self.render.event_shapes {
             let bar_center_x = self.tick_to_screen_x(shape.start_tick());

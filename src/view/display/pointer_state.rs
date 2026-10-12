@@ -13,7 +13,7 @@ use uuid::Uuid;
 
 use super::browser::BrowserPlugin;
 use crate::{
-    models::clip::{Clip, NoteBounds, NoteDrag},
+    models::clip::{Clip, ClipEdge, NoteBounds, NoteDrag},
     shapes::clip_shape::ClipShape,
 };
 
@@ -182,6 +182,41 @@ pub(super) struct ClipResizeDrag {
     pub(super) clip_id: Uuid,
     /// Which edge.
     pub(super) edge: ClipResizeEdge,
+}
+
+/// In-progress drag of a handle of the clip view's window band — see
+/// `Display::window_edge_at`, `begin_window_edge_drag` /
+/// `extend_window_edge_drag` / `finish_window_edge_drag`,
+/// `290-framing-a-take.md` § Phase 1. View-local until the release: the band
+/// previews the window (`Display::window_drag_preview`) and one edit is sent
+/// when the button comes up.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct WindowEdgeDrag {
+    /// The window edge the pressed handle moves.
+    pub(super) edge: ClipEdge,
+    /// The lead clip's reach at the press, in event ticks: the handle is held
+    /// inside it.
+    pub(super) reach: (i32, i32),
+    /// The lead clip's arrangement room before the next clip on its track at
+    /// the press (`None` with none after it) — what the sequencer clamps the
+    /// window to, so the preview lands where the release will.
+    pub(super) room: Option<i32>,
+    /// The handle's grid-snapped event tick, `None` until the pointer moves.
+    pub(super) target: Option<i32>,
+}
+
+/// A released window band drag on its way to the sequencer: the clip view
+/// keeps drawing `after` while the clip's committed window is still `before`,
+/// so the band doesn't flick back to the old window for the frames the edit
+/// takes to come back. Dropped as soon as the committed window is anything
+/// else — the edit landed (or was clamped, or something else moved it) —
+/// see `Display::settle_window_edge_commit`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct WindowEdgeCommit {
+    /// The committed window at the release.
+    pub(super) before: (i32, i32),
+    /// The window the release commits — the drag's last preview.
+    pub(super) after: (i32, i32),
 }
 
 /// What an arranger band drag moves — decided at press time by

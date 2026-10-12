@@ -1,7 +1,7 @@
 //! The view-local selection- and pointer-gesture state — the arranger time
 //! selection, the event marquee, the ⌘/Ctrl velocity drag, the piano roll's
 //! note move / resize drag, the clip-edge, clip-band (move) and track-header
-//! drags, the piano roll's key-column zoom drag, a `.mid` dragged in for
+//! drags, the clip view's window band drag, the piano roll's key-column zoom drag, a `.mid` dragged in for
 //! import, a plugin dragged onto a track, and their hover
 //! counterparts, plus the in-lane cursor-line hover override.
 //!
@@ -14,10 +14,12 @@
 use uuid::Uuid;
 
 use crate::core::{input_event::TimeSelectionRect, view_state::Pane};
+use crate::models::clip::ClipEdge;
 
 use super::pointer_state::{
     ClipMoveDrag, ClipResizeDrag, KeyZoomDrag, MarqueeAnchor, MidiDrag, NoteMouseDrag, NotePart,
-    PluginDrag, TrackButton, TrackMixDrag, TrackMixParam, VelocityDrag,
+    PluginDrag, TrackButton, TrackMixDrag, TrackMixParam, VelocityDrag, WindowEdgeCommit,
+    WindowEdgeDrag,
 };
 
 /// The selection / gesture state, grouped out of [`Display`](super::Display).
@@ -124,6 +126,17 @@ pub(super) struct GestureState {
     /// cursor icon and the edge grip glyph; cleared whenever a real drag
     /// starts. Arranger only.
     pub(super) clip_resize_hover: Option<ClipResizeDrag>,
+    /// In-progress drag of a handle of the clip view's window band. `Some`
+    /// only while the primary button is held after a press landed on one
+    /// (`window_edge_at`). Clip pane only — `290-framing-a-take.md`.
+    pub(super) window_edge_drag: Option<WindowEdgeDrag>,
+    /// A released window band drag the sequencer hasn't applied yet; the
+    /// clip view draws its window meanwhile. Clip pane only.
+    pub(super) window_edge_commit: Option<WindowEdgeCommit>,
+    /// Hover-only counterpart of `window_edge_drag`: which window band
+    /// handle (if any) is under the pointer with no button held, for the
+    /// resize cursor icon. Clip pane only.
+    pub(super) window_edge_hover: Option<ClipEdge>,
     /// In-progress clip band drag (move). `Some` only while the primary
     /// button is held after a press landed on a clip's header band off its
     /// edges — doubles as the drag-active flag. View-local ghost only; the

@@ -569,6 +569,13 @@ impl EventHandlers {
                 });
             }
 
+            InputEvent::SetClipWindowEdge { edge, tick } => {
+                self.send_sequencer(SequencerCommand::SetClipWindowEdge {
+                    edge: *edge,
+                    tick: *tick,
+                });
+            }
+
             InputEvent::MoveCursorByGrid { step_ticks } => match self.view_state() {
                 ViewState::Arranger => {
                     self.send_transport(TransportCommand::MoveCursor { ticks: *step_ticks });

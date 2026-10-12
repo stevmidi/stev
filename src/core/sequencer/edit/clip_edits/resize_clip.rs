@@ -6,7 +6,6 @@
 
 use uuid::Uuid;
 
-use crate::metadata::clip_metadata::ClipMetadata;
 use crate::models::clip::ClipBounds;
 
 use super::super::super::Sequencer;
@@ -95,16 +94,12 @@ impl ResizeClipEdit {
         self.apply(sequencer, self.before)
     }
 
-    /// Moves the clip to `bounds`.
+    /// Moves the clip to `bounds`. While playing, the clip is heard in its
+    /// new window from the playhead at once (`Sequencer::set_clip_bounds`).
     fn apply(&self, sequencer: &mut Sequencer, bounds: ClipBounds) -> EditResult {
-        let Some(clip) = sequencer.clip_on_mut(self.track_idx, self.clip_id) else {
-            return EditResult::NoOp;
-        };
-
-        clip.set_bounds(bounds);
-        EditResult::ClipResized {
-            clip: ClipMetadata::from_clip(self.track_idx, clip),
-            retime: None,
+        match sequencer.set_clip_bounds(self.track_idx, self.clip_id, bounds) {
+            Some(clip) => EditResult::ClipResized { clip, retime: None },
+            None => EditResult::NoOp,
         }
     }
 }
@@ -228,42 +223,26 @@ mod tests {
         );
     }
 
+    /// `]` ends the window exactly at the tick, with any number of clips
+    /// (the fixture has two), at least the minimum length after the start
+    /// and no further than the next clip.
     #[test]
-    fn end_marker_rounds_up_to_whole_bars_and_stops_at_the_next_clip() {
+    fn end_marker_is_exact_and_stops_at_the_next_clip() {
         let bar = Meter::FOUR_FOUR.bar_ticks();
         let sequencer = sequencer_with_clip();
-
-        // Rounds up: 0.6 bars from the window start → 1 bar, exactly on a
-        // bar line → that bar line, 2.4 bars → 3 (the window is 2 bars).
-        let length_at = |cursor_from_start: i32| {
+        let window_start = sequencer.selected_clip().unwrap().region().start();
+        let length_at = |from_start: i32| {
             sequencer
-                .selected_clip_end_marker_at(bar + cursor_from_start, true)
+                .selected_clip_end_marker_at(window_start + from_start)
                 .map(|after| after.region_end - after.region_start)
         };
-        assert_eq!(length_at(bar * 6 / 10), Some(bar));
-        assert_eq!(length_at(bar), Some(bar));
-        assert_eq!(length_at(bar * 24 / 10), Some(bar * 3));
-        assert_eq!(length_at(bar * 16 / 10), None, "in the last bar: unchanged");
+
+        assert_eq!(length_at(bar * 6 / 10), Some(bar * 6 / 10));
+        assert_eq!(length_at(bar * 24 / 10), Some(bar * 24 / 10));
+        assert_eq!(length_at(1), Some(time::min_clip_length_ticks()));
 
         // 9 bars asked for, 6 bars of room before the clip at bar 10.
-        let after = sequencer
-            .selected_clip_end_marker_at(bar * 10, true)
-            .unwrap();
-        assert_eq!(after.region_end - after.region_start, bar * 6);
-    }
-
-    #[test]
-    fn end_marker_rounds_up_to_whole_bars_of_the_meter() {
-        let sequencer = sequencer_with_clip();
-        let seven_eight = Meter::new(7, 8).unwrap();
-        sequencer.set_meter(seven_eight);
-        let bar = seven_eight.bar_ticks();
-        let window_start = sequencer.selected_clip().unwrap().region().start();
-
-        let after = sequencer
-            .selected_clip_end_marker_at(window_start + bar * 24 / 10, true)
-            .unwrap();
-        assert_eq!(after.region_end - after.region_start, bar * 3);
+        assert_eq!(length_at(bar * 9), Some(bar * 6));
     }
 
     /// In the arranger `[`/`]` act on the clip under the cursor, else the

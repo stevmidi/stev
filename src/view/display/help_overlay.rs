@@ -132,6 +132,7 @@ pub(super) const HELP: [&[HelpSection]; 3] = [
                 ("Double-click", "Insert a note"),
                 ("Drag", "Move, or resize by an edge"),
                 ("⌘ drag", "Change the velocity"),
+                ("Band drag", "Move the clip's start / end"),
                 ("Legend drag", "Zoom / scroll the note rows"),
             ],
         },

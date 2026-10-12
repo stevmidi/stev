@@ -655,15 +655,16 @@ mod tests {
         notes
     }
 
-    /// Moving the start while playing (`220`, "Playback during edits"): the
-    /// clip's events don't change, so the pass in progress plays out as it
-    /// was — no jump to the new start at the moment of the edit — and the
-    /// next loop wrap's seek picks up the new start.
-    #[test]
-    fn a_start_moved_while_playing_is_heard_from_the_next_wrap() {
+    /// A playing one-bar clip at bar 1 holding note 60 over the first eighth
+    /// and note 62 over the eighth from the half bar, the playhead walked
+    /// `ticks` into it, the clip selected. Returns the clip's id.
+    fn playing_two_note_clip(
+        seq: &mut Sequencer,
+        rx: &mut Consumer<ClipInstrumentEvent>,
+        ticks: i32,
+    ) -> Uuid {
         let bar = Meter::FOUR_FOUR.bar_ticks();
-        let (mut seq, mut rx) = make_seq_with_rx();
-        instrument_track_0(&mut seq);
+        instrument_track_0(seq);
         let mut clip = Clip::new();
         clip.region_mut().set_region(Some(0), Some(bar));
         clip.add_event(Event::new(0, 0, vec![0x90, 60, 100]));
@@ -674,29 +675,88 @@ mod tests {
         let clip_id = clip.id();
         seq.tracks_mut()[0].add_clip(&clip);
         seq.select_clip(Some(clip_id));
-
+        seq.running.store(true, Ordering::Relaxed);
         seq.reset_to_tick(0);
-        assert_eq!(tick_and_collect(&mut seq, &mut rx, bar / 4), vec![60]);
+        tick_and_collect_messages(seq, rx, ticks);
+        clip_id
+    }
 
-        // `[` in the clip view at the second note: the window now starts there.
-        let after = seq.selected_clip_start_marker_at(bar / 2).unwrap();
-        let edit = ResizeClipEdit::for_clip(&seq, clip_id, after, None).unwrap();
+    /// Every note message `(status high nibble, note)` the next `ticks` ticks
+    /// send, a velocity-0 `NoteOn` counted as a `NoteOff`.
+    fn tick_and_collect_messages(
+        seq: &mut Sequencer,
+        rx: &mut Consumer<ClipInstrumentEvent>,
+        ticks: i32,
+    ) -> Vec<(u8, u8)> {
+        let at = Instant::now();
+        let mut messages = Vec::new();
+        for _ in 0..ticks {
+            seq.tick(at);
+            while let Ok(ev) = rx.pop() {
+                let status = match ev.message[0] & 0xf0 {
+                    0x90 if ev.message[2] == 0 => 0x80,
+                    status @ (0x80 | 0x90) => status,
+                    _ => continue,
+                };
+                messages.push((status, ev.message[1]));
+            }
+        }
+        messages
+    }
+
+    /// `[` in the clip view at `event_tick`, recorded as the edit does it.
+    fn move_start(seq: &mut Sequencer, clip_id: Uuid, event_tick: i32) {
+        let after = seq.selected_clip_start_marker_at(event_tick).unwrap();
+        let edit = ResizeClipEdit::for_clip(seq, clip_id, after, None).unwrap();
         let mut record: Record<SequencerEdit> = Record::new();
-        record.edit(&mut seq, SequencerEdit::ResizeClip(edit));
+        record.edit(seq, SequencerEdit::ResizeClip(edit));
+    }
 
-        let rest_of_pass = tick_and_collect(&mut seq, &mut rx, bar / 4 - 1);
-        assert!(
-            !rest_of_pass.contains(&62),
-            "no jump to the new start mid-pass: {rest_of_pass:?}"
-        );
+    /// Moving the start while playing (`220`, "Playback during edits") is
+    /// heard at once: the playhead stays where it is and the clip plays its
+    /// new window from the matching point — not the old window walked on
+    /// until the next wrap, which played the rest of the pass out of phase
+    /// (found 2026-10-12).
+    #[test]
+    fn a_start_moved_while_playing_is_heard_at_once() {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        let (mut seq, mut rx) = make_seq_with_rx();
+        let clip_id = playing_two_note_clip(&mut seq, &mut rx, bar / 4);
 
-        // The loop wraps (what the transport's wrap does to the sequencer).
-        seq.reset_to_tick(0);
+        // The window now starts a quarter bar later, so the playhead's
+        // quarter bar into the clip is the half bar of the take: note 62.
+        move_start(&mut seq, clip_id, bar / 4);
         assert_eq!(
-            tick_and_collect(&mut seq, &mut rx, bar / 4),
-            vec![62],
-            "the new start from the next wrap"
+            tick_and_collect_messages(&mut seq, &mut rx, 8),
+            vec![(0x90, 62)],
+            "the new window from the playhead"
         );
+        // ...and it ends where the new window does, an eighth later.
+        assert_eq!(
+            tick_and_collect_messages(&mut seq, &mut rx, bar / 8),
+            vec![(0x80, 62)]
+        );
+    }
+
+    /// A note sounding when the start moves is released if the new point
+    /// has it silent, and a note sounding at the new point is chased in.
+    #[test]
+    fn a_start_moved_while_playing_releases_and_chases_notes() {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        let (mut seq, mut rx) = make_seq_with_rx();
+        // A sixteenth in: note 60 is sounding.
+        let clip_id = playing_two_note_clip(&mut seq, &mut rx, bar / 16);
+
+        // The window now starts on note 62, so the playhead's sixteenth into
+        // the clip is a sixteenth into that note.
+        move_start(&mut seq, clip_id, bar / 2);
+        let messages = tick_and_collect_messages(&mut seq, &mut rx, 4);
+        assert!(messages.contains(&(0x80, 60)), "60 released: {messages:?}");
+        assert!(messages.contains(&(0x90, 62)), "62 chased in: {messages:?}");
+
+        // 62 ends where the walk meets its own note-off, not twice.
+        let rest = tick_and_collect_messages(&mut seq, &mut rx, bar / 8);
+        assert_eq!(rest, vec![(0x80, 62)]);
     }
 
     /// A four-bar lead clip at bar 5, its clip cursor at `clip_cursor` (event

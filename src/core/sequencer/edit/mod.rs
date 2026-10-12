@@ -23,7 +23,7 @@ use uuid::Uuid;
 
 use crate::core::input_event::TimeSelectionRect;
 use crate::metadata::clip_metadata::ClipMetadata;
-use crate::models::clip::{Clip, EventSpaceRetime};
+use crate::models::clip::{Clip, ClipBounds, EventSpaceRetime};
 use crate::models::track::InstrumentRef;
 
 use super::Sequencer;
@@ -524,6 +524,29 @@ impl Sequencer {
         self.tracks_mut()
             .get_mut(track_idx)?
             .get_clip_by_id_mut(clip_id)
+    }
+
+    /// Moves the clip with this id on `track_idx` to `bounds` — an edge edit
+    /// — returning its metadata; `None` if either is gone. While the
+    /// transport runs, a clip playback is inside is re-seeked in place, so
+    /// the new window is heard from the playhead at once
+    /// ([`Track::set_clip_bounds`](crate::models::track::Track::set_clip_bounds)).
+    pub(crate) fn set_clip_bounds(
+        &mut self,
+        track_idx: usize,
+        clip_id: Uuid,
+        bounds: ClipBounds,
+    ) -> Option<ClipMetadata> {
+        if !self.is_running() {
+            let clip = self.clip_on_mut(track_idx, clip_id)?;
+            clip.set_bounds(bounds);
+            return Some(ClipMetadata::from_clip(track_idx, clip));
+        }
+        let clip = self
+            .tracks_mut()
+            .get_mut(track_idx)?
+            .set_clip_bounds(clip_id, bounds)?;
+        Some(ClipMetadata::from_clip(track_idx, clip))
     }
 
     /// Runs `edit` on the clip with this id on `track_idx`; `None` if either

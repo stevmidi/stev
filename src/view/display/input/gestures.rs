@@ -8,7 +8,7 @@
 use egui::Pos2;
 
 use crate::core::audio::mix::{db_from_fader_pos, fader_pos_from_db};
-use crate::models::clip::{NoteBounds, NoteDrag};
+use crate::models::clip::{ClipEdge, NoteBounds, NoteDrag};
 
 use super::*;
 
@@ -632,6 +632,72 @@ impl Display {
             .flatten();
     }
 
+    /// Begins a drag of the clip view's window band handle on `edge`
+    /// (`window_edge_at`), freezing what its preview is held to: the lead
+    /// clip's reach and its room before the next clip on its track. A
+    /// distinct gesture: the press neither places the cursor nor selects
+    /// anything, and hides the cursor line, which would read as the cursor
+    /// moving with the handle.
+    pub(super) fn begin_window_edge_drag(&mut self, edge: ClipEdge) {
+        let reach = self.clip_reach_of(self.region_bounds_for_render());
+        let room = self.lead_clip_room();
+        self.gesture.hover_cursor = None;
+        self.gesture.window_edge_hover = None;
+        self.gesture.window_edge_drag = Some(WindowEdgeDrag {
+            edge,
+            reach,
+            room,
+            target: None,
+        });
+    }
+
+    /// Extends an in-progress window band drag: the handle follows the
+    /// pointer's grid-snapped event tick (`snapped_tick_at`, the piano roll's
+    /// visible grid — the arranger edge drag's rule), held inside the reach
+    /// frozen at the press. Nothing is sent: the band previews the window
+    /// (`window_drag_preview`) until the release commits it.
+    pub(super) fn extend_window_edge_drag(&mut self, x: f32) {
+        let tick = self.snapped_tick_at(x);
+        if let Some(drag) = &mut self.gesture.window_edge_drag {
+            let (reach_start, reach_end) = drag.reach;
+            drag.target = Some(tick.clamp(reach_start, reach_end));
+        }
+    }
+
+    /// Ends a window band drag on release: commits the handle's last tick as
+    /// one `SetClipWindowEdge` (one undo step), and holds the preview on
+    /// screen until the sequencer has applied it (`WindowEdgeCommit`), so the
+    /// band doesn't flick back to the old window meanwhile. A press that
+    /// never moved, or a preview that is the window already, commits nothing.
+    pub(super) fn finish_window_edge_drag(&mut self) {
+        let preview = self.window_drag_preview();
+        let Some(WindowEdgeDrag {
+            edge,
+            target: Some(tick),
+            ..
+        }) = self.gesture.window_edge_drag.take()
+        else {
+            return;
+        };
+        let before = self.region_bounds_for_render();
+        let Some(after) = preview.filter(|&after| after != before) else {
+            return;
+        };
+        self.gesture.window_edge_commit = Some(WindowEdgeCommit { before, after });
+        self.input_event_tx
+            .send(InputEvent::SetClipWindowEdge { edge, tick })
+            .ok();
+    }
+
+    /// Updates which window band handle (if any) is under the pointer, for
+    /// the resize cursor icon. A no-op while one is being dragged.
+    pub(super) fn update_window_edge_hover(&mut self, x: f32, y: f32) {
+        if self.gesture.window_edge_drag.is_some() {
+            return;
+        }
+        self.gesture.window_edge_hover = self.window_edge_at(x, y);
+    }
+
     /// Begins a clip band gesture, decided at press time by `clip_band_at`
     /// (after `clip_edge_at` has had first refusal). What the gesture drags
     /// is decided here too, by [`marquee_under_press`]: a press landing
@@ -1193,7 +1259,7 @@ impl Display {
     /// in progress — the cursor line stays pinned at the drag anchor rather
     /// than sliding along with the pointer.
     pub(super) fn update_hover_cursor_tick(&mut self, x: f32, y: f32) {
-        if self.gesture.time_selection_anchor.is_some() {
+        if self.gesture.time_selection_anchor.is_some() || self.gesture.window_edge_drag.is_some() {
             return;
         }
         self.gesture.hover_cursor = (self.is_mouse_inside_pane(x, y)

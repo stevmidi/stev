@@ -9,7 +9,7 @@ Keep the valuable part of the retired modal `PendingClip` view, the phrase **det
 ## Principles
 
 1. **Everything is an edit.** Every change is a `SequencerEdit`: it lands in the arranger and one ⌘Z takes it back.
-2. **Edits never move the transport**, with one exception (below). No edit changes the loop region, the loop flag or the playhead. If an edit changes the music under a running playhead, the current pass plays out and the next loop wrap's seek picks up the change. New transport behaviour during edits is added only when the user asks for it. **The exception, asked for by the user (2026-09-26): while the project has exactly one clip, the loop region is that clip**, so its end can be judged against the wrap before Enter sets the tempo.
+2. **Edits never move the transport**, with one exception (below). No edit changes the loop region, the loop flag or the playhead. If an edit changes the music under a running playhead, the playhead stays where it is: a clip edge edit is heard from there at once (§ Playback during edits); other changes are picked up by the next loop wrap's seek. New transport behaviour during edits is added only when the user asks for it. **The exception, asked for by the user (2026-09-26): while the project has exactly one clip, the loop region is that clip**, so its end can be judged against the wrap before Enter sets the tempo.
 3. **While a project has one clip, that clip's length is the tempo reference, so it is never rounded.** The tempo changes only when the user asks for it (Enter). Nothing about this is stored: every rule reads what's there at the moment of the action.
 4. **Once there's more than one clip, loops are whole bars** (of the project's meter, `archive/270`) unless the user places an edge exactly. A loop that isn't whole bars drifts against the metronome click (`150`). Adapting the clock to arbitrary loop lengths is out of scope, for a later thread.
 
@@ -51,14 +51,14 @@ Every edge change is an undoable `ResizeClipEdit`: keyboard and mouse alike. A m
 | | Arranger (arranger cursor) | Clip view (clip cursor) |
 |---|---|---|
 | `[` | Trim the start to the cursor; the content stays put in time. | Move only the start to the cursor. The end stays, the clip keeps its place in the arrangement, and the length follows. |
-| `]` | Trim the end to the cursor. | **One clip in the project:** end exactly at the cursor. **More than one:** end on the bar line at or after the cursor (rounded *up*), floored to the room before the next clip. |
+| `]` | Trim the end to the cursor. | End exactly at the cursor, held to the room before the next clip (with more than one clip it rounded *up* to the bar line until 2026-10-12). |
 | Which clip | The one under the cursor, otherwise the nearest on the side the edge faces, so the keys can grow a clip as well as shrink it. | The lead clip. |
 
 The mouse edge drag is the arranger trim, snapped to the view grid.
 
 ### Material outside the window
 
-- **Reach.** A clip's *reach* is its window plus **one bar of headroom** after the end, widened to any event further out (`reach_over`, the single rule). The clip cursor is clamped to the reach (`Clip::reach`), and the clip view scrolls over it. The headroom means a set end is never a wall: `→` into it and `]` lengthens the clip.
+- **Reach.** A clip's *reach* is its window plus **one bar of headroom** after the end, widened to any event further out, its start then pulled back to the **bar line** at or before it (`reach_over`, the single rule). The clip cursor is clamped to the reach (`Clip::reach`), and the clip view scrolls over it. The headroom means a set end is never a wall: `→` into it and `]` lengthens the clip. The bar line does the same for the start (added 2026-10-12): a start moved past the gap before the first note can always come back to the bar line the clip began on — before, the reach shrank to the first note and that bar line was lost.
 - **Shading.** Outside the window, the note grid is shaded and notes are dimmed like muted ones. Those notes never play.
 - **`⌥Space`** from a cursor outside the window plays from the clip's start.
 
@@ -71,9 +71,10 @@ The mouse edge drag is the arranger trim, snapped to the view grid.
 
 ### Playback during edits
 
-Nothing is done to the transport (principle 2). Because a clip's events don't change when its edges move, the current pass plays out as it was and the next loop wrap re-seeks onto the new window. Specifically:
+Nothing is done to the transport (principle 2): the playhead, the loop region and the loop flag stay. Specifically:
 
-- **Moving the start in the clip view** switches the music at the next wrap. That's the seamless option: switching immediately jumps the music mid-bar or puts the loop out of phase.
+- **An edge edit is heard at once** (changed 2026-10-12). `ResizeClipEdit` goes through `Sequencer::set_clip_bounds` → `Track::set_clip_bounds`: while playback is inside the clip and still inside it afterwards, the clip is re-seeked in place, so it plays its new window from the playhead — a note the switch stops sounding is released, a note sounding at the new point is chased in, and the wheels follow. Most visible for **moving the start in the clip view**: the clip keeps its arrangement start, so the same arrangement tick now maps to another point of the take. The playhead never moves.
+  - Why it changed: the first version waited for the next wrap, as "the seamless option" — switching immediately jumps the music mid-bar. That held while `[` kept the clip's length and slid its end along, so the old window could play out intact. When `[` was changed the same day (2026-09-26) to keep the end and move only the start, the clip got shorter at once and its end (and with one clip the loop end) moved in: the old window couldn't play out any more, and the rest of the pass played the old point of the take, cut short, until the wrap — out of phase. The playback rule wasn't revisited then; the user heard it on 2026-10-12. With the band committing on release, the switch happens once per edit, not per pointer move.
 - **Pulling the end in behind the playhead** leaves the playhead past the new end, where the transport doesn't wrap. Playback runs on linearly until the user restarts, which the user considers correct.
 - **Enter while playing** works. The fit rescales the playing clip's ticks while the playhead keeps its tick, so the rest of that pass may play out of phase; the next loop wrap's seek corrects it. The pending view's confirm behaved the same way. Accepted (see Decisions).
 
@@ -83,7 +84,7 @@ Nothing is done to the transport (principle 2). Because a clip's events don't ch
 |---|---|---|---|
 | stopped `/` | none yet | first clip, exact detected window; tempo untouched; loop over it, looping on | n/a |
 | stopped `/` | one or more | nearest whole bars, floored to the room (auto-fit dropped; see Decisions) | n/a |
-| `[` clip view | any | start to the clip cursor; end stays | pass plays out; new start from the next wrap |
+| `[` clip view | any | start to the clip cursor; end stays | the new window from the playhead at once |
 | `]` clip view | one | exact at the clip cursor; the loop follows | same; the loop follows, the playhead isn't moved |
 | `]` clip view | more than one | up to the bar line at or after the cursor | same; nothing moved (a playhead left past the end runs on) |
 | `[`/`]` arranger | any | trim at the arranger cursor; with one clip the loop follows | same; the playhead isn't moved |
@@ -94,7 +95,7 @@ Nothing is done to the transport (principle 2). Because a clip's events don't ch
 
 The stopped `/` into a lead clip: the detected phrase at the clip cursor, one undoable `InsertCaptureEdit`, stopped or playing alike; nothing sent to the transport.
 
-Pinned by: `stopped_first_clip_is_exact_and_enter_fits_it`, `stopped_commit_window_is_the_retired_confirms`, `stopped_commit_floors_to_the_bars_before_the_next_clip`, `stopped_insert_lands_the_detected_phrase_at_the_clip_cursor`, `stopped_insert_is_undoable_and_keeps_the_selection`, `insert_running_capture_is_undoable`, `stopped_commit_into_the_lead_clip_is_one_undoable_insert` (`/`); `start_marker_moves_only_the_start`, `end_marker_rounds_up_to_whole_bars_and_stops_at_the_next_clip`, `the_end_is_exact_with_one_clip_and_rounds_up_with_more`, the `resize_clip` tests (edges); `enter_fits_the_tempo_to_the_only_clip_and_undoes_with_it`, `nothing_to_fit_on_a_whole_bar_clip_or_with_a_second_clip`, `enter_does_nothing_with_more_than_one_clip` (Enter). The playing column and the loop: `the_only_clip_keeps_the_loop_on_it_and_never_moves_the_playhead` and `with_two_clips_an_edge_edit_sends_nothing_to_the_transport` (handler-level) and `a_start_moved_while_playing_is_heard_from_the_next_wrap` (drives `Sequencer::tick` across a wrap and checks the notes emitted).
+Pinned by: `stopped_first_clip_is_exact_and_enter_fits_it`, `stopped_commit_window_is_the_retired_confirms`, `stopped_commit_floors_to_the_bars_before_the_next_clip`, `stopped_insert_lands_the_detected_phrase_at_the_clip_cursor`, `stopped_insert_is_undoable_and_keeps_the_selection`, `insert_running_capture_is_undoable`, `stopped_commit_into_the_lead_clip_is_one_undoable_insert` (`/`); `start_marker_moves_only_the_start`, `end_marker_rounds_up_to_whole_bars_and_stops_at_the_next_clip`, `the_end_is_exact_with_one_clip_and_rounds_up_with_more`, the `resize_clip` tests (edges); `enter_fits_the_tempo_to_the_only_clip_and_undoes_with_it`, `nothing_to_fit_on_a_whole_bar_clip_or_with_a_second_clip`, `enter_does_nothing_with_more_than_one_clip` (Enter). The playing column and the loop: `the_only_clip_keeps_the_loop_on_it_and_never_moves_the_playhead` and `with_two_clips_an_edge_edit_sends_nothing_to_the_transport` (handler-level) and `a_start_moved_while_playing_is_heard_at_once` / `a_start_moved_while_playing_releases_and_chases_notes` (drive `Sequencer::tick` across the edit and check the notes emitted).
 
 ## Decisions
 
@@ -102,7 +103,7 @@ Settled with the user (2026-09-26):
 
 - **Detection stays, the modal is gone.** Correcting a detected start is a mouse or `[`/`]` job; phrase tokens as cursor stops were dropped (the user didn't miss them).
 - **The stopped commit keeps outside material; the running commit doesn't.** Running passes overlap the same phase, so there's no linear timeline to keep. The kept span is 8 bars, stored like any other event with no DTO change.
-- **`[`/`]` in both views** with the operands above. Clip view `[` moves only the start; the end changes only deliberately, with `]`. With more than one clip, clip-view `]` rounds up; with one clip it is exact.
+- **`[`/`]` in both views** with the operands above. Clip view `[` moves only the start; the end changes only deliberately, with `]`. Clip-view `]` is exact (since 2026-10-12; it rounded up with more than one clip).
 - **Fitting the tempo is an action (Enter), not a stored state.** Every rule reads the clip count when the action happens. No header hint and no automatic fit: Enter is the one way to fit the tempo.
 - **The metronome is out of scope.** If it needs a change, it gets a separate fix.
 - **One bar of end headroom.** **Narrowest grid in the piano roll**; more grid options are future work. Snap-end-to-content is dropped.
@@ -114,7 +115,7 @@ Settled with the user (2026-09-26):
 
 ## Known gap: adjusting the detected phrase (found 2026-09-26)
 
-**Designed 2026-10-12 in `290-framing-a-take.md`** (not built yet): a window band in the clip view, and a take session for inserts. The gap as found:
+**Designed 2026-10-12 in `290-framing-a-take.md`**: a window band in the clip view (phase 1, built 2026-10-12), and a take session for inserts (phase 2, not built yet). The gap as found:
 
 Found by the user after phase 4, on real takes: **a stopped `/` commits detection's best guess, and a take the detection framed too long or too short can't be corrected the way the pending view allowed.** The pending view kept the take open: the user adjusted the phrase's start and end against the whole capture, then confirmed. Now:
 

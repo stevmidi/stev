@@ -1,6 +1,6 @@
 # Framing a Take
 
-**Status: design, agreed 2026-10-12; nothing built yet.** Closes the known gap in `220-capture-without-pending-view.md`: a stopped `/` commits detection's best guess, and a take inserted into an existing clip can't be re-framed at all. Two phases, each its own branch: a **window band** in the clip view for every clip (phase 1), then a **take session** that frames a take before it is inserted (phase 2). Read `220` and `040-phrase-detection.md` first.
+**Status: design, agreed 2026-10-12. Phase 1 (the window band) built 2026-10-12, as-built in `020` § Clip Edge Drag-Resize and `030` § Timeline; phase 2 not started.** Closes the known gap in `220-capture-without-pending-view.md`: a stopped `/` commits detection's best guess, and a take inserted into an existing clip can't be re-framed at all. Two phases, each its own branch: a **window band** in the clip view for every clip (phase 1), then a **take session** that frames a take before it is inserted (phase 2). Read `220` and `040-phrase-detection.md` first.
 
 ## The problem
 
@@ -24,9 +24,9 @@ The clip view gets a band in its timeline strip spanning the clip's window, with
 
 - **Look.** Modelled on the arranger's region band (`030` § Timeline, `draw_region`): `REGION_BAND_H` tall, translucent, a 1px line at each edge, flush down to the strip-bottom groove, in the clip's colour rather than `theme::region()` so it doesn't read as the loop. The arranger's region band stays arranger-only. The cursor's play triangle draws over it. Edges go through `region_bound_x` like every other time-anchored x. The pointer turns into the horizontal-resize cursor over a handle.
 - **Grab.** A press within a few px of an edge, in the strip, grabs it; elsewhere the strip keeps what it does today.
-- **Snap.** The piano roll's visible grid (`GridSurface::PianoRoll`), the same rule as the arranger's edge drag (snapped to the view grid). `]`'s one-clip exactness and more-than-one-clip round-up stay keyboard rules; the fine piano-roll grid (down to 256ths) makes an exact mouse edge unnecessary.
-- **What it does.** The start handle is clip-view `[` (moves only the start; the end stays, the clip keeps its place in the arrangement). The end handle is `]` at the snapped tick. Each move is a `ResizeClipEdit`, one undo step per drag (merged by drag id, the `050` pattern the arranger drag already uses). While the project has one clip the loop follows, through the same `loop_sole_clip_workflow` call the other edge edits make.
-- **Reach.** A handle can't leave the clip's reach (`Clip::reach`); the start can't pass the end and vice versa (the minimum window as for `[`/`]`).
+- **Snap.** The piano roll's visible grid (`GridSurface::PianoRoll`), the same rule as the arranger's edge drag (snapped to the view grid). As built, `]` itself became exact with any number of clips (2026-10-12), so the end handle is simply `]` at the snapped tick.
+- **What it does.** The start handle is clip-view `[` (moves only the start; the end stays, the clip keeps its place in the arrangement). The end handle is `]` at the snapped tick. As built, the drag only previews the window and the release commits one `ResizeClipEdit` (Esc cancels): an edit per move showed the clip changing under the drag (`020` § Clip Edge Drag-Resize). While the project has one clip the loop follows, through the same `loop_sole_clip_workflow` call the other edge edits make.
+- **Reach.** A handle can't leave the clip's reach (`Clip::reach`, which starts on the bar line at or before the window start and the first note — `220` § Reach); the start can't pass the end and vice versa (the minimum window as for `[`/`]`).
 
 Pinned by: band-drag tests next to the `resize_clip` ones (start drag = `[`, end drag snapped to the grid, one undo step per drag, loop follows with one clip and not with two) and pure geometry tests for the handle hit-test and band span.
 
@@ -91,7 +91,7 @@ These temporary notes are never undo steps of their own. **Enter** restores the 
 
 The footer names the session (e.g. "Framing take: Enter inserts, Esc cancels") while it is open; it is the one place the mode is visible beyond the take itself.
 
-Pinned by: the window rule (`[` in a silence still lands the first note on the cursor; a note across `]` kept whole; a note across `[` left out; chord onsets one stop), Enter = one undo step whose undo restores the pre-session clip, Esc and ⌘Z restore it and keep the buffer, the selection unchanged, blocked commands are no-ops, and a run across a loop wrap that hears a changed window from the next pass (driving `Sequencer::tick`, like `a_start_moved_while_playing_is_heard_from_the_next_wrap`).
+Pinned by: the window rule (`[` in a silence still lands the first note on the cursor; a note across `]` kept whole; a note across `[` left out; chord onsets one stop), Enter = one undo step whose undo restores the pre-session clip, Esc and ⌘Z restore it and keep the buffer, the selection unchanged, blocked commands are no-ops, and a run across a loop wrap that hears a changed window from the next pass (driving `Sequencer::tick`, like `a_start_moved_while_playing_is_heard_at_once`).
 
 ## Decisions
 

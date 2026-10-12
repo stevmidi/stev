@@ -86,7 +86,7 @@ impl Display {
     }
 
     /// Whether `(x, y)` is on the active pane's timeline strip.
-    fn is_mouse_on_timeline_strip(&self, x: f32, y: f32) -> bool {
+    pub(super) fn is_mouse_on_timeline_strip(&self, x: f32, y: f32) -> bool {
         self.is_mouse_inside_pane(x, y) && !self.is_mouse_inside_clip_content(x, y)
     }
 
@@ -123,6 +123,13 @@ impl Display {
             arranger && self.is_mouse_inside_clip_content(x, y) && x < self.content_origin_x();
         if !in_header_column {
             self.key_focus = KeyFocus::Pane;
+        }
+
+        // A handle of the clip view's window band: drags that window edge
+        // (`290-framing-a-take.md`).
+        if let Some(edge) = self.window_edge_at(x, y) {
+            self.begin_window_edge_drag(edge);
+            return true;
         }
 
         // The timeline strip places the pane's cursor and nothing else: no
@@ -313,6 +320,7 @@ impl Display {
             display.update_note_hover(x, y, modifiers.command);
             display.update_key_zoom_hover(x, y);
             display.update_clip_resize_hover(x, y);
+            display.update_window_edge_hover(x, y);
             display.update_clip_move_hover(x, y);
             display.update_track_mix_hover(x, y);
             display.update_track_button_hover(x, y);
@@ -737,6 +745,7 @@ impl Display {
                     display.extend_velocity_drag(y);
                     display.extend_note_drag(x, y);
                     display.extend_clip_resize_drag(x);
+                    display.extend_window_edge_drag(x);
                     display.extend_clip_move_drag(x, y);
                     display.extend_track_mix_drag(y, modifiers.shift);
                 });
@@ -881,6 +890,9 @@ impl Display {
                     self.in_pane(Pane::Clip, Self::finish_note_drag);
                 }
                 self.gesture.clip_resize_drag = None;
+                if self.gesture.window_edge_drag.is_some() {
+                    self.in_pane(Pane::Clip, Self::finish_window_edge_drag);
+                }
                 // A keyboard-armed nudge is committed by `MoveModifierReleased`
                 // only — the mirror of that arm's `via_keyboard` guard, so a
                 // click while ⌘/Ctrl is held can't commit (or discard) it.
@@ -1104,6 +1116,15 @@ impl Display {
                 modifiers: _,
             } if self.gesture.note_drag.is_some() => {
                 self.cancel_note_drag();
+                true
+            }
+            // Esc mid window band drag cancels it: the preview vanishes and
+            // nothing is committed.
+            InputEvent::KeyPressed {
+                key: Key::Escape,
+                modifiers: _,
+            } if self.gesture.window_edge_drag.is_some() => {
+                self.gesture.window_edge_drag = None;
                 true
             }
             // Esc mid BPM chip drag: the tempo goes back, no undo step.

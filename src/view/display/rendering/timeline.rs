@@ -1,9 +1,11 @@
 //! Painting the timeline strip above the lanes: the bar-number ruler, the
-//! loop-region band, and the arranger time-selection markers. The `REGION_BAND_H`
+//! loop-region band (the clip view's window band in its place there, with
+//! its handle hit-test), and the arranger time-selection markers. The `REGION_BAND_H`
 //! constant is shared with the piano roll. See `030-ui-design.md`.
 
-use egui::{Align2, CornerRadius, FontId, Painter, Rect, Shape, Stroke, pos2, vec2};
+use egui::{Align2, Color32, CornerRadius, FontId, Painter, Rect, Shape, Stroke, pos2, vec2};
 
+use crate::models::clip::ClipEdge;
 use crate::view::display::grid::GridRole;
 
 use super::*;
@@ -179,14 +181,64 @@ impl Display {
         // earns its place in the arranger (the loop region is edited there),
         // but in `Clip` the region just
         // spans the clip being edited — the band stretches the whole ruler and
-        // says nothing — so skip it there. Modal states (`Project` etc.) layer
-        // over the arranger and keep it.
+        // says nothing — so the clip's window band takes its place there
+        // (`draw_window_band`). Modal states (`Project` etc.) layer over the
+        // arranger and keep it.
         if self.active_pane() == Pane::Clip {
             return;
         }
 
+        let region = theme::region();
+        // When looping is disabled the region still marks the playback bounds
+        // but no longer wraps playback, so everything dims to signal that.
+        let loop_dim = if self.is_loop_enabled() { 1.0 } else { 0.4 };
+        self.draw_strip_band(
+            painter,
+            rect,
+            self.region_bounds_for_render(),
+            region.gamma_multiply(Self::STRIP_BAND_FILL_ALPHA * loop_dim),
+            region.gamma_multiply(Self::STRIP_BAND_EDGE_ALPHA * loop_dim),
+        );
+    }
+
+    /// Paints the clip view's window band along the bottom of its timeline
+    /// strip: the lead clip's window, the loop band's shape in the clip's
+    /// colour, so it doesn't read as the loop. Its edge lines are the handles
+    /// `window_edge_at` grabs (`290-framing-a-take.md` § Phase 1); during a
+    /// handle drag it shows the preview (`clip_window_for_render`). Clip pane
+    /// only.
+    pub(super) fn draw_window_band(&self, painter: &Painter, rect: Rect) {
+        if self.active_pane() != Pane::Clip {
+            return;
+        }
+        let color = self.lead_clip_color();
+        self.draw_strip_band(
+            painter,
+            rect,
+            self.clip_window_for_render(),
+            color.gamma_multiply(Self::STRIP_BAND_FILL_ALPHA),
+            color.gamma_multiply(Self::STRIP_BAND_EDGE_ALPHA),
+        );
+    }
+
+    /// Opacity of a strip band's body (`draw_strip_band`).
+    const STRIP_BAND_FILL_ALPHA: f32 = 0.26;
+    /// Opacity of a strip band's edge lines (`draw_strip_band`).
+    const STRIP_BAND_EDGE_ALPHA: f32 = 0.6;
+
+    /// Paints a `REGION_BAND_H` band over the tick span `(start, end)` along
+    /// the bottom of the active pane's timeline strip: a translucent `fill`
+    /// and a 1px `edge` line at each bound — the loop region in the arranger,
+    /// the clip's window in the clip view.
+    fn draw_strip_band(
+        &self,
+        painter: &Painter,
+        rect: Rect,
+        (start, end): (i32, i32),
+        fill: Color32,
+        edge: Color32,
+    ) {
         let area_top = rect.min.y + self.track_area_top();
-        let (region_start, region_end) = self.region_bounds_for_render();
         let ry = area_top + Self::TIMELINE_H; // strip bottom — sits on the groove seam
         let band_top = ry - REGION_BAND_H;
         let content_x = self.content_origin_x();
@@ -200,44 +252,54 @@ impl Display {
         // near .5 — on those bars the edge line drifted a pixel off the bar tick
         // bleeding through the translucent band, doubling it into a blurred
         // "gutter". `region_bound_x` mirrors `tick_to_screen_x` exactly.
-        let start_x = self.tick_to_screen_x(region_start);
-        let end_x = self.tick_to_screen_x(region_end).max(start_x + 1.0);
+        let start_x = self.tick_to_screen_x(start);
+        let end_x = self.tick_to_screen_x(end).max(start_x + 1.0);
 
-        // Scrolled fully past the region (either side): nothing to paint. The
+        // Scrolled fully past the span (either side): nothing to paint. The
         // band is otherwise clamped to the content area so it never bleeds into
         // the track-header gutter.
         let Some((rx, right)) = region_band_span(start_x, end_x, content_x, content_right) else {
             return;
         };
-        let rw = right - rx;
-
-        let region = theme::region();
-        // When looping is disabled the region still marks the playback bounds
-        // but no longer wraps playback, so everything dims to signal that.
-        let loop_dim = if self.is_loop_enabled() { 1.0 } else { 0.4 };
 
         // Body — shallow translucent band, flush down to the strip-bottom
-        // groove. Fill colour/alpha unchanged; it's the edges that were
-        // reworked.
+        // groove.
         painter.rect_filled(
-            Rect::from_min_size(pos2(rx, band_top), vec2(rw, REGION_BAND_H)),
+            Rect::from_min_size(pos2(rx, band_top), vec2(right - rx, REGION_BAND_H)),
             CornerRadius::ZERO,
-            region.gamma_multiply(0.26 * loop_dim),
+            fill,
         );
 
-        // Edges — a single crisp 1px vertical line at each region bound, one
-        // alpha (the old band had a near-invisible 0.18 top line, a 0.45 bottom
-        // line and 0.75 handle bars, three weights fighting each other). No top
-        // or bottom line: the fill marks the span, the strip-bottom groove
-        // closes it underneath, and the bounds are what matter. Each edge draws
-        // only where that bound is actually on-screen.
-        let edge = Stroke::new(1.0_f32, region.gamma_multiply(0.6 * loop_dim));
+        // Edges — a single crisp 1px vertical line at each bound, one alpha.
+        // No top or bottom line: the fill marks the span, the strip-bottom
+        // groove closes it underneath, and the bounds are what matter. Each
+        // edge draws only where that bound is actually on-screen.
+        let edge = Stroke::new(1.0_f32, edge);
         if self.content_x_on_screen(start_x) {
             painter.vline(start_x, band_top..=ry, edge);
         }
         if self.content_x_on_screen(end_x) {
             painter.vline(end_x, band_top..=ry, edge);
         }
+    }
+
+    /// The window band handle a press at `(x, y)` grabs: in the clip view's
+    /// timeline strip, within `CLIP_EDGE_HIT_PX` of an on-screen edge of the
+    /// lead clip's window (`window_edge_hit`). `None` anywhere else, with no
+    /// lead clip, and in the arranger.
+    pub(in crate::view::display) fn window_edge_at(&self, x: f32, y: f32) -> Option<ClipEdge> {
+        if self.active_pane() != Pane::Clip
+            || self.lead_clip_time.is_none()
+            || !self.is_mouse_on_timeline_strip(x, y)
+        {
+            return None;
+        }
+        let (start, end) = self.region_bounds_for_render();
+        let on_screen = |tick: i32| {
+            let edge_x = self.tick_to_screen_x(tick);
+            self.content_x_on_screen(edge_x).then_some(edge_x)
+        };
+        window_edge_hit(x, on_screen(start), on_screen(end), Self::CLIP_EDGE_HIT_PX)
     }
 
     /// Draws the time-position markers in the timeline strip.
@@ -362,6 +424,29 @@ fn grid_line_x(step: i32, ticks_per_step: i32, ppt: f32, content_x: f32, scroll_
     region_bound_x(step * ticks_per_step, ppt, content_x, scroll_x)
 }
 
+/// Which window band handle a press at screen `x` grabs, given the window's
+/// start and end edge x (`None` while scrolled off screen): the edge within
+/// `hit_px`, or the nearer one when both are — the end on a tie, so a window
+/// squeezed to a few pixels can still be pulled open.
+fn window_edge_hit(
+    x: f32,
+    start_x: Option<f32>,
+    end_x: Option<f32>,
+    hit_px: f32,
+) -> Option<ClipEdge> {
+    let distance = |edge_x: Option<f32>| {
+        edge_x
+            .map(|edge_x| (x - edge_x).abs())
+            .filter(|&distance| distance <= hit_px)
+    };
+    match (distance(start_x), distance(end_x)) {
+        (Some(start), Some(end)) if start < end => Some(ClipEdge::Start),
+        (_, Some(_)) => Some(ClipEdge::End),
+        (Some(_), None) => Some(ClipEdge::Start),
+        (None, None) => None,
+    }
+}
+
 /// Screen-x `[x0, x1]` the region band should paint, clamped to the content
 /// area `[content_x, content_right]`, or `None` when the region is scrolled
 /// entirely out of view. Keeps a scrolled-away region from bleeding its band
@@ -383,8 +468,11 @@ fn region_band_span(
 
 #[cfg(test)]
 mod tests {
-    use super::{grid_line_x, region_band_span, region_bound_x, timeline_step_span};
+    use super::{
+        grid_line_x, region_band_span, region_bound_x, timeline_step_span, window_edge_hit,
+    };
     use crate::core::time::{self, Meter};
+    use crate::models::clip::ClipEdge;
 
     const CONTENT_X: f32 = 118.0;
 
@@ -541,5 +629,39 @@ mod tests {
         let pps = 1274.0 / 128.0;
         assert!(covers_right_edge(37.0 * pps, 118.0, 1274.0, pps));
         assert!(covers_right_edge(1000.5, 118.0, 1274.0, pps));
+    }
+
+    #[test]
+    fn a_press_near_a_window_edge_grabs_its_handle() {
+        let hit = |x| window_edge_hit(x, Some(200.0), Some(400.0), 5.0);
+        assert_eq!(hit(196.0), Some(ClipEdge::Start));
+        assert_eq!(hit(205.0), Some(ClipEdge::Start));
+        assert_eq!(hit(398.0), Some(ClipEdge::End));
+        assert_eq!(hit(405.0), Some(ClipEdge::End));
+        assert_eq!(hit(194.0), None);
+        assert_eq!(hit(300.0), None);
+        assert_eq!(hit(406.0), None);
+    }
+
+    #[test]
+    fn a_narrow_window_grabs_the_nearer_handle_and_the_end_on_a_tie() {
+        let hit = |x| window_edge_hit(x, Some(200.0), Some(204.0), 5.0);
+        assert_eq!(hit(199.0), Some(ClipEdge::Start));
+        assert_eq!(hit(201.0), Some(ClipEdge::Start));
+        assert_eq!(hit(202.0), Some(ClipEdge::End));
+        assert_eq!(hit(207.0), Some(ClipEdge::End));
+    }
+
+    #[test]
+    fn an_edge_scrolled_off_screen_has_no_handle() {
+        assert_eq!(
+            window_edge_hit(200.0, None, Some(202.0), 5.0),
+            Some(ClipEdge::End)
+        );
+        assert_eq!(
+            window_edge_hit(202.0, Some(200.0), None, 5.0),
+            Some(ClipEdge::Start)
+        );
+        assert_eq!(window_edge_hit(200.0, None, None, 5.0), None);
     }
 }

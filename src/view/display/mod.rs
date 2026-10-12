@@ -98,7 +98,7 @@ pub(crate) use modal_focus::{MidiSettingsFocus, Overlay, PortSide, SettingsTab};
 use pointer_state::{
     AxisFilter, ClipMoveDrag, ClipMoveKind, ClipResizeDrag, ClipResizeEdge, KeyZoomDrag,
     LoadedMidi, MarqueeAnchor, MidiDrag, NoteMouseDrag, NotePart, PluginDrag, TrackButton,
-    TrackMixDrag, TrackMixParam, VelocityDrag,
+    TrackMixDrag, TrackMixParam, VelocityDrag, WindowEdgeCommit, WindowEdgeDrag,
 };
 pub(crate) use ui_event::{TrackLane, TrackRoute, UiEvent};
 
@@ -118,6 +118,7 @@ use crate::core::plugin_host::PluginAudioHandle;
 #[cfg(target_os = "macos")]
 use crate::core::plugin_host::catalog::PluginCatalogEntry;
 use crate::core::time::{Meter, pixels_to_ticks, px_per_beat_to_ppt, snap_to_grid};
+use crate::models::clip::window_with_edge_at;
 #[cfg(target_os = "macos")]
 use crate::view::appkit::MainGlContext;
 use crate::{
@@ -832,6 +833,7 @@ impl Display {
         self.clear_event_marquee();
         self.clear_note_drag();
         self.clear_clip_resize();
+        self.clear_window_edge_drag();
         self.clear_clip_move_drag();
         self.clear_track_mix_drag();
     }
@@ -895,6 +897,29 @@ impl Display {
         self.gesture.clip_resize_hover = None;
     }
 
+    /// Drops any in-progress window band handle drag, uncommitted, its hover
+    /// state, and a released one's held preview.
+    fn clear_window_edge_drag(&mut self) {
+        self.gesture.window_edge_drag = None;
+        self.gesture.window_edge_commit = None;
+        self.gesture.window_edge_hover = None;
+    }
+
+    /// Drops a released window band drag's held preview once the clip's
+    /// committed window is no longer the one it was released over: the edit
+    /// has landed (or anything else moved the window), so the committed
+    /// window is what to draw. Run each frame after the UI events, in the
+    /// clip pane.
+    fn settle_window_edge_commit(&mut self) {
+        if self
+            .gesture
+            .window_edge_commit
+            .is_some_and(|commit| commit.before != self.region_bounds_for_render())
+        {
+            self.gesture.window_edge_commit = None;
+        }
+    }
+
     /// Drops any in-progress clip band (move) drag and its hover state
     /// without committing anything — the ghost simply vanishes. Like
     /// `clear_clip_resize`, scoped to a single arranger visit; also the Esc
@@ -934,6 +959,47 @@ impl Display {
     /// The lead clip is always on the selected track.
     fn lead_clip_color(&self) -> Color32 {
         self.track_color(self.selected_track_idx)
+    }
+
+    /// The lead clip's arrangement room before the next clip on its track,
+    /// from the clip shapes; `None` with no lead clip or nothing after it.
+    /// The window band's preview clamps to it as the sequencer does
+    /// (`window_with_edge_at`).
+    fn lead_clip_room(&self) -> Option<i32> {
+        let lead_id = self.lead_clip_time.as_ref()?.clip_id;
+        let lead = self
+            .render
+            .clip_shapes
+            .iter()
+            .find(|shape| shape.clip_id() == lead_id)?;
+        self.render
+            .clip_shapes
+            .iter()
+            .filter(|shape| {
+                shape.track_idx() == lead.track_idx() && shape.start_tick() > lead.start_tick()
+            })
+            .map(|shape| shape.start_tick() - lead.start_tick())
+            .min()
+    }
+
+    /// The window a live window band drag would commit if released now —
+    /// the sequencer's own rule (`window_with_edge_at`) over the room frozen
+    /// at the press. `None` with no drag or before the pointer moved.
+    fn window_drag_preview(&self) -> Option<(i32, i32)> {
+        let drag = self.gesture.window_edge_drag?;
+        let window = self.region_bounds_for_render();
+        window_with_edge_at(drag.edge, drag.target?, window, drag.room)
+    }
+
+    /// The lead clip's window as the clip view draws it: a live window band
+    /// drag's preview, then a released one's until the sequencer applies it
+    /// (`WindowEdgeCommit`), otherwise the clip's window. Drawing only — the
+    /// playhead and everything else that maps time keep the committed
+    /// window (`region_bounds_for_render`), which is what plays.
+    fn clip_window_for_render(&self) -> (i32, i32) {
+        self.window_drag_preview()
+            .or_else(|| self.gesture.window_edge_commit.map(|commit| commit.after))
+            .unwrap_or_else(|| self.region_bounds_for_render())
     }
 
     /// Reads `track_idx`'s mute flag from its slot's shared atomics.

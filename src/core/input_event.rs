@@ -25,7 +25,7 @@ use uuid::Uuid;
 use crate::{
     core::{project::ProjectAction, time::Meter, view_state::Pane},
     models::{
-        clip::{Clip, NoteDrag},
+        clip::{Clip, ClipEdge, NoteDrag},
         track::TrackOutput,
     },
 };
@@ -465,6 +465,16 @@ pub(crate) enum InputEvent {
         target_tick: i32,
         /// Identifies the drag so the undo stack coalesces it into one step.
         drag_id: u64,
+    },
+    /// The clip view's window band drag, released: the handle's grid-snapped
+    /// event tick, sent once (`Display::finish_window_edge_drag`) — the drag
+    /// itself is a view-local preview. Maps 1:1 to
+    /// `SequencerCommand::SetClipWindowEdge`.
+    SetClipWindowEdge {
+        /// The window edge the pressed handle moves.
+        edge: ClipEdge,
+        /// Grid-snapped event tick, held inside the clip's reach at the press.
+        tick: i32,
     },
     /// Arranger clip band press: select this clip and marquee exactly its
     /// span (cursor to its start, time selection over `[start, end)` on its

@@ -21,7 +21,7 @@ use uuid::Uuid;
 
 use crate::{
     core::time,
-    models::clip::{Clip, ClipBounds, ClipEdge},
+    models::clip::{Clip, ClipBounds, ClipEdge, window_with_edge_at},
 };
 
 use super::Sequencer;
@@ -112,10 +112,8 @@ impl Sequencer {
     /// the user placed, playing or not: in the arranger (`in_clip_view` off)
     /// an arrangement trim at the arranger cursor on
     /// [`Self::arranger_edge_clip_id`]'s clip; in the clip view a start/end
-    /// marker on the lead clip at its cursor. While the project has one clip
-    /// the end is exact in the clip view too — that length is what Enter fits
-    /// the tempo to (`RetimeClipEdit`). `None` when there is nothing to act
-    /// on or nothing would change.
+    /// marker on the lead clip at its cursor. `None` when there is nothing to
+    /// act on or nothing would change.
     pub(crate) fn clip_edge_target(
         &self,
         edge: ClipEdge,
@@ -124,12 +122,9 @@ impl Sequencer {
         let (clip_id, bounds) = if in_clip_view {
             let clip = self.selected_clip()?;
             let tick = clip.cursor_tick();
-            // While the project has one clip, its length is the tempo
-            // reference that Enter fits: never rounded.
-            let whole_bars = self.number_of_clips() != 1;
             let bounds = match edge {
                 ClipEdge::Start => self.selected_clip_start_marker_at(tick),
-                ClipEdge::End => self.selected_clip_end_marker_at(tick, whole_bars),
+                ClipEdge::End => self.selected_clip_end_marker_at(tick),
             };
             (clip.id(), bounds?)
         } else {
@@ -143,6 +138,30 @@ impl Sequencer {
         };
 
         Some(EdgeTarget { clip_id, bounds })
+    }
+
+    /// The clip view's window band drag (`290-framing-a-take.md`): `edge` of
+    /// the lead clip's window to `event_tick`, held inside the clip's
+    /// [`reach`](Clip::reach): the start is `[`'s start marker
+    /// ([`Self::selected_clip_start_marker_at`]), the end `]`'s end marker
+    /// ([`Self::selected_clip_end_marker_at`]) — the view snaps the tick to
+    /// its grid. `None` when there is no lead clip or nothing would change.
+    pub(crate) fn selected_clip_window_edge_at(
+        &self,
+        edge: ClipEdge,
+        event_tick: i32,
+    ) -> Option<EdgeTarget> {
+        let clip = self.selected_clip()?;
+        let (reach_start, reach_end) = clip.reach(self.meter());
+        let tick = event_tick.clamp(reach_start, reach_end);
+        let bounds = match edge {
+            ClipEdge::Start => self.selected_clip_start_marker_at(tick),
+            ClipEdge::End => self.selected_clip_end_marker_at(tick),
+        }?;
+        Some(EdgeTarget {
+            clip_id: clip.id(),
+            bounds,
+        })
     }
 
     /// Where the right edge of `clip_id` (on the selected track) would go for
@@ -222,30 +241,31 @@ impl Sequencer {
     /// the minimum clip length before the end and to the room before the next
     /// clip. `None` on a no-op.
     pub(crate) fn selected_clip_start_marker_at(&self, event_tick: i32) -> Option<ClipBounds> {
+        self.selected_clip_marker_at(ClipEdge::Start, event_tick)
+    }
+
+    /// The lead clip's window with `edge` at `event_tick`, by the clip
+    /// view's marker rule (`window_with_edge_at`) against the room before the
+    /// next clip on the selected track. `None` on a no-op.
+    fn selected_clip_marker_at(&self, edge: ClipEdge, event_tick: i32) -> Option<ClipBounds> {
         let clip = self.selected_clip()?;
-        let region_end = clip.region().end();
-        let latest = region_end - time::min_clip_length_ticks();
-        let earliest = self
+        let room = self
             .selected_track()?
             .next_clip_start_after(clip.start_tick())
-            .map_or(0, |next_start| {
-                region_end - (next_start - clip.start_tick())
-            })
-            .max(0);
-        if earliest > latest {
-            return None;
-        }
+            .map(|next_start| next_start - clip.start_tick());
+        let window = (clip.region().start(), clip.region().end());
+        let (region_start, region_end) = window_with_edge_at(edge, event_tick, window, room)?;
 
         let mut bounds = clip.bounds();
-        bounds.region_start = event_tick.clamp(earliest, latest);
+        bounds.region_start = region_start;
+        bounds.region_end = region_end;
         (bounds != clip.bounds()).then_some(bounds)
     }
 
     /// `length` fitted into the room a clip starting at `start_tick` on the
     /// selected track has before the next clip: unchanged when it fits,
     /// otherwise floored to the whole bars that fit there, or the bare gap
-    /// when not even one bar does. Shared by the stopped capture commit and
-    /// the clip view's `]`.
+    /// when not even one bar does. For the stopped capture commit.
     pub(crate) fn fit_length_before_next_clip(&self, start_tick: i32, length: i32) -> i32 {
         let bar = self.meter().bar_ticks();
         let Some(available) = self
@@ -264,37 +284,14 @@ impl Sequencer {
         }
     }
 
-    /// `]` in the clip view: the window ends on the bar line at or after
-    /// `event_tick`, measured from the window start — the bar the cursor is in
-    /// becomes the last one, so everything left of the cursor stays in (at
-    /// least one bar; rounded *up* since 2026-09-26, it was nearest, which
-    /// often left the end where it was). Floored to the bars that fit before
-    /// the next clip, or the bare gap when not even one bar does. Whole bars
-    /// keep a clip looped against the metronome in time (`150`). With
-    /// `whole_bars` off (the project's only clip, whose length is what Enter
-    /// fits the tempo to) it ends exactly at `event_tick`, at least the
-    /// minimum clip length. `None` on a no-op.
-    pub(crate) fn selected_clip_end_marker_at(
-        &self,
-        event_tick: i32,
-        whole_bars: bool,
-    ) -> Option<ClipBounds> {
-        let meter = self.meter();
-        let bar = meter.bar_ticks();
-        let clip = self.selected_clip()?;
-        let region_start = clip.region().start();
-
-        let raw = event_tick - region_start;
-        let length = if whole_bars {
-            meter.next_bar_boundary_after(raw - 1).max(bar)
-        } else {
-            raw.max(time::min_clip_length_ticks())
-        };
-        let length = self.fit_length_before_next_clip(clip.start_tick(), length);
-
-        let mut bounds = clip.bounds();
-        bounds.region_end = region_start + length;
-        (bounds != clip.bounds()).then_some(bounds)
+    /// `]` in the clip view: the window ends exactly at `event_tick`, its
+    /// start stays — the mirror of `[`'s start marker. At least the minimum
+    /// clip length after the start, and held to the room before the next
+    /// clip. Exact with any number of clips (decided with the user
+    /// 2026-10-12; it used to round up to whole bars with more than one clip,
+    /// for a metronome drift `150` has since fixed). `None` on a no-op.
+    pub(crate) fn selected_clip_end_marker_at(&self, event_tick: i32) -> Option<ClipBounds> {
+        self.selected_clip_marker_at(ClipEdge::End, event_tick)
     }
 
     /// Maps the arranger cursor into the selected clip's event-tick space and
