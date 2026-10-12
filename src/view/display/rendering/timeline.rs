@@ -175,49 +175,33 @@ impl Display {
         );
     }
 
-    /// Paints the loop-region band along the bottom of the timeline strip.
+    /// Paints the band along the bottom of the timeline strip: the loop
+    /// region in the arranger, the lead clip's window in the clip view.
+    ///
+    /// The loop band earns its place in the arranger (the loop region is
+    /// edited there), but in `Clip` the region just spans the clip being
+    /// edited, so the band would stretch the whole ruler and say nothing.
+    /// There the **window band** takes its place: the loop band's shape in
+    /// the clip's colour, so it doesn't read as the loop, its edge lines the
+    /// handles `window_edge_at` grabs (`290-framing-a-take.md` § Phase 1),
+    /// showing a handle drag's preview (`clip_window_for_render`). Modal
+    /// states (`Project` etc.) layer over the arranger and keep its band.
     pub(super) fn draw_region(&self, painter: &Painter, rect: Rect) {
-        // The band marks the loop / cycle span along the timeline strip. It
-        // earns its place in the arranger (the loop region is edited there),
-        // but in `Clip` the region just
-        // spans the clip being edited — the band stretches the whole ruler and
-        // says nothing — so the clip's window band takes its place there
-        // (`draw_window_band`). Modal states (`Project` etc.) layer over the
-        // arranger and keep it.
-        if self.active_pane() == Pane::Clip {
-            return;
-        }
-
-        let region = theme::region();
-        // When looping is disabled the region still marks the playback bounds
-        // but no longer wraps playback, so everything dims to signal that.
-        let loop_dim = if self.is_loop_enabled() { 1.0 } else { 0.4 };
+        let (span, color, dim) = if self.active_pane() == Pane::Clip {
+            (self.clip_window_for_render(), self.lead_clip_color(), 1.0)
+        } else {
+            // When looping is disabled the region still marks the playback
+            // bounds but no longer wraps playback, so everything dims to
+            // signal that.
+            let loop_dim = if self.is_loop_enabled() { 1.0 } else { 0.4 };
+            (self.region_bounds_for_render(), theme::region(), loop_dim)
+        };
         self.draw_strip_band(
             painter,
             rect,
-            self.region_bounds_for_render(),
-            region.gamma_multiply(Self::STRIP_BAND_FILL_ALPHA * loop_dim),
-            region.gamma_multiply(Self::STRIP_BAND_EDGE_ALPHA * loop_dim),
-        );
-    }
-
-    /// Paints the clip view's window band along the bottom of its timeline
-    /// strip: the lead clip's window, the loop band's shape in the clip's
-    /// colour, so it doesn't read as the loop. Its edge lines are the handles
-    /// `window_edge_at` grabs (`290-framing-a-take.md` § Phase 1); during a
-    /// handle drag it shows the preview (`clip_window_for_render`). Clip pane
-    /// only.
-    pub(super) fn draw_window_band(&self, painter: &Painter, rect: Rect) {
-        if self.active_pane() != Pane::Clip {
-            return;
-        }
-        let color = self.lead_clip_color();
-        self.draw_strip_band(
-            painter,
-            rect,
-            self.clip_window_for_render(),
-            color.gamma_multiply(Self::STRIP_BAND_FILL_ALPHA),
-            color.gamma_multiply(Self::STRIP_BAND_EDGE_ALPHA),
+            span,
+            color.gamma_multiply(Self::STRIP_BAND_FILL_ALPHA * dim),
+            color.gamma_multiply(Self::STRIP_BAND_EDGE_ALPHA * dim),
         );
     }
 

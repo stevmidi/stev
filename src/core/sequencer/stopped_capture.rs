@@ -223,7 +223,7 @@ mod tests {
                 test_support::{clip_at, instrument_track_0, note_off, note_on, sequencer_with},
             },
         },
-        models::event::Event,
+        models::{clip::ClipEdge, event::Event},
     };
 
     /// Minimal sequencer: track 0 selected, region `[0, 2 bars]`, default tempo.
@@ -642,17 +642,10 @@ mod tests {
         rx: &mut Consumer<ClipInstrumentEvent>,
         ticks: i32,
     ) -> Vec<u8> {
-        let at = Instant::now();
-        let mut notes = Vec::new();
-        for _ in 0..ticks {
-            seq.tick(at);
-            while let Ok(ev) = rx.pop() {
-                if ev.message[0] & 0xf0 == 0x90 && ev.message[2] != 0 {
-                    notes.push(ev.message[1]);
-                }
-            }
-        }
-        notes
+        tick_and_collect_messages(seq, rx, ticks)
+            .into_iter()
+            .filter_map(|(status, note)| (status == 0x90).then_some(note))
+            .collect()
     }
 
     /// A playing one-bar clip at bar 1 holding note 60 over the first eighth
@@ -706,7 +699,10 @@ mod tests {
 
     /// `[` in the clip view at `event_tick`, recorded as the edit does it.
     fn move_start(seq: &mut Sequencer, clip_id: Uuid, event_tick: i32) {
-        let after = seq.selected_clip_start_marker_at(event_tick).unwrap();
+        let after = seq
+            .selected_clip_marker_at(ClipEdge::Start, event_tick)
+            .unwrap()
+            .bounds;
         let edit = ResizeClipEdit::for_clip(seq, clip_id, after, None).unwrap();
         let mut record: Record<SequencerEdit> = Record::new();
         record.edit(seq, SequencerEdit::ResizeClip(edit));

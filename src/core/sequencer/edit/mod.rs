@@ -537,15 +537,14 @@ impl Sequencer {
         clip_id: Uuid,
         bounds: ClipBounds,
     ) -> Option<ClipMetadata> {
-        if !self.is_running() {
-            let clip = self.clip_on_mut(track_idx, clip_id)?;
-            clip.set_bounds(bounds);
-            return Some(ClipMetadata::from_clip(track_idx, clip));
+        if self.is_running() {
+            self.tracks_mut()
+                .get_mut(track_idx)?
+                .set_clip_bounds(clip_id, bounds)?;
+        } else {
+            self.clip_on_mut(track_idx, clip_id)?.set_bounds(bounds);
         }
-        let clip = self
-            .tracks_mut()
-            .get_mut(track_idx)?
-            .set_clip_bounds(clip_id, bounds)?;
+        let clip = self.clip_on(track_idx, clip_id)?;
         Some(ClipMetadata::from_clip(track_idx, clip))
     }
 

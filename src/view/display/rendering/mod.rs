@@ -567,7 +567,6 @@ impl Display {
         }
         self.draw_timeline(painter, rect);
         self.draw_region(painter, rect);
-        self.draw_window_band(painter, rect);
         self.draw_time_selection(painter, rect);
 
         if let Some(geom) = &note_geom {

@@ -441,7 +441,7 @@ pub(crate) enum SequencerCommand {
     },
     /// The clip view's window band drag, released: move the lead clip's
     /// window `edge` to `tick`, in event ticks
-    /// (`Sequencer::selected_clip_window_edge_at`), as one `ResizeClipEdit`.
+    /// (`Sequencer::selected_clip_marker_at`), as one `ResizeClipEdit`.
     /// `290-framing-a-take.md` § Phase 1.
     SetClipWindowEdge {
         /// The edge the band handle moved.
@@ -458,7 +458,7 @@ pub(crate) enum SequencerCommand {
     /// clip under it or the nearest one on that side
     /// (`Sequencer::arranger_edge_clip_id`); in the clip view a start/end
     /// marker on the lead clip at the clip cursor
-    /// (`Sequencer::selected_clip_start_marker_at`/`_end_marker_at`).
+    /// (`Sequencer::selected_clip_marker_at`).
     SetClipEdgeToCursor(ClipEdge),
     /// Arranger clip band press: select the clip, put the cursor on its start
     /// and marquee its span (`select_clip_span_workflow`). Not undoable —

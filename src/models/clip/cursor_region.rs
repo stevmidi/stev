@@ -100,11 +100,11 @@ pub(crate) fn reach_over(
         (window_start, end_with_headroom),
         |(lo, hi), (start, end)| (lo.min(start), hi.max(end)),
     );
-    (lo - lo.rem_euclid(meter.bar_ticks()), hi)
+    (meter.bar_line_at_or_before(lo), hi)
 }
 
 /// The clip view's start/end marker rule, shared by `[`/`]` and the window
-/// band (`Sequencer::selected_clip_start_marker_at` / `_end_marker_at`, and
+/// band (`Sequencer::selected_clip_marker_at`, and
 /// the band's drag preview, which must land where the release will):
 /// `window` with `edge` moved to the event tick `tick`. `room` is the
 /// arrangement room the clip has before the next clip on its track, `None`

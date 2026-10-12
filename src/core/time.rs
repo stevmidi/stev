@@ -154,6 +154,14 @@ impl Meter {
         tick + (bar - tick.rem_euclid(bar))
     }
 
+    /// The whole-bar tick at or before `tick`: a tick already on a bar line
+    /// stays. `rem_euclid`-based like
+    /// [`next_bar_boundary_after`](Self::next_bar_boundary_after), so
+    /// negative input works (`-1` → minus one bar). Bars count from tick 0.
+    pub(crate) const fn bar_line_at_or_before(self, tick: i32) -> i32 {
+        tick - tick.rem_euclid(self.bar_ticks())
+    }
+
     /// Packs the meter into one `u16` for a shared atomic: numerator in the
     /// high byte, denominator in the low one.
     pub(crate) const fn to_bits(self) -> u16 {
@@ -488,6 +496,20 @@ mod tests {
         assert_eq!(Meter::FOUR_FOUR.next_bar_boundary_after(0), bar);
         assert_eq!(Meter::FOUR_FOUR.next_bar_boundary_after(bar), bar * 2);
         assert_eq!(Meter::FOUR_FOUR.next_bar_boundary_after(bar * 3), bar * 4);
+    }
+
+    #[test]
+    fn bar_line_at_or_before_floors_and_keeps_a_bar_line() {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        assert_eq!(Meter::FOUR_FOUR.bar_line_at_or_before(0), 0);
+        assert_eq!(Meter::FOUR_FOUR.bar_line_at_or_before(bar + 1), bar);
+        assert_eq!(Meter::FOUR_FOUR.bar_line_at_or_before(bar * 2), bar * 2);
+        assert_eq!(Meter::FOUR_FOUR.bar_line_at_or_before(-1), -bar);
+        let three_four = Meter::new(3, 4).unwrap();
+        assert_eq!(
+            three_four.bar_line_at_or_before(three_four.bar_ticks() + 960),
+            three_four.bar_ticks()
+        );
     }
 
     #[test]

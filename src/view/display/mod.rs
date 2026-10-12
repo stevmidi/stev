@@ -964,7 +964,9 @@ impl Display {
     /// The lead clip's arrangement room before the next clip on its track,
     /// from the clip shapes; `None` with no lead clip or nothing after it.
     /// The window band's preview clamps to it as the sequencer does
-    /// (`window_with_edge_at`).
+    /// (`window_with_edge_at`), so it must stay the same rule as
+    /// `Track::next_clip_start_after`: the nearest clip starting after the
+    /// lead clip's start on its track.
     fn lead_clip_room(&self) -> Option<i32> {
         let lead_id = self.lead_clip_time.as_ref()?.clip_id;
         let lead = self

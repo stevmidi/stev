@@ -37,7 +37,7 @@ impl EventHandlers {
 
     /// The clip view's window band drag, released: moves the lead clip's
     /// window `edge` to the event tick `tick`
-    /// (`Sequencer::selected_clip_window_edge_at`) — the start as `[` does,
+    /// (`Sequencer::selected_clip_marker_at`) — the start as `[` does,
     /// the end as `]` — as one undo step. The drag before it was a view-local
     /// preview, so nothing is committed until the release.
     pub(super) fn window_edge_workflow(
@@ -47,8 +47,7 @@ impl EventHandlers {
         edge: ClipEdge,
         tick: i32,
     ) {
-        let Some(EdgeTarget { clip_id, bounds }) =
-            sequencer.selected_clip_window_edge_at(edge, tick)
+        let Some(EdgeTarget { clip_id, bounds }) = sequencer.selected_clip_marker_at(edge, tick)
         else {
             return;
         };

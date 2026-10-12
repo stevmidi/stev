@@ -160,6 +160,13 @@ mod tests {
         sequencer.selected_clip().unwrap().bounds()
     }
 
+    /// `[` in the clip view at `event_tick`: the lead clip's bounds after.
+    fn start_marker(sequencer: &Sequencer, event_tick: i32) -> Option<ClipBounds> {
+        sequencer
+            .selected_clip_marker_at(ClipEdge::Start, event_tick)
+            .map(|target| target.bounds)
+    }
+
     fn record_resize(
         sequencer: &mut Sequencer,
         record: &mut Record<SequencerEdit>,
@@ -205,7 +212,7 @@ mod tests {
         let bar = Meter::FOUR_FOUR.bar_ticks();
         let sequencer = sequencer_with_clip(); // window [bar, 3 bars) at bar 4
 
-        let after = sequencer.selected_clip_start_marker_at(bar / 2).unwrap();
+        let after = start_marker(&sequencer, bar / 2).unwrap();
         assert_eq!(
             after,
             ClipBounds {
@@ -216,7 +223,7 @@ mod tests {
         );
 
         // Never past the end: at least the minimum length is left.
-        let after = sequencer.selected_clip_start_marker_at(bar * 5).unwrap();
+        let after = start_marker(&sequencer, bar * 5).unwrap();
         assert_eq!(
             after.region_end - after.region_start,
             time::min_clip_length_ticks()
@@ -225,16 +232,26 @@ mod tests {
 
     /// `]` ends the window exactly at the tick, with any number of clips
     /// (the fixture has two), at least the minimum length after the start
-    /// and no further than the next clip.
+    /// and no further than the next clip — given a reach past it, here a
+    /// note kept 8 bars on.
     #[test]
     fn end_marker_is_exact_and_stops_at_the_next_clip() {
         let bar = Meter::FOUR_FOUR.bar_ticks();
-        let sequencer = sequencer_with_clip();
+        let mut sequencer = sequencer_with_clip();
         let window_start = sequencer.selected_clip().unwrap().region().start();
+        let clip = sequencer.selected_clip_mut().unwrap();
+        clip.add_event(Event::new(window_start + bar * 8, 0, vec![0x90, 60, 100]));
+        clip.add_event(Event::new(
+            window_start + bar * 8 + 100,
+            0,
+            vec![0x80, 60, 0],
+        ));
+        clip.sort_events_by_tick();
+        let sequencer = sequencer;
         let length_at = |from_start: i32| {
             sequencer
-                .selected_clip_end_marker_at(window_start + from_start)
-                .map(|after| after.region_end - after.region_start)
+                .selected_clip_marker_at(ClipEdge::End, window_start + from_start)
+                .map(|after| after.bounds.region_end - after.bounds.region_start)
         };
 
         assert_eq!(length_at(bar * 6 / 10), Some(bar * 6 / 10));
