@@ -29,8 +29,8 @@ use crate::core::{
         setup_transport,
     },
     threads::{
-        start_audio_engine, start_clock_thread, start_midi_output_thread,
-        start_midi_watcher_thread, start_sequencer_thread,
+        start_audio_engine, start_clock_thread, start_computer_keys_thread,
+        start_midi_output_thread, start_midi_watcher_thread, start_sequencer_thread,
     },
 };
 
@@ -88,11 +88,12 @@ mod core {
     pub mod transport;
     pub mod view_state;
 }
-/// The UI: the `Display` eframe app, input polling, the colour theme, and
-/// (macOS) the AppKit glue for the main window.
+/// The UI: the `Display` eframe app, input polling, the computer keyboard,
+/// the colour theme, and (macOS) the AppKit glue for the main window.
 mod view {
     #[cfg(target_os = "macos")]
     pub mod appkit;
+    pub mod computer_keyboard;
     pub mod display;
     pub mod input_poller;
     pub mod theme;
@@ -136,13 +137,13 @@ fn main() {
     let settings = load_settings();
     theme::set_active_theme(settings.theme_index);
 
-    let midi_input_forwarder = setup_midi_input_forwarder(
+    let midi_input_forwarder = Arc::new(setup_midi_input_forwarder(
         shared_channels.midi_in_tx,
         shared_channels.midi_out_tx.clone(),
         shared_channels.note_logger_command_tx.clone(),
         shared_channels.live_instrument_midi_tx,
         &shared_atomics,
-    );
+    ));
     // Publish the persisted MIDI-output offset before the `"midiout"` thread
     // starts reading it. See `160-midi-out-offset.md`.
     let midi_out_offset_ms = clamp_midi_out_offset_ms(settings.midi_out_offset_ms);
@@ -187,6 +188,7 @@ fn main() {
         &shared_atomics,
         shared_channels.midi_in_reconnect_tx.clone(),
         shared_channels.midi_out_reconnect_tx.clone(),
+        shared_channels.computer_keys_tx.clone(),
         settings.midi_in_port.clone(),
         settings.midi_out_port.clone(),
         settings.last_project_folder.clone(),
@@ -257,6 +259,11 @@ fn main() {
         shared_channels.transport_event_rx,
         shared_channels.sequencer_command_rx,
         shared_channels.transport_command_rx,
+    );
+
+    start_computer_keys_thread(
+        midi_input_forwarder.clone(),
+        shared_channels.computer_keys_rx,
     );
 
     start_midi_watcher_thread(

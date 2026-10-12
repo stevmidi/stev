@@ -57,7 +57,7 @@ impl<C> WantedPort<C> {
 pub(crate) fn start_midi_watcher_thread(
     midi_in_port: Option<String>,
     midi_out_port: Option<String>,
-    midi_input_forwarder: MidiInputForwarder,
+    midi_input_forwarder: Arc<MidiInputForwarder>,
     midi_in_reconnect_rx: Receiver<String>,
     midi_out_reconnect_rx: Receiver<String>,
     midi_out_connection_tx: Sender<MidiOutputConnection>,

@@ -12,6 +12,11 @@
 //! events are ignored, except for unmodified `+`/`=`/`-` (the arranger zoom
 //! keys), which ride the OS repeat — see the comment at that arm for why.
 //!
+//! While the computer keyboard is on (`poll`'s `note_keys`), the key events it
+//! takes (`computer_keyboard::takes_key_event`) — presses *and* releases —
+//! are set aside as note keys rather than becoming `KeyPressed`, so a note key
+//! never also fires its usual binding.
+//!
 //! Files dragged in from the file manager become enter / leave / drop edges
 //! (`FileDragEntered` / `FileDragLeft` / `FileDropped`). The pointer keeps
 //! moving during such a drag because `Display::raw_input_hook` feeds egui the
@@ -26,6 +31,7 @@ use crate::core::{
     input_event::{InputEvent, KeyModifiers},
     project::is_midi_file,
 };
+use crate::view::computer_keyboard::takes_key_event;
 
 /// Arrow keys that auto-repeat while held. Anything not in this list fires
 /// exactly once per physical press, however long it's held.
@@ -123,6 +129,11 @@ impl DoubleClick {
 pub(super) struct InputPoller {
     /// This frame's events, rebuilt by [`poll`](Self::poll).
     input_events: Vec<InputEvent>,
+    /// This frame's computer-keyboard key edges — the physical key and
+    /// whether it went down — set aside by [`poll`](Self::poll) while the
+    /// computer keyboard is on. Drained by
+    /// [`drain_note_keys`](Self::drain_note_keys).
+    note_keys: Vec<(Key, bool)>,
     /// Pointer position last frame, to detect a move.
     last_mouse_pos: Option<Pos2>,
     /// Primary button state last frame, to detect press / release edges.
@@ -176,6 +187,7 @@ impl InputPoller {
     pub(super) fn new() -> Self {
         Self {
             input_events: Vec::new(),
+            note_keys: Vec::new(),
             last_mouse_pos: None,
             left_mouse_down: false,
             double_click: DoubleClick::default(),
@@ -191,6 +203,12 @@ impl InputPoller {
     /// reuses its allocation.
     pub(super) fn take_input_events(&mut self) -> Vec<InputEvent> {
         std::mem::take(&mut self.input_events)
+    }
+
+    /// Drains this frame's computer-keyboard key edges, in the order they
+    /// happened.
+    pub(super) fn drain_note_keys(&mut self) -> impl Iterator<Item = (Key, bool)> + '_ {
+        self.note_keys.drain(..)
     }
 
     /// The pointer in canvas space as the last [`poll`](Self::poll) saw it,
@@ -209,9 +227,12 @@ impl InputPoller {
     /// Rebuilds the event list from `ctx`'s current-frame input. Pointer
     /// positions come out in canvas space: shifted left by `canvas_left`, the
     /// browser panel's width while it shows (the canvas is drawn that far
-    /// right), so a position over the panel has a negative x.
-    pub(super) fn poll(&mut self, ctx: &Context, canvas_left: f32) {
+    /// right), so a position over the panel has a negative x. With
+    /// `note_keys` the computer keyboard is playing, and the key events it
+    /// takes are set aside for [`drain_note_keys`](Self::drain_note_keys).
+    pub(super) fn poll(&mut self, ctx: &Context, canvas_left: f32, note_keys: bool) {
         self.input_events.clear();
+        self.note_keys.clear();
         // Read before `ctx.input`, which holds the context lock.
         let click_limits = ctx.options(|options| options.input_options);
 
@@ -299,6 +320,22 @@ impl InputPoller {
             // Key presses — egui delivers these as events, not state
             for event in &i.events {
                 match event {
+                    // The computer keyboard's keys, while it plays: set
+                    // aside whole (an OS repeat included, so a held note key
+                    // never reaches a binding), the repeat itself dropped.
+                    Event::Key {
+                        physical_key,
+                        pressed,
+                        repeat,
+                        modifiers: mods,
+                        ..
+                    } if note_keys
+                        && let Some(key) = takes_key_event(*physical_key, *pressed, *mods) =>
+                    {
+                        if !repeat {
+                            self.note_keys.push((key, *pressed));
+                        }
+                    }
                     Event::Key {
                         key,
                         pressed: true,

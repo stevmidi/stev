@@ -23,6 +23,7 @@ pub(super) use midi_drag::DragPointer;
 
 use self::gestures::past_drag_threshold;
 use super::browser::BrowserPress;
+use super::computer_keys::is_computer_keyboard_chord;
 use super::help_overlay::is_help_key;
 use super::settings_modal::is_settings_chord;
 
@@ -370,7 +371,14 @@ impl Display {
     /// `handle_browser_rename_input_event`), then an open output menu
     /// (`handle_output_menu_input_event`).
     pub(super) fn handle_input_events(&mut self, ctx: &egui::Context) {
-        self.input_poller.poll(ctx, self.browser_width());
+        // The computer keyboard's note keys, played ahead of this frame's
+        // other events; while they can't play, the notes they hold end.
+        let note_keys = self.computer_keys_live(ctx);
+        if !note_keys {
+            self.release_computer_keys();
+        }
+        self.input_poller.poll(ctx, self.browser_width(), note_keys);
+        self.play_computer_keys();
         // The clip view took the keyboard from the arranger: an open rename
         // field closes, and the header focus goes with it, so coming back
         // lands in the lanes. The settings modal, an overlay, takes neither:
@@ -415,6 +423,21 @@ impl Display {
             }
         }
         self.input_poller.recycle_input_events(events);
+    }
+
+    /// Whether something ahead of the main dispatch in
+    /// [`handle_input_events`](Self::handle_input_events) takes every key: a
+    /// project dialog, a rename field, the BPM or meter field, a modal
+    /// overlay. Keep it in step with that chain — a new handler there that
+    /// swallows keys belongs here too, or the computer keyboard plays notes
+    /// while the user types.
+    pub(super) fn keyboard_taken(&self) -> bool {
+        self.project_dialog.is_some()
+            || self.track_rename.is_some()
+            || self.browser.rename.is_some()
+            || self.tempo_chip.editing()
+            || self.meter_chip.editing()
+            || self.overlay.is_some()
     }
 
     /// The track-header column's keys while it has the keyboard: plain
@@ -554,6 +577,15 @@ impl Display {
             // to and the tab it opens on are the view's.
             InputEvent::KeyPressed { key, modifiers } if is_settings_chord(key, modifiers) => {
                 self.open_settings();
+                true
+            }
+            // ⌘/Ctrl+K turns the computer keyboard on or off, from any key
+            // focus (`computer_keys.rs`). View-local: the keyboard is
+            // `Display`'s.
+            InputEvent::KeyPressed { key, modifiers }
+                if is_computer_keyboard_chord(key, modifiers) =>
+            {
+                self.toggle_computer_keyboard();
                 true
             }
             // `?` opens the help overlay, from any key focus
@@ -789,6 +821,11 @@ impl Display {
                 // anywhere while it is up closes it again.
                 if self.is_on_help_chip(x, y) {
                     self.open_help();
+                    return true;
+                }
+                // The keyboard chip beside it: `⌘/Ctrl+K`'s mouse twin.
+                if self.is_on_keyboard_chip(x, y) {
+                    self.toggle_computer_keyboard();
                     return true;
                 }
                 // The header's BPM chip: a press starts its tempo drag, and

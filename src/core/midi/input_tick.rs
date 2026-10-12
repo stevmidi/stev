@@ -9,7 +9,8 @@
 //! instant, so one correction serves both). See `150-clock-position-sync.md`.
 //!
 //! [`precise_input_tick`] is the entry point, called once per message from the
-//! `midir` callback in `input.rs`.
+//! `midir` callback in `input.rs`; [`input_ticks_at_arrival`] serves the
+//! computer keyboard, whose messages carry a `monotonic_nanos` stamp already.
 
 use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 
@@ -50,6 +51,26 @@ pub(super) fn precise_input_tick(
         calibrated_arrival_ns(now_ns, midir_ts_us as i64 * 1_000, min_offset_ns)
     };
 
+    input_ticks_at_arrival(
+        clock_tick,
+        clock_tick_instant_nanos,
+        elapsed_ticks,
+        tempo,
+        arrival_ns,
+    )
+}
+
+/// The two tick coordinates of a message that arrived at `arrival_ns` on the
+/// [`time::monotonic_nanos`] timeline: [`precise_input_tick`] once it has
+/// placed a `midir` stamp there, or a source stamping its messages with that
+/// clock directly (the computer keyboard, `MidiInputForwarder::ticks_at`).
+pub(super) fn input_ticks_at_arrival(
+    clock_tick: &AtomicI32,
+    clock_tick_instant_nanos: &AtomicU64,
+    elapsed_ticks: &AtomicI32,
+    tempo: &AtomicI32,
+    arrival_ns: u64,
+) -> InputTicks {
     let last_tick_ns = clock_tick_instant_nanos.load(Ordering::Relaxed);
     // Two separate loads: a clock firing landing between them leaves one of the
     // bases a single tick behind the other. That is smaller than the correction

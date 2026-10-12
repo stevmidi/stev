@@ -1,7 +1,10 @@
 //! [`MidiInputForwarder`] — owns the live `midir` input connection and fans
 //! each incoming message out to live MIDI-thru and the instrument-plugin tap,
 //! its note edges and wheel moves to the sequencer (for capture / recording),
-//! and its note edges to the `NoteLogger`.
+//! and its note edges to the `NoteLogger`. The fan-out itself is a
+//! [`LiveInputRouter`], one per source: the computer keyboard (`Display`'s
+//! note keys, routed on the `"computerkeys"` thread) gets one of its own and so
+//! reaches everything a port does.
 //!
 //! Every message is stamped with two tick coordinates ([`InputTicks`]): a
 //! `position` in `clock_tick` space (which a seek repositions) for running
@@ -29,7 +32,7 @@ use midir::os::unix::VirtualInput;
 use crate::core::midi::port::VIRTUAL_PORT_NAME;
 use crate::core::{
     midi::{
-        input_tick::precise_input_tick,
+        input_tick::{input_ticks_at_arrival, precise_input_tick},
         message::{Midi3, is_recorded, midi3, parse_note, rewrite_channel},
         out_queue::MidiOutMessage,
         port::pickable_port_names,
@@ -157,6 +160,36 @@ impl MidiInputForwarder {
         )
     }
 
+    /// A fresh [`LiveInputRouter`] on this forwarder's channels and routing
+    /// atomics, holding no notes — one per input source (each port
+    /// connection, the computer keyboard).
+    pub(crate) fn router(&self) -> LiveInputRouter {
+        LiveInputRouter {
+            midi_in_tx: self.midi_in_tx.clone(),
+            midi_out_tx: self.midi_out_tx.clone(),
+            note_logger_command_tx: self.note_logger_command_tx.clone(),
+            instrument_midi_tx: self.instrument_midi_tx.clone(),
+            arm_channel: self.arm_channel.clone(),
+            performance_lane_armed: self.performance_lane_armed.clone(),
+            live_instrument_target: self.live_instrument_target.clone(),
+            held_note_channels: [None; 128],
+            held_live_targets: [None; 128],
+        }
+    }
+
+    /// The [`InputTicks`] of a message that arrived at `arrival_ns` on the
+    /// [`monotonic_nanos`](crate::core::time::monotonic_nanos) timeline — for
+    /// a source with no `midir` stamp of its own (the computer keyboard).
+    pub(crate) fn ticks_at(&self, arrival_ns: u64) -> InputTicks {
+        input_ticks_at_arrival(
+            &self.clock_tick,
+            &self.clock_tick_instant_nanos,
+            &self.elapsed_ticks,
+            &self.tempo,
+            arrival_ns,
+        )
+    }
+
     /// Opens the input connection on the named port and starts forwarding —
     /// the reconnect path from the settings modal. Returns the live connection
     /// (dropping it closes the port).
@@ -167,28 +200,12 @@ impl MidiInputForwarder {
         let mut midi_in = MidiInput::new("MIDI Input").unwrap();
         midi_in.ignore(Ignore::None);
 
-        let midi_in_tx = self.midi_in_tx.clone();
-        let midi_out_tx = self.midi_out_tx.clone();
-        let note_logger_command_tx = self.note_logger_command_tx.clone();
-        let instrument_midi_tx = self.instrument_midi_tx.clone();
+        let mut router = self.router();
         let clock_tick = self.clock_tick.clone();
         let clock_tick_instant_nanos = self.clock_tick_instant_nanos.clone();
         let elapsed_ticks = self.elapsed_ticks.clone();
         let tempo = self.tempo.clone();
-        let arm_channel = self.arm_channel.clone();
-        let performance_lane_armed = self.performance_lane_armed.clone();
-        let live_instrument_target = self.live_instrument_target.clone();
 
-        // Channel each currently-held live note was routed out on, indexed by
-        // note number. A note-off must be sent on the same channel its note-on
-        // used, otherwise switching the armed track mid-hold rewrites the
-        // note-off to the new track's channel and strands the note on the old
-        // one. Notes played by clips are unaffected — they never pass through
-        // here.
-        let mut held_note_channels: [Option<u8>; 128] = [None; 128];
-        // Same idea for the plugin tap: which instrument track each held
-        // note's note-on was tagged for. See `route_held`.
-        let mut held_live_targets: [Option<usize>; 128] = [None; 128];
         // Smallest `(callback monotonic time − midir stamp)` seen so far — the
         // running estimate of the fixed offset between midir's per-connection
         // µs epoch and `time::monotonic_nanos`. Converges to the true offset as
@@ -198,7 +215,7 @@ impl MidiInputForwarder {
         let mut min_ts_offset_ns: i64 = i64::MAX;
 
         let callback = move |midir_ts_us: u64, message: &[u8], _: &mut ()| {
-            // Capture timing first, before any of the routing work below.
+            // Capture timing first, before any of the routing work.
             let recorded_ticks = precise_input_tick(
                 &clock_tick,
                 &clock_tick_instant_nanos,
@@ -207,49 +224,7 @@ impl MidiInputForwarder {
                 midir_ts_us,
                 &mut min_ts_offset_ns,
             );
-            let arm_channel = arm_channel.load(Ordering::Relaxed);
-            let mut msg = message.to_vec();
-
-            let channel = route_channel(&msg, arm_channel, &mut held_note_channels);
-            rewrite_channel(&mut msg, channel);
-
-            // Performance-lane triggers drive the transport silently — the
-            // physical keyboard isn't playing an instrument right now, so
-            // suppress every audible route (MIDI-OUT thru *and* the hosted
-            // instrument tap) while armed. `route_held` /
-            // `route_channel` are still fed the message so a note held across
-            // arming is tracked and its later note-off is routed correctly.
-            let armed = performance_lane_armed.load(Ordering::Relaxed);
-
-            // Tap channel-voice messages for the hosted instrument, tagged
-            // with whichever track's plugin the live keyboard is currently
-            // routed to (a held note's off goes back to the track its on used
-            // — see `route_held`). Independent of MIDI-OUT thru, but
-            // gated by the performance lane like it.
-            let live_target = live_instrument_target.load(Ordering::Relaxed);
-            let live_target = (live_target >= 0).then_some(live_target as usize);
-            if matches!(msg.first().copied().map(|s| s & 0xF0), Some(0x80..=0xE0))
-                && let Some(target) = route_held(&msg, live_target, &mut held_live_targets)
-                && !armed
-                && let Ok(mut producer) = instrument_midi_tx.lock()
-            {
-                producer.push((target, midi3(&msg))).ok();
-            }
-
-            if !armed {
-                midi_out_tx.send(MidiOutMessage::now(msg.clone())).ok();
-            }
-
-            // Note edges and the two wheels go on to the sequencer (capture
-            // / recording, `is_recorded`); only note edges to the note logger.
-            if parse_note(&msg).is_some() {
-                note_logger_command_tx
-                    .send(NoteLoggerCommand::LogInputEvent(midi3(&msg)))
-                    .ok();
-            }
-            if is_recorded(&msg) {
-                midi_in_tx.send((msg, recorded_ticks)).ok();
-            }
+            router.route(message, recorded_ticks);
         };
 
         #[cfg(unix)]
@@ -270,6 +245,90 @@ impl MidiInputForwarder {
         let midi_in_connection = midi_in.connect(in_port, "midi-in", callback, ())?;
         dprintln!("Connected to input port: {}", port_name);
         Ok(midi_in_connection)
+    }
+}
+
+/// One live-input source's routing: fans each message out to MIDI-thru, the
+/// hosted-instrument tap, the note logger and the sequencer, rewritten onto
+/// the armed track's channel. Built by [`MidiInputForwarder::router`], one per
+/// source — a port connection's `midir` callback, or the computer keyboard on
+/// the `"computerkeys"` thread — since the held-note tables below belong to
+/// the source whose note-offs they route.
+pub(crate) struct LiveInputRouter {
+    /// Recorded messages + [`InputTicks`] to the `"sequencer"` thread.
+    midi_in_tx: Sender<(Vec<u8>, InputTicks)>,
+    /// MIDI-thru to the `"midiout"` thread.
+    midi_out_tx: Sender<MidiOutMessage>,
+    /// Note-on records to the `NoteLogger`.
+    note_logger_command_tx: Sender<NoteLoggerCommand>,
+    /// The hosted-instrument tap — see `MidiInputForwarder::instrument_midi_tx`.
+    /// Its lock is taken only on the input source's own thread (the `midir`
+    /// callback, the `"computerkeys"` thread), never on the audio or render thread.
+    instrument_midi_tx: SharedInstrumentMidiProducer,
+    /// MIDI channel (0–15) of the armed track.
+    arm_channel: Arc<AtomicU8>,
+    /// True while the arranger performance lane is armed.
+    performance_lane_armed: Arc<AtomicBool>,
+    /// The instrument track the live keyboard is routed to (`-1` = none).
+    live_instrument_target: Arc<AtomicI32>,
+    /// Channel each currently-held live note was routed out on, indexed by
+    /// note number. A note-off must be sent on the same channel its note-on
+    /// used, otherwise switching the armed track mid-hold rewrites the
+    /// note-off to the new track's channel and strands the note on the old
+    /// one. Notes played by clips are unaffected — they never pass through
+    /// here.
+    held_note_channels: [Option<u8>; 128],
+    /// Same idea for the plugin tap: which instrument track each held note's
+    /// note-on was tagged for. See [`route_held`].
+    held_live_targets: [Option<usize>; 128],
+}
+
+impl LiveInputRouter {
+    /// Routes one live-input `message` that landed at `ticks`.
+    pub(crate) fn route(&mut self, message: &[u8], ticks: InputTicks) {
+        let arm_channel = self.arm_channel.load(Ordering::Relaxed);
+        let mut msg = message.to_vec();
+
+        let channel = route_channel(&msg, arm_channel, &mut self.held_note_channels);
+        rewrite_channel(&mut msg, channel);
+
+        // Performance-lane triggers drive the transport silently — the
+        // keyboard isn't playing an instrument right now, so suppress every
+        // audible route (MIDI-OUT thru *and* the hosted instrument tap) while
+        // armed. `route_held` / `route_channel` are still fed the message so
+        // a note held across arming is tracked and its later note-off is
+        // routed correctly.
+        let armed = self.performance_lane_armed.load(Ordering::Relaxed);
+
+        // Tap channel-voice messages for the hosted instrument, tagged with
+        // whichever track's plugin the live keyboard is currently routed to
+        // (a held note's off goes back to the track its on used — see
+        // `route_held`). Independent of MIDI-OUT thru, but gated by the
+        // performance lane like it.
+        let live_target = self.live_instrument_target.load(Ordering::Relaxed);
+        let live_target = (live_target >= 0).then_some(live_target as usize);
+        if matches!(msg.first().copied().map(|s| s & 0xF0), Some(0x80..=0xE0))
+            && let Some(target) = route_held(&msg, live_target, &mut self.held_live_targets)
+            && !armed
+            && let Ok(mut producer) = self.instrument_midi_tx.lock()
+        {
+            producer.push((target, midi3(&msg))).ok();
+        }
+
+        if !armed {
+            self.midi_out_tx.send(MidiOutMessage::now(msg.clone())).ok();
+        }
+
+        // Note edges and the two wheels go on to the sequencer (capture /
+        // recording, `is_recorded`); only note edges to the note logger.
+        if parse_note(&msg).is_some() {
+            self.note_logger_command_tx
+                .send(NoteLoggerCommand::LogInputEvent(midi3(&msg)))
+                .ok();
+        }
+        if is_recorded(&msg) {
+            self.midi_in_tx.send((msg, ticks)).ok();
+        }
     }
 }
 

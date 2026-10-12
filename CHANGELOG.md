@@ -22,6 +22,18 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ### Added
 
+- **Play notes on the computer keyboard.** ⌘K (Ctrl+K on Windows and Linux),
+  or the piano chip at the right of the header, turns the letter keys into a
+  piano for a machine with no MIDI keyboard: `A` `S` `D` `F` `G` `H` `J` `K`
+  `L` are the white keys from C3, `W` `E` `T` `Y` `U` `O` `P` the black keys
+  between them, `Z`/`X` move an octave down/up and `C`/`V` the velocity.
+  The notes go wherever a MIDI keyboard's would — thru to MIDI Out and the
+  armed track's plugin, the stopped `/` capture, live recording and the
+  performance lane. While it is on, those keys play notes rather than their
+  usual bindings (`K` no longer toggles the metronome, `T` no longer taps the
+  tempo, `Z`/`X` no longer zoom); every chord with ⌘/Ctrl and every other key
+  still works. The header chip lights up while it is on.
+
 - **Icons in the browser.** Each row shows what it is at a glance: a folder
   (open while expanded), a project, a MIDI clip or a plugin.
 - **Hover highlight in the browser.** The row under the pointer gets a faint

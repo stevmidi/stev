@@ -55,6 +55,7 @@ pub(super) const HELP: [&[HelpSection]; 3] = [
                 ("Enter", "Fit the tempo to the only clip"),
                 ("T", "Tap tempo"),
                 ("K", "Metronome on / off"),
+                ("⌘K", "Play notes on the keyboard"),
                 ("⌘L", "Set the loop, or loop on / off"),
             ],
         },

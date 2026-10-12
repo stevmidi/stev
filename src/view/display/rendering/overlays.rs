@@ -1,11 +1,14 @@
 //! Painting the always-on overlays: the header info panel (tempo, meter, position,
-//! DSP/OVR chips, the help overlay's `?` chip), the footer's passing message, the dim in-lane cursor line,
+//! DSP/OVR chips, the computer keyboard's chip, the help overlay's `?` chip), the footer's passing message, the dim in-lane cursor line,
 //! and the playhead. See
 //! `030-ui-design.md`.
 
 use std::time::Instant;
 
-use egui::{Align2, Color32, CornerRadius, FontId, Galley, Painter, Rect, Stroke, pos2, vec2};
+use egui::{
+    Align2, Color32, CornerRadius, FontId, Galley, Painter, Pos2, Rect, Stroke, StrokeKind, pos2,
+    vec2,
+};
 
 use crate::core::time::{Meter, format_bpm, sixteenth_straight_ticks};
 use crate::view::display::browser::browser_toggle_rect;
@@ -20,10 +23,17 @@ use super::*;
 const DSP_LOAD_WARN: f32 = 0.70;
 
 impl Display {
-    /// Height of a header chip — the readouts and the `?` chip.
+    /// Height of a header chip — the readouts, the keyboard and `?` chips.
     const HEADER_CHIP_H: f32 = 28.0;
     /// Gap between the `?` chip and the header's right edge.
     const HELP_CHIP_INSET: f32 = 12.0;
+    /// Gap between the keyboard chip and the `?` chip right of it — the
+    /// readouts' gap.
+    const HEADER_CHIP_GAP: f32 = 8.0;
+    /// Width of the keyboard chip's piano icon.
+    const PIANO_ICON_W: f32 = 16.0;
+    /// Height of the keyboard chip's piano icon.
+    const PIANO_ICON_H: f32 = 12.0;
 
     /// The header readouts' value font — the BPM field's too, so the text
     /// doesn't jump when it opens.
@@ -143,7 +153,6 @@ impl Display {
         let chip_h = Self::HEADER_CHIP_H;
         let chip_pad_x = 10.0;
         let label_value_gap = 7.0;
-        let chip_gap = 8.0;
 
         // Each chip's label and value laid out once, in their paint colours:
         // the widths centre the row, the galleys are what gets painted. The
@@ -163,8 +172,8 @@ impl Display {
                 (label, value, value_color, width)
             })
             .collect();
-        let total_w: f32 =
-            chips.iter().map(|chip| chip.3).sum::<f32>() + chip_gap * (chips.len() as f32 - 1.0);
+        let total_w: f32 = chips.iter().map(|chip| chip.3).sum::<f32>()
+            + Self::HEADER_CHIP_GAP * (chips.len() as f32 - 1.0);
 
         let mut cx = rect.min.x + sw * 0.5 - total_w * 0.5;
         let chip_y = rect.min.y + (h - chip_h) * 0.5;
@@ -199,11 +208,12 @@ impl Display {
                 value_color,
             );
 
-            cx += cw + chip_gap;
+            cx += cw + Self::HEADER_CHIP_GAP;
         }
 
-        // The `?` chip at the right edge, apart from the readouts: a control
-        // that opens the help overlay, brighter under the pointer.
+        // The `?` chip at the right edge, apart from the readouts: a toggle
+        // for the help overlay, coloured as the keyboard chip beside it —
+        // accent while the overlay is up, `fg` under the pointer otherwise.
         let help_chip = Self::help_chip_rect(rect);
         painter.rect_filled(help_chip, CornerRadius::ZERO, Self::header_chip_fill());
         painter.text(
@@ -211,8 +221,61 @@ impl Display {
             Align2::CENTER_CENTER,
             "?",
             value_font,
-            accent_if(self.is_pointer_on_help_chip(), theme::fg_dim()),
+            toggle_icon_color(
+                self.overlay == Some(Overlay::Help),
+                self.is_pointer_on_help_chip(),
+            ),
         );
+
+        self.draw_keyboard_chip(painter, rect);
+    }
+
+    /// The computer keyboard's chip, left of the `?` chip: a piano icon,
+    /// `fg_dim` while off (`fg` under the pointer), accent while on — accent
+    /// being the colour of whatever has the keyboard, so the hover stays
+    /// neutral, as the footer's panel toggle's does.
+    fn draw_keyboard_chip(&self, painter: &Painter, rect: Rect) {
+        let chip = Self::keyboard_chip_rect(rect);
+        painter.rect_filled(chip, CornerRadius::ZERO, Self::header_chip_fill());
+        let color = toggle_icon_color(
+            self.computer_keyboard.enabled(),
+            self.is_pointer_on_keyboard_chip(),
+        );
+        Self::paint_piano_icon(painter, chip.center(), color);
+    }
+
+    /// A small piano — four white keys in an outline, two black keys — the
+    /// keyboard chip's icon, centred on `center`, drawn like the footer's
+    /// panel toggle: its stroke and radius, on whole pixels.
+    fn paint_piano_icon(painter: &Painter, center: Pos2, color: Color32) {
+        // Whole points, so the inside stroke lands on whole pixels.
+        let size = vec2(Self::PIANO_ICON_W, Self::PIANO_ICON_H);
+        let icon = Rect::from_min_size((center - size * 0.5).round(), size);
+        painter.rect_stroke(
+            icon,
+            CornerRadius::same(TOGGLE_ICON_RADIUS),
+            Stroke::new(TOGGLE_ICON_STROKE, color),
+            StrokeKind::Inside,
+        );
+        let white_w = icon.width() / 4.0;
+        let ppp = painter.pixels_per_point();
+        for divider in 1..4 {
+            // `seam_y` snaps an x as well as a y.
+            let x = seam_y(icon.min.x + white_w * divider as f32, 1.0, ppp);
+            painter.vline(x, icon.y_range(), Stroke::new(1.0, color));
+        }
+        // C♯ and D♯, over the first two dividers.
+        for divider in 1..3 {
+            let x = icon.min.x + white_w * divider as f32;
+            painter.rect_filled(
+                Rect::from_min_max(
+                    pos2(x - 1.75, icon.min.y),
+                    pos2(x + 1.75, icon.min.y + icon.height() * 0.6),
+                ),
+                CornerRadius::ZERO,
+                color,
+            );
+        }
     }
 
     /// A header chip's fill — the readouts' and the `?` chip's.
@@ -231,6 +294,27 @@ impl Display {
             ),
             vec2(size, size),
         )
+    }
+
+    /// Where the header's keyboard chip sits in the canvas `rect`: the `?`
+    /// chip's square, `HEADER_CHIP_GAP` to its left. Pure geometry.
+    fn keyboard_chip_rect(rect: Rect) -> Rect {
+        Self::help_chip_rect(rect)
+            .translate(vec2(-(Self::HEADER_CHIP_H + Self::HEADER_CHIP_GAP), 0.0))
+    }
+
+    /// Whether canvas point `(x, y)` is on the header's keyboard chip.
+    pub(in crate::view::display) fn is_on_keyboard_chip(&self, x: f32, y: f32) -> bool {
+        Self::keyboard_chip_rect(self.render.canvas_rect).contains(pos2(x, y))
+    }
+
+    /// Whether the pointer is on the keyboard chip with no modal overlay up
+    /// to swallow it — its hover highlight and pointing hand.
+    pub(in crate::view::display) fn is_pointer_on_keyboard_chip(&self) -> bool {
+        self.overlay.is_none()
+            && self
+                .canvas_pointer()
+                .is_some_and(|p| self.is_on_keyboard_chip(p.x, p.y))
     }
 
     /// Whether canvas point `(x, y)` is on the header's `?` chip.

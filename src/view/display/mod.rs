@@ -32,6 +32,9 @@
 //!   `Display::render`), the same shape as `instrument.rs`'s `InstrumentHost`: the driving
 //!   methods stay on `Display` and reach in through the matching `self.<group>`.
 //! - `status_message.rs` — the footer's passing message (`StatusMessage`).
+//! - `computer_keys.rs` — driving the computer keyboard (the letter keys
+//!   played as a piano, `view::computer_keyboard`): its toggle and the notes
+//!   it sends.
 //! - `output_menu.rs` — the track header's output menu (MIDI channel /
 //!   remove the plugin), opened from a track's output chip; drawn by
 //!   `rendering/output_menu.rs`.
@@ -44,6 +47,7 @@
 
 mod browser;
 mod browser_rename;
+mod computer_keys;
 mod gesture_state;
 mod grid;
 mod header_chip;
@@ -108,6 +112,7 @@ use egui::{Color32, Rect, pos2};
 use uuid::Uuid;
 
 use crate::core::audio::AudioLoad;
+use crate::core::midi::message::Midi3;
 #[cfg(target_os = "macos")]
 use crate::core::plugin_host::PluginAudioHandle;
 #[cfg(target_os = "macos")]
@@ -127,7 +132,7 @@ use crate::{
         clip_view::{ClipView, EventMetadata},
     },
     shapes::{clip_shape::ClipShape, event_shape::EventShape},
-    view::{input_poller::InputPoller, theme},
+    view::{computer_keyboard::ComputerKeyboard, input_poller::InputPoller, theme},
 };
 
 /// One clip's position atomics, shared with the clip (event-tick space) —
@@ -294,6 +299,13 @@ pub(crate) struct Display {
     // --- Input ---
     /// Polls egui's native input each frame into `InputEvent`s.
     input_poller: InputPoller,
+    /// The computer keyboard — the letter keys played as a piano while it is
+    /// on. See `computer_keys.rs`.
+    computer_keyboard: ComputerKeyboard,
+    /// The computer keyboard's notes, each with the `monotonic_nanos` the
+    /// frame read it at, to the `"computerkeys"` thread, which routes them as
+    /// a MIDI port's input.
+    computer_keys_tx: Sender<(Midi3, u64)>,
 
     // --- macOS instrument plugin host ---
     /// All plugin-host state — audio-thread handle, per-track editors, pending
@@ -381,6 +393,7 @@ impl Display {
         ui_event_rx: Receiver<UiEvent>,
         midi_in_reconnect_tx: Sender<String>,
         midi_out_reconnect_tx: Sender<String>,
+        computer_keys_tx: Sender<(Midi3, u64)>,
         midi_in_current_port: Option<String>,
         midi_out_current_port: Option<String>,
         last_project_folder: Option<String>,
@@ -447,6 +460,8 @@ impl Display {
             recording_clip_id: None,
             live_rec_state,
             input_poller: InputPoller::new(),
+            computer_keyboard: ComputerKeyboard::default(),
+            computer_keys_tx,
             #[cfg(target_os = "macos")]
             instruments: InstrumentHost::new(),
             #[cfg(target_os = "macos")]

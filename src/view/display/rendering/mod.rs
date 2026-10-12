@@ -36,6 +36,27 @@ fn accent_if(highlighted: bool, idle: Color32) -> Color32 {
     if highlighted { theme::accent() } else { idle }
 }
 
+/// A toggle control's icon colour — the footer's panel toggle, the header's
+/// keyboard and `?` chips: `accent` while `on`, else `fg` under the pointer
+/// and `fg_dim` at rest. The hover stays neutral so it can't be mistaken for
+/// on.
+fn toggle_icon_color(on: bool, hovered: bool) -> Color32 {
+    accent_if(
+        on,
+        if hovered {
+            theme::fg()
+        } else {
+            theme::fg_dim()
+        },
+    )
+}
+
+/// The toggle icons' outline and divider width (the footer's panel toggle,
+/// the header's piano): 3px on Retina, like the lane seams.
+const TOGGLE_ICON_STROKE: f32 = 1.5;
+/// The toggle icons' corner radius.
+const TOGGLE_ICON_RADIUS: u8 = 2;
+
 /// How often the UI wakes while the transport is stopped, so the header's
 /// DSP chip keeps reading the audio load rather than freezing between input
 /// events. See `030-ui-design.md` § Rendering Performance.
@@ -1106,6 +1127,7 @@ impl eframe::App for Display {
             || self.is_pointer_on_output_menu_item()
             || self.is_pointer_on_add_track_row()
             || self.is_pointer_on_help_chip()
+            || self.is_pointer_on_keyboard_chip()
             || self.is_pointer_on_browser_toggle()
         {
             ctx.set_cursor_icon(CursorIcon::PointingHand);

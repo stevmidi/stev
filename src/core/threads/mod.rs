@@ -11,16 +11,20 @@
 //! - `midi_output.rs` — the `"midiout"` thread and its delay queue
 //!   (`160-midi-out-offset.md`).
 //! - `midi_watcher.rs` — the `"midiwatcher"` hot-plug / reconnect thread.
+//! - `computer_keys.rs` — the `"computerkeys"` thread, routing the computer
+//!   keyboard's notes as live input.
 //! - `sequencer_pump.rs` — the `"sequencer"` thread, the hub: the tick pump
 //!   plus every command dispatch (`150-clock-position-sync.md`).
 //! - `controller.rs` — the parked MIDI-CC controller route, `#[allow(dead_code)]`
 //!   and never called; kept on purpose (`000-architecture.md`).
 
+mod computer_keys;
 mod controller;
 mod midi_output;
 mod midi_watcher;
 mod sequencer_pump;
 
+pub(crate) use computer_keys::start_computer_keys_thread;
 pub(crate) use midi_output::start_midi_output_thread;
 pub(crate) use midi_watcher::start_midi_watcher_thread;
 pub(crate) use sequencer_pump::start_sequencer_thread;

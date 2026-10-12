@@ -362,10 +362,12 @@ impl EventHandlers {
                 update_settings("theme", |settings| settings.theme_index = *theme_index);
             }
 
+            // `K` without ⌘/Ctrl (`⌘/Ctrl+K` is the computer keyboard,
+            // bound in `Display`).
             InputEvent::KeyPressed {
                 key: Key::K,
-                modifiers: _,
-            } => self.send_transport(TransportCommand::ToggleMetronomeMute),
+                modifiers,
+            } if !modifiers.command => self.send_transport(TransportCommand::ToggleMetronomeMute),
 
             // Bare `T` (⌘/Ctrl+T is add track, bound in `Display`).
             InputEvent::KeyPressed {

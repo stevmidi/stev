@@ -23,10 +23,6 @@ const DISCLOSURE_HALF: f32 = 4.0;
 const TOGGLE_ICON_W: f32 = 14.0;
 /// See [`TOGGLE_ICON_W`].
 const TOGGLE_ICON_H: f32 = 13.0;
-/// The icon's outline and divider width: 3px on Retina, like the lane seams.
-const TOGGLE_ICON_STROKE: f32 = 1.5;
-/// The icon's corner radius.
-const TOGGLE_ICON_RADIUS: u8 = 2;
 /// Where the sidebar divider sits, as a fraction of the icon's width.
 const TOGGLE_DIVIDER_AT: f32 = 0.4;
 /// Side of the rounded square washed behind the icon under the pointer.
@@ -286,7 +282,7 @@ impl Display {
             );
         }
 
-        let color = if hover { theme::fg() } else { theme::fg_dim() };
+        let color = toggle_icon_color(false, hover);
         // Whole points, so the inside stroke lands on whole pixels.
         let size = vec2(TOGGLE_ICON_W, TOGGLE_ICON_H);
         let outline = Rect::from_min_size((toggle.center() - size * 0.5).round(), size);

@@ -92,6 +92,7 @@ pub(crate) fn setup_shared_channels() -> SharedChannels {
     let (ui_event_tx, ui_event_rx) = unbounded::<UiEvent>();
     let (midi_in_reconnect_tx, midi_in_reconnect_rx) = bounded::<String>(1);
     let (midi_out_reconnect_tx, midi_out_reconnect_rx) = bounded::<String>(1);
+    let (computer_keys_tx, computer_keys_rx) = unbounded::<(Midi3, u64)>();
     let (midi_out_connection_tx, midi_out_connection_rx) = unbounded::<MidiOutputConnection>();
 
     SharedChannels {
@@ -125,6 +126,8 @@ pub(crate) fn setup_shared_channels() -> SharedChannels {
         midi_in_reconnect_rx,
         midi_out_reconnect_tx,
         midi_out_reconnect_rx,
+        computer_keys_tx,
+        computer_keys_rx,
         midi_out_connection_tx,
         midi_out_connection_rx,
     }
@@ -205,6 +208,7 @@ pub(crate) fn setup_display(
     shared_atomics: &SharedAtomics,
     midi_in_reconnect_tx: Sender<String>,
     midi_out_reconnect_tx: Sender<String>,
+    computer_keys_tx: Sender<(Midi3, u64)>,
     midi_in_current_port: Option<String>,
     midi_out_current_port: Option<String>,
     last_project_folder: Option<String>,
@@ -218,6 +222,7 @@ pub(crate) fn setup_display(
         ui_event_rx,
         midi_in_reconnect_tx,
         midi_out_reconnect_tx,
+        computer_keys_tx,
         midi_in_current_port,
         midi_out_current_port,
         last_project_folder,
