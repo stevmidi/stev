@@ -422,21 +422,11 @@ impl Sequencer {
         loop_reference_length: i32,
         meter: Meter,
     ) -> (i32, i32) {
-        Self::snapped_window_from_last(capture, EventType::NoteOn, loop_reference_length, meter)
-    }
-
-    /// The `(start, end)` window of `length` ending at `capture`'s last event
-    /// of `event_type`, its start snapped to a phrase start
-    /// ([`snap_region_start_to_note_on`](Self::snap_region_start_to_note_on)).
-    /// Shared by the stopped `/`'s new-clip and insert windows.
-    pub(in crate::core::sequencer) fn snapped_window_from_last(
-        capture: &Clip,
-        event_type: EventType,
-        length: i32,
-        meter: Meter,
-    ) -> (i32, i32) {
-        let (start, end) =
-            Self::calculate_phrase_window_from_last_note(capture, event_type, length);
+        let (start, end) = Self::calculate_phrase_window_from_last_note(
+            capture,
+            EventType::NoteOn,
+            loop_reference_length,
+        );
         (
             Self::snap_region_start_to_note_on(capture, start, meter),
             end,

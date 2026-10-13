@@ -118,15 +118,11 @@ impl EventHandlers {
                 transport.toggle_loop_enabled();
                 dprintln!("Toggle loop: loop_enabled={}", transport.is_loop_enabled());
             }
-            // Moving the arranger cursor can select another clip: an open
-            // take session is cancelled first.
             TransportCommand::MoveCursor { ticks } => {
-                self.cancel_take_framing_workflow(sequencer);
                 transport.move_cursor(*ticks);
                 self.sync_clip_selection_to_cursor_workflow(sequencer);
             }
             TransportCommand::SetCursorAndSelectClip { tick } => {
-                self.cancel_take_framing_workflow(sequencer);
                 transport.set_cursor_tick(*tick);
                 self.sync_clip_selection_to_cursor_workflow(sequencer);
             }

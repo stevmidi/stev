@@ -57,11 +57,10 @@ impl InsertCaptureEdit {
         Self::consuming(sequencer, sequencer.build_running_capture_insert()?)
     }
 
-    /// Enter in a take session (`290-framing-a-take.md`): closes it, the
-    /// target clip put back as it was before the session, and inserts the
-    /// framed notes at its clip cursor. `None` with no session open.
-    pub(crate) fn from_take_framing(sequencer: &mut Sequencer) -> Option<Self> {
-        let insert = sequencer.finish_take_framing()?;
+    /// Enter in a take session (`290-framing-a-take.md`): the framed notes
+    /// [`Sequencer::finish_take_framing`] returned, inserted at the target's
+    /// clip cursor. `None` when the target clip is gone.
+    pub(crate) fn from_insert(sequencer: &Sequencer, insert: CaptureInsert) -> Option<Self> {
         Self::consuming(sequencer, insert)
     }
 

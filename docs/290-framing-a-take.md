@@ -89,12 +89,12 @@ Pinned by: the window rule (`the_window_selects_whole_notes_by_their_start`: a n
 
 Where the design left a choice, the build made it so (2026-10-13):
 
-- **The take's edges are not `ResizeClipEdit`s**: the take isn't in the arrangement, so `Sequencer::set_take_edge_at` moves its region directly, with no room before a next clip to keep. The band's preview has none either (the take has no clip shape), so it lands where the release does.
+- **The take's edges are not `ResizeClipEdit`s**: the take isn't in the arrangement, so the ordinary marker rule (`clip_edge_target`/`selected_clip_marker_at`, which see the take as the selected clip) is applied to its bounds directly (`move_take_window`), with no room before a next clip to keep (`room_before_next_clip` is `None` in a session). The band's preview has none either (the take has no clip shape), so it lands where the release does.
 - **Enter on a window that frames no note** inserts nothing and closes the session, as Esc does.
 - **The take's arrangement start is the insert point**, so the clip view maps the playhead into the take where it is heard (`TakeFramingStarted` carries it, since the take has no clip shape), and `⌥Space` plays from where the take's cursor sounds in place.
 - **The lead clip's arranger thumbnail** shows the temporary notes while the session is open (`ClipUpdated` on every window change) and loses them when it closes.
 - **The panel** is put back as it was when the session closes (the view remembers it, since the sequencer doesn't know it), and the keyboard goes back to the pane that had it.
-- **An arranger cursor move** (`MoveCursor`, `SetCursorAndSelectClip`) cancels the session too, since it can select another clip.
+- **An arranger cursor move** (`MoveCursor`, `SetCursorAndSelectClip`) cancels the session too, since it can select another clip: `sync_clip_selection_to_cursor_workflow`, where every such move re-syncs the lead clip, cancels first.
 - **Blocked project commands** (new, open, save, export, import) say so in the footer; other blocked commands are silent no-ops. The piano roll starts no note drag, velocity drag or double-click insert on the take.
 
 ## Decisions

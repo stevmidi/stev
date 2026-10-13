@@ -37,7 +37,7 @@ impl EventHandlers {
                 start_tick,
             })
             .ok();
-        self.send_take_target_updated(sequencer);
+        self.send_selected_clip_updated_ui_event(sequencer);
     }
 
     /// The session's hold on `cmd` (`290` § Session rules). `true` when it
@@ -66,18 +66,20 @@ impl EventHandlers {
             // isn't in the arrangement.
             SequencerCommand::SetClipEdgeToCursor(edge) => {
                 if sequencer.set_take_edge_to_cursor(*edge) {
-                    self.send_take_target_updated(sequencer);
+                    self.send_selected_clip_updated_ui_event(sequencer);
                 }
             }
             SequencerCommand::SetClipWindowEdge { edge, tick } => {
                 if sequencer.set_take_edge_at(*edge, *tick) {
-                    self.send_take_target_updated(sequencer);
+                    self.send_selected_clip_updated_ui_event(sequencer);
                 }
             }
 
             // Leaving the clip view, another clip or track, and quitting
             // (so the unsaved-changes check sees the clip without the
-            // temporary notes): cancel, then carry on.
+            // temporary notes): cancel, then carry on. An arranger cursor
+            // move cancels where it re-syncs the lead clip
+            // (`sync_clip_selection_to_cursor_workflow`).
             SequencerCommand::ExitClip
             | SequencerCommand::FocusPane(Pane::Arranger)
             | SequencerCommand::SelectNextTrack
@@ -129,8 +131,7 @@ impl EventHandlers {
     /// clip put back as it was, the capture buffer kept for `/` to reopen.
     /// A no-op with no session open.
     pub(super) fn cancel_take_framing_workflow(&self, sequencer: &mut Sequencer) {
-        let return_to = sequencer.take_return_view();
-        if let (Some(return_to), Some(_)) = (return_to, sequencer.cancel_take_framing()) {
+        if let Some(return_to) = sequencer.cancel_take_framing() {
             self.end_take_framing(sequencer, return_to);
         }
     }
@@ -143,13 +144,13 @@ impl EventHandlers {
         sequencer: &mut Sequencer,
         undo_record: &mut Record<SequencerEdit>,
     ) {
-        let Some(return_to) = sequencer.take_return_view() else {
+        let Some((return_to, insert)) = sequencer.finish_take_framing() else {
             return;
         };
-        let edit = InsertCaptureEdit::from_take_framing(sequencer);
         // The clip view goes back to the lead clip before the edit's own
         // fan-out refreshes its notes.
         self.end_take_framing(sequencer, return_to);
+        let edit = insert.and_then(|insert| InsertCaptureEdit::from_insert(sequencer, insert));
         self.record_edit(sequencer, undo_record, edit);
     }
 
@@ -164,12 +165,6 @@ impl EventHandlers {
                 clip_view: sequencer.current_clip_view(),
             })
             .ok();
-        self.send_selected_clip_updated_ui_event(sequencer);
-    }
-
-    /// The lead clip's arranger shape after its temporary notes changed, so
-    /// its thumbnail shows the take in place.
-    fn send_take_target_updated(&self, sequencer: &Sequencer) {
         self.send_selected_clip_updated_ui_event(sequencer);
     }
 }

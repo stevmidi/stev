@@ -260,7 +260,7 @@ sequencer (`playback_is_looping().then(|| region_end() - region_start())`).
 gate and size reads notes: `Clip::has_notes` gates both running builders and the
 stopped commit (a wheel wiggled alone commits nothing, `a_capture_of_wheel_moves_alone_commits_nothing`),
 windows come from note-ons and note-offs (`calculate_running_region`,
-`linear_content_length`, `note_tick_bounds`), and the stopped capture source is trimmed
+`linear_content_length`), and the stopped capture source is trimmed
 back from its last note edge (`040`). Wheel moves ride along inside whatever window the
 notes chose.
 

@@ -80,7 +80,10 @@ impl Sequencer {
         self.clip_selection.select(id)
     }
 
-    /// Id of the lead-selected clip, if any.
+    /// Id of the lead-selected clip, if any — the [`lead_clip`](Self::lead_clip)'s,
+    /// even while a take session makes the take the
+    /// [`selected_clip`](Self::selected_clip). The session blocks every
+    /// command that would edit a clip by this id.
     pub(crate) fn selected_clip_id(&self) -> Option<Uuid> {
         self.clip_selection.selected_id()
     }

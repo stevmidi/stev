@@ -168,8 +168,12 @@ impl Sequencer {
     }
 
     /// The room a clip starting at `start_tick` on the selected track has
-    /// before the next clip there; `None` with nothing after it.
+    /// before the next clip there; `None` with nothing after it, and in a
+    /// take session, whose take isn't on the track (`take_framing.rs`).
     fn room_before_next_clip(&self, start_tick: i32) -> Option<i32> {
+        if self.is_framing_take() {
+            return None;
+        }
         self.selected_track()?
             .next_clip_start_after(start_tick)
             .map(|next_start| next_start - start_tick)

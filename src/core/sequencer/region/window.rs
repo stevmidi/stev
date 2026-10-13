@@ -123,7 +123,10 @@ impl Sequencer {
     }
 
     /// Highest tick among a slice's events of `event_type` (`0` if none).
-    fn max_event_tick(events: &[Event], event_type: EventType) -> i32 {
+    pub(in crate::core::sequencer) fn max_event_tick(
+        events: &[Event],
+        event_type: EventType,
+    ) -> i32 {
         events
             .iter()
             .filter(|e| e.event_type() == Some(event_type))

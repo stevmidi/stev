@@ -9,7 +9,8 @@
 //! back. Neither the session nor its window moves are undo steps.
 //!
 //! The take's window moves like any clip's (`[`/`]` at the cursor, the band
-//! on the grid, `window_with_edge_at`), and selects whole notes by where they
+//! on the grid: `Sequencer::selected_clip_marker_at`, which sees the take as
+//! the selected clip), and selects whole notes by where they
 //! start: a note starting inside it is in, kept whole past its end, and so
 //! is one starting up to [`TAKE_EARLY_TICKS`] before it — a note played a
 //! little ahead of the beat `[` sits on.
@@ -18,11 +19,11 @@ use uuid::Uuid;
 
 use crate::core::{time::PPQN, view_state::ViewState};
 use crate::models::{
-    clip::{Clip, ClipEdge, window_with_edge_at},
+    clip::{Clip, ClipEdge},
     event::{Event, EventType},
 };
 
-use super::{CaptureInsert, Sequencer};
+use super::{CaptureInsert, EdgeTarget, Sequencer};
 
 /// How far before the window start a note may start and still be in the
 /// take — a 32nd, so a chord played just ahead of the beat `[` is on comes
@@ -70,7 +71,7 @@ impl TakeFraming {
             .into_iter()
             .filter(Event::is_note_edge)
             .collect();
-        let last_off = notes.iter().map(Event::tick).max().unwrap_or(end).max(end);
+        let last_off = notes.iter().map(Event::tick).fold(end, i32::max);
         let wheels = self
             .take
             .events()
@@ -114,14 +115,11 @@ impl Sequencer {
         self.take_framing.as_ref().map(|framing| &framing.take)
     }
 
-    /// Mutable access to the open session's take.
+    /// Mutable access to the open session's take. (Checked first by
+    /// `selected_clip_mut`: returning a borrow out of an `if let` on `self`
+    /// would keep `self` borrowed on the fallback path.)
     pub(super) fn framed_take_mut(&mut self) -> Option<&mut Clip> {
         self.take_framing.as_mut().map(|framing| &mut framing.take)
-    }
-
-    /// The view the open session hands the keyboard back to when it closes.
-    pub(crate) fn take_return_view(&self) -> Option<ViewState> {
-        self.take_framing.as_ref().map(|framing| framing.return_to)
     }
 
     /// The stopped `/` with a lead clip: opens a take session on the capture
@@ -137,11 +135,12 @@ impl Sequencer {
         let Some(framing) = self.build_take_framing(return_to) else {
             return false;
         };
-        if framing.framed_events().is_empty() {
+        let framed = framing.framed_events();
+        if framed.is_empty() {
             return false;
         }
         self.take_framing = Some(framing);
-        self.hear_take_in_place();
+        self.hear_take_in_place(framed);
         true
     }
 
@@ -161,12 +160,7 @@ impl Sequencer {
         let capture = self.detection_capture_source();
         let (start, _) =
             Self::detected_phrase_window(&capture, self.loop_reference_length(), self.meter());
-        let end = capture
-            .events()
-            .iter()
-            .filter(|event| event.event_type() == Some(EventType::NoteOff))
-            .map(Event::tick)
-            .max()?;
+        let end = Self::max_event_tick(capture.events(), EventType::NoteOff);
 
         let mut take = Self::framed(capture, start, end.max(start + 1));
         take.set_start_tick(target.arrangement_tick_from_event_tick(insert_at));
@@ -182,82 +176,84 @@ impl Sequencer {
         })
     }
 
-    /// `[`/`]` in the session: the take's window `edge` to its cursor
-    /// ([`set_take_edge_at`](Self::set_take_edge_at)).
+    /// `[`/`]` in the session: the take's window `edge` to its cursor, by
+    /// the clip view's marker rule (`clip_edge_target`). `false` when
+    /// nothing changed.
     pub(crate) fn set_take_edge_to_cursor(&mut self, edge: ClipEdge) -> bool {
-        let Some(tick) = self.framed_take().map(Clip::cursor_tick) else {
-            return false;
-        };
-        self.set_take_edge_at(edge, tick)
+        let target = self.clip_edge_target(edge, true);
+        self.move_take_window(target)
     }
 
-    /// The take's window `edge` to the event tick `tick`, by the clip view's
-    /// marker rule (`window_with_edge_at`, held inside the take's reach, with
-    /// no room to keep: the take isn't in the arrangement) — `[`/`]` at the
-    /// cursor, and the window band's release, whose preview drew the same
-    /// rule. The lead clip hears the new framing. `false` when nothing
-    /// changed.
+    /// The window band released in the session: the take's window `edge`
+    /// to the event tick `tick`, by the marker rule its preview drew
+    /// (`selected_clip_marker_at`). `false` when nothing changed.
     pub(crate) fn set_take_edge_at(&mut self, edge: ClipEdge, tick: i32) -> bool {
-        let meter = self.meter();
-        let Some(framing) = &mut self.take_framing else {
-            return false;
-        };
-        let take = &mut framing.take;
-        let (reach_start, reach_end) = take.reach(meter);
-        let window = (take.region().start(), take.region().end());
-        let Some(after) =
-            window_with_edge_at(edge, tick.clamp(reach_start, reach_end), window, None)
+        let target = self.selected_clip_marker_at(edge, tick);
+        self.move_take_window(target)
+    }
+
+    /// Moves the take to `target`'s bounds — a marker edit worked out on
+    /// the take, which is the selected clip — directly, not as a
+    /// `ResizeClipEdit`: the take isn't in the arrangement. The lead clip
+    /// hears the new framing.
+    fn move_take_window(&mut self, target: Option<EdgeTarget>) -> bool {
+        let (Some(EdgeTarget { bounds, .. }), Some(framing)) = (target, &mut self.take_framing)
         else {
             return false;
         };
-        if after == window {
-            return false;
-        }
-        take.region_mut().set_region(Some(after.0), Some(after.1));
-        self.hear_take_in_place();
+        framing.take.set_bounds(bounds);
+        let framed = framing.framed_events();
+        self.hear_take_in_place(framed);
         true
     }
 
     /// Esc (and everything else that ends a session without inserting): puts
     /// the target's events back as they were and closes the session. The
-    /// capture buffer is left alone, so `/` reopens the take. The target,
-    /// `None` with no session open.
-    pub(crate) fn cancel_take_framing(&mut self) -> Option<(usize, Uuid)> {
-        let framing = self.take_framing.take()?;
-        let target = (framing.track_idx, framing.clip_id);
-        self.edit_clip_events(framing.track_idx, framing.clip_id, |clip| {
-            clip.restore_events(framing.pre_events);
-            clip.calculate_note_lengths();
-        });
-        Some(target)
+    /// capture buffer is left alone, so `/` reopens the take. The view to
+    /// hand the keyboard back to, `None` with no session open.
+    pub(crate) fn cancel_take_framing(&mut self) -> Option<ViewState> {
+        self.close_take_framing().map(|framing| framing.return_to)
     }
 
     /// Enter: closes the session, the target's events put back as they were,
-    /// and returns the framed notes for `InsertCaptureEdit` to insert, so
-    /// its undo state is the clip from before the session. `None` with no
-    /// session open, or a window that frames no note — the session is
-    /// closed then too, as by Esc.
-    pub(crate) fn finish_take_framing(&mut self) -> Option<CaptureInsert> {
-        let events = self.take_framing.as_ref()?.framed_events();
-        let (track_idx, clip_id) = self.cancel_take_framing()?;
-        (!events.is_empty()).then_some(CaptureInsert {
-            track_idx,
-            clip_id,
+    /// and returns the view to hand the keyboard back to and the framed notes
+    /// for `InsertCaptureEdit` to insert, so its undo state is the clip from
+    /// before the session — `None` for a window that frames no note. `None`
+    /// with no session open.
+    pub(crate) fn finish_take_framing(&mut self) -> Option<(ViewState, Option<CaptureInsert>)> {
+        let framing = self.close_take_framing()?;
+        let events = framing.framed_events();
+        let insert = (!events.is_empty()).then_some(CaptureInsert {
+            track_idx: framing.track_idx,
+            clip_id: framing.clip_id,
             events,
-        })
+        });
+        Some((framing.return_to, insert))
     }
 
-    /// Swaps the target's temporary notes for the session's framed ones:
-    /// its events from before the session plus the framed notes, through
+    /// Closes the session and puts the target's events back as they were
+    /// before it. The closed session, `None` with none open.
+    fn close_take_framing(&mut self) -> Option<TakeFraming> {
+        let framing = self.take_framing.take()?;
+        let pre_events = framing.pre_events.clone();
+        self.edit_clip_events(framing.track_idx, framing.clip_id, |clip| {
+            clip.restore_events(pre_events);
+            clip.calculate_note_lengths();
+        });
+        Some(framing)
+    }
+
+    /// Swaps the target's temporary notes for `framed`, the session's framed
+    /// notes: its events from before the session plus those, through
     /// `edit_clip_events`, so nothing hangs under a running playhead. The
     /// current pass plays out; the next loop wrap plays the change.
-    fn hear_take_in_place(&mut self) {
+    fn hear_take_in_place(&mut self, framed: Vec<Event>) {
         let Some(framing) = &self.take_framing else {
             return;
         };
         let (track_idx, clip_id) = (framing.track_idx, framing.clip_id);
         let mut events = framing.pre_events.clone();
-        events.extend(framing.framed_events());
+        events.extend(framed);
         self.edit_clip_events(track_idx, clip_id, |clip| {
             clip.restore_events(events);
             clip.calculate_note_lengths();
@@ -268,7 +264,6 @@ impl Sequencer {
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::Ordering;
-    use std::time::Instant;
 
     use rtrb::Consumer;
     use undo::Record;
@@ -277,7 +272,9 @@ mod tests {
     use crate::core::{
         sequencer::{
             ClipInstrumentEvent, EditResult, InsertCaptureEdit, SequencerEdit,
-            test_support::{clip_at, instrument_track_0, note_off, note_on, sequencer_with},
+            test_support::{
+                clip_at, instrument_track_0, note_off, note_on, sequencer_with, tick_and_collect,
+            },
         },
         time::Meter,
         view_state::ViewState,
@@ -342,7 +339,9 @@ mod tests {
 
     /// Enter: the session's insert recorded on `record`, and its result.
     fn enter(seq: &mut Sequencer, record: &mut Record<SequencerEdit>) -> EditResult {
-        let edit = InsertCaptureEdit::from_take_framing(seq).expect("a session to insert");
+        let (_, insert) = seq.finish_take_framing().expect("a session to insert");
+        let edit = InsertCaptureEdit::from_insert(seq, insert.expect("framed notes"))
+            .expect("the target clip");
         record.edit(seq, SequencerEdit::InsertCapture(edit))
     }
 
@@ -445,8 +444,8 @@ mod tests {
         assert_eq!(lead_notes(&seq), vec![(at, at + 240, 64)]);
     }
 
-    /// Enter with a window that frames no note inserts nothing, records
-    /// nothing, and closes the session as Esc would.
+    /// Enter with a window that frames no note has nothing to insert, and
+    /// closes the session as Esc would.
     #[test]
     fn enter_on_an_empty_window_inserts_nothing() {
         let notes = [(0, 240, 60), (1920, 2160, 62)];
@@ -456,7 +455,7 @@ mod tests {
         assert!(seq.set_take_edge_at(ClipEdge::End, 960));
         assert_eq!(lead_notes(&seq), vec![]);
 
-        assert!(InsertCaptureEdit::from_take_framing(&mut seq).is_none());
+        assert!(matches!(seq.finish_take_framing(), Some((_, None))));
         assert!(!seq.is_framing_take());
         assert!(seq.capture_clip.has_notes(), "buffer kept");
     }
@@ -497,7 +496,7 @@ mod tests {
             vec![(BAR, BAR + 240, 60), (BAR * 3, BAR * 3 + 240, 60)]
         );
 
-        assert!(seq.cancel_take_framing().is_some());
+        assert_eq!(seq.cancel_take_framing(), Some(ViewState::Clip));
         assert!(!seq.is_framing_take());
         assert_eq!(lead_notes(&seq), before);
         assert_eq!(seq.capture_clip.events().len(), buffer, "buffer kept");
@@ -565,26 +564,6 @@ mod tests {
         assert!(!seq.is_framing_take());
     }
 
-    /// The note numbers of the `NoteOn`s the next `ticks` ticks send to the
-    /// instrument.
-    fn note_ons_over(
-        seq: &mut Sequencer,
-        rx: &mut Consumer<ClipInstrumentEvent>,
-        ticks: i32,
-    ) -> Vec<u8> {
-        let at = Instant::now();
-        let mut notes = Vec::new();
-        for _ in 0..ticks {
-            seq.tick(at);
-            while let Ok(event) = rx.pop() {
-                if event.message[0] & 0xf0 == 0x90 && event.message[2] > 0 {
-                    notes.push(event.message[1]);
-                }
-            }
-        }
-        notes
-    }
-
     /// Framing while the loop plays: a window changed mid-pass is heard from
     /// the next loop wrap on, through the ordinary transport.
     #[test]
@@ -596,13 +575,13 @@ mod tests {
 
         seq.running.store(true, Ordering::Relaxed);
         seq.reset_to_tick(BAR * 4);
-        assert_eq!(note_ons_over(&mut seq, &mut rx, 480), vec![60]);
+        assert_eq!(tick_and_collect(&mut seq, &mut rx, 480), vec![60]);
 
         take_cursor_to(&mut seq, 480);
         assert!(seq.set_take_edge_to_cursor(ClipEdge::End));
-        note_ons_over(&mut seq, &mut rx, BAR - 480);
+        tick_and_collect(&mut seq, &mut rx, BAR - 480);
         // The loop wraps: the transport re-seeks to the region start.
         seq.reset_to_tick(BAR * 4);
-        assert_eq!(note_ons_over(&mut seq, &mut rx, BAR), vec![60]);
+        assert_eq!(tick_and_collect(&mut seq, &mut rx, BAR), vec![60]);
     }
 }

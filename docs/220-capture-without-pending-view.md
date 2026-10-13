@@ -22,7 +22,7 @@ Keep the valuable part of the retired modal `PendingClip` view, the phrase **det
 | Playing | none | Commit the last pass, cropped (unchanged, `100`). |
 | Playing | yes | Insert the last pass into that clip (`InsertCaptureEdit::from_running_capture`; the window rules of `100` unchanged, undoable since phase 4). |
 | Stopped | none | **Commit a new clip framed by phrase detection** (`CommitClipEdit::from_stopped_capture`). |
-| Stopped | yes | **Open a take session** on the take (`290-framing-a-take.md` § Phase 2): framed like a clip, heard in place; Enter inserts it at the clip cursor (`InsertCaptureEdit::from_take_framing`), Esc cancels. |
+| Stopped | yes | **Open a take session** on the take (`290-framing-a-take.md` § Phase 2): framed like a clip, heard in place; Enter inserts it at the clip cursor (`InsertCaptureEdit::from_insert`), Esc cancels. |
 
 The stopped commit places the clip at the arranger cursor on the selected track. It keeps the detected window: detected start, and tail at last NoteOff + 2 beats. **The project's first clip keeps that window exactly** and leaves the tempo alone (see "Fitting the tempo"). **Every later clip is rounded to the nearest whole bars**, floored to the room before the next clip. The clip is **not cropped**: the last `CAPTURE_BUFFER_BARS` (8) of the capture stay in it as material outside its window. The event space is rebased so the window starts on a bar line (`Clip::align_window_start_to_bar`), which gives quantize, swing and the clip view the phrase's grid. A commit never changes the event selection and never touches the loop region.
 

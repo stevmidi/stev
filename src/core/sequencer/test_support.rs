@@ -4,6 +4,7 @@ use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, AtomicI32, AtomicU8, AtomicU16, Ordering},
 };
+use std::time::Instant;
 
 use crossbeam_channel::{Receiver, unbounded};
 use rtrb::{Consumer, RingBuffer};
@@ -150,4 +151,40 @@ pub(crate) fn note_on(tick: i32) -> Event {
 /// The middle-C `NoteOff` matching [`note_on`], at `tick`.
 pub(crate) fn note_off(tick: i32) -> Event {
     Event::new(tick, 0, vec![0x80, 60, 0])
+}
+
+/// `ticks` sequencer ticks from wherever playback is, collecting the
+/// note numbers of the NoteOns that reached the instrument.
+pub(super) fn tick_and_collect(
+    seq: &mut Sequencer,
+    rx: &mut Consumer<ClipInstrumentEvent>,
+    ticks: i32,
+) -> Vec<u8> {
+    tick_and_collect_messages(seq, rx, ticks)
+        .into_iter()
+        .filter_map(|(status, note)| (status == 0x90).then_some(note))
+        .collect()
+}
+
+/// Every note message `(status high nibble, note)` the next `ticks` ticks
+/// send, a velocity-0 `NoteOn` counted as a `NoteOff`.
+pub(super) fn tick_and_collect_messages(
+    seq: &mut Sequencer,
+    rx: &mut Consumer<ClipInstrumentEvent>,
+    ticks: i32,
+) -> Vec<(u8, u8)> {
+    let at = Instant::now();
+    let mut messages = Vec::new();
+    for _ in 0..ticks {
+        seq.tick(at);
+        while let Ok(ev) = rx.pop() {
+            let status = match ev.message[0] & 0xf0 {
+                0x90 if ev.message[2] == 0 => 0x80,
+                status @ (0x80 | 0x90) => status,
+                _ => continue,
+            };
+            messages.push((status, ev.message[1]));
+        }
+    }
+    messages
 }

@@ -202,7 +202,11 @@ impl EventHandlers {
     /// (a change of lead does that itself): an arranger cursor move resets
     /// the clip cursor, but not the other way round
     /// (`archive/210-docked-clip-panel.md`).
+    ///
+    /// An open take session is cancelled first: the lead clip may change
+    /// under it.
     pub(super) fn sync_clip_selection_to_cursor_workflow(&self, sequencer: &mut Sequencer) {
+        self.cancel_take_framing_workflow(sequencer);
         let clip_id = sequencer.find_selected_track_clip_id_at_cursor();
         self.select_clip_workflow(sequencer, clip_id);
         sequencer.sync_selected_clip_cursor_with_arranger();

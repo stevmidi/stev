@@ -162,8 +162,6 @@ impl Sequencer {
 mod tests {
     use std::sync::atomic::Ordering;
 
-    use std::time::Instant;
-
     use rtrb::Consumer;
     use undo::Record;
     use uuid::Uuid;
@@ -174,7 +172,10 @@ mod tests {
             config,
             sequencer::{
                 ClipInstrumentEvent, CommitClipEdit, ResizeClipEdit, RetimeClipEdit, SequencerEdit,
-                test_support::{clip_at, instrument_track_0, note_off, note_on, sequencer_with},
+                test_support::{
+                    clip_at, instrument_track_0, note_off, note_on, sequencer_with,
+                    tick_and_collect, tick_and_collect_messages,
+                },
             },
         },
         models::{
@@ -592,19 +593,6 @@ mod tests {
         );
     }
 
-    /// `ticks` sequencer ticks from wherever playback is, collecting the
-    /// note numbers of the NoteOns that reached the instrument.
-    fn tick_and_collect(
-        seq: &mut Sequencer,
-        rx: &mut Consumer<ClipInstrumentEvent>,
-        ticks: i32,
-    ) -> Vec<u8> {
-        tick_and_collect_messages(seq, rx, ticks)
-            .into_iter()
-            .filter_map(|(status, note)| (status == 0x90).then_some(note))
-            .collect()
-    }
-
     /// A playing one-bar clip at bar 1 holding note 60 over the first eighth
     /// and note 62 over the eighth from the half bar, the playhead walked
     /// `ticks` into it, the clip selected. Returns the clip's id.
@@ -629,29 +617,6 @@ mod tests {
         seq.reset_to_tick(0);
         tick_and_collect_messages(seq, rx, ticks);
         clip_id
-    }
-
-    /// Every note message `(status high nibble, note)` the next `ticks` ticks
-    /// send, a velocity-0 `NoteOn` counted as a `NoteOff`.
-    fn tick_and_collect_messages(
-        seq: &mut Sequencer,
-        rx: &mut Consumer<ClipInstrumentEvent>,
-        ticks: i32,
-    ) -> Vec<(u8, u8)> {
-        let at = Instant::now();
-        let mut messages = Vec::new();
-        for _ in 0..ticks {
-            seq.tick(at);
-            while let Ok(ev) = rx.pop() {
-                let status = match ev.message[0] & 0xf0 {
-                    0x90 if ev.message[2] == 0 => 0x80,
-                    status @ (0x80 | 0x90) => status,
-                    _ => continue,
-                };
-                messages.push((status, ev.message[1]));
-            }
-        }
-        messages
     }
 
     /// `[` in the clip view at `event_tick`, recorded as the edit does it.
