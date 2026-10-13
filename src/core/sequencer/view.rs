@@ -18,11 +18,12 @@ impl Sequencer {
         self.selected_clip().map(ClipView::from_clip)
     }
 
-    /// Arranger metadata for the lead-selected clip, or `None`.
+    /// Arranger metadata for the lead-selected clip, or `None` — the clip in
+    /// the arrangement, never an open session's take.
     pub(crate) fn selected_clip_metadata(&self) -> Option<ClipMetadata> {
         Some(ClipMetadata::from_clip(
             self.selected_track_index()?,
-            self.selected_clip()?,
+            self.lead_clip()?,
         ))
     }
 }

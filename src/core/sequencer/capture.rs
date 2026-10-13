@@ -21,9 +21,9 @@ use crate::{
 
 use super::Sequencer;
 
-/// A take's notes ready to insert into an existing clip — what the insert
-/// builders ([`Sequencer::build_running_capture_insert`],
-/// [`Sequencer::build_stopped_capture_insert`]) hand `InsertCaptureEdit`.
+/// A take's notes ready to insert into an existing clip — what
+/// [`Sequencer::build_running_capture_insert`] and a take session's Enter
+/// ([`Sequencer::finish_take_framing`]) hand `InsertCaptureEdit`.
 pub(crate) struct CaptureInsert {
     /// Track the target clip is on.
     pub(crate) track_idx: usize,
@@ -429,6 +429,7 @@ mod tests {
             },
             sequencer::test_support::{clip_at, note_off, note_on, sequencer_with_outputs},
             time::{self, Meter},
+            view_state::ViewState,
         },
         metadata::clip_metadata::ClipMetadata,
         models::{
@@ -1529,7 +1530,7 @@ mod tests {
         assert!(seq.build_stopped_capture_clip().is_none());
         add_and_select_clip(&mut seq, 0, bar * 2);
         assert!(seq.build_running_capture_insert().is_none());
-        assert!(seq.build_stopped_capture_insert().is_none());
+        assert!(!seq.open_take_framing(ViewState::Clip));
     }
 
     /// Both recorders take a wheel move off the input like a note.

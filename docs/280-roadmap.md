@@ -21,10 +21,6 @@ Full Linux and Windows support is now a staged candidate (§ Candidates, Linux a
 
 Listed in priority order, highest first (set 2026-10-11): the capture workflow, then the engine's real-time threads, small fixes, then reaching non-developers, then larger or speculative features. The order is a priority, not a schedule; reorder it as priorities change.
 
-### Adjusting the detected phrase after a commit
-
-A stopped `/` commits detection's best guess, and a take framed too long or too short can't be corrected the way the old pending view allowed. **Designed 2026-10-12 in `290-framing-a-take.md`**, in two phases: a window band in the clip view for every clip, then a take session that frames an insert before it lands. Next: phase 1.
-
 ### The audio workgroup join
 
 Worker threads have no real-time priority, and under CPU pressure their pre-emption is the dominant cause of glitches (the overrun journal shows it). It degrades every session with plugins, it's bounded macOS work, and the journal's shape is its acceptance test. The fix is in `170` § Not done yet. It pairs with § MIDI Out timing below: both make the real-time threads behave.

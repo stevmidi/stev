@@ -19,6 +19,8 @@
 //! - `stopped_capture.rs` / `region/` — the stopped `/`: framing a take by
 //!   phrase detection into a new clip or an insert (`040-phrase-detection.md`,
 //!   `220-capture-without-pending-view.md`).
+//! - `take_framing.rs` — the take session the stopped `/` into a clip opens:
+//!   framing the notes to insert, heard in place (`290-framing-a-take.md`).
 //! - `live_recording.rs` — the dual-state live-record path.
 //! - `selection.rs` / `view.rs` — clip & event selection, clip-view snapshots.
 //! - `mix.rs` — the not-undoable per-track mixer writers.
@@ -45,6 +47,7 @@ mod region;
 mod selection;
 mod state;
 mod stopped_capture;
+mod take_framing;
 #[cfg(test)]
 pub(crate) mod test_support;
 mod view;
@@ -69,25 +72,3 @@ pub(crate) use instrument_event::EventTime;
 pub(crate) use region::EdgeTarget;
 pub(crate) use state::LiveRecResult;
 pub(crate) use state::Sequencer;
-
-use crate::models::{clip::Clip, event::EventType};
-
-/// `(first NoteOn tick, last NoteOff tick)` across a clip's events, or `None`
-/// if it has no notes. The played span, ignoring region bounds.
-pub(super) fn note_tick_bounds(clip: &Clip) -> Option<(i32, i32)> {
-    let first = clip
-        .events()
-        .iter()
-        .filter(|e| e.event_type() == Some(EventType::NoteOn))
-        .map(|e| e.tick())
-        .min()?;
-
-    let last = clip
-        .events()
-        .iter()
-        .filter(|e| e.event_type() == Some(EventType::NoteOff))
-        .map(|e| e.tick())
-        .max()?;
-
-    Some((first, last))
-}

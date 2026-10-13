@@ -37,11 +37,17 @@ impl EventHandlers {
         saved: &mut SavedProject,
         staged: &mut Option<StagedProject>,
     ) {
+        // An open take session handles or blocks most commands itself
+        // (`take_framing.rs`).
+        if self.take_framing_command(cmd, sequencer, undo_record) {
+            return;
+        }
         match cmd {
             SequencerCommand::Commit => {
                 // Into the lead clip if there is one, otherwise a new clip:
                 // the last pass while running, the detected phrase while
-                // stopped.
+                // stopped. Stopped into the lead clip opens a take session
+                // instead, which inserts on Enter.
                 let into_lead_clip = sequencer.selected_clip_id().is_some();
                 let running = sequencer.is_running();
                 let edit = match (into_lead_clip, running) {
@@ -52,7 +58,8 @@ impl EventHandlers {
                         if self.view_state() == ViewState::Arranger {
                             sequencer.sync_selected_clip_cursor_with_arranger();
                         }
-                        InsertCaptureEdit::from_stopped_capture(sequencer).map(SequencerEdit::from)
+                        self.open_take_framing_workflow(sequencer);
+                        None
                     }
                     (false, true) => {
                         CommitClipEdit::from_running_capture(sequencer).map(SequencerEdit::from)
@@ -738,9 +745,10 @@ mod tests {
         assert_eq!(last_track_routes(&h), Some(want));
     }
 
-    /// The stopped `/` with a lead clip under the arranger cursor inserts the
-    /// played phrase into it as one undoable edit: no pending view opens, the
-    /// transport is not sent anything, and ⌘Z takes the notes back out.
+    /// The stopped `/` with a lead clip under the arranger cursor opens a take
+    /// session rather than editing (`290-framing-a-take.md`), and Enter
+    /// inserts the played phrase as one undoable edit: the transport is sent
+    /// nothing either way, and ⌘Z takes the notes back out.
     #[test]
     fn stopped_commit_into_the_lead_clip_is_one_undoable_insert() {
         let mut h = harness();
@@ -760,7 +768,10 @@ mod tests {
 
         let mut record: Record<SequencerEdit> = Record::new();
         run_command(&mut h, &mut record, SequencerCommand::Commit);
+        assert_eq!(h.handlers.view_state(), ViewState::Clip);
+        assert!(record.is_empty());
 
+        run_command(&mut h, &mut record, SequencerCommand::FitTempo);
         assert_eq!(h.handlers.view_state(), ViewState::Arranger);
         assert_eq!(record.len(), 1);
         assert_eq!(note_ons(&h, clip_id), vec![(0, 60), (480, 64)]);

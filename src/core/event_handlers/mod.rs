@@ -47,6 +47,7 @@ mod performance_lane_handler;
 mod project;
 mod selection;
 mod sequencer_handler;
+mod take_framing;
 #[cfg(test)]
 mod test_harness;
 mod tracks;

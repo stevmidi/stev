@@ -218,20 +218,32 @@ impl Sequencer {
         self.tracks.get_mut(idx)
     }
 
-    /// The lead-selected [`Clip`] on the selected track, if any.
+    /// The clip the clip view shows and its commands act on: the take while
+    /// a take session is open (`take_framing.rs`), otherwise the
+    /// [`lead_clip`](Self::lead_clip).
     pub(crate) fn selected_clip(&self) -> Option<&Clip> {
-        let clip_id = self.clip_selection.selected_id()?;
-        self.selected_track()
-            .and_then(|track| track.get_clip_by_id(clip_id))
+        self.framed_take().or_else(|| self.lead_clip())
     }
 
-    /// Mutable access to the lead-selected clip. Not for moving its events:
-    /// that goes through [`edit_clip_events`](Self::edit_clip_events), or a
-    /// note sounding under a running playhead can hang.
+    /// Mutable access to the [`selected_clip`](Self::selected_clip). Not for
+    /// moving a lead clip's events: that goes through
+    /// [`edit_clip_events`](Self::edit_clip_events), or a note sounding under
+    /// a running playhead can hang.
     pub(super) fn selected_clip_mut(&mut self) -> Option<&mut Clip> {
+        if self.is_framing_take() {
+            return self.framed_take_mut();
+        }
         let clip_id = self.clip_selection.selected_id()?;
         self.selected_track_mut()
             .and_then(|track| track.get_clip_by_id_mut(clip_id))
+    }
+
+    /// The lead-selected [`Clip`] on the selected track, if any — in the
+    /// arrangement, whether or not a take session is open.
+    pub(crate) fn lead_clip(&self) -> Option<&Clip> {
+        let clip_id = self.clip_selection.selected_id()?;
+        self.selected_track()
+            .and_then(|track| track.get_clip_by_id(clip_id))
     }
 
     /// Updates `arm_channel` to reflect the currently selected track,

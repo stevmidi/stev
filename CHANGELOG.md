@@ -22,6 +22,18 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ### Added
 
+- **Frame a take before it goes into a clip.** With the transport stopped,
+  `\` (or `/`) into an existing clip no longer drops the detected phrase in
+  at once: the clip view opens the take, and you choose which notes go in by
+  moving its start and end like any clip's, with `[`/`]` or the band in the
+  timeline strip. Notes come along whole by where they start (one played just
+  ahead of the start too), and keep their timing against the grid. The clip
+  you're inserting into already holds the chosen notes at its cursor, so you
+  can loop the section and hear the take in place while you choose. Enter inserts it as
+  one undo step; Esc (or ⌘Z, or leaving the clip view) cancels and keeps the
+  take, so `\` opens it again. Other edits wait until you finish, and the
+  footer says a take is open.
+
 - **Drag a clip's start and end in the clip view.** The timeline strip above
   the piano roll shows the clip's window as a band in the clip's colour; drag
   either end of it to move the start or the end, snapped to the visible grid.
@@ -76,6 +88,11 @@ Breaking entries are marked **Breaking** and say what to do about them.
   the keyboard, so only one edge is ever lit.
 
 ### Changed
+
+- **The stopped `\` into a clip inserts the whole last phrase.** It used to
+  insert at most the phrase's last bar, and closed the last note a tick early.
+  Now `\` then Enter inserts every note of the detected phrase, each one
+  whole; a note that runs past the clip's end is still cut there.
 
 - **`]` in the clip view ends the clip exactly at the cursor.** With more than
   one clip in the project it used to round up to the next bar line; now it

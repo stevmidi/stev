@@ -1,20 +1,20 @@
-//! The stopped `/`: framing the capture buffer by phrase detection, either as
-//! a new clip ([`build_stopped_capture_clip`](Sequencer::build_stopped_capture_clip),
-//! placed by `CommitClipEdit`) or as notes inserted into the lead clip
-//! ([`build_stopped_capture_insert`](Sequencer::build_stopped_capture_insert),
-//! by `InsertCaptureEdit`). Both are pure. Phrase-token detection — where the
-//! last phrase starts — is in `region/`. See
-//! `220-capture-without-pending-view.md` and `040-phrase-detection.md`.
+//! The stopped `/`: framing the capture buffer by phrase detection as a new
+//! clip ([`build_stopped_capture_clip`](Sequencer::build_stopped_capture_clip),
+//! pure, placed by `CommitClipEdit`). With a lead clip the stopped `/` opens a
+//! take session instead (`take_framing.rs`), which frames the same capture
+//! source. Phrase-token detection — where the last phrase starts — is in
+//! `region/`. See `220-capture-without-pending-view.md`,
+//! `290-framing-a-take.md` and `040-phrase-detection.md`.
 
 use crate::{
     core::{
         config,
         time::{self, Meter},
     },
-    models::{clip::Clip, event::EventType},
+    models::clip::Clip,
 };
 
-use super::{CaptureInsert, Sequencer, note_tick_bounds};
+use super::Sequencer;
 
 #[cfg(debug_assertions)]
 use super::capture_fixture::CaptureFixture;
@@ -69,35 +69,6 @@ impl Sequencer {
             .then_some((track_idx, clip))
     }
 
-    /// The stopped `/` with a lead clip (`220-capture-without-pending-view.md`):
-    /// the notes of the last phrase ([`detected_insert_window`](Self::detected_insert_window)),
-    /// inserted into the selected clip at its clip cursor and cut off at its
-    /// region end — a note running past it is closed there. The pure half of
-    /// the insert; `InsertCaptureEdit` adds the notes and clears the buffer.
-    /// `None` on an empty buffer, no lead clip, or no room at the cursor.
-    pub(crate) fn build_stopped_capture_insert(&self) -> Option<CaptureInsert> {
-        let track_idx = self.selected_track_index()?;
-        let source_clip = self.selected_clip()?;
-        let insert_at = source_clip.cursor_tick();
-        let room = source_clip.region().end() - insert_at;
-        if room <= 0 {
-            return None;
-        }
-
-        let capture = self.detection_capture_source();
-        let (start, end) = Self::detected_insert_window(&capture, self.meter())?;
-        let length = (end - start).min(room);
-        let mut phrase = Self::framed(capture, start, start + length);
-        phrase.crop(length);
-
-        let events = Self::capture_events_to_insert(&phrase, insert_at, length);
-        (!events.is_empty()).then_some(CaptureInsert {
-            track_idx,
-            clip_id: source_clip.id(),
-            events,
-        })
-    }
-
     /// Debug builds: dumps the capture a stopped `/` is about to frame as a
     /// [`CaptureFixture`], when `STEV_CAPTURE_DIR` asks for it
     /// (`capture_fixture.rs`). Call before the commit consumes the buffer.
@@ -127,28 +98,12 @@ impl Sequencer {
     /// [`CAPTURE_BUFFER_BARS`](config::CAPTURE_BUFFER_BARS). A fresh clip —
     /// its own region and cursor, never the capture buffer's shared ones —
     /// so the builders can frame it in place.
-    fn detection_capture_source(&self) -> Clip {
+    pub(super) fn detection_capture_source(&self) -> Clip {
         let mut capture = Clip::new();
         capture.restore_events(self.capture_clip.events().to_vec());
         // Pairs the note lengths, over the trimmed buffer only.
         Self::trim_capture_source(&mut capture, self.meter());
         capture
-    }
-
-    /// The phrase a stopped insert takes from `capture` (as
-    /// [`detection_capture_source`](Self::detection_capture_source) returns it):
-    /// the window ending at the last `NoteOff`, as long as the played span but
-    /// at most a bar, its start snapped to a phrase start. `None` on a capture
-    /// without notes.
-    fn detected_insert_window(capture: &Clip, meter: Meter) -> Option<(i32, i32)> {
-        let (start, end) = note_tick_bounds(capture)?;
-        let length = (end - start).min(meter.bar_ticks());
-        Some(Self::snapped_window_from_last(
-            capture,
-            EventType::NoteOff,
-            length,
-            meter,
-        ))
     }
 
     /// The detected phrase as a clip: every event of the capture source in
@@ -174,7 +129,7 @@ impl Sequencer {
 
     /// `capture` (a [`detection_capture_source`](Self::detection_capture_source))
     /// with its window set to `[start, end)`.
-    fn framed(mut capture: Clip, start: i32, end: i32) -> Clip {
+    pub(super) fn framed(mut capture: Clip, start: i32, end: i32) -> Clip {
         capture.region_mut().set_region(Some(start), Some(end));
         capture
     }
@@ -218,12 +173,14 @@ mod tests {
         core::{
             config,
             sequencer::{
-                ClipInstrumentEvent, CommitClipEdit, EditResult, InsertCaptureEdit, ResizeClipEdit,
-                RetimeClipEdit, SequencerEdit,
+                ClipInstrumentEvent, CommitClipEdit, ResizeClipEdit, RetimeClipEdit, SequencerEdit,
                 test_support::{clip_at, instrument_track_0, note_off, note_on, sequencer_with},
             },
         },
-        models::{clip::ClipEdge, event::Event},
+        models::{
+            clip::ClipEdge,
+            event::{Event, EventType},
+        },
     };
 
     /// Minimal sequencer: track 0 selected, region `[0, 2 bars]`, default tempo.
@@ -753,176 +710,5 @@ mod tests {
         // 62 ends where the walk meets its own note-off, not twice.
         let rest = tick_and_collect_messages(&mut seq, &mut rx, bar / 8);
         assert_eq!(rest, vec![(0x80, 62)]);
-    }
-
-    /// A four-bar lead clip at bar 5, its clip cursor at `clip_cursor` (event
-    /// ticks), with `fill` in the capture buffer. Returns the clip's id.
-    fn lead_clip_with_capture(
-        seq: &mut Sequencer,
-        clip_cursor: i32,
-        fill: impl Fn(&mut Sequencer),
-    ) -> Uuid {
-        let bar = Meter::FOUR_FOUR.bar_ticks();
-        add_clip(seq, bar * 4, bar * 4);
-        let id = seq.selected_track().unwrap().clips()[0].id();
-        seq.select_clip(Some(id));
-        seq.selected_clip_mut()
-            .unwrap()
-            .set_cursor_tick(clip_cursor);
-        fill(seq);
-        id
-    }
-
-    /// Records the stopped `/` into the lead clip on `record`.
-    fn insert_stopped_capture(seq: &mut Sequencer, record: &mut Record<SequencerEdit>) {
-        let edit = InsertCaptureEdit::from_stopped_capture(seq).expect("a phrase to insert");
-        record.edit(seq, SequencerEdit::InsertCapture(edit));
-    }
-
-    /// The lead clip's `(tick, is NoteOn)` events, sorted.
-    fn lead_clip_notes(seq: &Sequencer) -> Vec<(i32, bool)> {
-        let mut notes: Vec<_> = seq
-            .selected_clip()
-            .unwrap()
-            .events()
-            .iter()
-            .map(|e| (e.tick(), e.event_type() == Some(EventType::NoteOn)))
-            .collect();
-        notes.sort_unstable();
-        notes
-    }
-
-    /// Phase 4's must-not-regress: the stopped `/` into a lead clip inserts
-    /// what an unedited `InsertIntoClip` pending phrase confirmed. These
-    /// values were checked against that confirm before it was retired: the
-    /// detected phrase starts on the clip cursor, an earlier phrase is left
-    /// out, and a phrase running past the clip's end is cut there.
-    #[test]
-    fn stopped_insert_lands_the_detected_phrase_at_the_clip_cursor() {
-        let bar = Meter::FOUR_FOUR.bar_ticks();
-        let notes_after = |clip_cursor: i32, fill: &dyn Fn(&mut Sequencer)| {
-            let mut seq = make_seq();
-            lead_clip_with_capture(&mut seq, clip_cursor, fill);
-            insert_stopped_capture(&mut seq, &mut Record::new());
-            assert!(seq.capture_clip.events().is_empty(), "buffer consumed");
-            lead_clip_notes(&seq)
-        };
-
-        // Six loose notes over a bar and a half: all of them, from the cursor.
-        let loose = |seq: &mut Sequencer| fill_capture_roughly(seq, bar * 3 / 2);
-        let expected: Vec<_> = (0..6)
-            .flat_map(|i| {
-                let on = bar + i * 960;
-                let off = if i == 5 { on + 479 } else { on + 480 };
-                [(on, true), (off, false)]
-            })
-            .collect();
-        assert_eq!(notes_after(bar, &loose), expected);
-
-        // Cursor 600 ticks before the clip end: only the first note fits.
-        let near_end = bar * 4 - 600;
-        assert_eq!(
-            notes_after(near_end, &loose),
-            vec![(near_end, true), (near_end + 480, false)]
-        );
-
-        // An early note, silence, then a four-note phrase: the phrase only.
-        let two_phrases = |seq: &mut Sequencer| {
-            seq.capture_clip.add_event(note_on(100));
-            seq.capture_clip.add_event(note_off(400));
-            for i in 0..4 {
-                let t = bar * 3 + 300 + i * 960;
-                seq.capture_clip.add_event(note_on(t));
-                seq.capture_clip.add_event(note_off(t + 480));
-            }
-        };
-        let expected: Vec<_> = (0..4)
-            .flat_map(|i| {
-                let on = 300 + i * 960;
-                let off = if i == 3 { on + 479 } else { on + 480 };
-                [(on, true), (off, false)]
-            })
-            .collect();
-        assert_eq!(notes_after(300, &two_phrases), expected);
-    }
-
-    /// One ⌘Z takes the insert back and redo puts the same notes back, with
-    /// the buffer left cleared; the event selection is never changed.
-    #[test]
-    fn stopped_insert_is_undoable_and_keeps_the_selection() {
-        let bar = Meter::FOUR_FOUR.bar_ticks();
-        let mut seq = make_seq();
-        lead_clip_with_capture(&mut seq, bar, |seq| fill_capture_roughly(seq, bar));
-        let existing = note_on(bar * 3);
-        let existing_id = existing.id();
-        {
-            let clip = seq.selected_clip_mut().unwrap();
-            clip.add_event(existing);
-            clip.add_event(note_off(bar * 3 + 240));
-            clip.calculate_note_lengths();
-            clip.select_event(Some(existing_id));
-        }
-        let before = lead_clip_notes(&seq);
-
-        let mut record: Record<SequencerEdit> = Record::new();
-        insert_stopped_capture(&mut seq, &mut record);
-        let inserted = lead_clip_notes(&seq);
-        assert!(inserted.len() > before.len());
-        assert_eq!(
-            seq.selected_clip().unwrap().selected_event_ids(),
-            vec![existing_id]
-        );
-
-        record.undo(&mut seq);
-        assert_eq!(lead_clip_notes(&seq), before);
-        assert!(
-            seq.capture_clip.events().is_empty(),
-            "undo leaves it cleared"
-        );
-        assert_eq!(
-            seq.selected_clip().unwrap().selected_event_ids(),
-            vec![existing_id]
-        );
-
-        record.redo(&mut seq);
-        assert_eq!(lead_clip_notes(&seq), inserted);
-    }
-
-    /// The insert and its redo report the take's pitch range, so the piano
-    /// roll re-frames over it either way (`UiEvent::CaptureInserted`); the
-    /// undo reports none.
-    #[test]
-    fn stopped_insert_reports_its_take_on_edit_and_redo_only() {
-        let bar = Meter::FOUR_FOUR.bar_ticks();
-        let mut seq = make_seq();
-        lead_clip_with_capture(&mut seq, bar, |seq| fill_capture_roughly(seq, bar));
-        let take = |result: EditResult| match result {
-            EditResult::EventsModified { inserted_take, .. } => inserted_take,
-            _ => panic!("an events edit"),
-        };
-
-        let mut record: Record<SequencerEdit> = Record::new();
-        let edit = InsertCaptureEdit::from_stopped_capture(&seq).expect("a phrase to insert");
-        // Every captured note is middle C.
-        assert_eq!(
-            take(record.edit(&mut seq, SequencerEdit::InsertCapture(edit))),
-            Some((60, 60))
-        );
-        assert_eq!(take(record.undo(&mut seq).unwrap()), None);
-        assert_eq!(take(record.redo(&mut seq).unwrap()), Some((60, 60)));
-    }
-
-    /// Nothing to insert — an empty buffer, or a cursor at the clip's end —
-    /// builds no edit, so nothing enters the undo record.
-    #[test]
-    fn stopped_insert_with_nothing_to_insert_builds_no_edit() {
-        let bar = Meter::FOUR_FOUR.bar_ticks();
-        let mut seq = make_seq();
-        lead_clip_with_capture(&mut seq, bar, |_| {});
-        assert!(InsertCaptureEdit::from_stopped_capture(&seq).is_none());
-
-        let mut seq = make_seq();
-        lead_clip_with_capture(&mut seq, bar * 4, |seq| fill_capture_roughly(seq, bar));
-        assert!(InsertCaptureEdit::from_stopped_capture(&seq).is_none());
     }
 }

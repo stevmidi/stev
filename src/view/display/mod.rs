@@ -161,6 +161,17 @@ impl ClipTimeAtomics {
     }
 }
 
+/// An open take session as the view keeps it (`UiEvent::TakeFramingStarted`,
+/// `290-framing-a-take.md`): where the take is heard, and what to put back
+/// when it ends.
+struct TakeSessionView {
+    /// Where the take's window starts in the arrangement — the insert point,
+    /// where it is heard. The take has no clip shape to read it from.
+    start_tick: i32,
+    /// Whether the clip panel showed before the session opened it.
+    panel_was_visible: bool,
+}
+
 /// The `eframe::App` — the whole render side. See the module docs.
 pub(crate) struct Display {
     // --- State ---
@@ -189,6 +200,9 @@ pub(crate) struct Display {
     /// `LeadClipChanged`); `None` with no lead clip, when the clip pane falls
     /// back to the transport's. See `archive/210-docked-clip-panel.md`.
     lead_clip_time: Option<ClipTimeAtomics>,
+    /// The open take session, `None` with none: the clip view shows the
+    /// take and the footer names it.
+    take_session: Option<TakeSessionView>,
     /// Shared "loop enabled" flag.
     loop_enabled: Arc<AtomicBool>,
     /// Shared active-view discriminant.
@@ -424,6 +438,7 @@ impl Display {
             region_start,
             region_end,
             lead_clip_time: None,
+            take_session: None,
             loop_enabled,
             view_state,
             has_event_selection,
@@ -747,21 +762,25 @@ impl Display {
     /// longer loops the transport on its clip, so the clip's own playback
     /// counter stalls whenever playback runs elsewhere — see
     /// `archive/210-docked-clip-panel.md`.
+    ///
+    /// A take session's take is off the arrangement: its span is where it is
+    /// heard in place, from the insert point for as long as its window.
     fn lead_clip_playback_tick(&self) -> Option<i32> {
         let lead = self.lead_clip_time.as_ref()?;
-        let shape = self
-            .render
-            .clip_shapes
-            .iter()
-            .find(|shape| shape.clip_id() == lead.clip_id)?;
-        clip_event_tick_at(
-            self.playback_tick(),
-            (shape.start_tick(), shape.end_tick()),
-            (
-                lead.region_start.load(Ordering::Relaxed),
-                lead.region_end.load(Ordering::Relaxed),
-            ),
-        )
+        let window = (
+            lead.region_start.load(Ordering::Relaxed),
+            lead.region_end.load(Ordering::Relaxed),
+        );
+        let span = match &self.take_session {
+            Some(session) => (session.start_tick, session.start_tick + window.1 - window.0),
+            None => self
+                .render
+                .clip_shapes
+                .iter()
+                .find(|shape| shape.clip_id() == lead.clip_id)
+                .map(|shape| (shape.start_tick(), shape.end_tick()))?,
+        };
+        clip_event_tick_at(self.playback_tick(), span, window)
     }
 
     /// Whether the transport is running, as this frame renders it: the clip

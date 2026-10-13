@@ -136,6 +136,15 @@ pub(super) const HELP: [&[HelpSection]; 3] = [
                 ("Legend drag", "Zoom / scroll the note rows"),
             ],
         },
+        HelpSection {
+            title: "Framing a take (\\ into a clip)",
+            pane: Some(Pane::Clip),
+            rows: &[
+                ("[  ]", "Take start / end to the cursor"),
+                ("Enter", "Insert the take"),
+                ("Esc", "Cancel"),
+            ],
+        },
     ],
 ];
 

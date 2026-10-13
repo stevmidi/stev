@@ -97,6 +97,30 @@ impl Display {
                     self.show_lead_clip(clip_view);
                     self.clear_gestures();
                 }
+                UiEvent::TakeFramingStarted {
+                    clip_view,
+                    start_tick,
+                } => {
+                    self.take_session = Some(TakeSessionView {
+                        start_tick,
+                        panel_was_visible: self.render.clip_panel.visible,
+                    });
+                    self.render.clip_panel.visible = true;
+                    self.show_lead_clip(clip_view);
+                    self.clear_gestures();
+                }
+                UiEvent::TakeFramingEnded { clip_view } => {
+                    let panel_was_visible = self
+                        .take_session
+                        .take()
+                        .is_none_or(|session| session.panel_was_visible);
+                    // Shown while the lead clip is framed, which measures
+                    // the pane, then as it was before the session.
+                    self.render.clip_panel.visible = true;
+                    self.show_lead_clip(clip_view);
+                    self.render.clip_panel.visible = panel_was_visible;
+                    self.clear_gestures();
+                }
                 UiEvent::ClipExited => {
                     // Leaving the clip view hides the panel.
                     self.render.clip_panel.visible = false;

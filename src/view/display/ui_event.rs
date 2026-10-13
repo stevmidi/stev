@@ -128,6 +128,25 @@ pub(crate) enum UiEvent {
     },
     /// The piano-roll view was closed.
     ClipExited,
+    /// A take session opened (`290-framing-a-take.md`): the clip view shows
+    /// the take, `clip_view`, and the panel shows if it was hidden; the
+    /// window band snaps to its note starts and the footer names the
+    /// session until [`TakeFramingEnded`](Self::TakeFramingEnded).
+    TakeFramingStarted {
+        /// Full render snapshot of the take.
+        clip_view: Option<ClipView>,
+        /// Where the take's window starts in the arrangement: the insert
+        /// point, where it is heard in place. The clip view maps the
+        /// playhead into the take from here.
+        start_tick: i32,
+    },
+    /// The take session closed, inserted or cancelled: the clip view goes
+    /// back to the lead clip, `clip_view`, and the panel back to shown or
+    /// hidden as it was when the session opened.
+    TakeFramingEnded {
+        /// Full render snapshot of the lead clip.
+        clip_view: Option<ClipView>,
+    },
     /// The lead clip — the clip under the cursor on the selected track, the
     /// one the clip view shows — changed. `None` when no clip sits there. See
     /// `archive/210-docked-clip-panel.md`.

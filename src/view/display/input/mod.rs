@@ -245,8 +245,12 @@ impl Display {
             return true;
         }
 
+        // A take session's notes are framed, never edited
+        // (`290-framing-a-take.md`): no velocity or note drag starts, so
+        // nothing previews an edit the sequencer would refuse.
+        let editable_notes = is_clip_events_view && self.take_session.is_none();
         if modifiers.command
-            && is_clip_events_view
+            && editable_notes
             && self.is_mouse_inside_grid(x, y)
             && let Some(hit_id) = self.event_id_at(x, y)
         {
@@ -255,7 +259,7 @@ impl Display {
         }
 
         // A plain press on a note: its body moves it, an edge resizes it.
-        if is_clip_events_view
+        if editable_notes
             && self.is_mouse_inside_grid(x, y)
             && let Some((event_id, part)) = self.note_hit_at(x, y)
         {
@@ -340,10 +344,11 @@ impl Display {
     /// `MouseClicked` started an event marquee — dropped here, so holding and
     /// moving after the insert can't marquee the new note's selection away.
     /// Anywhere else — on a note, the key column, the timeline strip, the
-    /// velocity panel — nothing; the two clicks it is made of did their own
-    /// work.
+    /// velocity panel — or in a take session, nothing; the two clicks it is
+    /// made of did their own work.
     fn handle_double_click(&mut self, x: f32, y: f32) {
         if self.view_state() != ViewState::Clip
+            || self.take_session.is_some()
             || !self.is_mouse_inside_grid(x, y)
             || self.event_id_at(x, y).is_some()
         {

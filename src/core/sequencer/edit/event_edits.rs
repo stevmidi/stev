@@ -30,8 +30,8 @@ use super::{EditResult, SequencerEdit};
 // ---------------------------------------------------------------------------
 
 /// A live take inserted into an existing clip: `/` with a lead clip, running
-/// ([`Sequencer::build_running_capture_insert`]) or stopped
-/// ([`Sequencer::build_stopped_capture_insert`]). The notes are worked out at
+/// ([`Sequencer::build_running_capture_insert`]) or stopped, framed in a take
+/// session first ([`Sequencer::finish_take_framing`]). The notes are worked out at
 /// construction; `edit()` adds them and `undo()` restores the clip's events
 /// from before. Like [`CommitClipEdit`](super::CommitClipEdit), the first
 /// `edit()` clears the capture buffer and no later one does, so a redo can't
@@ -57,10 +57,12 @@ impl InsertCaptureEdit {
         Self::consuming(sequencer, sequencer.build_running_capture_insert()?)
     }
 
-    /// The stopped `/` with a lead clip: the detected phrase at the clip
-    /// cursor. `None` when nothing would land in the clip.
-    pub(crate) fn from_stopped_capture(sequencer: &Sequencer) -> Option<Self> {
-        Self::consuming(sequencer, sequencer.build_stopped_capture_insert()?)
+    /// Enter in a take session (`290-framing-a-take.md`): closes it, the
+    /// target clip put back as it was before the session, and inserts the
+    /// framed notes at its clip cursor. `None` with no session open.
+    pub(crate) fn from_take_framing(sequencer: &mut Sequencer) -> Option<Self> {
+        let insert = sequencer.finish_take_framing()?;
+        Self::consuming(sequencer, insert)
     }
 
     /// An insert of `insert` into its clip, armed to clear the capture

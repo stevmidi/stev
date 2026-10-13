@@ -23,6 +23,7 @@ use uuid::Uuid;
 use super::clipboard::ClipClipboard;
 use super::instrument_event::ClipInstrumentEvent;
 use super::instrument_notes::InstrumentNotes;
+use super::take_framing::TakeFraming;
 use crate::core::midi::out_queue::MidiOutMessage;
 use crate::{
     core::{
@@ -162,6 +163,9 @@ pub(crate) struct Sequencer {
     /// Set when a take should stop itself at a known tick (loop-length reached);
     /// consumed by [`end_live_recording`](Self::end_live_recording).
     pub(super) auto_end_tick: Option<i32>,
+    /// The open take session, if any (`take_framing.rs`): while it is open
+    /// the lead clip the clip view shows is the take.
+    pub(super) take_framing: Option<TakeFraming>,
 
     // --- Arranger performance lane ---
     /// Tracks the physical keyboard's currently-held trigger while the
@@ -226,6 +230,7 @@ impl Sequencer {
             live_rec_session: None,
             elapsed_ticks,
             auto_end_tick: None,
+            take_framing: None,
             live_rec_state,
             performance_lane: PerformanceLane::new(),
             performance_lane_armed,

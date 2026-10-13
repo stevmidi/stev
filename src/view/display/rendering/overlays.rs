@@ -495,18 +495,33 @@ impl Display {
 
         // The passing message (`UiEvent::Status`): left-aligned past the
         // toggle and on its centre line, dim, fading out once its time is up.
+        // Otherwise an open take session's name, for as long as it is open:
+        // the one place the mode shows beyond the take itself.
+        let text_pos = pos2(toggle.max.x + Self::STATUS_TEXT_GAP_X, rect.center().y);
+        let font = FontId::proportional(theme::FONT_SIZE_LABEL);
         if let Some(status) = &self.render.status
             && let Some(opacity) = status.opacity(Instant::now())
         {
             painter.text(
-                pos2(toggle.max.x + Self::STATUS_TEXT_GAP_X, rect.center().y),
+                text_pos,
                 Align2::LEFT_CENTER,
                 &status.text,
-                FontId::proportional(theme::FONT_SIZE_LABEL),
+                font,
                 theme::fg_dim().gamma_multiply(opacity),
+            );
+        } else if self.take_session.is_some() {
+            painter.text(
+                text_pos,
+                Align2::LEFT_CENTER,
+                Self::TAKE_SESSION_TEXT,
+                font,
+                theme::fg(),
             );
         }
     }
+
+    /// The footer's name for an open take session.
+    const TAKE_SESSION_TEXT: &str = "Framing take: Enter inserts, Esc cancels";
 
     /// The footer message's gap from the panel toggle.
     const STATUS_TEXT_GAP_X: f32 = 4.0;

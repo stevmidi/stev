@@ -1,6 +1,6 @@
 # Framing a Take
 
-**Status: design, agreed 2026-10-12. Phase 1 (the window band) built 2026-10-12, as-built in `020` § Clip Edge Drag-Resize and `030` § Timeline; phase 2 not started.** Closes the known gap in `220-capture-without-pending-view.md`: a stopped `/` commits detection's best guess, and a take inserted into an existing clip can't be re-framed at all. Two phases, each its own branch: a **window band** in the clip view for every clip (phase 1), then a **take session** that frames a take before it is inserted (phase 2). Read `220` and `040-phrase-detection.md` first.
+**Status: built. Design agreed 2026-10-12; phase 1 (the window band) built 2026-10-12, as-built in `020` § Clip Edge Drag-Resize and `030` § Timeline; phase 2 (the take session) built 2026-10-13, as-built in `020` § Views, `010` § `[` / `]` and `050` (`InsertCaptureEdit`), with the choices the design left open in § As built below.** Closes the known gap in `220-capture-without-pending-view.md`: a stopped `/` commits detection's best guess, and a take inserted into an existing clip can't be re-framed at all. Two phases, each its own branch: a **window band** in the clip view for every clip (phase 1), then a **take session** that frames a take before it is inserted (phase 2). Read `220` and `040-phrase-detection.md` first.
 
 ## The problem
 
@@ -50,28 +50,20 @@ The session is `Option<TakeFraming>` on the `Sequencer`, holding the take, the t
 
 ### The window
 
-**The take window selects whole notes by where they start**: a note is in the take when its note-on is inside the window, and it comes along whole.
+**The take's window moves like any clip's, on the grid, and selects whole notes by where they start**: a note is in the take when its note-on is inside the window, and it comes along whole. (Revised 2026-10-13, after trying note-start stops in use; see § Decisions.)
 
-- **It runs from the first note-on to the last note-off of the notes it selects.** No tail: the take is a set of notes, not a stretch of time, and a tail only eats into the room before the clip's end.
-- **The first selected note-on lands on the clip cursor**, wherever in a silence `[` sits.
-- **A note that starts inside and ends past `]` is kept whole**, cut only at the target clip's region end (closed there, as today).
-- **A note that starts before `[` and sounds into the window is left out**: it belongs to the previous phrase, and the cropped fragment today's insert keeps would sound like a glitch.
-- **Wheel moves** (pitch bend, mod wheel, `090`) between the first selected note-on and the window end come along, offset with the notes.
-- **The initial window** is detection's: the start `snap_region_start_to_note_on` picks (the same start the new clip gets), the end at the take's last note-off. The window can't be shorter than one note.
+- **The window start lands on the clip cursor**, and every note keeps its offset from it, so the played timing against the grid survives. With the window at the detected start, the first note lands on the cursor.
+- **A note that starts up to a 32nd before `[` is in** (`TAKE_EARLY_TICKS`, 120 ticks), landing as far before the cursor as it was played: a chord played just ahead of the beat `[` sits on comes along. It is lost only if that falls before the target clip's own start.
+- **A note that starts earlier than that and sounds into the window is left out**: it belongs to the previous phrase, and a cropped fragment would sound like a glitch.
+- **A note that starts inside and ends past `]` is kept whole**, so a held last note isn't shortened: `]` decides which note starts are in. A note is cut only at the target clip's region end (closed there).
+- **Wheel moves** (pitch bend, mod wheel, `090`) from the window start to the last framed note-off come along, offset with the notes.
+- **The initial window** is detection's: the start `snap_region_start_to_note_on` picks (the same start the new clip gets), the end at the take's last note-off, with no tail.
 
-This replaces `detected_insert_window` for the stopped insert. Pressing `/` then Enter straight away inserts the whole last phrase, where today it inserts at most its last bar: a deliberate change to `stopped_insert_lands_the_detected_phrase_at_the_clip_cursor` (§ Must not regress).
+This replaces `detected_insert_window` for the stopped insert. Pressing `/` then Enter straight away inserts the whole last phrase, where before it inserted at most its last bar.
 
 ### Keys
 
-Inside the session the keys pick **notes**, not times, so the edges follow from the notes picked:
-
-- **`←`/`→` step the cursor to the previous/next note start** in the take. Starts within a 32nd (120 ticks) of each other are one stop, so a chord is one press; the stop is at the earliest of them. Shift doesn't change this. The cursor stays within the take's notes.
-- **`[` = start with this note**: the window starts at the stop under the cursor.
-- **`]` = end with this note**: the window takes every note starting up to and including the stop under the cursor, and ends at the last of their note-offs.
-- **The band** (phase 1) snaps to the same stops: the start handle to note starts, the end handle to "after note N", drawn at that window's end. Keyboard and mouse give the same window for the same notes.
-- **Enter** confirms, **Esc** cancels. `[`/`]` accept any modifier but ⌘/Ctrl, as everywhere.
-
-Outside the session nothing changes: a new clip from the arranger's stopped `/` is shaped on the grid, because there the edges are a loop length the tempo gets fitted to.
+The session has no keys of its own, and the take's edges move as any clip's do (`020` § Clip Edge Drag-Resize): `←`/`→` step the cursor on the grid, `[`/`]` move the start/end to the cursor by the clip view's marker rule (`window_with_edge_at`, at least a beat apart, inside the take's reach), and the window band drags them on the grid. **Enter** inserts, **Esc** cancels.
 
 ### Hearing it in place
 
@@ -91,7 +83,19 @@ These temporary notes are never undo steps of their own. **Enter** restores the 
 
 The footer names the session (e.g. "Framing take: Enter inserts, Esc cancels") while it is open; it is the one place the mode is visible beyond the take itself.
 
-Pinned by: the window rule (`[` in a silence still lands the first note on the cursor; a note across `]` kept whole; a note across `[` left out; chord onsets one stop), Enter = one undo step whose undo restores the pre-session clip, Esc and ⌘Z restore it and keep the buffer, the selection unchanged, blocked commands are no-ops, and a run across a loop wrap that hears a changed window from the next pass (driving `Sequencer::tick`, like `a_start_moved_while_playing_is_heard_at_once`).
+Pinned by: the window rule (`the_window_selects_whole_notes_by_their_start`: a note across `]` kept whole, a note across `[` left out, the window start on the cursor; `a_note_played_just_before_the_start_comes_along`), an empty window's Enter (`enter_on_an_empty_window_inserts_nothing`), Enter = one undo step whose undo restores the pre-session clip, Esc and ⌘Z restore it and keep the buffer, the selection unchanged, blocked commands are no-ops, and a run across a loop wrap that hears a changed window from the next pass (driving `Sequencer::tick`, like `a_start_moved_while_playing_is_heard_at_once`).
+
+### As built (phase 2)
+
+Where the design left a choice, the build made it so (2026-10-13):
+
+- **The take's edges are not `ResizeClipEdit`s**: the take isn't in the arrangement, so `Sequencer::set_take_edge_at` moves its region directly, with no room before a next clip to keep. The band's preview has none either (the take has no clip shape), so it lands where the release does.
+- **Enter on a window that frames no note** inserts nothing and closes the session, as Esc does.
+- **The take's arrangement start is the insert point**, so the clip view maps the playhead into the take where it is heard (`TakeFramingStarted` carries it, since the take has no clip shape), and `⌥Space` plays from where the take's cursor sounds in place.
+- **The lead clip's arranger thumbnail** shows the temporary notes while the session is open (`ClipUpdated` on every window change) and loses them when it closes.
+- **The panel** is put back as it was when the session closes (the view remembers it, since the sequencer doesn't know it), and the keyboard goes back to the pane that had it.
+- **An arranger cursor move** (`MoveCursor`, `SetCursorAndSelectClip`) cancels the session too, since it can select another clip.
+- **Blocked project commands** (new, open, save, export, import) say so in the footer; other blocked commands are silent no-ops. The piano roll starts no note drag, velocity drag or double-click insert on the take.
 
 ## Decisions
 
@@ -101,9 +105,9 @@ Settled with the user (2026-10-12):
 - **The take is the same clip the arranger's stopped `/` makes**, shown in the clip view, so both capture paths show the take the same way with the same keys.
 - **No tail on a take**: first note-on to last note-off.
 - **The window selects whole notes by their start.**
-- **Note-start cursor stops and "with this note" `[`/`]`**, inside the session only.
+- **~~Note-start cursor stops and "with this note" `[`/`]`~~** — dropped 2026-10-13 after use: the take's edges move on the grid like any clip's, which kept the played timing and needed no keys of its own. `[` just before a note picked the previous one, a symptom of the stop rule. Kept from it: whole notes by their start, with a 32nd of tolerance before `[`, and notes whole past `]`.
 - **By ear, in place**: the target clip holds the framed notes while framing.
-- **The band is for every clip**, grid-snapped, built first; the take session reuses it with note snapping.
+- **The band is for every clip**, grid-snapped, built first; the take session reuses it as it is.
 
 ## Changes elsewhere when built
 
