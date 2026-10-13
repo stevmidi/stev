@@ -20,6 +20,8 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-13
+
 ### Added
 
 - **Frame a take before it goes into a clip.** With the transport stopped,
@@ -29,11 +31,10 @@ Breaking entries are marked **Breaking** and say what to do about them.
   timeline strip. Notes come along whole by where they start (one played just
   ahead of the start too), and keep their timing against the grid. The clip
   you're inserting into already holds the chosen notes at its cursor, so you
-  can loop the section and hear the take in place while you choose. Enter inserts it as
-  one undo step; Esc (or ⌘Z, or leaving the clip view) cancels and keeps the
-  take, so `\` opens it again. Other edits wait until you finish, and the
-  footer says a take is open.
-
+  can loop the section and hear the take in place while you choose. Enter
+  inserts it as one undo step; Esc (or ⌘Z, or leaving the clip view) cancels
+  and keeps the take, so `\` opens it again. Other edits wait until you
+  finish, and the footer says a take is open.
 - **Drag a clip's start and end in the clip view.** The timeline strip above
   the piano roll shows the clip's window as a band in the clip's colour; drag
   either end of it to move the start or the end, snapped to the visible grid.
@@ -41,7 +42,6 @@ Breaking entries are marked **Breaking** and say what to do about them.
   will land while you drag, and the change is made when you let go, as one
   undo step; Esc cancels the drag. While the project has one clip the loop
   follows.
-
 - **Play notes on the computer keyboard.** ⌘K (Ctrl+K on Windows and Linux),
   or the piano chip at the right of the header, turns the letter keys into a
   piano for a machine with no MIDI keyboard: `A` `S` `D` `F` `G` `H` `J` `K`
@@ -53,7 +53,6 @@ Breaking entries are marked **Breaking** and say what to do about them.
   usual bindings (`K` no longer toggles the metronome, `T` no longer taps the
   tempo, `Z`/`X` no longer zoom); every chord with ⌘/Ctrl and every other key
   still works. The header chip lights up while it is on.
-
 - **Icons in the browser.** Each row shows what it is at a glance: a folder
   (open while expanded), a project, a MIDI clip or a plugin.
 - **Hover highlight in the browser.** The row under the pointer gets a faint
@@ -64,7 +63,6 @@ Breaking entries are marked **Breaking** and say what to do about them.
 - **Arrow keys in the unsaved-changes prompt.** ← and → move between Cancel,
   Don't Save and Save, and Enter presses the selected button (Save to start
   with).
-
 - **Progress while a project opens.** Opening a project with plugins on its
   tracks shows a panel naming the plugin it is loading, how many are left
   ("3 of 8") and a progress bar, instead of a frozen window. The open project
@@ -93,7 +91,6 @@ Breaking entries are marked **Breaking** and say what to do about them.
   insert at most the phrase's last bar, and closed the last note a tick early.
   Now `\` then Enter inserts every note of the detected phrase, each one
   whole; a note that runs past the clip's end is still cut there.
-
 - **`]` in the clip view ends the clip exactly at the cursor.** With more than
   one clip in the project it used to round up to the next bar line; now it
   works like `[`, whatever the number of clips, and still stops at the next
