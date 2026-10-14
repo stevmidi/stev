@@ -100,7 +100,7 @@ mod tests {
     use rtrb::RingBuffer;
 
     use super::*;
-    use crate::core::audio::{AudioClock, AudioLoad, DeadlineGroup, WorkerPool};
+    use crate::core::audio::{AudioClock, AudioLoad, WorkerPool};
 
     /// Renders one `frames`-long block starting at frame 0, against a clock
     /// with no anchor yet — so `frame_for` returns 0 and any queued event
@@ -110,7 +110,7 @@ mod tests {
     fn render(src: &mut MetronomeSource, frames: usize) -> [Vec<f32>; 2] {
         let mut mix = [vec![0.0; frames], vec![0.0; frames]];
         let clock = AudioClock::new(48_000.0);
-        let pool = WorkerPool::new(0, DeadlineGroup::none());
+        let pool = WorkerPool::new(0, || ());
         let load = AudioLoad::new();
         let ctx = RenderCtx {
             frames,

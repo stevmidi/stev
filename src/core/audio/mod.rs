@@ -9,7 +9,6 @@
 
 mod click_voice;
 mod clock;
-mod deadline;
 mod denormals;
 mod engine;
 mod journal;
@@ -19,11 +18,11 @@ pub(crate) mod mix;
 mod thread_role;
 mod topology;
 mod worker_pool;
+mod workgroup;
 
 use std::time::Instant;
 
 pub(crate) use clock::AudioClock;
-pub(crate) use deadline::{DeadlineGroup, WorkerDeadline};
 pub(crate) use engine::{AudioEngine, EngineHandle};
 pub(crate) use load::AudioLoad;
 pub(crate) use metronome_source::{ClickClass, ClickEvent, MetronomeSource};
@@ -33,6 +32,7 @@ pub(crate) use thread_role::enter_render_thread;
 pub(crate) use thread_role::is_audio_thread;
 pub(crate) use topology::max_dsp_threads;
 pub(crate) use worker_pool::WorkerPool;
+pub(crate) use workgroup::DeviceWorkgroup;
 
 /// Largest block the engine renders in one un-split pass, and the pre-reserved
 /// capacity of every per-channel mix buffer. Real `cpal` callback buffers are

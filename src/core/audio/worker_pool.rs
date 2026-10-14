@@ -28,8 +28,9 @@
 //! therefore no such thing as a straggler from a previous section, and the
 //! `JobCtx` on the caller's stack is guaranteed to outlive every dereference of
 //! it. The flip side is that the caller waits for the slowest worker to *wake*,
-//! which is why every worker joins the device's audio workgroup at start-up on
-//! macOS ([`DeadlineGroup`]) — see `docs/170-multicore-scheduling.md`.
+//! which is what the `on_start` hook given to [`WorkerPool::new`] is for: the
+//! engine uses it to join each worker to the device's audio workgroup — see
+//! `docs/170-multicore-scheduling.md`.
 
 use std::cell::UnsafeCell;
 use std::hint::spin_loop;
@@ -40,7 +41,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::thread::{Builder, JoinHandle, park_timeout};
 use std::time::Duration;
 
-use super::{DeadlineGroup, WorkerDeadline, enter_render_thread};
+use super::enter_render_thread;
 
 /// How long a worker spins on its `seq` *after finishing a section* before it
 /// parks — just long enough to catch a section already on its way, since the
@@ -136,8 +137,6 @@ struct PoolShared {
     seq: AtomicU64,
     /// Cleared on drop to retire the workers.
     running: AtomicBool,
-    /// Workers that joined the device's audio workgroup.
-    joined: AtomicUsize,
     /// Per-worker handshake slots.
     workers: Vec<WorkerSlot>,
 }
@@ -182,16 +181,21 @@ pub(crate) struct WorkerPool {
 }
 
 impl WorkerPool {
-    /// Spawns `worker_count` `"audio-worker-N"` threads, each of which enters
-    /// `deadline` before its first section. `0` is valid and makes
+    /// Spawns `worker_count` `"audio-worker-N"` threads. Each calls
+    /// `on_start` on itself before its first section and holds what it returns
+    /// until the thread exits, so a guard that must be dropped on its own
+    /// thread (a workgroup membership) can be. `0` is valid and makes
     /// [`for_each`](Self::for_each) run everything on the calling thread.
-    pub(crate) fn new(worker_count: usize, deadline: DeadlineGroup) -> Self {
+    pub(crate) fn new<F, G>(worker_count: usize, on_start: F) -> Self
+    where
+        F: Fn() -> G + Send + Sync + 'static,
+    {
+        let on_start = Arc::new(on_start);
         let shared = Arc::new(PoolShared {
             job: UnsafeCell::new(Job::EMPTY),
             next: AtomicUsize::new(0),
             seq: AtomicU64::new(0),
             running: AtomicBool::new(true),
-            joined: AtomicUsize::new(0),
             workers: (0..worker_count)
                 .map(|_| WorkerSlot {
                     seq: AtomicU64::new(0),
@@ -200,14 +204,16 @@ impl WorkerPool {
                 .collect(),
         });
 
-        let deadline = Arc::new(deadline);
         let threads = (0..worker_count)
             .map(|index| {
                 let shared = shared.clone();
-                let deadline = deadline.clone();
+                let on_start = on_start.clone();
                 Builder::new()
                     .name(format!("audio-worker-{index}"))
-                    .spawn(move || worker_loop(&shared, &deadline, index))
+                    .spawn(move || {
+                        let _guard = on_start();
+                        worker_loop(&shared, index);
+                    })
                     .expect("failed to spawn audio worker thread")
             })
             .collect();
@@ -215,15 +221,9 @@ impl WorkerPool {
         Self { shared, threads }
     }
 
-    /// How many workers joined their [`DeadlineGroup`]. A worker counts once
-    /// it has entered, which happens as it starts, well before the first
-    /// overrun this is read for.
-    pub(crate) fn deadline(&self) -> WorkerDeadline {
-        let count = |n: usize| n.min(usize::from(u8::MAX)) as u8;
-        WorkerDeadline {
-            workers: count(self.threads.len()),
-            joined: count(self.shared.joined.load(Ordering::Relaxed)),
-        }
+    /// Worker threads in the pool, not counting the calling thread.
+    pub(crate) fn worker_count(&self) -> usize {
+        self.threads.len()
     }
 
     /// Runs `f(index, item)` for every element of `items`, spread across the
@@ -315,18 +315,11 @@ impl Drop for WorkerPool {
     }
 }
 
-/// One `"audio-worker-N"` thread's body: join the device's workgroup, then
-/// park until a section is published, claim and run items, ack, repeat; exits
-/// when `running` clears, leaving the workgroup on the way out.
-fn worker_loop(shared: &PoolShared, deadline: &DeadlineGroup, index: usize) {
+/// One `"audio-worker-N"` thread's body: park until a section is published,
+/// claim and run items, ack, repeat; exits when `running` clears.
+fn worker_loop(shared: &PoolShared, index: usize) {
     // Per-thread, and this thread runs plugin DSP — see `super::thread_role`.
     enter_render_thread();
-    // Held for the thread's life: dropping it leaves the workgroup, which must
-    // happen on this thread.
-    let membership = deadline.enter();
-    if membership.is_joined() {
-        shared.joined.fetch_add(1, Ordering::Relaxed);
-    }
 
     let slot = &shared.workers[index];
     let mut last_seq = 0u64;
@@ -374,7 +367,7 @@ mod tests {
 
     #[test]
     fn every_item_is_visited_exactly_once() {
-        let pool = WorkerPool::new(4, DeadlineGroup::none());
+        let pool = WorkerPool::new(4, || ());
         let mut items = vec![0u32; 64];
         pool.for_each(&mut items, 5, |index, item| *item = index as u32 + 1);
         assert_eq!(items, (1..=64).collect::<Vec<u32>>());
@@ -382,7 +375,7 @@ mod tests {
 
     #[test]
     fn many_back_to_back_sections_stay_correct() {
-        let pool = WorkerPool::new(4, DeadlineGroup::none());
+        let pool = WorkerPool::new(4, || ());
         let mut items = vec![1u64; 32];
         for _ in 0..2000 {
             pool.for_each(&mut items, 5, |_, item| *item += 1);
@@ -392,7 +385,7 @@ mod tests {
 
     #[test]
     fn uneven_item_costs_are_balanced_not_dropped() {
-        let pool = WorkerPool::new(3, DeadlineGroup::none());
+        let pool = WorkerPool::new(3, || ());
         let visits = (0..16).map(|_| AtomicU32::new(0)).collect::<Vec<_>>();
         let mut items = (0..16).collect::<Vec<usize>>();
         pool.for_each(&mut items, 4, |index, item| {
@@ -411,14 +404,14 @@ mod tests {
 
     #[test]
     fn an_empty_slice_is_a_no_op() {
-        let pool = WorkerPool::new(2, DeadlineGroup::none());
+        let pool = WorkerPool::new(2, || ());
         let mut items: Vec<u32> = Vec::new();
         pool.for_each(&mut items, 4, |_, _| unreachable!());
     }
 
     #[test]
     fn a_pool_with_no_workers_still_runs_every_item() {
-        let pool = WorkerPool::new(0, DeadlineGroup::none());
+        let pool = WorkerPool::new(0, || ());
         let mut items = vec![0u32; 8];
         pool.for_each(&mut items, 8, |index, item| *item = index as u32);
         assert_eq!(items, (0..8).collect::<Vec<u32>>());
@@ -426,7 +419,7 @@ mod tests {
 
     #[test]
     fn one_runner_runs_everything_inline() {
-        let pool = WorkerPool::new(4, DeadlineGroup::none());
+        let pool = WorkerPool::new(4, || ());
         let caller = current().id();
         let mut items = vec![0u32; 8];
         pool.for_each(&mut items, 1, |index, item| {
@@ -438,7 +431,7 @@ mod tests {
 
     #[test]
     fn a_panicking_item_does_not_wedge_the_pool() {
-        let pool = WorkerPool::new(2, DeadlineGroup::none());
+        let pool = WorkerPool::new(2, || ());
         let mut items = vec![0u32; 8];
         pool.for_each(&mut items, 3, |index, item| {
             if index == 3 {
@@ -453,17 +446,31 @@ mod tests {
     }
 
     #[test]
-    fn workers_left_off_the_deadline_are_counted_as_such() {
-        let pool = WorkerPool::new(3, DeadlineGroup::none());
-        // A section makes every worker run once, so each has entered by now.
+    fn each_worker_holds_its_start_guard_for_its_life() {
+        /// Counts itself in on creation and out on drop.
+        struct Guard(Arc<AtomicUsize>);
+        impl Drop for Guard {
+            fn drop(&mut self) {
+                self.0.fetch_sub(1, Ordering::Relaxed);
+            }
+        }
+
+        let live = Arc::new(AtomicUsize::new(0));
+        let hook_live = live.clone();
+        let pool = WorkerPool::new(3, move || {
+            hook_live.fetch_add(1, Ordering::Relaxed);
+            Guard(hook_live.clone())
+        });
+        // A section makes every worker run once, so each has started by now.
         let mut items = vec![0u32; 4];
         pool.for_each(&mut items, 4, |_, item| *item = 1);
+        assert_eq!(pool.worker_count(), 3);
+        assert_eq!(live.load(Ordering::Relaxed), 3);
+        drop(pool);
         assert_eq!(
-            pool.deadline(),
-            WorkerDeadline {
-                workers: 3,
-                joined: 0,
-            }
+            live.load(Ordering::Relaxed),
+            0,
+            "guards dropped as workers exit"
         );
     }
 }

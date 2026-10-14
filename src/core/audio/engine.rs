@@ -15,7 +15,7 @@ use rtrb::{Consumer, Producer, RingBuffer};
 use super::journal::{self, JournalWriter, MAX_JOURNAL_SOURCES, OverrunRecord};
 use super::load::micros;
 use super::{
-    AudioClock, AudioLoad, AudioSource, DESIRED_BUFFER_FRAMES, DeadlineGroup, MAX_FRAMES,
+    AudioClock, AudioLoad, AudioSource, DESIRED_BUFFER_FRAMES, DeviceWorkgroup, MAX_FRAMES,
     RenderCtx, WorkerPool, enter_render_thread, max_dsp_threads,
 };
 use crate::core::config::MAX_TRACKS;
@@ -122,13 +122,13 @@ impl AudioEngine {
                     config.buffer_size = BufferSize::Default;
                 }
 
-                let deadline = DeadlineGroup::for_device(&device);
+                let workgroup = Arc::new(DeviceWorkgroup::for_device(&device));
                 let mixer = Mixer::new(
                     build_sources(sample_rate_f64),
                     sample_rate_f64,
                     add_source_rx,
                     callback_load,
-                    deadline,
+                    workgroup,
                 );
                 let stream = match build_stream(&device, &config, sample_format, channels, mixer) {
                     Ok(stream) => stream,
@@ -181,6 +181,9 @@ struct Mixer {
     /// independent per-item work can spread it across cores instead of running
     /// the whole block on this one thread.
     pool: WorkerPool,
+    /// The device workgroup the pool's workers joined; read for the overrun
+    /// journal's session header.
+    workgroup: Arc<DeviceWorkgroup>,
     /// Per-channel sum scratch, pre-reserved to `MAX_FRAMES`.
     mix: [Vec<f32>; 2],
     /// Monotonic sample counter — the frame index of the next callback's first
@@ -196,15 +199,16 @@ struct Mixer {
 
 impl Mixer {
     /// Builds the callback state, sizing `sources` so runtime additions never
-    /// reallocate on the audio thread. The pool's workers put themselves on
-    /// `deadline`.
+    /// reallocate on the audio thread. Each of the pool's workers joins
+    /// `workgroup` as it starts.
     fn new(
         initial: Vec<Box<dyn AudioSource>>,
         sample_rate: f64,
         add_source_rx: Consumer<Box<dyn AudioSource>>,
         load: Arc<AudioLoad>,
-        deadline: DeadlineGroup,
+        workgroup: Arc<DeviceWorkgroup>,
     ) -> Self {
+        let joining = workgroup.clone();
         let capacity = initial.len() + ADD_SOURCE_RING_CAPACITY;
         let mut sources = Vec::with_capacity(capacity);
         sources.extend(initial);
@@ -214,7 +218,8 @@ impl Mixer {
             clock: AudioClock::new(sample_rate),
             sample_rate,
             load,
-            pool: WorkerPool::new(worker_thread_count(), deadline),
+            pool: WorkerPool::new(worker_thread_count(), move || joining.join()),
+            workgroup,
             mix: [
                 Vec::with_capacity(MAX_FRAMES),
                 Vec::with_capacity(MAX_FRAMES),
@@ -351,7 +356,8 @@ impl Mixer {
             sources,
             source_count,
             tracks_us,
-            workers: self.pool.deadline(),
+            workers: self.pool.worker_count(),
+            workers_joined: self.workgroup.joined(),
         }
     }
 }

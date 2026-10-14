@@ -212,12 +212,14 @@ pressure the scheduler could pre-empt a worker while the callback sat
 journal showed that as the dominant glitch (`instruments` at 120–177 ms with
 every track under 1 ms, on the i7-8700B under provoked load).
 
-**What each worker does.** `src/core/audio/deadline.rs`. The engine builds one
-`DeadlineGroup` for the device it opened and hands it to `WorkerPool::new`.
-Each worker calls `DeadlineGroup::enter` on itself as it starts, before its
-first section, which runs **`os_workgroup_join`** on the device's IO-thread
-workgroup (`kAudioDevicePropertyIOThreadOSWorkgroup`, macOS 11+), and holds
-the returned `Membership` for its whole life. That tells the scheduler the
+**What each worker does.** `src/core/audio/workgroup.rs`. The engine builds
+one `DeviceWorkgroup` for the device it opened. `WorkerPool::new` takes an
+`on_start` hook that each worker runs on itself before its first section,
+holding what it returns until the thread exits; the pool knows nothing about
+workgroups. The engine's hook is `DeviceWorkgroup::join`, which runs
+**`os_workgroup_join`** on the device's IO-thread workgroup
+(`kAudioDevicePropertyIOThreadOSWorkgroup`, macOS 11+) and returns a `Joined`
+guard. That tells the scheduler the
 worker shares the IO thread's deadline. On Apple Silicon it should be
 make-or-break: without it the workers can land on E-cores, and the result can
 be *worse* than serial. That is unverified, since only an Intel Mac has been
@@ -228,15 +230,16 @@ device UID, turned back into an `AudioDeviceID` by
 `kAudioHardwarePropertyTranslateUIDToDevice`. So the workgroup is the *opened*
 device's, not whatever is default now, and stays right if device selection is
 ever added. The workgroup is retained for the group's life and released when
-the pool is dropped, after every worker has left (`Membership`'s drop, on the
-worker's own thread, with its own boxed join token). `os_workgroup_join` and
+the pool is dropped, after every worker has left (`Joined`'s drop, on the
+worker's own thread, with its own boxed join token; each guard holds the
+group by `Arc`). `os_workgroup_join` and
 `_leave` are looked up with `dlsym`, not linked, so an older macOS still
 launches, with workers outside any workgroup.
 
 The join is best effort: a refused one leaves the worker as it was. The
 overrun journal's session header says how many joined
-(`11 workers (11 in the device workgroup)`). `none()` (tests, other platforms)
-changes nothing.
+(`11 workers (11 in the device workgroup)`). `DeviceWorkgroup::default()`
+(tests, other platforms) has no workgroup and joins nobody.
 
 **Workers get no time-constraint policy, on purpose.** Giving each worker
 `THREAD_TIME_CONSTRAINT_POLICY` (period = the buffer, computation half or all
