@@ -20,6 +20,15 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Plugin rendering threads join the audio device's workgroup on macOS.**
+  The threads that render plugins alongside the audio callback now tell macOS
+  they share its deadline, which on Apple Silicon should keep them off the
+  slower efficiency cores (untested there; neutral on Intel). The overrun
+  journal's session line (`~/Library/Logs/stev/audio-overruns.log`) now says
+  how many of them joined.
+
 ## [0.3.0] - 2026-10-13
 
 ### Added

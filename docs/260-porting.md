@@ -34,7 +34,7 @@ Traced from the code, not yet measured:
 
 - **The `"midiout"` wait is probably the bigger gap.** Every clip message waits for its intended instant plus the MIDI-output offset (`160`) in crossbeam's `select! … default(timeout)`: a park/condvar timeout, not a precise timer, on every platform. On Windows that wait follows the system timer tick (15.6 ms by default), which could put up to ~15 ms of jitter on every note, far from the "few hundred µs" `160` assumes.
 - **The `"clock"` thread** (`core/timer.rs`): on Linux and Windows, `SleepTimer` sleeps *relative* to the end of each callback, so periods drift and jitter. Tempo is unaffected, because `Clock` credits musical time from real elapsed nanoseconds; tick granularity and jitter are not.
-- **No thread has real-time priority on any platform**, macOS included. The mach timer is only a spin tail.
+- **No thread has real-time priority on any platform**, macOS included. The mach timer is only a spin tail. Giving the audio workers a time-constraint policy was tried and made overruns several times worse (`170` § Audio workgroup); a timing thread that renders no plugins is a different case, but measure it before and after.
 
 ### Measure first: the timing probe
 

@@ -112,6 +112,13 @@ objc2-core-foundation = { version = "0.3", default-features = false, features = 
     "std",
 ] }
 libc = "0.2.189"
+# The output device's IO-thread workgroup, which the audio worker threads join
+# (`core::audio::deadline`, `docs/170-multicore-scheduling.md`). Already in the
+# tree via cpal with these features, so this pulls no new crates.
+objc2-core-audio = { version = "0.3", default-features = false, features = [
+    "std",
+    "AudioHardware",
+] }
 
 [workspace.metadata.cross.target.aarch64-unknown-linux-gnu]
 image = "aarch64-unknown-linux-gnu:tmjorud"

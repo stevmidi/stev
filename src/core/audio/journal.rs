@@ -35,7 +35,7 @@ use std::time::{Duration, SystemTime};
 use chrono::{DateTime, Local};
 use rtrb::{Consumer, Producer, RingBuffer};
 
-use super::INSTRUMENTS_SOURCE;
+use super::{INSTRUMENTS_SOURCE, WorkerDeadline};
 use crate::core::config::MAX_TRACKS;
 
 /// Records the ring can hold between drains. At one record per block that is
@@ -80,6 +80,9 @@ pub(crate) struct OverrunRecord {
     /// Per-instrument-track render time in microseconds, indexed by track;
     /// zero for a track that didn't render this block.
     pub(crate) tracks_us: [u32; MAX_TRACKS],
+    /// How the worker pool took to the callback's deadline — the same for
+    /// every record of a session, so only the session header shows it.
+    pub(crate) workers: WorkerDeadline,
 }
 
 impl OverrunRecord {
@@ -206,15 +209,20 @@ fn plan_burst(count: usize) -> (usize, usize) {
     (write, count - write)
 }
 
-/// The once-per-session line that precedes the first record: what build, and
-/// what block size / rate the stream opened at.
+/// The once-per-session line that precedes the first record: what build, what
+/// block size / rate the stream opened at, and how many of the worker threads
+/// joined the device's audio workgroup — what the "`instruments` high, every
+/// track small" shape is read against (see `170-multicore-scheduling.md`).
 fn session_header(first: &OverrunRecord) -> String {
+    let w = first.workers;
     format!(
-        "--- Stev {} session, {} frames @ {} Hz (budget {} µs) ---",
+        "--- Stev {} session, {} frames @ {} Hz (budget {} µs), {} workers ({} in the device workgroup) ---",
         env!("CARGO_PKG_VERSION"),
         first.frames,
         first.sample_rate,
-        first.budget_us()
+        first.budget_us(),
+        w.workers,
+        w.joined
     )
 }
 
@@ -308,6 +316,10 @@ mod tests {
             sources,
             source_count: 2,
             tracks_us,
+            workers: WorkerDeadline {
+                workers: 7,
+                joined: 6,
+            },
         }
     }
 
@@ -375,6 +387,10 @@ mod tests {
         let header = session_header(&record());
         assert!(
             header.contains("256 frames @ 48000 Hz (budget 5333 µs)"),
+            "{header}"
+        );
+        assert!(
+            header.contains("7 workers (6 in the device workgroup)"),
             "{header}"
         );
     }

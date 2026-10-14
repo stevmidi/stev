@@ -21,10 +21,6 @@ Full Linux and Windows support is now a staged candidate (§ Candidates, Linux a
 
 Listed in priority order, highest first (set 2026-10-11): the capture workflow, then the engine's real-time threads, small fixes, then reaching non-developers, then larger or speculative features. The order is a priority, not a schedule; reorder it as priorities change.
 
-### The audio workgroup join
-
-Worker threads have no real-time priority, and under CPU pressure their pre-emption is the dominant cause of glitches (the overrun journal shows it). It degrades every session with plugins, it's bounded macOS work, and the journal's shape is its acceptance test. The fix is in `170` § Not done yet. It pairs with § MIDI Out timing below: both make the real-time threads behave.
-
 ### MIDI Out timing
 
 Stage 1 of § Linux and Windows support, staged, taken first as macOS work. Parked 2026-10-07 with the macOS-first decision. The analysis, the timing-probe design and the fixes are in `260-porting.md` § Timing, since they are a port's first job. If picked up here, it starts on macOS alone: the probe measures macOS as well, the precise `"midiout"` wait helps every platform (crossbeam's `select!` timeout is a condvar wait on macOS too), and macOS threads have no real-time priority either. The author's own test plan:
@@ -55,7 +51,7 @@ Stev arranges and a DAW mixes (§ Principle), so the export's main job is the ha
 
 **Suggested start, decided 2026-10-11:**
 
-- **One real-time pass writes everything.** Play the arrangement from bar 1 to its end and write each plugin track's output, plus the summed mix. The voices are rendered separately before the summing pass (`130`), so stems cost no extra pass. Real time means the files are exactly what was heard. The footer says if an overrun happened during the render; § The audio workgroup join, earlier in this list, makes that rarer.
+- **One real-time pass writes everything.** Play the arrangement from bar 1 to its end and write each plugin track's output, plus the summed mix. The voices are rendered separately before the summing pass (`130`), so stems cost no extra pass. Real time means the files are exactly what was heard. The footer says if an overrun happened during the render.
 - **A folder per export**, in the project folder, never overwriting (a number is added, as the MIDI clip export does, `060` § MIDI clip export). Its name carries the project name, tempo and meter (e.g. `Sketch 120bpm 4-4`), since a DAW import needs them and WAV doesn't carry them.
 - **One WAV per plugin track, named `NN Name.wav`**: the track number keeps the arrangement's order when the files are sorted, and the name is the track's name as its header shows it. Plus `Mix.wav`.
 - **Every file the same length, starting at bar 1** (leading silence included) and ending at the arrangement's end plus a fixed tail of a few seconds, so all of them dropped at the DAW's start line up.
@@ -130,7 +126,7 @@ User direction, 2026-10-07. The `?` help overlay is the first-release form. Late
 
 Added 2026-10-11: everything macOS has today, on Linux and Windows too, built in stages that each stand on their own. It is by far the largest candidate: a second and third platform, not a feature. The ongoing cost matters more than the code. The author doesn't use either OS day to day, so timing and plugin bugs there are found on machines booted only to test, which is the neglect § Platforms warns about. So each stage is a promise made only once it's done, and stopping after any stage leaves an honest state. What's macOS-only today, and why each part matters, is in `260-porting.md`.
 
-1. **Timing: the probe and the fixes** (§ MIDI Out timing above). The timing probe, the precise `"midiout"` deadline wait, one absolute-deadline clock timer, and best-effort thread priority. All of it helps macOS too (its `select!` timeout is imprecise as well, and no thread has real-time priority on any platform), so it can be done as macOS work, ahead of the rest of this candidate and alongside the audio workgroup join (§ The audio workgroup join). It also clears the first and largest porting hurdle.
+1. **Timing: the probe and the fixes** (§ MIDI Out timing above). The timing probe, the precise `"midiout"` deadline wait, one absolute-deadline clock timer, and best-effort thread priority. All of it helps macOS too (its `select!` timeout is imprecise as well, and no thread has real-time priority on any platform), so it can be done as macOS work, ahead of the rest of this candidate. It also clears the first and largest porting hurdle.
 2. **MIDI Out parity on Windows 11 and Ubuntu 24.04.** Run the smoke test (`260` § Smoke test) and fix what it finds: no virtual MIDI port on Windows (midir can't create one; at least document loopMIDI or Windows MIDI Services), quit with unsaved changes, `.mid` file drag, MIDI hot-plug, and the library and log folders. When this lands, Stev is a supported MIDI Out sequencer on all three, with plugins on macOS only, and the README, § Platforms and § Not planned say so.
 3. **The plugin host, Windows first.** Windows has far more musicians and VST3 plugins, and the author has a Windows 11 machine. The host core is format-agnostic (`130`); what's needed is the platform glue: plugin search paths per OS, VST3 bundle layout (`180`), editor windows parented to Win32 (and X11 later), MMCSS as the workgroup join's counterpart (`170`), and expect another round of the GL-context clash with plugins that bring their own GL (NI, Qt). Linux CLAP/VST3 follows Windows; its plugin ecosystem is thin. Decide on this stage only after living with stage 2.
 4. **Packaging per OS** (installer or archive per platform, as § A downloadable macOS app does for macOS), only once stage 3 is solid.

@@ -9,6 +9,7 @@
 
 mod click_voice;
 mod clock;
+mod deadline;
 mod denormals;
 mod engine;
 mod journal;
@@ -22,6 +23,7 @@ mod worker_pool;
 use std::time::Instant;
 
 pub(crate) use clock::AudioClock;
+pub(crate) use deadline::{DeadlineGroup, WorkerDeadline};
 pub(crate) use engine::{AudioEngine, EngineHandle};
 pub(crate) use load::AudioLoad;
 pub(crate) use metronome_source::{ClickClass, ClickEvent, MetronomeSource};

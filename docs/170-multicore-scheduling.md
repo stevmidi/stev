@@ -56,9 +56,9 @@ conversion and the worker-pool hand-off. Three shapes to recognise:
   next stop is Instruments' Time Profiler on the IO thread, or the plugin's own
   settings (oversampling, voice count);
 - **`instruments` high but every track small** — the render pass was cheap and
-  the time went between the voices: the pool hand-off. This is the
-  audio-workgroup symptom, and the reason that work is still on this file's
-  list;
+  the time went between the voices: the pool hand-off, a worker pre-empted
+  while the callback waited. *Audio workgroup* below is the intended fix; check
+  the session header's worker count before reading this shape;
 - **`other` high** — outside every source: mix-down or conversion, which
   should be constant and tiny, so look for an outside cause (denormals not
   flushed, a debug build, the machine throttling).
@@ -180,14 +180,15 @@ worker's `ack` would never land and the audio thread would spin forever.
   platforms get an empty pool rather than parked threads that would never run.
   `cores` is `available_parallelism()` today, which is a placeholder: it counts
   SMT siblings on Intel and E-cores on Apple Silicon, both of which
-  over-provision (see sizing under *Not done yet*). It only bites at high awake
+  over-provision (see *Thread-count sizing*). It only bites at high awake
   counts, because `runners` already clamps to the work actually available.
 
 ### The cost that is left
 
 The caller waits for the slowest worker to *wake*. A parked worker costs ~10–50
 µs to wake and the scheduler may deschedule one at any time. That is the residual
-risk of this design, and it is what audio workgroups exist to bound.
+risk of this design, and it is what the audio workgroup (*Audio workgroup*
+below) exists to bound.
 
 **Idle workers must not spin.** A worker spins (`SPIN_ROUNDS`, single-digit µs)
 only in the moment *after finishing a section*, when another might already be on
@@ -201,54 +202,77 @@ headroom and so makes the number you are trying to improve worse. Note
 `spin_loop()` is `pause`, ~140 cycles on modern x86; spin counts that look small
 are not.
 
+## Audio workgroup (done)
+
+**Why.** CoreAudio runs its IO thread, the one `cpal` calls back on, with
+time-constraint scheduling and in the output device's audio workgroup. The
+`WorkerPool`'s threads were ordinary threads in no workgroup. Under CPU
+pressure the scheduler could pre-empt a worker while the callback sat
+*spinning at the barrier* waiting for it. In September 2026 the overrun
+journal showed that as the dominant glitch (`instruments` at 120–177 ms with
+every track under 1 ms, on the i7-8700B under provoked load).
+
+**What each worker does.** `src/core/audio/deadline.rs`. The engine builds one
+`DeadlineGroup` for the device it opened and hands it to `WorkerPool::new`.
+Each worker calls `DeadlineGroup::enter` on itself as it starts, before its
+first section, which runs **`os_workgroup_join`** on the device's IO-thread
+workgroup (`kAudioDevicePropertyIOThreadOSWorkgroup`, macOS 11+), and holds
+the returned `Membership` for its whole life. That tells the scheduler the
+worker shares the IO thread's deadline. On Apple Silicon it should be
+make-or-break: without it the workers can land on E-cores, and the result can
+be *worse* than serial. That is unverified, since only an Intel Mac has been
+available.
+
+The device is found through cpal's `Device::id()`, which on CoreAudio is the
+device UID, turned back into an `AudioDeviceID` by
+`kAudioHardwarePropertyTranslateUIDToDevice`. So the workgroup is the *opened*
+device's, not whatever is default now, and stays right if device selection is
+ever added. The workgroup is retained for the group's life and released when
+the pool is dropped, after every worker has left (`Membership`'s drop, on the
+worker's own thread, with its own boxed join token). `os_workgroup_join` and
+`_leave` are looked up with `dlsym`, not linked, so an older macOS still
+launches, with workers outside any workgroup.
+
+The join is best effort: a refused one leaves the worker as it was. The
+overrun journal's session header says how many joined
+(`11 workers (11 in the device workgroup)`). `none()` (tests, other platforms)
+changes nothing.
+
+**Workers get no time-constraint policy, on purpose.** Giving each worker
+`THREAD_TIME_CONSTRAINT_POLICY` (period = the buffer, computation half or all
+of it) was built and measured, and taken out. One project, 7 plugin tracks,
+twelve `yes` processes loading every logical CPU of the i7-8700B, ~26 s of
+playing each; the overruns counted leave out the start and stop spikes every
+run has:
+
+| Workers | Overruns | Track that went over |
+|---|---|---|
+| neither (as before) | 7 | t7 ×5, t2 ×2 |
+| workgroup only (shipped) | 10 | t7 ×8, t2 ×2 |
+| time-constraint only | 56 | t2 ×54, t7 ×2 |
+| both | 94 | t2 ×86, t7 ×8 |
+
+With the policy on, track 2's plugin (Serum 2, preset *ARP - Blossom Tree
+Sprites*) sat at the budget in nearly every line; without it, it never led. The
+author keeps that project as the reference for a rerun. Why it happens is not
+known; the journal can't say which thread ran which track or what the plugin
+does inside `process()`. Any
+later attempt at worker priority should rerun this table. The workgroup alone
+measured neutral on Intel, which is what it should be there.
+
+**Acceptance test, still open.** The September shape ("`instruments` high but
+every track small") did not appear in any of these runs, the "neither" run
+included, so this load doesn't reproduce it, and whether the join removes it
+is unproven. Next time it shows up in a journal, the session header says
+whether the workers were in the workgroup.
+
+**Not handled: a cancelled workgroup.** If the device restarts its IO (a sample
+rate or buffer change in Audio MIDI Setup), CoreAudio may cancel the workgroup
+the workers joined, leaving them outside the IO thread's group. The engine
+doesn't follow device changes either, so this waits for that work; a restart
+of the app re-joins.
+
 ## Not done yet
-
-**Worker threads have no real-time priority, and that is a priority inversion.**
-CoreAudio gives its IO thread — the one `cpal` calls back on — time-constraint
-scheduling automatically. The `WorkerPool`'s threads are ordinary threads. So
-while the transport is running, UI work can preempt a worker while the real-time
-callback thread sits *spinning at the barrier* waiting for it. Symptom to look
-for: the `DSP` readout being noticeably more sensitive to UI activity (dragging
-the mouse, resizing) while playing than while stopped, since a stopped transport
-sleeps every voice and runs the callback inline with no workers engaged at all.
-
-The minimal fix is `thread_policy_set(THREAD_TIME_CONSTRAINT_POLICY)` on each
-worker via the `mach` crate (already a dependency) — smaller than the workgroup
-join below, and on Intel it is most of the benefit, since there is no core-type
-placement problem to solve there.
-
-**Audio workgroups (macOS).** How much this matters depends on the machine.
-
-On **Apple Silicon it is make-or-break**: without joining the device's workgroup
-the scheduler does not know the worker threads share the callback's deadline and
-will happily place them on E-cores, and the result can be *worse* than serial. On
-**Intel there are no efficiency cores** — every core is identical, so a
-phase-2-only pool already schedules sensibly and its measurements are meaningful.
-Joining is still worth doing there for deadline-aware scheduling and to keep the
-workers from being preempted by lower-QoS work, but it is an improvement rather
-than a precondition.
-
-The sequence:
-
-1. `kAudioObjectSystemObject` + `kAudioHardwarePropertyDefaultOutputDevice` →
-   `AudioDeviceID`;
-2. that device + `kAudioDevicePropertyIOThreadOSWorkgroup` (`'oswg'`) →
-   `os_workgroup_t`, retained for the pool's life;
-3. each worker calls `os_workgroup_join` **on itself**, with its **own** token,
-   and `os_workgroup_leave` on exit.
-
-Two caveats. cpal does not expose the raw `AudioDeviceID` it opened, but since
-0.18 `Device::id()` returns the device's CoreAudio UID
-(`kAudioDevicePropertyDeviceUID`), which
-`kAudioHardwarePropertyTranslateUIDToDevice` turns back into the
-`AudioDeviceID` — so step 1 can address the *opened* device rather than
-re-querying the default, and stays correct the day device selection is added.
-And the property is
-macOS 11+; older systems return "property not found", where the fallback is
-`thread_policy_set(THREAD_TIME_CONSTRAINT_POLICY)` via the `mach` crate (already
-a dependency).
-
-**Cost-ordered claiming** is the other outstanding item — see below.
 
 **Cost-ordered claiming.** Keep an EWMA of each voice's last block time and claim
 expensive voices first (longest-processing-time-first). Materially better
@@ -301,9 +325,9 @@ tier needs no reactivation.
 - **This pool is imbalance-bound, not overhead-bound.** The measurements above
   say makespan is bounded below by the single most expensive voice, and that
   voices added up to the core count are nearly free (8 tracks at 56%). Larger
-  blocks do not touch imbalance; **cost-ordered claiming** does, and the
-  **audio workgroup** is what makes the existing numbers trustworthy. Both are
-  far smaller changes and both come first.
+  blocks do not touch imbalance; **cost-ordered claiming** does, and is a far
+  smaller change that comes first. (The **audio workgroup**, the other one
+  listed here before, is in: *Audio workgroup*.)
 - **It cuts across the timebase work.** Sample-accurate scheduling, `pending` +
   `SCHEDULE_DELAY_FRAMES`, `150-clock-position-sync.md`'s
   `clock_tick ≡ playback_tick (mod region_length)` invariant and

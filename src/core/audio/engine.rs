@@ -15,8 +15,8 @@ use rtrb::{Consumer, Producer, RingBuffer};
 use super::journal::{self, JournalWriter, MAX_JOURNAL_SOURCES, OverrunRecord};
 use super::load::micros;
 use super::{
-    AudioClock, AudioLoad, AudioSource, DESIRED_BUFFER_FRAMES, MAX_FRAMES, RenderCtx, WorkerPool,
-    enter_render_thread, max_dsp_threads,
+    AudioClock, AudioLoad, AudioSource, DESIRED_BUFFER_FRAMES, DeadlineGroup, MAX_FRAMES,
+    RenderCtx, WorkerPool, enter_render_thread, max_dsp_threads,
 };
 use crate::core::config::MAX_TRACKS;
 
@@ -122,11 +122,13 @@ impl AudioEngine {
                     config.buffer_size = BufferSize::Default;
                 }
 
+                let deadline = DeadlineGroup::for_device(&device);
                 let mixer = Mixer::new(
                     build_sources(sample_rate_f64),
                     sample_rate_f64,
                     add_source_rx,
                     callback_load,
+                    deadline,
                 );
                 let stream = match build_stream(&device, &config, sample_format, channels, mixer) {
                     Ok(stream) => stream,
@@ -194,12 +196,14 @@ struct Mixer {
 
 impl Mixer {
     /// Builds the callback state, sizing `sources` so runtime additions never
-    /// reallocate on the audio thread.
+    /// reallocate on the audio thread. The pool's workers put themselves on
+    /// `deadline`.
     fn new(
         initial: Vec<Box<dyn AudioSource>>,
         sample_rate: f64,
         add_source_rx: Consumer<Box<dyn AudioSource>>,
         load: Arc<AudioLoad>,
+        deadline: DeadlineGroup,
     ) -> Self {
         let capacity = initial.len() + ADD_SOURCE_RING_CAPACITY;
         let mut sources = Vec::with_capacity(capacity);
@@ -210,7 +214,7 @@ impl Mixer {
             clock: AudioClock::new(sample_rate),
             sample_rate,
             load,
-            pool: WorkerPool::new(worker_thread_count()),
+            pool: WorkerPool::new(worker_thread_count(), deadline),
             mix: [
                 Vec::with_capacity(MAX_FRAMES),
                 Vec::with_capacity(MAX_FRAMES),
@@ -347,6 +351,7 @@ impl Mixer {
             sources,
             source_count,
             tracks_us,
+            workers: self.pool.deadline(),
         }
     }
 }
