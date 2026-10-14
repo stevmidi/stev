@@ -133,7 +133,7 @@ pub(crate) fn setup_shared_channels() -> SharedChannels {
     }
 }
 
-/// Builds the [`Clock`] and its [`Timer`] (platform-specific), wired to the shared atomics.
+/// Builds the [`Clock`] and its [`Timer`], wired to the shared atomics.
 pub(crate) fn setup_clock(
     clock_command_rx: Receiver<ClockCommand>,
     shared_atomics: &SharedAtomics,

@@ -13,12 +13,18 @@ use std::hint::spin_loop;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::core::thread_priority::{TimingThread, raise_timing_priority};
+use crate::core::thread_priority::{TimeConstraint, raise_timing_priority};
 
 /// The final stretch before each firing that is spun rather than slept: a
 /// `thread::sleep` can overshoot by a few hundred µs. Spun once per period,
-/// so it is paid at the clock's whole rate (~10% of a core at 1 ms).
+/// so it is paid at the clock's whole rate (~10% of a core at 1 ms), which is
+/// why it is shorter than `"midiout"`'s once-per-deadline tail. Kept from the
+/// mach loop it replaced, and measured clean under the time-constraint policy.
 const SPIN_TAIL: Duration = Duration::from_micros(100);
+
+/// CPU a firing's callback is budgeted on top of [`SPIN_TAIL`], for the
+/// thread's time-constraint request.
+const CALLBACK_BUDGET: Duration = Duration::from_micros(200);
 
 /// The periodic timer behind `Clock`.
 pub(crate) struct Timer {
@@ -38,7 +44,7 @@ impl Timer {
     /// the [`Instant`] captured at the top of that firing — `Clock` uses the
     /// real elapsed time between firings to credit musical time, so the
     /// period's exact accuracy only affects tick granularity, not tempo.
-    pub(crate) fn start<F>(&mut self, mut callback: F)
+    pub(crate) fn start<F>(self, mut callback: F)
     where
         F: FnMut(Instant) + Send + 'static,
     {
@@ -47,7 +53,11 @@ impl Timer {
         thread::Builder::new()
             .name("clock".to_string())
             .spawn(move || {
-                raise_timing_priority(TimingThread::Clock);
+                raise_timing_priority(TimeConstraint {
+                    period: period.as_nanos() as u64,
+                    computation: (SPIN_TAIL + CALLBACK_BUDGET).as_nanos() as u64,
+                    constraint: period.as_nanos() as u64,
+                });
                 let mut target = Instant::now();
                 loop {
                     callback(Instant::now());
@@ -69,10 +79,11 @@ fn next_target(previous: Instant, period: Duration, now: Instant) -> Instant {
 }
 
 /// How to wait at `now` for `target`: `Some` sleep while more than
-/// [`SPIN_TAIL`] remains, `None` to spin.
-fn sleep_before(target: Instant, now: Instant) -> Option<Duration> {
+/// `spin_tail` remains, `None` to spin. Shared with the `"midiout"` thread's
+/// deadline wait, which uses a longer tail.
+pub(crate) fn sleep_before(target: Instant, now: Instant, spin_tail: Duration) -> Option<Duration> {
     let remaining = target.saturating_duration_since(now);
-    (remaining > SPIN_TAIL).then(|| remaining - SPIN_TAIL)
+    (remaining > spin_tail).then(|| remaining - spin_tail)
 }
 
 /// Blocks until `target`: sleeps most of the gap, spins the tail.
@@ -82,7 +93,7 @@ fn wait_until(target: Instant) {
         if now >= target {
             return;
         }
-        match sleep_before(target, now) {
+        match sleep_before(target, now, SPIN_TAIL) {
             Some(sleep) => thread::sleep(sleep),
             None => spin_loop(),
         }
@@ -120,14 +131,17 @@ mod tests {
     #[test]
     fn far_from_the_target_it_sleeps_to_the_spin_tail() {
         let now = Instant::now();
-        assert_eq!(sleep_before(now + PERIOD, now), Some(PERIOD - SPIN_TAIL));
+        assert_eq!(
+            sleep_before(now + PERIOD, now, SPIN_TAIL),
+            Some(PERIOD - SPIN_TAIL)
+        );
     }
 
     #[test]
     fn within_the_spin_tail_or_past_the_target_it_spins() {
         let now = Instant::now();
-        assert_eq!(sleep_before(now + SPIN_TAIL, now), None);
-        assert_eq!(sleep_before(now, now + PERIOD), None);
+        assert_eq!(sleep_before(now + SPIN_TAIL, now, SPIN_TAIL), None);
+        assert_eq!(sleep_before(now, now + PERIOD, SPIN_TAIL), None);
     }
 
     #[test]

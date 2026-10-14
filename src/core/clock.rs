@@ -134,7 +134,7 @@ impl Clock {
         F: FnMut(ClockTick) + Send + 'static,
     {
         let Clock {
-            mut timer,
+            timer,
             tempo,
             tick: clock_tick,
             tick_instant_nanos,

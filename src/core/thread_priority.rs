@@ -34,65 +34,43 @@ use std::iter::once;
 #[cfg(target_os = "windows")]
 use windows_sys::Win32::System::Threading::AvSetMmThreadCharacteristicsW;
 
-/// Which timing thread is asking, for its scheduling parameters.
-#[derive(Clone, Copy)]
-pub(crate) enum TimingThread {
-    /// The 1 ms clock timer (`core/timer.rs`).
-    Clock,
-    /// The MIDI output thread (`core/threads/midi_output.rs`).
-    MidiOut,
-}
-
-/// A thread's time-constraint parameters, in nanoseconds.
+/// A timing thread's time-constraint request, in nanoseconds. Each caller
+/// builds its own beside the constants it is derived from (`core/timer.rs`,
+/// `core/threads/midi_output.rs`). Only macOS reads it; Linux and Windows
+/// have no per-thread budget to give.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-#[derive(Debug, PartialEq)]
-struct TimeConstraint {
+pub(crate) struct TimeConstraint {
     /// How often the thread wants to run; 0 for a thread with no period.
-    period: u64,
+    pub(crate) period: u64,
     /// How much CPU it needs in each run, its spin tail included. A thread
     /// that runs past this without blocking is demoted to normal priority
-    /// until it blocks, so a runaway can't starve the machine.
-    computation: u64,
-    /// How soon after waking that computation must be done.
-    constraint: u64,
-}
-
-impl TimingThread {
-    /// The time-constraint parameters this thread asks macOS for. The clock
-    /// fires every millisecond and spins at most 100 µs of it; `"midiout"` has
-    /// no period, and spins up to 500 µs before a deadline after 250 µs
-    /// sleeps.
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-    fn time_constraint(self) -> TimeConstraint {
-        match self {
-            TimingThread::Clock => TimeConstraint {
-                period: 1_000_000,
-                computation: 300_000,
-                constraint: 1_000_000,
-            },
-            TimingThread::MidiOut => TimeConstraint {
-                period: 0,
-                computation: 1_000_000,
-                constraint: 2_000_000,
-            },
-        }
-    }
+    /// until it blocks, so a runaway can't starve the machine. macOS accepts
+    /// 50 µs to 50 ms.
+    pub(crate) computation: u64,
+    /// How soon after waking that computation must be done; at least the
+    /// computation, and at most the period when there is one.
+    pub(crate) constraint: u64,
 }
 
 /// Raises the calling thread's priority for its timing role, best effort.
-pub(crate) fn raise_timing_priority(thread: TimingThread) {
-    if let Err(_e) = raise(thread) {
+pub(crate) fn raise_timing_priority(wanted: TimeConstraint) {
+    debug_assert!(
+        (50_000..=50_000_000).contains(&wanted.computation)
+            && wanted.computation <= wanted.constraint
+            && (wanted.period == 0 || wanted.constraint <= wanted.period),
+        "time constraint out of range"
+    );
+    if let Err(_e) = raise(wanted) {
         dprintln!("timing priority refused: {_e}");
     }
 }
 
 /// macOS: the time-constraint policy.
 #[cfg(target_os = "macos")]
-fn raise(thread: TimingThread) -> Result<(), String> {
+fn raise(wanted: TimeConstraint) -> Result<(), String> {
     let mut info = mach_timebase_info_data_t { numer: 0, denom: 0 };
     unsafe { mach_timebase_info(&mut info) };
     let to_mach = |ns| nanos_to_mach(ns, info.numer, info.denom);
-    let wanted = thread.time_constraint();
     let mut policy = thread_time_constraint_policy {
         period: to_mach(wanted.period),
         computation: to_mach(wanted.computation),
@@ -116,7 +94,7 @@ fn raise(thread: TimingThread) -> Result<(), String> {
 
 /// Linux: `SCHED_FIFO`, when `RLIMIT_RTPRIO` allows.
 #[cfg(target_os = "linux")]
-fn raise(_thread: TimingThread) -> Result<(), String> {
+fn raise(_wanted: TimeConstraint) -> Result<(), String> {
     // Low in the 1–99 range, under audio servers' own threads; rtkit's
     // default ceiling is 20.
     let param = sched_param { sched_priority: 10 };
@@ -130,7 +108,7 @@ fn raise(_thread: TimingThread) -> Result<(), String> {
 
 /// Windows: MMCSS's "Pro Audio" task.
 #[cfg(target_os = "windows")]
-fn raise(_thread: TimingThread) -> Result<(), String> {
+fn raise(_wanted: TimeConstraint) -> Result<(), String> {
     let task: Vec<u16> = "Pro Audio".encode_utf16().chain(once(0)).collect();
     let mut task_index = 0u32;
     // The handle would revert the thread on exit; these threads never exit.
@@ -144,14 +122,14 @@ fn raise(_thread: TimingThread) -> Result<(), String> {
 
 /// Anywhere else: nothing to ask for.
 #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-fn raise(_thread: TimingThread) -> Result<(), String> {
+fn raise(_wanted: TimeConstraint) -> Result<(), String> {
     Ok(())
 }
 
 /// Converts nanoseconds into mach absolute time units using the timebase
 /// ratio `numer/denom` (`ns = mach * numer / denom`), in one rational step:
 /// computing `numer/denom` first truncates Apple Silicon's 125/3 to 41.
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#[cfg(target_os = "macos")]
 fn nanos_to_mach(ns: u64, numer: u32, denom: u32) -> u32 {
     if numer == 0 {
         return ns as u32;
@@ -159,7 +137,7 @@ fn nanos_to_mach(ns: u64, numer: u32, denom: u32) -> u32 {
     ((u128::from(ns) * u128::from(denom)) / u128::from(numer)) as u32
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;
 
@@ -179,16 +157,5 @@ mod tests {
     #[test]
     fn nanos_to_mach_zero_numer_falls_back_to_nanoseconds() {
         assert_eq!(nanos_to_mach(1_000_000, 0, 0), 1_000_000);
-    }
-
-    #[test]
-    fn each_thread_asks_for_a_computation_within_its_constraint() {
-        for thread in [TimingThread::Clock, TimingThread::MidiOut] {
-            let wanted = thread.time_constraint();
-            assert!(wanted.computation <= wanted.constraint);
-            assert!(wanted.period == 0 || wanted.constraint <= wanted.period);
-            // macOS refuses computations under 50 µs or over 50 ms.
-            assert!((50_000..=50_000_000).contains(&wanted.computation));
-        }
     }
 }

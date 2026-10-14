@@ -33,7 +33,7 @@ use std::time::{Duration, Instant};
 use crossbeam_channel::{Sender, unbounded};
 #[cfg(unix)]
 use midir::os::unix::VirtualInput;
-use midir::{MidiInput, MidiInputConnection, MidiOutput, MidiOutputConnection};
+use midir::{MidiIO, MidiInput, MidiInputConnection, MidiOutput, MidiOutputConnection};
 
 use crate::core::config::MIDI_OUT_OFFSET_DEFAULT_MS;
 use crate::core::midi::out_queue::MidiOutMessage;
@@ -214,50 +214,27 @@ fn decode(msg: &[u8]) -> Option<u32> {
     }
 }
 
-/// Recorder-mode sink: stamps each write with its sequence number.
-struct Recorder {
-    /// `(arrival, sequence)` per write.
-    arrivals: Vec<(Instant, u32)>,
-}
-
-impl MidiSink for Recorder {
-    fn send(&mut self, message: &[u8]) -> Result<(), Box<dyn Error>> {
-        let now = Instant::now();
-        if let Some(seq) = decode(message) {
-            self.arrivals.push((now, seq));
-        }
-        Ok(())
-    }
-}
-
-/// Loopback-mode sink: a real `midir` output port.
-struct PortSink(MidiOutputConnection);
-
-impl MidiSink for PortSink {
-    fn send(&mut self, message: &[u8]) -> Result<(), Box<dyn Error>> {
-        self.0.send(message)?;
-        Ok(())
-    }
-}
-
-/// A sink for this run, recorder or real port.
+/// Where this run's `"midiout"` loop writes.
 enum ProbeSink {
-    /// See [`Recorder`].
-    Recorder(Recorder),
-    /// See [`PortSink`].
-    Port(PortSink),
+    /// Recorder mode: `(arrival, sequence)` stamped per write, measuring
+    /// Stev's scheduling alone.
+    Recorder(Vec<(Instant, u32)>),
+    /// Loopback mode: a real `midir` output port.
+    Port(MidiOutputConnection),
 }
 
 impl MidiSink for ProbeSink {
     fn send(&mut self, message: &[u8]) -> Result<(), Box<dyn Error>> {
         match self {
-            ProbeSink::Recorder(recorder) => recorder.send(message),
-            ProbeSink::Port(port) => port.send(message),
+            ProbeSink::Recorder(arrivals) => stamp_arrival(0, message, arrivals),
+            ProbeSink::Port(port) => port.send(message)?,
         }
+        Ok(())
     }
 }
 
-/// The midir input callback: stamps each arrival with its sequence number.
+/// Stamps an arrival with its sequence number: the recorder's write, and the
+/// midir input callback in loopback mode.
 fn stamp_arrival(_timestamp: u64, message: &[u8], arrivals: &mut Vec<(Instant, u32)>) {
     let now = Instant::now();
     if let Some(seq) = decode(message) {
@@ -265,38 +242,33 @@ fn stamp_arrival(_timestamp: u64, message: &[u8], arrivals: &mut Vec<(Instant, u
     }
 }
 
-/// Opens the first output port whose name contains `wanted`, ignoring case.
-fn open_output(wanted: &str) -> PortSink {
-    let midi_out = MidiOutput::new("Stev Probe Out").expect("MIDI output client");
-    let port = midi_out
-        .ports()
+/// The first of `io`'s ports whose name contains `wanted`, ignoring case.
+fn find_port<T: MidiIO>(io: &T, wanted: &str) -> T::Port {
+    let wanted = wanted.to_lowercase();
+    io.ports()
         .into_iter()
         .find(|p| {
-            midi_out
-                .port_name(p)
-                .is_ok_and(|name| name.to_lowercase().contains(&wanted.to_lowercase()))
+            io.port_name(p)
+                .is_ok_and(|name| name.to_lowercase().contains(&wanted))
         })
-        .unwrap_or_else(|| panic!("no MIDI output port matches {wanted:?}"));
-    PortSink(
+        .unwrap_or_else(|| panic!("no MIDI port matches {wanted:?}"))
+}
+
+/// Opens the output port whose name contains `wanted`.
+fn open_output(wanted: &str) -> ProbeSink {
+    let midi_out = MidiOutput::new("Stev Probe Out").expect("MIDI output client");
+    let port = find_port(&midi_out, wanted);
+    ProbeSink::Port(
         midi_out
             .connect(&port, "stev-probe-out")
             .expect("output port opens"),
     )
 }
 
-/// Opens the first input port whose name contains `wanted`, ignoring case,
-/// stamping arrivals.
+/// Opens the input port whose name contains `wanted`, stamping arrivals.
 fn open_input(wanted: &str) -> LoopbackInput {
     let midi_in = MidiInput::new("Stev Probe In").expect("MIDI input client");
-    let port = midi_in
-        .ports()
-        .into_iter()
-        .find(|p| {
-            midi_in
-                .port_name(p)
-                .is_ok_and(|name| name.to_lowercase().contains(&wanted.to_lowercase()))
-        })
-        .unwrap_or_else(|| panic!("no MIDI input port matches {wanted:?}"));
+    let port = find_port(&midi_in, wanted);
     midi_in
         .connect(
             &port,
@@ -323,30 +295,21 @@ fn open_virtual_input() -> LoopbackInput {
 /// The sink and (in loopback mode) the input connection for `mode`.
 fn open_ports(mode: &ProbeMode) -> (ProbeSink, Option<LoopbackInput>) {
     match mode {
-        ProbeMode::Recorder => (
-            ProbeSink::Recorder(Recorder {
-                arrivals: Vec::with_capacity(1 << 16),
-            }),
-            None,
-        ),
+        ProbeMode::Recorder => (ProbeSink::Recorder(Vec::with_capacity(1 << 16)), None),
         ProbeMode::Loopback { out, input } => {
             let input = open_input(input);
-            (ProbeSink::Port(open_output(out)), Some(input))
+            (open_output(out), Some(input))
         }
         #[cfg(unix)]
         ProbeMode::VirtualLoopback => {
             let input = open_virtual_input();
-            (
-                ProbeSink::Port(open_output(VIRTUAL_LOOPBACK_NAME)),
-                Some(input),
-            )
+            (open_output(VIRTUAL_LOOPBACK_NAME), Some(input))
         }
     }
 }
 
-/// Starts one busy thread per logical core; they spin until `stop` is set.
-fn start_load(stop: &Arc<AtomicBool>) {
-    let cores = thread::available_parallelism().map_or(1, |n| n.get());
+/// Starts `cores` busy threads; they spin until `stop` is set.
+fn start_load(cores: usize, stop: &Arc<AtomicBool>) {
     for _ in 0..cores {
         let stop = Arc::clone(stop);
         thread::spawn(move || {
@@ -358,36 +321,25 @@ fn start_load(stop: &Arc<AtomicBool>) {
     }
 }
 
-/// What the feeder hands back when its run is over.
-struct FeederReport {
-    /// Nanoseconds between consecutive timer firings.
-    gaps: Vec<i64>,
-    /// Each message's deadline (intended instant plus the offset), by
-    /// sequence number.
-    deadlines: Vec<Instant>,
-}
-
-/// Starts the real platform [`Timer`] as clock and feeder in one: each firing
-/// records its gap and sends every message whose intended instant has passed.
-/// Once the last deadline plus [`DRAIN`] is behind it, it drops `midi_out_tx`
-/// (ending the `"midiout"` loop) and reports on `report_tx`. The timer thread
-/// can't be stopped, so it idles until the test process exits.
+/// Starts the real [`Timer`] as clock and feeder in one: each firing from
+/// `origin` on records its gap and sends every message whose intended instant
+/// (`intended`, ascending) has passed. At `end` it drops `midi_out_tx` (ending
+/// the `"midiout"` loop) and sends the gaps, in nanoseconds, on `gaps_tx`. The
+/// timer thread can't be stopped, so it idles until the test process exits.
 fn start_feeder(
-    intended: Vec<Duration>,
-    offset: Duration,
+    origin: Instant,
+    intended: Vec<Instant>,
+    end: Instant,
     midi_out_tx: Sender<MidiOutMessage>,
-    report_tx: Sender<FeederReport>,
+    gaps_tx: Sender<Vec<i64>>,
 ) {
-    let origin = Instant::now() + Duration::from_millis(100);
-    let deadlines: Vec<Instant> = intended.iter().map(|&at| origin + at + offset).collect();
-    let end = deadlines.last().map_or(origin, |&last| last + DRAIN);
     let mut gaps = Vec::with_capacity((end - origin).as_millis() as usize + 1024);
-    let mut report = Some((midi_out_tx, report_tx, deadlines));
+    let mut senders = Some((midi_out_tx, gaps_tx));
     let mut next = 0;
     let mut last_fire: Option<Instant> = None;
 
     Timer::new(CLOCK_PERIOD_MS).start(move |now| {
-        let Some((midi_out_tx, _, _)) = &report else {
+        let Some((midi_out_tx, _)) = &senders else {
             return;
         };
         if now >= origin {
@@ -396,22 +348,16 @@ fn start_feeder(
             }
             last_fire = Some(now);
         }
-        while next < intended.len() && origin + intended[next] <= now {
-            let at = origin + intended[next];
+        while next < intended.len() && intended[next] <= now {
             midi_out_tx
-                .send(MidiOutMessage::at(encode(next as u32), at))
+                .send(MidiOutMessage::at(encode(next as u32), intended[next]))
                 .ok();
             next += 1;
         }
         if now >= end
-            && let Some((_, report_tx, deadlines)) = report.take()
+            && let Some((_, gaps_tx)) = senders.take()
         {
-            report_tx
-                .send(FeederReport {
-                    gaps: std::mem::take(&mut gaps),
-                    deadlines,
-                })
-                .ok();
+            gaps_tx.send(std::mem::take(&mut gaps)).ok();
         }
     });
 }
@@ -438,24 +384,34 @@ fn lateness(deadlines: &[Instant], arrivals: &[(Instant, u32)]) -> (Vec<i64>, us
     (late, lost)
 }
 
+/// One report line in the table's column layout.
+fn cells(label: &str, values: [String; 8]) -> String {
+    let [count, mean, p50, p99, p999, max, over, lost] = values;
+    format!(
+        "{label:<16}{count:>8}{mean:>10}{p50:>10}{p99:>10}{p999:>10}{max:>10}{over:>8}{lost:>7}"
+    )
+}
+
 /// One report row: the label, then the summary in microseconds.
-fn row(label: &str, summary: Option<&Summary>, lost: Option<usize>) -> String {
+fn row(label: &str, summary: Option<Summary>, lost: Option<usize>) -> String {
+    let Some(s) = summary else {
+        return format!("{label:<16}no samples");
+    };
     let us = |ns: i64| format!("{:.1}", ns as f64 / 1000.0);
     let lost = lost.map_or("-".to_string(), |n| n.to_string());
-    match summary {
-        Some(s) => format!(
-            "{label:<16}{:>8}{:>10}{:>10}{:>10}{:>10}{:>10}{:>8}{:>7}",
-            s.count,
+    cells(
+        label,
+        [
+            s.count.to_string(),
             us(s.mean),
             us(s.p50),
             us(s.p99),
             us(s.p999),
             us(s.max),
-            s.over,
-            lost
-        ),
-        None => format!("{label:<16}{:>8}", 0),
-    }
+            s.over.to_string(),
+            lost,
+        ],
+    )
 }
 
 /// Dev tool, not a test: see the module docs.
@@ -469,10 +425,11 @@ fn timing_probe() {
     let loaded = env::var(LOAD_VAR).is_ok_and(|v| v == "1");
     let mode = ProbeMode::from_env();
     let offset_ms = MIDI_OUT_OFFSET_DEFAULT_MS;
+    let cores = thread::available_parallelism().map_or(1, |n| n.get());
 
     let stop_load = Arc::new(AtomicBool::new(false));
     if loaded {
-        start_load(&stop_load);
+        start_load(cores, &stop_load);
     }
 
     let (sink, input) = open_ports(&mode);
@@ -480,7 +437,7 @@ fn timing_probe() {
     let (release_tx, _release_rx) = unbounded::<MidiOutMessage>();
     let (_command_tx, command_rx) = unbounded();
     let (_sink_tx, sink_rx) = unbounded::<ProbeSink>();
-    let (report_tx, report_rx) = unbounded();
+    let (gaps_tx, gaps_rx) = unbounded();
 
     let midiout = thread::Builder::new()
         .name("midiout".to_string())
@@ -496,64 +453,56 @@ fn timing_probe() {
         })
         .expect("midiout thread spawns");
 
-    start_feeder(
-        pattern(Duration::from_secs(secs), mode.is_loopback()),
-        Duration::from_millis(offset_ms as u64),
-        midi_out_tx,
-        report_tx,
-    );
+    let origin = Instant::now() + Duration::from_millis(100);
+    let offset = Duration::from_millis(offset_ms as u64);
+    let intended: Vec<Instant> = pattern(Duration::from_secs(secs), mode.is_loopback())
+        .into_iter()
+        .map(|at| origin + at)
+        .collect();
+    let deadlines: Vec<Instant> = intended.iter().map(|&at| at + offset).collect();
+    let end = deadlines.last().map_or(origin, |&last| last + DRAIN);
+    start_feeder(origin, intended, end, midi_out_tx, gaps_tx);
 
-    let FeederReport {
-        mut gaps,
-        deadlines,
-    } = report_rx.recv().expect("feeder reports");
+    let mut gaps = gaps_rx.recv().expect("feeder reports");
     let sink = midiout.join().expect("midiout loop returns");
     stop_load.store(true, Ordering::Relaxed);
-    let arrivals = match (sink, input) {
-        (ProbeSink::Recorder(recorder), _) => recorder.arrivals,
-        (ProbeSink::Port(_), Some(input)) => input.close().1,
-        (ProbeSink::Port(_), None) => Vec::new(),
+    let arrivals = match sink {
+        ProbeSink::Recorder(arrivals) => arrivals,
+        ProbeSink::Port(_) => input.map_or_else(Vec::new, |input| input.close().1),
     };
     let (mut late, lost) = lateness(&deadlines, &arrivals);
+    let late_label = if mode.is_loopback() {
+        "loopback late"
+    } else {
+        "midiout late"
+    };
+    let clock_over = CLOCK_PERIOD_MS as i64 * ONE_MS_NANOS + ONE_MS_NANOS;
 
     // `println!`, not `dprintln!`: the probe runs in release, where
     // `dprintln!` compiles away, and the report is its whole point.
     println!();
     println!(
-        "timing probe: {} {}, {} cores, {secs} s, {}, {}, offset {offset_ms} ms",
-        OS,
-        ARCH,
-        thread::available_parallelism().map_or(1, |n| n.get()),
+        "timing probe: {OS} {ARCH}, {cores} cores, {secs} s, {}, {}, offset {offset_ms} ms",
         if loaded { "loaded" } else { "idle" },
         mode.label(),
     );
     println!(
-        "{:<16}{:>8}{:>10}{:>10}{:>10}{:>10}{:>10}{:>8}{:>7}",
-        "µs", "count", "mean", "p50", "p99", "p99.9", "max", ">1ms", "lost"
-    );
-    println!(
         "{}",
-        row(
-            "clock gap",
-            summarize(
-                &mut gaps,
-                CLOCK_PERIOD_MS as i64 * ONE_MS_NANOS + ONE_MS_NANOS
-            )
-            .as_ref(),
-            None,
+        cells(
+            "µs",
+            [
+                "count", "mean", "p50", "p99", "p99.9", "max", ">1ms", "lost"
+            ]
+            .map(String::from)
         )
     );
     println!(
         "{}",
-        row(
-            if mode.is_loopback() {
-                "loopback late"
-            } else {
-                "midiout late"
-            },
-            summarize(&mut late, ONE_MS_NANOS).as_ref(),
-            Some(lost),
-        )
+        row("clock gap", summarize(&mut gaps, clock_over), None)
+    );
+    println!(
+        "{}",
+        row(late_label, summarize(&mut late, ONE_MS_NANOS), Some(lost))
     );
     println!("(clock >1ms counts gaps over 2 ms: one period plus 1 ms)");
 }

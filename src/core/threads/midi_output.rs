@@ -22,7 +22,8 @@ use std::time::{Duration, Instant};
 use crate::core::midi::out_queue::{MidiOutMessage, MidiOutQueue, deadline_for};
 use crate::core::midi::output::MidiOutputConnection;
 use crate::core::note_logger::{NoteLogger, NoteLoggerCommand};
-use crate::core::thread_priority::{TimingThread, raise_timing_priority};
+use crate::core::thread_priority::{TimeConstraint, raise_timing_priority};
+use crate::core::timer::sleep_before;
 
 /// How long the `"midiout"` thread blocks when its delay queue is empty.
 /// Nothing depends on the wakeup — it exists only so the `select!` always has a
@@ -36,7 +37,9 @@ const MIDI_OUT_IDLE_TIMEOUT: Duration = Duration::from_secs(1);
 const PRECISE_WINDOW: Duration = Duration::from_millis(2);
 
 /// The final stretch before a deadline that is spun rather than slept: a
-/// `thread::sleep` can itself overshoot by a few hundred µs.
+/// `thread::sleep` can itself overshoot by a few hundred µs. Longer than the
+/// clock's 100 µs because it is paid once per deadline, not every
+/// millisecond; 200 µs let ~180 µs outliers through on an idle Mac.
 const SPIN_TAIL: Duration = Duration::from_micros(500);
 
 /// The longest single sleep inside [`PRECISE_WINDOW`], so a live-thru message
@@ -66,11 +69,22 @@ fn plan_wait(next_deadline: Option<Instant>, now: Instant) -> Wait {
     };
     let remaining = deadline.saturating_duration_since(now);
     if remaining > PRECISE_WINDOW {
-        Wait::Block(remaining - PRECISE_WINDOW)
-    } else if remaining > SPIN_TAIL {
-        Wait::Sleep((remaining - SPIN_TAIL).min(POLL_SLICE))
-    } else {
-        Wait::Spin
+        return Wait::Block(remaining - PRECISE_WINDOW);
+    }
+    match sleep_before(deadline, now, SPIN_TAIL) {
+        Some(sleep) => Wait::Sleep(sleep.min(POLL_SLICE)),
+        None => Wait::Spin,
+    }
+}
+
+impl Wait {
+    /// The `select!` timeout for this wait: the block itself, or zero (a
+    /// poll) when the sleep or spin follows the `select!`.
+    fn select_timeout(&self) -> Duration {
+        match self {
+            Wait::Block(timeout) => *timeout,
+            Wait::Sleep(_) | Wait::Spin => Duration::ZERO,
+        }
     }
 }
 
@@ -140,7 +154,13 @@ pub(crate) fn run_midi_output_loop<S: MidiSink>(
     sink_rx: Receiver<S>,
     midi_out_offset_ms: Arc<AtomicI32>,
 ) -> S {
-    raise_timing_priority(TimingThread::MidiOut);
+    // No period; a deadline's whole precise window, slices and spin, must
+    // fit its constraint.
+    raise_timing_priority(TimeConstraint {
+        period: 0,
+        computation: (2 * SPIN_TAIL).as_nanos() as u64,
+        constraint: PRECISE_WINDOW.as_nanos() as u64,
+    });
     let mut queue = MidiOutQueue::new();
 
     loop {
@@ -151,10 +171,6 @@ pub(crate) fn run_midi_output_loop<S: MidiSink>(
             send_midi_out(&mut sink, &mut logger, msg);
         }
         let wait = plan_wait(queue.next_deadline(), now);
-        let timeout = match wait {
-            Wait::Block(timeout) => timeout,
-            Wait::Sleep(_) | Wait::Spin => Duration::ZERO,
-        };
 
         select! {
             recv(midi_out_rx) -> message => {
@@ -192,7 +208,7 @@ pub(crate) fn run_midi_output_loop<S: MidiSink>(
                     sink = connection;
                 }
             }
-            default(timeout) => match wait {
+            default(wait.select_timeout()) => match wait {
                 Wait::Sleep(slice) => thread::sleep(slice),
                 Wait::Spin => spin_loop(),
                 Wait::Block(_) => {}
