@@ -47,6 +47,9 @@ pub(crate) enum TrackRoute {
 /// [`Track::name`]: crate::models::track::Track::name
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct TrackLane {
+    /// The track's id — what `Display` keeps a plugin's live state under
+    /// when it swaps the plugin out (`InstrumentHost::parked_states`).
+    pub(crate) id: Uuid,
     /// The track's engine slot.
     pub(crate) slot: usize,
     /// Where its output goes.
@@ -61,10 +64,12 @@ pub(crate) struct TrackLane {
 impl TrackLane {
     /// A fresh sequencer's tracks: `DEFAULT_TRACK_COUNT` of them, each in the
     /// slot, on the MIDI channel and in the colour matching its position
-    /// (0-based), unnamed.
+    /// (0-based), unnamed. Their ids are nil: the sequencer sends the real
+    /// list (`TracksChanged`) as soon as its thread starts.
     pub(crate) fn defaults() -> Vec<TrackLane> {
         (0..DEFAULT_TRACK_COUNT)
             .map(|idx| TrackLane {
+                id: Uuid::nil(),
                 slot: idx,
                 route: TrackRoute::MidiOut { channel: idx as u8 },
                 color: idx,
@@ -264,6 +269,21 @@ pub(crate) enum UiEvent {
         track_id: Uuid,
         /// The plugin to reload, state blob included.
         instrument: InstrumentRef,
+    },
+    /// A track's output changed (a `SetTrackOutputEdit`, its undo or redo):
+    /// `Display` brings the plugin in `slot` in line with `instrument`. A
+    /// no-op when it already is — the edit itself, whose plugin `Display`
+    /// swapped before asking. Otherwise the plugin there keeps its live state
+    /// under `track_id` and goes, and `instrument` (if any) reloads, editor
+    /// closed, from the live state kept for it, else from its blob. macOS
+    /// only; harmless elsewhere.
+    TrackOutputChanged {
+        /// The track's engine slot.
+        slot: usize,
+        /// The track's id.
+        track_id: Uuid,
+        /// Its plugin now, state blob included — `None` for MIDI Out.
+        instrument: Option<InstrumentRef>,
     },
     /// The arranger performance lane was armed (selected) — mutually
     /// exclusive with `TrackSelected`, which implicitly deselects it.

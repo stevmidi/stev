@@ -46,7 +46,7 @@ pub(crate) use event_edits::{
 };
 pub(crate) use meter_edit::SetMeterEdit;
 pub(crate) use tempo_edit::{SetTempoEdit, TempoGesture};
-pub(crate) use track_edits::{AddTrackEdit, RemoveTrackEdit, RenameTrackEdit};
+pub(crate) use track_edits::{AddTrackEdit, RemoveTrackEdit, RenameTrackEdit, SetTrackOutputEdit};
 
 /// Which clip a paste makes the lead (`EditResult::ClipsPasted`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -497,6 +497,20 @@ pub(crate) enum EditResult {
     /// A track's name changed (`RenameTrackEdit`'s edit and undo). The
     /// handler re-sends the view its track list (`TracksChanged`, no shift).
     TrackRenamed,
+    /// A track's output changed (`SetTrackOutputEdit`'s edit and undo). The
+    /// handler re-sends the view its track list and has `Display` bring the
+    /// plugin in `slot` in line with `instrument` (`TrackOutputChanged`):
+    /// nothing to do on the edit itself, whose plugin `Display` already
+    /// swapped; on an undo or redo, the plugin that goes out keeps its live
+    /// state under `track_id` and the one coming in reloads from its own.
+    TrackOutputChanged {
+        /// The track's id — what `Display` keeps a plugin's live state under.
+        track_id: Uuid,
+        /// Its engine slot.
+        slot: usize,
+        /// Its plugin now, state blob included — `None` for MIDI Out.
+        instrument: Option<InstrumentRef>,
+    },
     /// The project tempo changed (`SetTempoEdit`'s edit and undo). The view
     /// reads the tempo from its atomic, so the handler only wakes it.
     TempoChanged,
@@ -695,6 +709,7 @@ sequencer_edit_dispatch!(
     AddTrack(AddTrackEdit),
     RemoveTrack(RemoveTrackEdit),
     RenameTrack(RenameTrackEdit),
+    SetTrackOutput(SetTrackOutputEdit),
     SetTempo(SetTempoEdit),
     SetMeter(SetMeterEdit),
 );

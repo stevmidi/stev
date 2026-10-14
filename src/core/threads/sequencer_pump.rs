@@ -46,6 +46,8 @@ pub(crate) fn start_sequencer_thread(
         .name("sequencer".to_string())
         .spawn(move || {
             ProjectData::default().apply_to_sequencer(&mut sequencer);
+            // The view starts from placeholder lanes without track ids.
+            event_handlers.emit_tracks(&sequencer, None);
 
             event_handlers.select_track_workflow(&mut sequencer, 0);
 

@@ -14,8 +14,8 @@ use crate::core::sequencer::{
     DragNotesEdit, DuplicateClipsEdit, DuplicateTimeEdit, InsertCaptureEdit, InsertNotesEdit,
     InsertSilenceEdit, MoveClipEdit, MoveRangeEdit, MuteInRangeEdit, MuteSelectedEventsEdit,
     NudgeSelectedEventsEdit, NudgeSelectedEventsLengthEdit, PasteClipsEdit, QuantizeEventsEdit,
-    RenameTrackEdit, SequencerEdit, SetMeterEdit, SetTempoEdit, SplitClipsEdit, TempoGesture,
-    TransposeSelectedEventsEdit,
+    RenameTrackEdit, SequencerEdit, SetMeterEdit, SetTempoEdit, SetTrackOutputEdit, SplitClipsEdit,
+    TempoGesture, TransposeSelectedEventsEdit,
 };
 use crate::core::time::TapTempo;
 use crate::models::clip::ClipEdge;
@@ -549,8 +549,8 @@ impl EventHandlers {
             }
 
             SequencerCommand::SetTrackOutput { track, output } => {
-                sequencer.set_track_output(*track, output.clone());
-                self.emit_tracks(sequencer, None);
+                let edit = SetTrackOutputEdit::new(sequencer, *track, output.clone());
+                self.record_edit(sequencer, undo_record, edit);
             }
 
             SequencerCommand::SetTrackVolume {
@@ -607,6 +607,7 @@ mod tests {
     use crate::core::event_handlers::test_harness::{Harness, add_clip, harness, run_command};
     use crate::core::midi::input::InputTicks;
     use crate::core::project::ProjectAction;
+    use crate::core::sequencer::test_support::stub_instrument;
     use crate::core::sequencer::{SequencerCommand, SequencerEdit};
     use crate::core::time::Meter;
     use crate::core::view_state::ViewState;
@@ -743,6 +744,42 @@ mod tests {
         );
         want[2] = TrackRoute::MidiOut { channel: 9 };
         assert_eq!(last_track_routes(&h), Some(want));
+    }
+
+    /// An output change is one undo step, and its undo tells the view which
+    /// plugin the track's slot holds again, so `Display` can swap it back.
+    #[test]
+    fn set_track_output_is_undoable_and_the_undo_names_the_plugin_to_reload() {
+        let mut h = harness();
+        let mut record = Record::new();
+        let synth = stub_instrument(vec![7]);
+        let set = |output| SequencerCommand::SetTrackOutput { track: 2, output };
+        run_command(&mut h, &mut record, set(synth.clone()));
+        run_command(
+            &mut h,
+            &mut record,
+            set(TrackOutput::MidiOut { channel: 9 }),
+        );
+        while h.ui_events.try_recv().is_ok() {}
+
+        run_command(&mut h, &mut record, SequencerCommand::Undo);
+        assert_eq!(*h.sequencer.tracks()[2].output(), synth);
+        let slot = h.sequencer.tracks()[2].slot();
+        let reload = h.ui_events.try_iter().find_map(|event| match event {
+            UiEvent::TrackOutputChanged {
+                slot: s,
+                instrument,
+                ..
+            } if s == slot => Some(instrument),
+            _ => None,
+        });
+        assert_eq!(reload.flatten().map(|i| i.state), Some(vec![7]));
+
+        run_command(&mut h, &mut record, SequencerCommand::Undo);
+        assert!(matches!(
+            h.sequencer.tracks()[2].output(),
+            TrackOutput::MidiOut { channel: 2 }
+        ));
     }
 
     /// The stopped `/` with a lead clip under the arranger cursor opens a take

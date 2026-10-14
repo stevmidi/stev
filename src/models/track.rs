@@ -60,7 +60,7 @@ pub(crate) struct InstrumentRef {
 }
 
 /// How a track's events are sent to an output.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) enum TrackOutput {
     /// Send MIDI bytes to the external MIDI output on the given channel.
     MidiOut {

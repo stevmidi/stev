@@ -22,6 +22,12 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ### Changed
 
+- **Changing a track's output can be undone.** Putting a plugin on a track,
+  replacing one, removing one from the output menu and picking a MIDI channel
+  are each one undo step. Undoing a replacement brings the old plugin back
+  with its preset as it was, not as of the last save. A note sounding when
+  the output changes is released on the output it leaves, so nothing hangs.
+
 - **One clock timer on every platform.** The clock thread now waits for
   absolute deadlines with plain `Instant`s everywhere, replacing the
   macOS-only `mach_absolute_time` loop and the drifting sleep loop Linux and

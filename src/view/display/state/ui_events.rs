@@ -253,6 +253,16 @@ impl Display {
                     #[cfg(not(target_os = "macos"))]
                     let _ = (slot, track_id, instrument);
                 }
+                UiEvent::TrackOutputChanged {
+                    slot,
+                    track_id,
+                    instrument,
+                } => {
+                    #[cfg(target_os = "macos")]
+                    self.sync_slot_output(slot, track_id, instrument.as_ref());
+                    #[cfg(not(target_os = "macos"))]
+                    let _ = (slot, track_id, instrument);
+                }
                 UiEvent::StageProject { name, specs } => {
                     #[cfg(target_os = "macos")]
                     self.stage_project(name, specs);

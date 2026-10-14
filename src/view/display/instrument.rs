@@ -15,7 +15,7 @@
 //! the catalog entry and hands back a boxed editor.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::time::Duration;
@@ -64,10 +64,11 @@ pub(super) struct InstrumentHost {
     /// Each editor holds a `!Send` plugin handle, so this must never leave
     /// the eframe main thread. Pumped once per frame from `update`.
     pub(super) track_instruments: [Option<TrackInstrument>; MAX_TRACKS],
-    /// The live state of each plugin whose track left the arrangement, by
-    /// track id — what an undo bringing the track back reloads it from
+    /// The live state of each plugin swapped out of a track — the track left
+    /// the arrangement, or its output changed — by track and plugin: what an
+    /// undo or redo bringing that plugin back reloads it from
     /// (`restore_slot_instrument`). Session-only; cleared on project load.
-    pub(super) parked_states: HashMap<Uuid, Vec<u8>>,
+    pub(super) parked_states: HashMap<ParkedKey, Vec<u8>>,
     /// Editors whose plugin was removed, by the slot it was in, awaiting the
     /// mixer's voice-dropped ack before the instance can be deactivated and
     /// dropped.
@@ -90,6 +91,10 @@ pub(super) struct InstrumentHost {
     /// `None` when no load is staging. See [`ProjectStaging`].
     pub(super) staging: Option<ProjectStaging>,
 }
+
+/// What a parked plugin state is kept under: the track's id, then the
+/// plugin's bundle path and id.
+pub(super) type ParkedKey = (Uuid, PathBuf, String);
 
 /// A project load's plugins, prepared before the project replaces the open
 /// one (`Display::stage_project`). Once the queue is done the sequencer has
@@ -325,8 +330,8 @@ impl Display {
 
     /// Puts `plugin`, picked in the browser's Plugins category (Enter on
     /// the selected track, or a drop), on `track_idx`: loads it and opens its
-    /// editor, replacing any other plugin — not undoable, the footer says so.
-    /// A no-op when the track already has it.
+    /// editor, replacing any other plugin, whose live state is parked for an
+    /// undo to bring back. A no-op when the track already has it.
     pub(super) fn put_plugin_on_track(&mut self, track_idx: usize, plugin: &BrowserPlugin) {
         let (bundle_path, plugin_id) = (&plugin.bundle_path, plugin.plugin_id.as_str());
         let current = self.track_instrument(track_idx).map(|loaded| &loaded.entry);
@@ -334,12 +339,14 @@ impl Display {
             return;
         }
         let replaced = current.map(|entry| entry.name.clone());
-        let (Some(idx), Some(slot)) = (
+        let (Some(idx), Some(lane)) = (
             self.catalog_index_of(bundle_path, plugin_id),
-            self.track_slot(track_idx),
+            self.tracks.get(track_idx),
         ) else {
             return;
         };
+        let (slot, track_id) = (lane.slot, lane.id);
+        self.park_track_instrument(slot, track_id);
         self.load_slot_instrument(slot, idx, &[], Some(track_idx));
         let track = track_idx + 1;
         let loaded = self.track_instrument(track_idx).is_some();
@@ -376,14 +383,6 @@ impl Display {
         editor.save_state()
     }
 
-    /// Removes `track_idx`'s plugin — see
-    /// [`remove_slot_instrument`](Self::remove_slot_instrument).
-    pub(super) fn remove_track_instrument(&mut self, track_idx: usize) {
-        if let Some(slot) = self.track_slot(track_idx) {
-            self.remove_slot_instrument(slot);
-        }
-    }
-
     /// Removes the plugin in `slot`: tears down its GUI, tells the mixer to
     /// drop the voice, and stashes the editor until the voice-dropped ack
     /// arrives.
@@ -407,26 +406,73 @@ impl Display {
         self.sync_live_instrument_target();
     }
 
-    /// A track left the arrangement (`UiEvent::TrackInstrumentRemoved`): if
-    /// `slot` holds a plugin, keeps its live state under `track_id` (so an
-    /// undo reloads it as it was, not as of the last save) and tears it down.
+    /// The plugin in `slot` leaves its track — the track left the
+    /// arrangement (`UiEvent::TrackInstrumentRemoved`) or its output changed:
+    /// if there is one, keeps its live state under `track_id` and the plugin
+    /// (so an undo or redo reloads it as it was, not as of the last save) and
+    /// tears it down.
     pub(super) fn park_track_instrument(&mut self, slot: usize, track_id: Uuid) {
-        if let Some(state) = self.save_slot_instrument_state(slot) {
-            self.instruments.parked_states.insert(track_id, state);
+        let key = self
+            .instruments
+            .track_instruments
+            .get(slot)
+            .and_then(Option::as_ref)
+            .map(|loaded| {
+                (
+                    track_id,
+                    loaded.entry.bundle_path.clone(),
+                    loaded.entry.plugin_id.clone(),
+                )
+            });
+        if let (Some(key), Some(state)) = (key, self.save_slot_instrument_state(slot)) {
+            self.instruments.parked_states.insert(key, state);
         }
         self.remove_slot_instrument(slot);
     }
 
+    /// A track's output changed (`UiEvent::TrackOutputChanged`): brings the
+    /// plugin in `slot` in line with `want`. Nothing to do when it already
+    /// is — the edit itself, whose plugin was swapped before it was asked
+    /// for. Otherwise (an undo or redo) the plugin there is parked and `want`
+    /// reloads, editor closed (`restore_slot_instrument`).
+    pub(super) fn sync_slot_output(
+        &mut self,
+        slot: usize,
+        track_id: Uuid,
+        want: Option<&InstrumentRef>,
+    ) {
+        let current = self
+            .instruments
+            .track_instruments
+            .get(slot)
+            .and_then(Option::as_ref)
+            .map(|loaded| &loaded.entry);
+        let in_line = match (current, want) {
+            (Some(entry), Some(want)) => entry.is(&want.bundle_path, &want.plugin_id),
+            (None, None) => true,
+            _ => false,
+        };
+        if in_line {
+            return;
+        }
+        self.park_track_instrument(slot, track_id);
+        if let Some(want) = want {
+            self.restore_slot_instrument(slot, track_id, want);
+        }
+    }
+
     /// Reloads `want` into engine slot `slot`, editor closed — a plugin track
     /// coming back into the arrangement (`UiEvent::TrackInstrumentRestored`),
-    /// which prefers the live state parked for `track_id` over `want`'s blob.
+    /// or a plugin coming back to its track (`sync_slot_output`) — preferring
+    /// the live state parked for `track_id` and `want` over `want`'s blob.
     pub(super) fn restore_slot_instrument(
         &mut self,
         slot: usize,
         track_id: Uuid,
         want: &InstrumentRef,
     ) {
-        let parked = self.instruments.parked_states.remove(&track_id);
+        let key = (track_id, want.bundle_path.clone(), want.plugin_id.clone());
+        let parked = self.instruments.parked_states.remove(&key);
         match self.catalog_index_of(&want.bundle_path, &want.plugin_id) {
             Some(idx) => {
                 let state = parked.as_deref().unwrap_or(&want.state);

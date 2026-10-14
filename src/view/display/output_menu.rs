@@ -260,8 +260,8 @@ impl Display {
     }
 
     /// Routes `track` to MIDI out on `channel`, removing its plugin if it has
-    /// one — not undoable, like replacing a plugin; the footer says so. A
-    /// no-op when the track is already there.
+    /// one (parked, for an undo to bring back). A no-op when the track is
+    /// already there.
     fn route_track_to_midi(&mut self, track: usize, channel: u8) {
         let removed = match &self.tracks[track].route {
             TrackRoute::MidiOut { channel: current } if *current == channel => return,
@@ -269,7 +269,7 @@ impl Display {
             TrackRoute::Instrument { name } => Some(name.clone()),
         };
         #[cfg(target_os = "macos")]
-        self.remove_track_instrument(track);
+        self.park_track_instrument(self.tracks[track].slot, self.tracks[track].id);
         self.input_event_tx
             .send(InputEvent::SetTrackOutput {
                 track,

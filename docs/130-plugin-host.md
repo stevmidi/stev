@@ -82,7 +82,9 @@ methods take a track's position and look the slot up in its `tracks` mirror
   `Instrument`; the output menu on the track header (`020` § Track Header
   Output Chip & Menu) removes it again or picks a MIDI channel instead. `InstrumentHost::track_instruments`
   keeps each track's editor together with the catalog entry it came from (`TrackInstrument`), so the browser can
-  skip a pick the track already has and name the plugin it replaces. `Display::load_slot_instrument`
+  skip a pick the track already has and name the plugin it replaces. Replacing or removing a plugin is
+  undoable (`050` § Track output): the plugin that goes keeps its live state in `parked_states` (keyed by
+  track id and plugin), and an undo reloads it from there. `Display::load_slot_instrument`
   runs the format's `load` on the main thread (the `!Send` plugin instance stays with
   the UI as an `InstrumentEditor`), builds the matching `InstrumentVoice` from
   the `Send` processor, and sends `PluginHostCommand::Insert { track, voice }`
@@ -411,7 +413,7 @@ boundary.
 `StoppedPluginAudioProcessor` still holds an `Arc` clone. So removing a track's
 plugin is a handshake:
 
-1. `Display::remove_track_instrument` (by position) / `remove_slot_instrument` —
+1. `Display::park_track_instrument` (live state kept first) / `remove_slot_instrument` —
    `InstrumentEditor::teardown_gui` (destroy GUI), send
    `PluginHostCommand::Remove { track: slot }`, stash the editor in
    `pending_instance_drop` under the slot.
@@ -784,7 +786,7 @@ positions), persisted base64-encoded in the `.stev` and re-applied on load:
 
 ## Out of scope
 
-Undo integration for track-output changes, undo integration for the per-track
+Undo integration for the per-track
 volume/pan/mute/solo (mixer-surface controls, deliberately not undoable; solo
 also not persisted — see `020-views-and-state.md`), FX inserts/sends beyond that
 single gain stage,

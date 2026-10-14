@@ -21,13 +21,14 @@ use super::*;
 impl EventHandlers {
     /// Sends `Display` the whole track list — each track's slot, output,
     /// colour and name — with the add / remove that just happened, if any
-    /// (`shift`). After a project load / new-project, every `SetTrackOutput`,
-    /// every track add / remove and every rename.
-    pub(super) fn emit_tracks(&self, sequencer: &Sequencer, shift: Option<TrackShift>) {
+    /// (`shift`). When the thread starts, after a project load / new-project,
+    /// every output change, every track add / remove and every rename.
+    pub(crate) fn emit_tracks(&self, sequencer: &Sequencer, shift: Option<TrackShift>) {
         let tracks = sequencer
             .tracks()
             .iter()
             .map(|track| TrackLane {
+                id: track.id(),
                 slot: track.slot(),
                 route: match track.output() {
                     TrackOutput::MidiOut { channel } => TrackRoute::MidiOut { channel: *channel },

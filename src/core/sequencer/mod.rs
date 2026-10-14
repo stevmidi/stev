@@ -62,7 +62,7 @@ pub(crate) use edit::{
     MuteInRangeEdit, MuteSelectedEventsEdit, NudgeSelectedEventsEdit,
     NudgeSelectedEventsLengthEdit, PasteClipsEdit, PasteLead, QuantizeEventsEdit, RemoveTrackEdit,
     RenameTrackEdit, ResizeClipEdit, RetimeClipEdit, SequencerEdit, SetMeterEdit, SetTempoEdit,
-    SplitClipsEdit, TempoGesture, TransposeSelectedEventsEdit,
+    SetTrackOutputEdit, SplitClipsEdit, TempoGesture, TransposeSelectedEventsEdit,
 };
 pub(crate) use export::ExportRefusal;
 pub(crate) use instrument_event::ClipInstrumentEvent;

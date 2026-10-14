@@ -374,6 +374,20 @@ impl EventHandlers {
                 self.track_removed_workflow(sequencer, track_idx, track_id, slot);
             }
             EditResult::TrackRenamed => self.emit_tracks(sequencer, None),
+            EditResult::TrackOutputChanged {
+                track_id,
+                slot,
+                instrument,
+            } => {
+                self.emit_tracks(sequencer, None);
+                self.ui_event_tx
+                    .send(UiEvent::TrackOutputChanged {
+                        slot,
+                        track_id,
+                        instrument,
+                    })
+                    .ok();
+            }
             EditResult::TempoChanged | EditResult::MeterChanged => self.request_repaint(),
             EditResult::NoOp => {}
         }

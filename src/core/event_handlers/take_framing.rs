@@ -96,7 +96,8 @@ impl EventHandlers {
             }
 
             // The cursor moves on the take as on any clip (`selected_clip`
-            // is the take). Playing, auditioning and mixing go through;
+            // is the take). Playing, auditioning, mixing and re-routing a
+            // track go through (`Display` swaps a plugin before it asks);
             // `⌥Space` plays from where the take's cursor sounds in place.
             SequencerCommand::NudgeClipCursor(_)
             | SequencerCommand::NudgeClipCursorByGrid { .. }
@@ -110,6 +111,7 @@ impl EventHandlers {
             | SequencerCommand::SetTrackPan { .. }
             | SequencerCommand::ToggleTrackMute { .. }
             | SequencerCommand::ToggleTrackSolo { .. }
+            | SequencerCommand::SetTrackOutput { .. }
             | SequencerCommand::SetTrackInstrumentState { .. } => return false,
 
             // The project commands say why they did nothing.
@@ -179,6 +181,7 @@ mod tests {
     use crate::core::midi::input::InputTicks;
     use crate::core::project::ProjectAction;
     use crate::core::sequencer::SequencerCommand;
+    use crate::core::sequencer::test_support::stub_instrument;
     use crate::core::time::Meter;
     use crate::core::view_state::{Pane, ViewState};
     use crate::models::{clip::ClipEdge, event::EventType};
@@ -320,6 +323,29 @@ mod tests {
         run_command(&mut h, &mut record, SequencerCommand::Undo);
         assert!(!h.sequencer.is_framing_take());
         assert_eq!(lead_events(&h), before);
+    }
+
+    /// Re-routing a track goes through an open session, which stays open:
+    /// `Display` has already swapped the plugin by the time it asks, so a
+    /// block would leave the sequencer routing to a plugin no longer loaded.
+    #[test]
+    fn an_output_change_goes_through_a_session() {
+        let mut h = harness();
+        let mut record = Record::new();
+        played_into_a_lead_clip(&mut h);
+        run_command(&mut h, &mut record, SequencerCommand::Commit);
+
+        let synth = stub_instrument(Vec::new());
+        run_command(
+            &mut h,
+            &mut record,
+            SequencerCommand::SetTrackOutput {
+                track: 1,
+                output: synth.clone(),
+            },
+        );
+        assert_eq!(*h.sequencer.tracks()[1].output(), synth);
+        assert!(h.sequencer.is_framing_take());
     }
 
     /// Leaving the clip view cancels, and so does quitting — before the

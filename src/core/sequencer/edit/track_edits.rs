@@ -1,7 +1,8 @@
-//! Adding, removing and renaming tracks: [`AddTrackEdit`] (⌘T, the `+`
-//! row), [`RemoveTrackEdit`] (Delete in track header focus, the output menu's
-//! `Delete track`) and [`RenameTrackEdit`] (⌘R, a double-click on the
-//! header's name), each one undo step.
+//! Adding, removing, renaming and re-routing tracks: [`AddTrackEdit`] (⌘T,
+//! the `+` row), [`RemoveTrackEdit`] (Delete in track header focus, the
+//! output menu's `Delete track`), [`RenameTrackEdit`] (⌘R, a double-click on
+//! the header's name) and [`SetTrackOutputEdit`] (a plugin put on a track,
+//! the output menu's channels and `Remove`), each one undo step.
 //!
 //! They are mirror images built on one pair of helpers: [`Sequencer::lift_track`]
 //! takes a track out of the arrangement whole (its clips, output and mix
@@ -302,6 +303,73 @@ impl Sequencer {
     }
 }
 
+/// A plugin put on a track from the browser, or the output menu's MIDI
+/// channels and `Remove`: routes a track's output somewhere else. `Display`
+/// has already swapped the plugin by the time the edit is made; undo and redo
+/// have it swap back, from the live state it kept when the plugin went out
+/// (`EditResult::TrackOutputChanged`). See `050-undo-redo.md` § Track output.
+pub(crate) struct SetTrackOutputEdit {
+    /// The track's position.
+    track_idx: usize,
+    /// Its output before the edit (a plugin with its state blob as of the
+    /// last save or load).
+    before: TrackOutput,
+    /// Its output after.
+    after: TrackOutput,
+}
+
+impl SetTrackOutputEdit {
+    /// Routes the track at `track_idx` to `output`. `None` with no such
+    /// track, or when it is already routed there.
+    pub(crate) fn new(
+        sequencer: &Sequencer,
+        track_idx: usize,
+        output: TrackOutput,
+    ) -> Option<Self> {
+        let before = sequencer.tracks().get(track_idx)?.output();
+        (*before != output).then(|| SetTrackOutputEdit {
+            track_idx,
+            before: before.clone(),
+            after: output,
+        })
+    }
+
+    /// Routes the track to its new output.
+    pub(crate) fn edit(&mut self, sequencer: &mut Sequencer) -> EditResult {
+        sequencer.route_track(self.track_idx, self.after.clone())
+    }
+
+    /// Routes it back.
+    pub(crate) fn undo(&mut self, sequencer: &mut Sequencer) -> EditResult {
+        sequencer.route_track(self.track_idx, self.before.clone())
+    }
+}
+
+impl Sequencer {
+    /// Routes the track at `track_idx` to `output` — both halves of
+    /// [`SetTrackOutputEdit`]. While running, what the track has sounding is
+    /// released on its old output first, so nothing hangs there.
+    fn route_track(&mut self, track_idx: usize, output: TrackOutput) -> EditResult {
+        let Some(track) = self.tracks.get(track_idx) else {
+            return EditResult::NoOp;
+        };
+        let (track_id, slot) = (track.id(), track.slot());
+        if self.is_running() {
+            self.silence_leaving_track(track_idx);
+        }
+        let instrument = match &output {
+            TrackOutput::Instrument(instrument) => Some(instrument.clone()),
+            TrackOutput::MidiOut { .. } => None,
+        };
+        self.set_track_output(track_idx, output);
+        EditResult::TrackOutputChanged {
+            track_id,
+            slot,
+            instrument,
+        }
+    }
+}
+
 /// The colour a new track takes, given the tracks' colours in order: the
 /// first in rotation from just past the last track's that no track uses, so
 /// adding keeps walking the palette and a colour freed by a remove comes back
@@ -336,7 +404,9 @@ mod tests {
     };
     use crate::models::track::TrackOutput;
 
-    use super::{AddTrackEdit, RemoveTrackEdit, RenameTrackEdit, next_color_slot};
+    use super::{
+        AddTrackEdit, RemoveTrackEdit, RenameTrackEdit, SetTrackOutputEdit, next_color_slot,
+    };
 
     /// The tracks' ids, in order.
     fn ids(sequencer: &Sequencer) -> Vec<Uuid> {
@@ -730,5 +800,70 @@ mod tests {
         // Slot 1's note record is clear for whichever track takes it next.
         sequencer.release_instrument_notes();
         assert!(plugin_events(&mut plugin_rx).is_empty());
+    }
+
+    /// Track `track_idx`'s output.
+    fn output(sequencer: &Sequencer, track_idx: usize) -> TrackOutput {
+        sequencer.tracks()[track_idx].output().clone()
+    }
+
+    #[test]
+    fn set_output_routes_the_track_and_undo_and_redo_route_it_back() {
+        let mut sequencer = test_sequencer();
+        let mut record = Record::new();
+        let before = output(&sequencer, 1);
+        let synth = stub_instrument(vec![7]);
+        let slot = sequencer.tracks()[1].slot();
+        let track_id = sequencer.tracks()[1].id();
+
+        let edit = SetTrackOutputEdit::new(&sequencer, 1, synth.clone()).unwrap();
+        let result = record.edit(&mut sequencer, SequencerEdit::from(edit));
+        assert_eq!(output(&sequencer, 1), synth);
+        assert!(matches!(
+            result,
+            EditResult::TrackOutputChanged { track_id: id, slot: s, instrument: Some(ref i) }
+                if id == track_id && s == slot && i.state == vec![7]
+        ));
+
+        let result = record.undo(&mut sequencer).unwrap();
+        assert_eq!(output(&sequencer, 1), before);
+        assert!(matches!(
+            result,
+            EditResult::TrackOutputChanged {
+                instrument: None,
+                ..
+            }
+        ));
+        record.redo(&mut sequencer);
+        assert_eq!(output(&sequencer, 1), synth);
+    }
+
+    #[test]
+    fn an_output_change_that_changes_nothing_is_no_edit() {
+        let sequencer = test_sequencer();
+        let current = output(&sequencer, 0);
+        assert!(SetTrackOutputEdit::new(&sequencer, 0, current).is_none());
+        let synth = stub_instrument(Vec::new());
+        assert!(SetTrackOutputEdit::new(&sequencer, 9, synth).is_none());
+    }
+
+    /// While running, a note sounding on the old output is released there:
+    /// the new output never saw its note-on.
+    #[test]
+    fn an_output_change_releases_the_notes_sounding_on_the_old_output() {
+        let (mut sequencer, midi_out_rx, mut plugin_rx) = sounding_note_on(1, None);
+        assert_eq!(midi_out(&midi_out_rx), vec![vec![0x91, 60, 100]]);
+
+        let synth = stub_instrument(Vec::new());
+        let mut edit = SetTrackOutputEdit::new(&sequencer, 1, synth).unwrap();
+        edit.edit(&mut sequencer);
+
+        assert_eq!(midi_out(&midi_out_rx), vec![vec![0x81, 60, 0]]);
+        for _ in 0..480 {
+            sequencer.tick(Instant::now());
+        }
+        // The clip's own note-off plays into the plugin, harmlessly; no
+        // note-on reaches it.
+        assert_eq!(plugin_events(&mut plugin_rx), vec![(1, [0x80, 60, 0])]);
     }
 }

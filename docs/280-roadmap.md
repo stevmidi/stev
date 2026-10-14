@@ -37,10 +37,6 @@ Stage 1 of § Linux and Windows support, staged, taken first as macOS work. Park
   | Surface Pro 3, Windows 10 | idle / loaded | | | |
   | Raspberry Pi 4 (optional) | idle / loaded | | | — |
 
-### Smaller loose ends
-
-- **Replacing a track's plugin isn't undoable.** The old plugin's preset state is gone, and the footer says so (`130`).
-
 ### Export to audio: a stem set for the DAW
 
 Stev arranges and a DAW mixes (§ Principle), so the export's main job is the hand-off: a tidy set of stems that drops into any DAW and lines up with no fiddling (added 2026-10-10, reshaped 2026-10-11). A reference mix comes alongside, so a sketch can also be shared without a DAW.

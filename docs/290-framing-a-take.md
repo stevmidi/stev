@@ -77,7 +77,7 @@ These temporary notes are never undo steps of their own. **Enter** restores the 
 - **Leaving the clip view** cancels: Shift+Tab, a click in the arranger, selecting another clip or track.
 - **Enter** consumes the buffer, as the insert does today (`InsertCaptureEdit`'s first `edit()`).
 - **Everything else that edits is blocked** while the session is open: note edits, quantize, `M`, `⌥=`/`⌥-`, another `/`, save, load, new project, the browser's open/import. The take only chooses a window; it isn't edited.
-- **Transport, zoom and scroll work** (Space, `⌥Space`, the loop toggle, `+`/`-`, `Z`/`X`, the wheel).
+- **Transport, zoom and scroll work** (Space, `⌥Space`, the loop toggle, `+`/`-`, `Z`/`X`, the wheel), and so do the mix controls and a track's output (a plugin put on a track, the output menu's channels): `Display` swaps a plugin before it asks, so blocking the output change would leave the sequencer routing to a plugin no longer loaded (`an_output_change_goes_through_a_session`). It is an undo step of its own, recorded under the session; ⌘Z inside the session still only cancels.
 - **Quit or window close** cancels the session first, so the unsaved-changes check (`060`) compares the project without the temporary notes.
 - **Nothing to frame:** no notes in the buffer, or no room at the clip cursor, opens no session (as the insert does nothing today).
 
