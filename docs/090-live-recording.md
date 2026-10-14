@@ -30,7 +30,8 @@ Key files: `src/core/sequencer/live_recording.rs`, `src/core/sequencer/capture.r
   recorded controller: a sustain stuck on holds every note, so it would need the
   note-release machinery rather than this chase; it can join later as one more `Wheel`.
 - **Invisible in the base.** No lane shows controller data and no gesture edits it
-  (`280` § Not planned); note edits, quantize and transpose leave it where it was recorded
+  (`280` § Not planned). No lighter hint either (a badge or a strip on the clip): if wheel
+  data is ever shown, it is in an automation lane, a feature of its own (decided 2026-10-14); note edits, quantize and transpose leave it where it was recorded
   (`020` § Event Selection, `070`).
 
 ### Tick handling

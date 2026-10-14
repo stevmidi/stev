@@ -39,9 +39,6 @@ Stage 1 of § Linux and Windows support, staged, taken first as macOS work. Park
 
 ### Smaller loose ends
 
-In order: the first is a cheap fix for a confusing moment, the second is already flagged in the footer.
-
-- **No hint that a clip carries wheel data.** Pitch bend and mod wheel play back but are invisible in the piano roll and the thumbnails (`090`).
 - **Replacing a track's plugin isn't undoable.** The old plugin's preset state is gone, and the footer says so (`130`).
 
 ### Export to audio: a stem set for the DAW
@@ -139,7 +136,7 @@ Mirrored in the README's *Not planned* list, so nobody expects these. Some may c
 - tempo or meter changes along the timeline (one tempo and one meter per project; the meter is stored as a list so changes could extend the format later, `060`)
 - audio tracks and audio recording
 - a built-in sampler or other built-in instrument: sampler and instrument plugins cover it, loaded through the plugin host (`130`)
-- automation lanes and CC lane editing
+- automation lanes and CC lane editing, and with them any view of recorded wheel data: pitch bend and the mod wheel stay invisible in the piano roll and the thumbnails until a lane shows them (decided 2026-10-14, `090`)
 - mixing: built-in EQ, compression or other effects, effect plugins, sends, a mixer panel (Stev arranges, a DAW mixes: § Principle; the hand-off is a stem export)
 - MIDI clock / Ableton Link / external sync
 - notation
