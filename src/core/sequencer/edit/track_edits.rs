@@ -146,15 +146,11 @@ impl Sequencer {
             return EditResult::NoOp;
         };
         let track = &self.tracks[track_idx];
-        let instrument = match track.output() {
-            TrackOutput::Instrument(instrument) => Some(instrument.clone()),
-            TrackOutput::MidiOut { .. } => None,
-        };
         EditResult::TrackAdded {
             track_idx,
             track_id: track.id(),
             slot: track.slot(),
-            instrument,
+            instrument: track.output().instrument().cloned(),
         }
     }
 }
@@ -311,11 +307,11 @@ impl Sequencer {
 pub(crate) struct SetTrackOutputEdit {
     /// The track's position.
     track_idx: usize,
-    /// Its output before the edit (a plugin with its state blob as of the
-    /// last save or load).
-    before: TrackOutput,
-    /// Its output after.
-    after: TrackOutput,
+    /// The output the track doesn't have: the new one before the edit, the
+    /// old one (a plugin with its state blob as of the last save or load)
+    /// after it. Edit and undo swap it with the track's, so neither copies
+    /// the blob.
+    other: TrackOutput,
 }
 
 impl SetTrackOutputEdit {
@@ -326,46 +322,44 @@ impl SetTrackOutputEdit {
         track_idx: usize,
         output: TrackOutput,
     ) -> Option<Self> {
-        let before = sequencer.tracks().get(track_idx)?.output();
-        (*before != output).then(|| SetTrackOutputEdit {
+        let current = sequencer.tracks().get(track_idx)?.output();
+        (*current != output).then_some(SetTrackOutputEdit {
             track_idx,
-            before: before.clone(),
-            after: output,
+            other: output,
         })
     }
 
     /// Routes the track to its new output.
     pub(crate) fn edit(&mut self, sequencer: &mut Sequencer) -> EditResult {
-        sequencer.route_track(self.track_idx, self.after.clone())
+        sequencer.swap_track_output(self.track_idx, &mut self.other)
     }
 
     /// Routes it back.
     pub(crate) fn undo(&mut self, sequencer: &mut Sequencer) -> EditResult {
-        sequencer.route_track(self.track_idx, self.before.clone())
+        sequencer.swap_track_output(self.track_idx, &mut self.other)
     }
 }
 
 impl Sequencer {
-    /// Routes the track at `track_idx` to `output` — both halves of
-    /// [`SetTrackOutputEdit`]. While running, what the track has sounding is
-    /// released on its old output first, so nothing hangs there.
-    fn route_track(&mut self, track_idx: usize, output: TrackOutput) -> EditResult {
-        let Some(track) = self.tracks.get(track_idx) else {
+    /// Swaps the output of the track at `track_idx` with `output` — both
+    /// halves of [`SetTrackOutputEdit`]. While running, what the track has
+    /// sounding is released on its old output first, so nothing hangs there.
+    fn swap_track_output(&mut self, track_idx: usize, output: &mut TrackOutput) -> EditResult {
+        if track_idx >= self.tracks.len() {
             return EditResult::NoOp;
-        };
-        let (track_id, slot) = (track.id(), track.slot());
+        }
         if self.is_running() {
             self.silence_leaving_track(track_idx);
         }
-        let instrument = match &output {
-            TrackOutput::Instrument(instrument) => Some(instrument.clone()),
-            TrackOutput::MidiOut { .. } => None,
-        };
-        self.set_track_output(track_idx, output);
+        let incoming = std::mem::replace(output, TrackOutput::MidiOut { channel: 0 });
+        if let Some(old) = self.set_track_output(track_idx, incoming) {
+            *output = old;
+        }
+        let track = &self.tracks[track_idx];
         EditResult::TrackOutputChanged {
-            track_id,
-            slot,
-            instrument,
+            track_id: track.id(),
+            slot: track.slot(),
+            instrument: track.output().instrument().cloned(),
         }
     }
 }

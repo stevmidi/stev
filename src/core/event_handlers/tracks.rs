@@ -45,6 +45,23 @@ impl EventHandlers {
             .ok();
     }
 
+    /// Tells `Display` which plugin engine slot `slot` (track `track_id`'s)
+    /// should hold now — `None` for none (`UiEvent::SlotInstrument`).
+    pub(super) fn send_slot_instrument(
+        &self,
+        slot: usize,
+        track_id: Uuid,
+        instrument: Option<InstrumentRef>,
+    ) {
+        self.ui_event_tx
+            .send(UiEvent::SlotInstrument {
+                slot,
+                track_id,
+                instrument,
+            })
+            .ok();
+    }
+
     /// ⌘T / the `+` row: records an `AddTrackEdit` at `track_idx` (after the
     /// selected track when `None`). Refused, with a footer message, at
     /// `MAX_TRACKS` and during a live take (whose session names its track by
@@ -110,15 +127,7 @@ impl EventHandlers {
             .map(|clip| ClipMetadata::from_clip(track_idx, clip))
             .collect();
         self.send_clips_added_ui_event(&clips);
-        if let Some(instrument) = instrument {
-            self.ui_event_tx
-                .send(UiEvent::TrackInstrumentRestored {
-                    slot,
-                    track_id,
-                    instrument,
-                })
-                .ok();
-        }
+        self.send_slot_instrument(slot, track_id, instrument);
         self.select_track_workflow(sequencer, track_idx);
     }
 
@@ -141,9 +150,7 @@ impl EventHandlers {
             self.exit_clip_workflow(sequencer);
         }
         self.emit_tracks(sequencer, Some(TrackShift::Removed(track_idx)));
-        self.ui_event_tx
-            .send(UiEvent::TrackInstrumentRemoved { slot, track_id })
-            .ok();
+        self.send_slot_instrument(slot, track_id, None);
         if was_selected {
             let select_idx = track_idx.min(sequencer.tracks().len() - 1);
             self.select_track_workflow(sequencer, select_idx);
@@ -329,7 +336,7 @@ mod tests {
         )));
         assert!(events.iter().any(|e| matches!(
             e,
-            UiEvent::TrackInstrumentRemoved { slot: 2, track_id } if *track_id == removed_id
+            UiEvent::SlotInstrument { slot: 2, track_id, instrument: None } if *track_id == removed_id
         )));
         // The track that took its place is selected.
         assert!(
@@ -351,7 +358,7 @@ mod tests {
         });
         let reload = position(
             &events,
-            |e| matches!(e, UiEvent::TrackInstrumentRestored { slot: 2, track_id, instrument } if *track_id == removed_id && instrument.state == vec![7]),
+            |e| matches!(e, UiEvent::SlotInstrument { slot: 2, track_id, instrument: Some(instrument) } if *track_id == removed_id && instrument.state == vec![7]),
         );
         assert!(mirror < reload, "the plugin reloads into a mirrored track");
         assert_eq!(h.sequencer.track_id_by_index(2), Some(removed_id));

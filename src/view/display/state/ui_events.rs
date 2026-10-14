@@ -237,29 +237,13 @@ impl Display {
                     #[cfg(target_os = "macos")]
                     self.sync_live_instrument_target();
                 }
-                UiEvent::TrackInstrumentRemoved { slot, track_id } => {
-                    #[cfg(target_os = "macos")]
-                    self.park_track_instrument(slot, track_id);
-                    #[cfg(not(target_os = "macos"))]
-                    let _ = (slot, track_id);
-                }
-                UiEvent::TrackInstrumentRestored {
+                UiEvent::SlotInstrument {
                     slot,
                     track_id,
                     instrument,
                 } => {
                     #[cfg(target_os = "macos")]
-                    self.restore_slot_instrument(slot, track_id, &instrument);
-                    #[cfg(not(target_os = "macos"))]
-                    let _ = (slot, track_id, instrument);
-                }
-                UiEvent::TrackOutputChanged {
-                    slot,
-                    track_id,
-                    instrument,
-                } => {
-                    #[cfg(target_os = "macos")]
-                    self.sync_slot_output(slot, track_id, instrument.as_ref());
+                    self.sync_slot_instrument(slot, track_id, instrument.as_ref());
                     #[cfg(not(target_os = "macos"))]
                     let _ = (slot, track_id, instrument);
                 }

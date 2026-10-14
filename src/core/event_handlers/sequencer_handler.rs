@@ -766,7 +766,7 @@ mod tests {
         assert_eq!(*h.sequencer.tracks()[2].output(), synth);
         let slot = h.sequencer.tracks()[2].slot();
         let reload = h.ui_events.try_iter().find_map(|event| match event {
-            UiEvent::TrackOutputChanged {
+            UiEvent::SlotInstrument {
                 slot: s,
                 instrument,
                 ..

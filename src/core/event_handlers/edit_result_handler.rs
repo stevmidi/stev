@@ -380,13 +380,7 @@ impl EventHandlers {
                 instrument,
             } => {
                 self.emit_tracks(sequencer, None);
-                self.ui_event_tx
-                    .send(UiEvent::TrackOutputChanged {
-                        slot,
-                        track_id,
-                        instrument,
-                    })
-                    .ok();
+                self.send_slot_instrument(slot, track_id, instrument);
             }
             EditResult::TempoChanged | EditResult::MeterChanged => self.request_repaint(),
             EditResult::NoOp => {}

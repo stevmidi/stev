@@ -499,7 +499,7 @@ pub(crate) enum EditResult {
     TrackRenamed,
     /// A track's output changed (`SetTrackOutputEdit`'s edit and undo). The
     /// handler re-sends the view its track list and has `Display` bring the
-    /// plugin in `slot` in line with `instrument` (`TrackOutputChanged`):
+    /// plugin in `slot` in line with `instrument` (`UiEvent::SlotInstrument`):
     /// nothing to do on the edit itself, whose plugin `Display` already
     /// swapped; on an undo or redo, the plugin that goes out keeps its live
     /// state under `track_id` and the one coming in reloads from its own.

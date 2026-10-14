@@ -96,6 +96,12 @@ pub(super) struct InstrumentHost {
 /// plugin's bundle path and id.
 pub(super) type ParkedKey = (Uuid, PathBuf, String);
 
+/// The [`ParkedKey`] of the plugin `plugin_id` in the bundle at
+/// `bundle_path`, on track `track_id`.
+fn parked_key(track_id: Uuid, bundle_path: &Path, plugin_id: &str) -> ParkedKey {
+    (track_id, bundle_path.to_owned(), plugin_id.to_owned())
+}
+
 /// A project load's plugins, prepared before the project replaces the open
 /// one (`Display::stage_project`). Once the queue is done the sequencer has
 /// been told to apply the project, and its `ProjectLoaded` swaps them in.
@@ -258,10 +264,12 @@ impl Display {
 
     /// The plugin loaded for the track at `track_idx`, if any.
     pub(super) fn track_instrument(&self, track_idx: usize) -> Option<&TrackInstrument> {
-        self.instruments
-            .track_instruments
-            .get(self.track_slot(track_idx)?)?
-            .as_ref()
+        self.slot_instrument(self.track_slot(track_idx)?)
+    }
+
+    /// The plugin loaded in engine slot `slot`, if any.
+    fn slot_instrument(&self, slot: usize) -> Option<&TrackInstrument> {
+        self.instruments.track_instruments.get(slot)?.as_ref()
     }
 
     /// Whether the background catalog scan is still running. The catalog is
@@ -407,46 +415,33 @@ impl Display {
     }
 
     /// The plugin in `slot` leaves its track — the track left the
-    /// arrangement (`UiEvent::TrackInstrumentRemoved`) or its output changed:
+    /// arrangement or its output changed:
     /// if there is one, keeps its live state under `track_id` and the plugin
     /// (so an undo or redo reloads it as it was, not as of the last save) and
     /// tears it down.
     pub(super) fn park_track_instrument(&mut self, slot: usize, track_id: Uuid) {
         let key = self
-            .instruments
-            .track_instruments
-            .get(slot)
-            .and_then(Option::as_ref)
-            .map(|loaded| {
-                (
-                    track_id,
-                    loaded.entry.bundle_path.clone(),
-                    loaded.entry.plugin_id.clone(),
-                )
-            });
+            .slot_instrument(slot)
+            .map(|loaded| parked_key(track_id, &loaded.entry.bundle_path, &loaded.entry.plugin_id));
         if let (Some(key), Some(state)) = (key, self.save_slot_instrument_state(slot)) {
             self.instruments.parked_states.insert(key, state);
         }
         self.remove_slot_instrument(slot);
     }
 
-    /// A track's output changed (`UiEvent::TrackOutputChanged`): brings the
-    /// plugin in `slot` in line with `want`. Nothing to do when it already
-    /// is — the edit itself, whose plugin was swapped before it was asked
-    /// for. Otherwise (an undo or redo) the plugin there is parked and `want`
+    /// Brings the plugin in `slot` in line with `want`
+    /// (`UiEvent::SlotInstrument`: a track added or removed, an output
+    /// changed, or the undo or redo of either). Nothing to do when it already
+    /// is — an output change's own edit, whose plugin was swapped before it
+    /// was asked for. Otherwise the plugin there is parked and `want`
     /// reloads, editor closed (`restore_slot_instrument`).
-    pub(super) fn sync_slot_output(
+    pub(super) fn sync_slot_instrument(
         &mut self,
         slot: usize,
         track_id: Uuid,
         want: Option<&InstrumentRef>,
     ) {
-        let current = self
-            .instruments
-            .track_instruments
-            .get(slot)
-            .and_then(Option::as_ref)
-            .map(|loaded| &loaded.entry);
+        let current = self.slot_instrument(slot).map(|loaded| &loaded.entry);
         let in_line = match (current, want) {
             (Some(entry), Some(want)) => entry.is(&want.bundle_path, &want.plugin_id),
             (None, None) => true,
@@ -461,17 +456,11 @@ impl Display {
         }
     }
 
-    /// Reloads `want` into engine slot `slot`, editor closed — a plugin track
-    /// coming back into the arrangement (`UiEvent::TrackInstrumentRestored`),
-    /// or a plugin coming back to its track (`sync_slot_output`) — preferring
-    /// the live state parked for `track_id` and `want` over `want`'s blob.
-    pub(super) fn restore_slot_instrument(
-        &mut self,
-        slot: usize,
-        track_id: Uuid,
-        want: &InstrumentRef,
-    ) {
-        let key = (track_id, want.bundle_path.clone(), want.plugin_id.clone());
+    /// Reloads `want` into engine slot `slot`, editor closed — a plugin
+    /// coming back to its track (`sync_slot_instrument`) — preferring the
+    /// live state parked for `track_id` and `want` over `want`'s blob.
+    fn restore_slot_instrument(&mut self, slot: usize, track_id: Uuid, want: &InstrumentRef) {
+        let key = parked_key(track_id, &want.bundle_path, &want.plugin_id);
         let parked = self.instruments.parked_states.remove(&key);
         match self.catalog_index_of(&want.bundle_path, &want.plugin_id) {
             Some(idx) => {

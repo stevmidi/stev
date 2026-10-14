@@ -50,12 +50,19 @@ impl Sequencer {
     // --- Track output ---
 
     /// Re-routes `track` and re-arms live input, which follows the selected
-    /// track's channel. No-op on an out-of-range index.
-    pub(crate) fn set_track_output(&mut self, track: usize, output: TrackOutput) {
-        if let Some(track) = self.tracks.get_mut(track) {
-            track.set_output(output);
-        }
+    /// track's channel. Returns the output it had; `None` (and no change) on
+    /// an out-of-range index.
+    pub(crate) fn set_track_output(
+        &mut self,
+        track: usize,
+        output: TrackOutput,
+    ) -> Option<TrackOutput> {
+        let old = self
+            .tracks
+            .get_mut(track)
+            .map(|track| std::mem::replace(track.output_mut(), output));
         self.arm_selected_track();
+        old
     }
 
     /// Stores the latest plugin-state blob on the instrument of the track in

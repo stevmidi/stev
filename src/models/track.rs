@@ -73,6 +73,16 @@ pub(crate) enum TrackOutput {
     Instrument(InstrumentRef),
 }
 
+impl TrackOutput {
+    /// The plugin, for an `Instrument` output.
+    pub(crate) fn instrument(&self) -> Option<&InstrumentRef> {
+        match self {
+            TrackOutput::Instrument(instrument) => Some(instrument),
+            TrackOutput::MidiOut { .. } => None,
+        }
+    }
+}
+
 /// A track inserted at, or removed from, a position — how every positional
 /// track index moves across it (the view's clip shapes and marquee span).
 /// Engine state is keyed by [`Track::slot`] and never needs this.

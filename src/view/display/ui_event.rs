@@ -246,43 +246,23 @@ pub(crate) enum UiEvent {
         /// for a load or an output change.
         shift: Option<TrackShift>,
     },
-    /// A track left the arrangement (a remove, or the undo of an add):
-    /// if it hosted a plugin, `Display` keeps the plugin's live state under
-    /// `track_id` (so an undo reloads it as it was) and tears the plugin in
-    /// `slot` down the usual way; with no plugin there it does nothing. macOS
-    /// only; harmless elsewhere.
-    TrackInstrumentRemoved {
-        /// The engine slot the track held.
-        slot: usize,
-        /// The track's id.
-        track_id: Uuid,
-    },
-    /// A plugin track came back into the arrangement (the undo of a remove,
-    /// the redo of an add): `Display` reloads its plugin into `slot`, editor
-    /// closed — from the live state it kept for `track_id` if it has one,
-    /// else from `instrument`'s state blob. The project-load path. macOS
-    /// only; harmless elsewhere.
-    TrackInstrumentRestored {
-        /// The engine slot the track is in.
-        slot: usize,
-        /// The track's id.
-        track_id: Uuid,
-        /// The plugin to reload, state blob included.
-        instrument: InstrumentRef,
-    },
-    /// A track's output changed (a `SetTrackOutputEdit`, its undo or redo):
-    /// `Display` brings the plugin in `slot` in line with `instrument`. A
-    /// no-op when it already is — the edit itself, whose plugin `Display`
-    /// swapped before asking. Otherwise the plugin there keeps its live state
-    /// under `track_id` and goes, and `instrument` (if any) reloads, editor
-    /// closed, from the live state kept for it, else from its blob. macOS
-    /// only; harmless elsewhere.
-    TrackOutputChanged {
+    /// The plugin a track's engine slot should hold now: after a track
+    /// add / remove (and their undos) and after an output change (a
+    /// `SetTrackOutputEdit`, its undo or redo). `Display` brings `slot` in
+    /// line (`sync_slot_instrument`): nothing to do when it already holds
+    /// `instrument` (or nothing, for `None`) — an output change's own edit,
+    /// whose plugin `Display` swapped before asking. Otherwise the plugin
+    /// there keeps its live state under `track_id` and goes, and
+    /// `instrument` (if any) reloads, editor closed, from the live state kept
+    /// for it, else from its blob — the project-load path. macOS only;
+    /// harmless elsewhere.
+    SlotInstrument {
         /// The track's engine slot.
         slot: usize,
         /// The track's id.
         track_id: Uuid,
-        /// Its plugin now, state blob included — `None` for MIDI Out.
+        /// Its plugin, state blob included — `None` for a MIDI-Out track or
+        /// one that left the arrangement.
         instrument: Option<InstrumentRef>,
     },
     /// The arranger performance lane was armed (selected) — mutually

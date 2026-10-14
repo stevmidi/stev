@@ -436,17 +436,19 @@ its slot, an added one takes the lowest free one.
 - **Remove** (`Delete` with the track headers focused, the output menu's `Delete track`, or the undo of an add).
   The sequencer lifts the track and first releases its sounding plugin notes on
   its slot (clearing that slot's `InstrumentNotes`). The handler sends
-  `UiEvent::TrackInstrumentRemoved { slot, track_id }` for every removed
-  track; `Display::park_track_instrument` does nothing if the slot holds no
-  plugin, else saves the live plugin's state (`InstrumentEditor::save_state`)
-  into `InstrumentHost::parked_states` under the track id and tears the plugin
+  `UiEvent::SlotInstrument { slot, track_id, instrument: None }` for every
+  removed track; `Display::sync_slot_instrument` → `park_track_instrument`
+  does nothing if the slot holds no plugin, else saves the live plugin's state
+  (`InstrumentEditor::save_state`) into `InstrumentHost::parked_states` under
+  the track id and the plugin (`ParkedKey`) and tears the plugin
   down by the ordinary handshake above. No voice is parked anywhere, and the
   parked state never leaves `Display` (the sequencer's `InstrumentRef.state`
   stays as of the last ⌘S, which re-captures every loaded plugin anyway).
 - **Restore** (the undo of a remove, the redo of an add). `restore_track` puts
   the track back in its own slot (or the lowest free one); the handler sends
-  `UiEvent::TrackInstrumentRestored { slot, track_id, instrument }`, and
-  `Display::restore_slot_instrument` reloads the plugin into that slot with
+  `UiEvent::SlotInstrument { slot, track_id, instrument }` (`None` for a
+  MIDI-Out track, which changes nothing), and `Display::sync_slot_instrument`
+  → `restore_slot_instrument` reloads the plugin into that slot with
   the editor closed — from the parked live state if there is one, else from
   `instrument`'s blob — the project-load path (`load_slot_instrument` with
   `picked: None`). So undo brings the plugin back as it was when the track
