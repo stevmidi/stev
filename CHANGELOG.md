@@ -30,6 +30,12 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ### Fixed
 
+- **Quitting from the Dock or by logging out asks about unsaved changes.**
+  Before, only ⌘Q and the window's close button did; the Dock's Quit and a
+  logout, restart or shutdown quit at once and lost unsaved changes. A
+  logout, restart or shutdown is now cancelled while Stev asks, even when
+  nothing is unsaved, so you log out again once Stev has quit
+  (`docs/060-persistence.md` § Unsaved changes).
 - **MIDI Out notes leave on time.** Clip notes bound for external gear used
   to go out up to ~1.3 ms late, at random, even on an idle Mac. The output
   thread now times the last 2 ms before each note itself, so they're now

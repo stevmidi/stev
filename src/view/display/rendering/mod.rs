@@ -1265,7 +1265,9 @@ impl eframe::App for Display {
     /// On macOS this is the last thing the process does: it ends with
     /// [`exit_without_destructors`] rather than returning to AppKit's
     /// `terminate:` (which would call `exit()`) or to `main`. When reached
-    /// via `terminate:` (Dock Quit, logout) the whole call is nested inside
+    /// via `terminate:` — rare now that Dock Quit and logout become a window
+    /// close (`view::appkit`), but still possible if the main window is
+    /// already gone — the whole call is nested inside
     /// AppKit's own `-[NSApplication terminate:]` notification post (it runs
     /// off winit's `app_will_terminate`, an observer callback for that same
     /// post). Stopping the audio thread here is required — otherwise the

@@ -39,9 +39,8 @@ Stage 1 of § Linux and Windows support, staged, taken first as macOS work. Park
 
 ### Smaller loose ends
 
-In order: the first can lose work, the second is a cheap fix for a confusing moment, the third is already flagged in the footer.
+In order: the first is a cheap fix for a confusing moment, the second is already flagged in the footer.
 
-- **Quit from the Dock or a logout** skips the unsaved-changes prompt; only ⌘Q and closing the window are covered (`060` § Unsaved changes).
 - **No hint that a clip carries wheel data.** Pitch bend and mod wheel play back but are invisible in the piano roll and the thumbnails (`090`).
 - **Replacing a track's plugin isn't undoable.** The old plugin's preset state is gone, and the footer says so (`130`).
 
