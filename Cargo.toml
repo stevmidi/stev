@@ -48,8 +48,20 @@ eframe = { version = "0.36", default-features = false, features = [
     "x11",
     "wayland",
 ] }
+# `SCHED_FIFO` for the timing threads (`core::thread_priority`). Already in the
+# tree on Linux, so this pulls no new crates.
+libc = "0.2.189"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+# MMCSS for the timing threads (`core::thread_priority`). This version is
+# already in the tree via eframe and dirs, so this pulls no new crates.
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_Threading",
+] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+# The timing threads' time-constraint policy (`core::thread_priority`).
 mach2 = "0.7"
 # macOS-only CLAP instrument hosting. See core::plugin_host::clap /
 # docs/130-plugin-host.md.

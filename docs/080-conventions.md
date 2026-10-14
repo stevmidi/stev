@@ -5,7 +5,7 @@
 - **New commands go through channels**: add a variant to the relevant enum (`SequencerCommand`, `TransportCommand`), send via `EventHandlers`, and handle in the sequencer thread's `select!` loop.
 - **No locks on the render path**: UI-visible state must use `Arc<AtomicX>` in `SharedAtomics`, not channels or mutexes.
 - **`dprintln!` for debug logging**: compiles away in release via `#[cfg(debug_assertions)]`. Use it instead of `println!`.
-- **Platform guards**: use `[target.'cfg(...)'.dependencies]` for platform-specific crates (on macOS `mach2`, the plugin host's crates and the AppKit bindings) and `#[cfg(target_os = "...")]` for per-OS code (e.g. the plugin host's `#[cfg(target_os = "macos")]` module in `main.rs`). The one Linux-only entry re-declares `eframe` with its `x11` + `wayland` window backends, which `default-features = false` otherwise drops (`000` § CI). `cpal` (the unified audio engine, `src/core/audio/`) is an all-platform dependency.
+- **Platform guards**: use `[target.'cfg(...)'.dependencies]` for platform-specific crates (on macOS `mach2`, the plugin host's crates and the AppKit bindings; `libc` on Linux and `windows-sys` on Windows for the timing threads' priority) and `#[cfg(target_os = "...")]` for per-OS code (e.g. the plugin host's `#[cfg(target_os = "macos")]` module in `main.rs`). The one Linux-only entry re-declares `eframe` with its `x11` + `wayland` window backends, which `default-features = false` otherwise drops (`000` § CI). `cpal` (the unified audio engine, `src/core/audio/`) is an all-platform dependency.
 - **Edition 2024**: use current Rust idioms freely.
 
 ## EventHandlers

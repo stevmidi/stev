@@ -25,8 +25,12 @@ latency counts. On a track playing hardware and a track playing a plugin, the
 hardware was ahead.
 
 This is a **constant offset**, not jitter — which is why the fix is a
-calibration setting rather than a clock change. The sequencer thread's own
-scheduling jitter (a few hundred µs) is a rounding error beside it.
+calibration setting rather than a clock change. The output thread's own
+lateness is a rounding error beside it: the timing probe (`260` § Timing)
+measures p99 under 30 µs on an Intel Mac, idle or with every core busy, since
+the precise deadline wait below and the thread's real-time priority
+(`core/thread_priority.rs`); before them, `select!`'s timeout alone was late by
+up to ~1.3 ms idle and ~4.5 ms loaded.
 
 ## Why it cannot be auto-derived
 
@@ -88,13 +92,23 @@ always slightly in the past by the time the output thread sees it).
 
 ### The thread
 
-`start_midi_output_thread` (`src/core/threads/midi_output.rs`) now runs:
+`start_midi_output_thread` (`src/core/threads/midi_output.rs`) spawns the
+thread and runs `run_midi_output_loop`, which is generic over its port
+(`MidiSink`) so the timing probe drives the same loop with a recorder. Each
+pass:
 
 1. flush everything due (`pop_due`), writing each through `send_midi_out`, which
    also records note on/off with the `NoteLogger`;
-2. compute the wait — the next deadline, or `MIDI_OUT_IDLE_TIMEOUT` (1 s) when
-   the queue is empty;
-3. `select!` over the three existing channels plus a `default(timeout)` arm.
+2. plan the wait (`plan_wait`): with nothing queued, block up to
+   `MIDI_OUT_IDLE_TIMEOUT` (1 s); with the next deadline more than
+   `PRECISE_WINDOW` (2 ms) away, block until that window opens; inside it,
+   poll the channels and sleep in `POLL_SLICE`s (250 µs) down to `SPIN_TAIL`
+   (500 µs), then spin. `select!`'s timeout is a condvar wait that overshoots
+   by up to ~1.3 ms, so it never times the final approach; the short slices
+   keep live thru from waiting behind a near deadline. A 200 µs tail let
+   ~180 µs outliers through on an idle Mac, hence 500;
+3. `select!` over the three existing channels plus a `default(timeout)` arm
+   (a zero timeout inside the window, followed by the sleep or spin).
 
 **`ReleaseNotes` clears the queue before releasing.** This is the one place the
 design can bite: a scheduled note-on belongs to a playback that has just ended,

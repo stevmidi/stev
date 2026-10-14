@@ -82,9 +82,12 @@ mod core {
     pub mod setup;
     pub mod shared_atomics;
     pub mod shared_channels;
+    pub mod thread_priority;
     pub mod threads;
     pub mod time;
     pub mod timer;
+    #[cfg(test)]
+    pub mod timing_probe;
     pub mod transport;
     pub mod view_state;
 }

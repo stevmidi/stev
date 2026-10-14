@@ -26,6 +26,8 @@ mod sequencer_pump;
 
 pub(crate) use computer_keys::start_computer_keys_thread;
 pub(crate) use midi_output::start_midi_output_thread;
+#[cfg(test)]
+pub(crate) use midi_output::{MidiSink, run_midi_output_loop};
 pub(crate) use midi_watcher::start_midi_watcher_thread;
 pub(crate) use sequencer_pump::start_sequencer_thread;
 

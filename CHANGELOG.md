@@ -20,7 +20,25 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ## [Unreleased]
 
+### Changed
+
+- **One clock timer on every platform.** The clock thread now waits for
+  absolute deadlines with plain `Instant`s everywhere, replacing the
+  macOS-only `mach_absolute_time` loop and the drifting sleep loop Linux and
+  Windows used. Same timing on macOS; Linux and Windows should tick more
+  steadily (unmeasured).
+
 ### Fixed
+
+- **MIDI Out notes leave on time.** Clip notes bound for external gear used
+  to go out up to ~1.3 ms late, at random, even on an idle Mac. The output
+  thread now times the last 2 ms before each note itself, so they're now
+  within about 10 µs (`docs/160-midi-out-offset.md`).
+- **Timing holds up on a busy machine.** The clock and MIDI Out threads now
+  ask for real-time priority (macOS's time-constraint policy; best effort on
+  Linux and Windows, unmeasured there). With every core of an Intel Mac busy,
+  clock firings went from up to ~7 ms apart to within ~20 µs of 1 ms, and
+  MIDI Out notes from up to ~4.5 ms late to under 20 µs.
 
 - **Plugin rendering threads join the audio device's workgroup on macOS.**
   The threads that render plugins alongside the audio callback now tell macOS

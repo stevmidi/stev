@@ -261,7 +261,7 @@ author keeps that project as the reference for a rerun. Why it happens is not
 known; the journal can't say which thread ran which track or what the plugin
 does inside `process()`. Any
 later attempt at worker priority should rerun this table. The workgroup alone
-measured neutral on Intel, which is what it should be there.
+measured neutral on Intel, which is what it should be there. The `"clock"` and `"midiout"` threads, which render nothing, do take the policy (`260` § The fixes); a rerun of this table with them on (2026-10-14) came out the same.
 
 **Acceptance test, still open.** The September shape ("`instruments` high but
 every track small") did not appear in any of these runs, the "neither" run

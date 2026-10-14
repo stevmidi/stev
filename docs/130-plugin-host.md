@@ -369,7 +369,7 @@ boundary.
 1. **`Clock`** (`core/clock.rs`) credits musical time from the *real* elapsed
    nanoseconds between timer firings (`Clock::musical_credit_ppqn_us`), not a
    nominal 1 ms — this also removed a ~1.6 % tempo error on Apple Silicon, where
-   the mach timer's period was stretched to ~1.016 ms. Each tick a firing
+   the old mach timer's period was stretched to ~1.016 ms. Each tick a firing
    produces gets an intended `Instant`, linearly interpolated across the firing's
    elapsed span (`Clock::tick_offset_ns`), and rides `tick_tx` as
    `ClockTick { at, tick }`. A firing's elapsed time is clamped
@@ -807,7 +807,7 @@ bytes, `mix::gains_for` + the fader taper round-trip/monotonicity, the
 missing-field back-compat, `mix::track_is_audible`, the `Sequencer` mute/solo
 wiring, `track_header_rects` geometry, and `Clock`'s
 elapsed-time tick crediting + per-tick instant interpolation + stall clamp, and
-`MachWaitUntilTimer::nanos_to_mach`).
+the clock `Timer`'s deadline maths, `core/timer.rs`).
 
 Manual smoke test (`cargo run --release --package stev --bin stev`):
 
