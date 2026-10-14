@@ -20,6 +20,8 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-14
+
 ### Changed
 
 - **Changing a track's output can be undone.** Putting a plugin on a track,
@@ -27,7 +29,6 @@ Breaking entries are marked **Breaking** and say what to do about them.
   are each one undo step. Undoing a replacement brings the old plugin back
   with its preset as it was, not as of the last save. A note sounding when
   the output changes is released on the output it leaves, so nothing hangs.
-
 - **One clock timer on every platform.** The clock thread now waits for
   absolute deadlines with plain `Instant`s everywhere, replacing the
   macOS-only `mach_absolute_time` loop and the drifting sleep loop Linux and
@@ -51,7 +52,6 @@ Breaking entries are marked **Breaking** and say what to do about them.
   Linux and Windows, unmeasured there). With every core of an Intel Mac busy,
   clock firings went from up to ~7 ms apart to within ~20 µs of 1 ms, and
   MIDI Out notes from up to ~4.5 ms late to under 20 µs.
-
 - **Plugin rendering threads join the audio device's workgroup on macOS.**
   The threads that render plugins alongside the audio callback now tell macOS
   they share its deadline, which on Apple Silicon should keep them off the
