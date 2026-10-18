@@ -1,7 +1,8 @@
 //! Filesystem layout for projects: per-project subfolders of the projects
 //! root (`paths::project_dir`), `.stev` file CRUD, project name rules, the
-//! `Clips` folder a MIDI clip export lands in, and reading a `.mid` for the
-//! MIDI clip import (see `060-persistence.md`).
+//! `Clips` folder a MIDI clip export lands in, the `Exports` folder and file
+//! names of the audio export (`300-export-to-audio.md`), and reading a `.mid`
+//! for the MIDI clip import (see `060-persistence.md`).
 
 use std::{
     cmp::Reverse,
@@ -13,7 +14,11 @@ use std::{
 };
 
 use crate::{
-    core::{config::PROJECT_NAME_MAX_CHARS, paths::project_dir, time::Meter},
+    core::{
+        config::PROJECT_NAME_MAX_CHARS,
+        paths::project_dir,
+        time::{Meter, format_bpm},
+    },
     models::clip::Clip,
 };
 
@@ -74,11 +79,27 @@ fn clips_dir() -> PathBuf {
     project_dir().join(CLIPS_FOLDER)
 }
 
+/// The folder under `project_dir()` that every audio export's own folder
+/// goes in. Not a project folder, so [`list_project_folders`] leaves it out,
+/// and nothing in the browser lists it.
+const EXPORTS_FOLDER: &str = "Exports";
+
+/// The exports folder ([`EXPORTS_FOLDER`]).
+#[expect(
+    dead_code,
+    reason = "the audio export writes here from phase 2 of docs/300"
+)]
+fn exports_dir() -> PathBuf {
+    project_dir().join(EXPORTS_FOLDER)
+}
+
 /// Whether a subdirectory of `project_dir()` named `name` is a project
-/// folder: not hidden and not the clips folder (in any case — the volume may
-/// not tell `clips` from `Clips`).
+/// folder: not hidden and neither the clips nor the exports folder (in any
+/// case — the volume may not tell `clips` from `Clips`).
 fn is_project_folder_name(name: &str) -> bool {
-    !name.starts_with('.') && !name.eq_ignore_ascii_case(CLIPS_FOLDER)
+    !name.starts_with('.')
+        && !name.eq_ignore_ascii_case(CLIPS_FOLDER)
+        && !name.eq_ignore_ascii_case(EXPORTS_FOLDER)
 }
 
 /// Subdirectories of `project_dir()` — each one is a project, created
@@ -254,6 +275,91 @@ pub(crate) fn load_midi_clip(path: &Path, meter: Meter) -> Result<Clip, String> 
         .ok_or_else(|| "it has no notes".to_owned())
 }
 
+/// The file every audio export writes the summed mix to.
+#[expect(
+    dead_code,
+    reason = "the audio export writes it from phase 2 of docs/300"
+)]
+pub(crate) const MIX_FILE_NAME: &str = "Mix.wav";
+
+/// Makes a new, empty folder for one audio export inside the exports folder
+/// (creating that too), named by [`audio_export_dir_name`]; returns its path.
+/// Never reuses a folder: a name taken on disk moves on to the next number.
+#[expect(
+    dead_code,
+    reason = "the audio export calls it from phase 2 of docs/300"
+)]
+pub(crate) fn create_audio_export_dir(
+    base: &str,
+    tempo_us: i32,
+    meter: Meter,
+    start_tick: i32,
+) -> io::Result<PathBuf> {
+    let exports = exports_dir();
+    fs::create_dir_all(&exports)?;
+    let name = audio_export_dir_name(base, tempo_us, meter, start_tick, |name| {
+        exports.join(name).exists()
+    });
+    let dir = exports.join(name);
+    fs::create_dir(&dir)?;
+    Ok(dir)
+}
+
+/// `<base> <tempo>bpm <n>-<d> bar <bar>` (e.g. `Sketch 120bpm 4-4 bar 9`) for
+/// an export starting at arrangement tick `start_tick`, in bars of `meter`
+/// (1-based, as on screen). A DAW import needs the tempo, the meter and
+/// where to drop the files, and a WAV carries none of them. The tempo shows a
+/// tenth only when it has one (`120.5bpm`). While `taken` says a name is in
+/// use, ` 2`, ` 3`, … go after it.
+fn audio_export_dir_name(
+    base: &str,
+    tempo_us: i32,
+    meter: Meter,
+    start_tick: i32,
+    taken: impl Fn(&str) -> bool,
+) -> String {
+    let bpm = format_bpm(tempo_us);
+    let bpm = bpm.strip_suffix(".0").unwrap_or(&bpm);
+    let stem = format!(
+        "{base} {bpm}bpm {}-{} bar {}",
+        meter.numerator(),
+        meter.denominator(),
+        meter.ticks_to_bars(start_tick) + 1
+    );
+    once(stem.clone())
+        .chain((2..).map(|n| format!("{stem} {n}")))
+        .find(|name| !taken(name))
+        .expect("an unbounded list of names has a free one")
+}
+
+/// `NN Name.wav` for the stem of the track at 1-based `number`, zero-padded
+/// so the files sort in the arrangement's order. `name` is the track's name
+/// (or its plugin's, for a track never named), with every character a file
+/// system refuses ([`PROJECT_NAME_FORBIDDEN`], control characters) replaced
+/// by `_`. A blank `name` leaves just the number: `NN.wav`.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "the audio export plan names its stems with it")
+)]
+pub(crate) fn stem_file_name(number: usize, name: &str) -> String {
+    let name: String = name
+        .trim()
+        .chars()
+        .map(|c| {
+            if c.is_control() || PROJECT_NAME_FORBIDDEN.contains(&c) {
+                '_'
+            } else {
+                c
+            }
+        })
+        .collect();
+    if name.is_empty() {
+        format!("{number:02}.wav")
+    } else {
+        format!("{number:02} {name}.wav")
+    }
+}
+
 /// `<base>_T<track>_B<bar>.mid` for a clip on track `track_idx` starting at
 /// arrangement tick `start_tick`, in bars of `meter` (both 1-based in the
 /// name, as on screen); while `taken` says a name is in use, `_2`, `_3`, …
@@ -278,6 +384,8 @@ fn clip_export_name(
 
 #[cfg(test)]
 mod tests {
+    use crate::core::time::{bpm_tenths_to_tempo_us, bpm_to_tempo_us};
+
     use super::*;
 
     #[test]
@@ -363,6 +471,8 @@ mod tests {
         assert!(is_project_folder_name("Song"));
         assert!(!is_project_folder_name(CLIPS_FOLDER));
         assert!(!is_project_folder_name("clips"));
+        assert!(!is_project_folder_name(EXPORTS_FOLDER));
+        assert!(!is_project_folder_name("exports"));
         assert!(!is_project_folder_name(".git"));
     }
 
@@ -373,6 +483,70 @@ mod tests {
         assert!(is_midi_file(Path::new("b.midi")));
         assert!(!is_midi_file(Path::new("b.stev")));
         assert!(!is_midi_file(Path::new("mid")));
+    }
+
+    #[test]
+    fn audio_export_dir_name_carries_tempo_meter_and_start_bar() {
+        let four_four = Meter::FOUR_FOUR;
+        let name = audio_export_dir_name(
+            "Sketch",
+            bpm_to_tempo_us(120),
+            four_four,
+            four_four.bars_to_ticks(8),
+            |_| false,
+        );
+        assert_eq!(name, "Sketch 120bpm 4-4 bar 9");
+    }
+
+    #[test]
+    fn audio_export_dir_name_from_bar_one_still_says_so() {
+        let name =
+            audio_export_dir_name("Sketch", bpm_to_tempo_us(90), Meter::FOUR_FOUR, 0, |_| {
+                false
+            });
+        assert_eq!(name, "Sketch 90bpm 4-4 bar 1");
+    }
+
+    #[test]
+    fn audio_export_dir_name_keeps_a_tempo_tenth_and_an_eighth_meter() {
+        let six_eight = Meter::parse("6/8").unwrap();
+        let name = audio_export_dir_name(
+            "Waltz",
+            bpm_tenths_to_tempo_us(1_205),
+            six_eight,
+            six_eight.bars_to_ticks(2),
+            |_| false,
+        );
+        assert_eq!(name, "Waltz 120.5bpm 6-8 bar 3");
+    }
+
+    #[test]
+    fn audio_export_dir_name_never_reuses_a_folder() {
+        let taken = ["Sketch 120bpm 4-4 bar 1", "Sketch 120bpm 4-4 bar 1 2"];
+        let name =
+            audio_export_dir_name("Sketch", bpm_to_tempo_us(120), Meter::FOUR_FOUR, 0, |n| {
+                taken.contains(&n)
+            });
+        assert_eq!(name, "Sketch 120bpm 4-4 bar 1 3");
+    }
+
+    #[test]
+    fn stem_file_names_sort_in_track_order() {
+        assert_eq!(stem_file_name(1, "Bass"), "01 Bass.wav");
+        assert_eq!(stem_file_name(12, "Pads"), "12 Pads.wav");
+    }
+
+    #[test]
+    fn a_blank_stem_name_leaves_the_number() {
+        assert_eq!(stem_file_name(4, "  "), "04.wav");
+    }
+
+    #[test]
+    fn stem_file_names_replace_what_a_file_system_refuses() {
+        assert_eq!(
+            stem_file_name(3, " Lead: A/B\\C\u{7}D? "),
+            "03 Lead_ A_B_C_D_.wav"
+        );
     }
 
     #[test]

@@ -21,5 +21,5 @@ pub(crate) use staged::StagedProject;
 pub(crate) use storage::{
     clip_path, delete_project, is_midi_file, list_clips, list_project_folders, list_projects,
     load_midi_clip, load_project, project_exists, project_name_from_input, rename_clip,
-    rename_project, save_clip_export, save_project,
+    rename_project, save_clip_export, save_project, stem_file_name,
 };

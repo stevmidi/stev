@@ -6,6 +6,9 @@
 //! at runtime once it exists (see `core::plugin_host`). Everything shares one
 //! [`AudioClock`], so every source places its events on the same output-sample
 //! timeline.
+//!
+//! `wav` is the audio export's file writer (`300-export-to-audio.md`): the
+//! engine's float samples, written as stereo 32-bit float WAV.
 
 mod click_voice;
 mod clock;
@@ -17,6 +20,14 @@ mod metronome_source;
 pub(crate) mod mix;
 mod thread_role;
 mod topology;
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "the audio export writes with it from phase 2 of docs/300"
+    )
+)]
+mod wav;
 mod worker_pool;
 mod workgroup;
 

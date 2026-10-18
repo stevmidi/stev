@@ -34,7 +34,7 @@ The `"audio-engine"` thread (`src/core/audio/`) builds the `cpal` default-output
 src/core/
   config.rs              — Constants (BPM_DEFAULT=90, BARS_IN_VIEWPORT=32 (default arranger zoom), ARRANGER_MIN_PX_PER_BEAT, MAX_PX_PER_BEAT + ZOOM_KEY_STEP (shared by the arranger and clip views), PHRASE_DETECTION_WINDOW_BARS=4, MAX_TRACKS=16 (capacity of every per-track array), DEFAULT_TRACK_COUNT=4, TEMPO_US_DEFAULT, etc.)
   time.rs                — Tick/bar/beat math, PPQN, MICROSECONDS_PER_MINUTE, tempo helpers, the `Meter` time signature (unit-tested)
-  audio/                 — Unified audio engine: "audio-engine" thread + one cpal stream, AudioSource trait, shared AudioClock, MetronomeSource (synthesized click voice)
+  audio/                 — Unified audio engine: "audio-engine" thread + one cpal stream, AudioSource trait, shared AudioClock, MetronomeSource (synthesized click voice), WavWriter (the audio export's stereo float WAV files, `300`)
   metronome.rs           — Metronome: per-tick beat/click-class decision + mute gate (sequencer-thread-local), pushes ClickEvents to the engine ring
   plugin_host/           — macOS only. Per-track instrument plugin host: format-agnostic core (InstrumentMixer added to the audio engine as an AudioSource, InstrumentVoice/InstrumentEditor traits, transport snapshot, merged catalog, "plugin-host" voice-reclaim thread) + one submodule per format (clap/, vst3/). vst3/ scans bundles in child processes (see 180). See 130-plugin-host.md
   threads/               — Thread factory functions, one file per named thread (mod.rs: clock + audio engine; midi_output.rs; midi_watcher.rs; computer_keys.rs; sequencer_pump.rs; controller.rs)

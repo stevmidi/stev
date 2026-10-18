@@ -25,11 +25,21 @@
 //! - `selection.rs` / `view.rs` — clip & event selection, clip-view snapshots.
 //! - `mix.rs` — the not-undoable per-track mixer writers.
 //! - `export.rs` — the MIDI clip export: which clip, and its `.mid` bytes.
+//! - `audio_export.rs` — the audio export's plan: which tracks get a stem,
+//!   their file names, the span (`300-export-to-audio.md`).
 //! - `performance_lane.rs` — arming / trigger routing for the arranger lane
 //!   (`110-performance-lane.md`).
 //! - `instrument_event.rs` / `instrument_notes.rs` — the CLAP clip-event feed
 //!   and the note-tracking safety net (`130-plugin-host.md`).
 
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "the audio export runs the plan from phase 2 of docs/300"
+    )
+)]
+mod audio_export;
 mod capture;
 #[cfg(debug_assertions)]
 mod capture_fixture;

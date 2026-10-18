@@ -1,6 +1,6 @@
 # Export to Audio — Phase Plan
 
-**Status: planned, not started** (drafted 2026-10-18). This is the build plan for `280-roadmap.md` § Export to audio. The decisions agreed there on 2026-10-11 are taken as given and not argued again here, with one exception: one real-time pass, a folder per export, `NN Name.wav` stems plus `Mix.wav`, 32-bit float WAV at the device rate, plugin tracks only, stems at unity gain and centred, mute and solo honoured, the click never exported. The exception, changed 2026-10-18: **the arranger's time selection sets what's exported**, replacing "bar 1 to the arrangement's end plus a fixed tail". A fixed tail would cut a long delay or reverb, so the user owns the length: every file starts at the selection's start and ends at its end, and leaving room for the tail is part of making the selection. Once the feature lands, its as-built behaviour moves into `130`, `060`, `010` and `000`, and this file is archived.
+**Status: phase 1 built** (drafted 2026-10-18, phase 1 2026-10-18). This is the build plan for `280-roadmap.md` § Export to audio. The decisions agreed there on 2026-10-11 are taken as given and not argued again here, with one exception: one real-time pass, a folder per export, `NN Name.wav` stems plus `Mix.wav`, 32-bit float WAV at the device rate, plugin tracks only, stems at unity gain and centred, mute and solo honoured, the click never exported. The exception, changed 2026-10-18: **the arranger's time selection sets what's exported**, replacing "bar 1 to the arrangement's end plus a fixed tail". A fixed tail would cut a long delay or reverb, so the user owns the length: every file starts at the selection's start and ends at its end, and leaving room for the tail is part of making the selection. Once the feature lands, its as-built behaviour moves into `130`, `060`, `010` and `000`, and this file is archived.
 
 ## How it works
 
@@ -38,7 +38,7 @@ The writer reports back with a `UiEvent::Status` for the footer. The export is n
 
 There's no audio and no UI in this phase, only code that tests can pin down. It is small, and there's nothing to try by hand.
 
-- **`core/project/wav.rs`: a streaming WAV writer**, hand-rolled like `smf.rs`, with no dependency. It writes `WAVE_FORMAT_IEEE_FLOAT` (format tag 3), 2 channels, 32-bit, at the device rate, plus the `fact` chunk that non-PCM WAV requires. The writer streams frames as they arrive. `finish()` seeks back and patches the `RIFF`, `data` and `fact` sizes. A file that would pass 4 GiB stops at the limit. That's about 3 hours of stereo at 48 kHz, so the limit is a guard, not a feature. Tests:
+- **`core/audio/wav.rs`: a streaming WAV writer**, next to the engine whose samples it writes, hand-rolled like `smf.rs`, with no dependency. It writes `WAVE_FORMAT_IEEE_FLOAT` (format tag 3), 2 channels, 32-bit, at the device rate, plus the `fact` chunk that non-PCM WAV requires. The writer streams frames as they arrive. `finish()` seeks back and patches the `RIFF`, `data` and `fact` sizes. A file that would pass 4 GiB stops at the limit. That's about 3 hours of stereo at 48 kHz, so the limit is a guard, not a feature. Tests:
   - The header bytes of a known short file, field by field.
   - The size patching.
   - A round trip through a tiny test-only reader.
@@ -46,12 +46,12 @@ There's no audio and no UI in this phase, only code that tests can pin down. It 
   - Every export goes in one `Exports` folder (`project_dir()/Exports`, `storage::EXPORTS_FOLDER`), next to `Clips` and kept out of the browser the same way: `list_project_folders` hides it in any case, as it does `Clips` (decided 2026-10-18). The first export creates it. It works the same for a project saved loose in the Projects root or not saved at all, since nothing goes inside a project's own folder.
   - The `base` of the folder name comes from the open project's name, else its folder's, else `project`, the same fallback as `clip_export_name`.
   - `audio_export_dir_name(base, tempo, meter, start_bar, taken)` gives names like `Sketch 120bpm 4-4 bar 9`. The start bar tells the DAW user where to drop the files; a selection from bar 1 still says `bar 1`. A name that's taken gets ` 2`, ` 3`, … appended; the folder is never overwritten, the same rule as `clip_export_name`.
-  - `stem_file_name(n, name)` gives `NN Name.wav`. `NN` is the 1-based, zero-padded track number. `Name` is the name the track header shows, with the characters a filesystem refuses (`/`, `:`, control characters) replaced.
+  - `stem_file_name(n, name)` gives `NN Name.wav`. `NN` is the 1-based, zero-padded track number. `Name` is the track's own name, or for a track never named, its plugin's (`InstrumentRef::display_name`): the header's bare number would add nothing to `NN`. The characters a filesystem refuses (`PROJECT_NAME_FORBIDDEN`, control characters) become `_`, and a blank name leaves `NN.wav`.
   - The mix file is always `Mix.wav`.
   - Tests cover the numbering, padding, sanitising, the x/8 meter in the folder name, the taken-name suffix, and `list_project_folders` hiding `Exports` (and `exports`).
 - **`Sequencer::audio_export_plan(selection)`** takes the arranger's time selection (as the MIDI clip export's `time_bounds` does) and returns either `AudioExportPlan { stems: Vec<StemPlan { slot, file_name }>, start_tick, end_tick, left_out: Vec<String> }` or `AudioExportRefusal`. The rules:
-  - A track gets a stem when its output is an instrument, its voice is loaded, and it's audible under mute and solo (`track_is_audible`, the same rule the mixer uses).
-  - `left_out` names the MIDI Out tracks that would otherwise have been audible, so the footer can say they were skipped.
+  - A track gets a stem when its output is an instrument and it's audible under mute and solo (`track_audibility`, the same rule the mixer uses). Whether its plugin actually loaded is the view's knowledge, not the sequencer's, so a missing voice is phase 2's to handle: its stem comes out silent and the footer names it.
+  - `left_out` holds the positions of the MIDI Out tracks that would otherwise have been heard, so the footer can say they were skipped.
   - `start_tick` and `end_tick` are the selection's tick range, exactly. The selection's tracks don't narrow the export: mute and solo choose the tracks, the selection only chooses the time.
   - It refuses with `NoSelection` when there's no time selection ("Select the time to export"), and with `NothingToHear` when no track qualifies or no unmuted clip on one overlaps the selection.
   - Tests: mute, solo, a mix of MIDI Out and plugin tracks, a selection on only some tracks (all audible ones still export), a selection with no clips in it, no selection, and an empty project.
@@ -60,6 +60,7 @@ There's no audio and no UI in this phase, only code that tests can pin down. It 
 
 This is the first phase to try by hand. `⌘/Ctrl+⇧+R` writes a real stem set. The guard rails come in phase 3, so during a phase-2 export you just don't touch anything.
 
+- **Remove the `expect(dead_code)` markers** phase 1 left on `mod wav` (in `core/audio`), `mod audio_export` and the `Exports` items in `storage.rs`; with the export wired up they are fulfilled no longer.
 - **The tap in `InstrumentMixer`.** It's armed with the plan's slot mask and the two frames resolved from the marks. A pure helper, `export_span(start, end, block_start, frames) -> Option<Range<usize>>`, gives the part of a block that's inside the export, so a block can be cut part-way through at either end. It's tested on its own, including a span that starts and ends inside a single block. The summing pass pushes each exported voice's raw samples to its slot's ring, and its gained samples into a mix scratch. The scratch then goes to the mix ring. A voice that was asleep this block, or whose render failed, pushes silence, so every file keeps the same length. A unit test with a test-only `InstrumentVoice` fake checks two things: stems come out at unity while the mix is gained, and a muted slot pushes nothing.
 - **The `"audio-export"` thread** is spawned with the plugin host and parks until it's told to start. It opens one `WavWriter` per stem plus `Mix.wav`, drains the rings, finishes the files when the mixer reports the `End` frame, and reports `Exported "<folder>" — N stems + mix` to the footer. If a write fails, it says so and leaves what it wrote in place.
 - **The run** (§ How it works) goes in `event_handlers/audio_export.rs`. That keeps it out of `project.rs`, which already holds the MIDI clip export. The marks are sent from the tick path in `playback.rs`, where each tick's `Instant` is known.
@@ -128,7 +129,7 @@ All decided 2026-10-18:
 
 | Phase | Where | What |
 |---|---|---|
-| 1 | `project/wav.rs` | Header bytes, size patching, round trip, 4 GiB guard |
+| 1 | `audio/wav.rs` | Header bytes, size patching, round trip, 4 GiB guard |
 | 1 | `project/storage.rs` | Folder name, ` 2` suffix, stem names, sanitising |
 | 1 | `sequencer/` (plan) | Track choice under mute/solo/output, `end_tick`, refusals |
 | 2 | `plugin_host/mixer.rs` | `export_span` edges; stems at unity vs gained mix with a fake voice |
