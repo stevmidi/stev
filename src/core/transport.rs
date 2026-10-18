@@ -96,6 +96,13 @@ pub(crate) enum TransportCommand {
     /// time selection. The region band stays where it is (dimmed while looping
     /// is off) so the next press turns it back on in place.
     ToggleLoop,
+    /// Turns looping on or off, whatever it was, leaving the region. The
+    /// audio export turns it off for its run and puts it back after
+    /// (`300-export-to-audio.md`).
+    SetLoop {
+        /// Whether playback wraps at the region end.
+        enabled: bool,
+    },
     /// Sets the transport cursor to an absolute tick and re-syncs clip
     /// selection to whatever clip (if any) now sits under the cursor.
     /// Used for click-to-place-cursor in the arranger view.

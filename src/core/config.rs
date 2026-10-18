@@ -158,3 +158,8 @@ pub const MIDI_OUT_OFFSET_STEP_MS: i32 = 1;
 /// and consumed every audio callback, so a handful of slots is ample; a full
 /// ring drops the click rather than blocking.
 pub const METRONOME_CLICK_RING_CAPACITY: usize = 16;
+
+/// Capacity of the `rtrb` SPSC ring carrying the audio export's start and
+/// end marks from the sequencer to the plugin host's mixer. One export sends
+/// two, and the mixer drains them every callback.
+pub const EXPORT_MARK_RING_CAPACITY: usize = 4;

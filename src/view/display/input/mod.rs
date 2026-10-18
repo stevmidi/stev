@@ -58,6 +58,24 @@ fn track_header_key(key: Key, modifiers: KeyModifiers) -> Option<TrackHeaderKey>
 }
 
 impl Display {
+    /// What an export takes from the view: the arranger marquee (`None` in
+    /// the clip view) and the name its file or folder starts with — the open
+    /// project's name, else its folder's, else `project`.
+    fn export_scope(&self) -> (Option<TimeSelectionRect>, String) {
+        let time_bounds = self
+            .gesture
+            .time_selection
+            .filter(|_| self.view_state() == ViewState::Arranger);
+        let name = self
+            .project
+            .project_current_name
+            .as_deref()
+            .or(self.project.project_current_folder.as_deref())
+            .unwrap_or("project")
+            .to_owned();
+        (time_bounds, name)
+    }
+
     /// Whether `(x, y)` is inside the drawable canvas.
     fn is_mouse_inside_window(&self, x: f32, y: f32) -> bool {
         self.render.canvas_rect.contains(egui::pos2(x, y))
@@ -1279,19 +1297,22 @@ impl Display {
                 key: Key::E,
                 modifiers,
             } if modifiers.command && modifiers.shift && !modifiers.alt => {
-                let time_bounds = self
-                    .gesture
-                    .time_selection
-                    .filter(|_| self.view_state() == ViewState::Arranger);
-                let name = self
-                    .project
-                    .project_current_name
-                    .as_deref()
-                    .or(self.project.project_current_folder.as_deref())
-                    .unwrap_or("project")
-                    .to_owned();
+                let (time_bounds, name) = self.export_scope();
                 self.input_event_tx
                     .send(InputEvent::ExportClip { time_bounds, name })
+                    .is_ok()
+            }
+            // ⌘/Ctrl+⇧+R — "Export Audio" (Ableton's chord): the marquee's
+            // time as WAV stems plus a mix. Without a marquee, and in the
+            // clip view, the sequencer says to make one. Ahead of the ⌘R
+            // rename arm, which refuses ⇧ anyway.
+            InputEvent::KeyPressed {
+                key: Key::R,
+                modifiers,
+            } if modifiers.command && modifiers.shift && !modifiers.alt => {
+                let (time_bounds, name) = self.export_scope();
+                self.input_event_tx
+                    .send(InputEvent::ExportAudio { time_bounds, name })
                     .is_ok()
             }
             // Ableton-style split at the cursor: same shape as Delete above,

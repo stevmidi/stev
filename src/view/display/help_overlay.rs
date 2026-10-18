@@ -104,6 +104,7 @@ pub(super) const HELP: [&[HelpSection]; 3] = [
             ("⌘⇧M", "Insert an empty clip"),
             ("⌘T", "Add a track"),
             ("⌘R", "Rename the track"),
+            ("⌘⇧R", "Export the selection as audio"),
         ],
     }],
     &[

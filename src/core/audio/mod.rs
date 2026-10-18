@@ -20,14 +20,9 @@ mod metronome_source;
 pub(crate) mod mix;
 mod thread_role;
 mod topology;
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the audio export writes with it from phase 2 of docs/300"
-    )
-)]
-mod wav;
+// Only the macOS plugin host's audio export writes WAV.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) mod wav;
 mod worker_pool;
 mod workgroup;
 

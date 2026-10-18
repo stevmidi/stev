@@ -12,8 +12,8 @@ use egui::Context;
 use rtrb::{Producer, RingBuffer};
 
 use crate::core::config::{
-    INSTRUMENT_MIDI_RING_CAPACITY, METRONOME_CLICK_RING_CAPACITY, MIDI_OUT_OFFSET_DEFAULT_MS,
-    REGION_LENGTH_DEFAULT, TEMPO_US_DEFAULT,
+    EXPORT_MARK_RING_CAPACITY, INSTRUMENT_MIDI_RING_CAPACITY, METRONOME_CLICK_RING_CAPACITY,
+    MIDI_OUT_OFFSET_DEFAULT_MS, REGION_LENGTH_DEFAULT, TEMPO_US_DEFAULT,
 };
 use crate::core::{
     shared_atomics::{LiveRecState, TrackMixAtomics},
@@ -34,7 +34,7 @@ use crate::{
             output::MidiOutputConnection,
         },
         note_logger::NoteLoggerCommand,
-        sequencer::{ClipInstrumentEvent, Sequencer, SequencerCommand},
+        sequencer::{AudioExportJob, ClipInstrumentEvent, ExportMark, Sequencer, SequencerCommand},
         shared_atomics::SharedAtomics,
         shared_channels::SharedChannels,
         transport::{Transport, TransportCommand, TransportEvent},
@@ -88,6 +88,8 @@ pub(crate) fn setup_shared_channels() -> SharedChannels {
     let (live_instrument_midi_tx, live_instrument_midi_rx) =
         RingBuffer::new(INSTRUMENT_MIDI_RING_CAPACITY);
     let (metronome_click_tx, metronome_click_rx) = RingBuffer::new(METRONOME_CLICK_RING_CAPACITY);
+    let (export_mark_tx, export_mark_rx) = RingBuffer::new(EXPORT_MARK_RING_CAPACITY);
+    let (audio_export_job_tx, audio_export_job_rx) = unbounded::<AudioExportJob>();
     let (input_event_tx, input_event_rx) = unbounded::<InputEvent>();
     let (ui_event_tx, ui_event_rx) = unbounded::<UiEvent>();
     let (midi_in_reconnect_tx, midi_in_reconnect_rx) = bounded::<String>(1);
@@ -118,6 +120,10 @@ pub(crate) fn setup_shared_channels() -> SharedChannels {
         live_instrument_midi_rx,
         metronome_click_tx,
         metronome_click_rx,
+        export_mark_tx,
+        export_mark_rx,
+        audio_export_job_tx,
+        audio_export_job_rx,
         input_event_tx,
         input_event_rx,
         ui_event_tx,
@@ -248,11 +254,13 @@ pub(crate) fn setup_display(
 pub(crate) fn setup_sequencer(
     midi_out_tx: Sender<MidiOutMessage>,
     instrument_midi_tx: Producer<ClipInstrumentEvent>,
+    export_mark_tx: Producer<ExportMark>,
     shared_atomics: &SharedAtomics,
 ) -> Sequencer {
     Sequencer::new(
         midi_out_tx,
         instrument_midi_tx,
+        export_mark_tx,
         shared_atomics.playback_tick.clone(),
         shared_atomics.elapsed_ticks.clone(),
         shared_atomics.cursor_tick.clone(),
@@ -276,6 +284,7 @@ pub(crate) fn setup_event_handlers(
     transport_command_tx: Sender<TransportCommand>,
     sequencer_command_tx: Sender<SequencerCommand>,
     note_logger_command_tx: Sender<NoteLoggerCommand>,
+    audio_export_job_tx: Sender<AudioExportJob>,
     shared_atomics: &SharedAtomics,
     repaint_ctx: Arc<OnceLock<Context>>,
 ) -> EventHandlers {
@@ -284,6 +293,7 @@ pub(crate) fn setup_event_handlers(
         transport_command_tx,
         sequencer_command_tx,
         note_logger_command_tx,
+        audio_export_job_tx,
         shared_atomics.view_state.clone(),
         shared_atomics.has_event_selection.clone(),
         shared_atomics.midi_out_offset_ms.clone(),

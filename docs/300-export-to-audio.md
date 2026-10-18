@@ -1,6 +1,6 @@
 # Export to Audio — Phase Plan
 
-**Status: phase 1 built** (drafted 2026-10-18, phase 1 2026-10-18). This is the build plan for `280-roadmap.md` § Export to audio. The decisions agreed there on 2026-10-11 are taken as given and not argued again here, with one exception: one real-time pass, a folder per export, `NN Name.wav` stems plus `Mix.wav`, 32-bit float WAV at the device rate, plugin tracks only, stems at unity gain and centred, mute and solo honoured, the click never exported. The exception, changed 2026-10-18: **the arranger's time selection sets what's exported**, replacing "bar 1 to the arrangement's end plus a fixed tail". A fixed tail would cut a long delay or reverb, so the user owns the length: every file starts at the selection's start and ends at its end, and leaving room for the tail is part of making the selection. Once the feature lands, its as-built behaviour moves into `130`, `060`, `010` and `000`, and this file is archived.
+**Status: phases 1–2 built** (drafted 2026-10-18, phases 1 and 2 2026-10-18). This is the build plan for `280-roadmap.md` § Export to audio. The decisions agreed there on 2026-10-11 are taken as given and not argued again here, with one exception: one real-time pass, a folder per export, `NN Name.wav` stems plus `Mix.wav`, 32-bit float WAV at the device rate, plugin tracks only, stems at unity gain and centred, mute and solo honoured, the click never exported. The exception, changed 2026-10-18: **the arranger's time selection sets what's exported**, replacing "bar 1 to the arrangement's end plus a fixed tail". A fixed tail would cut a long delay or reverb, so the user owns the length: every file starts at the selection's start and ends at its end, and leaving room for the tail is part of making the selection. Once the feature lands, its as-built behaviour moves into `130`, `060`, `010` and `000`, and this file is archived.
 
 ## How it works
 
@@ -15,20 +15,20 @@ The tap runs before the engine's ±1.0 safety clamp, so the files carry float le
 
 **Sample-exact alignment comes from the existing scheduling.** The sequencer already stamps each tick with its intended `Instant` (`EventTime::At`), and the mixer maps that stamp onto the `steady` frame timeline with `RenderCtx::scheduled_frame`. The export's start and end go through exactly the same path:
 
-- **Start:** the sequencer sends `ExportMark::Start { at }`, carrying the selection start's `Instant`.
+- **Start:** the sequencer sends `ExportMark::Start { at, slots }`, carrying the selection start's `Instant` and the engine slots that get a stem.
 - **End:** the sequencer sends `ExportMark::End { at }`, carrying the selection end's `Instant`.
 
-The mixer turns both into frames the same way it does a note-on. So the selection's first tick lands at sample 0 of every file, and a note at any tick lands where the plugin played it. The marks travel on their own small `rtrb` ring from the sequencer thread to the mixer, next to the clip feed. They're `Copy` and carry no payload.
+The mixer turns both into frames the same way it does a note-on. So the selection's first tick lands at sample 0 of every file, and a note at any tick lands where the plugin played it. The marks travel on their own small `rtrb` ring from the sequencer thread to the mixer, next to the clip feed. They're `Copy` and carry no heap payload (the slots are a fixed `[bool; MAX_TRACKS]`). `Sequencer::tick` sends them, counting the ticks on the tracks' own position from the run's seek (`reset_to_tick`), not the transport's: a clock tick that slips in before the seek reaches the tracks plays where they were and must not start the files.
 
 **The run is a sequencer workflow, like the take session's** (`290`). `⌘/Ctrl+⇧+R` (Ableton's Export Audio/Video chord; it's free here) works in the arranger. In the clip view it refuses with "Select the time to export in the arranger". It runs these steps:
 
 1. Build the plan, or refuse.
-2. Stop the transport, then turn looping off and seek to the selection's start. The loop state and the cursor are saved first, so they can be restored at the end.
+2. Stop the transport, then turn looping off and seek to the selection's start. The loop state is saved first, so it can be restored at the end. The cursor needs no saving: the run plays with `PlayFromTick`, which never moves it.
 3. Tell the writer to open the files.
 4. Play.
 5. Send `Start` at the selection's start tick and `End` at its end tick.
-6. Stop the transport at the end tick. Until phase 4, whatever is still ringing then is cut, so the selection has to leave room for the tail; phase 4 lets it ring out to silence instead.
-7. Restore the saved loop state and cursor.
+6. Stop the transport once the writer has finished the files (`SequencerCommand::AudioExportWritten`), a moment past the end tick; the files themselves end exactly on the `End` frame. Stopping right at the end tick would send its note-offs ahead of the `End` frame, which sits a buffer later. Until phase 4, whatever is still ringing at the end is cut, so the selection has to leave room for the tail; phase 4 lets it ring out to silence instead.
+7. Restore the saved loop state. The stop returns playback to the cursor.
 
 The writer reports back with a `UiEvent::Status` for the footer. The export is not an edit, so there's no undo. Edits never move the transport (`220`), but the export isn't an edit: it is a transport run, and it puts the transport back the way it found it.
 
@@ -43,12 +43,12 @@ There's no audio and no UI in this phase, only code that tests can pin down. It 
   - The size patching.
   - A round trip through a tiny test-only reader.
 - **`storage`: names and folders.**
-  - Every export goes in one `Exports` folder (`project_dir()/Exports`, `storage::EXPORTS_FOLDER`), next to `Clips` and kept out of the browser the same way: `list_project_folders` hides it in any case, as it does `Clips` (decided 2026-10-18). The first export creates it. It works the same for a project saved loose in the Projects root or not saved at all, since nothing goes inside a project's own folder.
+  - Every export goes in one `Exports` folder in the library, beside `Projects` (`paths::exports_dir()`, `~/Documents/Stev/Exports`; moved there from the projects root after phase 2, 2026-10-18, so the browser needs no rule to hide it). The first export creates it. It works the same for a project saved loose in the Projects root or not saved at all, since nothing goes inside a project's own folder.
   - The `base` of the folder name comes from the open project's name, else its folder's, else `project`, the same fallback as `clip_export_name`.
   - `audio_export_dir_name(base, tempo, meter, start_bar, taken)` gives names like `Sketch 120bpm 4-4 bar 9`. The start bar tells the DAW user where to drop the files; a selection from bar 1 still says `bar 1`. A name that's taken gets ` 2`, ` 3`, … appended; the folder is never overwritten, the same rule as `clip_export_name`.
   - `stem_file_name(n, name)` gives `NN Name.wav`. `NN` is the 1-based, zero-padded track number. `Name` is the track's own name, or for a track never named, its plugin's (`InstrumentRef::display_name`): the header's bare number would add nothing to `NN`. The characters a filesystem refuses (`PROJECT_NAME_FORBIDDEN`, control characters) become `_`, and a blank name leaves `NN.wav`.
   - The mix file is always `Mix.wav`.
-  - Tests cover the numbering, padding, sanitising, the x/8 meter in the folder name, the taken-name suffix, and `list_project_folders` hiding `Exports` (and `exports`).
+  - Tests cover the numbering, padding, sanitising, the x/8 meter in the folder name, and the taken-name suffix.
 - **`Sequencer::audio_export_plan(selection)`** takes the arranger's time selection (as the MIDI clip export's `time_bounds` does) and returns either `AudioExportPlan { stems: Vec<StemPlan { slot, file_name }>, start_tick, end_tick, left_out: Vec<String> }` or `AudioExportRefusal`. The rules:
   - A track gets a stem when its output is an instrument and it's audible under mute and solo (`track_audibility`, the same rule the mixer uses). Whether its plugin actually loaded is the view's knowledge, not the sequencer's, so a missing voice is phase 2's to handle: its stem comes out silent and the footer names it.
   - `left_out` holds the positions of the MIDI Out tracks that would otherwise have been heard, so the footer can say they were skipped.
@@ -57,6 +57,8 @@ There's no audio and no UI in this phase, only code that tests can pin down. It 
   - Tests: mute, solo, a mix of MIDI Out and plugin tracks, a selection on only some tracks (all audible ones still export), a selection with no clips in it, no selection, and an empty project.
 
 ## Phase 2: the export, end to end
+
+**Built 2026-10-18.** As built, beyond what's below: the writer reports back to the sequencer (`SequencerCommand::AudioExportWritten`), which ends the run and writes the footer; the writer drains every 100 ms and clears its shared flags once an export is finished (not when the next starts, when its start mark may already have armed the mixer); the handler makes the folder before the run and removes it, still empty, if the job can't be sent (no plugin host); ring overflow is already reported (`samples were dropped: listen before you use it`); a second `⌘⇧R` during a run refuses ("An export is already running").
 
 This is the first phase to try by hand. `⌘/Ctrl+⇧+R` writes a real stem set. The guard rails come in phase 3, so during a phase-2 export you just don't touch anything.
 
@@ -120,7 +122,7 @@ The hold is the real trade-off: too short and a sparse ping-pong delay ends earl
 All decided 2026-10-18:
 
 - **The time selection sets what's exported**, not bar 1 to the end. No fixed tail: until phase 4 the length is the user's to choose, and from phase 4 the files ring out to silence past the selection end.
-- **Exports go in one `Exports` folder** beside `Clips`, hidden from the browser.
+- **Exports go in one `Exports` folder** in the library, beside `Projects` (first beside `Clips`, hidden from the browser; moved after phase 2).
 - **Live input is blocked during an export.** The export is the arrangement only; recording a live performance over it would be a different feature.
 - **No stem for a plugin track with no clips in the selection.** Silence adds nothing in a DAW.
 - **No fixed settle.** The detector in phase 4 decides when the path is clear and when the tail is done.

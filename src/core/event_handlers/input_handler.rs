@@ -285,6 +285,13 @@ impl EventHandlers {
                 });
             }
 
+            InputEvent::ExportAudio { time_bounds, name } => {
+                self.send_sequencer(SequencerCommand::ExportAudio {
+                    time_bounds: *time_bounds,
+                    name: name.clone(),
+                });
+            }
+
             InputEvent::ImportMidiClip { clip, name, target } => {
                 self.send_sequencer(SequencerCommand::ImportMidiClip {
                     clip: clip.clone(),

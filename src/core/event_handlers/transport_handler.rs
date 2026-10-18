@@ -118,6 +118,9 @@ impl EventHandlers {
                 transport.toggle_loop_enabled();
                 dprintln!("Toggle loop: loop_enabled={}", transport.is_loop_enabled());
             }
+            TransportCommand::SetLoop { enabled } => {
+                transport.set_loop_enabled(*enabled);
+            }
             TransportCommand::MoveCursor { ticks } => {
                 transport.move_cursor(*ticks);
                 self.sync_clip_selection_to_cursor_workflow(sequencer);

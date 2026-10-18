@@ -129,7 +129,10 @@ impl Sequencer {
     /// `at` is the tick's intended [`Instant`], carried from `Clock` — clip
     /// events for `Instrument` tracks are tagged with it so the CLAP host can
     /// place them at the exact output sample, rather than at block offset 0.
+    /// An audio export's start and end marks carry it the same way
+    /// (`audio_export.rs`).
     pub(crate) fn tick(&mut self, at: Instant) {
+        self.mark_audio_export(at);
         // Read audibility once, before the `&mut` loop below.
         let audible = self.track_audibility();
         for (track_idx, track) in self.tracks.iter_mut().enumerate() {
@@ -358,11 +361,13 @@ impl Sequencer {
     }
 
     /// Re-seeks every track to `tick` (each track's wheels then chase what
-    /// is in force there — `Track::seek`).
+    /// is in force there — `Track::seek`), and an audio export's count of
+    /// the ticks they play with them.
     pub(crate) fn reset_to_tick(&mut self, tick: i32) {
         for track in self.tracks.iter_mut() {
             track.seek(tick);
         }
+        self.seek_audio_export(tick);
     }
 }
 

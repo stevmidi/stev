@@ -29,6 +29,13 @@
 //! one-buffer delay — so it lands at (close to) the right output sample,
 //! with a constant one-buffer latency, instead of always at block offset 0.
 //! Live keyboard events skip the delay and play at the head of the block.
+//!
+//! ## Audio export
+//!
+//! While an audio export runs, the summing pass also feeds its tap
+//! ([`ExportTap`], `300-export-to-audio.md`): each exported voice's raw
+//! samples, and their gained sum, between the frames the sequencer's start
+//! and end marks resolve to, scheduled the way a clip event's `At` is.
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -43,6 +50,7 @@ use crate::core::midi::message::Midi3;
 use crate::core::sequencer::{ClipInstrumentEvent, EventTime};
 use crate::core::shared_atomics::TrackMixAtomics;
 
+use super::export::ExportTap;
 use super::shutdown::HostShutdown;
 use super::transport::TransportState;
 use super::voice::InstrumentVoice;
@@ -150,10 +158,13 @@ pub(super) struct InstrumentMixer {
     cached_gains: [(f32, f32); MAX_TRACKS],
     /// App-exit shutdown coordination with the `"plugin-host"` thread.
     shutdown: Arc<HostShutdown>,
+    /// The audio export's tap, fed by the summing pass.
+    export: ExportTap,
 }
 
 impl InstrumentMixer {
     /// Builds the mixer with no voices, wired to the feeds and shared state.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
         cmd_rx: Consumer<PluginHostCommand>,
         dead_tx: Producer<(usize, Box<dyn InstrumentVoice>)>,
@@ -162,6 +173,7 @@ impl InstrumentMixer {
         transport: TransportState,
         track_mix: Arc<TrackMixAtomics>,
         shutdown: Arc<HostShutdown>,
+        export: ExportTap,
     ) -> Self {
         Self {
             voices: std::array::from_fn(|_| None),
@@ -176,6 +188,7 @@ impl InstrumentMixer {
             mix_cache: [(0, 0); MAX_TRACKS],
             cached_gains: [(1.0, 1.0); MAX_TRACKS],
             shutdown,
+            export,
         }
     }
 
@@ -305,6 +318,11 @@ impl AudioSource for InstrumentMixer {
             self.push_pending(target, event.track, event.message);
         }
 
+        // The export's marks land on their ticks' samples the same way.
+        let voices = &self.voices;
+        self.export
+            .take_marks(|at| ctx.scheduled_frame(at), |slot| voices[slot].is_some());
+
         // Live keyboard events: no delay, head of the block. Same `pending`
         // path so note-on / note-off ordering against clip events is kept.
         while let Ok((track, bytes)) = self.live_midi_rx.pop() {
@@ -390,24 +408,39 @@ impl AudioSource for InstrumentMixer {
         // --- Summing pass ---
         // Order-dependent, and writing one shared accumulator, so it stays on
         // this thread. A couple of multiply-adds per frame per track —
-        // negligible next to the render pass above.
+        // negligible next to the render pass above. An exported voice is
+        // tapped here too, silence for a slot with nothing to play.
+        let export_span = self.export.begin_block(block_start, frames);
         let [left, right] = mix;
         for (track, slot) in self.voices.iter_mut().enumerate() {
-            let Some(voice) = slot else { continue };
+            let Some(voice) = slot else {
+                if let Some(span) = export_span.clone() {
+                    self.export.tap(track, None, (0.0, 0.0), (0.0, 0.0), span);
+                }
+                continue;
+            };
             let (target_l, target_r) = gains[track];
             // Ramp linearly across the block from last block's end gain to this
             // block's target, so a fader move (or a fresh voice's 0.0 start)
             // doesn't zipper.
-            if voice.mix().rendered {
-                let (mut gl, mut gr) = (voice.mix().gain_l, voice.mix().gain_r);
-                let step_l = (target_l - gl) / frames as f32;
-                let step_r = (target_r - gr) / frames as f32;
+            let gain = (voice.mix().gain_l, voice.mix().gain_r);
+            let step = (
+                (target_l - gain.0) / frames as f32,
+                (target_r - gain.1) / frames as f32,
+            );
+            let rendered = voice.mix().rendered;
+            if rendered {
+                let (mut gl, mut gr) = gain;
                 for (f, (l, r)) in left.iter_mut().zip(right.iter_mut()).enumerate() {
-                    gl += step_l;
-                    gr += step_r;
+                    gl += step.0;
+                    gr += step.1;
                     *l += voice.sample(0, f) * gl;
                     *r += voice.sample(1, f) * gr;
                 }
+            }
+            if let Some(span) = export_span.clone() {
+                let playing = rendered.then_some(&**voice);
+                self.export.tap(track, playing, gain, step, span);
             }
             // The block ends at the target either way. A voice that rendered
             // nothing snaps straight to it, so it doesn't ramp from a stale
@@ -416,6 +449,8 @@ impl AudioSource for InstrumentMixer {
             m.gain_l = target_l;
             m.gain_r = target_r;
         }
+
+        self.export.end_block(export_span, block_end);
 
         // Events queued this block have been consumed; the next starts empty.
         for voice in self.voices.iter_mut().flatten() {

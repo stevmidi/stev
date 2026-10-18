@@ -1,13 +1,79 @@
-//! The audio export's plan (`⌘/Ctrl+⇧+R`, `300-export-to-audio.md`): which
-//! tracks get a stem, what each file is called, and the stretch of time it
-//! covers. The run that plays it and the files it writes are the handler's.
+//! The audio export (`⌘/Ctrl+⇧+R`, `300-export-to-audio.md`), its sequencer
+//! half: the plan (which tracks get a stem, what each file is called, the
+//! stretch of time it covers) and the run's state while it plays. The run
+//! sends the [`ExportMark`]s from the tick path, stamped with the `Instant`
+//! of the tick the tracks play at the selection's start and end, so the
+//! mixer cuts every file where those ticks sound. The workflow that starts
+//! and ends the run is the handler's; the tap and the files are the plugin
+//! host's.
+
+use std::path::PathBuf;
+use std::time::Instant;
 
 use crate::{
-    core::{input_event::TimeSelectionRect, project::stem_file_name},
+    core::{config::MAX_TRACKS, input_event::TimeSelectionRect, project::stem_file_name},
     models::track::Track,
 };
 
 use super::Sequencer;
+
+/// One end of the export, from the sequencer to the plugin host's mixer on
+/// its own `rtrb` ring. The mixer turns `at` into a frame the way it places
+/// a note-on (`RenderCtx::scheduled_frame`), so the files start and end on
+/// the samples where those ticks sound.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) enum ExportMark {
+    /// The selection's start tick: sample 0 of every file.
+    Start {
+        /// The tick's intended time.
+        at: Instant,
+        /// The engine slots that get a stem ([`Track::slot`]).
+        slots: [bool; MAX_TRACKS],
+    },
+    /// The selection's end tick: the first sample past every file.
+    End {
+        /// The tick's intended time.
+        at: Instant,
+    },
+}
+
+/// The files one export writes, sent to the `"audio-export"` thread before
+/// the run plays. The folder already exists.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) struct AudioExportJob {
+    /// Each stem's engine slot and file.
+    pub(crate) stems: Vec<(usize, PathBuf)>,
+    /// The mix file.
+    pub(crate) mix: PathBuf,
+}
+
+/// How the `"audio-export"` thread's files came out, sent back once it has
+/// finished them (`SequencerCommand::AudioExportWritten`).
+#[derive(Debug, Default, PartialEq)]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) struct AudioExportOutcome {
+    /// The first file error; what was written before it stays on disk.
+    pub(crate) error: Option<String>,
+    /// The stem slots with no plugin loaded: their files are silence.
+    pub(crate) silent: Vec<usize>,
+    /// A ring filled before the writer drained it, so samples were dropped.
+    pub(crate) overflowed: bool,
+}
+
+/// An export in progress: its plan, where it writes, and what to put back
+/// when it ends.
+pub(crate) struct AudioExportRun {
+    /// What's exported.
+    pub(crate) plan: AudioExportPlan,
+    /// The export's folder.
+    pub(crate) folder: PathBuf,
+    /// Whether looping was on before the run turned it off.
+    pub(crate) loop_was_enabled: bool,
+    /// The tick the tracks play on the next [`Sequencer::tick`], counted
+    /// from the last re-seek. `None` until the run's own seek.
+    position: Option<i32>,
+}
 
 /// What an export will write: one stem per track in [`stems`](Self::stems)
 /// plus the mix, every file covering `[start_tick, end_tick)`.
@@ -95,6 +161,76 @@ impl Sequencer {
     }
 }
 
+impl Sequencer {
+    /// Starts the run for `plan`, writing into `folder`: from here the tick
+    /// path sends its marks. Remembers the loop state for
+    /// [`finish_audio_export`](Self::finish_audio_export) to hand back.
+    pub(crate) fn begin_audio_export(&mut self, plan: AudioExportPlan, folder: PathBuf) {
+        self.audio_export = Some(AudioExportRun {
+            plan,
+            folder,
+            loop_was_enabled: self.is_loop_enabled(),
+            position: None,
+        });
+    }
+
+    /// Whether an export is running.
+    pub(crate) fn is_exporting_audio(&self) -> bool {
+        self.audio_export.is_some()
+    }
+
+    /// Ends the run and hands it back; `None` with none running.
+    pub(crate) fn finish_audio_export(&mut self) -> Option<AudioExportRun> {
+        self.audio_export.take()
+    }
+
+    /// The tracks were re-seeked to `tick` (`reset_to_tick`).
+    pub(super) fn seek_audio_export(&mut self, tick: i32) {
+        if let Some(run) = &mut self.audio_export {
+            run.position = Some(tick);
+        }
+    }
+
+    /// Sends the mark for the tick the tracks play now, `at`, if it is the
+    /// selection's start or end. Counted on the tracks' own position, not
+    /// the transport's: a clock tick that slips in before the run's seek
+    /// reaches the tracks plays where they were, and must not start the
+    /// files.
+    pub(super) fn mark_audio_export(&mut self, at: Instant) {
+        let Some(run) = &mut self.audio_export else {
+            return;
+        };
+        let Some(tick) = run.position.as_mut() else {
+            return;
+        };
+        let mark = if *tick == run.plan.start_tick {
+            Some(ExportMark::Start {
+                at,
+                slots: run.plan.slots(),
+            })
+        } else if *tick == run.plan.end_tick {
+            Some(ExportMark::End { at })
+        } else {
+            None
+        };
+        *tick += 1;
+        if let Some(mark) = mark {
+            self.export_mark_tx.push(mark).ok();
+        }
+    }
+}
+
+impl AudioExportPlan {
+    /// The engine slots that get a stem, as the mixer indexes them.
+    fn slots(&self) -> [bool; MAX_TRACKS] {
+        let mut slots = [false; MAX_TRACKS];
+        for stem in &self.stems {
+            slots[stem.slot] = true;
+        }
+        slots
+    }
+}
+
 /// What a stem is named after: the track's own name, or for a track never
 /// named, its plugin's (`plugin_name`) — the header's bare number would say
 /// nothing in a DAW that the file's `NN` doesn't already.
@@ -104,6 +240,11 @@ fn stem_name<'a>(track: &'a Track, plugin_name: &'a str) -> &'a str {
 
 #[cfg(test)]
 mod tests {
+    use std::iter;
+    use std::time::Duration;
+
+    use rtrb::RingBuffer;
+
     use crate::core::sequencer::test_support::{clip_at, rect, stub_instrument, test_sequencer};
     use crate::core::time::Meter;
 
@@ -220,6 +361,49 @@ mod tests {
             later.audio_export_plan(two_bars()),
             Err(AudioExportRefusal::NothingToHear)
         );
+    }
+
+    #[test]
+    fn the_marks_go_out_on_the_ticks_the_tracks_play_at_the_selections_ends() {
+        let mut sequencer = sequencer_with_clips(1);
+        let (marks_tx, mut marks) = RingBuffer::new(4);
+        sequencer.export_mark_tx = marks_tx;
+        let plan = sequencer
+            .audio_export_plan(Some(rect(10, 20, 0, 0)))
+            .unwrap();
+        let mut slots = [false; MAX_TRACKS];
+        slots[sequencer.tracks()[0].slot()] = true;
+        sequencer.begin_audio_export(plan, PathBuf::new());
+
+        let origin = Instant::now();
+        let at = |tick: i32| origin + Duration::from_millis(tick as u64);
+        // Before the run's seek reaches the tracks, nothing counts.
+        sequencer.tick(at(0));
+        sequencer.reset_to_tick(8);
+        for tick in 8..30 {
+            sequencer.tick(at(tick));
+        }
+
+        let sent: Vec<ExportMark> = iter::from_fn(|| marks.pop().ok()).collect();
+        assert_eq!(
+            sent,
+            [
+                ExportMark::Start { at: at(10), slots },
+                ExportMark::End { at: at(20) }
+            ]
+        );
+    }
+
+    #[test]
+    fn the_run_keeps_the_loop_state_it_found() {
+        let mut sequencer = sequencer_with_clips(1);
+        let plan = sequencer.audio_export_plan(two_bars()).unwrap();
+        sequencer.begin_audio_export(plan, PathBuf::new());
+        assert!(sequencer.is_exporting_audio());
+        let run = sequencer.finish_audio_export().unwrap();
+        assert!(run.loop_was_enabled);
+        assert!(!sequencer.is_exporting_audio());
+        assert!(sequencer.finish_audio_export().is_none());
     }
 
     #[test]

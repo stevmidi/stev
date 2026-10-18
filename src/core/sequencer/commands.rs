@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use crate::core::input_event::TimeSelectionRect;
 use crate::core::project::ProjectAction;
-use crate::core::sequencer::TempoGesture;
+use crate::core::sequencer::{AudioExportOutcome, TempoGesture};
 use crate::core::time::Meter;
 use crate::core::view_state::Pane;
 use crate::models::clip::{Clip, ClipEdge, NoteDrag};
@@ -530,6 +530,21 @@ pub(crate) enum SequencerCommand {
         /// What the file name starts with (`InputEvent::ExportClip`).
         name: String,
     },
+    /// Export the arrangement over `time_bounds` as WAV stems plus a mix
+    /// (`300-export-to-audio.md`): plan it, hand the files to the
+    /// `"audio-export"` thread and play the selection through the plugin
+    /// host. Not an edit. Says in the footer that it started, or why not.
+    ExportAudio {
+        /// The arranger marquee; `None` in the clip view or without one.
+        time_bounds: Option<TimeSelectionRect>,
+        /// What the folder name starts with (`InputEvent::ExportAudio`).
+        name: String,
+    },
+    /// From the `"audio-export"` thread: the export's files are finished.
+    /// Ends the run (the transport stopped, the loop state put back) and
+    /// says how it went in the footer.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    AudioExportWritten(AudioExportOutcome),
     /// Put an imported `.mid`'s clip on a track (`PasteClipsEdit::importing`,
     /// `InputEvent::ImportMidiClip`), one undoable step. Says how it went in
     /// the footer (`UiEvent::Status`).

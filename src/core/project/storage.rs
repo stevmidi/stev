@@ -1,7 +1,7 @@
 //! Filesystem layout for projects: per-project subfolders of the projects
 //! root (`paths::project_dir`), `.stev` file CRUD, project name rules, the
-//! `Clips` folder a MIDI clip export lands in, the `Exports` folder and file
-//! names of the audio export (`300-export-to-audio.md`), and reading a `.mid`
+//! `Clips` folder a MIDI clip export lands in, the folder and file names of
+//! the audio export (`300-export-to-audio.md`), and reading a `.mid`
 //! for the MIDI clip import (see `060-persistence.md`).
 
 use std::{
@@ -16,7 +16,7 @@ use std::{
 use crate::{
     core::{
         config::PROJECT_NAME_MAX_CHARS,
-        paths::project_dir,
+        paths::{exports_dir, project_dir},
         time::{Meter, format_bpm},
     },
     models::clip::Clip,
@@ -79,27 +79,11 @@ fn clips_dir() -> PathBuf {
     project_dir().join(CLIPS_FOLDER)
 }
 
-/// The folder under `project_dir()` that every audio export's own folder
-/// goes in. Not a project folder, so [`list_project_folders`] leaves it out,
-/// and nothing in the browser lists it.
-const EXPORTS_FOLDER: &str = "Exports";
-
-/// The exports folder ([`EXPORTS_FOLDER`]).
-#[expect(
-    dead_code,
-    reason = "the audio export writes here from phase 2 of docs/300"
-)]
-fn exports_dir() -> PathBuf {
-    project_dir().join(EXPORTS_FOLDER)
-}
-
 /// Whether a subdirectory of `project_dir()` named `name` is a project
-/// folder: not hidden and neither the clips nor the exports folder (in any
-/// case — the volume may not tell `clips` from `Clips`).
+/// folder: not hidden and not the clips folder (in any case — the volume may
+/// not tell `clips` from `Clips`).
 fn is_project_folder_name(name: &str) -> bool {
-    !name.starts_with('.')
-        && !name.eq_ignore_ascii_case(CLIPS_FOLDER)
-        && !name.eq_ignore_ascii_case(EXPORTS_FOLDER)
+    !name.starts_with('.') && !name.eq_ignore_ascii_case(CLIPS_FOLDER)
 }
 
 /// Subdirectories of `project_dir()` — each one is a project, created
@@ -276,19 +260,11 @@ pub(crate) fn load_midi_clip(path: &Path, meter: Meter) -> Result<Clip, String> 
 }
 
 /// The file every audio export writes the summed mix to.
-#[expect(
-    dead_code,
-    reason = "the audio export writes it from phase 2 of docs/300"
-)]
 pub(crate) const MIX_FILE_NAME: &str = "Mix.wav";
 
 /// Makes a new, empty folder for one audio export inside the exports folder
 /// (creating that too), named by [`audio_export_dir_name`]; returns its path.
 /// Never reuses a folder: a name taken on disk moves on to the next number.
-#[expect(
-    dead_code,
-    reason = "the audio export calls it from phase 2 of docs/300"
-)]
 pub(crate) fn create_audio_export_dir(
     base: &str,
     tempo_us: i32,
@@ -337,10 +313,6 @@ fn audio_export_dir_name(
 /// (or its plugin's, for a track never named), with every character a file
 /// system refuses ([`PROJECT_NAME_FORBIDDEN`], control characters) replaced
 /// by `_`. A blank `name` leaves just the number: `NN.wav`.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the audio export plan names its stems with it")
-)]
 pub(crate) fn stem_file_name(number: usize, name: &str) -> String {
     let name: String = name
         .trim()
@@ -471,8 +443,6 @@ mod tests {
         assert!(is_project_folder_name("Song"));
         assert!(!is_project_folder_name(CLIPS_FOLDER));
         assert!(!is_project_folder_name("clips"));
-        assert!(!is_project_folder_name(EXPORTS_FOLDER));
-        assert!(!is_project_folder_name("exports"));
         assert!(!is_project_folder_name(".git"));
     }
 

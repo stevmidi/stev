@@ -112,12 +112,15 @@ impl EventHandlers {
             | SequencerCommand::ToggleTrackMute { .. }
             | SequencerCommand::ToggleTrackSolo { .. }
             | SequencerCommand::SetTrackOutput { .. }
-            | SequencerCommand::SetTrackInstrumentState { .. } => return false,
+            | SequencerCommand::SetTrackInstrumentState { .. }
+            // A running export's end, which the session can't hold up.
+            | SequencerCommand::AudioExportWritten(_) => return false,
 
             // The project commands say why they did nothing.
             SequencerCommand::ProjectAction { .. }
             | SequencerCommand::SaveProject { .. }
             | SequencerCommand::ExportClip { .. }
+            | SequencerCommand::ExportAudio { .. }
             | SequencerCommand::ImportMidiClip { .. } => {
                 self.send_status_ui_event(FINISH_TAKE_FIRST.to_string());
             }

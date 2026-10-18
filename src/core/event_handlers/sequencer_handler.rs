@@ -514,6 +514,14 @@ impl EventHandlers {
                 self.export_clip_workflow(sequencer, *time_bounds, name);
             }
 
+            SequencerCommand::ExportAudio { time_bounds, name } => {
+                self.export_audio_workflow(sequencer, *time_bounds, name);
+            }
+
+            SequencerCommand::AudioExportWritten(outcome) => {
+                self.finish_audio_export_workflow(sequencer, outcome);
+            }
+
             SequencerCommand::ImportMidiClip { clip, name, target } => {
                 self.import_clip_workflow(sequencer, undo_record, clip, name, *target);
             }

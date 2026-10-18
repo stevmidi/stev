@@ -26,7 +26,7 @@ use crate::{
     core::{
         metronome::Metronome,
         note_logger::NoteLoggerCommand,
-        sequencer::{Sequencer, SequencerCommand},
+        sequencer::{AudioExportJob, Sequencer, SequencerCommand},
         time::sixteenth_straight_ticks,
         transport::{Transport, TransportCommand, TransportEvent},
         view_state::{Pane, ViewState},
@@ -35,6 +35,7 @@ use crate::{
     view::display::UiEvent,
 };
 
+mod audio_export;
 mod clip_edges;
 mod clip_lifecycle;
 mod clip_range_edits;
@@ -68,6 +69,9 @@ pub(crate) struct EventHandlers {
     sequencer_command_tx: Sender<SequencerCommand>,
     /// Commands to the `"midiout"` thread's `NoteLogger`.
     note_logger_command_tx: Sender<NoteLoggerCommand>,
+    /// An audio export's files to the `"audio-export"` writer thread; its
+    /// receiver is gone without the plugin host.
+    audio_export_job_tx: Sender<AudioExportJob>,
 
     // --- Shared atomics ---
     /// The active [`ViewState`] discriminant.
@@ -101,6 +105,7 @@ impl EventHandlers {
         transport_command_tx: Sender<TransportCommand>,
         sequencer_command_tx: Sender<SequencerCommand>,
         note_logger_command_tx: Sender<NoteLoggerCommand>,
+        audio_export_job_tx: Sender<AudioExportJob>,
         view_state: Arc<AtomicU8>,
         has_event_selection: Arc<AtomicBool>,
         midi_out_offset_ms: Arc<AtomicI32>,
@@ -111,6 +116,7 @@ impl EventHandlers {
             transport_command_tx,
             sequencer_command_tx,
             note_logger_command_tx,
+            audio_export_job_tx,
             view_state,
             has_event_selection,
             midi_out_offset_ms,

@@ -277,9 +277,11 @@ methods take a track's position and look the slot up in its `tracks` mirror
 | `voice.rs` | The `InstrumentVoice` trait and `VoiceMix` - the mixer-owned `sleeping` / `rendered` flags and gain-ramp endpoints every voice carries. Also `note_reset_messages`, the burst `load_instrument` queues into every new voice. They live on the voice rather than in a parallel array in the mixer because the render pass is the loop spread across worker threads, where each worker may only touch its own voice. |
 | `editor.rs` | The `InstrumentEditor` trait - the `!Send` main-thread half. `close` (= `teardown_gui`) and `toggle` (on `is_open`) are default methods, so a format supplies only `is_open`. |
 | `buffers.rs` | `AudioIoLayout` (a plugin's declared channels per input/output port or bus; `new` applies the one-stereo-output fallback) and `PortBuffers` - the `[port][channel]` buffer set every voice renders into: silent input feed, capacity-reserved outputs, `prepare_outputs(frames)`, `main_sample` (port-0-only, mono/empty/out-of-range-safe - what the mixer sums) and `main_output_silent`. Each format builds its own FFI view over it. Unit-tested. |
-| `mixer.rs` | `InstrumentMixer` (`impl AudioSource` - the audio-callback state: `[Option<Box<dyn InstrumentVoice>>; MAX_TRACKS]`, the `pending` scheduling buffer and per-block dispatch, the render/sum two-pass split, the per-track gain ramp, summed into the engine's `mix`), `PluginHostCommand`, `within_block_offset`. `AudioClock` lives in `core::audio`. Unit-tested: the pending sort's note-off/note-on ordering, `within_block_offset` clamping, the partition-point sub-block selection. |
+| `mixer.rs` | `InstrumentMixer` (`impl AudioSource` - the audio-callback state: `[Option<Box<dyn InstrumentVoice>>; MAX_TRACKS]`, the `pending` scheduling buffer and per-block dispatch, the render/sum two-pass split, the per-track gain ramp, summed into the engine's `mix`, and the audio export's tap fed from the summing pass), `PluginHostCommand`, `within_block_offset`. `AudioClock` lives in `core::audio`. Unit-tested: the pending sort's note-off/note-on ordering, `within_block_offset` clamping, the partition-point sub-block selection. |
 | `transport.rs` | `TransportState` (the shared atomics) and `BlockTransport` (the plain `Copy` snapshot taken once per block and handed to every voice, in app-native units - ticks and microseconds-per-quarter - plus `bpm()`, `bar_number()` and `bar_start_beats()` - the bar maths in the project's `Meter`, carried in the snapshot from the `SharedAtomics.meter` atomic, floored for a pre-roll playhead; `bar_start_beats` is in quarter notes). Each format converts it in its own `render_block`; that conversion is a handful of float ops, so doing it per voice rather than once per block costs nothing and keeps every plugin type out of the mixer. Unit-tested. |
 | `catalog.rs` | `PluginFormat` (label - which is also its `Audio/Plug-Ins` subdirectory - and bundle extension), `ALL_FORMATS`, `PluginCatalogEntry { format, bundle_path, plugin_id, name }`, `installed_bundles` (the shared depth-capped bundle walk over the install roots - what each format's scan calls), `scan_catalog` (runs every format's scan and reports the merged, name-sorted list **once per format** — VST3 is slow enough that waiting for it would hide the CLAP plugins too; `merge_scans` takes the scans as functions so each only starts after the previous one's delivery), `available_bundles_hint`. Runs on the background `"plugin-catalog-scan"` thread, result held in `Display::plugin_catalog`. Unit-tested. |
+| `export.rs` | The audio export's tap (`300-export-to-audio.md`): `ExportTap` (the mixer's half: takes the sequencer's `ExportMark`s and resolves them with `scheduled_frame`, `begin_block` / `tap` / `end_block` push each exported slot's raw samples and the gained mix), `export_span` (the part of a block inside the export), `ExportShared` (the `ended` / silent-slots / overflow atomics the writer reads), `export_tap` (builds the tap and one ring per slot plus the mix, about a second of stereo each, at start-up). Unit-tested with a fake voice. |
+| `export_writer.rs` | The `"audio-export"` thread: `start_export_writer`, one `WavWriter` per stem plus `Mix.wav`, drained from the rings until the mixer has ended, then `SequencerCommand::AudioExportWritten`. A failed file stops being written but its ring is still drained. Unit-tested: draining across the ring's wrap, a failed write. |
 | `shutdown.rs` | `HostShutdown` - app-exit coordination (`requested` + `in_process`), one instance shared by the mixer and the reclaim thread. Unit-tested. |
 | `window.rs` | `PluginWindow` - a minimal native `NSWindow` parent for an embedded plugin GUI; `show` (`orderFront:`), `is_visible`, `frame_top_left` / a `top_left` argument to `new` (position carried across a close/reopen), `set_content_size` (anchored at the top-left corner), `take_closed` (the title-bar close button, refused by the `CloseInterceptor` delegate so the editor can tear down first, or the window off screen by any other route); registers/deregisters itself with `key_guard` on construction/`Drop`. It is closed by `Drop`, not hidden - there is no `hide`. Format-agnostic. |
 | `key_guard.rs` | App-wide `NSEvent` local monitor reserving bare `Space`/`v`/`.`/`0` even while an embedded editor window has OS keyboard focus - `install_key_guard`, `take_toggle_editor_pending`, `register_window` / `unregister_window`. See the module doc and the caveat below. Format-agnostic. |
@@ -406,6 +408,32 @@ boundary.
      (`target_gains()` from `track_mix`, ramped across the block — see the
      "Per-track volume / pan" and "Per-track mute / solo" bullets above), then
      `in_events` is cleared.
+
+### Audio export tap
+
+The audio export (`300-export-to-audio.md`) is an ordinary playback run with a
+tap on this mixer; nothing new renders audio.
+
+- **Marks.** `Sequencer::tick(at)` sends `ExportMark::Start { at, slots }` on
+  the tick the tracks play at the selection's start and `ExportMark::End { at }`
+  at its end, counted on the tracks' own position from the run's seek, on their
+  own `rtrb` ring beside the clip feed. The mixer resolves each with
+  `scheduled_frame`, exactly as a clip event's `At`, so the selection's first
+  tick is sample 0 of every file.
+- **Stems and mix.** Between the two frames (`export_span` cuts a block at
+  either end), the summing pass pushes each exported slot's raw
+  `sample(ch, f)` — before its gain, so unity and centred — to that slot's
+  ring, and adds the same samples, gained by the block's ramp, to a mix
+  scratch pushed to the mix ring. A slot with no voice, or one asleep or
+  failed this block, pushes silence, so every file has the same length.
+- **The mix leaves out the click.** `Mix.wav` is this mixer's own
+  contribution to the engine mix; `MetronomeSource` is a separate
+  `AudioSource` and never passes through the tap, so a forgotten `K` can't
+  reach it. Both taps come before the engine's ±1.0 clamp, so the files keep
+  float levels that were never clipped.
+- **Nothing allocated on the audio thread.** The rings and the scratch are
+  built once in `start_plugin_host`. A ring too full for a block drops it
+  and sets a flag the writer reports.
 
 ## Per-track teardown ordering
 

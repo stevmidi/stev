@@ -8,6 +8,8 @@
 //! - [`mixer`] — the single [`AudioSource`] that renders and sums every track's
 //!   voice, schedules clip/live MIDI onto output samples, and applies the
 //!   per-track gain ramp and mute/solo.
+//! - [`export`] / [`export_writer`] — the audio export: the mixer's tap and
+//!   the `"audio-export"` thread that writes its WAV files.
 //! - [`voice`] / [`editor`] — the two traits a format implements: the `Send`
 //!   audio-thread half and the `!Send` main-thread half.
 //! - [`buffers`] — the declared audio layout and the `[port][channel]` buffer
@@ -34,9 +36,11 @@
 //!   (`core::audio`) — no `cpal` stream of its own. A small `"plugin-host"`
 //!   thread does only off-audio-thread voice reclamation and app-exit
 //!   coordination.
+//! - The **`"audio-export"`** thread waits for an audio export and writes its
+//!   files from the mixer's export rings.
 //!
 //! [`start_plugin_host`] builds the empty mixer, hands it to the running engine
-//! via [`EngineHandle::add_source`], and spawns the reclaim thread.
+//! via [`EngineHandle::add_source`], and spawns the reclaim and export threads.
 //! [`load_instrument`] runs on the main thread (plugin load + activate), keeps
 //! the `!Send` instance for the UI, and sends the voice to the mixer as a
 //! [`PluginHostCommand::Insert`].
@@ -48,6 +52,8 @@ mod buffers;
 pub(crate) mod catalog;
 mod clap;
 pub(crate) mod editor;
+mod export;
+mod export_writer;
 mod key_guard;
 mod mixer;
 mod shutdown;
@@ -64,6 +70,8 @@ use crossbeam_channel::{Receiver, Sender, unbounded};
 use rtrb::{Consumer, Producer, RingBuffer};
 
 use catalog::{PluginCatalogEntry, PluginFormat};
+use export::export_tap;
+use export_writer::start_export_writer;
 use mixer::InstrumentMixer;
 use transport::TransportState;
 use voice::{InstrumentVoice, note_reset_messages};
@@ -71,7 +79,7 @@ use voice::{InstrumentVoice, note_reset_messages};
 use crate::core::audio::{AudioSource, EngineHandle};
 use crate::core::config::MAX_TRACKS;
 use crate::core::midi::message::Midi3;
-use crate::core::sequencer::ClipInstrumentEvent;
+use crate::core::sequencer::{AudioExportJob, ClipInstrumentEvent, ExportMark, SequencerCommand};
 use crate::core::shared_atomics::SharedAtomics;
 
 pub(crate) use catalog::scan_catalog;
@@ -125,17 +133,24 @@ pub(crate) struct PluginAudioHandle {
 
 /// Builds the instrument mixer, hands it to the running audio engine as a
 /// second source, and spawns the `"plugin-host"` thread that reclaims removed
-/// plugin voices off the audio thread. Call once from `main`; `clip_midi_rx` /
+/// plugin voices off the audio thread and the `"audio-export"` thread. Call once from `main`; `clip_midi_rx` /
 /// `live_midi_rx` are the tagged MIDI feeds — `(track slot, [`Midi3`])` — for
 /// per-track clip events and live keyboard notes respectively (two separate
 /// `rtrb` rings, since `rtrb` is strict single-producer and the two feeds have
-/// different producer threads). `repaint` is the app's shared egui context
+/// different producer threads). `export_mark_rx` / `audio_export_jobs` are
+/// the audio export's marks from the sequencer and files from its workflow;
+/// the writer reports back on `sequencer_command_tx`. `repaint` is the app's
+/// shared egui context
 /// slot, handed to every plugin loaded later. Any failure is returned as `Err`
 /// and the whole feature is disabled.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn start_plugin_host(
     engine: &mut EngineHandle,
     clip_midi_rx: Consumer<ClipInstrumentEvent>,
     live_midi_rx: Consumer<(usize, Midi3)>,
+    export_mark_rx: Consumer<ExportMark>,
+    audio_export_jobs: Receiver<AudioExportJob>,
+    sequencer_command_tx: Sender<SequencerCommand>,
     atomics: &SharedAtomics,
     repaint: Arc<OnceLock<egui::Context>>,
 ) -> Result<PluginAudioHandle, String> {
@@ -154,6 +169,7 @@ pub(crate) fn start_plugin_host(
         loop_enabled: Arc::clone(&atomics.loop_enabled),
     };
 
+    let (export, export_rings, export_shared) = export_tap(export_mark_rx, engine.sample_rate);
     let mixer = InstrumentMixer::new(
         cmd_rx,
         dead_tx,
@@ -162,6 +178,7 @@ pub(crate) fn start_plugin_host(
         transport,
         Arc::clone(&atomics.track_mix),
         Arc::clone(&shutdown),
+        export,
     );
     engine.add_source(Box::new(mixer) as Box<dyn AudioSource>)?;
 
@@ -170,6 +187,14 @@ pub(crate) fn start_plugin_host(
         .name("plugin-host".to_string())
         .spawn(move || reclaim_voices(dead_rx, voice_dropped_tx, reclaim_shutdown))
         .expect("failed to spawn plugin-host thread");
+
+    start_export_writer(
+        audio_export_jobs,
+        export_rings,
+        export_shared,
+        engine.sample_rate,
+        sequencer_command_tx,
+    );
 
     dprintln!("plugin host: mixer attached to the audio engine");
 

@@ -68,6 +68,7 @@ pub(crate) fn harness() -> Harness {
         transport_command_tx,
         sequencer_command_tx,
         unbounded().0,
+        unbounded().0,
         Arc::new(AtomicU8::new(0)),
         has_event_selection.clone(),
         Arc::new(AtomicI32::new(0)),
@@ -82,6 +83,7 @@ pub(crate) fn harness() -> Harness {
     let mut sequencer = Sequencer::new(
         unbounded().0,
         plugin_midi_tx,
+        RingBuffer::new(8).0,
         playback_tick.clone(),
         Arc::new(AtomicI32::new(0)), // elapsed_ticks
         cursor_tick.clone(),

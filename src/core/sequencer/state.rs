@@ -20,6 +20,7 @@ use crossbeam_channel::Sender;
 use rtrb::Producer;
 use uuid::Uuid;
 
+use super::audio_export::{AudioExportRun, ExportMark};
 use super::clipboard::ClipClipboard;
 use super::instrument_event::ClipInstrumentEvent;
 use super::instrument_notes::InstrumentNotes;
@@ -85,6 +86,10 @@ pub(crate) struct Sequencer {
     /// Elsewhere the consumer is dropped, so pushes here fill the ring once
     /// and fail from then on. See `130-plugin-host.md`.
     pub(super) instrument_midi_tx: Producer<ClipInstrumentEvent>,
+    /// The audio export's start and end marks to the plugin host's mixer
+    /// (`audio_export.rs`), on their own `rtrb` ring beside the clip feed.
+    /// Elsewhere the consumer is dropped, as for `instrument_midi_tx`.
+    pub(super) export_mark_tx: Producer<ExportMark>,
     /// Which notes each instrument track's plugin currently has sounding, so
     /// [`release_instrument_notes`](Self::release_instrument_notes) can release
     /// exactly those. Fed from `tick` / `chase_notes`.
@@ -166,6 +171,8 @@ pub(crate) struct Sequencer {
     /// The open take session, if any (`take_framing.rs`): while it is open
     /// the lead clip the clip view shows is the take.
     pub(super) take_framing: Option<TakeFraming>,
+    /// The audio export in progress, if any (`audio_export.rs`).
+    pub(super) audio_export: Option<AudioExportRun>,
 
     // --- Arranger performance lane ---
     /// Tracks the physical keyboard's currently-held trigger while the
@@ -189,6 +196,7 @@ impl Sequencer {
     pub(crate) fn new(
         midi_out_tx: Sender<MidiOutMessage>,
         instrument_midi_tx: Producer<ClipInstrumentEvent>,
+        export_mark_tx: Producer<ExportMark>,
         playback_tick: Arc<AtomicI32>,
         elapsed_ticks: Arc<AtomicI32>,
         cursor_tick: Arc<AtomicI32>,
@@ -206,6 +214,7 @@ impl Sequencer {
         Sequencer {
             midi_out_tx,
             instrument_midi_tx,
+            export_mark_tx,
             instrument_notes: InstrumentNotes::new(),
             track_selection: Selection::new(),
             clip_selection: Selection::new(),
@@ -231,6 +240,7 @@ impl Sequencer {
             elapsed_ticks,
             auto_end_tick: None,
             take_framing: None,
+            audio_export: None,
             live_rec_state,
             performance_lane: PerformanceLane::new(),
             performance_lane_armed,

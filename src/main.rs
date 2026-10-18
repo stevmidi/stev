@@ -167,6 +167,7 @@ fn main() {
     let sequencer = setup_sequencer(
         shared_channels.midi_out_tx.clone(),
         shared_channels.clip_instrument_midi_tx,
+        shared_channels.export_mark_tx,
         &shared_atomics,
     );
 
@@ -179,6 +180,7 @@ fn main() {
         shared_channels.transport_command_tx.clone(),
         shared_channels.sequencer_command_tx.clone(),
         shared_channels.note_logger_command_tx.clone(),
+        shared_channels.audio_export_job_tx,
         &shared_atomics,
         repaint_ctx.clone(),
     ));
@@ -220,6 +222,9 @@ fn main() {
             engine,
             shared_channels.clip_instrument_midi_rx,
             shared_channels.live_instrument_midi_rx,
+            shared_channels.export_mark_rx,
+            shared_channels.audio_export_job_rx,
+            shared_channels.sequencer_command_tx.clone(),
             &shared_atomics,
             repaint_ctx.clone(),
         ) {
@@ -232,6 +237,9 @@ fn main() {
             }
             Err(_e) => dprintln!("plugin host disabled: {_e}"),
         }
+    } else {
+        // No writer will take an export's files: let the send fail.
+        drop(shared_channels.audio_export_job_rx);
     }
     // No plugin host off macOS — drop the consumers so the taps fail fast
     // (fill the ring, then every push fails) instead of running forever
@@ -240,6 +248,8 @@ fn main() {
     {
         drop(shared_channels.clip_instrument_midi_rx);
         drop(shared_channels.live_instrument_midi_rx);
+        drop(shared_channels.export_mark_rx);
+        drop(shared_channels.audio_export_job_rx);
     }
 
     start_clock_thread(clock, shared_channels.tick_tx);

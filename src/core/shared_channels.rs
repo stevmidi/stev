@@ -24,7 +24,7 @@ use crate::{
             output::MidiOutputConnection,
         },
         note_logger::NoteLoggerCommand,
-        sequencer::{ClipInstrumentEvent, SequencerCommand},
+        sequencer::{AudioExportJob, ClipInstrumentEvent, ExportMark, SequencerCommand},
         transport::{TransportCommand, TransportEvent},
     },
     view::display::UiEvent,
@@ -103,6 +103,21 @@ pub(crate) struct SharedChannels {
     pub(crate) metronome_click_tx: Producer<ClickEvent>,
     /// Receiving half of the pair documented above.
     pub(crate) metronome_click_rx: Consumer<ClickEvent>,
+    /// The audio export's start and end marks from the `"sequencer"` thread's
+    /// tick path to the `InstrumentMixer` (macOS only), stamped like a clip
+    /// event so the mixer cuts the files on those ticks' samples. `rtrb` SPSC
+    /// ring — drained on the realtime audio callback. Elsewhere the consumer
+    /// is dropped. See `300-export-to-audio.md`.
+    pub(crate) export_mark_tx: Producer<ExportMark>,
+    /// Receiving half of the pair documented above.
+    pub(crate) export_mark_rx: Consumer<ExportMark>,
+    /// The `"sequencer"` thread's export workflow → the `"audio-export"`
+    /// writer thread (macOS only): the files to open before the run plays.
+    /// Elsewhere, or with the plugin host disabled, the receiver is dropped
+    /// and the send fails, which is how the workflow knows to refuse.
+    pub(crate) audio_export_job_tx: Sender<AudioExportJob>,
+    /// Receiving half of the pair documented above.
+    pub(crate) audio_export_job_rx: Receiver<AudioExportJob>,
     /// `InputPoller` (render thread) → `"main"` dispatch loop: keyboard/mouse
     /// [`InputEvent`]s, drained each frame and handed to `EventHandlers`.
     pub(crate) input_event_tx: Sender<InputEvent>,

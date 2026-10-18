@@ -1,6 +1,6 @@
 //! Where the app keeps things on disk: the user's library under Documents
-//! (`Stev/`, holding only user content — `Projects/` today, sibling root
-//! folders for forks), app settings in the platform config directory, and
+//! (`Stev/`, holding only user content — `Projects/` and the audio export's
+//! `Exports/` today, sibling root folders for forks), app settings in the platform config directory, and
 //! rebuildable caches in the platform cache directory. See
 //! `060-persistence.md`.
 
@@ -14,6 +14,10 @@ const LIBRARY_DIR_NAME: &str = "Stev";
 
 /// Name of the projects root folder inside the library.
 const PROJECTS_DIR_NAME: &str = "Projects";
+
+/// Name of the folder inside the library that every audio export's own
+/// folder goes in.
+const EXPORTS_DIR_NAME: &str = "Exports";
 
 /// File name of the app settings.
 pub(crate) const SETTINGS_FILE_NAME: &str = "settings.json";
@@ -41,6 +45,13 @@ pub(crate) fn library_dir() -> PathBuf {
 /// subfolder is one project.
 pub(crate) fn project_dir() -> PathBuf {
     ensured(library_dir().join(PROJECTS_DIR_NAME))
+}
+
+/// The audio exports' folder (`Stev/Exports/`), beside the projects root,
+/// whichever project an export came from. Not created here: the first
+/// export makes it (`storage::create_audio_export_dir`).
+pub(crate) fn exports_dir() -> PathBuf {
+    library_dir().join(EXPORTS_DIR_NAME)
 }
 
 /// The app's folder in the platform directory `base`, created if absent;

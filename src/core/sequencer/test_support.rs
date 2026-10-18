@@ -40,6 +40,7 @@ pub(super) fn sequencer_with_outputs(
     let sequencer = Sequencer::new(
         midi_out_tx,
         plugin_midi_tx,
+        RingBuffer::new(8).0,
         Arc::new(AtomicI32::new(0)),
         Arc::new(AtomicI32::new(0)),
         Arc::new(AtomicI32::new(0)),

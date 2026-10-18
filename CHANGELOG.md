@@ -20,6 +20,16 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ## [Unreleased]
 
+### Added
+
+- **Export to audio (macOS).** `⌘⇧R` exports the arranger's time selection
+  as WAV files: one per audible plugin track, at unity gain and centred, plus
+  `Mix.wav`, all 32-bit float at the device rate and all the same length, in
+  a new folder inside `Stev/Exports` named with the project, tempo, meter and
+  start bar. The selection plays through once in real time; leave room in it
+  for any tail you want. The click is never in the export. While it runs,
+  don't touch anything: nothing blocks other keys yet.
+
 ## [0.3.1] - 2026-10-14
 
 ### Changed

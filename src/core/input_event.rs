@@ -612,6 +612,16 @@ pub(crate) enum InputEvent {
         /// folder's, else `project`.
         name: String,
     },
+    /// **⌘/Ctrl+⇧+R** — "Export Audio": the arranger's time selection as WAV
+    /// stems plus a mix (`SequencerCommand::ExportAudio`). The view adds what
+    /// only it knows, as for [`ExportClip`](Self::ExportClip).
+    ExportAudio {
+        /// The arranger marquee; `None` in the clip view or without one.
+        time_bounds: Option<TimeSelectionRect>,
+        /// What the folder name starts with: the open project's name, else
+        /// the folder's, else `project`.
+        name: String,
+    },
     /// A `.mid` dropped on a track lane (the ghost clip's target, from the
     /// file manager or the browser panel) or, `target` `None`, Enter on one in
     /// the browser — put the clip on the selected track at the cursor. The
