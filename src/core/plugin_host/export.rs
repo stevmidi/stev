@@ -24,15 +24,12 @@ use rtrb::{Consumer, Producer, RingBuffer};
 
 use crate::core::audio::MAX_FRAMES;
 use crate::core::config::MAX_TRACKS;
-use crate::core::sequencer::ExportMark;
+use crate::core::sequencer::{ExportMark, SlotMask};
 
 use super::voice::InstrumentVoice;
 
 /// Every file is stereo, interleaved in the rings as in the WAV.
 const CHANNELS: usize = 2;
-
-// The silent slots travel as a bit mask.
-const _: () = assert!(MAX_TRACKS <= u32::BITS as usize);
 
 /// What the mixer tells the writer besides the samples. Written by the audio
 /// thread while an export runs, and reset by the writer once it has read
@@ -113,7 +110,7 @@ pub(super) fn export_tap(
 #[derive(Clone, Copy)]
 struct Armed {
     /// The exported slots.
-    slots: [bool; MAX_TRACKS],
+    slots: SlotMask,
     /// The first frame of every file.
     start: i64,
     /// The first frame past every file, once the end mark has come.
@@ -148,9 +145,10 @@ impl ExportTap {
         while let Ok(mark) = self.marks.pop() {
             match mark {
                 ExportMark::Start { at, slots } => {
-                    let silent = (0..MAX_TRACKS)
-                        .filter(|&slot| slots[slot] && !has_voice(slot))
+                    let voiced = (0..MAX_TRACKS)
+                        .filter(|&slot| has_voice(slot))
                         .fold(0, |mask, slot| mask | 1 << slot);
+                    let silent = slots & !voiced;
                     self.shared.silent_slots.store(silent, Ordering::Relaxed);
                     self.armed = Some(Armed {
                         slots,
@@ -177,29 +175,27 @@ impl ExportTap {
         Some(span)
     }
 
+    /// Whether `slot` is in the export being cut.
+    fn taps(&self, slot: usize) -> bool {
+        self.armed.is_some_and(|armed| armed.slots & 1 << slot != 0)
+    }
+
     /// Pushes `slot`'s samples over `span` to its stem ring and adds them,
-    /// gained, to the block's mix — if `slot` is exported. `voice` is `None`
-    /// when it has nothing for this block (none loaded, asleep, failed), and
-    /// the stem gets silence. The gain ramps from `gain` by `step` per frame,
-    /// reaching `gain + step * (f + 1)` at frame `f`, as in the mixer's
-    /// summing pass.
+    /// gained, to the block's mix — if `slot` is exported. The gain ramps
+    /// from `gain` by `step` per frame, reaching `gain + step * (f + 1)` at
+    /// frame `f`, as in the mixer's summing pass.
     pub(super) fn tap(
         &mut self,
         slot: usize,
-        voice: Option<&dyn InstrumentVoice>,
+        voice: &dyn InstrumentVoice,
         gain: (f32, f32),
         step: (f32, f32),
         span: Range<usize>,
     ) {
-        if !self.armed.is_some_and(|armed| armed.slots[slot]) {
+        if !self.taps(slot) {
             return;
         }
         let len = span.len() * CHANNELS;
-        let ring = &mut self.stems[slot];
-        let Some(voice) = voice else {
-            push(ring, repeat_n(0.0, len), len, &self.shared.overflowed);
-            return;
-        };
         for (frame, mixed) in span
             .clone()
             .zip(self.mix_scratch.as_chunks_mut::<CHANNELS>().0)
@@ -209,7 +205,21 @@ impl ExportTap {
             mixed[1] += voice.sample(1, frame) * (gain.1 + step.1 * ramp);
         }
         let samples = span.flat_map(|frame| [voice.sample(0, frame), voice.sample(1, frame)]);
-        push(ring, samples, len, &self.shared.overflowed);
+        push(&mut self.stems[slot], samples, len, &self.shared.overflowed);
+    }
+
+    /// Pushes silence over `span` to `slot`'s stem ring, if it is exported:
+    /// its voice has nothing for this block (none loaded, asleep, failed).
+    pub(super) fn tap_silence(&mut self, slot: usize, span: Range<usize>) {
+        if self.taps(slot) {
+            let len = span.len() * CHANNELS;
+            push(
+                &mut self.stems[slot],
+                repeat_n(0.0, len),
+                len,
+                &self.shared.overflowed,
+            );
+        }
     }
 
     /// Pushes the block's mix over `span`, then ends the export if its last
@@ -315,29 +325,45 @@ mod tests {
         }
     }
 
-    fn tap_with_marks() -> (
-        ExportTap,
-        ExportRings,
-        Arc<ExportShared>,
-        Producer<ExportMark>,
-    ) {
-        let (marks_tx, marks_rx) = RingBuffer::new(4);
-        let (tap, rings, shared) = export_tap(marks_rx, 1_000.0);
-        (tap, rings, shared, marks_tx)
+    /// A tap with an export armed, and what a test reads back or sends.
+    struct Fixture {
+        /// The tap under test.
+        tap: ExportTap,
+        /// The writer's ends of the rings.
+        rings: ExportRings,
+        /// What the tap tells the writer.
+        shared: Arc<ExportShared>,
+        /// The sequencer's end of the marks ring.
+        marks: Producer<ExportMark>,
     }
 
-    fn slots(exported: &[usize]) -> [bool; MAX_TRACKS] {
-        std::array::from_fn(|slot| exported.contains(&slot))
+    /// A tap cutting an export of the `exported` slots from frame `start`,
+    /// with a voice loaded in every slot but the `unloaded` ones.
+    fn armed(exported: &[usize], start: i64, unloaded: &[usize]) -> Fixture {
+        let (mut marks, marks_rx) = RingBuffer::new(4);
+        let (mut tap, rings, shared) = export_tap(marks_rx, 1_000.0);
+        let slots = exported.iter().fold(0, |mask, slot| mask | 1 << slot);
+        marks
+            .push(ExportMark::Start {
+                at: Instant::now(),
+                slots,
+            })
+            .unwrap();
+        tap.take_marks(|_| start, |slot| !unloaded.contains(&slot));
+        Fixture {
+            tap,
+            rings,
+            shared,
+            marks,
+        }
     }
 
     fn drained(ring: &mut Consumer<f32>) -> Vec<f32> {
         std::iter::from_fn(|| ring.pop().ok()).collect()
     }
 
-    /// Marks resolve to `frame` for every `Instant` in these tests.
-    fn at(frame: i64) -> impl Fn(Instant) -> i64 {
-        move |_| frame
-    }
+    /// No gain ramp: `gain` throughout the block.
+    const FLAT: (f32, f32) = (0.0, 0.0);
 
     #[test]
     fn export_span_cuts_a_block_at_either_end() {
@@ -356,21 +382,15 @@ mod tests {
 
     #[test]
     fn stems_are_at_unity_and_the_mix_is_gained() {
-        let (mut tap, mut rings, _shared, mut marks) = tap_with_marks();
-        marks
-            .push(ExportMark::Start {
-                at: Instant::now(),
-                slots: slots(&[0, 1]),
-            })
-            .unwrap();
-        tap.take_marks(at(2), |_| true);
-
+        let Fixture {
+            mut tap, mut rings, ..
+        } = armed(&[0, 1], 2, &[]);
         let span = tap.begin_block(0, 4).unwrap();
         assert_eq!(span, 2..4);
         let loud = ConstantVoice::new(0.5);
         let soft = ConstantVoice::new(0.25);
-        tap.tap(0, Some(&loud), (0.5, 0.5), (0.0, 0.0), span.clone());
-        tap.tap(1, Some(&soft), (1.0, 2.0), (0.0, 0.0), span.clone());
+        tap.tap(0, &loud, (0.5, 0.5), FLAT, span.clone());
+        tap.tap(1, &soft, (1.0, 2.0), FLAT, span.clone());
         tap.end_block(Some(span), 4);
 
         assert_eq!(drained(&mut rings.stems[0]), [0.5, -0.5, 0.5, -0.5]);
@@ -381,18 +401,13 @@ mod tests {
 
     #[test]
     fn the_mix_follows_the_gain_ramp() {
-        let (mut tap, mut rings, _shared, mut marks) = tap_with_marks();
-        marks
-            .push(ExportMark::Start {
-                at: Instant::now(),
-                slots: slots(&[0]),
-            })
-            .unwrap();
-        tap.take_marks(at(0), |_| true);
+        let Fixture {
+            mut tap, mut rings, ..
+        } = armed(&[0], 0, &[]);
         let span = tap.begin_block(0, 2).unwrap();
         tap.tap(
             0,
-            Some(&ConstantVoice::new(1.0)),
+            &ConstantVoice::new(1.0),
             (0.0, 0.0),
             (0.5, 0.25),
             span.clone(),
@@ -403,71 +418,53 @@ mod tests {
 
     #[test]
     fn a_slot_outside_the_export_pushes_nothing() {
-        let (mut tap, mut rings, _shared, mut marks) = tap_with_marks();
-        marks
-            .push(ExportMark::Start {
-                at: Instant::now(),
-                slots: slots(&[0]),
-            })
-            .unwrap();
-        tap.take_marks(at(0), |_| true);
+        let Fixture {
+            mut tap, mut rings, ..
+        } = armed(&[0], 0, &[]);
         let span = tap.begin_block(0, 2).unwrap();
-        tap.tap(
-            3,
-            Some(&ConstantVoice::new(1.0)),
-            (1.0, 1.0),
-            (0.0, 0.0),
-            span.clone(),
-        );
+        tap.tap(3, &ConstantVoice::new(1.0), (1.0, 1.0), FLAT, span.clone());
+        tap.tap_silence(4, span.clone());
         tap.end_block(Some(span), 2);
         assert!(drained(&mut rings.stems[3]).is_empty());
+        assert!(drained(&mut rings.stems[4]).is_empty());
         assert_eq!(drained(&mut rings.mix), [0.0; 4], "nor reaches the mix");
     }
 
     #[test]
     fn a_slot_with_nothing_to_play_pushes_silence_and_is_reported() {
-        let (mut tap, mut rings, shared, mut marks) = tap_with_marks();
-        marks
-            .push(ExportMark::Start {
-                at: Instant::now(),
-                slots: slots(&[0, 2]),
-            })
-            .unwrap();
-        tap.take_marks(at(0), |slot| slot != 2);
+        let Fixture {
+            mut tap,
+            mut rings,
+            shared,
+            ..
+        } = armed(&[0, 2], 0, &[2]);
         let span = tap.begin_block(0, 2).unwrap();
-        tap.tap(0, None, (1.0, 1.0), (0.0, 0.0), span.clone());
-        tap.tap(2, None, (1.0, 1.0), (0.0, 0.0), span.clone());
+        tap.tap_silence(0, span.clone());
+        tap.tap_silence(2, span.clone());
         tap.end_block(Some(span), 2);
         assert_eq!(drained(&mut rings.stems[0]), [0.0; 4]);
         assert_eq!(drained(&mut rings.stems[2]), [0.0; 4]);
-        assert!(!shared.is_silent(0));
+        assert!(!shared.is_silent(0), "loaded, just asleep");
         assert!(shared.is_silent(2), "no voice loaded");
     }
 
     #[test]
     fn the_end_mark_cuts_the_block_and_ends_the_export() {
-        let (mut tap, mut rings, shared, mut marks) = tap_with_marks();
-        let start = ExportMark::Start {
-            at: Instant::now(),
-            slots: slots(&[0]),
-        };
-        marks.push(start).unwrap();
-        tap.take_marks(at(2), |_| true);
+        let Fixture {
+            mut tap,
+            mut rings,
+            shared,
+            mut marks,
+        } = armed(&[0], 2, &[]);
         let span = tap.begin_block(0, 4);
         tap.end_block(span, 4);
         assert!(!shared.has_ended());
 
         marks.push(ExportMark::End { at: Instant::now() }).unwrap();
-        tap.take_marks(at(5), |_| true);
+        tap.take_marks(|_| 5, |_| true);
         let span = tap.begin_block(4, 4).unwrap();
         assert_eq!(span, 0..1);
-        tap.tap(
-            0,
-            Some(&ConstantVoice::new(1.0)),
-            (1.0, 1.0),
-            (0.0, 0.0),
-            span.clone(),
-        );
+        tap.tap(0, &ConstantVoice::new(1.0), (1.0, 1.0), FLAT, span.clone());
         tap.end_block(Some(span), 8);
         assert!(shared.has_ended());
         assert_eq!(drained(&mut rings.stems[0]), [1.0, -1.0]);
@@ -482,20 +479,18 @@ mod tests {
 
     #[test]
     fn a_full_ring_drops_the_block_and_says_so() {
-        let (mut tap, mut rings, shared, mut marks) = tap_with_marks();
-        marks
-            .push(ExportMark::Start {
-                at: Instant::now(),
-                slots: slots(&[0]),
-            })
-            .unwrap();
-        tap.take_marks(at(0), |_| true);
+        let Fixture {
+            mut tap,
+            mut rings,
+            shared,
+            ..
+        } = armed(&[0], 0, &[]);
         let voice = ConstantVoice::new(1.0);
         let capacity = rings.stems[0].buffer().capacity();
         for block in 0..=(capacity / (MAX_FRAMES * CHANNELS)) as i64 {
             let block_start = block * MAX_FRAMES as i64;
             let span = tap.begin_block(block_start, MAX_FRAMES).unwrap();
-            tap.tap(0, Some(&voice), (1.0, 1.0), (0.0, 0.0), span.clone());
+            tap.tap(0, &voice, (1.0, 1.0), FLAT, span.clone());
             tap.end_block(Some(span), block_start + MAX_FRAMES as i64);
         }
         assert!(shared.overflowed());

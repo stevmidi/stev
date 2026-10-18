@@ -131,8 +131,10 @@ fn written_message(run: &AudioExportRun, outcome: &AudioExportOutcome) -> String
         Some(error) => format!("Export failed: {error} (what was written is in \"{folder}\")"),
         None => {
             let stems = run.plan.stems.len();
-            let plural = if stems == 1 { "" } else { "s" };
-            format!("Exported \"{folder}\" — {stems} stem{plural} + mix")
+            format!(
+                "Exported \"{folder}\" — {stems} stem{} + mix",
+                plural(stems)
+            )
         }
     };
 
@@ -154,9 +156,9 @@ fn written_message(run: &AudioExportRun, outcome: &AudioExportOutcome) -> String
             .iter()
             .map(|position| (position + 1).to_string())
             .collect();
-        let plural = if numbers.len() == 1 { "" } else { "s" };
         notes.push(format!(
-            "MIDI Out track{plural} {} left out",
+            "MIDI Out track{} {} left out",
+            plural(numbers.len()),
             numbers.join(", ")
         ));
     }
@@ -169,6 +171,11 @@ fn written_message(run: &AudioExportRun, outcome: &AudioExportOutcome) -> String
     } else {
         format!("{head} ({})", notes.join("; "))
     }
+}
+
+/// The plural `s` for `n` of something.
+fn plural(n: usize) -> &'static str {
+    if n == 1 { "" } else { "s" }
 }
 
 #[cfg(test)]

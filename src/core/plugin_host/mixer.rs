@@ -415,7 +415,7 @@ impl AudioSource for InstrumentMixer {
         for (track, slot) in self.voices.iter_mut().enumerate() {
             let Some(voice) = slot else {
                 if let Some(span) = export_span.clone() {
-                    self.export.tap(track, None, (0.0, 0.0), (0.0, 0.0), span);
+                    self.export.tap_silence(track, span);
                 }
                 continue;
             };
@@ -439,8 +439,11 @@ impl AudioSource for InstrumentMixer {
                 }
             }
             if let Some(span) = export_span.clone() {
-                let playing = rendered.then_some(&**voice);
-                self.export.tap(track, playing, gain, step, span);
+                if rendered {
+                    self.export.tap(track, &**voice, gain, step, span);
+                } else {
+                    self.export.tap_silence(track, span);
+                }
             }
             // The block ends at the target either way. A voice that rendered
             // nothing snaps straight to it, so it doesn't ramp from a stale

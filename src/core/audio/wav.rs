@@ -25,13 +25,17 @@ const BYTES_PER_FRAME: u32 = CHANNELS as u32 * BITS_PER_SAMPLE as u32 / 8;
 /// Length of everything before the sample data: `RIFF` + size + `WAVE`
 /// (12), the 18-byte `fmt ` chunk a non-PCM format needs (26), the `fact`
 /// chunk (12), and the `data` chunk header (8).
-const HEADER_LEN: u32 = 58;
+pub(crate) const HEADER_LEN: u32 = 58;
 
-/// Where the `fact` chunk's frame count sits.
-const FACT_FRAMES_OFFSET: u64 = 46;
+/// Where the `RIFF` size sits, after the `RIFF` tag.
+const RIFF_SIZE_OFFSET: u64 = 4;
 
-/// Where the `data` chunk's size sits.
-const DATA_SIZE_OFFSET: u64 = 54;
+/// Where the `data` chunk's size sits: the header's last field.
+const DATA_SIZE_OFFSET: u64 = HEADER_LEN as u64 - 4;
+
+/// Where the `fact` chunk's frame count sits: just before the `data` chunk
+/// header.
+const FACT_FRAMES_OFFSET: u64 = DATA_SIZE_OFFSET - 8;
 
 /// The most sample bytes a file can hold: the `RIFF` size (everything after
 /// its own 8 bytes) is a `u32`, rounded down to whole frames.
@@ -43,6 +47,9 @@ pub(crate) struct WavWriter<W: Write + Seek> {
     out: W,
     /// Sample bytes written so far.
     data_bytes: u32,
+    /// The little-endian bytes of the frames being written, kept between
+    /// calls so a write doesn't allocate.
+    bytes: Vec<u8>,
 }
 
 impl<W: Write + Seek> WavWriter<W> {
@@ -72,7 +79,11 @@ impl<W: Write + Seek> WavWriter<W> {
         header.extend_from_slice(&0u32.to_le_bytes());
         debug_assert_eq!(header.len(), HEADER_LEN as usize);
         out.write_all(&header)?;
-        Ok(Self { out, data_bytes: 0 })
+        Ok(Self {
+            out,
+            data_bytes: 0,
+            bytes: Vec::new(),
+        })
     }
 
     /// Appends interleaved `[left, right, left, right, …]` samples, a whole
@@ -86,11 +97,10 @@ impl<W: Write + Seek> WavWriter<W> {
             .ok_or_else(|| {
                 io::Error::new(ErrorKind::FileTooLarge, "past the WAV format's 4 GiB")
             })?;
-        let mut buf = Vec::with_capacity(bytes as usize);
-        for sample in samples {
-            buf.extend_from_slice(&sample.to_le_bytes());
-        }
-        self.out.write_all(&buf)?;
+        self.bytes.clear();
+        self.bytes
+            .extend(samples.iter().flat_map(|sample| sample.to_le_bytes()));
+        self.out.write_all(&self.bytes)?;
         self.data_bytes += bytes;
         Ok(())
     }
@@ -104,7 +114,7 @@ impl<W: Write + Seek> WavWriter<W> {
     /// positioned at the file's end.
     pub(crate) fn finish(mut self) -> io::Result<W> {
         let frames = self.frames();
-        self.patch(4, HEADER_LEN - 8 + self.data_bytes)?;
+        self.patch(RIFF_SIZE_OFFSET, HEADER_LEN - 8 + self.data_bytes)?;
         self.patch(FACT_FRAMES_OFFSET, frames)?;
         self.patch(DATA_SIZE_OFFSET, self.data_bytes)?;
         self.out.seek(SeekFrom::End(0))?;

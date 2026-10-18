@@ -202,10 +202,25 @@ pub(crate) fn project_name_from_input(input: &str) -> Option<String> {
     let valid = !name.is_empty()
         && !name.starts_with('.')
         && name.chars().count() <= PROJECT_NAME_MAX_CHARS
-        && !name
-            .chars()
-            .any(|c| c.is_control() || PROJECT_NAME_FORBIDDEN.contains(&c));
+        && !name.chars().any(is_forbidden_in_name);
     valid.then(|| name.to_owned())
+}
+
+/// Whether a file system refuses `c` in a name: a control character or one
+/// of [`PROJECT_NAME_FORBIDDEN`].
+fn is_forbidden_in_name(c: char) -> bool {
+    c.is_control() || PROJECT_NAME_FORBIDDEN.contains(&c)
+}
+
+/// The first of `name(None)`, `name(Some(2))`, `name(Some(3))`, … that
+/// `taken` doesn't claim: the never-overwrite rule every export's name
+/// follows.
+fn first_free_name(name: impl Fn(Option<u32>) -> String, taken: impl Fn(&str) -> bool) -> String {
+    once(None)
+        .chain((2..).map(Some))
+        .map(name)
+        .find(|name| !taken(name))
+        .expect("an unbounded list of names has a free one")
 }
 
 /// Whether `folder/name.stev` exists (`None`: the projects root) — Save As
@@ -302,10 +317,10 @@ fn audio_export_dir_name(
         meter.denominator(),
         meter.ticks_to_bars(start_tick) + 1
     );
-    once(stem.clone())
-        .chain((2..).map(|n| format!("{stem} {n}")))
-        .find(|name| !taken(name))
-        .expect("an unbounded list of names has a free one")
+    first_free_name(
+        |n| n.map_or_else(|| stem.clone(), |n| format!("{stem} {n}")),
+        taken,
+    )
 }
 
 /// `NN Name.wav` for the stem of the track at 1-based `number`, zero-padded
@@ -317,13 +332,7 @@ pub(crate) fn stem_file_name(number: usize, name: &str) -> String {
     let name: String = name
         .trim()
         .chars()
-        .map(|c| {
-            if c.is_control() || PROJECT_NAME_FORBIDDEN.contains(&c) {
-                '_'
-            } else {
-                c
-            }
-        })
+        .map(|c| if is_forbidden_in_name(c) { '_' } else { c })
         .collect();
     if name.is_empty() {
         format!("{number:02}.wav")
@@ -348,10 +357,13 @@ fn clip_export_name(
         track_idx + 1,
         meter.ticks_to_bars(start_tick) + 1
     );
-    once(format!("{stem}.{MIDI_EXTENSION}"))
-        .chain((2..).map(|n| format!("{stem}_{n}.{MIDI_EXTENSION}")))
-        .find(|name| !taken(name))
-        .expect("an unbounded list of names has a free one")
+    first_free_name(
+        |n| match n {
+            None => format!("{stem}.{MIDI_EXTENSION}"),
+            Some(n) => format!("{stem}_{n}.{MIDI_EXTENSION}"),
+        },
+        taken,
+    )
 }
 
 #[cfg(test)]

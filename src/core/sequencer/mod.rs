@@ -61,6 +61,9 @@ use capture::CaptureInsert;
 pub(crate) use audio_export::{
     AudioExportJob, AudioExportOutcome, AudioExportRefusal, AudioExportRun, ExportMark,
 };
+// Only the plugin host's export tap (macOS) reads the slots from outside.
+#[cfg(target_os = "macos")]
+pub(crate) use audio_export::SlotMask;
 #[cfg(test)]
 pub(crate) use audio_export::{AudioExportPlan, StemPlan};
 pub(crate) use commands::SequencerCommand;

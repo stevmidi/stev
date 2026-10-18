@@ -133,7 +133,11 @@ fn drain<W: Write + Seek>(
 /// `result`'s value, or `None` with its error kept in `error` unless an
 /// earlier one is there already.
 fn keep_first_error<T>(error: &mut Option<io::Error>, result: io::Result<T>) -> Option<T> {
-    result.map_err(|e| *error = error.take().or(Some(e))).ok()
+    result
+        .map_err(|e| {
+            error.get_or_insert(e);
+        })
+        .ok()
 }
 
 #[cfg(test)]
@@ -141,6 +145,8 @@ mod tests {
     use std::io::Cursor;
 
     use rtrb::RingBuffer;
+
+    use crate::core::audio::wav::HEADER_LEN;
 
     use super::*;
 
@@ -183,16 +189,10 @@ mod tests {
                 Ok(0)
             }
         }
-        let header = WavWriter::new(Cursor::new(Vec::new()), 48_000.0)
-            .unwrap()
-            .finish()
-            .unwrap()
-            .into_inner()
-            .len();
-        let wav = WavWriter::new(Broken { room: header }, 48_000.0).unwrap();
+        let room = HEADER_LEN as usize;
+        let mut wav = Some(WavWriter::new(Broken { room }, 48_000.0).unwrap());
         let (mut tx, mut rx) = RingBuffer::new(4);
         tx.push_entire_slice(&[0.1, 0.2]).unwrap();
-        let mut wav = Some(wav);
         let mut error = None;
         drain(&mut rx, &mut wav, &mut error);
         assert!(wav.is_none());

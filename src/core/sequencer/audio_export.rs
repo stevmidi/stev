@@ -10,12 +10,15 @@
 use std::path::PathBuf;
 use std::time::Instant;
 
-use crate::{
-    core::{config::MAX_TRACKS, input_event::TimeSelectionRect, project::stem_file_name},
-    models::track::Track,
-};
+use crate::core::{config::MAX_TRACKS, input_event::TimeSelectionRect, project::stem_file_name};
 
 use super::Sequencer;
+
+/// A set of engine slots (`Track::slot`), bit `n` for slot `n`.
+pub(crate) type SlotMask = u32;
+
+// Every slot has a bit.
+const _: () = assert!(MAX_TRACKS <= SlotMask::BITS as usize);
 
 /// One end of the export, from the sequencer to the plugin host's mixer on
 /// its own `rtrb` ring. The mixer turns `at` into a frame the way it places
@@ -28,8 +31,8 @@ pub(crate) enum ExportMark {
     Start {
         /// The tick's intended time.
         at: Instant,
-        /// The engine slots that get a stem ([`Track::slot`]).
-        slots: [bool; MAX_TRACKS],
+        /// The engine slots that get a stem.
+        slots: SlotMask,
     },
     /// The selection's end tick: the first sample past every file.
     End {
@@ -94,7 +97,7 @@ pub(crate) struct AudioExportPlan {
 /// One track's stem.
 #[derive(Debug, PartialEq)]
 pub(crate) struct StemPlan {
-    /// The track's engine slot ([`Track::slot`]): the voice the mixer taps.
+    /// The track's engine slot (`Track::slot`): the voice the mixer taps.
     pub(crate) slot: usize,
     /// The stem's file name ([`stem_file_name`]).
     pub(crate) file_name: String,
@@ -140,9 +143,12 @@ impl Sequencer {
             match track.output().instrument() {
                 Some(instrument) => stems.push(StemPlan {
                     slot: track.slot(),
+                    // The track's own name, or for a track never named its
+                    // plugin's: the header's bare number would say nothing
+                    // in a DAW that the file's `NN` doesn't already.
                     file_name: stem_file_name(
                         position + 1,
-                        stem_name(track, &instrument.display_name),
+                        track.name().unwrap_or(&instrument.display_name),
                     ),
                 }),
                 None => left_out.push(position),
@@ -159,9 +165,7 @@ impl Sequencer {
             left_out,
         })
     }
-}
 
-impl Sequencer {
     /// Starts the run for `plan`, writing into `folder`: from here the tick
     /// path sends its marks. Remembers the loop state for
     /// [`finish_audio_export`](Self::finish_audio_export) to hand back.
@@ -222,20 +226,11 @@ impl Sequencer {
 
 impl AudioExportPlan {
     /// The engine slots that get a stem, as the mixer indexes them.
-    fn slots(&self) -> [bool; MAX_TRACKS] {
-        let mut slots = [false; MAX_TRACKS];
-        for stem in &self.stems {
-            slots[stem.slot] = true;
-        }
-        slots
+    fn slots(&self) -> SlotMask {
+        self.stems
+            .iter()
+            .fold(0, |mask, stem| mask | 1 << stem.slot)
     }
-}
-
-/// What a stem is named after: the track's own name, or for a track never
-/// named, its plugin's (`plugin_name`) — the header's bare number would say
-/// nothing in a DAW that the file's `NN` doesn't already.
-fn stem_name<'a>(track: &'a Track, plugin_name: &'a str) -> &'a str {
-    track.name().unwrap_or(plugin_name)
 }
 
 #[cfg(test)]
@@ -371,8 +366,7 @@ mod tests {
         let plan = sequencer
             .audio_export_plan(Some(rect(10, 20, 0, 0)))
             .unwrap();
-        let mut slots = [false; MAX_TRACKS];
-        slots[sequencer.tracks()[0].slot()] = true;
+        let slots = 1 << sequencer.tracks()[0].slot();
         sequencer.begin_audio_export(plan, PathBuf::new());
 
         let origin = Instant::now();
