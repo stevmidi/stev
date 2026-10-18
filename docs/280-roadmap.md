@@ -41,12 +41,14 @@ Stage 1 of § Linux and Windows support, staged, taken first as macOS work. Park
 
 Stev arranges and a DAW mixes (§ Principle), so the export's main job is the hand-off: a tidy set of stems that drops into any DAW and lines up with no fiddling (added 2026-10-10, reshaped 2026-10-11). A reference mix comes alongside, so a sketch can also be shared without a DAW.
 
+Picked up 2026-10-18: the phase plan is `300-export-to-audio.md`.
+
 **Suggested start, decided 2026-10-11:**
 
-- **One real-time pass writes everything.** Play the arrangement from bar 1 to its end and write each plugin track's output, plus the summed mix. The voices are rendered separately before the summing pass (`130`), so stems cost no extra pass. Real time means the files are exactly what was heard. The footer says if an overrun happened during the render.
-- **A folder per export**, in the project folder, never overwriting (a number is added, as the MIDI clip export does, `060` § MIDI clip export). Its name carries the project name, tempo and meter (e.g. `Sketch 120bpm 4-4`), since a DAW import needs them and WAV doesn't carry them.
+- **One real-time pass writes everything.** Play the arranger's time selection and write each plugin track's output, plus the summed mix. The voices are rendered separately before the summing pass (`130`), so stems cost no extra pass. Real time means the files are exactly what was heard. The footer says if an overrun happened during the render.
+- **A folder per export**, in one `Exports` folder beside `Clips` and hidden from the browser like it (decided 2026-10-18, `300`), never overwriting (a number is added, as the MIDI clip export does, `060` § MIDI clip export). Its name carries the project name, tempo and meter (e.g. `Sketch 120bpm 4-4`), since a DAW import needs them and WAV doesn't carry them.
 - **One WAV per plugin track, named `NN Name.wav`**: the track number keeps the arrangement's order when the files are sorted, and the name is the track's name as its header shows it. Plus `Mix.wav`.
-- **Every file the same length, starting at bar 1** (leading silence included) and ending at the arrangement's end plus a fixed tail of a few seconds, so all of them dropped at the DAW's start line up.
+- **The time selection sets the length** (changed 2026-10-18, replacing "bar 1 to the arrangement's end plus a fixed tail"): every file starts at the selection's start and ends at its end, so all of them line up when dropped at the same bar in the DAW. There is no fixed tail, since one would cut a long delay or reverb: the files ring out past the selection end until the output is measured silent, and the same measurement decides when the path is clear to start (`300` phase 4). With no selection, the export refuses. Details in `300`.
 - **One format:** 32-bit float WAV at the device's sample rate, so no level is clipped or rounded before the DAW sees it. A hand-rolled writer, no dependency, as the SMF writer was (`smf.rs`).
 - **Plugin tracks only.** A MIDI Out track's audio is made by external gear or another app and never reaches Stev, so the footer names the tracks left out, and the export refuses when nothing would be heard. Like the plugin host, it's macOS-only.
 
@@ -56,7 +58,6 @@ Stev arranges and a DAW mixes (§ Principle), so the export's main job is the ha
 **Later:**
 
 - Offline rendering (quick and glitch-free, but each plugin must accept the CLAP/VST3 offline-processing flag, and the render must reproduce the transport exactly as playback does: `BlockTransport`, note chase, the wheels).
-- A loop-region-only export.
 - Tails that end on silence.
 
 It comes before the website on purpose: it serves the author first, and the site's demo audio can then come out of Stev itself.
