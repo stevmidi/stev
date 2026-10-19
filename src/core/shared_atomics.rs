@@ -132,7 +132,7 @@ impl LiveRecState {
     }
 }
 
-/// The running audio export (`300-export-to-audio.md`), mirrored for the
+/// The running audio export (`130-plugin-host.md` § Audio export), mirrored for the
 /// threads besides the `"sequencer"` one, whose `Sequencer` holds the run
 /// itself. Grouped like [`TrackMixAtomics`]: three values, each independent.
 #[derive(Default)]

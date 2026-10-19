@@ -7,7 +7,7 @@
 //! [`AudioClock`], so every source places its events on the same output-sample
 //! timeline.
 //!
-//! `wav` is the audio export's file writer (`300-export-to-audio.md`): the
+//! `wav` is the audio export's file writer (`130-plugin-host.md` § Audio export): the
 //! engine's float samples, written as stereo 32-bit float WAV.
 
 mod click_voice;

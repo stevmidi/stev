@@ -1,5 +1,5 @@
 //! The audio export's tap on the [`InstrumentMixer`](super::mixer::InstrumentMixer)
-//! (`300-export-to-audio.md`): between the sequencer's start and end marks,
+//! (`130-plugin-host.md` § Audio export): between the sequencer's start and end marks,
 //! each exported slot's raw samples go to its own ring, and the gained sum of
 //! those slots goes to the mix ring, for the `"audio-export"` thread
 //! (`export_writer.rs`) to write.

@@ -27,7 +27,7 @@
 //! - `export.rs` — the MIDI clip export: which clip, and its `.mid` bytes.
 //! - `audio_export.rs` — the audio export's plan (which tracks get a stem,
 //!   their file names, the span) and the run's start/end marks
-//!   (`300-export-to-audio.md`).
+//!   (`130-plugin-host.md` § Audio export).
 //! - `performance_lane.rs` — arming / trigger routing for the arranger lane
 //!   (`110-performance-lane.md`).
 //! - `instrument_event.rs` / `instrument_notes.rs` — the CLAP clip-event feed

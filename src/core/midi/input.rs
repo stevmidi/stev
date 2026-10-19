@@ -316,7 +316,7 @@ impl LiveInputRouter {
         //
         // While an audio export runs the keyboard has no plugin to play
         // either: the export is the arrangement alone
-        // (`300-export-to-audio.md`). `route_held` still sends a note held
+        // (`130-plugin-host.md` § Audio export). `route_held` still sends a note held
         // into the run its note-off, so it doesn't stick.
         let live_target = self.live_instrument_target.load(Ordering::Relaxed);
         let live_target =

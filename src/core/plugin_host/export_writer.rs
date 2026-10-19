@@ -1,4 +1,4 @@
-//! The `"audio-export"` thread (`300-export-to-audio.md`): spawned with the
+//! The `"audio-export"` thread (`130-plugin-host.md` § Audio export): spawned with the
 //! plugin host, it waits for an [`AudioExportJob`], opens a WAV file per stem
 //! plus the mix, drains the mixer's export rings (`export.rs`) into them
 //! until the mixer reports the end, finishes the files and tells the

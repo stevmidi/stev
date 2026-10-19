@@ -33,7 +33,7 @@
 //! ## Audio export
 //!
 //! While an audio export runs, the summing pass also feeds its tap
-//! ([`ExportTap`], `300-export-to-audio.md`): each exported voice's raw
+//! ([`ExportTap`], `130-plugin-host.md` § Audio export): each exported voice's raw
 //! samples, and their gained sum, between the frames the sequencer's start
 //! and end marks resolve to, scheduled the way a clip event's `At` is.
 

@@ -1,4 +1,4 @@
-//! A streaming WAV writer for the audio export (`300-export-to-audio.md`),
+//! A streaming WAV writer for the audio export (`130-plugin-host.md` § Audio export),
 //! hand-rolled like the MIDI clip export's `smf.rs` (no dependency): stereo 32-bit float
 //! (`WAVE_FORMAT_IEEE_FLOAT`) at the device's sample rate, so no level is
 //! clipped or rounded before the DAW sees it.

@@ -1,6 +1,6 @@
 # Export to Audio — Phase Plan
 
-**Status: phases 1–3 built** (drafted 2026-10-18, phases 1 and 2 2026-10-18, phase 3 2026-10-19). This is the build plan for `280-roadmap.md` § Export to audio. The decisions agreed there on 2026-10-11 are taken as given and not argued again here, with one exception: one real-time pass, a folder per export, `NN Name.wav` stems plus `Mix.wav`, 32-bit float WAV at the device rate, plugin tracks only, stems at unity gain and centred, mute and solo honoured, the click never exported. The exception, changed 2026-10-18: **the arranger's time selection sets what's exported**, replacing "bar 1 to the arrangement's end plus a fixed tail". A fixed tail would cut a long delay or reverb, so the user owns the length: every file starts at the selection's start and ends at its end, and leaving room for the tail is part of making the selection. Once the feature lands, its as-built behaviour moves into `130`, `060`, `010` and `000`, and this file is archived.
+**Archived 2026-10-19. Status: phases 1–3 built, phase 4 deferred** (drafted 2026-10-18, phases 1 and 2 2026-10-18, phase 3 2026-10-19). Phase 4 was deferred the day phase 3 landed: measured silence at either end isn't something DAW users expect (Ableton's export renders exactly the selection), and what you hear is what you get, with the selection setting the length. It stays in `280-roadmap.md` § Later. The as-built behaviour lives in `130-plugin-host.md` § Audio export, `060`, `010` and `000`; this file is the plan and its rationale, not maintained. This is the build plan for `280-roadmap.md` § Export to audio. The decisions agreed there on 2026-10-11 are taken as given and not argued again here, with one exception: one real-time pass, a folder per export, `NN Name.wav` stems plus `Mix.wav`, 32-bit float WAV at the device rate, plugin tracks only, stems at unity gain and centred, mute and solo honoured, the click never exported. The exception, changed 2026-10-18: **the arranger's time selection sets what's exported**, replacing "bar 1 to the arrangement's end plus a fixed tail". A fixed tail would cut a long delay or reverb, so the user owns the length: every file starts at the selection's start and ends at its end, and leaving room for the tail is part of making the selection. Once the feature lands, its as-built behaviour moves into `130`, `060`, `010` and `000`, and this file is archived.
 
 ## How it works
 
@@ -105,6 +105,8 @@ This phase makes the run safe to leave alone or to interrupt.
   - `130`: the blocking and live-input rules.
 
 ## Phase 4: knowing when it's silent
+
+**Deferred 2026-10-19, not built** (see the status above). Kept as the design if it's ever picked up.
 
 A fixed wait can't know when a delay or reverb has finished: it's too short for a long hall, and wasted time for a dry pluck. So the export measures the output itself. That works the same for CLAP and VST3: VST3 has no sleep status (`180`), but every format produces samples. The same detector serves both ends of the run (split out as its own phase, 2026-10-18).
 

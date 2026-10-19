@@ -1,4 +1,4 @@
-//! The audio export (`⌘/Ctrl+⇧+R`, `300-export-to-audio.md`), its sequencer
+//! The audio export (`⌘/Ctrl+⇧+R`, `130-plugin-host.md` § Audio export), its sequencer
 //! half: the plan (which tracks get a stem, what each file is called, the
 //! stretch of time it covers) and the run's state while it plays. The run
 //! sends the [`ExportMark`]s from the tick path, stamped with the `Instant`

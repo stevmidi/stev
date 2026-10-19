@@ -280,7 +280,7 @@ methods take a track's position and look the slot up in its `tracks` mirror
 | `mixer.rs` | `InstrumentMixer` (`impl AudioSource` - the audio-callback state: `[Option<Box<dyn InstrumentVoice>>; MAX_TRACKS]`, the `pending` scheduling buffer and per-block dispatch, the render/sum two-pass split, the per-track gain ramp, summed into the engine's `mix`, and the audio export's tap fed from the summing pass), `PluginHostCommand`, `within_block_offset`. `AudioClock` lives in `core::audio`. Unit-tested: the pending sort's note-off/note-on ordering, `within_block_offset` clamping, the partition-point sub-block selection. |
 | `transport.rs` | `TransportState` (the shared atomics) and `BlockTransport` (the plain `Copy` snapshot taken once per block and handed to every voice, in app-native units - ticks and microseconds-per-quarter - plus `bpm()`, `bar_number()` and `bar_start_beats()` - the bar maths in the project's `Meter`, carried in the snapshot from the `SharedAtomics.meter` atomic, floored for a pre-roll playhead; `bar_start_beats` is in quarter notes). Each format converts it in its own `render_block`; that conversion is a handful of float ops, so doing it per voice rather than once per block costs nothing and keeps every plugin type out of the mixer. Unit-tested. |
 | `catalog.rs` | `PluginFormat` (label - which is also its `Audio/Plug-Ins` subdirectory - and bundle extension), `ALL_FORMATS`, `PluginCatalogEntry { format, bundle_path, plugin_id, name }`, `installed_bundles` (the shared depth-capped bundle walk over the install roots - what each format's scan calls), `scan_catalog` (runs every format's scan and reports the merged, name-sorted list **once per format** — VST3 is slow enough that waiting for it would hide the CLAP plugins too; `merge_scans` takes the scans as functions so each only starts after the previous one's delivery), `available_bundles_hint`. Runs on the background `"plugin-catalog-scan"` thread, result held in `Display::plugin_catalog`. Unit-tested. |
-| `export.rs` | The audio export's tap (`300-export-to-audio.md`): `ExportTap` (the mixer's half: takes the sequencer's `ExportMark`s and resolves them with `scheduled_frame`, `begin_block` / `tap` (or `tap_silence`) / `end_block` push each exported slot's raw samples and the gained mix), `export_span` (the part of a block inside the export), `ExportShared` (the `ended` export id / silent-slots / overflow atomics the writer reads), `tap_missing` (silence for a slot with no voice, reported), `export_tap` (builds the tap and one ring per slot plus the mix, about a second of stereo each, at start-up). Unit-tested with a fake voice. |
+| `export.rs` | The audio export's tap (§ Audio export): `ExportTap` (the mixer's half: takes the sequencer's `ExportMark`s and resolves them with `scheduled_frame`, `begin_block` / `tap` (or `tap_silence`) / `end_block` push each exported slot's raw samples and the gained mix), `export_span` (the part of a block inside the export), `ExportShared` (the `ended` export id / silent-slots / overflow atomics the writer reads), `tap_missing` (silence for a slot with no voice, reported), `export_tap` (builds the tap and one ring per slot plus the mix, about a second of stereo each, at start-up). Unit-tested with a fake voice. |
 | `export_writer.rs` | The `"audio-export"` thread: `start_export_writer`, `ExportWriter::write` (one `WavWriter` per stem plus `Mix.wav`, drained from the rings until the mixer has ended that export's id, then `SequencerCommand::AudioExportWritten`), progress into `AudioExportAtomics::written_ms`, `stop_reason` (a stream error, or 3 s with nothing from the mixer). A failed file stops being written but its ring is still drained. It never removes files: a cancelled or stopped run's go in the handler (`event_handlers/audio_export.rs`). Unit-tested: draining across the ring's wrap, a failed write, a written export on disk, an abandoned export's leftovers, `stop_reason`. |
 | `shutdown.rs` | `HostShutdown` - app-exit coordination (`requested` + `in_process`), one instance shared by the mixer and the reclaim thread. Unit-tested. |
 | `window.rs` | `PluginWindow` - a minimal native `NSWindow` parent for an embedded plugin GUI; `show` (`orderFront:`), `is_visible`, `frame_top_left` / a `top_left` argument to `new` (position carried across a close/reopen), `set_content_size` (anchored at the top-left corner), `take_closed` (the title-bar close button, refused by the `CloseInterceptor` delegate so the editor can tear down first, or the window off screen by any other route); registers/deregisters itself with `key_guard` on construction/`Drop`. It is closed by `Drop`, not hidden - there is no `hide`. Format-agnostic. |
@@ -409,10 +409,45 @@ boundary.
      "Per-track volume / pan" and "Per-track mute / solo" bullets above), then
      `in_events` is cleared.
 
-### Audio export tap
+## Audio export
 
-The audio export (`300-export-to-audio.md`) is an ordinary playback run with a
-tap on this mixer; nothing new renders audio.
+`⌘/Ctrl+⇧+R` (`010`) exports the arranger's time selection as a stem set for
+a DAW: a WAV per audible plugin track plus `Mix.wav`, in a folder of its own
+under `Stev/Exports` (`060` § On-disk layout). It is an ordinary playback run
+with a tap on this mixer; nothing new renders audio. Built 2026-10-18/19; the
+phase plan, with the decisions behind it, is `archive/300-export-to-audio.md`.
+
+### The run
+
+- **What's exported.** `Sequencer::audio_export_plan` (`sequencer/audio_export.rs`)
+  takes the selection's tick range exactly; the selection's tracks don't
+  narrow it. A track gets a stem when its output is a plugin, it's audible
+  under mute and solo (`track_audibility`, the mixer's own rule) and an
+  unmuted clip of it overlaps the selection; an audible MIDI Out track is
+  named in the footer as left out, its audio never reaching the app. It
+  refuses with no selection and when nothing would be heard. Stems are the
+  voice before its gain, at unity and centred; `Mix.wav` keeps the sketch's
+  volume and pan.
+- **What you hear is what you get** (2026-10-19, ending the plan at phase 3):
+  every file starts on the selection's start and ends on its end, as in
+  Ableton's Export Audio/Video. There is no tail detection: room for a reverb
+  or delay to ring out is part of the selection, and nothing waits for the
+  path to go quiet before the start either, so a tail still ringing from
+  playback just before the export can reach the files' first moments. A
+  short fixed pause between the stop and the play would be the small fix if
+  that bites; measured silence at both ends stays `280` § Later.
+- **The workflow** (`event_handlers/audio_export.rs`): plan, make the folder,
+  `Sequencer::begin_audio_export` (the run, the loop state to restore, the
+  export's id), hand the files to the `"audio-export"` thread
+  (`AudioExportJob`), then `SetLoop { enabled: false }` and
+  `PlayFromTick { tick: start }`, which never moves the cursor. The writer's
+  `SequencerCommand::AudioExportWritten` ends it: transport stopped (playback
+  back at the cursor), loop state restored, the result in the footer. The
+  export is a transport run, not an edit: no undo. Off macOS it refuses
+  ("Audio export needs the plugin host (macOS)"); the plan and `WavWriter`
+  are cross-platform.
+
+### The tap
 
 - **Marks.** `Sequencer::tick(at)` sends `ExportMark::Start { at, slots }` on
   the tick the tracks play at the selection's start and `ExportMark::End { at }`
@@ -447,8 +482,8 @@ tap on this mixer; nothing new renders audio.
 ### While an export runs
 
 The run blocks everything that would make the stems disagree with `Mix.wav`
-or the export depend on anything but the arrangement (`300` § Phase 3,
-`event_handlers/audio_export.rs`):
+or the export depend on anything but the arrangement
+(`event_handlers/audio_export.rs`):
 
 - **Commands.** `EventHandlers::audio_export_command` stands in front of every
   `SequencerCommand`, as the take session's does: only `EnterClip`,

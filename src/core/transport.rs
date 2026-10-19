@@ -98,7 +98,7 @@ pub(crate) enum TransportCommand {
     ToggleLoop,
     /// Turns looping on or off, whatever it was, leaving the region. The
     /// audio export turns it off for its run and puts it back after
-    /// (`300-export-to-audio.md`).
+    /// (`130-plugin-host.md` § Audio export).
     SetLoop {
         /// Whether playback wraps at the region end.
         enabled: bool,

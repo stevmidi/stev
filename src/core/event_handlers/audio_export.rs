@@ -1,5 +1,5 @@
 //! `EventHandlers` workflows for the audio export (`⌘/Ctrl+⇧+R`,
-//! `300-export-to-audio.md`): the run that plays the arranger's time
+//! `130-plugin-host.md` § Audio export): the run that plays the arranger's time
 //! selection through the plugin host while the `"audio-export"` thread
 //! writes a WAV per stem plus the mix.
 //!

@@ -107,7 +107,7 @@ pub(crate) struct SharedChannels {
     /// tick path to the `InstrumentMixer` (macOS only), stamped like a clip
     /// event so the mixer cuts the files on those ticks' samples. `rtrb` SPSC
     /// ring — drained on the realtime audio callback. Elsewhere the consumer
-    /// is dropped. See `300-export-to-audio.md`.
+    /// is dropped. See `130-plugin-host.md` § Audio export.
     pub(crate) export_mark_tx: Producer<ExportMark>,
     /// Receiving half of the pair documented above.
     pub(crate) export_mark_rx: Consumer<ExportMark>,

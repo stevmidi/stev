@@ -1,7 +1,7 @@
 //! Filesystem layout for projects: per-project subfolders of the projects
 //! root (`paths::project_dir`), `.stev` file CRUD, project name rules, the
 //! `Clips` folder a MIDI clip export lands in, the folder and file names of
-//! the audio export (`300-export-to-audio.md`), and reading a `.mid`
+//! the audio export (`130-plugin-host.md` § Audio export), and reading a `.mid`
 //! for the MIDI clip import (see `060-persistence.md`).
 
 use std::{

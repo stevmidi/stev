@@ -531,7 +531,7 @@ pub(crate) enum SequencerCommand {
         name: String,
     },
     /// Export the arrangement over `time_bounds` as WAV stems plus a mix
-    /// (`300-export-to-audio.md`): plan it, hand the files to the
+    /// (`130-plugin-host.md` § Audio export): plan it, hand the files to the
     /// `"audio-export"` thread and play the selection through the plugin
     /// host. Not an edit. Says in the footer that it started, or why not.
     ExportAudio {
