@@ -204,6 +204,13 @@ pub fn ticks_to_beats_f64(ticks: i32) -> f64 {
     f64::from(ticks) / f64::from(PPQN)
 }
 
+/// Wall-clock milliseconds for `ticks` (an amount) at `tempo` (µs per
+/// quarter). Unlike [`ticks_to_microseconds`] it neither truncates nor
+/// overflows `i32`, so it holds for a span as long as an arrangement.
+pub fn ticks_to_millis_f64(tempo: i32, ticks: i32) -> f64 {
+    ticks_to_beats_f64(ticks) * f64::from(tempo) / 1000.0
+}
+
 /// Beats (fractional) → ticks (an amount), truncating.
 pub const fn beats_to_ticks(beats: f32) -> i32 {
     (beats * PPQN as f32) as i32
@@ -609,6 +616,15 @@ mod tests {
     #[test]
     fn ticks_to_microseconds_zero_ticks_is_zero() {
         assert_eq!(ticks_to_microseconds(500_000, 0), 0);
+    }
+
+    #[test]
+    fn ticks_to_millis_f64_holds_past_where_microseconds_overflow() {
+        // A bar of 4/4 at 120 BPM is two seconds.
+        assert_eq!(ticks_to_millis_f64(500_000, 4 * PPQN), 2_000.0);
+        // An hour at 40 BPM: far past `i32` microseconds.
+        let hour = 40 * 60 * PPQN;
+        assert_eq!(ticks_to_millis_f64(1_500_000, hour), 3_600_000.0);
     }
 
     #[test]

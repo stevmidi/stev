@@ -64,17 +64,15 @@ impl StatusMessage {
 /// The footer's line while an audio export runs: how much of it is written,
 /// of how much, and how to stop it — `Exporting… 0:42 / 2:10 — Esc cancels`.
 pub(super) fn export_progress_text(written_ms: u32, total_ms: u32) -> String {
-    format!(
-        "Exporting… {} / {} — Esc cancels",
-        minutes_seconds(written_ms.min(total_ms)),
-        minutes_seconds(total_ms)
-    )
+    let (written_m, written_s) = minutes_seconds(written_ms.min(total_ms));
+    let (total_m, total_s) = minutes_seconds(total_ms);
+    format!("Exporting… {written_m}:{written_s:02} / {total_m}:{total_s:02} — Esc cancels")
 }
 
-/// `ms` as `m:ss`, whole seconds, the minutes as many as it takes.
-fn minutes_seconds(ms: u32) -> String {
+/// `ms` as whole minutes and seconds, the minutes as many as it takes.
+fn minutes_seconds(ms: u32) -> (u32, u32) {
     let seconds = ms / 1000;
-    format!("{}:{:02}", seconds / 60, seconds % 60)
+    (seconds / 60, seconds % 60)
 }
 
 #[cfg(test)]

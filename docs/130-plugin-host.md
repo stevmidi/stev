@@ -281,7 +281,7 @@ methods take a track's position and look the slot up in its `tracks` mirror
 | `transport.rs` | `TransportState` (the shared atomics) and `BlockTransport` (the plain `Copy` snapshot taken once per block and handed to every voice, in app-native units - ticks and microseconds-per-quarter - plus `bpm()`, `bar_number()` and `bar_start_beats()` - the bar maths in the project's `Meter`, carried in the snapshot from the `SharedAtomics.meter` atomic, floored for a pre-roll playhead; `bar_start_beats` is in quarter notes). Each format converts it in its own `render_block`; that conversion is a handful of float ops, so doing it per voice rather than once per block costs nothing and keeps every plugin type out of the mixer. Unit-tested. |
 | `catalog.rs` | `PluginFormat` (label - which is also its `Audio/Plug-Ins` subdirectory - and bundle extension), `ALL_FORMATS`, `PluginCatalogEntry { format, bundle_path, plugin_id, name }`, `installed_bundles` (the shared depth-capped bundle walk over the install roots - what each format's scan calls), `scan_catalog` (runs every format's scan and reports the merged, name-sorted list **once per format** — VST3 is slow enough that waiting for it would hide the CLAP plugins too; `merge_scans` takes the scans as functions so each only starts after the previous one's delivery), `available_bundles_hint`. Runs on the background `"plugin-catalog-scan"` thread, result held in `Display::plugin_catalog`. Unit-tested. |
 | `export.rs` | The audio export's tap (`300-export-to-audio.md`): `ExportTap` (the mixer's half: takes the sequencer's `ExportMark`s and resolves them with `scheduled_frame`, `begin_block` / `tap` (or `tap_silence`) / `end_block` push each exported slot's raw samples and the gained mix), `export_span` (the part of a block inside the export), `ExportShared` (the `ended` export id / silent-slots / overflow atomics the writer reads), `tap_missing` (silence for a slot with no voice, reported), `export_tap` (builds the tap and one ring per slot plus the mix, about a second of stereo each, at start-up). Unit-tested with a fake voice. |
-| `export_writer.rs` | The `"audio-export"` thread: `start_export_writer`, `ExportWriter::write` (one `WavWriter` per stem plus `Mix.wav`, drained from the rings until the mixer has ended that export's id, then `SequencerCommand::AudioExportWritten`), progress into `AudioExportAtomics::written_ms`, `stop_reason` (a stream error, or 3 s with nothing from the mixer), `remove_export` for a cancelled or stopped run. A failed file stops being written but its ring is still drained. Unit-tested: draining across the ring's wrap, a failed write, a written and a cancelled export on disk, an abandoned export's leftovers, `stop_reason`. |
+| `export_writer.rs` | The `"audio-export"` thread: `start_export_writer`, `ExportWriter::write` (one `WavWriter` per stem plus `Mix.wav`, drained from the rings until the mixer has ended that export's id, then `SequencerCommand::AudioExportWritten`), progress into `AudioExportAtomics::written_ms`, `stop_reason` (a stream error, or 3 s with nothing from the mixer). A failed file stops being written but its ring is still drained. It never removes files: a cancelled or stopped run's go in the handler (`event_handlers/audio_export.rs`). Unit-tested: draining across the ring's wrap, a failed write, a written export on disk, an abandoned export's leftovers, `stop_reason`. |
 | `shutdown.rs` | `HostShutdown` - app-exit coordination (`requested` + `in_process`), one instance shared by the mixer and the reclaim thread. Unit-tested. |
 | `window.rs` | `PluginWindow` - a minimal native `NSWindow` parent for an embedded plugin GUI; `show` (`orderFront:`), `is_visible`, `frame_top_left` / a `top_left` argument to `new` (position carried across a close/reopen), `set_content_size` (anchored at the top-left corner), `take_closed` (the title-bar close button, refused by the `CloseInterceptor` delegate so the editor can tear down first, or the window off screen by any other route); registers/deregisters itself with `key_guard` on construction/`Drop`. It is closed by `Drop`, not hidden - there is no `hide`. Format-agnostic. |
 | `key_guard.rs` | App-wide `NSEvent` local monitor reserving bare `Space`/`v`/`.`/`0` even while an embedded editor window has OS keyboard focus - `install_key_guard`, `take_toggle_editor_pending`, `register_window` / `unregister_window`. See the module doc and the caveat below. Format-agnostic. |
@@ -459,19 +459,26 @@ or the export depend on anything but the arrangement (`300` § Phase 3,
   `PlayFromTick` (nothing else that sends them can run meanwhile) and
   `ToggleMetronomeMute` (the click never reaches the files). The run's
   closing `Stop` is sent once it has ended.
-- **Live input.** `LiveInputRouter::route` sends nothing to the plugins while
-  `AudioExportAtomics::running` is set, except a note-off, so a note held into
-  the run doesn't stick. MIDI-thru to the output port and the sequencer's
+- **Live input.** `LiveInputRouter::route` has no plugin target while
+  `AudioExportAtomics::running` is set, so nothing new reaches a plugin;
+  `route_held` still sends a note held into the run its note-off, so it
+  doesn't stick. MIDI-thru to the output port and the sequencer's
   capture buffer are untouched.
-- **Esc.** `CancelAudioExport` sets `AudioExportAtomics::cancelled` and sends
-  the run's missing marks stamped now (`Sequencer::close_audio_export`: the
-  end, or with no start yet both), so the mixer ends the files at once. The
-  writer then removes the files and the folder, and its report ends the run
-  as a finished one would: transport stopped, loop state back.
+- **Esc.** `CancelAudioExport` marks the run cancelled and sends its missing
+  marks stamped now (`Sequencer::cancel_audio_export` →
+  `close_audio_export`: the end, or with no start yet both), so the mixer
+  ends the files at once. The writer finishes them as usual, and its report
+  ends the run as a finished one would — transport stopped, loop state back
+  — with the handler removing the files and the folder. The cancel never
+  crosses to the writer.
+- **The mirror.** `AudioExportAtomics` (`running`, `total_ms`, `written_ms`)
+  is what the threads besides the `"sequencer"` one see of the run. The
+  `Sequencer` sets `running` and `total_ms` in `begin_audio_export` and
+  clears `running` in `finish_audio_export`, so the run and its mirror can't
+  disagree.
 - **Progress and honest results.** The writer publishes the milliseconds
-  written to `AudioExportAtomics::written_ms` and wakes the UI through the
-  plugin host's `repaint` slot each time the shown second moves on; the
-  footer draws `Exporting… 0:42 / 2:10 — Esc cancels` from it and `total_ms`.
+  written to `AudioExportAtomics::written_ms`; the transport runs throughout,
+  so the UI's own running repaint shows it, and the footer draws `Exporting… 0:42 / 2:10 — Esc cancels` from it and `total_ms`.
   It clears the engine's overrun and xrun counts when its job starts and
   reports them at the end, with any ring overflow, in the result. Only the
   overflow is a warning ("samples dropped: listen before you use it"): the
@@ -479,9 +486,10 @@ or the export depend on anything but the arrangement (`300` § Phase 3,
   glitches what was heard but not the files, and is only noted ("2 overruns,
   1 xrun while playing"; user-checked 2026-10-19).
 - **A device that changes or goes away.** The engine counts every stream error
-  that isn't an xrun (`AudioLoad::stream_errors`). The writer stops the run,
-  removing its files, when that count moves or the mixer sends nothing for
-  3 s, and the footer says "Export stopped: the audio device changed" (or
+  that isn't an xrun (`AudioLoad::stream_errors`). The writer stops early and
+  reports why (`AudioExportOutcome::stopped`) when that count moves or the
+  mixer sends nothing for 3 s; the handler closes the run's marks, removes
+  its files and the folder, and the footer says "Export stopped: the audio device changed" (or
   "… the audio output stopped"). The engine never follows a device or rate
   change, so this is all the export can do.
 

@@ -29,7 +29,7 @@ use crate::core::midi::out_queue::MidiOutMessage;
 use crate::{
     core::{
         config,
-        shared_atomics::{LiveRecState, TrackMixAtomics},
+        shared_atomics::{AudioExportAtomics, LiveRecState, TrackMixAtomics},
         time::Meter,
     },
     metadata::clip_metadata::ClipMetadata,
@@ -175,6 +175,9 @@ pub(crate) struct Sequencer {
     pub(super) audio_export: Option<AudioExportRun>,
     /// How many audio exports have begun: the last one's id.
     pub(super) audio_exports_begun: u32,
+    /// The running export's mirror for the other threads, kept by
+    /// `begin_audio_export` / `finish_audio_export`.
+    pub(super) audio_export_atomics: Arc<AudioExportAtomics>,
 
     // --- Arranger performance lane ---
     /// Tracks the physical keyboard's currently-held trigger while the
@@ -211,6 +214,7 @@ impl Sequencer {
         arm_channel: Arc<AtomicU8>,
         performance_lane_armed: Arc<AtomicBool>,
         track_mix: Arc<TrackMixAtomics>,
+        audio_export_atomics: Arc<AudioExportAtomics>,
         live_rec_state: LiveRecState,
     ) -> Self {
         Sequencer {
@@ -244,6 +248,7 @@ impl Sequencer {
             take_framing: None,
             audio_export: None,
             audio_exports_begun: 0,
+            audio_export_atomics,
             live_rec_state,
             performance_lane: PerformanceLane::new(),
             performance_lane_armed,

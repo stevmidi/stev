@@ -100,6 +100,7 @@ pub(crate) fn harness() -> Harness {
         Arc::new(AtomicU8::new(0)),
         Arc::new(AtomicBool::new(false)),
         Arc::new(TrackMixAtomics::new()),
+        audio_export.clone(),
         LiveRecState {
             last_note_on: Arc::new(AtomicU8::new(0)),
             last_note_velocity: Arc::new(AtomicU8::new(0)),

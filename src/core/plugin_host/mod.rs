@@ -194,7 +194,6 @@ pub(crate) fn start_plugin_host(
         Arc::clone(&atomics.audio_export),
         Arc::clone(&engine.load),
         engine.sample_rate,
-        Arc::clone(&repaint),
     );
     start_export_writer(audio_export_jobs, writer, sequencer_command_tx);
 

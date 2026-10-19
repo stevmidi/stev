@@ -13,7 +13,7 @@ use crate::core::{
     config,
     input_event::TimeSelectionRect,
     midi::out_queue::MidiOutMessage,
-    shared_atomics::{LiveRecState, TrackMixAtomics},
+    shared_atomics::{AudioExportAtomics, LiveRecState, TrackMixAtomics},
     time::Meter,
 };
 use crate::models::{
@@ -53,6 +53,7 @@ pub(super) fn sequencer_with_outputs(
         Arc::new(AtomicU8::new(0)),
         Arc::new(AtomicBool::new(false)),
         Arc::new(TrackMixAtomics::new()),
+        Arc::new(AudioExportAtomics::default()),
         LiveRecState {
             last_note_on: Arc::new(AtomicU8::new(0)),
             last_note_velocity: Arc::new(AtomicU8::new(0)),

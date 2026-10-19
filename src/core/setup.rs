@@ -276,6 +276,7 @@ pub(crate) fn setup_sequencer(
         shared_atomics.arm_channel.clone(),
         shared_atomics.performance_lane_armed.clone(),
         shared_atomics.track_mix.clone(),
+        shared_atomics.audio_export.clone(),
         shared_atomics.live_rec_state.clone(),
     )
 }

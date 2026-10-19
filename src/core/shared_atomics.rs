@@ -134,19 +134,15 @@ impl LiveRecState {
 
 /// The running audio export (`300-export-to-audio.md`), mirrored for the
 /// threads besides the `"sequencer"` one, whose `Sequencer` holds the run
-/// itself. Grouped like [`TrackMixAtomics`]: four values, each independent.
+/// itself. Grouped like [`TrackMixAtomics`]: three values, each independent.
 #[derive(Default)]
 pub(crate) struct AudioExportAtomics {
     /// True from the run's start until the writer's report ends it. Written
-    /// by `EventHandlers` on the `"sequencer"` thread; read by the UI thread
-    /// (the footer's progress, Esc) and the live MIDI input, which keeps the
-    /// keyboard off the plugins while it is set.
+    /// by the `Sequencer` (`begin_audio_export` / `finish_audio_export`);
+    /// read by the UI thread (the footer's progress, Esc) and the live MIDI
+    /// input, which keeps the keyboard off the plugins while it is set.
     pub(crate) running: AtomicBool,
-    /// Set when Esc cancels the run, cleared when the next starts. Written by
-    /// `EventHandlers`, read by the `"audio-export"` thread, which then
-    /// removes the files instead of finishing them.
-    pub(crate) cancelled: AtomicBool,
-    /// The export's length, in milliseconds. Written by `EventHandlers` when
+    /// The export's length, in milliseconds. Written by the `Sequencer` when
     /// the run starts.
     pub(crate) total_ms: AtomicU32,
     /// How much of it the `"audio-export"` thread has written, in

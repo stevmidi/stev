@@ -4,33 +4,32 @@
 //! until the mixer reports the end, finishes the files and tells the
 //! `"sequencer"` thread how it went (`SequencerCommand::AudioExportWritten`).
 //! On the way it publishes how far it has got for the footer
-//! (`AudioExportAtomics::written_ms`).
+//! (`AudioExportAtomics::written_ms`; the UI repaints on its own while the
+//! transport runs). It stops early, reporting why, if the audio output
+//! changes or stops.
 //!
 //! A file that fails to open or write stops being written, and what it got
 //! stays on disk; its ring is still drained, so the rest of the export goes
-//! on and the mixer never fills up waiting. A cancelled run (Esc) and one
-//! whose audio output changed or stopped leave nothing: the files and the
-//! folder are removed.
+//! on and the mixer never fills up waiting. Removing the files of a
+//! cancelled or stopped run is the `"sequencer"` thread's, which knows about
+//! the cancel.
 
-use std::fs::{self, File};
+use std::fs::File;
 use std::io::{self, BufWriter, Seek, Write};
 use std::path::Path;
+use std::sync::Arc;
 use std::sync::atomic::Ordering;
-use std::sync::{Arc, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, Sender};
-use egui::Context;
 use rtrb::Consumer;
 
 use crate::core::audio::{AudioLoad, wav::WavWriter};
-use crate::core::sequencer::{
-    AudioExportEnd, AudioExportJob, AudioExportOutcome, SequencerCommand,
-};
+use crate::core::sequencer::{AudioExportJob, AudioExportOutcome, SequencerCommand};
 use crate::core::shared_atomics::AudioExportAtomics;
 
-use super::export::{ExportRings, ExportShared};
+use super::export::{CHANNELS, ExportRings, ExportShared};
 
 /// How long the writer sleeps when the rings are drained and the export
 /// hasn't ended. A tenth of the rings' second of slack.
@@ -50,14 +49,12 @@ pub(super) struct ExportWriter {
     rings: ExportRings,
     /// What the mixer reports besides the samples.
     shared: Arc<ExportShared>,
-    /// The run's mirror: the cancel flag in, the progress out.
+    /// The run's mirror, which the progress goes out on.
     progress: Arc<AudioExportAtomics>,
     /// The engine's meter: its overrun, xrun and stream-error counts.
     load: Arc<AudioLoad>,
     /// The device rate the files are written at.
     sample_rate: f64,
-    /// Wakes the UI when the footer's progress moves on.
-    repaint: Arc<OnceLock<Context>>,
     /// The last export stopped before the mixer ended it, so the mixer may
     /// have pushed more of it since.
     abandoned: bool,
@@ -92,7 +89,6 @@ impl ExportWriter {
         progress: Arc<AudioExportAtomics>,
         load: Arc<AudioLoad>,
         sample_rate: f64,
-        repaint: Arc<OnceLock<Context>>,
     ) -> Self {
         ExportWriter {
             rings,
@@ -100,14 +96,13 @@ impl ExportWriter {
             progress,
             load,
             sample_rate,
-            repaint,
             abandoned: false,
         }
     }
 
     /// Writes one export: opens the files, drains the rings into them until
-    /// the mixer has ended the export, then finishes them — or removes them
-    /// when the run was cancelled or its audio output went wrong.
+    /// the mixer has ended the export — or the audio output went wrong — and
+    /// finishes them.
     fn write(&mut self, job: &AudioExportJob) -> AudioExportOutcome {
         // Whatever a stopped export left behind. The job comes before the
         // run plays, so its own start mark is still to come.
@@ -133,7 +128,7 @@ impl ExportWriter {
 
         let mut frames = 0;
         let mut last_heard = Instant::now();
-        let end = loop {
+        let stopped = loop {
             // Read before draining: every sample pushed before the flag was
             // set is then in this pass.
             let ended = self.shared.has_ended(job.id);
@@ -142,38 +137,27 @@ impl ExportWriter {
             }
             let mixed = drain(&mut self.rings.mix, &mut mix, &mut error);
             if mixed > 0 {
-                frames += mixed / 2;
+                frames += mixed;
                 last_heard = Instant::now();
-                self.publish_progress(frames);
+                let ms = (frames as f64 * 1000.0 / self.sample_rate) as u32;
+                self.progress.written_ms.store(ms, Ordering::Relaxed);
             }
             if ended {
-                break if self.progress.cancelled.load(Ordering::Relaxed) {
-                    AudioExportEnd::Cancelled
-                } else {
-                    AudioExportEnd::Written
-                };
+                break None;
             }
             let errors_changed = self.load.stream_errors() != stream_errors;
             if let Some(reason) = stop_reason(errors_changed, last_heard.elapsed()) {
-                break AudioExportEnd::Stopped(reason);
+                break Some(reason);
             }
             thread::sleep(DRAIN_INTERVAL);
         };
 
-        self.abandoned = matches!(end, AudioExportEnd::Stopped(_));
-        let wavs = stems.into_iter().map(|(_, wav)| wav).chain([mix]).flatten();
-        if end == AudioExportEnd::Written {
-            for wav in wavs {
-                keep_first_error(&mut error, wav.finish());
-            }
-        } else {
-            // Closed unfinished, then removed with the folder.
-            wavs.for_each(drop);
-            remove_export(job);
-            error = None;
+        self.abandoned = stopped.is_some();
+        for wav in stems.into_iter().map(|(_, wav)| wav).chain([mix]).flatten() {
+            keep_first_error(&mut error, wav.finish());
         }
         AudioExportOutcome {
-            end,
+            stopped,
             error: error.map(|e| e.to_string()),
             silent: job
                 .stems
@@ -190,21 +174,7 @@ impl ExportWriter {
     /// Empties every ring.
     fn discard_leftovers(&mut self) {
         for ring in self.rings.stems.iter_mut().chain([&mut self.rings.mix]) {
-            if let Ok(chunk) = ring.read_chunk(ring.slots()) {
-                chunk.commit_all();
-            }
-        }
-    }
-
-    /// Publishes `frames` written as milliseconds for the footer, and wakes
-    /// the UI when the second it shows moves on.
-    fn publish_progress(&self, frames: usize) {
-        let ms = (frames as f64 * 1000.0 / self.sample_rate) as u32;
-        let before = self.progress.written_ms.swap(ms, Ordering::Relaxed);
-        if before / 1000 != ms / 1000
-            && let Some(ctx) = self.repaint.get()
-        {
-            ctx.request_repaint();
+            drain::<File>(ring, &mut None, &mut None);
         }
     }
 }
@@ -222,16 +192,7 @@ fn stop_reason(stream_errors_changed: bool, quiet_for: Duration) -> Option<&'sta
     }
 }
 
-/// Removes a run's files and then its folder, which held nothing else. A
-/// folder that does hold something else stays.
-fn remove_export(job: &AudioExportJob) {
-    for path in job.stems.iter().map(|(_, path)| path).chain([&job.mix]) {
-        fs::remove_file(path).ok();
-    }
-    fs::remove_dir(&job.folder).ok();
-}
-
-/// Moves everything in `ring` into `wav` and returns how many samples that
+/// Moves everything in `ring` into `wav` and returns how many frames that
 /// was. A write error is kept (the first one) and stops `wav`; the ring is
 /// drained either way.
 fn drain<W: Write + Seek>(
@@ -253,7 +214,7 @@ fn drain<W: Write + Seek>(
         }
     }
     chunk.commit_all();
-    len
+    len / CHANNELS
 }
 
 /// `result`'s value, or `None` with its error kept in `error` unless an
@@ -268,6 +229,7 @@ fn keep_first_error<T>(error: &mut Option<io::Error>, result: io::Result<T>) -> 
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
     use std::io::Cursor;
     use std::path::PathBuf;
 
@@ -289,7 +251,6 @@ mod tests {
             Arc::new(AudioExportAtomics::default()),
             Arc::new(AudioLoad::new()),
             1_000.0,
-            Arc::new(OnceLock::new()),
         );
         (writer, tap, marks)
     }
@@ -315,47 +276,36 @@ mod tests {
         tap.end_block(span, 8);
     }
 
-    /// A job for slot 0 in a fresh folder under the temp dir.
-    fn job(id: u32, tag: &str) -> AudioExportJob {
+    /// A job for slot 0 in a fresh folder under the temp dir, and the folder.
+    fn job(id: u32, tag: &str) -> (AudioExportJob, PathBuf) {
         let folder = std::env::temp_dir().join(format!("stev-export-{}-{tag}", std::process::id()));
         fs::remove_dir_all(&folder).ok();
         fs::create_dir(&folder).unwrap();
-        AudioExportJob {
+        let job = AudioExportJob {
             id,
             stems: vec![(0, folder.join("01 Synth.wav"))],
             mix: folder.join("Mix.wav"),
-            folder,
-        }
+        };
+        (job, folder)
     }
 
-    fn wav_len(path: &PathBuf) -> u64 {
+    fn wav_len(path: &Path) -> u64 {
         fs::metadata(path).unwrap().len()
     }
 
     #[test]
     fn a_finished_export_leaves_its_files_and_says_how_far_it_got() {
         let (mut writer, mut tap, mut marks) = writer();
-        let job = job(1, "written");
+        let (job, folder) = job(1, "written");
         play(&mut tap, &mut marks, 1);
         let outcome = writer.write(&job);
-        assert_eq!(outcome.end, AudioExportEnd::Written);
+        assert_eq!(outcome.stopped, None);
         assert_eq!(outcome.error, None);
-        let four_frames = u64::from(HEADER_LEN) + 4 * 2 * 4;
+        let four_frames = u64::from(HEADER_LEN) + 4 * CHANNELS as u64 * 4;
         assert_eq!(wav_len(&job.stems[0].1), four_frames);
         assert_eq!(wav_len(&job.mix), four_frames);
         assert_eq!(writer.progress.written_ms.load(Ordering::Relaxed), 4);
-        fs::remove_dir_all(&job.folder).unwrap();
-    }
-
-    #[test]
-    fn a_cancelled_export_removes_its_files_and_folder() {
-        let (mut writer, mut tap, mut marks) = writer();
-        let job = job(1, "cancelled");
-        writer.progress.cancelled.store(true, Ordering::Relaxed);
-        play(&mut tap, &mut marks, 1);
-        let outcome = writer.write(&job);
-        assert_eq!(outcome.end, AudioExportEnd::Cancelled);
-        assert!(!job.folder.exists());
+        fs::remove_dir_all(&folder).unwrap();
     }
 
     #[test]

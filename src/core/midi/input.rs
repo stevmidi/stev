@@ -314,16 +314,16 @@ impl LiveInputRouter {
         // `route_held`). Independent of MIDI-OUT thru, but gated by the
         // performance lane like it.
         //
-        // While an audio export runs the keyboard plays no plugin either: the
-        // export is the arrangement alone (`300-export-to-audio.md`). A
-        // note-off still goes, so a note held into the run doesn't stick.
-        let exporting = self.audio_export.is_running() && !is_note_off(&msg);
+        // While an audio export runs the keyboard has no plugin to play
+        // either: the export is the arrangement alone
+        // (`300-export-to-audio.md`). `route_held` still sends a note held
+        // into the run its note-off, so it doesn't stick.
         let live_target = self.live_instrument_target.load(Ordering::Relaxed);
-        let live_target = (live_target >= 0).then_some(live_target as usize);
+        let live_target =
+            (live_target >= 0 && !self.audio_export.is_running()).then_some(live_target as usize);
         if matches!(msg.first().copied().map(|s| s & 0xF0), Some(0x80..=0xE0))
             && let Some(target) = route_held(&msg, live_target, &mut self.held_live_targets)
             && !armed
-            && !exporting
             && let Ok(mut producer) = self.instrument_midi_tx.lock()
         {
             producer.push((target, midi3(&msg))).ok();
@@ -344,11 +344,6 @@ impl LiveInputRouter {
             self.midi_in_tx.send((msg, ticks)).ok();
         }
     }
-}
-
-/// Whether `msg` is a note-off (or a note-on at velocity 0).
-fn is_note_off(msg: &[u8]) -> bool {
-    matches!(parse_note(msg), Some((_, false)))
 }
 
 /// Routes a live-input message by the note it belongs to. A note-on (and any

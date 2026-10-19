@@ -36,7 +36,7 @@ use crate::core::sequencer::{ExportMark, SlotMask};
 use super::voice::InstrumentVoice;
 
 /// Every file is stereo, interleaved in the rings as in the WAV.
-const CHANNELS: usize = 2;
+pub(super) const CHANNELS: usize = 2;
 
 /// What the mixer tells the writer besides the samples. Written only by the
 /// audio thread — the last two cleared when an export starts — and read by
