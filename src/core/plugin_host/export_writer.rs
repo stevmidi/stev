@@ -3,23 +3,32 @@
 //! plus the mix, drains the mixer's export rings (`export.rs`) into them
 //! until the mixer reports the end, finishes the files and tells the
 //! `"sequencer"` thread how it went (`SequencerCommand::AudioExportWritten`).
+//! On the way it publishes how far it has got for the footer
+//! (`AudioExportAtomics::written_ms`).
 //!
 //! A file that fails to open or write stops being written, and what it got
 //! stays on disk; its ring is still drained, so the rest of the export goes
-//! on and the mixer never fills up waiting.
+//! on and the mixer never fills up waiting. A cancelled run (Esc) and one
+//! whose audio output changed or stopped leave nothing: the files and the
+//! folder are removed.
 
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::{self, BufWriter, Seek, Write};
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::atomic::Ordering;
+use std::sync::{Arc, OnceLock};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, Sender};
+use egui::Context;
 use rtrb::Consumer;
 
-use crate::core::audio::wav::WavWriter;
-use crate::core::sequencer::{AudioExportJob, AudioExportOutcome, SequencerCommand};
+use crate::core::audio::{AudioLoad, wav::WavWriter};
+use crate::core::sequencer::{
+    AudioExportEnd, AudioExportJob, AudioExportOutcome, SequencerCommand,
+};
+use crate::core::shared_atomics::AudioExportAtomics;
 
 use super::export::{ExportRings, ExportShared};
 
@@ -27,24 +36,45 @@ use super::export::{ExportRings, ExportShared};
 /// hasn't ended. A tenth of the rings' second of slack.
 const DRAIN_INTERVAL: Duration = Duration::from_millis(100);
 
+/// How long the mixer may send nothing before the writer decides the audio
+/// output has stopped. Far past the start mark's latency (a few
+/// milliseconds) and any block.
+const STALL_TIMEOUT: Duration = Duration::from_secs(3);
+
 /// One file being written: its writer, until an error stops it.
 type OpenWav = Option<WavWriter<BufWriter<File>>>;
+
+/// The writer's ends of everything it reads and reports through.
+pub(super) struct ExportWriter {
+    /// The mixer's export rings.
+    rings: ExportRings,
+    /// What the mixer reports besides the samples.
+    shared: Arc<ExportShared>,
+    /// The run's mirror: the cancel flag in, the progress out.
+    progress: Arc<AudioExportAtomics>,
+    /// The engine's meter: its overrun, xrun and stream-error counts.
+    load: Arc<AudioLoad>,
+    /// The device rate the files are written at.
+    sample_rate: f64,
+    /// Wakes the UI when the footer's progress moves on.
+    repaint: Arc<OnceLock<Context>>,
+    /// The last export stopped before the mixer ended it, so the mixer may
+    /// have pushed more of it since.
+    abandoned: bool,
+}
 
 /// Spawns the `"audio-export"` thread. It runs one job at a time and exits
 /// when `jobs` disconnects.
 pub(super) fn start_export_writer(
     jobs: Receiver<AudioExportJob>,
-    rings: ExportRings,
-    shared: Arc<ExportShared>,
-    sample_rate: f64,
+    mut writer: ExportWriter,
     done_tx: Sender<SequencerCommand>,
 ) {
     thread::Builder::new()
         .name("audio-export".to_string())
         .spawn(move || {
-            let mut rings = rings;
             for job in jobs {
-                let outcome = write_export(&job, &mut rings, &shared, sample_rate);
+                let outcome = writer.write(&job);
                 done_tx
                     .send(SequencerCommand::AudioExportWritten(outcome))
                     .ok();
@@ -53,71 +83,166 @@ pub(super) fn start_export_writer(
         .expect("failed to spawn audio-export thread");
 }
 
-/// Writes one export: opens the files, drains the rings into them until the
-/// mixer has ended the export, then finishes them.
-fn write_export(
-    job: &AudioExportJob,
-    rings: &mut ExportRings,
-    shared: &ExportShared,
-    sample_rate: f64,
-) -> AudioExportOutcome {
-    let mut error = None;
-    let mut open = |path: &Path| {
-        let opened =
-            File::create(path).and_then(|file| WavWriter::new(BufWriter::new(file), sample_rate));
-        keep_first_error(&mut error, opened)
-    };
-    let mut stems: Vec<(usize, OpenWav)> = job
-        .stems
-        .iter()
-        .map(|(slot, path)| (*slot, open(path)))
-        .collect();
-    let mut mix = open(&job.mix);
-
-    loop {
-        // Read before draining: every sample pushed before the flag was set
-        // is then in this pass.
-        let ended = shared.has_ended();
-        for (slot, wav) in &mut stems {
-            drain(&mut rings.stems[*slot], wav, &mut error);
+impl ExportWriter {
+    /// A writer on the mixer's `rings` and `shared` state, writing at
+    /// `sample_rate`.
+    pub(super) fn new(
+        rings: ExportRings,
+        shared: Arc<ExportShared>,
+        progress: Arc<AudioExportAtomics>,
+        load: Arc<AudioLoad>,
+        sample_rate: f64,
+        repaint: Arc<OnceLock<Context>>,
+    ) -> Self {
+        ExportWriter {
+            rings,
+            shared,
+            progress,
+            load,
+            sample_rate,
+            repaint,
+            abandoned: false,
         }
-        drain(&mut rings.mix, &mut mix, &mut error);
-        if ended {
-            break;
-        }
-        thread::sleep(DRAIN_INTERVAL);
     }
 
-    for wav in stems.into_iter().map(|(_, wav)| wav).chain([mix]).flatten() {
-        keep_first_error(&mut error, wav.finish());
-    }
-    let outcome = AudioExportOutcome {
-        error: error.map(|e| e.to_string()),
-        silent: job
+    /// Writes one export: opens the files, drains the rings into them until
+    /// the mixer has ended the export, then finishes them — or removes them
+    /// when the run was cancelled or its audio output went wrong.
+    fn write(&mut self, job: &AudioExportJob) -> AudioExportOutcome {
+        // Whatever a stopped export left behind. The job comes before the
+        // run plays, so its own start mark is still to come.
+        if self.abandoned {
+            self.discard_leftovers();
+        }
+        // The counts read "this export", like the header's do "this take".
+        self.load.reset_counts();
+        let stream_errors = self.load.stream_errors();
+
+        let mut error = None;
+        let mut open = |path: &Path| {
+            let opened = File::create(path)
+                .and_then(|file| WavWriter::new(BufWriter::new(file), self.sample_rate));
+            keep_first_error(&mut error, opened)
+        };
+        let mut stems: Vec<(usize, OpenWav)> = job
             .stems
             .iter()
-            .map(|(slot, _)| *slot)
-            .filter(|&slot| shared.is_silent(slot))
-            .collect(),
-        overflowed: shared.overflowed(),
-    };
-    // Cleared here, not when the next job comes: by then its start mark may
-    // already have armed the mixer. The rings are empty: the mixer pushes
-    // nothing once it has ended.
-    shared.reset();
-    outcome
+            .map(|(slot, path)| (*slot, open(path)))
+            .collect();
+        let mut mix = open(&job.mix);
+
+        let mut frames = 0;
+        let mut last_heard = Instant::now();
+        let end = loop {
+            // Read before draining: every sample pushed before the flag was
+            // set is then in this pass.
+            let ended = self.shared.has_ended(job.id);
+            for (slot, wav) in &mut stems {
+                drain(&mut self.rings.stems[*slot], wav, &mut error);
+            }
+            let mixed = drain(&mut self.rings.mix, &mut mix, &mut error);
+            if mixed > 0 {
+                frames += mixed / 2;
+                last_heard = Instant::now();
+                self.publish_progress(frames);
+            }
+            if ended {
+                break if self.progress.cancelled.load(Ordering::Relaxed) {
+                    AudioExportEnd::Cancelled
+                } else {
+                    AudioExportEnd::Written
+                };
+            }
+            let errors_changed = self.load.stream_errors() != stream_errors;
+            if let Some(reason) = stop_reason(errors_changed, last_heard.elapsed()) {
+                break AudioExportEnd::Stopped(reason);
+            }
+            thread::sleep(DRAIN_INTERVAL);
+        };
+
+        self.abandoned = matches!(end, AudioExportEnd::Stopped(_));
+        let wavs = stems.into_iter().map(|(_, wav)| wav).chain([mix]).flatten();
+        if end == AudioExportEnd::Written {
+            for wav in wavs {
+                keep_first_error(&mut error, wav.finish());
+            }
+        } else {
+            // Closed unfinished, then removed with the folder.
+            wavs.for_each(drop);
+            remove_export(job);
+            error = None;
+        }
+        AudioExportOutcome {
+            end,
+            error: error.map(|e| e.to_string()),
+            silent: job
+                .stems
+                .iter()
+                .map(|(slot, _)| *slot)
+                .filter(|&slot| self.shared.is_silent(slot))
+                .collect(),
+            overflowed: self.shared.overflowed(),
+            overruns: self.load.overruns(),
+            xruns: self.load.xruns(),
+        }
+    }
+
+    /// Empties every ring.
+    fn discard_leftovers(&mut self) {
+        for ring in self.rings.stems.iter_mut().chain([&mut self.rings.mix]) {
+            if let Ok(chunk) = ring.read_chunk(ring.slots()) {
+                chunk.commit_all();
+            }
+        }
+    }
+
+    /// Publishes `frames` written as milliseconds for the footer, and wakes
+    /// the UI when the second it shows moves on.
+    fn publish_progress(&self, frames: usize) {
+        let ms = (frames as f64 * 1000.0 / self.sample_rate) as u32;
+        let before = self.progress.written_ms.swap(ms, Ordering::Relaxed);
+        if before / 1000 != ms / 1000
+            && let Some(ctx) = self.repaint.get()
+        {
+            ctx.request_repaint();
+        }
+    }
 }
 
-/// Moves everything in `ring` into `wav`. A write error is kept (the first
-/// one) and stops `wav`; the ring is drained either way.
+/// Why a run should stop before its end, if it should: the stream reported an
+/// error (the device went away or changed), or the mixer has sent nothing for
+/// [`STALL_TIMEOUT`] (the output stopped).
+fn stop_reason(stream_errors_changed: bool, quiet_for: Duration) -> Option<&'static str> {
+    if stream_errors_changed {
+        Some("the audio device changed")
+    } else if quiet_for >= STALL_TIMEOUT {
+        Some("the audio output stopped")
+    } else {
+        None
+    }
+}
+
+/// Removes a run's files and then its folder, which held nothing else. A
+/// folder that does hold something else stays.
+fn remove_export(job: &AudioExportJob) {
+    for path in job.stems.iter().map(|(_, path)| path).chain([&job.mix]) {
+        fs::remove_file(path).ok();
+    }
+    fs::remove_dir(&job.folder).ok();
+}
+
+/// Moves everything in `ring` into `wav` and returns how many samples that
+/// was. A write error is kept (the first one) and stops `wav`; the ring is
+/// drained either way.
 fn drain<W: Write + Seek>(
     ring: &mut Consumer<f32>,
     wav: &mut Option<WavWriter<W>>,
     error: &mut Option<io::Error>,
-) {
+) -> usize {
     let Ok(chunk) = ring.read_chunk(ring.slots()) else {
-        return;
+        return 0;
     };
+    let len = chunk.len();
     if let Some(writer) = wav {
         let (first, second) = chunk.as_slices();
         let written = writer
@@ -128,6 +253,7 @@ fn drain<W: Write + Seek>(
         }
     }
     chunk.commit_all();
+    len
 }
 
 /// `result`'s value, or `None` with its error kept in `error` unless an
@@ -143,12 +269,119 @@ fn keep_first_error<T>(error: &mut Option<io::Error>, result: io::Result<T>) -> 
 #[cfg(test)]
 mod tests {
     use std::io::Cursor;
+    use std::path::PathBuf;
 
-    use rtrb::RingBuffer;
+    use rtrb::{Producer, RingBuffer};
 
     use crate::core::audio::wav::HEADER_LEN;
+    use crate::core::sequencer::ExportMark;
 
+    use super::super::export::{ExportTap, export_tap};
     use super::*;
+
+    /// A writer at 1 kHz and the tap feeding it, with its marks ring.
+    fn writer() -> (ExportWriter, ExportTap, Producer<ExportMark>) {
+        let (marks, marks_rx) = RingBuffer::new(4);
+        let (tap, rings, shared) = export_tap(marks_rx, 1_000.0);
+        let writer = ExportWriter::new(
+            rings,
+            shared,
+            Arc::new(AudioExportAtomics::default()),
+            Arc::new(AudioLoad::new()),
+            1_000.0,
+            Arc::new(OnceLock::new()),
+        );
+        (writer, tap, marks)
+    }
+
+    /// Export `id` of slot 0, four frames long, pushed whole through `tap`.
+    fn play(tap: &mut ExportTap, marks: &mut Producer<ExportMark>, id: u32) {
+        let start = Instant::now();
+        let end = start + Duration::from_millis(4);
+        marks
+            .push(ExportMark::Start {
+                id,
+                at: start,
+                slots: 1,
+            })
+            .unwrap();
+        marks.push(ExportMark::End { at: end }).unwrap();
+        // Frames 0–3 of an eight-frame block.
+        tap.take_marks(|at| if at == start { 0 } else { 4 });
+        let span = tap.begin_block(0, 8);
+        if let Some(span) = span.clone() {
+            tap.tap_silence(0, span);
+        }
+        tap.end_block(span, 8);
+    }
+
+    /// A job for slot 0 in a fresh folder under the temp dir.
+    fn job(id: u32, tag: &str) -> AudioExportJob {
+        let folder = std::env::temp_dir().join(format!("stev-export-{}-{tag}", std::process::id()));
+        fs::remove_dir_all(&folder).ok();
+        fs::create_dir(&folder).unwrap();
+        AudioExportJob {
+            id,
+            stems: vec![(0, folder.join("01 Synth.wav"))],
+            mix: folder.join("Mix.wav"),
+            folder,
+        }
+    }
+
+    fn wav_len(path: &PathBuf) -> u64 {
+        fs::metadata(path).unwrap().len()
+    }
+
+    #[test]
+    fn a_finished_export_leaves_its_files_and_says_how_far_it_got() {
+        let (mut writer, mut tap, mut marks) = writer();
+        let job = job(1, "written");
+        play(&mut tap, &mut marks, 1);
+        let outcome = writer.write(&job);
+        assert_eq!(outcome.end, AudioExportEnd::Written);
+        assert_eq!(outcome.error, None);
+        let four_frames = u64::from(HEADER_LEN) + 4 * 2 * 4;
+        assert_eq!(wav_len(&job.stems[0].1), four_frames);
+        assert_eq!(wav_len(&job.mix), four_frames);
+        assert_eq!(writer.progress.written_ms.load(Ordering::Relaxed), 4);
+        fs::remove_dir_all(&job.folder).unwrap();
+    }
+
+    #[test]
+    fn a_cancelled_export_removes_its_files_and_folder() {
+        let (mut writer, mut tap, mut marks) = writer();
+        let job = job(1, "cancelled");
+        writer.progress.cancelled.store(true, Ordering::Relaxed);
+        play(&mut tap, &mut marks, 1);
+        let outcome = writer.write(&job);
+        assert_eq!(outcome.end, AudioExportEnd::Cancelled);
+        assert!(!job.folder.exists());
+    }
+
+    #[test]
+    fn an_abandoned_exports_leftovers_are_discarded_and_its_end_is_its_own() {
+        let (mut writer, mut tap, mut marks) = writer();
+        // Export 1 ended after its writer gave up on it.
+        play(&mut tap, &mut marks, 1);
+        assert!(writer.shared.has_ended(1));
+        assert!(!writer.shared.has_ended(2));
+        writer.discard_leftovers();
+        assert!(writer.rings.mix.is_empty());
+        assert!(writer.rings.stems[0].is_empty());
+    }
+
+    #[test]
+    fn a_run_stops_when_the_stream_errs_or_goes_quiet() {
+        assert_eq!(stop_reason(false, Duration::from_millis(100)), None);
+        assert_eq!(
+            stop_reason(true, Duration::ZERO),
+            Some("the audio device changed")
+        );
+        assert_eq!(
+            stop_reason(false, STALL_TIMEOUT),
+            Some("the audio output stopped")
+        );
+    }
 
     #[test]
     fn drain_writes_across_the_rings_wrap() {

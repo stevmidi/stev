@@ -12,7 +12,14 @@
 //! engine's safety clamp.
 //!
 //! Every file keeps the same length: a slot whose voice slept, failed to
-//! render or isn't loaded pushes silence for the block.
+//! render or isn't loaded pushes silence for the block. A slot with no voice
+//! for any block (never loaded, or removed by a crash or reload mid-run) is
+//! reported, so the footer can name its stem.
+//!
+//! Each export carries an id from its start mark to the writer's job, and the
+//! mixer reports the end by id: an end that comes late, after the writer gave
+//! up on its export (`export_writer.rs`), can never be read as the next
+//! export's.
 
 use std::iter::repeat_n;
 use std::ops::Range;
@@ -31,36 +38,28 @@ use super::voice::InstrumentVoice;
 /// Every file is stereo, interleaved in the rings as in the WAV.
 const CHANNELS: usize = 2;
 
-/// What the mixer tells the writer besides the samples. Written by the audio
-/// thread while an export runs, and reset by the writer once it has read
-/// them at the end, so there are no locks.
+/// What the mixer tells the writer besides the samples. Written only by the
+/// audio thread — the last two cleared when an export starts — and read by
+/// the writer, so there are no locks.
 #[derive(Default)]
 pub(super) struct ExportShared {
-    /// Set once the mixer has pushed the last frame before the end mark.
-    ended: AtomicBool,
-    /// The exported slots with no voice loaded when the start resolved, as a
-    /// bit mask: their stems are silence.
+    /// The id of the last export the mixer has pushed every frame of.
+    ended: AtomicU32,
+    /// The exported slots that had no voice for a block, as a bit mask:
+    /// their stems are silence there.
     silent_slots: AtomicU32,
     /// Set when a ring was too full for a block, which was then dropped.
     overflowed: AtomicBool,
 }
 
 impl ExportShared {
-    /// (writer) Clears everything once an export is finished, ready for the
-    /// next.
-    pub(super) fn reset(&self) {
-        self.ended.store(false, Ordering::Relaxed);
-        self.silent_slots.store(0, Ordering::Relaxed);
-        self.overflowed.store(false, Ordering::Relaxed);
+    /// (writer) Whether the mixer has pushed the last frame of export `id`.
+    /// Once it has, draining every ring once more gets the rest.
+    pub(super) fn has_ended(&self, id: u32) -> bool {
+        self.ended.load(Ordering::Acquire) == id
     }
 
-    /// (writer) Whether the mixer has pushed its last frame. Once it has,
-    /// draining every ring once more gets the rest.
-    pub(super) fn has_ended(&self) -> bool {
-        self.ended.load(Ordering::Acquire)
-    }
-
-    /// (writer) Whether `slot` had no voice when the export started.
+    /// (writer) Whether `slot` had no voice for some of the export.
     pub(super) fn is_silent(&self, slot: usize) -> bool {
         self.silent_slots.load(Ordering::Relaxed) & (1 << slot) != 0
     }
@@ -105,10 +104,12 @@ pub(super) fn export_tap(
     (tap, rings, shared)
 }
 
-/// An export the mixer is cutting: which slots, and the frames it starts
-/// and ends on in the `steady` timeline.
+/// An export the mixer is cutting: which one, which slots, and the frames it
+/// starts and ends on in the `steady` timeline.
 #[derive(Clone, Copy)]
 struct Armed {
+    /// The export's id, from its start mark.
+    id: u32,
     /// The exported slots.
     slots: SlotMask,
     /// The first frame of every file.
@@ -136,21 +137,15 @@ pub(super) struct ExportTap {
 impl ExportTap {
     /// Takes the sequencer's marks, turning each one's `Instant` into its
     /// frame with `frame_for` (`RenderCtx::scheduled_frame`). A start arms
-    /// the tap and notes which exported slots have no voice (`has_voice`).
-    pub(super) fn take_marks(
-        &mut self,
-        frame_for: impl Fn(Instant) -> i64,
-        has_voice: impl Fn(usize) -> bool,
-    ) {
+    /// the tap and clears what the last export reported.
+    pub(super) fn take_marks(&mut self, frame_for: impl Fn(Instant) -> i64) {
         while let Ok(mark) = self.marks.pop() {
             match mark {
-                ExportMark::Start { at, slots } => {
-                    let voiced = (0..MAX_TRACKS)
-                        .filter(|&slot| has_voice(slot))
-                        .fold(0, |mask, slot| mask | 1 << slot);
-                    let silent = slots & !voiced;
-                    self.shared.silent_slots.store(silent, Ordering::Relaxed);
+                ExportMark::Start { id, at, slots } => {
+                    self.shared.silent_slots.store(0, Ordering::Relaxed);
+                    self.shared.overflowed.store(false, Ordering::Relaxed);
                     self.armed = Some(Armed {
+                        id,
                         slots,
                         start: frame_for(at),
                         end: None,
@@ -208,8 +203,20 @@ impl ExportTap {
         push(&mut self.stems[slot], samples, len, &self.shared.overflowed);
     }
 
+    /// Pushes silence over `span` to `slot`'s stem ring, if it is exported,
+    /// and reports the slot: it has no voice (never loaded, or removed
+    /// mid-run).
+    pub(super) fn tap_missing(&mut self, slot: usize, span: Range<usize>) {
+        if self.taps(slot) {
+            self.shared
+                .silent_slots
+                .fetch_or(1 << slot, Ordering::Relaxed);
+            self.tap_silence(slot, span);
+        }
+    }
+
     /// Pushes silence over `span` to `slot`'s stem ring, if it is exported:
-    /// its voice has nothing for this block (none loaded, asleep, failed).
+    /// its voice has nothing for this block (asleep, failed).
     pub(super) fn tap_silence(&mut self, slot: usize, span: Range<usize>) {
         if self.taps(slot) {
             let len = span.len() * CHANNELS;
@@ -231,12 +238,11 @@ impl ExportTap {
                 self.shared.overflowed.store(true, Ordering::Relaxed);
             }
         }
-        let ends_here = self
-            .armed
-            .is_some_and(|armed| armed.end.is_some_and(|end| end <= block_end));
-        if ends_here {
+        if let Some(armed) = self.armed
+            && armed.end.is_some_and(|end| end <= block_end)
+        {
             self.armed = None;
-            self.shared.ended.store(true, Ordering::Release);
+            self.shared.ended.store(armed.id, Ordering::Release);
         }
     }
 }
@@ -337,19 +343,23 @@ mod tests {
         marks: Producer<ExportMark>,
     }
 
-    /// A tap cutting an export of the `exported` slots from frame `start`,
-    /// with a voice loaded in every slot but the `unloaded` ones.
-    fn armed(exported: &[usize], start: i64, unloaded: &[usize]) -> Fixture {
+    /// The id of the fixture's export.
+    const ID: u32 = 7;
+
+    /// A tap cutting export [`ID`] of the `exported` slots from frame
+    /// `start`.
+    fn armed(exported: &[usize], start: i64) -> Fixture {
         let (mut marks, marks_rx) = RingBuffer::new(4);
         let (mut tap, rings, shared) = export_tap(marks_rx, 1_000.0);
         let slots = exported.iter().fold(0, |mask, slot| mask | 1 << slot);
         marks
             .push(ExportMark::Start {
+                id: ID,
                 at: Instant::now(),
                 slots,
             })
             .unwrap();
-        tap.take_marks(|_| start, |slot| !unloaded.contains(&slot));
+        tap.take_marks(|_| start);
         Fixture {
             tap,
             rings,
@@ -384,7 +394,7 @@ mod tests {
     fn stems_are_at_unity_and_the_mix_is_gained() {
         let Fixture {
             mut tap, mut rings, ..
-        } = armed(&[0, 1], 2, &[]);
+        } = armed(&[0, 1], 2);
         let span = tap.begin_block(0, 4).unwrap();
         assert_eq!(span, 2..4);
         let loud = ConstantVoice::new(0.5);
@@ -403,7 +413,7 @@ mod tests {
     fn the_mix_follows_the_gain_ramp() {
         let Fixture {
             mut tap, mut rings, ..
-        } = armed(&[0], 0, &[]);
+        } = armed(&[0], 0);
         let span = tap.begin_block(0, 2).unwrap();
         tap.tap(
             0,
@@ -419,33 +429,72 @@ mod tests {
     #[test]
     fn a_slot_outside_the_export_pushes_nothing() {
         let Fixture {
-            mut tap, mut rings, ..
-        } = armed(&[0], 0, &[]);
+            mut tap,
+            mut rings,
+            shared,
+            ..
+        } = armed(&[0], 0);
         let span = tap.begin_block(0, 2).unwrap();
         tap.tap(3, &ConstantVoice::new(1.0), (1.0, 1.0), FLAT, span.clone());
         tap.tap_silence(4, span.clone());
+        tap.tap_missing(5, span.clone());
         tap.end_block(Some(span), 2);
         assert!(drained(&mut rings.stems[3]).is_empty());
         assert!(drained(&mut rings.stems[4]).is_empty());
+        assert!(drained(&mut rings.stems[5]).is_empty());
+        assert!(!shared.is_silent(5), "nor is reported");
         assert_eq!(drained(&mut rings.mix), [0.0; 4], "nor reaches the mix");
     }
 
     #[test]
-    fn a_slot_with_nothing_to_play_pushes_silence_and_is_reported() {
+    fn a_slot_with_nothing_to_play_pushes_silence_and_a_missing_voice_is_reported() {
         let Fixture {
             mut tap,
             mut rings,
             shared,
             ..
-        } = armed(&[0, 2], 0, &[2]);
+        } = armed(&[0, 2], 0);
         let span = tap.begin_block(0, 2).unwrap();
         tap.tap_silence(0, span.clone());
-        tap.tap_silence(2, span.clone());
+        tap.tap(2, &ConstantVoice::new(1.0), (1.0, 1.0), FLAT, span.clone());
         tap.end_block(Some(span), 2);
-        assert_eq!(drained(&mut rings.stems[0]), [0.0; 4]);
-        assert_eq!(drained(&mut rings.stems[2]), [0.0; 4]);
+        // Slot 2's plugin is removed mid-run: silence from there on.
+        let span = tap.begin_block(2, 2).unwrap();
+        tap.tap_silence(0, span.clone());
+        tap.tap_missing(2, span.clone());
+        tap.end_block(Some(span), 4);
+        assert_eq!(drained(&mut rings.stems[0]), [0.0; 8]);
+        assert_eq!(
+            drained(&mut rings.stems[2]),
+            [1.0, -1.0, 1.0, -1.0, 0.0, 0.0, 0.0, 0.0]
+        );
         assert!(!shared.is_silent(0), "loaded, just asleep");
-        assert!(shared.is_silent(2), "no voice loaded");
+        assert!(shared.is_silent(2), "its voice went missing");
+    }
+
+    #[test]
+    fn the_next_start_clears_what_the_last_export_reported() {
+        let Fixture {
+            mut tap,
+            shared,
+            mut marks,
+            ..
+        } = armed(&[0], 0);
+        let span = tap.begin_block(0, 2).unwrap();
+        tap.tap_missing(0, span.clone());
+        tap.end_block(Some(span), 2);
+        shared.overflowed.store(true, Ordering::Relaxed);
+
+        marks
+            .push(ExportMark::Start {
+                id: ID + 1,
+                at: Instant::now(),
+                slots: 1,
+            })
+            .unwrap();
+        tap.take_marks(|_| 0);
+        assert!(!shared.is_silent(0));
+        assert!(!shared.overflowed());
     }
 
     #[test]
@@ -455,18 +504,19 @@ mod tests {
             mut rings,
             shared,
             mut marks,
-        } = armed(&[0], 2, &[]);
+        } = armed(&[0], 2);
         let span = tap.begin_block(0, 4);
         tap.end_block(span, 4);
-        assert!(!shared.has_ended());
+        assert!(!shared.has_ended(ID));
 
         marks.push(ExportMark::End { at: Instant::now() }).unwrap();
-        tap.take_marks(|_| 5, |_| true);
+        tap.take_marks(|_| 5);
         let span = tap.begin_block(4, 4).unwrap();
         assert_eq!(span, 0..1);
         tap.tap(0, &ConstantVoice::new(1.0), (1.0, 1.0), FLAT, span.clone());
         tap.end_block(Some(span), 8);
-        assert!(shared.has_ended());
+        assert!(shared.has_ended(ID));
+        assert!(!shared.has_ended(ID + 1), "an end is its own export's");
         assert_eq!(drained(&mut rings.stems[0]), [1.0, -1.0]);
         assert_eq!(
             drained(&mut rings.mix).len(),
@@ -484,7 +534,7 @@ mod tests {
             mut rings,
             shared,
             ..
-        } = armed(&[0], 0, &[]);
+        } = armed(&[0], 0);
         let voice = ConstantVoice::new(1.0);
         let capacity = rings.stems[0].buffer().capacity();
         for block in 0..=(capacity / (MAX_FRAMES * CHANNELS)) as i64 {

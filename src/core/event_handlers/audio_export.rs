@@ -8,14 +8,25 @@
 //! back after, and the cursor is never moved (the run plays from the
 //! selection's start with `PlayFromTick`, and the stop at the end returns
 //! playback to the cursor).
+//!
+//! While it runs, [`audio_export_command`](EventHandlers::audio_export_command)
+//! and [`audio_export_transport_command`](EventHandlers::audio_export_transport_command)
+//! stand in front of every command, as the take session's does
+//! (`take_framing.rs`): only looking around and Esc go through. A mute or a
+//! fader move halfway through would make the stems disagree with the mix.
 
 use std::fs;
 use std::path::Path;
+use std::sync::atomic::Ordering;
+use std::time::Instant;
 
 use crate::core::{
     input_event::TimeSelectionRect,
     project::{self, MIX_FILE_NAME},
-    sequencer::{AudioExportJob, AudioExportOutcome, AudioExportRefusal, AudioExportRun},
+    sequencer::{
+        AudioExportEnd, AudioExportJob, AudioExportOutcome, AudioExportRefusal, AudioExportRun,
+    },
+    time::ticks_to_beats_f64,
 };
 
 use super::*;
@@ -23,34 +34,39 @@ use super::*;
 /// The footer's answer where the plugin host, and so the writer, is missing.
 const NEEDS_PLUGIN_HOST: &str = "Audio export needs the plugin host (macOS)";
 
+/// The footer's answer to a command the run blocks.
+const FINISH_EXPORT_FIRST: &str = "Finish or cancel the export first";
+
 impl EventHandlers {
     /// `⌘/Ctrl+⇧+R`: plans the export, makes its folder, hands the files to
     /// the `"audio-export"` thread and plays the selection with looping off
     /// (`Sequencer::begin_audio_export`; the tick path sends the marks). The
-    /// footer says it started, or why it didn't. The writer's report ends
-    /// the run ([`finish_audio_export_workflow`](Self::finish_audio_export_workflow)).
+    /// footer shows its progress from here (`AudioExportAtomics`), or says
+    /// why it didn't start. The writer's report ends the run
+    /// ([`finish_audio_export_workflow`](Self::finish_audio_export_workflow)).
     pub(super) fn export_audio_workflow(
         &self,
         sequencer: &mut Sequencer,
         time_bounds: Option<TimeSelectionRect>,
         name: &str,
     ) {
-        let (Ok(message) | Err(message)) = self.start_audio_export(sequencer, time_bounds, name);
-        self.send_status_ui_event(message);
+        if let Err(message) = self.start_audio_export(sequencer, time_bounds, name) {
+            self.send_status_ui_event(message);
+        }
     }
 
-    /// The run's start: what the footer says it is doing, or why it refused.
+    /// The run's start, or why it refused.
     fn start_audio_export(
         &self,
         sequencer: &mut Sequencer,
         time_bounds: Option<TimeSelectionRect>,
         name: &str,
-    ) -> Result<String, String> {
+    ) -> Result<(), String> {
         if cfg!(not(target_os = "macos")) {
             return Err(NEEDS_PLUGIN_HOST.to_owned());
         }
-        if sequencer.is_exporting_audio() {
-            return Err("An export is already running".to_owned());
+        if sequencer.is_recording() {
+            return Err("Stop recording first".to_owned());
         }
         let plan = sequencer
             .audio_export_plan(time_bounds)
@@ -72,44 +88,123 @@ impl EventHandlers {
             plan.start_tick,
         )
         .map_err(|e| format!("Export failed: {e}"))?;
+        let stems = plan
+            .stems
+            .iter()
+            .map(|stem| (stem.slot, folder.join(&stem.file_name)))
+            .collect();
+        let mix = folder.join(MIX_FILE_NAME);
+        let beats = ticks_to_beats_f64(plan.end_tick - plan.start_tick);
+        let total_ms = beats * f64::from(sequencer.tempo_us()) / 1000.0;
+        let start_tick = plan.start_tick;
+
+        let id = sequencer.begin_audio_export(plan, folder.clone());
         let job = AudioExportJob {
-            stems: plan
-                .stems
-                .iter()
-                .map(|stem| (stem.slot, folder.join(&stem.file_name)))
-                .collect(),
-            mix: folder.join(MIX_FILE_NAME),
+            id,
+            folder,
+            stems,
+            mix,
         };
-        if self.audio_export_job_tx.send(job).is_err() {
+        let progress = &self.audio_export;
+        progress.cancelled.store(false, Ordering::Relaxed);
+        progress.written_ms.store(0, Ordering::Relaxed);
+        progress.total_ms.store(total_ms as u32, Ordering::Relaxed);
+        if let Err(unsent) = self.audio_export_job_tx.send(job) {
+            sequencer.finish_audio_export(Instant::now());
             // Nothing is in it yet.
-            fs::remove_dir(&folder).ok();
+            fs::remove_dir(&unsent.0.folder).ok();
             return Err(NEEDS_PLUGIN_HOST.to_owned());
         }
-
-        let message = format!("Exporting \"{}\"…", folder_name(&folder));
-        let start_tick = plan.start_tick;
-        sequencer.begin_audio_export(plan, folder);
+        progress.running.store(true, Ordering::Relaxed);
         self.send_transport(TransportCommand::SetLoop { enabled: false });
         self.send_transport(TransportCommand::PlayFromTick { tick: start_tick });
-        Ok(message)
+        Ok(())
     }
 
-    /// The `"audio-export"` thread finished the files: stops the transport
-    /// (playback back at the cursor), puts the loop state back and says how
-    /// it went. A no-op with no run.
+    /// Esc during a run: the mixer ends the files now
+    /// (`Sequencer::close_audio_export`) and the writer removes them and the
+    /// folder. The writer's report then ends the run as usual — the
+    /// transport stopped, the loop state put back — and the footer says
+    /// "Export cancelled". A no-op with no run.
+    pub(super) fn cancel_audio_export_workflow(&self, sequencer: &mut Sequencer) {
+        if sequencer.is_exporting_audio() {
+            self.audio_export.cancelled.store(true, Ordering::Relaxed);
+            sequencer.close_audio_export(Instant::now());
+        }
+    }
+
+    /// The `"audio-export"` thread is done: stops the transport (playback
+    /// back at the cursor), puts the loop state back and says how it went.
+    /// A no-op with no run.
     pub(super) fn finish_audio_export_workflow(
         &self,
         sequencer: &mut Sequencer,
         outcome: &AudioExportOutcome,
     ) {
-        let Some(run) = sequencer.finish_audio_export() else {
+        let Some(run) = sequencer.finish_audio_export(Instant::now()) else {
             return;
         };
+        self.audio_export.running.store(false, Ordering::Relaxed);
         self.send_transport(TransportCommand::Stop);
         self.send_transport(TransportCommand::SetLoop {
             enabled: run.loop_was_enabled,
         });
         self.send_status_ui_event(written_message(&run, outcome));
+    }
+
+    /// The run's hold on `cmd`. `true` when it was blocked here and the
+    /// ordinary arm must not run; `false` with no run, and for what goes
+    /// through: changing view, a plugin's saved state, Esc and the writer's
+    /// report.
+    pub(super) fn audio_export_command(
+        &self,
+        cmd: &SequencerCommand,
+        sequencer: &Sequencer,
+    ) -> bool {
+        if !sequencer.is_exporting_audio() {
+            return false;
+        }
+        match cmd {
+            SequencerCommand::AudioExportWritten(_)
+            | SequencerCommand::CancelAudioExport
+            | SequencerCommand::EnterClip
+            | SequencerCommand::ExitClip
+            | SequencerCommand::FocusPane(_)
+            | SequencerCommand::SetTrackInstrumentState { .. } => false,
+            _ => {
+                self.send_status_ui_event(FINISH_EXPORT_FIRST.to_owned());
+                true
+            }
+        }
+    }
+
+    /// The run's hold on a transport `cmd`, as for
+    /// [`audio_export_command`](Self::audio_export_command). Only the run's
+    /// own `SetLoop` and `PlayFromTick` go through — nothing else that sends
+    /// them can run during an export — and the click, which never reaches
+    /// the files. The run's closing `Stop` comes after it has ended.
+    pub(super) fn audio_export_transport_command(
+        &self,
+        cmd: &TransportCommand,
+        sequencer: &Sequencer,
+    ) -> bool {
+        if !sequencer.is_exporting_audio() {
+            return false;
+        }
+        match cmd {
+            TransportCommand::SetLoop { .. }
+            | TransportCommand::PlayFromTick { .. }
+            | TransportCommand::ToggleMetronomeMute => false,
+            _ => {
+                self.send_status_ui_event(FINISH_EXPORT_FIRST.to_owned());
+                true
+            }
+        }
+    }
+
+    /// Whether an export is running, for the UI thread's key routing (Esc).
+    pub(super) fn is_exporting_audio(&self) -> bool {
+        self.audio_export.is_running()
     }
 }
 
@@ -121,15 +216,20 @@ fn folder_name(folder: &Path) -> String {
         .unwrap_or_default()
 }
 
-/// The footer's report on a finished export: the folder and what's in it,
-/// or the error, plus what the user should know about: stems that came out
-/// silent for want of a loaded plugin, MIDI Out tracks that were heard but
-/// can't be exported, and dropped samples.
+/// The footer's report on an export: cancelled, stopped and why, or the
+/// folder and what's in it (or the error), plus what the user should know
+/// about: stems that came out silent for want of a plugin, MIDI Out tracks
+/// that were heard but can't be exported, dropped samples (the one glitch
+/// that damages the files) and any overrun or xrun in what was heard.
 fn written_message(run: &AudioExportRun, outcome: &AudioExportOutcome) -> String {
     let folder = folder_name(&run.folder);
-    let head = match &outcome.error {
-        Some(error) => format!("Export failed: {error} (what was written is in \"{folder}\")"),
-        None => {
+    let head = match (&outcome.end, &outcome.error) {
+        (AudioExportEnd::Cancelled, _) => return "Export cancelled".to_owned(),
+        (AudioExportEnd::Stopped(reason), _) => return format!("Export stopped: {reason}"),
+        (AudioExportEnd::Written, Some(error)) => {
+            format!("Export failed: {error} (what was written is in \"{folder}\")")
+        }
+        (AudioExportEnd::Written, None) => {
             let stems = run.plan.stems.len();
             format!(
                 "Exported \"{folder}\" — {stems} stem{} + mix",
@@ -162,8 +262,18 @@ fn written_message(run: &AudioExportRun, outcome: &AudioExportOutcome) -> String
             numbers.join(", ")
         ));
     }
+    // Only dropped samples damage the files. An overrun or xrun glitched
+    // what was heard, but the files take the samples before the device.
     if outcome.overflowed {
-        notes.push("samples were dropped: listen before you use it".to_owned());
+        notes.push("samples dropped: listen before you use it".to_owned());
+    }
+    let glitches: Vec<String> = [(outcome.overruns, "overrun"), (outcome.xruns, "xrun")]
+        .into_iter()
+        .filter(|&(count, _)| count > 0)
+        .map(|(count, what)| format!("{count} {what}{}", plural(count as usize)))
+        .collect();
+    if !glitches.is_empty() {
+        notes.push(format!("{} while playing", glitches.join(", ")));
     }
 
     if notes.is_empty() {
@@ -182,13 +292,17 @@ fn plural(n: usize) -> &'static str {
 mod tests {
     use std::path::PathBuf;
 
-    use crate::core::sequencer::test_support::rect;
+    use egui::Key;
+    use undo::Record;
+
+    use crate::core::input_event::{InputEvent, KeyModifiers};
     #[cfg(target_os = "macos")]
-    use crate::core::sequencer::test_support::{clip_at, stub_instrument};
+    use crate::core::sequencer::test_support::clip_at;
+    use crate::core::sequencer::test_support::rect;
     use crate::core::sequencer::{AudioExportPlan, StemPlan};
     use crate::core::time::Meter;
 
-    use super::super::test_harness::{Harness, harness};
+    use super::super::test_harness::{Harness, harness, run_command};
     use super::*;
 
     const BAR: i32 = Meter::FOUR_FOUR.bars_to_ticks(1);
@@ -218,9 +332,15 @@ mod tests {
         }
     }
 
+    /// An export of `plan` running, as `start_audio_export` leaves it.
     fn running(h: &mut Harness, plan: AudioExportPlan) {
         h.sequencer
             .begin_audio_export(plan, PathBuf::from("/x/Exports/Sketch 120bpm 4-4 bar 1"));
+        h.audio_export.running.store(true, Ordering::Relaxed);
+    }
+
+    fn finished(h: &mut Harness) -> AudioExportRun {
+        h.sequencer.finish_audio_export(Instant::now()).unwrap()
     }
 
     #[cfg(target_os = "macos")]
@@ -240,6 +360,7 @@ mod tests {
             ]
         );
         assert!(!h.sequencer.is_exporting_audio());
+        assert!(!h.audio_export.is_running());
         assert_eq!(h.transport_commands.try_iter().count(), 0);
     }
 
@@ -258,19 +379,6 @@ mod tests {
         assert_eq!(h.transport_commands.try_iter().count(), 0);
     }
 
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn a_second_export_waits_for_the_first() {
-        let mut h = harness();
-        h.sequencer.tracks_mut()[0].set_output(stub_instrument(Vec::new()));
-        h.sequencer.tracks_mut()[0].add_clip(&clip_at(0, BAR));
-        running(&mut h, plan(&[(0, "01 Synth.wav")], Vec::new()));
-        h.handlers
-            .export_audio_workflow(&mut h.sequencer, Some(rect(0, BAR, 0, 0)), "Sketch");
-        assert_eq!(statuses(&h), ["An export is already running"]);
-        assert_eq!(h.transport_commands.try_iter().count(), 0);
-    }
-
     #[cfg(not(target_os = "macos"))]
     #[test]
     fn off_macos_the_export_needs_the_plugin_host() {
@@ -278,6 +386,105 @@ mod tests {
         h.handlers
             .export_audio_workflow(&mut h.sequencer, Some(rect(0, BAR, 0, 0)), "Sketch");
         assert_eq!(statuses(&h), [NEEDS_PLUGIN_HOST]);
+    }
+
+    #[test]
+    fn a_running_export_blocks_edits_mixing_and_another_export() {
+        let mut h = harness();
+        let mut record = Record::new();
+        running(&mut h, plan(&[(0, "01 Synth.wav")], Vec::new()));
+        for cmd in [
+            SequencerCommand::ToggleTrackMute { track_idx: 0 },
+            SequencerCommand::Commit,
+            SequencerCommand::ExportAudio {
+                time_bounds: Some(rect(0, BAR, 0, 0)),
+                name: "Sketch".to_owned(),
+            },
+        ] {
+            run_command(&mut h, &mut record, cmd);
+        }
+        assert!(!h.sequencer.track_muted(0));
+        assert_eq!(statuses(&h), [FINISH_EXPORT_FIRST; 3]);
+        assert_eq!(h.transport_commands.try_iter().count(), 0);
+
+        // Looking around goes through.
+        run_command(
+            &mut h,
+            &mut record,
+            SequencerCommand::FocusPane(Pane::Arranger),
+        );
+        assert!(statuses(&h).is_empty());
+    }
+
+    #[test]
+    fn a_running_export_keeps_the_transport_to_itself() {
+        let mut h = harness();
+        let blocked = |h: &Harness, cmd: TransportCommand| {
+            h.handlers
+                .audio_export_transport_command(&cmd, &h.sequencer)
+        };
+        assert!(!blocked(&h, TransportCommand::TogglePlayback), "no run");
+
+        running(&mut h, plan(&[(0, "01 Synth.wav")], Vec::new()));
+        assert!(blocked(&h, TransportCommand::TogglePlayback));
+        assert!(blocked(&h, TransportCommand::Stop));
+        assert!(blocked(&h, TransportCommand::MoveCursor { ticks: 1 }));
+        assert!(!blocked(&h, TransportCommand::SetLoop { enabled: false }));
+        assert!(!blocked(&h, TransportCommand::PlayFromTick { tick: 0 }));
+        assert!(!blocked(&h, TransportCommand::ToggleMetronomeMute));
+        assert_eq!(statuses(&h), [FINISH_EXPORT_FIRST; 3]);
+    }
+
+    #[test]
+    fn esc_cancels_the_export_and_the_report_puts_everything_back() {
+        let mut h = harness();
+        let mut record = Record::new();
+        running(&mut h, plan(&[(0, "01 Synth.wav")], Vec::new()));
+
+        h.handlers.handle_input_event(&InputEvent::KeyPressed {
+            key: Key::Escape,
+            modifiers: KeyModifiers::default(),
+        });
+        let cancel = h.sequencer_commands.try_recv().unwrap();
+        assert!(matches!(cancel, SequencerCommand::CancelAudioExport));
+        run_command(&mut h, &mut record, cancel);
+        assert!(h.audio_export.cancelled.load(Ordering::Relaxed));
+        assert!(h.sequencer.is_exporting_audio(), "until the writer is done");
+
+        let outcome = AudioExportOutcome {
+            end: AudioExportEnd::Cancelled,
+            ..AudioExportOutcome::default()
+        };
+        run_command(
+            &mut h,
+            &mut record,
+            SequencerCommand::AudioExportWritten(outcome),
+        );
+        assert!(!h.sequencer.is_exporting_audio());
+        assert!(!h.audio_export.is_running());
+        let commands: Vec<TransportCommand> = h.transport_commands.try_iter().collect();
+        assert!(matches!(
+            commands[..],
+            [
+                TransportCommand::Stop,
+                TransportCommand::SetLoop { enabled: true }
+            ]
+        ));
+        assert_eq!(statuses(&h), ["Export cancelled"]);
+    }
+
+    #[test]
+    fn esc_with_no_export_running_is_the_ordinary_esc() {
+        let h = harness();
+        h.handlers.set_view_state(ViewState::Clip);
+        h.handlers.handle_input_event(&InputEvent::KeyPressed {
+            key: Key::Escape,
+            modifiers: KeyModifiers::default(),
+        });
+        assert!(matches!(
+            h.sequencer_commands.try_recv(),
+            Ok(SequencerCommand::ClearEventSelection)
+        ));
     }
 
     #[test]
@@ -289,6 +496,7 @@ mod tests {
             .finish_audio_export_workflow(&mut h.sequencer, &AudioExportOutcome::default());
 
         assert!(!h.sequencer.is_exporting_audio());
+        assert!(!h.audio_export.is_running());
         let commands: Vec<TransportCommand> = h.transport_commands.try_iter().collect();
         assert!(matches!(
             commands[..],
@@ -313,23 +521,25 @@ mod tests {
     }
 
     #[test]
-    fn the_report_names_silent_stems_skipped_tracks_and_dropped_samples() {
+    fn the_report_names_silent_stems_skipped_tracks_and_glitches() {
         let mut h = harness();
         running(
             &mut h,
             plan(&[(0, "01 Bass.wav"), (5, "02 Keys.wav")], vec![2, 3]),
         );
-        let run = h.sequencer.finish_audio_export().unwrap();
+        let run = finished(&mut h);
         let outcome = AudioExportOutcome {
-            error: None,
             silent: vec![5],
             overflowed: true,
+            overruns: 2,
+            xruns: 1,
+            ..AudioExportOutcome::default()
         };
         assert_eq!(
             written_message(&run, &outcome),
             "Exported \"Sketch 120bpm 4-4 bar 1\" — 2 stems + mix \
              (no plugin loaded: 02 Keys.wav silent; MIDI Out tracks 3, 4 left out; \
-             samples were dropped: listen before you use it)"
+             samples dropped: listen before you use it; 2 overruns, 1 xrun while playing)"
         );
     }
 
@@ -337,7 +547,7 @@ mod tests {
     fn a_write_error_says_where_the_rest_is() {
         let mut h = harness();
         running(&mut h, plan(&[(0, "01 Bass.wav")], vec![1]));
-        let run = h.sequencer.finish_audio_export().unwrap();
+        let run = finished(&mut h);
         let outcome = AudioExportOutcome {
             error: Some("disk full".to_owned()),
             ..AudioExportOutcome::default()
@@ -346,6 +556,22 @@ mod tests {
             written_message(&run, &outcome),
             "Export failed: disk full (what was written is in \"Sketch 120bpm 4-4 bar 1\") \
              (MIDI Out track 2 left out)"
+        );
+    }
+
+    #[test]
+    fn a_stopped_export_says_why_and_nothing_else() {
+        let mut h = harness();
+        running(&mut h, plan(&[(0, "01 Bass.wav")], vec![1]));
+        let run = finished(&mut h);
+        let outcome = AudioExportOutcome {
+            end: AudioExportEnd::Stopped("the audio device changed"),
+            overruns: 3,
+            ..AudioExportOutcome::default()
+        };
+        assert_eq!(
+            written_message(&run, &outcome),
+            "Export stopped: the audio device changed"
         );
     }
 }

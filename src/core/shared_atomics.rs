@@ -132,6 +132,35 @@ impl LiveRecState {
     }
 }
 
+/// The running audio export (`300-export-to-audio.md`), mirrored for the
+/// threads besides the `"sequencer"` one, whose `Sequencer` holds the run
+/// itself. Grouped like [`TrackMixAtomics`]: four values, each independent.
+#[derive(Default)]
+pub(crate) struct AudioExportAtomics {
+    /// True from the run's start until the writer's report ends it. Written
+    /// by `EventHandlers` on the `"sequencer"` thread; read by the UI thread
+    /// (the footer's progress, Esc) and the live MIDI input, which keeps the
+    /// keyboard off the plugins while it is set.
+    pub(crate) running: AtomicBool,
+    /// Set when Esc cancels the run, cleared when the next starts. Written by
+    /// `EventHandlers`, read by the `"audio-export"` thread, which then
+    /// removes the files instead of finishing them.
+    pub(crate) cancelled: AtomicBool,
+    /// The export's length, in milliseconds. Written by `EventHandlers` when
+    /// the run starts.
+    pub(crate) total_ms: AtomicU32,
+    /// How much of it the `"audio-export"` thread has written, in
+    /// milliseconds.
+    pub(crate) written_ms: AtomicU32,
+}
+
+impl AudioExportAtomics {
+    /// Whether an export is running.
+    pub(crate) fn is_running(&self) -> bool {
+        self.running.load(Ordering::Relaxed)
+    }
+}
+
 /// The whole shared-state bundle. Built in `setup_shared_atomics`, cloned into
 /// each thread. `track_mix` and `live_rec_state` group related sub-bundles;
 /// everything else is a single value. Unless a field says otherwise it is
@@ -224,4 +253,6 @@ pub(crate) struct SharedAtomics {
     pub(crate) track_mix: Arc<TrackMixAtomics>,
     /// Live-recording thumbnail + last-note state — see [`LiveRecState`].
     pub(crate) live_rec_state: LiveRecState,
+    /// The running audio export — see [`AudioExportAtomics`].
+    pub(crate) audio_export: Arc<AudioExportAtomics>,
 }

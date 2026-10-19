@@ -71,7 +71,7 @@ use rtrb::{Consumer, Producer, RingBuffer};
 
 use catalog::{PluginCatalogEntry, PluginFormat};
 use export::export_tap;
-use export_writer::start_export_writer;
+use export_writer::{ExportWriter, start_export_writer};
 use mixer::InstrumentMixer;
 use transport::TransportState;
 use voice::{InstrumentVoice, note_reset_messages};
@@ -188,13 +188,15 @@ pub(crate) fn start_plugin_host(
         .spawn(move || reclaim_voices(dead_rx, voice_dropped_tx, reclaim_shutdown))
         .expect("failed to spawn plugin-host thread");
 
-    start_export_writer(
-        audio_export_jobs,
+    let writer = ExportWriter::new(
         export_rings,
         export_shared,
+        Arc::clone(&atomics.audio_export),
+        Arc::clone(&engine.load),
         engine.sample_rate,
-        sequencer_command_tx,
+        Arc::clone(&repaint),
     );
+    start_export_writer(audio_export_jobs, writer, sequencer_command_tx);
 
     dprintln!("plugin host: mixer attached to the audio engine");
 

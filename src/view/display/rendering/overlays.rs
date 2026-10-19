@@ -13,6 +13,7 @@ use egui::{
 use crate::core::time::{Meter, format_bpm, sixteenth_straight_ticks};
 use crate::view::display::browser::browser_toggle_rect;
 use crate::view::display::header_chip::HeaderChipRects;
+use crate::view::display::status_message::export_progress_text;
 
 use super::*;
 
@@ -495,8 +496,9 @@ impl Display {
 
         // The passing message (`UiEvent::Status`): left-aligned past the
         // toggle and on its centre line, dim, fading out once its time is up.
-        // Otherwise an open take session's name, for as long as it is open:
-        // the one place the mode shows beyond the take itself.
+        // Otherwise a running audio export's progress, or an open take
+        // session's name, for as long as it is open: the one place the mode
+        // shows beyond the take itself.
         let text_pos = pos2(toggle.max.x + Self::STATUS_TEXT_GAP_X, rect.center().y);
         let font = FontId::proportional(theme::FONT_SIZE_LABEL);
         if let Some(status) = &self.render.status
@@ -508,6 +510,18 @@ impl Display {
                 &status.text,
                 font,
                 theme::fg_dim().gamma_multiply(opacity),
+            );
+        } else if self.is_exporting_audio() {
+            let progress = &self.audio_export;
+            painter.text(
+                text_pos,
+                Align2::LEFT_CENTER,
+                export_progress_text(
+                    progress.written_ms.load(Ordering::Relaxed),
+                    progress.total_ms.load(Ordering::Relaxed),
+                ),
+                font,
+                theme::fg(),
             );
         } else if self.take_session.is_some() {
             painter.text(

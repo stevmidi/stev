@@ -173,6 +173,8 @@ pub(crate) struct Sequencer {
     pub(super) take_framing: Option<TakeFraming>,
     /// The audio export in progress, if any (`audio_export.rs`).
     pub(super) audio_export: Option<AudioExportRun>,
+    /// How many audio exports have begun: the last one's id.
+    pub(super) audio_exports_begun: u32,
 
     // --- Arranger performance lane ---
     /// Tracks the physical keyboard's currently-held trigger while the
@@ -241,6 +243,7 @@ impl Sequencer {
             auto_end_tick: None,
             take_framing: None,
             audio_export: None,
+            audio_exports_begun: 0,
             live_rec_state,
             performance_lane: PerformanceLane::new(),
             performance_lane_armed,

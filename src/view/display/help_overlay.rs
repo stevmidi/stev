@@ -105,6 +105,7 @@ pub(super) const HELP: [&[HelpSection]; 3] = [
             ("⌘T", "Add a track"),
             ("⌘R", "Rename the track"),
             ("⌘⇧R", "Export the selection as audio"),
+            ("Esc", "Cancel the export"),
         ],
     }],
     &[

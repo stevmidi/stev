@@ -16,7 +16,7 @@ use uuid::Uuid;
 
 use crate::core::sequencer::test_support::{clip_at, note_off, note_on};
 use crate::core::sequencer::{Sequencer, SequencerCommand, SequencerEdit};
-use crate::core::shared_atomics::{LiveRecState, TrackMixAtomics};
+use crate::core::shared_atomics::{AudioExportAtomics, LiveRecState, TrackMixAtomics};
 use crate::core::time::{Meter, TapTempo};
 use crate::core::transport::TransportCommand;
 use crate::view::display::UiEvent;
@@ -39,6 +39,8 @@ pub(crate) struct Harness {
     pub(crate) sequencer_commands: Receiver<SequencerCommand>,
     /// `SharedAtomics::has_event_selection`.
     pub(crate) has_event_selection: Arc<AtomicBool>,
+    /// `SharedAtomics::audio_export`.
+    pub(crate) audio_export: Arc<AudioExportAtomics>,
     /// The transport cursor, shared with the sequencer.
     pub(crate) cursor_tick: Arc<AtomicI32>,
     /// The playback position, shared with the sequencer.
@@ -63,6 +65,7 @@ pub(crate) fn harness() -> Harness {
     let (transport_command_tx, transport_commands) = unbounded();
     let (sequencer_command_tx, sequencer_commands) = unbounded();
     let has_event_selection = Arc::new(AtomicBool::new(false));
+    let audio_export = Arc::new(AudioExportAtomics::default());
     let handlers = EventHandlers::new(
         ui_event_tx,
         transport_command_tx,
@@ -72,6 +75,7 @@ pub(crate) fn harness() -> Harness {
         Arc::new(AtomicU8::new(0)),
         has_event_selection.clone(),
         Arc::new(AtomicI32::new(0)),
+        audio_export.clone(),
         Arc::new(OnceLock::new()),
     );
 
@@ -113,6 +117,7 @@ pub(crate) fn harness() -> Harness {
         transport_commands,
         sequencer_commands,
         has_event_selection,
+        audio_export,
         cursor_tick,
         playback_tick,
         running,

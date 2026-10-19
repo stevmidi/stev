@@ -1167,10 +1167,14 @@ impl Display {
             // — so dropping `time_selection` alone makes `draw_selected_track_cursor`
             // fall back to that anchor. Also drops the drag anchor so a still-held
             // mouse button doesn't resume extending a selection.
+            //
+            // Not during an audio export: the marquee is what's being
+            // exported, and Esc goes on to cancel the export
+            // (`EventHandlers::handle_escape`).
             InputEvent::KeyPressed {
                 key: Key::Escape,
                 modifiers: _,
-            } if self.view_state() == ViewState::Arranger => {
+            } if self.view_state() == ViewState::Arranger && !self.is_exporting_audio() => {
                 self.clear_time_selection();
                 // Also abandons a live band drag: the ghost vanishes and
                 // nothing is committed.

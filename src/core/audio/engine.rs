@@ -418,7 +418,8 @@ fn build_stream(
 /// data callback and its meter into the error callback, where the backend's
 /// overload notifications (`ErrorKind::Xrun`) are latched rather than logged —
 /// CoreAudio fires them on the real-time thread, and they are a count the UI
-/// shows, not a fault.
+/// shows, not a fault. Every other error is counted too, for the audio
+/// export to notice the device going away under it.
 fn build_typed<T>(
     device: &Device,
     config: &StreamConfig,
@@ -436,6 +437,7 @@ where
             if e.kind() == ErrorKind::Xrun {
                 load.record_xrun();
             } else {
+                load.record_stream_error();
                 dprintln!("audio engine stream error: {e}");
             }
         },

@@ -319,9 +319,7 @@ impl AudioSource for InstrumentMixer {
         }
 
         // The export's marks land on their ticks' samples the same way.
-        let voices = &self.voices;
-        self.export
-            .take_marks(|at| ctx.scheduled_frame(at), |slot| voices[slot].is_some());
+        self.export.take_marks(|at| ctx.scheduled_frame(at));
 
         // Live keyboard events: no delay, head of the block. Same `pending`
         // path so note-on / note-off ordering against clip events is kept.
@@ -415,7 +413,7 @@ impl AudioSource for InstrumentMixer {
         for (track, slot) in self.voices.iter_mut().enumerate() {
             let Some(voice) = slot else {
                 if let Some(span) = export_span.clone() {
-                    self.export.tap_silence(track, span);
+                    self.export.tap_missing(track, span);
                 }
                 continue;
             };

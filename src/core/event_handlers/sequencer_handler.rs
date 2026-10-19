@@ -42,6 +42,10 @@ impl EventHandlers {
         if self.take_framing_command(cmd, sequencer, undo_record) {
             return;
         }
+        // A running audio export blocks nearly everything (`audio_export.rs`).
+        if self.audio_export_command(cmd, sequencer) {
+            return;
+        }
         match cmd {
             SequencerCommand::Commit => {
                 // Into the lead clip if there is one, otherwise a new clip:
@@ -516,6 +520,10 @@ impl EventHandlers {
 
             SequencerCommand::ExportAudio { time_bounds, name } => {
                 self.export_audio_workflow(sequencer, *time_bounds, name);
+            }
+
+            SequencerCommand::CancelAudioExport => {
+                self.cancel_audio_export_workflow(sequencer);
             }
 
             SequencerCommand::AudioExportWritten(outcome) => {

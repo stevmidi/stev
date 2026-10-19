@@ -1,7 +1,8 @@
 //! The footer's passing message: what an action just did, or why it did
 //! nothing ("Exported …mid", "Select a single clip to export"), held then
 //! faded. Arrives as `UiEvent::Status`, lives in `RenderState::status`, drawn
-//! by `draw_status_bar`. See `030-ui-design.md` § Header & Footer.
+//! by `draw_status_bar`. See `030-ui-design.md` § Header & Footer. Also the
+//! running audio export's progress line, shown under no passing message.
 
 use std::time::{Duration, Instant};
 
@@ -60,11 +61,44 @@ impl StatusMessage {
     }
 }
 
+/// The footer's line while an audio export runs: how much of it is written,
+/// of how much, and how to stop it — `Exporting… 0:42 / 2:10 — Esc cancels`.
+pub(super) fn export_progress_text(written_ms: u32, total_ms: u32) -> String {
+    format!(
+        "Exporting… {} / {} — Esc cancels",
+        minutes_seconds(written_ms.min(total_ms)),
+        minutes_seconds(total_ms)
+    )
+}
+
+/// `ms` as `m:ss`, whole seconds, the minutes as many as it takes.
+fn minutes_seconds(ms: u32) -> String {
+    let seconds = ms / 1000;
+    format!("{}:{:02}", seconds / 60, seconds % 60)
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
 
-    use super::StatusMessage;
+    use super::{StatusMessage, export_progress_text};
+
+    #[test]
+    fn export_progress_reads_in_minutes_and_seconds() {
+        assert_eq!(
+            export_progress_text(42_900, 130_000),
+            "Exporting… 0:42 / 2:10 — Esc cancels"
+        );
+        assert_eq!(
+            export_progress_text(0, 3_725_000),
+            "Exporting… 0:00 / 62:05 — Esc cancels"
+        );
+        // The files run a block past the selection; the line doesn't.
+        assert_eq!(
+            export_progress_text(5_010, 5_000),
+            "Exporting… 0:05 / 0:05 — Esc cancels"
+        );
+    }
 
     #[test]
     fn a_status_message_holds_then_fades_then_is_gone() {

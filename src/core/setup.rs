@@ -16,7 +16,7 @@ use crate::core::config::{
     MIDI_OUT_OFFSET_DEFAULT_MS, REGION_LENGTH_DEFAULT, TEMPO_US_DEFAULT,
 };
 use crate::core::{
-    shared_atomics::{LiveRecState, TrackMixAtomics},
+    shared_atomics::{AudioExportAtomics, LiveRecState, TrackMixAtomics},
     time::Meter,
     timer::Timer,
 };
@@ -70,6 +70,7 @@ pub(crate) fn setup_shared_atomics() -> SharedAtomics {
             elapsed_start_tick: Arc::new(AtomicI32::new(0)),
             thumbnail_snapshot: Arc::new(Mutex::new(Vec::new())),
         },
+        audio_export: Arc::new(AudioExportAtomics::default()),
     }
 }
 
@@ -201,6 +202,7 @@ pub(crate) fn setup_midi_input_forwarder(
         shared_atomics.arm_channel.clone(),
         shared_atomics.performance_lane_armed.clone(),
         shared_atomics.live_instrument_target.clone(),
+        shared_atomics.audio_export.clone(),
     )
 }
 
@@ -246,6 +248,7 @@ pub(crate) fn setup_display(
         shared_atomics.view_state.clone(),
         shared_atomics.has_event_selection.clone(),
         shared_atomics.track_mix.clone(),
+        shared_atomics.audio_export.clone(),
         shared_atomics.live_rec_state.clone(),
     )
 }
@@ -297,6 +300,7 @@ pub(crate) fn setup_event_handlers(
         shared_atomics.view_state.clone(),
         shared_atomics.has_event_selection.clone(),
         shared_atomics.midi_out_offset_ms.clone(),
+        shared_atomics.audio_export.clone(),
         repaint_ctx,
     )
 }

@@ -27,6 +27,7 @@ use crate::{
         metronome::Metronome,
         note_logger::NoteLoggerCommand,
         sequencer::{AudioExportJob, Sequencer, SequencerCommand},
+        shared_atomics::AudioExportAtomics,
         time::sixteenth_straight_ticks,
         transport::{Transport, TransportCommand, TransportEvent},
         view_state::{Pane, ViewState},
@@ -83,6 +84,9 @@ pub(crate) struct EventHandlers {
     /// `"midiout"` thread when the MIDI settings modal is confirmed. See
     /// `160-midi-out-offset.md`.
     midi_out_offset_ms: Arc<AtomicI32>,
+    /// The running audio export's mirror for the other threads; the run
+    /// itself is the `Sequencer`'s. See `audio_export.rs`.
+    audio_export: Arc<AudioExportAtomics>,
 
     /// Handle to the real `egui::Context`, filled in once at startup (see
     /// `main.rs`) after `eframe::run_native` hands it over — `EventHandlers`
@@ -109,6 +113,7 @@ impl EventHandlers {
         view_state: Arc<AtomicU8>,
         has_event_selection: Arc<AtomicBool>,
         midi_out_offset_ms: Arc<AtomicI32>,
+        audio_export: Arc<AudioExportAtomics>,
         repaint_ctx: Arc<OnceLock<egui::Context>>,
     ) -> Self {
         EventHandlers {
@@ -120,6 +125,7 @@ impl EventHandlers {
             view_state,
             has_event_selection,
             midi_out_offset_ms,
+            audio_export,
             repaint_ctx,
         }
     }

@@ -85,6 +85,11 @@ impl EventHandlers {
         metronome: &Metronome,
         undo_record: &mut Record<SequencerEdit>,
     ) {
+        // A running audio export keeps the transport to itself
+        // (`audio_export.rs`).
+        if self.audio_export_transport_command(cmd, sequencer) {
+            return;
+        }
         match cmd {
             TransportCommand::SetRegion { start, end } => {
                 transport.region_mut().set_region(*start, *end);

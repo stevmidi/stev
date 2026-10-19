@@ -64,6 +64,9 @@ pub(crate) struct AudioLoad {
     /// `overruns`, which is this code timing its own render. Latched for the
     /// same reason.
     xruns: AtomicU32,
+    /// The stream's other errors since the app started (a device that went
+    /// away or changed under it). Never reset: a reader compares two reads.
+    stream_errors: AtomicU32,
     /// The most recent block's render time per track, in microseconds,
     /// indexed by track.
     tracks_us: [AtomicU32; MAX_TRACKS],
@@ -84,6 +87,7 @@ impl AudioLoad {
             peak_bits: AtomicU32::new(0),
             overruns: AtomicU32::new(0),
             xruns: AtomicU32::new(0),
+            stream_errors: AtomicU32::new(0),
             tracks_us: [const { AtomicU32::new(0) }; MAX_TRACKS],
         }
     }
@@ -187,6 +191,19 @@ impl AudioLoad {
     ///   the case the render-side timer alone can never see.
     pub(crate) fn xruns(&self) -> u32 {
         self.xruns.load(Ordering::Relaxed)
+    }
+
+    /// (backend notification thread) Counts a stream error that isn't an
+    /// overload: the device went away or changed under the stream.
+    pub(crate) fn record_stream_error(&self) {
+        self.stream_errors.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Stream errors since the app started; a change between two reads
+    /// means the output went wrong in between (the audio export's writer).
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pub(crate) fn stream_errors(&self) -> u32 {
+        self.stream_errors.load(Ordering::Relaxed)
     }
 
     /// (UI thread) Clears both latched counts, so they read "this take" rather
@@ -340,6 +357,15 @@ mod tests {
         load.record_xrun();
         assert_eq!(load.overruns(), 0);
         assert_eq!(load.xruns(), 1);
+    }
+
+    #[test]
+    fn stream_errors_are_counted_apart_and_never_reset() {
+        let load = AudioLoad::new();
+        load.record_stream_error();
+        load.reset_counts();
+        assert_eq!(load.stream_errors(), 1);
+        assert_eq!(load.xruns(), 0);
     }
 
     #[test]

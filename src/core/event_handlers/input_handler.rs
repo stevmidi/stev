@@ -868,9 +868,14 @@ impl EventHandlers {
         }
     }
 
-    /// ESC deselects every selected event in `Clip` (a no-op with
-    /// nothing selected; `Shift+Tab` remains the way back to `Arranger`).
+    /// ESC cancels a running audio export, and otherwise deselects every
+    /// selected event in `Clip` (a no-op with nothing selected; `Shift+Tab`
+    /// remains the way back to `Arranger`).
     fn handle_escape(&self) {
+        if self.is_exporting_audio() {
+            self.send_sequencer(SequencerCommand::CancelAudioExport);
+            return;
+        }
         match self.clip_context() {
             ClipContext::Clip | ClipContext::ClipWithSelection => {
                 self.send_sequencer(SequencerCommand::ClearEventSelection);

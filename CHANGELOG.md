@@ -27,8 +27,14 @@ Breaking entries are marked **Breaking** and say what to do about them.
   `Mix.wav`, all 32-bit float at the device rate and all the same length, in
   a new folder inside `Stev/Exports` named with the project, tempo, meter and
   start bar. The selection plays through once in real time; leave room in it
-  for any tail you want. The click is never in the export. While it runs,
-  don't touch anything: nothing blocks other keys yet.
+  for any tail you want. The click is never in the export. While it runs the
+  footer shows how far it has got, `Esc` cancels it and removes its folder,
+  and everything else waits ("Finish or cancel the export first"); the
+  keyboard plays no plugin. The result warns when samples were dropped, the
+  one glitch that damages the files, and notes any overrun or xrun in what
+  you heard (the files take the samples before the device, so those don't
+  reach them). An export whose audio device
+  changes or goes away stops and says so.
 
 ## [0.3.1] - 2026-10-14
 

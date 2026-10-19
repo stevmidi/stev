@@ -540,9 +540,12 @@ pub(crate) enum SequencerCommand {
         /// What the folder name starts with (`InputEvent::ExportAudio`).
         name: String,
     },
-    /// From the `"audio-export"` thread: the export's files are finished.
-    /// Ends the run (the transport stopped, the loop state put back) and
-    /// says how it went in the footer.
+    /// Esc during an audio export: the files end now and are removed; the
+    /// writer's report then ends the run. A no-op with none running.
+    CancelAudioExport,
+    /// From the `"audio-export"` thread: the export's files are finished, or
+    /// removed. Ends the run (the transport stopped, the loop state put
+    /// back) and says how it went in the footer.
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     AudioExportWritten(AudioExportOutcome),
     /// Put an imported `.mid`'s clip on a track (`PasteClipsEdit::importing`,

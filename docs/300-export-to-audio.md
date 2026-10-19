@@ -1,6 +1,6 @@
 # Export to Audio — Phase Plan
 
-**Status: phases 1–2 built** (drafted 2026-10-18, phases 1 and 2 2026-10-18). This is the build plan for `280-roadmap.md` § Export to audio. The decisions agreed there on 2026-10-11 are taken as given and not argued again here, with one exception: one real-time pass, a folder per export, `NN Name.wav` stems plus `Mix.wav`, 32-bit float WAV at the device rate, plugin tracks only, stems at unity gain and centred, mute and solo honoured, the click never exported. The exception, changed 2026-10-18: **the arranger's time selection sets what's exported**, replacing "bar 1 to the arrangement's end plus a fixed tail". A fixed tail would cut a long delay or reverb, so the user owns the length: every file starts at the selection's start and ends at its end, and leaving room for the tail is part of making the selection. Once the feature lands, its as-built behaviour moves into `130`, `060`, `010` and `000`, and this file is archived.
+**Status: phases 1–3 built** (drafted 2026-10-18, phases 1 and 2 2026-10-18, phase 3 2026-10-19). This is the build plan for `280-roadmap.md` § Export to audio. The decisions agreed there on 2026-10-11 are taken as given and not argued again here, with one exception: one real-time pass, a folder per export, `NN Name.wav` stems plus `Mix.wav`, 32-bit float WAV at the device rate, plugin tracks only, stems at unity gain and centred, mute and solo honoured, the click never exported. The exception, changed 2026-10-18: **the arranger's time selection sets what's exported**, replacing "bar 1 to the arrangement's end plus a fixed tail". A fixed tail would cut a long delay or reverb, so the user owns the length: every file starts at the selection's start and ends at its end, and leaving room for the tail is part of making the selection. Once the feature lands, its as-built behaviour moves into `130`, `060`, `010` and `000`, and this file is archived.
 
 ## How it works
 
@@ -80,6 +80,16 @@ This is the first phase to try by hand. `⌘/Ctrl+⇧+R` writes a real stem set.
   - Turn `K` on: the click must not be in the export.
 
 ## Phase 3: guard rails
+
+**Built 2026-10-19.** As built, beyond or instead of what's below (the details are in `130` § While an export runs):
+
+- **Looking around still works.** `EnterClip`, `ExitClip` and `FocusPane` go through (`Shift+Tab`, `Tab`, a click on a pane), and so does `K`: the click never reaches the files. Everything else, quitting included, answers "Finish or cancel the export first". A live take refuses to start an export ("Stop recording first").
+- **Esc stops the sound once the writer is done**, a tenth of a second or so, not at once: the cancel sends the run's missing marks stamped now, the mixer ends the files on its next block, and the writer's report stops the transport as for a finished run. Stopping at once would need a transport command the guard can tell from the user's own `Stop`. In the arranger the marquee keeps its `Esc` only when no export runs.
+- **No start message.** The progress line replaces "Exporting …"; it shows whenever no passing message does. It's driven by milliseconds (`AudioExportAtomics::written_ms`, `total_ms`) rather than a frame count, so the view needs no sample rate.
+- **Each export has an id**, carried by its start mark and its job, and the mixer reports the end by id. A writer that gave up on an export can't then read that export's late end as the next one's, and it empties the rings before the next job. The mixer, not the writer, clears the silent-slot and overflow flags, at each start.
+- **A device change is noticed through the stream.** The engine never follows a device or rate change (it keeps the rate it opened at), so what the export can see is the stream erroring (`AudioLoad::stream_errors`, which counts every error that isn't an xrun) or going quiet (3 s with nothing from the mixer). Either stops the run, removes its files like a cancel, and says "Export stopped: the audio device changed" (or "… the audio output stopped").
+- **Only dropped samples are a warning.** An overrun or xrun glitches what's heard, not the files, which take the samples before the device (checked by ear 2026-10-19: a run with both left `Mix.wav` clean). The result notes them plainly: `Exported "Sketch 120bpm 4-4" — 4 stems + mix (2 overruns while playing)`. "listen before you use it" is kept for ring overflow.
+- **A plugin that goes missing mid-run** is noticed per block (`tap_missing`), not only at the start, and the footer names its stem as for one never loaded.
 
 This phase makes the run safe to leave alone or to interrupt.
 

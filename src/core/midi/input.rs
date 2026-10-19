@@ -38,6 +38,7 @@ use crate::core::{
         port::pickable_port_names,
     },
     note_logger::NoteLoggerCommand,
+    shared_atomics::AudioExportAtomics,
 };
 
 /// Shared handle to the live-instrument `rtrb` producer — see the field doc on
@@ -112,6 +113,8 @@ pub(crate) struct MidiInputForwarder {
     /// written by `Display`'s macOS plugin host. Used to tag `instrument_midi_tx`
     /// sends with the right track.
     live_instrument_target: Arc<AtomicI32>,
+    /// The running audio export, which keeps the keyboard off the plugins.
+    audio_export: Arc<AudioExportAtomics>,
 }
 
 impl MidiInputForwarder {
@@ -130,6 +133,7 @@ impl MidiInputForwarder {
         arm_channel: Arc<AtomicU8>,
         performance_lane_armed: Arc<AtomicBool>,
         live_instrument_target: Arc<AtomicI32>,
+        audio_export: Arc<AudioExportAtomics>,
     ) -> Self {
         MidiInputForwarder {
             midi_in_tx,
@@ -143,6 +147,7 @@ impl MidiInputForwarder {
             arm_channel,
             performance_lane_armed,
             live_instrument_target,
+            audio_export,
         }
     }
 
@@ -172,6 +177,7 @@ impl MidiInputForwarder {
             arm_channel: self.arm_channel.clone(),
             performance_lane_armed: self.performance_lane_armed.clone(),
             live_instrument_target: self.live_instrument_target.clone(),
+            audio_export: self.audio_export.clone(),
             held_note_channels: [None; 128],
             held_live_targets: [None; 128],
         }
@@ -271,6 +277,8 @@ pub(crate) struct LiveInputRouter {
     performance_lane_armed: Arc<AtomicBool>,
     /// The instrument track the live keyboard is routed to (`-1` = none).
     live_instrument_target: Arc<AtomicI32>,
+    /// The running audio export, which keeps the keyboard off the plugins.
+    audio_export: Arc<AudioExportAtomics>,
     /// Channel each currently-held live note was routed out on, indexed by
     /// note number. A note-off must be sent on the same channel its note-on
     /// used, otherwise switching the armed track mid-hold rewrites the
@@ -305,11 +313,17 @@ impl LiveInputRouter {
         // (a held note's off goes back to the track its on used — see
         // `route_held`). Independent of MIDI-OUT thru, but gated by the
         // performance lane like it.
+        //
+        // While an audio export runs the keyboard plays no plugin either: the
+        // export is the arrangement alone (`300-export-to-audio.md`). A
+        // note-off still goes, so a note held into the run doesn't stick.
+        let exporting = self.audio_export.is_running() && !is_note_off(&msg);
         let live_target = self.live_instrument_target.load(Ordering::Relaxed);
         let live_target = (live_target >= 0).then_some(live_target as usize);
         if matches!(msg.first().copied().map(|s| s & 0xF0), Some(0x80..=0xE0))
             && let Some(target) = route_held(&msg, live_target, &mut self.held_live_targets)
             && !armed
+            && !exporting
             && let Ok(mut producer) = self.instrument_midi_tx.lock()
         {
             producer.push((target, midi3(&msg))).ok();
@@ -330,6 +344,11 @@ impl LiveInputRouter {
             self.midi_in_tx.send((msg, ticks)).ok();
         }
     }
+}
+
+/// Whether `msg` is a note-off (or a note-on at velocity 0).
+fn is_note_off(msg: &[u8]) -> bool {
+    matches!(parse_note(msg), Some((_, false)))
 }
 
 /// Routes a live-input message by the note it belongs to. A note-on (and any
@@ -357,6 +376,11 @@ fn route_channel(msg: &[u8], arm_channel: u8, held: &mut [Option<u8>; 128]) -> u
 
 #[cfg(test)]
 mod tests {
+    use std::iter;
+
+    use crossbeam_channel::unbounded;
+    use rtrb::RingBuffer;
+
     use super::*;
 
     const NOTE: u8 = 60;
@@ -450,5 +474,36 @@ mod tests {
         let cc = [0xB0, 74, 64];
         assert_eq!(route_held(&cc, Some(5), &mut held), Some(5));
         assert_eq!(route_held(&cc, None, &mut held), None);
+    }
+
+    #[test]
+    fn an_audio_export_keeps_the_keyboard_off_the_plugins_but_lets_a_held_note_go() {
+        let (instrument_tx, mut instrument_rx) = RingBuffer::new(8);
+        let audio_export = Arc::new(AudioExportAtomics::default());
+        let mut router = LiveInputRouter {
+            midi_in_tx: unbounded().0,
+            midi_out_tx: unbounded().0,
+            note_logger_command_tx: unbounded().0,
+            instrument_midi_tx: Arc::new(Mutex::new(instrument_tx)),
+            arm_channel: Arc::new(AtomicU8::new(0)),
+            performance_lane_armed: Arc::new(AtomicBool::new(false)),
+            live_instrument_target: Arc::new(AtomicI32::new(2)),
+            audio_export: audio_export.clone(),
+            held_note_channels: [None; 128],
+            held_live_targets: [None; 128],
+        };
+        let ticks = InputTicks {
+            position: 0,
+            elapsed: 0,
+        };
+
+        router.route(&note_on(0), ticks);
+        audio_export.running.store(true, Ordering::Relaxed);
+        router.route(&[0x90, NOTE + 1, 100], ticks);
+        router.route(&[0xE0, 0, 0x50], ticks);
+        router.route(&note_off(0), ticks);
+
+        let sent: Vec<(usize, Midi3)> = iter::from_fn(|| instrument_rx.pop().ok()).collect();
+        assert_eq!(sent, [(2, note_on(0)), (2, note_off(0))]);
     }
 }

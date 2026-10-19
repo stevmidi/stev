@@ -125,7 +125,7 @@ use crate::{
     core::{
         event_handlers::EventHandlers,
         input_event::{InputEvent, TimeSelectionRect},
-        shared_atomics::{LiveRecState, TrackMixAtomics},
+        shared_atomics::{AudioExportAtomics, LiveRecState, TrackMixAtomics},
         view_state::ViewState,
     },
     metadata::{
@@ -216,6 +216,9 @@ pub(crate) struct Display {
     /// bars; never written here (the sequencer owns the writes — see
     /// `SequencerCommand::SetTrackVolume`).
     track_mix: Arc<TrackMixAtomics>,
+    /// The running audio export: the footer's progress, and Esc cancelling
+    /// it rather than the marquee. See `SharedAtomics::audio_export`.
+    audio_export: Arc<AudioExportAtomics>,
     /// Audio-callback deadline utilisation, shared with the audio engine and
     /// read once per frame for the header's DSP readout. `None` when no output
     /// device was available and the app is running silent. See
@@ -426,6 +429,7 @@ impl Display {
         view_state: Arc<AtomicU8>,
         has_event_selection: Arc<AtomicBool>,
         track_mix: Arc<TrackMixAtomics>,
+        audio_export: Arc<AudioExportAtomics>,
         live_rec_state: LiveRecState,
     ) -> Self {
         Display {
@@ -443,6 +447,7 @@ impl Display {
             view_state,
             has_event_selection,
             track_mix,
+            audio_export,
             audio_load: None,
             project: ProjectViewState::new(last_project_folder),
             browser: BrowserPanel {
@@ -534,6 +539,11 @@ impl Display {
     /// mirror).
     fn has_event_selection(&self) -> bool {
         self.has_event_selection.load(Ordering::Relaxed)
+    }
+
+    /// Whether an audio export is running.
+    fn is_exporting_audio(&self) -> bool {
+        self.audio_export.is_running()
     }
 
     /// Whether a live-record take is in progress.
