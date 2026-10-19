@@ -63,6 +63,11 @@ const TOGGLE_ICON_RADIUS: u8 = 2;
 /// events. See `030-ui-design.md` § Rendering Performance.
 const DSP_IDLE_REFRESH: Duration = Duration::from_millis(250);
 
+/// The UI's frame period while anything moves on its own: ~30 fps while the
+/// transport runs, and while a track meter falls. See `030-ui-design.md`
+/// § Rendering Performance.
+const MOVING_FRAME: Duration = Duration::from_millis(33);
+
 /// Thickness of the accent along the top of the docked pane with the keyboard.
 const FOCUS_EDGE_W: f32 = 2.0;
 
@@ -487,9 +492,6 @@ const TRACK_METER_W: f32 = 4.0;
 const TRACK_METER_GAP: f32 = 4.0;
 /// How long a track's meter takes to fall from full scale to empty.
 const TRACK_METER_FALL: Duration = Duration::from_millis(600);
-/// How often the stopped UI wakes while a meter is falling: the running
-/// frame rate.
-const TRACK_METER_FALL_FRAME: Duration = Duration::from_millis(33);
 
 /// A track meter's height, `0.0..=1.0`: the last note-on's velocity, falling
 /// at a steady rate, full scale in [`TRACK_METER_FALL`]. `note_on` is the
@@ -1283,19 +1285,17 @@ impl eframe::App for Display {
         // `running` true with nothing here to notice — that's handled by an
         // explicit `EventHandlers::request_repaint()` call at the trigger
         // site instead of polling for it here.
-        if running {
-            ctx.request_repaint_after(Duration::from_millis(33));
+        //
+        // Stopped, a meter kicked by a live note or by the last notes before
+        // the stop falls with nothing else to wake the UI: the same frames.
+        if running || self.any_track_meter_falling(monotonic_nanos()) {
+            ctx.request_repaint_after(MOVING_FRAME);
         } else if self.audio_load.is_some() {
             // Stopped, the UI only wakes for input, and the header's DSP
             // chip would freeze at whatever it read last — while live-played
             // plugins are still rendering. A slow wake keeps it current;
             // faster adds nothing readable (the average settles in ~¼ s).
             ctx.request_repaint_after(DSP_IDLE_REFRESH);
-        }
-        // A meter kicked by a live note, or by the last notes before a stop,
-        // falls with nothing else waking the stopped UI.
-        if !running && self.any_track_meter_falling(monotonic_nanos()) {
-            ctx.request_repaint_after(TRACK_METER_FALL_FRAME);
         }
         // The footer message: one wake when its hold ends, then the fade's
         // frames; dropped once it is gone.

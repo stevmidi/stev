@@ -551,7 +551,7 @@ mod tests {
 
     #[test]
     fn a_muted_track_or_note_leaves_its_meter_empty() {
-        // What didn't go out doesn't light: the dot shows what was sent.
+        // What didn't go out doesn't move it: the meter shows what was sent.
         let (mut muted_track, _midi_out_rx) = sequencer_and_midi_out_rx(config::TEMPO_US_DEFAULT);
         midi_out_track_with_one_note(&mut muted_track);
         muted_track.toggle_track_mute(0);

@@ -108,12 +108,12 @@ pub(crate) fn start_sequencer_thread(
                             if sequencer.is_performance_lane_armed() {
                                 event_handlers.handle_performance_lane_midi_input(&mut sequencer, &mut transport, &message);
                             } else {
-                                sequencer.handle_midi_input_dispatch(&message, ticks);
+                                let kicked = sequencer.handle_midi_input_dispatch(&message, ticks);
                                 // Running, the UI's ~30 fps frames show the
                                 // track's meter (and an extra wake would jitter
                                 // the playhead, `030`); stopped, nothing else
                                 // wakes it for a live note.
-                                if sequencer.mark_live_activity(&message) && !transport.is_running() {
+                                if kicked && !transport.is_running() {
                                     event_handlers.request_repaint();
                                 }
                             }

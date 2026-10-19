@@ -54,7 +54,7 @@ pub(crate) struct TrackMixAtomics {
     /// header's meter falls from (`030-ui-design.md` § Arranger Track
     /// Header). Not part of the mix: written by the sequencer thread as a
     /// clip's note-on goes out (`Sequencer::tick`) or a live one arrives for
-    /// the selected track (`Sequencer::mark_live_activity`), read by the
+    /// the selected track (`Sequencer::handle_midi_input_dispatch`), read by the
     /// render thread.
     pub(crate) note_on: [AtomicU64; MAX_TRACKS],
 }

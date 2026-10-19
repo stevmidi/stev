@@ -110,8 +110,10 @@ impl Sequencer {
 
     /// Routes one live-input message to both recorders, each in its own tick
     /// space — running capture needs the arrangement *position*, live recording
-    /// needs *elapsed* time a seek can't move. See [`InputTicks`].
-    pub(crate) fn handle_midi_input_dispatch(&mut self, message: &[u8], ticks: InputTicks) {
+    /// needs *elapsed* time a seek can't move. See [`InputTicks`]. Returns
+    /// whether a note-on kicked the selected track's meter
+    /// ([`kick_live_meter`](Self::kick_live_meter)).
+    pub(crate) fn handle_midi_input_dispatch(&mut self, message: &[u8], ticks: InputTicks) -> bool {
         // Track which live keys are down so a transport stop does not release a
         // note the player is holding on an instrument track. See `130-plugin-host.md`.
         let live_target = self.live_instrument_target();
@@ -137,14 +139,16 @@ impl Sequencer {
 
         self.add_midi_event_to_capture(message, ticks.position);
         self.add_midi_event_to_live_rec(message, ticks.elapsed);
+        self.kick_live_meter(message)
     }
 
     /// Kicks the selected track's meter for a live note-on, as `tick` does for
     /// its clips: the keyboard plays the selected track. Not on a plugin track
     /// during an audio export, where the keyboard reaches no plugin
     /// (`130-plugin-host.md` § Audio export). Returns whether it kicked one,
-    /// so the caller can wake a stopped UI.
-    pub(crate) fn mark_live_activity(&self, message: &[u8]) -> bool {
+    /// so [`handle_midi_input_dispatch`](Self::handle_midi_input_dispatch)'s
+    /// caller can wake a stopped UI.
+    fn kick_live_meter(&self, message: &[u8]) -> bool {
         if !is_note_on(message) {
             return false;
         }
@@ -2103,13 +2107,13 @@ mod tests {
         seq.select_track(track1);
         let slot = seq.tracks()[1].slot();
 
-        assert!(!seq.mark_live_activity(&[0x80, 60, 0]));
+        assert!(!seq.kick_live_meter(&[0x80, 60, 0]));
         // A velocity-0 note-on is a note-off.
-        assert!(!seq.mark_live_activity(&[0x90, 60, 0]));
-        assert!(!seq.mark_live_activity(&[0xE0, 0x00, 0x60]));
+        assert!(!seq.kick_live_meter(&[0x90, 60, 0]));
+        assert!(!seq.kick_live_meter(&[0xE0, 0x00, 0x60]));
         assert_eq!(seq.track_mix.last_note_on(slot), None);
 
-        assert!(seq.mark_live_activity(&[0x90, 60, 90]));
+        assert!(seq.kick_live_meter(&[0x90, 60, 90]));
         assert_eq!(seq.track_mix.last_note_on(slot).map(|(_, v)| v), Some(90));
         let other = seq.tracks()[0].slot();
         assert_eq!(seq.track_mix.last_note_on(other), None);
@@ -2126,10 +2130,10 @@ mod tests {
 
         let track0 = seq.track_id_by_index(0);
         seq.select_track(track0);
-        assert!(!seq.mark_live_activity(&[0x90, 60, 100]));
+        assert!(!seq.kick_live_meter(&[0x90, 60, 100]));
 
         let track1 = seq.track_id_by_index(1);
         seq.select_track(track1);
-        assert!(seq.mark_live_activity(&[0x90, 60, 100]));
+        assert!(seq.kick_live_meter(&[0x90, 60, 100]));
     }
 }
