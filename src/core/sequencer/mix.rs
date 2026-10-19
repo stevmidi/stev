@@ -149,7 +149,7 @@ impl Sequencer {
     }
 
     /// Puts engine slot `slot` back at neutral — unity, centre, unmuted,
-    /// unsoloed: for every slot on a new project, and for one whose track
+    /// unsoloed, its meter empty: for every slot on a new project, and for one whose track
     /// has left the arrangement, so an idle slot never counts toward
     /// `any_track_soloed` and the next track to take it starts clean.
     pub(super) fn reset_slot_mix(&mut self, slot: usize) {
@@ -158,6 +158,7 @@ impl Sequencer {
         mix.pan[slot].store(0.0f32.to_bits(), Ordering::Relaxed);
         mix.mute[slot].store(false, Ordering::Relaxed);
         mix.solo[slot].store(false, Ordering::Relaxed);
+        mix.note_on[slot].store(0, Ordering::Relaxed);
     }
 }
 
@@ -212,11 +213,13 @@ mod tests {
         seq.set_track_pan(1, 0.7);
         seq.set_track_muted(1, true);
         seq.toggle_track_solo(2);
+        seq.track_mix.mark_note_on(1, 4200, 100);
         seq.reset_track_mix();
         assert_eq!(seq.track_volume_db(1), 0.0);
         assert_eq!(seq.track_pan(1), 0.0);
         assert!(!seq.track_muted(1));
         assert!(!seq.track_soloed(2));
+        assert_eq!(seq.track_mix.last_note_on(1), None);
     }
 
     // --- Mute / solo --- (the pure `track_is_audible` rule is tested in

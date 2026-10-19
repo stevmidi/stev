@@ -29,6 +29,7 @@ use super::*;
 use crate::core::config::MAX_TRACKS;
 #[cfg(target_os = "macos")]
 use crate::core::plugin_host::exit_without_destructors;
+use crate::core::time::monotonic_nanos;
 
 /// `theme::accent()` when `highlighted` (the focused section, the row under
 /// the cursor), else `idle`. Shared by the modals and the browser panel.
@@ -199,7 +200,8 @@ fn arranger_scroll_y_to_show(scroll_y: f32, viewport_h: f32, top: f32, height: f
 }
 
 /// Screen rects of one track header's controls: the name row on top, then
-/// the **S**/**M** button row, then the volume and pan bars. See
+/// the **S**/**M** button row, then the volume and pan bars, with the meter
+/// beside them all. See
 /// `Display::track_header_rects`.
 pub(super) struct TrackHeaderRects {
     /// The name row: the track's name, or its number while unnamed. A
@@ -216,6 +218,9 @@ pub(super) struct TrackHeaderRects {
     pub(super) volume: Rect,
     /// The pan bar.
     pub(super) pan: Rect,
+    /// The meter: a thin strip right of the controls, in the column's right
+    /// padding, the stack's full height.
+    pub(super) meter: Rect,
 }
 
 /// Height of one track-header mix bar.
@@ -402,7 +407,9 @@ fn name_row_at(top: f32, left: f32, right: f32) -> Rect {
 /// then the S/M button row (left-aligned, fixed width, the output chip
 /// filling the rest of the row), then the two full-width bars (volume then
 /// pan), the whole stack vertically centred in `[lane_top, lane_top +
-/// lane_h)`. `None` when the lane is too short to hold the stack with a
+/// lane_h)`, and the meter right of `right`, as tall as the stack: in the
+/// column's right padding (`Display::TRACK_HEADER_INNER_PAD_X`), so it
+/// narrows nothing. `None` when the lane is too short to hold the stack with a
 /// little margin, or the column too narrow — [`track_name_row`] then still
 /// places the name on its own. The button row and the bars are always part
 /// of the layout — even for a track with no instrument (no bars drawn) — so
@@ -445,6 +452,11 @@ fn track_header_rects(
     );
     let pan_top = volume_top + TRACK_MIX_BAR_H + TRACK_MIX_BAR_GAP;
     let pan = Rect::from_min_max(pos2(left, pan_top), pos2(right, pan_top + TRACK_MIX_BAR_H));
+    let meter_left = right + TRACK_METER_GAP;
+    let meter = Rect::from_min_max(
+        pos2(meter_left, name.min.y),
+        pos2(meter_left + TRACK_METER_W, pan.max.y),
+    );
 
     Some(TrackHeaderRects {
         name,
@@ -453,6 +465,7 @@ fn track_header_rects(
         output,
         volume,
         pan,
+        meter,
     })
 }
 
@@ -468,7 +481,42 @@ fn track_name_row(lane_top: f32, lane_h: f32, left: f32, right: f32) -> Option<R
         .map(|top| name_row_at(top, left, right))
 }
 
+/// Width of a track header's meter.
+const TRACK_METER_W: f32 = 4.0;
+/// Gap between the header controls' right edge and the meter.
+const TRACK_METER_GAP: f32 = 4.0;
+/// How long a track's meter takes to fall from full scale to empty.
+const TRACK_METER_FALL: Duration = Duration::from_millis(600);
+/// How often the stopped UI wakes while a meter is falling: the running
+/// frame rate.
+const TRACK_METER_FALL_FRAME: Duration = Duration::from_millis(33);
+
+/// A track meter's height, `0.0..=1.0`: the last note-on's velocity, falling
+/// at a steady rate, full scale in [`TRACK_METER_FALL`]. `note_on` is the
+/// track's last note-on time and velocity (`None` = never); a time ahead of
+/// `now_ns` (a clip note due a moment from now) counts as just played.
+fn meter_level(note_on: Option<(u64, u8)>, now_ns: u64) -> f32 {
+    let Some((at_ns, velocity)) = note_on else {
+        return 0.0;
+    };
+    let age = now_ns.saturating_sub(at_ns) as f32;
+    (f32::from(velocity) / 127.0 - age / TRACK_METER_FALL.as_nanos() as f32).max(0.0)
+}
+
 impl Display {
+    /// `track_idx`'s meter height at `now_ns` — see [`meter_level`]. `0.0`
+    /// for an out-of-range index.
+    pub(super) fn track_meter_level(&self, track_idx: usize, now_ns: u64) -> f32 {
+        self.track_slot(track_idx).map_or(0.0, |slot| {
+            meter_level(self.track_mix.last_note_on(slot), now_ns)
+        })
+    }
+
+    /// Whether any track's meter is still falling at `now_ns`.
+    fn any_track_meter_falling(&self, now_ns: u64) -> bool {
+        (0..self.track_count()).any(|track_idx| self.track_meter_level(track_idx, now_ns) > 0.0)
+    }
+
     /// The arranger's vertical geometry ([`ArrangerLayout`]) for this frame —
     /// shared by drawing and hit-testing so they can't drift.
     pub(super) fn arranger_layout(&self) -> ArrangerLayout {
@@ -1244,6 +1292,11 @@ impl eframe::App for Display {
             // faster adds nothing readable (the average settles in ~¼ s).
             ctx.request_repaint_after(DSP_IDLE_REFRESH);
         }
+        // A meter kicked by a live note, or by the last notes before a stop,
+        // falls with nothing else waking the stopped UI.
+        if !running && self.any_track_meter_falling(monotonic_nanos()) {
+            ctx.request_repaint_after(TRACK_METER_FALL_FRAME);
+        }
         // The footer message: one wake when its hold ends, then the fade's
         // frames; dropped once it is gone.
         if let Some(status) = &self.render.status {
@@ -1380,6 +1433,7 @@ mod tests {
         clip_resize_band, gap_spans, seam_y, tick_overlap, track_header_rects, track_name_row,
     };
     use super::{NotePart, note_at_grid_point, note_part_at};
+    use super::{TRACK_METER_FALL, TRACK_METER_GAP, TRACK_METER_W, meter_level};
     use crate::core::config::MAX_TRACKS;
 
     /// The physical-pixel span `[top, bottom)` a `width`-point line centred
@@ -1706,5 +1760,32 @@ mod tests {
         assert_eq!(note_part_at(102.9, 100.0, 109.0), NotePart::Start);
         assert_eq!(note_part_at(104.5, 100.0, 109.0), NotePart::Body);
         assert_eq!(note_part_at(106.0, 100.0, 109.0), NotePart::End);
+    }
+
+    // --- Track meter ---
+
+    #[test]
+    fn the_meter_sits_right_of_the_controls_as_tall_as_the_stack() {
+        let rects = track_header_rects(0.0, 200.0, 12.0, 104.0).unwrap();
+        assert_eq!(rects.meter.min.x, 104.0 + TRACK_METER_GAP);
+        assert_eq!(rects.meter.width(), TRACK_METER_W);
+        assert_eq!(rects.meter.min.y, rects.name.min.y);
+        assert_eq!(rects.meter.max.y, rects.pan.max.y);
+    }
+
+    #[test]
+    fn the_meter_falls_from_the_velocity_at_a_steady_rate() {
+        let fall = TRACK_METER_FALL.as_nanos() as u64;
+        let on = 5_000_000_000;
+        // Never played: empty, even in the app's first moments.
+        assert_eq!(meter_level(None, 1), 0.0);
+        assert_eq!(meter_level(Some((on, 127)), on), 1.0);
+        // A clip note due a moment from now has already kicked it.
+        assert_eq!(meter_level(Some((on + 1_000_000, 127)), on), 1.0);
+        assert!((meter_level(Some((on, 127)), on + fall / 2) - 0.5).abs() < 1e-6);
+        // A softer note starts lower and so empties sooner, at the same rate.
+        assert!((meter_level(Some((on, 64)), on) - 64.0 / 127.0).abs() < 1e-6);
+        assert_eq!(meter_level(Some((on, 64)), on + fall * 6 / 10), 0.0);
+        assert_eq!(meter_level(Some((on, 127)), on + 10 * fall), 0.0);
     }
 }

@@ -62,9 +62,13 @@ Stev arranges and a DAW mixes (§ Principle), so the export's main job is the ha
 
 It comes before the website on purpose: it serves the author first, and the site's demo audio can then come out of Stev itself.
 
-### Track activity, then level meters
+### Audio meters on plugin tracks
 
-Audio meters only mean something on plugin tracks: a MIDI Out track's audio never reaches the app, so they'd be blank on most tracks and missing off macOS. A per-track MIDI-activity indicator works on every track and platform, and is the more general first step. A full mixer panel stays § Not planned.
+Each track header has a meter (`030` § Arranger Track Header). Today it meters MIDI on every track: the velocity of each note-on as it goes out, falling back. That works on every track and platform; built 2026-10-19, after a coloured activity dot in the name row was tried the same day and found distracting. Next, plugin tracks meter their audio output instead, in the same strip and the same neutral look, so audio and MIDI meters read as one thing (decided 2026-10-19). MIDI Out tracks keep the velocity meter: their audio never reaches the app. Audio level gives some mixing feedback while balancing a sketch, which is in scope (§ Principle keeps volume, pan, mute and solo for that); a mixer panel stays § Not planned.
+
+- **Where the level comes from:** `InstrumentMixer` already reads every sample of every voice in its summing pass. It keeps each slot's per-block peak (after its gain, so the meter matches the fader) in an atomic beside `TrackMixAtomics::note_on`, written only by the audio thread: no lock, no allocation. Export phase 4's detector (`archive/300-export-to-audio.md`) was designed to read the same per-slot peaks, before gain.
+- **Ballistics:** instant attack, a steady fall in dB (about 20 dB/s), the scale in dB down to around −60.
+- **Open:** whether the top of the scale warms (amber near 0 dBFS, red at clipping) or stays neutral; a peak-hold line; stereo or one bar.
 
 ### A website at stevmidi.com
 

@@ -134,7 +134,7 @@ impl EventHandlers {
     /// called before `eframe::run_native` has handed over its context
     /// (can't happen in practice: nothing that calls this runs before the
     /// window exists).
-    fn request_repaint(&self) {
+    pub(crate) fn request_repaint(&self) {
         if let Some(ctx) = self.repaint_ctx.get() {
             ctx.request_repaint();
         }

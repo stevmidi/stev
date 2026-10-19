@@ -16,6 +16,7 @@ use crate::{
     models::{
         clip::Clip,
         event::{Event, EventType},
+        track::TrackOutput,
     },
 };
 
@@ -136,6 +137,26 @@ impl Sequencer {
 
         self.add_midi_event_to_capture(message, ticks.position);
         self.add_midi_event_to_live_rec(message, ticks.elapsed);
+    }
+
+    /// Kicks the selected track's meter for a live note-on, as `tick` does for
+    /// its clips: the keyboard plays the selected track. Not on a plugin track
+    /// during an audio export, where the keyboard reaches no plugin
+    /// (`130-plugin-host.md` § Audio export). Returns whether it kicked one,
+    /// so the caller can wake a stopped UI.
+    pub(crate) fn mark_live_activity(&self, message: &[u8]) -> bool {
+        if !is_note_on(message) {
+            return false;
+        }
+        let Some(track) = self.selected_track() else {
+            return false;
+        };
+        if self.audio_export.is_some() && matches!(track.output(), TrackOutput::Instrument(_)) {
+            return false;
+        }
+        self.track_mix
+            .mark_note_on(track.slot(), time::monotonic_nanos(), message[2]);
+        true
     }
 
     /// The note pairs of `capture` (a crop, rebased to 0) whose onsets fall
@@ -415,7 +436,7 @@ fn is_note_on(message: &[u8]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::{sync::atomic::Ordering, time::Instant};
+    use std::{path::PathBuf, sync::atomic::Ordering, time::Instant};
 
     use crossbeam_channel::Receiver;
 
@@ -427,7 +448,10 @@ mod tests {
             sequencer::edit::{
                 CommitClipEdit, EditResult, InsertCaptureEdit, ResizeClipEdit, SequencerEdit,
             },
-            sequencer::test_support::{clip_at, note_off, note_on, sequencer_with_outputs},
+            sequencer::test_support::{
+                clip_at, instrument_track_0, note_off, note_on, rect, sequencer_with_outputs,
+                test_sequencer,
+            },
             time::{self, Meter},
             view_state::ViewState,
         },
@@ -2068,5 +2092,44 @@ mod tests {
             .tick();
 
         assert_eq!(on_tick, 600, "zero offset must not shift event ticks");
+    }
+
+    // --- Track meter ---
+
+    #[test]
+    fn a_live_note_on_kicks_the_selected_tracks_meter_with_its_velocity() {
+        let mut seq = test_sequencer();
+        let track1 = seq.track_id_by_index(1);
+        seq.select_track(track1);
+        let slot = seq.tracks()[1].slot();
+
+        assert!(!seq.mark_live_activity(&[0x80, 60, 0]));
+        // A velocity-0 note-on is a note-off.
+        assert!(!seq.mark_live_activity(&[0x90, 60, 0]));
+        assert!(!seq.mark_live_activity(&[0xE0, 0x00, 0x60]));
+        assert_eq!(seq.track_mix.last_note_on(slot), None);
+
+        assert!(seq.mark_live_activity(&[0x90, 60, 90]));
+        assert_eq!(seq.track_mix.last_note_on(slot).map(|(_, v)| v), Some(90));
+        let other = seq.tracks()[0].slot();
+        assert_eq!(seq.track_mix.last_note_on(other), None);
+    }
+
+    #[test]
+    fn during_an_audio_export_a_live_note_kicks_no_plugin_tracks_meter() {
+        // The keyboard reaches no plugin during a run; MIDI out still plays.
+        let mut seq = test_sequencer();
+        instrument_track_0(&mut seq);
+        seq.tracks_mut()[0].add_clip(&clip_at(0, 480));
+        let plan = seq.audio_export_plan(Some(rect(0, 480, 0, 0))).unwrap();
+        seq.begin_audio_export(plan, PathBuf::new());
+
+        let track0 = seq.track_id_by_index(0);
+        seq.select_track(track0);
+        assert!(!seq.mark_live_activity(&[0x90, 60, 100]));
+
+        let track1 = seq.track_id_by_index(1);
+        seq.select_track(track1);
+        assert!(seq.mark_live_activity(&[0x90, 60, 100]));
     }
 }

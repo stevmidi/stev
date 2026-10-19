@@ -20,7 +20,8 @@ use std::sync::{
 
 use crate::core::config::MAX_TRACKS;
 
-/// Per-track mixer state — volume, stereo balance, mute and solo. `volume_db`
+/// Per-track mixer state — volume, stereo balance, mute and solo — plus each
+/// track's last note-on, for its meter (`note_on`). `volume_db`
 /// and `pan` are stored as `f32` bit patterns
 /// ([`f32::to_bits`]/[`f32::from_bits`]) so each is a single lock-free atomic;
 /// `mute` and `solo` are plain [`AtomicBool`]. Written by the sequencer thread
@@ -46,6 +47,16 @@ pub(crate) struct TrackMixAtomics {
     pub(crate) mute: [AtomicBool; MAX_TRACKS],
     /// Per-track solo. Gates MIDI, not audio.
     pub(crate) solo: [AtomicBool; MAX_TRACKS],
+    /// Each track's last note-on: when it went out, on the
+    /// [`monotonic_nanos`](crate::core::time::monotonic_nanos) timeline, and
+    /// its velocity, packed into one value so the two are never read torn
+    /// ([`mark_note_on`](Self::mark_note_on); `0` = never). What the arranger
+    /// header's meter falls from (`030-ui-design.md` § Arranger Track
+    /// Header). Not part of the mix: written by the sequencer thread as a
+    /// clip's note-on goes out (`Sequencer::tick`) or a live one arrives for
+    /// the selected track (`Sequencer::mark_live_activity`), read by the
+    /// render thread.
+    pub(crate) note_on: [AtomicU64; MAX_TRACKS],
 }
 
 impl TrackMixAtomics {
@@ -58,6 +69,7 @@ impl TrackMixAtomics {
             pan: std::array::from_fn(|_| AtomicU32::new(0)),
             mute: std::array::from_fn(|_| AtomicBool::new(false)),
             solo: std::array::from_fn(|_| AtomicBool::new(false)),
+            note_on: std::array::from_fn(|_| AtomicU64::new(0)),
         }
     }
 
@@ -89,7 +101,30 @@ impl TrackMixAtomics {
             .get(track_idx)
             .is_some_and(|s| s.load(Ordering::Relaxed))
     }
+
+    /// Records a note-on of `velocity` from `track_idx` at `at_ns`: the time
+    /// in the high bits, the velocity in the low 7 (the time loses 128 ns).
+    /// Out-of-range indices are ignored.
+    pub(crate) fn mark_note_on(&self, track_idx: usize, at_ns: u64, velocity: u8) {
+        if let Some(s) = self.note_on.get(track_idx) {
+            s.store(
+                (at_ns & !VELOCITY_MASK) | (u64::from(velocity) & VELOCITY_MASK),
+                Ordering::Relaxed,
+            );
+        }
+    }
+
+    /// When `track_idx` last sent a note-on and its velocity; `None` if it
+    /// never has, or for an out-of-range index.
+    pub(crate) fn last_note_on(&self, track_idx: usize) -> Option<(u64, u8)> {
+        let packed = self.note_on.get(track_idx)?.load(Ordering::Relaxed);
+        (packed != 0).then_some((packed & !VELOCITY_MASK, (packed & VELOCITY_MASK) as u8))
+    }
 }
+
+/// The low bits of a [`TrackMixAtomics::note_on`] value that hold the
+/// velocity.
+const VELOCITY_MASK: u64 = 0x7F;
 
 /// The live-recording surface the render thread reads to draw the take as it
 /// grows. Written by the `"sequencer"` thread as notes arrive; see
@@ -251,4 +286,22 @@ pub(crate) struct SharedAtomics {
     pub(crate) live_rec_state: LiveRecState,
     /// The running audio export — see [`AudioExportAtomics`].
     pub(crate) audio_export: Arc<AudioExportAtomics>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TrackMixAtomics;
+
+    #[test]
+    fn a_note_on_round_trips_its_velocity_and_time_to_128_ns() {
+        let mix = TrackMixAtomics::new();
+        assert_eq!(mix.last_note_on(3), None);
+        mix.mark_note_on(3, 5_000_000_123, 100);
+        assert_eq!(mix.last_note_on(3), Some((5_000_000_000, 100)));
+        // A velocity past 7 bits doesn't leak into the time.
+        mix.mark_note_on(3, 5_000_000_123, 0xFF);
+        assert_eq!(mix.last_note_on(3), Some((5_000_000_000, 0x7F)));
+        assert_eq!(mix.last_note_on(usize::MAX), None);
+        mix.mark_note_on(usize::MAX, 1, 1);
+    }
 }

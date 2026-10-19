@@ -23,6 +23,7 @@ use crate::core::config::PITCH_PREVIEW_MS;
 use crate::core::midi::message::midi3;
 use crate::core::midi::message::rewrite_channel;
 use crate::core::midi::out_queue::MidiOutMessage;
+use crate::core::time::monotonic_nanos_at;
 use crate::models::{
     event::EventType,
     track::{Track, TrackOutput},
@@ -150,8 +151,16 @@ impl Sequencer {
                 // keeps running so the track's playhead stays in sync. Its
                 // wheel moves go out too: no note sounds to hear them, and
                 // the synth is already where the clip has it on an unmute.
-                if !track_audible && matches!(event.event_type(), Some(EventType::NoteOn)) {
+                let note_on = matches!(event.event_type(), Some(EventType::NoteOn));
+                if !track_audible && note_on {
                     continue;
+                }
+                // Kicks the track's meter, stamped when the note is due
+                // rather than when it is heard: the output offset's few
+                // milliseconds are less than a frame.
+                if note_on && let Some(velocity) = event.velocity() {
+                    self.track_mix
+                        .mark_note_on(track.slot(), monotonic_nanos_at(at), velocity);
                 }
                 match track.output() {
                     TrackOutput::MidiOut { channel } => {
@@ -384,6 +393,7 @@ mod tests {
     use crate::core::sequencer::ClipInstrumentEvent;
     use crate::core::sequencer::instrument_event::EventTime;
     use crate::core::sequencer::test_support::{clip_at, instrument_track_0, sequencer_at_tempo};
+    use crate::core::time::monotonic_nanos_at;
     use crate::models::clip::Clip;
     use crate::models::event::Event;
     use crate::models::track::TrackOutput;
@@ -520,6 +530,46 @@ mod tests {
         clip.add_event(Event::new(0, 0, vec![0x90, 60, 100]));
         clip.add_event(Event::new(240, 0, vec![0x80, 60, 0]));
         sequencer.tracks_mut()[0].add_clip(&clip);
+    }
+
+    #[test]
+    fn a_clip_note_on_kicks_its_tracks_meter_with_its_velocity_at_the_tick_instant() {
+        let (mut sequencer, _midi_out_rx) = sequencer_and_midi_out_rx(config::TEMPO_US_DEFAULT);
+        midi_out_track_with_one_note(&mut sequencer);
+        let slot = sequencer.tracks()[0].slot();
+        sequencer.reset_to_tick(0);
+
+        let at = Instant::now();
+        sequencer.tick(at);
+
+        let (at_ns, velocity) = sequencer.track_mix.last_note_on(slot).unwrap();
+        assert_eq!(at_ns, monotonic_nanos_at(at) & !0x7F);
+        assert_eq!(velocity, 100);
+        let other = sequencer.tracks()[1].slot();
+        assert_eq!(sequencer.track_mix.last_note_on(other), None);
+    }
+
+    #[test]
+    fn a_muted_track_or_note_leaves_its_meter_empty() {
+        // What didn't go out doesn't light: the dot shows what was sent.
+        let (mut muted_track, _midi_out_rx) = sequencer_and_midi_out_rx(config::TEMPO_US_DEFAULT);
+        midi_out_track_with_one_note(&mut muted_track);
+        muted_track.toggle_track_mute(0);
+        muted_track.reset_to_tick(0);
+        muted_track.tick(Instant::now());
+        let slot = muted_track.tracks()[0].slot();
+        assert_eq!(muted_track.track_mix.last_note_on(slot), None);
+
+        let (mut muted_note, _midi_out_rx) = sequencer_and_midi_out_rx(config::TEMPO_US_DEFAULT);
+        let mut clip = clip_at(0, 480);
+        let mut on = Event::new(0, 0, vec![0x90, 60, 100]);
+        on.set_muted(true);
+        clip.add_event(on);
+        muted_note.tracks_mut()[0].add_clip(&clip);
+        muted_note.reset_to_tick(0);
+        muted_note.tick(Instant::now());
+        let slot = muted_note.tracks()[0].slot();
+        assert_eq!(muted_note.track_mix.last_note_on(slot), None);
     }
 
     #[test]

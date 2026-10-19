@@ -35,6 +35,10 @@ Breaking entries are marked **Breaking** and say what to do about them.
   you heard (the files take the samples before the device, so those don't
   reach them). An export whose audio device
   changes or goes away stops and says so.
+- **Track meters.** A thin meter runs down the right of each track header.
+  It jumps to the velocity of each note the track sends, from a clip or from
+  the keyboard on the selected track, and falls back. A muted or non-soloed
+  track, or a muted note, leaves it empty. On every track and platform.
 
 ## [0.3.1] - 2026-10-14
 

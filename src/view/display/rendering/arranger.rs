@@ -125,6 +125,7 @@ impl Display {
                 Some(rects) => {
                     self.draw_track_name(painter, track_idx, rects.name);
                     self.draw_track_header_buttons(painter, track_idx, &rects);
+                    self.draw_track_meter(painter, track_idx, rects.meter);
                     if self.track_has_instrument(track_idx) {
                         self.draw_track_mix_bars(painter, track_idx, accent, &rects);
                     }
@@ -509,6 +510,21 @@ impl Display {
             LayoutJob::single_section(label, format),
             row.width(),
         );
+    }
+
+    /// Draws `track_idx`'s meter in `rect`: the trough the bars use, filled
+    /// from the bottom in `fg_dim` to the last note-on's velocity as it falls
+    /// (`meter_level`). Neutral, not the track's colour, so it sits back.
+    fn draw_track_meter(&self, painter: &Painter, track_idx: usize, rect: Rect) {
+        painter.rect_filled(rect, CornerRadius::same(1), grid_seam_color());
+        let level = self.track_meter_level(track_idx, monotonic_nanos());
+        if level > 0.0 {
+            let fill = Rect::from_min_max(
+                pos2(rect.min.x, rect.max.y - rect.height() * level),
+                rect.max,
+            );
+            painter.rect_filled(fill, CornerRadius::same(1), theme::fg_dim());
+        }
     }
 
     /// Draws `track_idx`'s S (solo) and M (mute) toggle buttons. Off, both wear
