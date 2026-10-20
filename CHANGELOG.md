@@ -20,6 +20,8 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-20
+
 ### Added
 
 - **Export to audio (macOS).** `⌘⇧R` exports the arranger's time selection
