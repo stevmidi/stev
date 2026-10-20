@@ -61,7 +61,7 @@ pub(crate) struct TrackMixAtomics {
     pub(crate) note_on: [AtomicU64; MAX_TRACKS],
     /// Each plugin track's audio level, left and right, after its fader, pan
     /// and mute: what the arranger header's meter draws on a plugin track
-    /// (`310-audio-meters.md`). Not part of the mix: written once per block by
+    /// (`archive/310-audio-meters.md`). Not part of the mix: written once per block by
     /// the instrument mixer's summing pass, with the ballistics already
     /// applied (`plugin_host::meter`),
     /// read by the render thread ([`audio_level`](Self::audio_level)).

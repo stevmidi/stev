@@ -35,7 +35,7 @@
 //! The summing pass also measures each slot's gained output, the level its
 //! arranger meter shows: the block's peak and mean square per channel, run
 //! through [`MeterBallistics`] and published to
-//! [`TrackMixAtomics::audio_level`] (`310-audio-meters.md`). An empty or
+//! [`TrackMixAtomics::audio_level`] (`archive/310-audio-meters.md`). An empty or
 //! silent slot is measured as silence, so its meter falls. A slot's meter
 //! starts again from empty when its voice is inserted or removed, and when
 //! its [`meter_resets`](TrackMixAtomics::meter_resets) count moves (a new or

@@ -1,5 +1,5 @@
 //! Level-meter ballistics for the arranger's track meters
-//! (`310-audio-meters.md`): peak, RMS and peak hold for one channel, advanced
+//! (`archive/310-audio-meters.md`): peak, RMS and peak hold for one channel, advanced
 //! once per audio block by the instrument mixer's summing pass, on the audio
 //! thread, so no block's peak is missed between UI frames. Pure arithmetic,
 //! no allocation. What they publish is a [`ChannelLevel`].

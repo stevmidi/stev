@@ -1,4 +1,4 @@
-//! What a track meter reads (`310-audio-meters.md`): one channel's level as
+//! What a track meter reads (`archive/310-audio-meters.md`): one channel's level as
 //! the instrument mixer publishes it ([`ChannelLevel`], its ballistics in
 //! `plugin_host::meter`), and the dB conversion the UI draws it with.
 //!
