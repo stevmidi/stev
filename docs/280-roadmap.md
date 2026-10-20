@@ -4,7 +4,7 @@ What Stev may do next, and what it won't. It picks up where the release plan (`a
 
 ## Principle
 
-**Build the app the author wants to use.** Stev is an opinionated sequencer built around capture: play freely, and keep what you just played. That workflow is why the app exists. It grows in that direction, not toward a general-purpose DAW, and a feature earns its place by serving that workflow, not by whether every user would want it. **Stev arranges; a DAW mixes.** There is no mixing DSP in the app (no EQ, compression or other effects), and that's a strength: the user stays on the arrangement. Per-track volume, pan, mute and solo stay, for hearing a sketch balanced while playing, and the hand-off to a DAW is a tidy stem set (§ Export to audio). Others are welcome to fork it and take it elsewhere. The licence, the agent-oriented docs and the clean platform boundary (§ Platforms) make that practical, but the repo doesn't shape itself around forks. Every addition still follows the ground rules in `AGENTS.md`: tests in the same change, docs in sync, the build gate, permissive licences only.
+**Build the app the author wants to use.** Stev is an opinionated sequencer built around capture: play freely, and keep what you just played. That workflow is why the app exists. It grows in that direction, not toward a general-purpose DAW, and a feature earns its place by serving that workflow, not by whether every user would want it. **Stev arranges; a DAW mixes.** There is no mixing DSP in the app (no EQ, compression or other effects), and that's a strength: the user stays on the arrangement. Per-track volume, pan, mute and solo stay, for hearing a sketch balanced while playing, and the hand-off to a DAW is a tidy stem set (`130` § Audio export). Others are welcome to fork it and take it elsewhere. The licence, the agent-oriented docs and the clean platform boundary (§ Platforms) make that practical, but the repo doesn't shape itself around forks. Every addition still follows the ground rules in `AGENTS.md`: tests in the same change, docs in sync, the build gate, permissive licences only.
 
 ## Platforms
 
@@ -36,41 +36,6 @@ Stage 1 of § Linux and Windows support, staged, taken first as macOS work. Park
   | Ubuntu 24.04 (same machine) | idle / loaded | | | |
   | Surface Pro 3, Windows 10 | idle / loaded | | | |
   | Raspberry Pi 4 (optional) | idle / loaded | | | — |
-
-### Export to audio: a stem set for the DAW
-
-Stev arranges and a DAW mixes (§ Principle), so the export's main job is the hand-off: a tidy set of stems that drops into any DAW and lines up with no fiddling (added 2026-10-10, reshaped 2026-10-11). A reference mix comes alongside, so a sketch can also be shared without a DAW.
-
-**Built 2026-10-18/19** (`⌘/Ctrl+⇧+R`; as built in `130` § Audio export, the phase plan archived as `archive/300-export-to-audio.md`). What follows is the shape decided 2026-10-11, as it landed; the tail is the one part changed.
-
-**Decided 2026-10-11:**
-
-- **One real-time pass writes everything.** Play the arranger's time selection and write each plugin track's output, plus the summed mix. The voices are rendered separately before the summing pass (`130`), so stems cost no extra pass. Real time means the files are exactly what was heard. The footer says if an overrun happened during the render.
-- **A folder per export**, in one `Exports` folder in the library beside `Projects` (decided 2026-10-18), never overwriting (a number is added, as the MIDI clip export does, `060` § MIDI clip export). Its name carries the project name, tempo and meter (e.g. `Sketch 120bpm 4-4`), since a DAW import needs them and WAV doesn't carry them.
-- **One WAV per plugin track, named `NN Name.wav`**: the track number keeps the arrangement's order when the files are sorted, and the name is the track's name as its header shows it. Plus `Mix.wav`.
-- **The time selection sets the length** (changed 2026-10-18, replacing "bar 1 to the arrangement's end plus a fixed tail"): every file starts at the selection's start and ends at its end, so all of them line up when dropped at the same bar in the DAW. There is no tail of any kind: what you hear is what you get, as in Ableton's Export Audio/Video, and room for a reverb or delay to ring out is part of the selection (decided 2026-10-19, deferring the measured ring-out below). With no selection, the export refuses.
-- **One format:** 32-bit float WAV at the device's sample rate, so no level is clipped or rounded before the DAW sees it. A hand-rolled writer, no dependency, as the SMF writer was (`smf.rs`).
-- **Plugin tracks only.** A MIDI Out track's audio is made by external gear or another app and never reaches Stev, so the footer names the tracks left out, and the export refuses when nothing would be heard. Like the plugin host, it's macOS-only.
-
-- **Stems at unity and centre.** Track volume and pan aren't applied to stems, so the DAW mix starts clean. `Mix.wav` keeps the sketch's balance (volume and pan as set) as a reference (decided 2026-10-11).
-- **What you hear is what you get.** The export holds the tracks you hear, so mute and solo shape the stems and the mix alike. A muted track is skipped (usually a discarded idea), and while any track is soloed only the soloed tracks are exported. Muted notes (bare `M`, or the arranger's marquee `M` over a range, `010`) stay silent too; a real-time pass gets that for free, since it renders playback itself. One rule, with one exception: the metronome click (`K`) is never exported, whether it's on or not. It's a tool for playing in time, not part of the music, and a forgotten `K` must not end up in `Mix.wav` (decided 2026-10-11).
-
-**Later:**
-
-- Offline rendering (quick and glitch-free, but each plugin must accept the CLAP/VST3 offline-processing flag, and the render must reproduce the transport exactly as playback does: `BlockTransport`, note chase, the wheels).
-- Tails that end on silence: the files ringing out past the selection until the output is measured silent, and the export waiting for the same silence before it starts. Planned as phase 4 of `archive/300-export-to-audio.md` (the detector, thresholds and caps are designed there) and deferred 2026-10-19: DAW users don't expect it, Ableton doesn't do it, and the selection already sets the length. Its smaller cousin, a short fixed pause before the start so a tail from playback just before can't reach the files, is the first thing to try if that bites.
-
-It comes before the website on purpose: it serves the author first, and the site's demo audio can then come out of Stev itself.
-
-### Audio meters on plugin tracks (built)
-
-Built 2026-10-20 to the plan in `archive/310-audio-meters.md`; as-built in `030` § Arranger Track Header and `130`. The notes below are the original candidate.
-
-Each track header has a meter (`030` § Arranger Track Header). Today it meters MIDI on every track: the velocity of each note-on as it goes out, falling back. That works on every track and platform; built 2026-10-19, after a coloured activity dot in the name row was tried the same day and found distracting. Next, plugin tracks meter their audio output instead, in the same strip and the same neutral look, so audio and MIDI meters read as one thing (decided 2026-10-19). MIDI Out tracks keep the velocity meter: their audio never reaches the app. Audio level gives some mixing feedback while balancing a sketch, which is in scope (§ Principle keeps volume, pan, mute and solo for that); a mixer panel stays § Not planned.
-
-- **Where the level comes from:** `InstrumentMixer` already reads every sample of every voice in its summing pass. It keeps each slot's per-block peak (after its gain, so the meter matches the fader) in an atomic beside `TrackMixAtomics::note_on`, written only by the audio thread: no lock, no allocation. Export phase 4's detector (`archive/300-export-to-audio.md`) was designed to read the same per-slot peaks, before gain.
-- **Ballistics:** instant attack, a steady fall in dB (about 20 dB/s), the scale in dB down to around −60.
-- **Settled 2026-10-20:** stereo, neutral, peak and RMS in one bar with a peak-hold line. The build plan is `archive/310-audio-meters.md`.
 
 ### A website at stevmidi.com
 
@@ -120,6 +85,13 @@ Idea, 2026-10-09. Enter's fit (`fit_first_clip_tempo`, `040` § Fitting the temp
 ### Keyboard shortcuts as a settings tab, with rebinding
 
 User direction, 2026-10-07. The `?` help overlay is the first-release form. Later it moves into the settings modal as its own tab: a categorized, searchable list of every binding that can also record a new binding for each one. Rebinding likely means the matchers read from a keymap instead of matching keys inline, which would also retire the hand-written `HELP` table (`help_overlay.rs`).
+
+### Export to audio: what's left
+
+The stem export is built (`⌘/Ctrl+⇧+R`, as built in `130` § Audio export, phase plan in `archive/300-export-to-audio.md`). Two follow-ups were left out of it on purpose:
+
+- **Offline rendering:** quick and glitch-free, but each plugin must accept the CLAP/VST3 offline-processing flag, and the render must reproduce the transport exactly as playback does (`BlockTransport`, note chase, the wheels).
+- **Tails that end on silence:** the files ringing out past the selection until the output is measured silent, and the export waiting for the same silence before it starts. Designed as phase 4 of `archive/300-export-to-audio.md` (detector, thresholds, caps) and deferred 2026-10-19: DAW users don't expect it, Ableton doesn't do it, and the selection already sets the length. If a tail from playback just before the start ever reaches the files, try its smaller cousin first: a short fixed pause before the start.
 
 ### Linux and Windows support, staged
 
