@@ -62,13 +62,15 @@ Stev arranges and a DAW mixes (§ Principle), so the export's main job is the ha
 
 It comes before the website on purpose: it serves the author first, and the site's demo audio can then come out of Stev itself.
 
-### Audio meters on plugin tracks
+### Audio meters on plugin tracks (built)
+
+Built 2026-10-20 to the plan in `310-audio-meters.md`; as-built in `030` § Arranger Track Header and `130`. The notes below are the original candidate.
 
 Each track header has a meter (`030` § Arranger Track Header). Today it meters MIDI on every track: the velocity of each note-on as it goes out, falling back. That works on every track and platform; built 2026-10-19, after a coloured activity dot in the name row was tried the same day and found distracting. Next, plugin tracks meter their audio output instead, in the same strip and the same neutral look, so audio and MIDI meters read as one thing (decided 2026-10-19). MIDI Out tracks keep the velocity meter: their audio never reaches the app. Audio level gives some mixing feedback while balancing a sketch, which is in scope (§ Principle keeps volume, pan, mute and solo for that); a mixer panel stays § Not planned.
 
 - **Where the level comes from:** `InstrumentMixer` already reads every sample of every voice in its summing pass. It keeps each slot's per-block peak (after its gain, so the meter matches the fader) in an atomic beside `TrackMixAtomics::note_on`, written only by the audio thread: no lock, no allocation. Export phase 4's detector (`archive/300-export-to-audio.md`) was designed to read the same per-slot peaks, before gain.
 - **Ballistics:** instant attack, a steady fall in dB (about 20 dB/s), the scale in dB down to around −60.
-- **Open:** whether the top of the scale warms (amber near 0 dBFS, red at clipping) or stays neutral; a peak-hold line; stereo or one bar.
+- **Settled 2026-10-20:** stereo, neutral, peak and RMS in one bar with a peak-hold line. The build plan is `310-audio-meters.md`.
 
 ### A website at stevmidi.com
 

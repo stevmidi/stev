@@ -30,6 +30,14 @@
 //! with a constant one-buffer latency, instead of always at block offset 0.
 //! Live keyboard events skip the delay and play at the head of the block.
 //!
+//! ## Track meters
+//!
+//! The summing pass also measures each slot's gained output, the level its
+//! arranger meter shows: the block's peak and mean square per channel, run
+//! through [`MeterBallistics`] and published to
+//! [`TrackMixAtomics::audio_level`] (`310-audio-meters.md`). An empty or
+//! silent slot is measured as silence, so its meter falls.
+//!
 //! ## Audio export
 //!
 //! While an audio export runs, the summing pass also feeds its tap
@@ -43,6 +51,7 @@ use std::time::{Duration, Instant};
 
 use rtrb::{Consumer, Producer};
 
+use crate::core::audio::meter::{BlockDecay, ChannelLevel, MeterBallistics};
 use crate::core::audio::mix::{gains_for, track_is_audible};
 use crate::core::audio::{AudioSource, INSTRUMENTS_SOURCE, RenderCtx};
 use crate::core::config::MAX_TRACKS;
@@ -160,6 +169,11 @@ pub(super) struct InstrumentMixer {
     shutdown: Arc<HostShutdown>,
     /// The audio export's tap, fed by the summing pass.
     export: ExportTap,
+    /// Each slot's meter state, left and right, advanced by the summing pass.
+    meters: [[MeterBallistics; 2]; MAX_TRACKS],
+    /// The output sample rate, Hz: what turns a block's frames into the
+    /// meters' time step.
+    sample_rate: f32,
 }
 
 impl InstrumentMixer {
@@ -174,6 +188,7 @@ impl InstrumentMixer {
         track_mix: Arc<TrackMixAtomics>,
         shutdown: Arc<HostShutdown>,
         export: ExportTap,
+        sample_rate: f64,
     ) -> Self {
         Self {
             voices: std::array::from_fn(|_| None),
@@ -189,7 +204,27 @@ impl InstrumentMixer {
             cached_gains: [(1.0, 1.0); MAX_TRACKS],
             shutdown,
             export,
+            meters: [[MeterBallistics::default(); 2]; MAX_TRACKS],
+            sample_rate: sample_rate as f32,
         }
+    }
+
+    /// Advances `track`'s meters by one block of the given per-channel peaks
+    /// and sums of squares over `frames`, and publishes them.
+    fn meter_block(
+        &mut self,
+        track: usize,
+        peaks: [f32; 2],
+        sums_of_squares: [f32; 2],
+        frames: usize,
+        decay: &BlockDecay,
+    ) {
+        let mut level = [ChannelLevel::default(); 2];
+        for (ch, meter) in self.meters[track].iter_mut().enumerate() {
+            meter.step(peaks[ch], sums_of_squares[ch] / frames as f32, decay);
+            level[ch] = meter.level();
+        }
+        self.track_mix.set_audio_level(track, level);
     }
 
     /// Resolves every track's target `(left, right)` linear gain for this
@@ -407,8 +442,12 @@ impl AudioSource for InstrumentMixer {
         // Order-dependent, and writing one shared accumulator, so it stays on
         // this thread. A couple of multiply-adds per frame per track —
         // negligible next to the render pass above. An exported voice is
-        // tapped here too, silence for a slot with nothing to play.
+        // tapped here too, silence for a slot with nothing to play, and every
+        // slot is metered.
         let export_span = self.export.begin_block(block_start, frames);
+        // Each slot's gained peaks and sums of squares, for its meter; an
+        // empty or silent slot stays at zero.
+        let mut measured = [([0.0f32; 2], [0.0f32; 2]); MAX_TRACKS];
         let [left, right] = mix;
         for (track, slot) in self.voices.iter_mut().enumerate() {
             let Some(voice) = slot else {
@@ -427,13 +466,19 @@ impl AudioSource for InstrumentMixer {
                 (target_r - gain.1) / frames as f32,
             );
             let rendered = voice.mix().rendered;
+            let (peaks, sums_of_squares) = &mut measured[track];
             if rendered {
                 let (mut gl, mut gr) = gain;
                 for (f, (l, r)) in left.iter_mut().zip(right.iter_mut()).enumerate() {
                     gl += step.0;
                     gr += step.1;
-                    *l += voice.sample(0, f) * gl;
-                    *r += voice.sample(1, f) * gr;
+                    let out = [voice.sample(0, f) * gl, voice.sample(1, f) * gr];
+                    *l += out[0];
+                    *r += out[1];
+                    for ch in 0..2 {
+                        peaks[ch] = peaks[ch].max(out[ch].abs());
+                        sums_of_squares[ch] += out[ch] * out[ch];
+                    }
                 }
             }
             if let Some(span) = export_span.clone() {
@@ -451,6 +496,11 @@ impl AudioSource for InstrumentMixer {
             m.gain_r = target_r;
         }
 
+        let decay = BlockDecay::new(frames, self.sample_rate);
+        for (track, (peaks, sums_of_squares)) in measured.into_iter().enumerate() {
+            self.meter_block(track, peaks, sums_of_squares, frames, &decay);
+        }
+
         self.export.end_block(export_span, block_end);
 
         // Events queued this block have been consumed; the next starts empty.
@@ -464,7 +514,123 @@ impl AudioSource for InstrumentMixer {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU16};
+
+    use rtrb::RingBuffer;
+
+    use crate::core::audio::meter::amplitude_db;
+    use crate::core::audio::{AudioClock, AudioLoad, WorkerPool};
+
+    use super::super::export::export_tap;
+    use super::super::test_voice::ConstantVoice;
     use super::*;
+
+    /// The test mixer's sample rate.
+    const RATE: f64 = 48_000.0;
+    /// The test mixer's block size.
+    const BLOCK: usize = 256;
+
+    /// A mixer with a [`ConstantVoice`] of `level` in slot 0, and the mix
+    /// atomics it reads and meters into.
+    fn mixer_with_voice(level: f32) -> (InstrumentMixer, Arc<TrackMixAtomics>) {
+        let track_mix = Arc::new(TrackMixAtomics::new());
+        let transport = TransportState {
+            running: Arc::new(AtomicBool::new(false)),
+            tempo_us: Arc::new(AtomicI32::new(500_000)),
+            meter: Arc::new(AtomicU16::new(0)),
+            playback_tick: Arc::new(AtomicI32::new(0)),
+            region_start: Arc::new(AtomicI32::new(0)),
+            region_end: Arc::new(AtomicI32::new(0)),
+            loop_enabled: Arc::new(AtomicBool::new(false)),
+        };
+        let (_marks, marks_rx) = RingBuffer::new(4);
+        let (export, _rings, _shared) = export_tap(marks_rx, RATE);
+        let mut mixer = InstrumentMixer::new(
+            RingBuffer::new(4).1,
+            RingBuffer::new(4).0,
+            RingBuffer::new(4).1,
+            RingBuffer::new(4).1,
+            transport,
+            Arc::clone(&track_mix),
+            Arc::new(HostShutdown::default()),
+            export,
+            RATE,
+        );
+        mixer.voices[0] = Some(Box::new(ConstantVoice::new(level)));
+        (mixer, track_mix)
+    }
+
+    /// Renders `secs` of blocks.
+    fn render(mixer: &mut InstrumentMixer, secs: f64) {
+        let clock = AudioClock::new(RATE);
+        let pool = WorkerPool::new(0, || ());
+        let load = AudioLoad::new();
+        let mut mix = [vec![0.0; BLOCK], vec![0.0; BLOCK]];
+        for block in 0..(secs * RATE / BLOCK as f64).round() as u64 {
+            let ctx = RenderCtx {
+                frames: BLOCK,
+                first_frame: block * BLOCK as u64,
+                clock: &clock,
+                pool: &pool,
+                load: &load,
+            };
+            mix.iter_mut().for_each(|ch| ch.fill(0.0));
+            mixer.render_into(&mut mix, &ctx);
+        }
+    }
+
+    /// Slot 0's peak, left and right, in dB.
+    fn peak_db(track_mix: &TrackMixAtomics) -> [f32; 2] {
+        track_mix.audio_level(0).map(|ch| amplitude_db(ch.peak))
+    }
+
+    #[test]
+    fn the_meter_reads_after_the_fader_and_the_balance() {
+        let (mut mixer, track_mix) = mixer_with_voice(1.0);
+        track_mix.volume_db[0].store((-6.0f32).to_bits(), Ordering::Relaxed);
+        render(&mut mixer, 3.0);
+        let [l, r] = peak_db(&track_mix);
+        assert!((l + 6.0).abs() < 0.01 && (r + 6.0).abs() < 0.01, "{l} {r}");
+        let [l, r] = track_mix.audio_level(0);
+        assert!(
+            (amplitude_db(l.rms) + 6.0).abs() < 0.1,
+            "a constant's RMS is its level"
+        );
+        assert_eq!(l.hold, r.hold);
+
+        track_mix.pan[0].store((-1.0f32).to_bits(), Ordering::Relaxed);
+        render(&mut mixer, 10.0);
+        let [l, r] = track_mix.audio_level(0);
+        assert!((amplitude_db(l.peak) + 6.0).abs() < 0.01);
+        assert_eq!(r, ChannelLevel::default(), "hard left empties the right");
+    }
+
+    #[test]
+    fn a_muted_or_sleeping_voice_falls() {
+        let (mut mixer, track_mix) = mixer_with_voice(1.0);
+        render(&mut mixer, 0.5);
+        track_mix.mute[0].store(true, Ordering::Relaxed);
+        render(&mut mixer, 1.0);
+        let [l, _] = peak_db(&track_mix);
+        assert!((l + PEAK_FALL).abs() < 0.5, "fell from 0 dB for ~1 s: {l}");
+
+        let (mut mixer, track_mix) = mixer_with_voice(1.0);
+        render(&mut mixer, 0.5);
+        mixer.voices[0].as_mut().unwrap().mix_mut().sleeping = true;
+        render(&mut mixer, 1.0);
+        let [l, _] = peak_db(&track_mix);
+        assert!((l + PEAK_FALL).abs() < 0.5, "{l}");
+    }
+
+    #[test]
+    fn an_empty_slot_meters_silence() {
+        let (mut mixer, track_mix) = mixer_with_voice(1.0);
+        render(&mut mixer, 0.1);
+        assert_eq!(track_mix.audio_level(1), [ChannelLevel::default(); 2]);
+    }
+
+    /// [`PEAK_FALL_DB_PER_S`](crate::core::audio::meter::PEAK_FALL_DB_PER_S).
+    const PEAK_FALL: f32 = crate::core::audio::meter::PEAK_FALL_DB_PER_S;
 
     fn pending(target_frame: i64, seq: u64, msg: Midi3) -> PendingEvent {
         PendingEvent {

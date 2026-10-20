@@ -281,55 +281,9 @@ fn push(
 mod tests {
     use rtrb::Producer;
 
-    use crate::core::midi::message::Midi3;
-    use crate::core::plugin_host::transport::BlockTransport;
-    use crate::core::plugin_host::voice::VoiceMix;
+    use crate::core::plugin_host::test_voice::ConstantVoice;
 
     use super::*;
-
-    /// A voice that plays a constant: `level` on the left, `-level` on the
-    /// right.
-    struct ConstantVoice {
-        /// The left channel's sample.
-        level: f32,
-        /// Unused mixer state.
-        mix: VoiceMix,
-    }
-
-    impl ConstantVoice {
-        fn new(level: f32) -> Self {
-            ConstantVoice {
-                level,
-                mix: VoiceMix::default(),
-            }
-        }
-    }
-
-    impl InstrumentVoice for ConstantVoice {
-        fn queue_midi(&mut self, _bytes: Midi3, _time: u32) {}
-
-        fn render_block(&mut self, _frames: usize, _steady: u64, _t: &BlockTransport) -> bool {
-            true
-        }
-
-        fn sample(&self, channel: usize, _frame: usize) -> f32 {
-            if channel == 0 {
-                self.level
-            } else {
-                -self.level
-            }
-        }
-
-        fn clear_events(&mut self) {}
-
-        fn mix(&self) -> &VoiceMix {
-            &self.mix
-        }
-
-        fn mix_mut(&mut self) -> &mut VoiceMix {
-            &mut self.mix
-        }
-    }
 
     /// A tap with an export armed, and what a test reads back or sends.
     struct Fixture {

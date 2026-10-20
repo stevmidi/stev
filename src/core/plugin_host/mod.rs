@@ -57,6 +57,8 @@ mod export_writer;
 mod key_guard;
 mod mixer;
 mod shutdown;
+#[cfg(test)]
+mod test_voice;
 mod transport;
 mod voice;
 mod vst3;
@@ -179,6 +181,7 @@ pub(crate) fn start_plugin_host(
         Arc::clone(&atomics.track_mix),
         Arc::clone(&shutdown),
         export,
+        engine.sample_rate,
     );
     engine.add_source(Box::new(mixer) as Box<dyn AudioSource>)?;
 

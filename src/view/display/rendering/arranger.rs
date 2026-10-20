@@ -512,18 +512,19 @@ impl Display {
         );
     }
 
-    /// Draws `track_idx`'s meter in `rect`: the trough the bars use, filled
-    /// from the bottom in `fg_dim` to the last note-on's velocity as it falls
-    /// (`meter_level`). Neutral, not the track's colour, so it sits back.
+    /// Draws `track_idx`'s meter in the strip `rect` (`track_meter`): a
+    /// plugin track's two channel bars side by side, or a MIDI track's one
+    /// bar centred.
     fn draw_track_meter(&self, painter: &Painter, track_idx: usize, rect: Rect) {
-        painter.rect_filled(rect, CornerRadius::same(1), grid_seam_color());
-        let level = self.track_meter_level(track_idx, monotonic_nanos());
-        if level > 0.0 {
-            let fill = Rect::from_min_max(
-                pos2(rect.min.x, rect.max.y - rect.height() * level),
-                rect.max,
-            );
-            painter.rect_filled(fill, CornerRadius::same(1), theme::fg_dim());
+        match self.track_meter(track_idx, monotonic_nanos()) {
+            TrackMeter::Audio(bars) => {
+                for (bar, rect) in bars.iter().zip(meter_channel_rects(rect)) {
+                    draw_meter_bar(painter, bar, rect, Some(zero_db_meter_height()));
+                }
+            }
+            TrackMeter::Midi(bar) => {
+                draw_meter_bar(painter, &bar, meter_centre_rect(rect), None);
+            }
         }
     }
 
@@ -937,5 +938,45 @@ fn lane_grid_fill(is_selected: bool, accent: Color32) -> Color32 {
         accent.gamma_multiply(0.12)
     } else {
         shifted_rgb(theme::bg(), 5)
+    }
+}
+
+/// Draws one meter bar in `rect`, bottom-up: the trough the mix bars use,
+/// with a faint 1px mark at `mark` (an audio meter's 0 dBFS) that the bars
+/// cover as they pass it, the peak in a dimmer tone, the level (RMS, or a MIDI track's velocity) in
+/// `fg_dim` in front of it, then the 1px peak-hold line. Neutral, not the
+/// track's colour, so it sits back; the hold line alone turns `track_mute`
+/// red while it holds a clip.
+fn draw_meter_bar(painter: &Painter, bar: &MeterBar, rect: Rect, mark: Option<f32>) {
+    let trough = grid_seam_color();
+    let bright = theme::fg_dim();
+    painter.rect_filled(rect, CornerRadius::same(1), trough);
+    // Whole pixels, so a bar doesn't shimmer at fractional heights.
+    let top = |height: f32| rect.max.y - (rect.height() * height).round();
+    // A 1px line from `y` across the bar.
+    let line_at = |y: f32| Rect::from_min_max(pos2(rect.min.x, y), pos2(rect.max.x, y + 1.0));
+    if let Some(height) = mark {
+        painter.rect_filled(
+            line_at(top(height)),
+            CornerRadius::ZERO,
+            bright.lerp_to_gamma(trough, 0.75),
+        );
+    }
+    for (height, color) in [
+        (bar.peak, bright.lerp_to_gamma(trough, 0.5)),
+        (bar.level, bright),
+    ] {
+        if height > 0.0 {
+            let fill = Rect::from_min_max(pos2(rect.min.x, top(height)), rect.max);
+            painter.rect_filled(fill, CornerRadius::same(1), color);
+        }
+    }
+    if let Some((height, clipped)) = bar.hold {
+        let color = if clipped { theme::track_mute() } else { bright };
+        painter.rect_filled(
+            line_at(top(height).min(rect.max.y - 1.0)),
+            CornerRadius::ZERO,
+            color,
+        );
     }
 }

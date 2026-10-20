@@ -16,6 +16,7 @@ mod denormals;
 mod engine;
 mod journal;
 mod load;
+pub(crate) mod meter;
 mod metronome_source;
 pub(crate) mod mix;
 mod thread_role;

@@ -26,6 +26,7 @@ use egui::{
 
 use super::state::scrolled_offset;
 use super::*;
+use crate::core::audio::meter::{ChannelLevel, amplitude_db};
 use crate::core::config::MAX_TRACKS;
 #[cfg(target_os = "macos")]
 use crate::core::plugin_host::exit_without_destructors;
@@ -388,19 +389,42 @@ const TRACK_BTN_ROW_GAP: f32 = 4.0;
 pub(super) const TRACK_NAME_ROW_H: f32 = 16.0;
 /// Gap from the name row down to the S/M button row.
 const TRACK_NAME_ROW_GAP: f32 = 4.0;
-/// Least room left around a header stack (or a lone name row), top and
-/// bottom together.
-const TRACK_HEADER_V_MARGIN: f32 = 4.0;
+/// The one padding inside a track header, top and bottom: from the lane's
+/// top to the tops of the name's capitals and of the meter, and from the
+/// meter's bottom (and, in the shortest lane, the pan bar's) to the lane's
+/// bottom.
+const TRACK_HEADER_PAD_Y: f32 = 4.0;
+/// How far below the name row's top the name's capitals start: the
+/// `TRACK_NAME_FONT_SIZE` line (Plex, 15.5pt tall) centred in
+/// `TRACK_NAME_ROW_H`, plus the room the font leaves above its capitals.
+/// Measured, and pinned by `the_name_cap_inset_matches_the_font`.
+const TRACK_NAME_CAP_INSET: f32 = 3.75;
+/// Where the name row starts below the lane's top, so its capitals start
+/// [`TRACK_HEADER_PAD_Y`] down: the line box rises above the padding, the
+/// letters don't.
+const TRACK_HEADER_TOP: f32 = TRACK_HEADER_PAD_Y - TRACK_NAME_CAP_INSET;
 /// Narrowest header column the controls are laid out in.
 const TRACK_HEADER_MIN_W: f32 = 8.0;
 
-/// The top of a band `h` tall centred in `[lane_top, lane_top + lane_h)` —
-/// `None` when the lane can't hold it with `TRACK_HEADER_V_MARGIN` to spare,
-/// or `[left, right]` is narrower than `TRACK_HEADER_MIN_W`. The fit test
-/// shared by the full header stack and a lone name row.
-fn centred_band_top(lane_top: f32, lane_h: f32, left: f32, right: f32, h: f32) -> Option<f32> {
-    (lane_h >= h + TRACK_HEADER_V_MARGIN && right - left >= TRACK_HEADER_MIN_W)
-        .then_some(lane_top + (lane_h - h) * 0.5)
+/// The top of a band `h` tall at the top of `[lane_top, lane_top + lane_h)`,
+/// [`TRACK_HEADER_TOP`] down — `None` when the lane can't hold it with
+/// [`TRACK_HEADER_PAD_Y`] to spare below, or `[left, right]` is narrower than
+/// `TRACK_HEADER_MIN_W`. The fit test shared by the full header stack and a
+/// lone name row. Top-aligned, as in a DAW: a taller lane adds room below the
+/// controls, which stay put.
+fn header_band_top(lane_top: f32, lane_h: f32, left: f32, right: f32, h: f32) -> Option<f32> {
+    (lane_h >= TRACK_HEADER_TOP + h + TRACK_HEADER_PAD_Y && right - left >= TRACK_HEADER_MIN_W)
+        .then_some(lane_top + TRACK_HEADER_TOP)
+}
+
+/// The pixel-snapped `[top, bottom)` of a track meter in its lane: the lane
+/// less [`TRACK_HEADER_PAD_Y`] at each end, so it grows with the lane and
+/// keeps the header's one padding.
+fn meter_band(lane_top: f32, lane_h: f32) -> (f32, f32) {
+    (
+        (lane_top + TRACK_HEADER_PAD_Y).round(),
+        (lane_top + lane_h - TRACK_HEADER_PAD_Y).round(),
+    )
 }
 
 /// The full-width name row with its top at `top`.
@@ -411,9 +435,10 @@ fn name_row_at(top: f32, left: f32, right: f32) -> Rect {
 /// Lays out one track header within a lane: the full-width name row on top,
 /// then the S/M button row (left-aligned, fixed width, the output chip
 /// filling the rest of the row), then the two full-width bars (volume then
-/// pan), the whole stack vertically centred in `[lane_top, lane_top +
-/// lane_h)`, and the meter right of `right`, as tall as the stack: in the
-/// column's right padding (`Display::TRACK_HEADER_INNER_PAD_X`), so it
+/// pan), the whole stack at the top of `[lane_top, lane_top + lane_h)`
+/// ([`header_band_top`]), and the meter right of `right`, the lane's height
+/// less the padding ([`meter_band`]), so it grows with the lane: in the
+/// column's right padding (`Display::TRACK_HEADER_METER_PAD_X`), so it
 /// narrows nothing. `None` when the lane is too short to hold the stack with a
 /// little margin, or the column too narrow — [`track_name_row`] then still
 /// places the name on its own. The button row and the bars are always part
@@ -433,7 +458,7 @@ fn track_header_rects(
         + 2.0 * TRACK_MIX_BAR_H
         + TRACK_MIX_BAR_GAP;
     let name = name_row_at(
-        centred_band_top(lane_top, lane_h, left, right, stack_h)?,
+        header_band_top(lane_top, lane_h, left, right, stack_h)?,
         left,
         right,
     );
@@ -458,9 +483,13 @@ fn track_header_rects(
     let pan_top = volume_top + TRACK_MIX_BAR_H + TRACK_MIX_BAR_GAP;
     let pan = Rect::from_min_max(pos2(left, pan_top), pos2(right, pan_top + TRACK_MIX_BAR_H));
     let meter_left = right + TRACK_METER_GAP;
+    let (meter_top, meter_bottom) = meter_band(lane_top, lane_h);
     let meter = Rect::from_min_max(
-        pos2(meter_left, name.min.y),
-        pos2(meter_left + TRACK_METER_W, pan.max.y),
+        pos2(meter_left, meter_top),
+        pos2(
+            meter_left + 2.0 * TRACK_METER_W + TRACK_METER_CHANNEL_GAP,
+            meter_bottom,
+        ),
     );
 
     Some(TrackHeaderRects {
@@ -475,25 +504,110 @@ fn track_header_rects(
 }
 
 /// Where a track header's name row sits: in the full stack
-/// ([`track_header_rects`]) when the lane holds it; else alone, centred in a
-/// lane too short for the rest — the name is the last of the header to go,
+/// ([`track_header_rects`]) when the lane holds it; else alone, at the same
+/// top, in a lane too short for the rest — the name is the last of the header to go,
 /// being the lane's identity. `None` only when not even the name fits.
 fn track_name_row(lane_top: f32, lane_h: f32, left: f32, right: f32) -> Option<Rect> {
     if let Some(rects) = track_header_rects(lane_top, lane_h, left, right) {
         return Some(rects.name);
     }
-    centred_band_top(lane_top, lane_h, left, right, TRACK_NAME_ROW_H)
+    header_band_top(lane_top, lane_h, left, right, TRACK_NAME_ROW_H)
         .map(|top| name_row_at(top, left, right))
 }
 
-/// Width of a track header's meter.
+/// Width of one channel of a track header's meter.
 const TRACK_METER_W: f32 = 4.0;
+/// Gap between a track meter's left and right channels.
+const TRACK_METER_CHANNEL_GAP: f32 = 1.0;
 /// Gap between the header controls' right edge and the meter.
 const TRACK_METER_GAP: f32 = 4.0;
-/// How long a track's meter takes to fall from full scale to empty.
+/// How long a MIDI track's meter takes to fall from full scale to empty.
 const TRACK_METER_FALL: Duration = Duration::from_millis(600);
+/// The bottom of an audio meter's scale, dBFS: empty at or below it.
+const TRACK_METER_FLOOR_DB: f32 = -60.0;
+/// The top of an audio meter's scale, dBFS: headroom above 0 dBFS, as in
+/// Ableton, so a clip climbs visibly past the 0 dB mark instead of just
+/// filling the bar.
+const TRACK_METER_CEILING_DB: f32 = 6.0;
 
-/// A track meter's height, `0.0..=1.0`: the last note-on's velocity, falling
+/// What one bar of a track meter shows, each height `0.0..=1.0` of the
+/// bar.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(super) struct MeterBar {
+    /// The dimmer peak bar, behind `level` (`0.0` on a MIDI track).
+    pub(super) peak: f32,
+    /// The bright bar: the RMS level on a plugin track, the falling velocity
+    /// on a MIDI track.
+    pub(super) level: f32,
+    /// The peak-hold line's height and whether it holds a clip (a peak over
+    /// 0 dBFS); `None` when it's below the scale or the track has none.
+    pub(super) hold: Option<(f32, bool)>,
+}
+
+impl MeterBar {
+    /// Whether anything is showing — what keeps frames coming while stopped.
+    fn is_lit(&self) -> bool {
+        self.peak > 0.0 || self.level > 0.0 || self.hold.is_some()
+    }
+}
+
+/// What a track's meter shows: a plugin track's audio, a bar per channel, or
+/// a MIDI track's velocity, one bar centred in the strip — MIDI has no
+/// channels to split, so it doesn't pretend to be stereo.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum TrackMeter {
+    /// Left and right.
+    Audio([MeterBar; 2]),
+    /// The falling velocity, as the bar's `level`.
+    Midi(MeterBar),
+}
+
+impl TrackMeter {
+    /// Whether any bar is showing anything.
+    fn is_lit(&self) -> bool {
+        match self {
+            TrackMeter::Audio(bars) => bars.iter().any(MeterBar::is_lit),
+            TrackMeter::Midi(bar) => bar.is_lit(),
+        }
+    }
+}
+
+/// The two halves of a track meter's strip: left channel, right channel.
+pub(super) fn meter_channel_rects(meter: Rect) -> [Rect; 2] {
+    let left = Rect::from_min_max(meter.min, pos2(meter.min.x + TRACK_METER_W, meter.max.y));
+    let right = Rect::from_min_max(pos2(meter.max.x - TRACK_METER_W, meter.min.y), meter.max);
+    [left, right]
+}
+
+/// A MIDI meter's single bar: one channel's width, centred in the strip.
+pub(super) fn meter_centre_rect(meter: Rect) -> Rect {
+    Rect::from_center_size(meter.center(), vec2(TRACK_METER_W, meter.height()))
+}
+
+/// Where a level of `db` dBFS sits on an audio meter, `0.0..=1.0`: linear in
+/// dB from [`TRACK_METER_FLOOR_DB`] (and below, silence included) to
+/// [`TRACK_METER_CEILING_DB`] (and above).
+fn db_to_meter_height(db: f32) -> f32 {
+    ((db - TRACK_METER_FLOOR_DB) / (TRACK_METER_CEILING_DB - TRACK_METER_FLOOR_DB)).clamp(0.0, 1.0)
+}
+
+/// Where 0 dBFS sits on an audio meter: the mark a clip climbs past.
+pub(super) fn zero_db_meter_height() -> f32 {
+    db_to_meter_height(0.0)
+}
+
+/// One channel of a plugin track's meter, from its published `level`.
+fn audio_meter_bar(level: ChannelLevel) -> MeterBar {
+    let height = |amplitude| db_to_meter_height(amplitude_db(amplitude));
+    let hold = height(level.hold);
+    MeterBar {
+        peak: height(level.peak),
+        level: height(level.rms),
+        hold: (hold > 0.0).then_some((hold, level.hold > 1.0)),
+    }
+}
+
+/// A MIDI track meter's height, `0.0..=1.0`: the last note-on's velocity, falling
 /// at a steady rate, full scale in [`TRACK_METER_FALL`]. `note_on` is the
 /// track's last note-on time and velocity (`None` = never); a time ahead of
 /// `now_ns` (a clip note due a moment from now) counts as just played.
@@ -506,17 +620,27 @@ fn meter_level(note_on: Option<(u64, u8)>, now_ns: u64) -> f32 {
 }
 
 impl Display {
-    /// `track_idx`'s meter height at `now_ns` — see [`meter_level`]. `0.0`
-    /// for an out-of-range index.
-    pub(super) fn track_meter_level(&self, track_idx: usize, now_ns: u64) -> f32 {
-        self.track_slot(track_idx).map_or(0.0, |slot| {
-            meter_level(self.track_mix.last_note_on(slot), now_ns)
-        })
+    /// What `track_idx`'s meter shows at `now_ns`: a plugin track's audio
+    /// level ([`audio_meter_bar`]), else the falling velocity of its last
+    /// note-on ([`meter_level`]). An empty MIDI bar for an out-of-range
+    /// index.
+    pub(super) fn track_meter(&self, track_idx: usize, now_ns: u64) -> TrackMeter {
+        let Some(slot) = self.track_slot(track_idx) else {
+            return TrackMeter::Midi(MeterBar::default());
+        };
+        if self.track_has_instrument(track_idx) {
+            TrackMeter::Audio(self.track_mix.audio_level(slot).map(audio_meter_bar))
+        } else {
+            TrackMeter::Midi(MeterBar {
+                level: meter_level(self.track_mix.last_note_on(slot), now_ns),
+                ..MeterBar::default()
+            })
+        }
     }
 
-    /// Whether any track's meter is still falling at `now_ns`.
+    /// Whether any track's meter is still showing anything at `now_ns`.
     fn any_track_meter_falling(&self, now_ns: u64) -> bool {
-        (0..self.track_count()).any(|track_idx| self.track_meter_level(track_idx, now_ns) > 0.0)
+        (0..self.track_count()).any(|track_idx| self.track_meter(track_idx, now_ns).is_lit())
     }
 
     /// The arranger's vertical geometry ([`ArrangerLayout`]) for this frame —
@@ -854,14 +978,13 @@ impl Display {
         if track_idx >= layout.track_count {
             return None;
         }
-        // Equal padding on both sides so the controls sit centred in the
-        // column: `left` insets from the column's left edge, `right` insets
-        // by the same amount from its groove-line right edge
-        // (`content_origin_x() - TRACK_COLUMN_GRID_GAP_X`).
+        // `left` insets from the column's left edge, `right` from its
+        // groove-line right edge (`content_origin_x() -
+        // TRACK_COLUMN_GRID_GAP_X`), by more: the meter sits in that padding.
         let left = self.render.canvas_rect.min.x + Self::TRACK_HEADER_INNER_PAD_X;
         let right = self.content_origin_x()
             - Self::TRACK_COLUMN_GRID_GAP_X
-            - Self::TRACK_HEADER_INNER_PAD_X;
+            - Self::TRACK_HEADER_METER_PAD_X;
         Some((layout.lane_top(track_idx), layout.lane_h, left, right))
     }
 
@@ -1424,6 +1547,8 @@ fn note_part_at(x: f32, left: f32, right: f32) -> NotePart {
 
 #[cfg(test)]
 mod tests {
+    use egui::epaint::{Fonts, TextOptions};
+    use egui::{Color32, FontId};
     use uuid::Uuid;
 
     use super::{
@@ -1432,9 +1557,17 @@ mod tests {
         arranger_lane_h, arranger_max_scroll_y, arranger_scroll_y_to_show, clip_body_band,
         clip_resize_band, gap_spans, seam_y, tick_overlap, track_header_rects, track_name_row,
     };
+    use super::{
+        MeterBar, TRACK_METER_CHANNEL_GAP, TRACK_METER_FALL, TRACK_METER_GAP, TRACK_METER_W,
+        audio_meter_bar, db_to_meter_height, meter_centre_rect, meter_channel_rects, meter_level,
+        zero_db_meter_height,
+    };
     use super::{NotePart, note_at_grid_point, note_part_at};
-    use super::{TRACK_METER_FALL, TRACK_METER_GAP, TRACK_METER_W, meter_level};
+    use super::{TRACK_HEADER_PAD_Y, TRACK_NAME_CAP_INSET};
+    use crate::core::audio::meter::ChannelLevel;
     use crate::core::config::MAX_TRACKS;
+    use crate::view::display::track_rename::TRACK_NAME_FONT_SIZE;
+    use crate::view::theme::fonts::font_definitions;
 
     /// The physical-pixel span `[top, bottom)` a `width`-point line centred
     /// at `y` covers at `ppp`.
@@ -1637,10 +1770,15 @@ mod tests {
         assert_eq!(r.name.height(), TRACK_NAME_ROW_H);
         assert_eq!(r.volume.min.x, 12.0);
         assert_eq!(r.pan.max.x, 110.0);
-        // Vertically centred: equal margin above and below the stack.
-        let above = r.name.min.y - 100.0;
-        let below = 220.0 - r.pan.max.y;
-        assert!((above - below).abs() < 0.01);
+        // Top-aligned: the name's capitals and the meter one padding down,
+        // the room left over below the stack.
+        assert_eq!(
+            r.name.min.y + TRACK_NAME_CAP_INSET,
+            100.0 + TRACK_HEADER_PAD_Y
+        );
+        assert_eq!(r.meter.min.y, 100.0 + TRACK_HEADER_PAD_Y);
+        assert_eq!(r.meter.max.y, 220.0 - TRACK_HEADER_PAD_Y);
+        assert!(220.0 - r.pan.max.y > TRACK_HEADER_PAD_Y);
     }
 
     #[test]
@@ -1650,8 +1788,35 @@ mod tests {
     }
 
     #[test]
-    fn the_whole_stack_fits_the_shortest_lane() {
-        assert!(track_header_rects(0.0, ARRANGER_MIN_LANE_H, 12.0, 110.0).is_some());
+    fn the_whole_stack_fits_the_shortest_lane_with_the_padding_below() {
+        let r = track_header_rects(0.0, ARRANGER_MIN_LANE_H, 12.0, 110.0).unwrap();
+        assert!(ARRANGER_MIN_LANE_H - r.pan.max.y >= TRACK_HEADER_PAD_Y);
+    }
+
+    #[test]
+    fn the_name_cap_inset_matches_the_font() {
+        let mut fonts = Fonts::new(TextOptions::default(), font_definitions());
+        let mut fonts = fonts.with_pixels_per_point(2.0);
+        let galley = fonts.layout_no_wrap(
+            "H".to_owned(),
+            FontId::proportional(TRACK_NAME_FONT_SIZE),
+            Color32::WHITE,
+        );
+        let h = &galley.rows[0].glyphs[0];
+        // The line is centred in the row; the capital's ink starts
+        // `uv_rect.offset.y` above its baseline.
+        let line_top = (TRACK_NAME_ROW_H - galley.size().y) / 2.0;
+        let cap_top = line_top + h.pos.y + h.uv_rect.offset.y;
+        assert!((cap_top - TRACK_NAME_CAP_INSET).abs() <= 0.5, "{cap_top}");
+    }
+
+    #[test]
+    fn a_taller_lane_leaves_the_controls_where_they_were() {
+        let short = track_header_rects(0.0, ARRANGER_MIN_LANE_H, 12.0, 110.0).unwrap();
+        let tall = track_header_rects(0.0, 400.0, 12.0, 110.0).unwrap();
+        assert_eq!(short.name, tall.name);
+        assert_eq!(short.pan, tall.pan);
+        assert!(tall.meter.height() > short.meter.height());
     }
 
     #[test]
@@ -1659,11 +1824,11 @@ mod tests {
         // In the stack when it fits.
         let stack = track_header_rects(0.0, 120.0, 12.0, 110.0).unwrap();
         assert_eq!(track_name_row(0.0, 120.0, 12.0, 110.0), Some(stack.name));
-        // Alone and centred on a lane too short for the rest.
+        // Alone, at the same top, on a lane too short for the rest.
         assert!(track_header_rects(50.0, 30.0, 12.0, 110.0).is_none());
         let alone = track_name_row(50.0, 30.0, 12.0, 110.0).unwrap();
         assert_eq!(alone.height(), TRACK_NAME_ROW_H);
-        assert!((alone.center().y - 65.0).abs() < 0.01);
+        assert_eq!(alone.min.y, stack.name.min.y + 50.0);
         // Gone only when not even it fits.
         assert!(track_name_row(0.0, 12.0, 12.0, 110.0).is_none());
         assert!(track_name_row(0.0, 120.0, 12.0, 15.0).is_none());
@@ -1765,12 +1930,74 @@ mod tests {
     // --- Track meter ---
 
     #[test]
-    fn the_meter_sits_right_of_the_controls_as_tall_as_the_stack() {
+    fn the_meter_sits_right_of_the_controls_padded_like_them() {
         let rects = track_header_rects(0.0, 200.0, 12.0, 104.0).unwrap();
         assert_eq!(rects.meter.min.x, 104.0 + TRACK_METER_GAP);
-        assert_eq!(rects.meter.width(), TRACK_METER_W);
-        assert_eq!(rects.meter.min.y, rects.name.min.y);
-        assert_eq!(rects.meter.max.y, rects.pan.max.y);
+        assert_eq!(
+            rects.meter.width(),
+            2.0 * TRACK_METER_W + TRACK_METER_CHANNEL_GAP
+        );
+        assert_eq!(
+            (rects.meter.min.y, rects.meter.max.y),
+            (TRACK_HEADER_PAD_Y, 200.0 - TRACK_HEADER_PAD_Y)
+        );
+    }
+
+    #[test]
+    fn the_meter_splits_into_two_channels_with_a_gap() {
+        let rects = track_header_rects(0.0, 200.0, 12.0, 104.0).unwrap();
+        let [left, right] = meter_channel_rects(rects.meter);
+        assert_eq!(left.min, rects.meter.min);
+        assert_eq!(right.max, rects.meter.max);
+        assert_eq!(left.width(), TRACK_METER_W);
+        assert_eq!(right.width(), TRACK_METER_W);
+        assert_eq!(right.min.x - left.max.x, TRACK_METER_CHANNEL_GAP);
+        assert_eq!(left.height(), rects.meter.height());
+    }
+
+    #[test]
+    fn a_midi_meter_is_one_channel_wide_and_centred() {
+        let rects = track_header_rects(0.0, 200.0, 12.0, 104.0).unwrap();
+        let bar = meter_centre_rect(rects.meter);
+        assert_eq!(bar.width(), TRACK_METER_W);
+        assert_eq!(bar.center(), rects.meter.center());
+        assert_eq!(bar.height(), rects.meter.height());
+    }
+
+    #[test]
+    fn the_audio_scale_is_linear_in_db_from_minus_60_to_plus_6() {
+        assert_eq!(db_to_meter_height(f32::NEG_INFINITY), 0.0);
+        assert_eq!(db_to_meter_height(-90.0), 0.0);
+        assert_eq!(db_to_meter_height(-60.0), 0.0);
+        assert_eq!(db_to_meter_height(-27.0), 0.5);
+        assert_eq!(db_to_meter_height(6.0), 1.0);
+        assert_eq!(db_to_meter_height(12.0), 1.0);
+        // 0 dBFS leaves headroom above it.
+        assert!((zero_db_meter_height() - 60.0 / 66.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn an_audio_bar_shows_peak_rms_and_a_hold_that_clips_over_0_db() {
+        assert_eq!(
+            audio_meter_bar(ChannelLevel::default()),
+            MeterBar::default()
+        );
+        let bar = audio_meter_bar(ChannelLevel {
+            peak: 1.0,
+            rms: 0.001, // −60 dB
+            hold: 1.0,
+        });
+        let zero = zero_db_meter_height();
+        assert_eq!(bar.peak, zero);
+        assert_eq!(bar.level, 0.0);
+        assert_eq!(bar.hold, Some((zero, false)), "0 dBFS isn't a clip");
+        let clipped = audio_meter_bar(ChannelLevel {
+            hold: 1.5, // +3.5 dB
+            ..ChannelLevel::default()
+        });
+        let (height, clip) = clipped.hold.unwrap();
+        assert!(clip);
+        assert!(height > zero && height < 1.0, "in the headroom: {height}");
     }
 
     #[test]

@@ -18,10 +18,12 @@ use std::sync::{
     atomic::{AtomicBool, AtomicI32, AtomicU8, AtomicU16, AtomicU32, AtomicU64, Ordering},
 };
 
+use crate::core::audio::meter::ChannelLevel;
 use crate::core::config::MAX_TRACKS;
 
-/// Per-track mixer state — volume, stereo balance, mute and solo — plus each
-/// track's last note-on, for its meter (`note_on`). `volume_db`
+/// Per-track mixer state — volume, stereo balance, mute and solo — plus what
+/// each track's meter reads: its last note-on (`note_on`) and its audio level
+/// (`audio_level`). `volume_db`
 /// and `pan` are stored as `f32` bit patterns
 /// ([`f32::to_bits`]/[`f32::from_bits`]) so each is a single lock-free atomic;
 /// `mute` and `solo` are plain [`AtomicBool`]. Written by the sequencer thread
@@ -57,6 +59,46 @@ pub(crate) struct TrackMixAtomics {
     /// the selected track (`Sequencer::handle_midi_input_dispatch`), read by the
     /// render thread.
     pub(crate) note_on: [AtomicU64; MAX_TRACKS],
+    /// Each plugin track's audio level, left and right, after its fader, pan
+    /// and mute: what the arranger header's meter draws on a plugin track
+    /// (`310-audio-meters.md`). Not part of the mix: written once per block by
+    /// the instrument mixer's summing pass, with the ballistics already
+    /// applied ([`MeterBallistics`](crate::core::audio::meter::MeterBallistics)),
+    /// read by the render thread ([`audio_level`](Self::audio_level)).
+    pub(crate) audio_level: [[LevelAtomics; 2]; MAX_TRACKS],
+}
+
+/// One channel of [`TrackMixAtomics::audio_level`]: a [`ChannelLevel`]'s
+/// linear amplitudes as `f32` bit patterns, so the all-zero default is
+/// silence. The three are stored separately, so a read can mix values from
+/// blocks a few milliseconds apart, which no meter can show.
+#[derive(Default)]
+pub(crate) struct LevelAtomics {
+    /// [`ChannelLevel::peak`].
+    peak: AtomicU32,
+    /// [`ChannelLevel::rms`].
+    rms: AtomicU32,
+    /// [`ChannelLevel::hold`].
+    hold: AtomicU32,
+}
+
+impl LevelAtomics {
+    /// Publishes `level`.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    fn store(&self, level: ChannelLevel) {
+        self.peak.store(level.peak.to_bits(), Ordering::Relaxed);
+        self.rms.store(level.rms.to_bits(), Ordering::Relaxed);
+        self.hold.store(level.hold.to_bits(), Ordering::Relaxed);
+    }
+
+    /// The last published level.
+    fn load(&self) -> ChannelLevel {
+        ChannelLevel {
+            peak: f32::from_bits(self.peak.load(Ordering::Relaxed)),
+            rms: f32::from_bits(self.rms.load(Ordering::Relaxed)),
+            hold: f32::from_bits(self.hold.load(Ordering::Relaxed)),
+        }
+    }
 }
 
 impl TrackMixAtomics {
@@ -70,6 +112,7 @@ impl TrackMixAtomics {
             mute: std::array::from_fn(|_| AtomicBool::new(false)),
             solo: std::array::from_fn(|_| AtomicBool::new(false)),
             note_on: std::array::from_fn(|_| AtomicU64::new(0)),
+            audio_level: std::array::from_fn(|_| Default::default()),
         }
     }
 
@@ -119,6 +162,25 @@ impl TrackMixAtomics {
     pub(crate) fn last_note_on(&self, track_idx: usize) -> Option<(u64, u8)> {
         let packed = self.note_on.get(track_idx)?.load(Ordering::Relaxed);
         (packed != 0).then_some((packed & !VELOCITY_MASK, (packed & VELOCITY_MASK) as u8))
+    }
+
+    /// Publishes `track_idx`'s audio level, left then right. Out-of-range
+    /// indices are ignored.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pub(crate) fn set_audio_level(&self, track_idx: usize, level: [ChannelLevel; 2]) {
+        if let Some(channels) = self.audio_level.get(track_idx) {
+            for (atomics, level) in channels.iter().zip(level) {
+                atomics.store(level);
+            }
+        }
+    }
+
+    /// `track_idx`'s audio level, left then right; silence for an
+    /// out-of-range index.
+    pub(crate) fn audio_level(&self, track_idx: usize) -> [ChannelLevel; 2] {
+        self.audio_level
+            .get(track_idx)
+            .map_or_else(Default::default, |[l, r]| [l.load(), r.load()])
     }
 }
 
@@ -291,6 +353,23 @@ pub(crate) struct SharedAtomics {
 #[cfg(test)]
 mod tests {
     use super::TrackMixAtomics;
+    use crate::core::audio::meter::ChannelLevel;
+
+    #[test]
+    fn an_audio_level_round_trips_and_starts_silent() {
+        let mix = TrackMixAtomics::new();
+        assert_eq!(mix.audio_level(3), [ChannelLevel::default(); 2]);
+        let left = ChannelLevel {
+            peak: 0.5,
+            rms: 0.25,
+            hold: 1.25,
+        };
+        let right = ChannelLevel { peak: 0.1, ..left };
+        mix.set_audio_level(3, [left, right]);
+        assert_eq!(mix.audio_level(3), [left, right]);
+        mix.set_audio_level(999, [left, right]);
+        assert_eq!(mix.audio_level(999), [ChannelLevel::default(); 2]);
+    }
 
     #[test]
     fn a_note_on_round_trips_its_velocity_and_time_to_128_ns() {

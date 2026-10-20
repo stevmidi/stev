@@ -35,10 +35,18 @@ Breaking entries are marked **Breaking** and say what to do about them.
   you heard (the files take the samples before the device, so those don't
   reach them). An export whose audio device
   changes or goes away stops and says so.
-- **Track meters.** A thin meter runs down the right of each track header.
-  It jumps to the velocity of each note the track sends, from a clip or from
-  the keyboard on the selected track, and falls back. A muted or non-soloed
-  track, or a muted note, leaves it empty. On every track and platform.
+- **Track meters.** A thin stereo meter runs down the right of each track
+  header. On a plugin track (macOS) it shows the track's audio after its
+  fader, pan and mute: the peak in a dim bar, the RMS level in a brighter one
+  in front of it, and a peak-hold line that turns red when the track goes
+  over 0 dBFS; the scale runs to +6 dB, with 0 dBFS marked a little below
+  the top. On a MIDI Out track a single centred bar jumps to the velocity
+  of each note the track sends, from a clip or from the keyboard on the
+  selected track, and falls back; a muted or non-soloed track, or a muted note, leaves it empty.
+  The meter grows with the lane, and the track header is 5 pixels wider to
+  make room. The header's controls now sit at the top of the lane instead of
+  centred, with the same small margin above the name and at both ends of the
+  meter.
 
 ## [0.3.1] - 2026-10-14
 
