@@ -93,10 +93,10 @@ impl BlockTransport {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn state(tempo_us: i32, tick: i32) -> TransportState {
+impl TransportState {
+    /// Fresh atomics for a test: running at `tempo_us` from `tick`, in 4/4,
+    /// with a one-bar region and looping off.
+    pub(super) fn for_test(tempo_us: i32, tick: i32) -> Self {
         TransportState {
             running: Arc::new(AtomicBool::new(true)),
             tempo_us: Arc::new(AtomicI32::new(tempo_us)),
@@ -107,10 +107,15 @@ mod tests {
             loop_enabled: Arc::new(AtomicBool::new(false)),
         }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
 
     #[test]
     fn snapshot_reads_every_atomic() {
-        let s = state(500_000, 960);
+        let s = TransportState::for_test(500_000, 960);
         assert_eq!(
             s.snapshot(),
             BlockTransport {
@@ -127,7 +132,7 @@ mod tests {
 
     #[test]
     fn snapshot_clamps_a_zero_tempo_so_bpm_cannot_divide_by_zero() {
-        let s = state(0, 0);
+        let s = TransportState::for_test(0, 0);
         let snap = s.snapshot();
         assert_eq!(snap.tempo_us, 1);
         assert!(snap.bpm().is_finite());
@@ -136,13 +141,13 @@ mod tests {
     #[test]
     fn bpm_converts_microseconds_per_quarter() {
         // 500_000 µs per quarter is the canonical 120 BPM.
-        assert!((state(500_000, 0).snapshot().bpm() - 120.0).abs() < 1e-9);
-        assert!((state(1_000_000, 0).snapshot().bpm() - 60.0).abs() < 1e-9);
+        assert!((TransportState::for_test(500_000, 0).snapshot().bpm() - 120.0).abs() < 1e-9);
+        assert!((TransportState::for_test(1_000_000, 0).snapshot().bpm() - 60.0).abs() < 1e-9);
     }
 
     #[test]
     fn bar_number_and_start_at_two_bars_in() {
-        let snap = state(500_000, 2 * 4 * 960 + 10).snapshot();
+        let snap = TransportState::for_test(500_000, 2 * 4 * 960 + 10).snapshot();
         assert_eq!(snap.bar_number(), 2);
         assert!((snap.bar_start_beats() - 8.0).abs() < 1e-9);
     }
@@ -150,14 +155,14 @@ mod tests {
     #[test]
     fn bar_number_floors_for_a_negative_playhead() {
         // `div_euclid`, not `/` — a pre-roll tick must not round toward zero.
-        let snap = state(500_000, -1).snapshot();
+        let snap = TransportState::for_test(500_000, -1).snapshot();
         assert_eq!(snap.bar_number(), -1);
         assert!((snap.bar_start_beats() - -4.0).abs() < 1e-9);
     }
 
     #[test]
     fn bar_number_and_start_follow_a_three_four_meter() {
-        let s = state(500_000, 2 * 3 * 960 + 10);
+        let s = TransportState::for_test(500_000, 2 * 3 * 960 + 10);
         s.meter
             .store(Meter::new(3, 4).unwrap().to_bits(), Ordering::Relaxed);
         let snap = s.snapshot();
@@ -168,7 +173,7 @@ mod tests {
     #[test]
     fn bar_start_counts_quarters_in_an_eighth_note_meter() {
         // 7/8 bars are 3.5 quarters: bar 2 starts on quarter 7.
-        let s = state(500_000, 7 * 960);
+        let s = TransportState::for_test(500_000, 7 * 960);
         s.meter
             .store(Meter::new(7, 8).unwrap().to_bits(), Ordering::Relaxed);
         let snap = s.snapshot();

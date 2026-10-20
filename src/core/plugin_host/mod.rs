@@ -55,6 +55,7 @@ pub(crate) mod editor;
 mod export;
 mod export_writer;
 mod key_guard;
+mod meter;
 mod mixer;
 mod shutdown;
 #[cfg(test)]

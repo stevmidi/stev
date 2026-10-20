@@ -158,7 +158,7 @@ impl Sequencer {
         mix.pan[slot].store(0.0f32.to_bits(), Ordering::Relaxed);
         mix.mute[slot].store(false, Ordering::Relaxed);
         mix.solo[slot].store(false, Ordering::Relaxed);
-        mix.note_on[slot].store(0, Ordering::Relaxed);
+        mix.reset_meter(slot);
     }
 }
 
@@ -220,6 +220,8 @@ mod tests {
         assert!(!seq.track_muted(1));
         assert!(!seq.track_soloed(2));
         assert_eq!(seq.track_mix.last_note_on(1), None);
+        // The audio meter's reset goes to the mixer, which owns its state.
+        assert_eq!(seq.track_mix.meter_resets(1), 1);
     }
 
     // --- Mute / solo --- (the pure `track_is_audible` rule is tested in

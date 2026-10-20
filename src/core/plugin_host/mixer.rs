@@ -36,7 +36,11 @@
 //! arranger meter shows: the block's peak and mean square per channel, run
 //! through [`MeterBallistics`] and published to
 //! [`TrackMixAtomics::audio_level`] (`310-audio-meters.md`). An empty or
-//! silent slot is measured as silence, so its meter falls.
+//! silent slot is measured as silence, so its meter falls. A slot's meter
+//! starts again from empty when its voice is inserted or removed, and when
+//! its [`meter_resets`](TrackMixAtomics::meter_resets) count moves (a new or
+//! loaded project, a removed track), so no meter carries one project's sound
+//! into the next.
 //!
 //! ## Audio export
 //!
@@ -51,7 +55,7 @@ use std::time::{Duration, Instant};
 
 use rtrb::{Consumer, Producer};
 
-use crate::core::audio::meter::{BlockDecay, ChannelLevel, MeterBallistics};
+use crate::core::audio::meter::ChannelLevel;
 use crate::core::audio::mix::{gains_for, track_is_audible};
 use crate::core::audio::{AudioSource, INSTRUMENTS_SOURCE, RenderCtx};
 use crate::core::config::MAX_TRACKS;
@@ -60,6 +64,7 @@ use crate::core::sequencer::{ClipInstrumentEvent, EventTime};
 use crate::core::shared_atomics::TrackMixAtomics;
 
 use super::export::ExportTap;
+use super::meter::{BlockDecay, MeterBallistics};
 use super::shutdown::HostShutdown;
 use super::transport::TransportState;
 use super::voice::InstrumentVoice;
@@ -171,6 +176,9 @@ pub(super) struct InstrumentMixer {
     export: ExportTap,
     /// Each slot's meter state, left and right, advanced by the summing pass.
     meters: [[MeterBallistics; 2]; MAX_TRACKS],
+    /// Each slot's `TrackMixAtomics::meter_resets` count as of its meters'
+    /// last reset.
+    meter_resets_seen: [u32; MAX_TRACKS],
     /// The output sample rate, Hz: what turns a block's frames into the
     /// meters' time step.
     sample_rate: f32,
@@ -205,12 +213,14 @@ impl InstrumentMixer {
             shutdown,
             export,
             meters: [[MeterBallistics::default(); 2]; MAX_TRACKS],
+            meter_resets_seen: [0; MAX_TRACKS],
             sample_rate: sample_rate as f32,
         }
     }
 
     /// Advances `track`'s meters by one block of the given per-channel peaks
-    /// and sums of squares over `frames`, and publishes them.
+    /// and sums of squares over `frames`, and publishes them — from empty if
+    /// the slot's meter was reset since the last block.
     fn meter_block(
         &mut self,
         track: usize,
@@ -219,6 +229,11 @@ impl InstrumentMixer {
         frames: usize,
         decay: &BlockDecay,
     ) {
+        let resets = self.track_mix.meter_resets(track);
+        if resets != self.meter_resets_seen[track] {
+            self.meter_resets_seen[track] = resets;
+            self.meters[track] = Default::default();
+        }
         let mut level = [ChannelLevel::default(); 2];
         for (ch, meter) in self.meters[track].iter_mut().enumerate() {
             meter.step(peaks[ch], sums_of_squares[ch] / frames as f32, decay);
@@ -282,6 +297,12 @@ impl InstrumentMixer {
             };
             if let Some(old) = old {
                 self.dead_tx.push((track, old)).ok();
+            }
+            // The meter belongs to the voice: a new one, or none, starts it
+            // from empty, so a project load's swap doesn't carry the old
+            // voice's tail over.
+            if let Some(meters) = self.meters.get_mut(track) {
+                *meters = Default::default();
             }
         }
     }
@@ -514,14 +535,13 @@ impl AudioSource for InstrumentMixer {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU16};
-
     use rtrb::RingBuffer;
 
     use crate::core::audio::meter::amplitude_db;
     use crate::core::audio::{AudioClock, AudioLoad, WorkerPool};
 
     use super::super::export::export_tap;
+    use super::super::meter::PEAK_FALL_DB_PER_S;
     use super::super::test_voice::ConstantVoice;
     use super::*;
 
@@ -533,20 +553,25 @@ mod tests {
     /// A mixer with a [`ConstantVoice`] of `level` in slot 0, and the mix
     /// atomics it reads and meters into.
     fn mixer_with_voice(level: f32) -> (InstrumentMixer, Arc<TrackMixAtomics>) {
+        let (mut mixer, track_mix, _commands) = mixer_with_commands();
+        mixer.voices[0] = Some(Box::new(ConstantVoice::new(level)));
+        (mixer, track_mix)
+    }
+
+    /// An empty mixer, the mix atomics it reads and meters into, and the
+    /// command ring's producer end.
+    fn mixer_with_commands() -> (
+        InstrumentMixer,
+        Arc<TrackMixAtomics>,
+        Producer<PluginHostCommand>,
+    ) {
         let track_mix = Arc::new(TrackMixAtomics::new());
-        let transport = TransportState {
-            running: Arc::new(AtomicBool::new(false)),
-            tempo_us: Arc::new(AtomicI32::new(500_000)),
-            meter: Arc::new(AtomicU16::new(0)),
-            playback_tick: Arc::new(AtomicI32::new(0)),
-            region_start: Arc::new(AtomicI32::new(0)),
-            region_end: Arc::new(AtomicI32::new(0)),
-            loop_enabled: Arc::new(AtomicBool::new(false)),
-        };
+        let (commands, cmd_rx) = RingBuffer::new(4);
+        let transport = TransportState::for_test(500_000, 0);
         let (_marks, marks_rx) = RingBuffer::new(4);
         let (export, _rings, _shared) = export_tap(marks_rx, RATE);
-        let mut mixer = InstrumentMixer::new(
-            RingBuffer::new(4).1,
+        let mixer = InstrumentMixer::new(
+            cmd_rx,
             RingBuffer::new(4).0,
             RingBuffer::new(4).1,
             RingBuffer::new(4).1,
@@ -556,8 +581,7 @@ mod tests {
             export,
             RATE,
         );
-        mixer.voices[0] = Some(Box::new(ConstantVoice::new(level)));
-        (mixer, track_mix)
+        (mixer, track_mix, commands)
     }
 
     /// Renders `secs` of blocks.
@@ -606,20 +630,65 @@ mod tests {
     }
 
     #[test]
+    fn a_reset_empties_the_meter_at_once_and_it_picks_the_sound_up_again() {
+        let (mut mixer, track_mix) = mixer_with_voice(1.0);
+        render(&mut mixer, 0.5);
+        // Silent from here, so only the old history could keep it up.
+        mixer.voices[0] = None;
+        track_mix.reset_meter(0);
+        render(&mut mixer, 0.01);
+        assert_eq!(track_mix.audio_level(0), [ChannelLevel::default(); 2]);
+
+        // A voice still sounding shows again on the very next block.
+        let (mut mixer, track_mix) = mixer_with_voice(1.0);
+        render(&mut mixer, 0.5);
+        track_mix.reset_meter(0);
+        render(&mut mixer, 0.01);
+        let [l, _] = track_mix.audio_level(0);
+        assert_eq!(l.peak, 1.0);
+    }
+
+    #[test]
+    fn a_voice_swap_starts_the_meter_from_empty() {
+        let (mut mixer, track_mix, mut commands) = mixer_with_commands();
+        let insert = |level| PluginHostCommand::Insert {
+            track: 0,
+            voice: Box::new(ConstantVoice::new(level)),
+        };
+        commands.push(insert(1.0)).ok().unwrap();
+        render(&mut mixer, 0.5);
+        assert_eq!(track_mix.audio_level(0)[0].hold, 1.0);
+        // A quieter voice takes the slot: no hold left over from the last.
+        commands.push(insert(0.25)).ok().unwrap();
+        render(&mut mixer, 0.5);
+        assert_eq!(track_mix.audio_level(0)[0].hold, 0.25);
+        // Removed: empty at once, not falling from the old level.
+        commands
+            .push(PluginHostCommand::Remove { track: 0 })
+            .ok()
+            .unwrap();
+        render(&mut mixer, 0.01);
+        assert_eq!(track_mix.audio_level(0), [ChannelLevel::default(); 2]);
+    }
+
+    #[test]
     fn a_muted_or_sleeping_voice_falls() {
         let (mut mixer, track_mix) = mixer_with_voice(1.0);
         render(&mut mixer, 0.5);
         track_mix.mute[0].store(true, Ordering::Relaxed);
         render(&mut mixer, 1.0);
         let [l, _] = peak_db(&track_mix);
-        assert!((l + PEAK_FALL).abs() < 0.5, "fell from 0 dB for ~1 s: {l}");
+        assert!(
+            (l + PEAK_FALL_DB_PER_S).abs() < 0.5,
+            "fell from 0 dB for ~1 s: {l}"
+        );
 
         let (mut mixer, track_mix) = mixer_with_voice(1.0);
         render(&mut mixer, 0.5);
         mixer.voices[0].as_mut().unwrap().mix_mut().sleeping = true;
         render(&mut mixer, 1.0);
         let [l, _] = peak_db(&track_mix);
-        assert!((l + PEAK_FALL).abs() < 0.5, "{l}");
+        assert!((l + PEAK_FALL_DB_PER_S).abs() < 0.5, "{l}");
     }
 
     #[test]
@@ -628,9 +697,6 @@ mod tests {
         render(&mut mixer, 0.1);
         assert_eq!(track_mix.audio_level(1), [ChannelLevel::default(); 2]);
     }
-
-    /// [`PEAK_FALL_DB_PER_S`](crate::core::audio::meter::PEAK_FALL_DB_PER_S).
-    const PEAK_FALL: f32 = crate::core::audio::meter::PEAK_FALL_DB_PER_S;
 
     fn pending(target_frame: i64, seq: u64, msg: Midi3) -> PendingEvent {
         PendingEvent {

@@ -366,13 +366,9 @@ impl Display {
     const TRACK_HEADER_W: f32 = 129.0;
     /// Padding between the track column's left edge and the header controls
     /// (S/M row, volume/pan bars) inside it (`track_header_band`); the right
-    /// side's is `TRACK_HEADER_METER_PAD_X`. `TRACK_HEADER_W` was widened to
+    /// side's is `rendering`'s `TRACK_HEADER_METER_PAD_X`. `TRACK_HEADER_W` was widened to
     /// keep the bars a comfortable width once both sides are padded.
     const TRACK_HEADER_INNER_PAD_X: f32 = 12.0;
-    /// The right-hand counterpart of `TRACK_HEADER_INNER_PAD_X`: wider by the
-    /// room the stereo meter needs, which sits in it (`track_header_rects`),
-    /// so the controls keep their width and the meter its margins.
-    const TRACK_HEADER_METER_PAD_X: f32 = 17.0;
     /// Margin carved out of the right edge of the `TRACK_HEADER_W` reservation:
     /// the track-column fill, its separator line and the header controls all
     /// stop this far short of `content_origin_x()`, leaving a strip of bare

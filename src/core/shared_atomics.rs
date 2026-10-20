@@ -63,9 +63,17 @@ pub(crate) struct TrackMixAtomics {
     /// and mute: what the arranger header's meter draws on a plugin track
     /// (`310-audio-meters.md`). Not part of the mix: written once per block by
     /// the instrument mixer's summing pass, with the ballistics already
-    /// applied ([`MeterBallistics`](crate::core::audio::meter::MeterBallistics)),
+    /// applied (`plugin_host::meter`),
     /// read by the render thread ([`audio_level`](Self::audio_level)).
     pub(crate) audio_level: [[LevelAtomics; 2]; MAX_TRACKS],
+    /// How many times each slot's audio meter has been reset
+    /// ([`reset_meter`](Self::reset_meter)), wrapping. The instrument mixer
+    /// owns the meter's ballistics on the audio thread, so clearing
+    /// `audio_level` from here would be overwritten on its next block; it
+    /// compares this instead and empties a slot's meter when it moves. Written
+    /// by the sequencer thread (`Sequencer::reset_slot_mix`), read once per
+    /// block by the mixer.
+    pub(crate) meter_resets: [AtomicU32; MAX_TRACKS],
 }
 
 /// One channel of [`TrackMixAtomics::audio_level`]: a [`ChannelLevel`]'s
@@ -113,6 +121,7 @@ impl TrackMixAtomics {
             solo: std::array::from_fn(|_| AtomicBool::new(false)),
             note_on: std::array::from_fn(|_| AtomicU64::new(0)),
             audio_level: std::array::from_fn(|_| Default::default()),
+            meter_resets: std::array::from_fn(|_| AtomicU32::new(0)),
         }
     }
 
@@ -173,6 +182,25 @@ impl TrackMixAtomics {
                 atomics.store(level);
             }
         }
+    }
+
+    /// Empties `track_idx`'s meter: its last note-on now, its audio level on
+    /// the mixer's next block (`meter_resets`). Out-of-range indices are
+    /// ignored.
+    pub(crate) fn reset_meter(&self, track_idx: usize) {
+        if let Some(note_on) = self.note_on.get(track_idx) {
+            note_on.store(0, Ordering::Relaxed);
+            self.meter_resets[track_idx].fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    /// How many times `track_idx`'s meter has been reset (`0` for an
+    /// out-of-range index).
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pub(crate) fn meter_resets(&self, track_idx: usize) -> u32 {
+        self.meter_resets
+            .get(track_idx)
+            .map_or(0, |n| n.load(Ordering::Relaxed))
     }
 
     /// `track_idx`'s audio level, left then right; silence for an
