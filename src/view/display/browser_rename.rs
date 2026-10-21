@@ -7,8 +7,8 @@
 //! is refused with a footer message. Renaming the open project renames what
 //! ⌘S saves to. See `020-views-and-state.md` § Views.
 //!
-//! The field and its keymap are the app's one text field
-//! ([`TextField`], [`field_event`]); this module decides where it goes and what a commit
+//! The field and its keymap are the app's one text field ([`TextField`],
+//! [`field_event`]); this module decides where it goes and what a commit
 //! does.
 
 use egui::{FontId, Id, Rect, Ui, UiBuilder, pos2, vec2};

@@ -354,11 +354,9 @@ mod tests {
 
     use egui::Key;
 
-    use crate::view::display::text_field::TextField;
-
     use super::{
-        FIXED, KeyboardTab, ShortcutLine, chord_glyphs, is_keyboard_tab_key, key_label_for,
-        row_lines, scroll_to_show_line, shortcut_lines, shortcut_rows,
+        FIXED, KeyboardTab, ShortcutLine, TextField, chord_glyphs, is_keyboard_tab_key,
+        key_label_for, row_lines, scroll_to_show_line, shortcut_lines, shortcut_rows,
     };
     use crate::core::input_event::KeyModifiers;
     use crate::core::keymap::{ACTIONS, Chord};

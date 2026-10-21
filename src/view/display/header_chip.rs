@@ -1,7 +1,7 @@
 //! What the header's control chips — BPM (`tempo_field.rs`) and meter
 //! (`meter_field.rs`) — share: where a chip was painted, and the inline text
-//! field a double-click opens over its value (a [`TextField`]). Each chip keeps its own parse
-//! and commit. See `030-ui-design.md` § Header & Footer.
+//! field a double-click opens over its value (a [`TextField`]). Each chip
+//! keeps its own parse and commit. See `030-ui-design.md` § Header & Footer.
 
 use egui::{FontId, Id, Rect, Ui, pos2};
 

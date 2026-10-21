@@ -18,9 +18,9 @@
 //! approves it.
 //!
 //! This module decides what the keys and buttons do (Save As's are the text
-//! fields' [`field_key`]; [`unsaved_key`], unit-tested); `rendering/modals/project_dialog.rs` draws
-//! the dialogs and lays out their buttons. See `060-persistence.md`
-//! § Unsaved changes.
+//! fields' [`field_key`]; [`unsaved_key`], unit-tested);
+//! `rendering/modals/project_dialog.rs` draws the dialogs and lays out their
+//! buttons. See `060-persistence.md` § Unsaved changes.
 
 use egui::{Context, Key, ViewportCommand, pos2};
 
@@ -70,6 +70,18 @@ enum DialogKey {
     Select(UnsavedButton),
     /// Typing, or a key with no meaning here: nothing else gets it.
     Swallow,
+}
+
+impl From<FieldEvent> for DialogKey {
+    /// Save As's key, from the text fields' keymap ([`field_key`]): Enter
+    /// saves, Esc cancels, the rest is typing.
+    fn from(event: FieldEvent) -> Self {
+        match event {
+            FieldEvent::Commit => DialogKey::Confirm,
+            FieldEvent::Cancel => DialogKey::Cancel,
+            _ => DialogKey::Swallow,
+        }
+    }
 }
 
 /// One of the prompt's three buttons, left to right.
@@ -256,12 +268,9 @@ impl Display {
         let key = match (event, dialog) {
             // The text fields' keymap, but no click-away commit: a modal
             // takes every press.
-            (&InputEvent::KeyPressed { key, .. }, ProjectDialog::SaveAs(_)) => match field_key(key)
-            {
-                FieldEvent::Commit => DialogKey::Confirm,
-                FieldEvent::Cancel => DialogKey::Cancel,
-                _ => DialogKey::Swallow,
-            },
+            (&InputEvent::KeyPressed { key, .. }, ProjectDialog::SaveAs(_)) => {
+                field_key(key).into()
+            }
             (
                 &InputEvent::KeyPressed { key, modifiers },
                 &ProjectDialog::Unsaved { selected, .. },
@@ -329,7 +338,19 @@ mod tests {
 
     use crate::core::input_event::KeyModifiers;
 
-    use super::{DialogKey, UnsavedButton, unsaved_key};
+    use super::{DialogKey, UnsavedButton, field_key, unsaved_key};
+
+    /// Save As reads the text fields' keymap: Enter saves, Esc cancels, and
+    /// nothing typed reaches the app — not `D`, which the prompt reads as
+    /// Don't Save.
+    #[test]
+    fn save_as_saves_on_enter_and_cancels_on_escape() {
+        assert_eq!(DialogKey::from(field_key(Key::Enter)), DialogKey::Confirm);
+        assert_eq!(DialogKey::from(field_key(Key::Escape)), DialogKey::Cancel);
+        for key in [Key::D, Key::Space, Key::Delete] {
+            assert_eq!(DialogKey::from(field_key(key)), DialogKey::Swallow);
+        }
+    }
 
     /// Enter presses whichever button is selected; `D` — bare or ⌘/Ctrl+D —
     /// and Esc don't care which.
