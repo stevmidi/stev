@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Stev: a capture-first MIDI sequencer</title>
+  <meta name="description" content="Stev is a capture-first MIDI sequencer for macOS. It is always listening: play freely, and one key keeps what you just played as a clip, framed and in time.">
+  <meta name="theme-color" content="#0a0a0a">
+  <meta property="og:title" content="Stev">
+  <meta property="og:description" content="Play freely, and keep what you just played. A capture-first MIDI sequencer.">
+  <meta property="og:image" content="https://stevmidi.com/images/arranger.png">
+  <meta property="og:url" content="https://stevmidi.com/">
+  <link rel="preload" href="fonts/IBMPlexSans-Regular.ttf" as="font" type="font/ttf" crossorigin>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="top">
+  <nav class="wrap nav">
+    <a class="wordmark" href="#">Stev</a>
+    <a href="#capture">Capture</a>
+    <a href="#sound">Sound</a>
+    <a href="#scope">Scope</a>
+    <a class="nav-repo" href="https://github.com/stevmidi/stev">GitHub</a>
+  </nav>
+</header>
+
+<main>
+
+<section class="hero">
+  <div class="wrap">
+    <h1>Play freely, and keep what you just played.</h1>
+    <p class="lede">
+      Stev is a capture-first MIDI sequencer. It is always listening: you never
+      press record before you play. When something is worth keeping, one key
+      turns it into a clip, framed and in time, whether the transport was
+      running or not. Then you loop it, arrange it across tracks, and play the
+      next part on top.
+    </p>
+    <div class="actions">
+      <a class="button primary" href="https://github.com/stevmidi/stev#building">Build from source</a>
+      <a class="button" href="https://github.com/stevmidi/stev">View on GitHub</a>
+    </div>
+    <p class="status">
+      Version 0.5.0 · free and open source · macOS. No prebuilt app yet:
+      running Stev means building it with Rust.
+    </p>
+  </div>
+</section>
+
+<figure class="shot wrap">
+  <img src="images/arranger.png" width="1907" height="1051"
+       alt="Stev: six tracks of captured clips in the arranger, with the clip panel open on a bass line">
+</figure>
+
+<section class="wrap" id="steps">
+  <h2>How it goes</h2>
+  <ol class="clips">
+    <li class="clip" style="--track: #ff3daa">
+      <h3>Play</h3>
+      <p>Noodle until something sounds right. Nothing needs to be armed.</p>
+    </li>
+    <li class="clip" style="--track: #ffb300">
+      <h3><kbd>\</kbd> Keep it</h3>
+      <p>Stev finds the phrase you just played and makes it a looping clip.
+        <kbd>[</kbd> and <kbd>]</kbd> move its edges if it came out too long
+        or short.</p>
+    </li>
+    <li class="clip" style="--track: #00e5ff">
+      <h3><kbd>Enter</kbd> Set the tempo</h3>
+      <p>The tempo fits that first clip, so it is a whole number of bars.
+        There is no tempo to set up front: your first phrase is the tempo.</p>
+    </li>
+    <li class="clip" style="--track: #76ff03">
+      <h3><kbd>Space</kbd> Play over it</h3>
+      <p>Play the next part over the loop, on the same track or another,
+        and keep that too.</p>
+    </li>
+    <li class="clip" style="--track: #7c4dff">
+      <h3><kbd>⌘Z</kbd> Change your mind</h3>
+      <p>Anything can be undone, a capture included.</p>
+    </li>
+  </ol>
+</section>
+
+<section class="wrap" id="capture">
+  <h2>Capture</h2>
+  <p>
+    Stev keeps everything you play on the MIDI input, and <kbd>\</kbd> keeps
+    your latest take. It works the same in the arranger and in the clip view.
+    Where the take goes depends on what is under the cursor:
+  </p>
+  <div class="grid" role="table" aria-label="Where a capture goes">
+    <div role="row" class="grid-head">
+      <span role="columnheader"></span>
+      <span role="columnheader">Empty space</span>
+      <span role="columnheader">A clip</span>
+    </div>
+    <div role="row">
+      <span role="rowheader">Stopped</span>
+      <span role="cell">The phrase you just played becomes a new clip at the cursor.</span>
+      <span role="cell">The phrase goes into that clip, at the cursor.</span>
+    </div>
+    <div role="row">
+      <span role="rowheader">Playing</span>
+      <span role="cell">The last loop pass becomes a new clip at the cursor.</span>
+      <span role="cell">The last loop pass goes into that clip.</span>
+    </div>
+  </div>
+  <p>
+    So you can noodle with the transport stopped and keep the phrase you liked,
+    or play over a running loop and keep the pass that worked, and either way
+    start a new clip or add to one you already have. The metronome clicks with
+    the transport stopped too, so you can play to a pulse before anything runs.
+  </p>
+</section>
+
+<section class="wrap" id="sound">
+  <h2>Getting sound</h2>
+  <p>Stev makes no sound of its own apart from the metronome. Each track sends
+    its notes to one of two places:</p>
+  <div class="two">
+    <div class="panel">
+      <h3>An instrument plugin</h3>
+      <p>CLAP and VST® 3 instruments, one per track, dragged from the browser
+        onto a track. macOS only.</p>
+      <img class="vst" src="images/vst-compatible.svg" width="116" height="75" alt="VST Compatible">
+    </div>
+    <div class="panel">
+      <h3>MIDI Out</h3>
+      <p>To a DAW or a hardware synth, each track on its own channel. A virtual
+        port lets other apps on the same Mac listen without any hardware.</p>
+    </div>
+  </div>
+  <p class="aside">Stev arranges; a DAW mixes. There are no effects or mixer
+    by design: export the tracks as audio stems and mix them elsewhere.</p>
+</section>
+
+<section class="wrap" id="scope">
+  <h2>What it is, and isn't</h2>
+  <p>
+    Stev is an opinionated app built around one workflow, not a general-purpose
+    DAW. It is developed and tested on macOS. Linux and Windows builds compile
+    and pass the tests, but are untested and have no plugin host.
+  </p>
+  <p>Not planned:</p>
+  <ul class="not-planned">
+    <li>tempo or meter changes along the timeline</li>
+    <li>audio tracks and audio recording</li>
+    <li>a built-in sampler or instrument</li>
+    <li>automation lanes and CC editing</li>
+    <li>mixing: EQ, compression, effects, sends</li>
+    <li>MIDI clock, Ableton Link or other sync</li>
+    <li>notation</li>
+    <li>whole-arrangement MIDI file export</li>
+    <li>a draw mode for notes</li>
+    <li>more than 16 tracks</li>
+    <li>VST2, ever</li>
+  </ul>
+  <p>The full list and what may come next are in the
+    <a href="https://github.com/stevmidi/stev/blob/main/docs/280-roadmap.md">roadmap</a>.</p>
+</section>
+
+</main>
+
+<footer class="wrap foot">
+  <p class="verse"><em>A</em> stev <em>is a short Norwegian folk verse, traditionally improvised.</em></p>
+  <p class="links">
+    <a href="https://github.com/stevmidi/stev">Source</a>
+    <a href="https://github.com/stevmidi/stev/blob/main/CHANGELOG.md">Changelog</a>
+    <a href="https://github.com/stevmidi/stev/blob/main/CONTRIBUTING.md">Contributing</a>
+    <a href="https://github.com/stevmidi/stev#license">MIT or Apache-2.0</a>
+    <a href="https://github.com/stevmidi/stev/blob/main/TRADEMARKS.md">Trademarks</a>
+  </p>
+  <p class="fine">VST is a registered trademark of Steinberg Media Technologies GmbH.</p>
+</footer>
+
+</body>
+</html>

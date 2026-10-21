@@ -1,0 +1,47 @@
+# Publishes site/ to GitHub Pages, served at stevmidi.com. Design and the
+# reasons behind it: docs/280-roadmap.md § A website at stevmidi.com.
+name: Pages
+
+on:
+  # After each merge that touches the site.
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - ".github/workflows/pages.yml"
+  # The "Run workflow" button in the Actions tab: republish by hand.
+  workflow_dispatch:
+
+# Pages deploys need these; nothing else in the repo is written.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deploy at a time, and a newer one replaces a queued one; a deploy
+# already running is let finish.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy site
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/configure-pages@v5
+
+      # No build step: site/ is the site. Its images and font are symlinks
+      # into docs/ and assets/, which the upload follows (it tars with
+      # --dereference), so nothing is duplicated in the repo.
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -1,0 +1,287 @@
+/* stevmidi.com. Colours are the app's Magenta Pulse palette
+   (src/view/theme/palettes.rs), the theme in the README screenshot; the
+   roles follow docs/030-ui-design.md § Theme & Contrast. One font and one
+   weight, as in the app: hierarchy from size and colour. */
+
+@font-face {
+  font-family: "IBM Plex Sans";
+  src: url("fonts/IBMPlexSans-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-display: swap;
+}
+
+:root {
+  color-scheme: dark;
+  --bg: #0a0a0a;
+  --bg-lane: #0f0f0f;          /* bg + 5, the arranger lane fill */
+  --bg-panel: #181818;
+  --bg-timeline: #242424;
+  --separator: #3a3a3a;
+  --grid-major: #4a4a4a;
+  --fg: #efefef;
+  --fg-dim: #a8a8a8;
+  --accent: #ff3daa;
+  --playhead: #33e1ff;
+  --wrap: 68rem;
+  --gutter: 16px;
+}
+
+* { box-sizing: border-box; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 400 1.0625rem/1.6 "IBM Plex Sans", system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+a { color: var(--fg); text-decoration-color: var(--grid-major); text-underline-offset: 0.2em; }
+a:hover { color: var(--accent); text-decoration-color: var(--accent); }
+
+h1, h2, h3 { font-weight: 400; line-height: 1.2; margin: 0; }
+
+.wrap {
+  max-width: var(--wrap);
+  margin: 0 auto;
+  padding: 0 var(--gutter);
+}
+
+/* Frame chrome: the header bar, as the app's. */
+.top {
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--accent);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.nav {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  height: 3.25rem;
+  font-size: 0.9375rem;
+}
+.nav a { color: var(--fg-dim); text-decoration: none; }
+.nav a:hover { color: var(--fg); }
+.nav .wordmark { color: var(--fg); font-size: 1.375rem; margin-right: auto; }
+.nav .nav-repo { color: var(--fg); }
+
+/* The hero sits on a bar-and-beat grid, like an empty arranger lane. */
+.hero {
+  background:
+    repeating-linear-gradient(90deg,
+      var(--separator) 0 1px, transparent 1px 48px),
+    repeating-linear-gradient(90deg,
+      #161616 0 1px, transparent 1px 12px),
+    var(--bg-lane);
+  border-bottom: 1px solid var(--separator);
+  padding: 5rem 0 4rem;
+}
+
+.hero h1 {
+  font-size: clamp(2.25rem, 6vw, 4rem);
+  max-width: 16ch;
+  letter-spacing: -0.01em;
+}
+
+.lede {
+  max-width: 38rem;
+  font-size: 1.1875rem;
+  color: var(--fg);
+  margin: 1.5rem 0 2rem;
+  /* Lift the text off the grid lines. */
+  text-shadow: 0 0 12px var(--bg), 0 0 4px var(--bg);
+}
+
+.actions { display: flex; flex-wrap: wrap; gap: 0.75rem; }
+
+.button {
+  display: inline-block;
+  padding: 0.6rem 1.1rem;
+  border: 1px solid var(--grid-major);
+  border-radius: 4px;
+  background: var(--bg-panel);
+  color: var(--fg);
+  text-decoration: none;
+}
+.button:hover { border-color: var(--fg-dim); color: var(--fg); }
+.button.primary { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+.button.primary:hover { background: #ff5cb8; color: var(--bg); }
+
+.status {
+  color: var(--fg-dim);
+  font-size: 0.9375rem;
+  margin: 1.5rem 0 0;
+  text-shadow: 0 0 8px var(--bg);
+}
+
+.shot { margin-top: 3rem; margin-bottom: 0; }
+.shot img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--separator);
+  border-radius: 6px;
+}
+
+section.wrap { margin-top: 5rem; }
+section.wrap > p { max-width: 42rem; color: var(--fg-dim); }
+
+h2 {
+  font-size: 1.75rem;
+  margin-bottom: 1.25rem;
+}
+h2::before {
+  /* The playhead's loop-start marker, a small triangle in the ruler. */
+  content: "";
+  display: inline-block;
+  width: 0;
+  height: 0;
+  border-left: 0.5em solid var(--accent);
+  border-top: 0.3em solid transparent;
+  border-bottom: 0.3em solid transparent;
+  margin-right: 0.5em;
+  vertical-align: 0.15em;
+}
+
+h3 { font-size: 1.125rem; margin-bottom: 0.5rem; }
+
+kbd {
+  font: inherit;
+  font-size: 0.9em;
+  display: inline-block;
+  min-width: 1.6em;
+  padding: 0 0.4em;
+  text-align: center;
+  background: var(--bg-timeline);
+  border: 1px solid var(--separator);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  color: var(--fg);
+  line-height: 1.5;
+}
+
+/* The steps are drawn as clips: a header strip in the track colour and a
+   16% tint over the panel base (030 § Clip Anatomy). */
+.clips {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: 2px;
+}
+
+.clip {
+  background:
+    linear-gradient(color-mix(in srgb, var(--track) 16%, transparent),
+                    color-mix(in srgb, var(--track) 16%, transparent)),
+    var(--bg-panel);
+  border-top: 20px solid color-mix(in srgb, var(--track) 45%, var(--bg-panel));
+  padding: 1rem 1.1rem 1.25rem;
+  counter-increment: step;
+  position: relative;
+}
+.clip::before {
+  content: counter(step);
+  position: absolute;
+  top: -20px;
+  left: 0.6rem;
+  line-height: 20px;
+  font-size: 0.8125rem;
+  color: var(--fg);
+}
+.clip p { margin: 0; color: var(--fg-dim); font-size: 0.9375rem; }
+.clip h3 kbd { margin-right: 0.35em; }
+
+/* The capture table: a 2×2 grid with the ruler's readout strip on top. */
+.grid {
+  display: grid;
+  border: 1px solid var(--separator);
+  border-radius: 4px;
+  overflow: hidden;
+  margin: 1.5rem 0;
+  max-width: 52rem;
+}
+.grid > div {
+  display: grid;
+  grid-template-columns: 7rem 1fr 1fr;
+  border-top: 1px solid var(--separator);
+}
+.grid > div:first-child { border-top: 0; }
+.grid span { padding: 0.75rem 1rem; }
+.grid span + span { border-left: 1px solid var(--separator); }
+.grid-head { background: var(--bg-timeline); color: var(--fg-dim); font-size: 0.9375rem; }
+.grid [role="rowheader"] { background: var(--bg-panel); color: var(--fg-dim); }
+.grid [role="cell"] { background: var(--bg-lane); }
+
+.two {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: 1rem;
+  margin: 1.5rem 0;
+  max-width: 52rem;
+}
+.panel {
+  background: var(--bg-panel);
+  border: 1px solid var(--separator);
+  border-radius: 4px;
+  padding: 1.25rem;
+}
+.panel p { margin: 0; color: var(--fg-dim); }
+.panel .vst { display: block; margin-top: 1rem; width: 84px; height: auto; }
+
+section.wrap > p.aside {
+  border-left: 2px solid var(--playhead);
+  padding-left: 1rem;
+  color: var(--fg);
+}
+
+.not-planned {
+  margin: 0 0 1.5rem;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  max-width: 52rem;
+}
+.not-planned li {
+  background: var(--bg-panel);
+  border: 1px solid var(--separator);
+  border-radius: 4px;
+  padding: 0.25rem 0.65rem;
+  font-size: 0.9375rem;
+  color: var(--fg-dim);
+}
+
+.foot {
+  margin-top: 6rem;
+  padding-top: 2rem;
+  padding-bottom: 3rem;
+  border-top: 1px solid var(--separator);
+  color: var(--fg-dim);
+  font-size: 0.9375rem;
+}
+.foot .verse { color: var(--fg); }
+.foot .links { display: flex; flex-wrap: wrap; gap: 0.5rem 1.5rem; }
+.foot .links a { color: var(--fg-dim); }
+.foot .links a:hover { color: var(--accent); }
+.foot .fine { font-size: 0.8125rem; }
+
+@media (max-width: 40rem) {
+  .nav { gap: 1rem; }
+  .nav a:not(.wordmark):not(.nav-repo) { display: none; }
+  .hero { padding: 3rem 0 2.5rem; }
+  section.wrap { margin-top: 3.5rem; }
+  .grid > div { grid-template-columns: 5rem 1fr 1fr; }
+  .grid span { padding: 0.6rem 0.6rem; font-size: 0.9375rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+}

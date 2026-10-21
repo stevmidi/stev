@@ -1,0 +1,1 @@
+../../assets/fonts/IBMPlexSans/OFL.txt

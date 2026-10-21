@@ -47,7 +47,9 @@ The domain is held but points nowhere yet (added 2026-10-10). Today the GitHub R
 - **What it promises.** The same as the README: macOS supported, Linux and Windows build-only (§ Platforms), and the § Not planned list, so the site never promises more than the repo does. Any VST3 mention carries the trademark sentence and logo rules (`080` § Licensing).
 - **Assets.** Screenshots and recordings are the author's own; fonts and images follow the same licence rule as the repo (`080` § Licensing), with any third-party font licence committed beside it.
 
-Suggested start: a single static page on GitHub Pages, ahead of the first binary, so the download button has somewhere to live when level 1 lands.
+**First page built** (2026-10-21, `feature/website`): `site/index.html` + `site/style.css`, plain HTML/CSS with no build step, in the Magenta Pulse palette (the theme of the README screenshot) and Plex Regular only, as the app draws (`030` § Fonts). The steps are drawn as clips (`030` § Clip Anatomy), the hero sits on a bar-and-beat grid. The screenshot, the VST logo and the font are symlinks into `docs/images/` and `assets/fonts/`, so nothing is duplicated; the Pages upload follows them. `.github/workflows/pages.yml` publishes `site/` on a push to `main` that touches it (or by hand), and `ci.yml` skips `site/**`. Until a binary exists the main button is *Build from source*; it becomes the download when level 1 of § A downloadable macOS app lands.
+
+Left to do, outside the repo: in the repo's Settings → Pages, set the source to *GitHub Actions* and the custom domain to `stevmidi.com` with *Enforce HTTPS*; at the registrar, point the apex at GitHub Pages (`A` 185.199.108–111.153, `AAAA` 2606:50c0:8000–8003::153) and `www` at `stevmidi.github.io` (`CNAME`); verify the domain under the org's Settings → Pages. Then set the repo's website field to `https://stevmidi.com` and link it from the README. Still open: a logo and an icon (shared with the `.app` bundle), and a short screen recording of a capture.
 
 ### A downloadable macOS app
 
