@@ -23,7 +23,7 @@ Listed in priority order, highest first (set 2026-10-11): the capture workflow, 
 
 ### MIDI Out timing
 
-Stage 1 of § Linux and Windows support, staged, taken first as macOS work. Parked 2026-10-07 with the macOS-first decision, picked up 2026-10-14: the probe and all three fixes (the precise `"midiout"` wait, the absolute-deadline clock timer, real-time priority for both timing threads) are built and measured on macOS (`260` § The fixes); the Linux and Windows rows below are what's left. The analysis, the timing-probe design and the fixes are in `260-porting.md` § Timing, since they are a port's first job. If picked up here, it starts on macOS alone: the probe measures macOS as well, the precise `"midiout"` wait helps every platform (crossbeam's `select!` timeout is a condvar wait on macOS too), and macOS threads have no real-time priority either. The author's own test plan:
+Stage 1 of § Linux and Windows support, staged, taken first as macOS work. Parked 2026-10-07 with the macOS-first decision, picked up 2026-10-14: the probe and all three fixes (the precise `"midiout"` wait, the absolute-deadline clock timer, real-time priority for both timing threads) are built and measured on macOS (`260` § The fixes); the Linux and Windows rows below are what's left. The analysis, the timing-probe design and the fixes are in `260-porting.md` § Timing, since they are a port's first job. The author's own test plan for the rest:
 
 - **The machines:** the Windows 11 machine, booted both natively and from an **Ubuntu 24.04 live USB stick**, so Windows and Linux are compared on the same hardware; the Intel Mac as the reference; a **Surface Pro 3 on Windows 10** as the old-laptop worst case (2014 low-power Intel that throttles when hot: run it plugged in, on the *High performance* power plan, cooled between loaded runs; a first release build may need `-j 2` on 4 GB of RAM); and, optionally, the headless Raspberry Pi 4. Windows 11 stays the main Windows machine. Unlike 10, it stops honouring a process's timer-resolution request while that process's window is minimised or hidden, so the `timeBeginPeriod` fix (`260`), if the probe shows it's needed, must be checked on 11, in the app, with its window minimised. On the live stick nothing persists across a reboot: `apt install build-essential pkg-config libasound2-dev git`, install rustup (the pinned toolchain installs itself), and clone the repo.
 - **Loopback hardware:** a Roland UM-ONE with its Out plugged into its own In, on every machine (the Scarlett 2i2 has no MIDI).
@@ -31,7 +31,7 @@ Stage 1 of § Linux and Windows support, staged, taken first as macOS work. Park
 
   | Machine | Load | Clock mean / p99 / max | `midiout` recorder p99 / max | Loopback p99 / max |
   |---|---|---|---|---|
-  | Intel Mac (reference) | idle / loaded | | | |
+  | Intel Mac (reference) | idle / loaded | measured, `260` § The fixes | measured, `260` § The fixes | virtual port only, `260` § The fixes |
   | Windows 11 | idle / loaded | | | |
   | Ubuntu 24.04 (same machine) | idle / loaded | | | |
   | Surface Pro 3, Windows 10 | idle / loaded | | | |
@@ -82,10 +82,6 @@ Idea, 2026-10-09. Enter's fit (`fit_first_clip_tempo`, `040` § Fitting the temp
 - **Pinned to real takes**, as phrase detection is (`040` § Phrase start). Fixtures already record `meter`, so the meter the user chose for a take is the answer the detector must reproduce. Every checked-in 4/4 take must come out 4/4 before a 3/4 result counts.
 - **First step:** a test-only probe over `fixtures/captures/` that finds the beat, counts the beats in the phrase and reports duple/triple, changing no app behaviour. If it can't call every 4/4 take duple, the idea dies cheaply. If it can, record a few 3/4 and 6/8 takes, pin them, and see whether triple comes out.
 
-### Keyboard shortcuts as a settings tab, with rebinding
-
-User direction, 2026-10-07. The `?` help overlay is the first-release form. Later it moves into the settings modal as its own tab: a categorized, searchable list of every binding that can also record a new binding for each one. Rebinding likely means the matchers read from a keymap instead of matching keys inline, which would also retire the hand-written `HELP` table (`help_overlay.rs`). Design agreed 2026-10-21 in `320-keyboard-shortcuts.md`: commands rebindable (navigation and dialog keys fixed), `?` opens the new Keyboard tab and the overlay goes, three phases. Phases 1 (the keymap) and 2 (the read-only Keyboard tab, the overlay retired) built 2026-10-21, and phase 3 (rebinding, saved in `settings.json`) the same day.
-
 ### Export to audio: what's left
 
 The stem export is built (`⌘/Ctrl+⇧+R`, as built in `130` § Audio export, phase plan in `archive/300-export-to-audio.md`). Two follow-ups were left out of it on purpose:
@@ -97,7 +93,7 @@ The stem export is built (`⌘/Ctrl+⇧+R`, as built in `130` § Audio export, p
 
 Added 2026-10-11: everything macOS has today, on Linux and Windows too, built in stages that each stand on their own. It is by far the largest candidate: a second and third platform, not a feature. The ongoing cost matters more than the code. The author doesn't use either OS day to day, so timing and plugin bugs there are found on machines booted only to test, which is the neglect § Platforms warns about. So each stage is a promise made only once it's done, and stopping after any stage leaves an honest state. What's macOS-only today, and why each part matters, is in `260-porting.md`.
 
-1. **Timing: the probe and the fixes** (§ MIDI Out timing above). The timing probe, the precise `"midiout"` deadline wait, one absolute-deadline clock timer, and best-effort thread priority. All of it helps macOS too (its `select!` timeout is imprecise as well, and no thread has real-time priority on any platform), so it can be done as macOS work, ahead of the rest of this candidate. It also clears the first and largest porting hurdle.
+1. **Timing: the probe and the fixes** (§ MIDI Out timing above). The timing probe, the precise `"midiout"` deadline wait, one absolute-deadline clock timer, and best-effort thread priority. All of it helped macOS too, so it was done as macOS work ahead of the rest of this candidate (2026-10-14); what's left is measuring Linux and Windows. It clears the first and largest porting hurdle.
 2. **MIDI Out parity on Windows 11 and Ubuntu 24.04.** Run the smoke test (`260` § Smoke test) and fix what it finds: no virtual MIDI port on Windows (midir can't create one; at least document loopMIDI or Windows MIDI Services), quit with unsaved changes, `.mid` file drag, MIDI hot-plug, and the library and log folders. When this lands, Stev is a supported MIDI Out sequencer on all three, with plugins on macOS only, and the README, § Platforms and § Not planned say so.
 3. **The plugin host, Windows first.** Windows has far more musicians and VST3 plugins, and the author has a Windows 11 machine. The host core is format-agnostic (`130`); what's needed is the platform glue: plugin search paths per OS, VST3 bundle layout (`180`), editor windows parented to Win32 (and X11 later), MMCSS as the workgroup join's counterpart (`170`), and expect another round of the GL-context clash with plugins that bring their own GL (NI, Qt). Linux CLAP/VST3 follows Windows; its plugin ecosystem is thin. Decide on this stage only after living with stage 2.
 4. **Packaging per OS** (installer or archive per platform, as § A downloadable macOS app does for macOS), only once stage 3 is solid.
