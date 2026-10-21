@@ -84,7 +84,7 @@ Idea, 2026-10-09. Enter's fit (`fit_first_clip_tempo`, `040` § Fitting the temp
 
 ### Keyboard shortcuts as a settings tab, with rebinding
 
-User direction, 2026-10-07. The `?` help overlay is the first-release form. Later it moves into the settings modal as its own tab: a categorized, searchable list of every binding that can also record a new binding for each one. Rebinding likely means the matchers read from a keymap instead of matching keys inline, which would also retire the hand-written `HELP` table (`help_overlay.rs`).
+User direction, 2026-10-07. The `?` help overlay is the first-release form. Later it moves into the settings modal as its own tab: a categorized, searchable list of every binding that can also record a new binding for each one. Rebinding likely means the matchers read from a keymap instead of matching keys inline, which would also retire the hand-written `HELP` table (`help_overlay.rs`). Design agreed 2026-10-21 in `320-keyboard-shortcuts.md`: commands rebindable (navigation and dialog keys fixed), `?` opens the new Keyboard tab and the overlay goes, three phases.
 
 ### Export to audio: what's left
 
