@@ -1,14 +1,19 @@
 //! The settings modal (`settings_modal.rs`): one fixed-size panel with a tab
 //! strip along its top and the showing tab below — MIDI (the input / output
-//! port lists and the output-offset row) or Appearance (the theme list). The
-//! layout is shared with the click hit-test
+//! port lists and the output-offset row), Appearance (the theme list) or
+//! Keyboard (the search field over every command and fixed key,
+//! `keyboard_tab.rs`). The layout is shared with the click hit-test
 //! ([`settings_hit_at`](Display::settings_hit_at)), so the two can't drift.
 
-use egui::Pos2;
+use egui::{Id, Margin, Pos2, RichText, TextEdit, Ui};
 
+use crate::view::display::keyboard_tab::{
+    ShortcutLine, ShortcutRow, line_of_row, row_count, row_of_line, shortcut_lines,
+};
 use crate::view::display::midi_state::{MidiSettingsState, PORT_ROWS, PortList};
 use crate::view::display::modal_focus::{PortSide, SettingsTab};
 use crate::view::display::settings_modal::{SettingsHit, THEME_ROWS, window_start};
+use crate::view::display::track_rename::show_name_field;
 
 use super::*;
 
@@ -73,6 +78,15 @@ struct MidiTabLayout {
     offset: Section,
 }
 
+/// Where the Keyboard tab's parts sit.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct KeyboardTabLayout {
+    /// The search field, across the top.
+    field: Rect,
+    /// The window the list shows through, a line per row.
+    lines: ListRows,
+}
+
 impl Display {
     /// Panel width.
     const SETTINGS_W: f32 = 480.0 * Self::M_SCALE;
@@ -91,6 +105,8 @@ impl Display {
     /// Height of a list row — and the wheel travel that scrolls the theme
     /// list a row.
     pub(in crate::view::display) const SETTINGS_ROW_H: f32 = 22.0 * Self::M_SCALE;
+    /// Gap between a Keyboard tab heading and the foot of its line.
+    const SETTINGS_HEADING_PAD: f32 = 3.0 * Self::M_SCALE;
     /// Inset of a row's text from the content's left edge.
     const SETTINGS_TEXT_INSET: f32 = 8.0 * Self::M_SCALE;
 
@@ -181,6 +197,34 @@ impl Display {
         }
     }
 
+    /// The Keyboard tab in `content`: the search field, then as many list
+    /// lines as fit under it. Pure geometry.
+    fn keyboard_tab_layout(content: Rect) -> KeyboardTabLayout {
+        let field = Rect::from_min_size(content.min, vec2(content.width(), Self::FIELD_H));
+        let top = field.max.y + Self::SETTINGS_STRIP_GAP;
+        let count = ((content.max.y - top) / Self::SETTINGS_ROW_H).floor() as usize;
+        KeyboardTabLayout {
+            field,
+            lines: ListRows {
+                first: Rect::from_min_size(
+                    pos2(content.min.x, top),
+                    vec2(content.width(), Self::SETTINGS_ROW_H),
+                ),
+                count,
+            },
+        }
+    }
+
+    /// How many lines the Keyboard tab's list shows at once — the window its
+    /// selection and wheel keep the scroll inside.
+    pub(in crate::view::display) fn keyboard_visible_lines() -> usize {
+        // The content's height is fixed, so any canvas gives the same count.
+        let canvas = Rect::from_min_size(Pos2::ZERO, vec2(4096.0, 4096.0));
+        Self::keyboard_tab_layout(Self::settings_layout(canvas).content)
+            .lines
+            .count
+    }
+
     /// What canvas point `p` is on in the settings panel — `None` outside
     /// it.
     pub(in crate::view::display) fn settings_hit_at(&self, p: Pos2) -> Option<SettingsHit> {
@@ -226,6 +270,15 @@ impl Display {
                     window_start(self.settings.theme_scroll, theme::theme_count(), THEME_ROWS) + i,
                 )
             }),
+            SettingsTab::Keyboard => {
+                let window = Self::keyboard_tab_layout(layout.content).lines;
+                let lines = shortcut_lines(&self.settings.keys.search);
+                let start = window_start(self.settings.keys.scroll, lines.len(), window.count);
+                window
+                    .hit(p)
+                    .and_then(|i| row_of_line(&lines, start + i))
+                    .map(SettingsHit::Shortcut)
+            }
         };
         Some(hit.unwrap_or(SettingsHit::Panel))
     }
@@ -274,6 +327,7 @@ impl Display {
         match self.settings.tab {
             SettingsTab::Midi => self.draw_midi_tab(painter, layout.content),
             SettingsTab::Appearance => self.draw_appearance_tab(painter, layout.content),
+            SettingsTab::Keyboard => self.draw_keyboard_tab(painter, layout.content),
         }
     }
 
@@ -411,6 +465,117 @@ impl Display {
             );
         }
     }
+
+    /// The Keyboard tab's list under its search field (the field itself is
+    /// [`show_keyboard_search`](Self::show_keyboard_search)): the rows the
+    /// search matches under their groups' headings, the selected row
+    /// tinted. A heading sits at the foot of its line, so the room above it
+    /// starts the group.
+    fn draw_keyboard_tab(&self, painter: &Painter, content: Rect) {
+        let window = Self::keyboard_tab_layout(content).lines;
+        let lines = shortcut_lines(&self.settings.keys.search);
+        if lines.is_empty() {
+            let row = window.row(0);
+            Self::draw_settings_text(
+                painter,
+                row,
+                "No shortcut matches",
+                Self::FONT_LIST,
+                theme::fg_dim(),
+            );
+            return;
+        }
+        let selected = line_of_row(
+            &lines,
+            self.settings.keys.selection.min(row_count(&lines) - 1),
+        );
+        let start = window_start(self.settings.keys.scroll, lines.len(), window.count);
+        for (i, line) in lines.iter().enumerate().skip(start).take(window.count) {
+            let rect = window.row(i - start);
+            match line {
+                ShortcutLine::Header(category) => {
+                    painter.text(
+                        pos2(
+                            rect.min.x + Self::SETTINGS_TEXT_INSET,
+                            rect.max.y - Self::SETTINGS_HEADING_PAD,
+                        ),
+                        Align2::LEFT_BOTTOM,
+                        category.to_uppercase(),
+                        FontId::proportional(Self::FONT_HINT),
+                        theme::fg_dim(),
+                    );
+                }
+                ShortcutLine::Row(row) => {
+                    Self::draw_shortcut_row(painter, rect, row, selected == Some(i));
+                }
+            }
+        }
+    }
+
+    /// Paints one row of the Keyboard tab: the selection's tint, the label
+    /// on the left, cut short of the keys, and the keys on the right. A
+    /// fixed key's keys read `fg_dim` — listed, not rebindable — and its
+    /// label stays as legible as any.
+    fn draw_shortcut_row(painter: &Painter, rect: Rect, row: &ShortcutRow, is_selected: bool) {
+        if is_selected {
+            painter.rect_filled(
+                rect,
+                CornerRadius::ZERO,
+                theme::accent().gamma_multiply(0.15),
+            );
+        }
+        let color = accent_if(is_selected, theme::fg());
+        let keys_color = if row.fixed { theme::fg_dim() } else { color };
+        let keys = painter.text(
+            pos2(rect.max.x - Self::SETTINGS_TEXT_INSET, rect.center().y),
+            Align2::RIGHT_CENTER,
+            &row.keys,
+            FontId::proportional(Self::FONT_LIST),
+            keys_color,
+        );
+        let label_x = rect.min.x + Self::SETTINGS_TEXT_INSET;
+        Self::draw_modal_text(
+            painter,
+            pos2(label_x, rect.center().y),
+            row.label,
+            FontId::proportional(Self::FONT_LIST),
+            color,
+            keys.min.x - Self::SETTINGS_TEXT_INSET - label_x,
+        );
+    }
+
+    /// Shows the Keyboard tab's search field while that tab is up, in the
+    /// canvas `ui`. It keeps the egui focus, so typing always lands in it,
+    /// and a change to its text puts the selection and the list back at the
+    /// top.
+    pub(in crate::view::display) fn show_keyboard_search(&mut self, ui: &mut Ui) {
+        if self.overlay != Some(Overlay::Settings) || self.settings.tab != SettingsTab::Keyboard {
+            return;
+        }
+        let rect =
+            Self::keyboard_tab_layout(Self::settings_layout(self.render.canvas_rect).content).field;
+        let keys = &mut self.settings.keys;
+        let font = FontId::proportional(Self::FONT_LIST);
+        // The hint in the field's font: egui draws it in the default one
+        // otherwise, and places the empty field's caret against it.
+        let field = TextEdit::singleline(&mut keys.search)
+            .font(font.clone())
+            .hint_text(RichText::new("Search").font(font));
+        let response = show_name_field(
+            ui,
+            field,
+            Id::new("keyboard-search"),
+            rect,
+            Margin::symmetric(6, 2),
+            &mut keys.field_shown,
+        );
+        if !response.has_focus() {
+            response.request_focus();
+        }
+        if response.changed() {
+            self.reset_keyboard_list();
+        }
+    }
 }
 
 #[cfg(test)]
@@ -490,6 +655,17 @@ mod tests {
         assert!(input.area.contains(ghost.center()));
         assert_eq!(input.rows.hit(ghost.center()), None);
         assert_eq!(input.rows.hit(input.rows.row(0).center()), Some(0));
+    }
+
+    #[test]
+    fn the_keyboard_tab_lists_under_its_field_inside_the_content() {
+        let content = Display::settings_layout(canvas()).content;
+        let layout = Display::keyboard_tab_layout(content);
+        assert_eq!(layout.field.min, content.min);
+        assert!(layout.lines.first.min.y > layout.field.max.y);
+        assert!(layout.lines.count >= 10);
+        assert!(layout.lines.row(layout.lines.count - 1).max.y <= content.max.y + 0.01);
+        assert_eq!(Display::keyboard_visible_lines(), layout.lines.count);
     }
 
     #[test]

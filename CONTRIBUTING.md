@@ -69,7 +69,8 @@ The rules a pull request is checked against, in short:
   bug fix.
 - **Docs in the same change**: if the code changes something a `docs/` file
   describes, that file changes too. A new or changed key also updates
-  `docs/010-keybindings.md` and the help overlay (`?`), and anything a user
+  `docs/010-keybindings.md` and its row in the keymap (`ACTIONS` in
+  `src/core/keymap.rs`), which the Keyboard tab (`?`) lists, and anything a user
   would notice gets a line in [`CHANGELOG.md`](CHANGELOG.md) under
   `[Unreleased]`.
 - **The build gate passes with zero warnings**: `cargo check`,

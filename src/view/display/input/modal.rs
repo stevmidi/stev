@@ -1,9 +1,12 @@
 //! `handle_settings_input_event` — the settings modal's keymap and mouse: Esc
-//! or `⌘/Ctrl+,` closes it, the tab chords switch tabs, and inside a tab the
-//! arrows move a cursor (the MIDI rows, the theme list), Enter connects a
-//! port, and a click or wheel is resolved by `settings_modal.rs`. See
-//! `020-views-and-state.md`.
+//! or `⌘/Ctrl+,` closes it, the tab chords switch tabs, `?` shows the
+//! Keyboard tab, and inside a tab the arrows move a cursor (the MIDI rows,
+//! the theme list, the Keyboard tab's rows), Enter connects a port, and a
+//! click or wheel is resolved by `settings_modal.rs`. On the Keyboard tab
+//! every other key is the search field's, and Esc clears a search before
+//! it closes the modal. See `020-views-and-state.md`.
 
+use crate::view::display::keyboard_tab::is_keyboard_tab_key;
 use crate::view::display::modal_focus::SettingsTab;
 use crate::view::display::settings_modal::{is_settings_chord, settings_tab_step};
 
@@ -16,14 +19,21 @@ impl Display {
     pub(super) fn handle_settings_input_event(&mut self, input_event: &InputEvent) {
         match *input_event {
             InputEvent::KeyPressed { key, modifiers } => {
-                if key == Key::Escape || is_settings_chord(key, modifiers) {
+                let on_keyboard_tab = self.settings.tab == SettingsTab::Keyboard;
+                if key == Key::Escape && on_keyboard_tab && self.clear_keyboard_search() {
+                    // Esc cleared the search; the next one closes.
+                } else if key == Key::Escape || is_settings_chord(key, modifiers) {
                     self.close_overlay();
                 } else if let Some(step) = settings_tab_step(key, modifiers) {
                     self.settings.tab = self.settings.tab.stepped(step);
+                } else if !on_keyboard_tab && is_keyboard_tab_key(key, modifiers) {
+                    // On the Keyboard tab `?` is typing, for the search.
+                    self.settings.tab = SettingsTab::Keyboard;
                 } else {
                     match self.settings.tab {
                         SettingsTab::Midi => self.handle_midi_tab_key(key),
                         SettingsTab::Appearance => self.handle_appearance_tab_key(key),
+                        SettingsTab::Keyboard => self.handle_keyboard_tab_key(key),
                     }
                 }
             }

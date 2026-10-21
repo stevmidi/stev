@@ -13,7 +13,7 @@ Stev is built with coding agents, and the repo is set up for them. Claude Code l
   > Add a key in the clip view that inverts the velocities of the selected notes, undoable, as one step. Suggest a free key first. Follow `docs/250-first-feature.md` and its checklist.
 
   Asking for the key first matters: the agent checks `010` and comes back before writing anything, so you choose the binding instead of finding it in the diff.
-- **Review against the checklist** at the end of this file. Where an agent is most likely to slip: the key is free in one view but taken in the other; the rule is written inside the edit instead of on `Clip`; the tests cover `edit()` but not undo and redo; `010` changed and the `HELP` table didn't. Ask for the gate's output too: zero warnings, not just a build.
+- **Review against the checklist** at the end of this file. Where an agent is most likely to slip: the key is free in one view but taken in the other; the rule is written inside the edit instead of on `Clip`; the tests cover `edit()` but not undo and redo; `010` changed and the action's row in `ACTIONS` didn't. Ask for the gate's output too: zero warnings, not just a build.
 - **Then try it yourself.** `AGENTS.md` tells agents not to launch the app, so playing the feature is always your part. If something's off, describe what you did and what happened, and ask for the fix with a regression test.
 - **Before merging**, once it works, ask for the `/simplify` pass (`080` § Agentic Editing): the agent applies it and runs the gate once more, and you retest if it changed anything.
 
@@ -146,8 +146,7 @@ When the handler side has logic of its own (a follow-up after recording, gesture
 The docs are written for the next person or agent to change the code, so they change with it, in the same commit (`AGENTS.md`, "Docs stay in sync"). For a new key and edit:
 
 - **`010-keybindings.md`**: the binding, where it applies, and what it does there.
-- **The keymap**: the action's row in `ACTIONS` (`core/keymap.rs`), with its label and category — the settings modal's Keyboard tab will be built from it.
-- **The help overlay**: the `HELP` table in `src/view/display/help_overlay.rs` (`("M", "Mute notes")` in the clip view's section). It's hand-written, so nothing reminds you.
+- **The keymap**: the action's row in `ACTIONS` (`core/keymap.rs`), with its label and category — the settings modal's Keyboard tab (`?`) lists it from there, so there is no second table to update.
 - **`050-undo-redo.md`**: add the new variant to the list of current `SequencerEdit` variants, and any new `EditResult` variant to its section.
 - Anything else you changed that a topic file describes: view state (`020`), persistence (`060`), threading (`000`). `AGENTS.md`'s table says which file covers what.
 
@@ -167,5 +166,5 @@ Run the build gate from `AGENTS.md` (`cargo check`, `cargo clippy --all-targets`
 6. The rule itself on the model (`Clip`, `Track`, …), not in the edit.
 7. An existing `EditResult`, or a new pair plus its `handle_edit_result` arm.
 8. Tests: the model's rule, and the edit's edit, undo, redo and `None`.
-9. Docs: `010`, the `HELP` table, `050`, and any topic file whose subject you changed.
+9. Docs: `010`, `050`, and any topic file whose subject you changed.
 10. The build gate, clean.

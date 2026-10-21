@@ -130,10 +130,12 @@ impl Display {
             "SAVE AS",
         );
 
-        let field_h = Self::FONT_LIST * 1.6;
         let field_rect = Rect::from_min_size(
-            pos2(layout.body.min.x, layout.body.center().y - field_h * 0.5),
-            vec2(layout.body.width(), field_h),
+            pos2(
+                layout.body.min.x,
+                layout.body.center().y - Self::FIELD_H * 0.5,
+            ),
+            vec2(layout.body.width(), Self::FIELD_H),
         );
         let field = TextEdit::singleline(&mut save_as.text)
             .char_limit(PROJECT_NAME_MAX_CHARS)

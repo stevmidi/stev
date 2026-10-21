@@ -1,10 +1,8 @@
-//! The modal screens — the settings modal, the help overlay, the
-//! plugin-restore overlay (macOS) and the project dialogs (Save As, the
+//! The modal screens — the settings modal, the plugin-restore overlay (macOS) and the project dialogs (Save As, the
 //! unsaved-changes prompt) — overlays `Display` owns, each drawn over the view
 //! underneath. One file per modal; this file holds the shared modal-frame
 //! chrome.
 
-mod help;
 #[cfg(target_os = "macos")]
 mod instrument_restore;
 mod project_dialog;
@@ -30,6 +28,10 @@ impl Display {
     const FONT_LIST: f32 = 14.0 * Self::M_SCALE;
     /// Modal hint / footer font size.
     const FONT_HINT: f32 = 12.0 * Self::M_SCALE;
+    /// Height of a modal's text field (Save As's name, the Keyboard tab's
+    /// search), in the list font: its line with room above and below for
+    /// the caret, which egui draws as the line plus 3 points.
+    const FIELD_H: f32 = 2.0 * Self::FONT_LIST;
 
     /// Paints a modal's frame — a `panel_w` × `panel_h` panel centred in
     /// `rect`, background, outline and `title` — and returns the panel's

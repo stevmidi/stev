@@ -51,12 +51,12 @@ mod computer_keys;
 mod gesture_state;
 mod grid;
 mod header_chip;
-mod help_overlay;
 mod input;
 #[cfg(target_os = "macos")]
 mod instrument;
 #[cfg(target_os = "macos")]
 mod instrument_restore;
+mod keyboard_tab;
 mod meter_field;
 mod midi_state;
 mod modal_focus;
@@ -77,7 +77,6 @@ mod ui_event;
 use self::browser::{BrowserItem, BrowserPanel, BrowserPlugin, clamp_browser_width, footer_rect};
 use self::gesture_state::GestureState;
 use self::grid::{GridSurface, GridTiers, grid_tiers};
-use self::help_overlay::HelpOverlay;
 use self::input::DragPointer;
 #[cfg(target_os = "macos")]
 use self::instrument::InstrumentHost;
@@ -292,15 +291,13 @@ pub(crate) struct Display {
     /// The modal overlay that is up, if any — the one switch every "does an
     /// overlay own the input?" check reads.
     overlay: Option<Overlay>,
-    /// The settings modal: its tab, the theme list's scroll. See
-    /// [`SettingsModal`].
+    /// The settings modal: its tab, the theme list's scroll, the Keyboard
+    /// tab's search. See [`SettingsModal`].
     settings: SettingsModal,
     /// The settings modal's MIDI tab — port lists, the row selections and
     /// focus, connected-port badges, the output-offset mirror, and the
     /// reconnect channel ends. See [`MidiSettingsState`].
     midi: MidiSettingsState,
-    /// The help overlay's scroll. See [`HelpOverlay`].
-    help: HelpOverlay,
 
     // --- Selection / gesture state ---
     /// The view-local selection and pointer-gesture state — the arranger time
@@ -470,7 +467,6 @@ impl Display {
             performance_lane_selected: false,
             overlay: None,
             settings: SettingsModal::default(),
-            help: HelpOverlay::default(),
             tracks: TrackLane::defaults(),
             midi: MidiSettingsState::new(
                 midi_in_reconnect_tx,

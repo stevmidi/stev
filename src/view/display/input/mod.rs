@@ -3,8 +3,7 @@
 //! resolves anything view-local (scroll, cursor placement, the drag
 //! rectangles, the `⌘/Ctrl+L` / `Delete` operand) against `Display` state and
 //! forwards the rest to `EventHandlers`. `gestures.rs` holds the drag state
-//! machines; `modal.rs` the settings modal's keymap and mouse, `help.rs` the
-//! help overlay's. See
+//! machines; `modal.rs` the settings modal's keymap and mouse. See
 //! `020-views-and-state.md`.
 
 use egui::Key;
@@ -16,7 +15,6 @@ use crate::core::project::{ProjectAction, clip_path};
 use crate::core::time::PPQN;
 
 mod gestures;
-mod help;
 mod midi_drag;
 mod modal;
 mod plugin_drag;
@@ -25,7 +23,7 @@ pub(super) use midi_drag::DragPointer;
 
 use self::gestures::past_drag_threshold;
 use super::browser::BrowserPress;
-use super::help_overlay::is_help_key;
+use super::keyboard_tab::is_keyboard_tab_key;
 use super::settings_modal::is_settings_chord;
 
 use super::*;
@@ -533,7 +531,6 @@ impl Display {
     fn handle_overlay_input_event(&mut self, event: &InputEvent) -> bool {
         match self.overlay {
             Some(Overlay::Settings) => self.handle_settings_input_event(event),
-            Some(Overlay::Help) => self.handle_help_input_event(event),
             // Nothing to do but wait for the last plugin (keys from a
             // plugin window, `try_consume_as_modal`).
             #[cfg(target_os = "macos")]
@@ -552,7 +549,8 @@ impl Display {
 
     /// Whether a key press is taken before the keymap sees it, acting on it
     /// if so: every key but the nudge itself during a keyboard marquee nudge,
-    /// and the fixed `⌘/Ctrl+,` and `?`, the ways into Settings and the help.
+    /// and the fixed `⌘/Ctrl+,` and `?`, the ways into Settings and its
+    /// Keyboard tab.
     fn key_taken_before_keymap(&mut self, key: Key, modifiers: KeyModifiers) -> bool {
         // A keyboard-armed marquee nudge (`⌘/Ctrl+←`/`→`, ⌘/Ctrl held)
         // owns the keyboard the way it owns the pointer: every other key
@@ -588,10 +586,10 @@ impl Display {
             self.open_settings();
             return true;
         }
-        // `?` opens the help overlay, from any key focus
-        // (`help_overlay.rs`); inside it its own keymap closes it again.
-        if is_help_key(key, modifiers) {
-            self.open_help();
+        // `?` opens Settings on the Keyboard tab, from any key focus
+        // (`keyboard_tab.rs`); inside it `?` is typing, for the search.
+        if is_keyboard_tab_key(key, modifiers) {
+            self.open_keyboard_tab();
             return true;
         }
         false
@@ -833,10 +831,10 @@ impl Display {
                 if self.key_focus == KeyFocus::Browser {
                     self.key_focus = KeyFocus::Pane;
                 }
-                // The header's `?` chip opens the help overlay; a press
-                // anywhere while it is up closes it again.
+                // The header's `?` chip opens Settings on the Keyboard tab;
+                // a press outside the panel while it is up closes it again.
                 if self.is_on_help_chip(x, y) {
-                    self.open_help();
+                    self.open_keyboard_tab();
                     return true;
                 }
                 // The keyboard chip beside it: `⌘/Ctrl+K`'s mouse twin.

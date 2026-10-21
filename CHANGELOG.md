@@ -33,6 +33,11 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ### Removed
 
+- **The `?` help overlay is gone; `?` opens Settings → Keyboard instead.**
+  The new tab lists every command with its keys, then the keys that aren't
+  commands (the arrows, Enter and Esc, the clipboard, the mouse, the
+  browser, the computer keyboard), with a search field that filters as you
+  type ("loop", or "cmd+l"). The header's `?` chip opens it too.
 - **`⇧F5` / `⇧F6` no longer step the colour theme.** Pick it in Settings →
   Appearance (`⌘,`).
 

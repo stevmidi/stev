@@ -1,5 +1,5 @@
 //! Painting the always-on overlays: the header info panel (tempo, meter, position,
-//! DSP/OVR chips, the computer keyboard's chip, the help overlay's `?` chip), the footer's passing message, the dim in-lane cursor line,
+//! DSP/OVR chips, the computer keyboard's chip, the `?` chip into Settings' Keyboard tab), the footer's passing message, the dim in-lane cursor line,
 //! and the playhead. See
 //! `030-ui-design.md`.
 
@@ -212,9 +212,9 @@ impl Display {
             cx += cw + Self::HEADER_CHIP_GAP;
         }
 
-        // The `?` chip at the right edge, apart from the readouts: a toggle
-        // for the help overlay, coloured as the keyboard chip beside it —
-        // accent while the overlay is up, `fg` under the pointer otherwise.
+        // The `?` chip at the right edge, apart from the readouts: the way
+        // into Settings' Keyboard tab, coloured as the keyboard chip beside
+        // it — accent while that tab is up, `fg` under the pointer otherwise.
         let help_chip = Self::help_chip_rect(rect);
         painter.rect_filled(help_chip, CornerRadius::ZERO, Self::header_chip_fill());
         painter.text(
@@ -223,7 +223,8 @@ impl Display {
             "?",
             value_font,
             toggle_icon_color(
-                self.overlay == Some(Overlay::Help),
+                self.overlay == Some(Overlay::Settings)
+                    && self.settings.tab == SettingsTab::Keyboard,
                 self.is_pointer_on_help_chip(),
             ),
         );

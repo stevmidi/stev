@@ -14,8 +14,6 @@
 pub(crate) enum Overlay {
     /// The settings modal (`settings_modal.rs`).
     Settings,
-    /// The keyboard help overlay (`help_overlay.rs`).
-    Help,
     /// A project load restoring its plugins, one per frame
     /// (`instrument_restore.rs`). Takes no input of its own: it swallows
     /// every event until the last plugin is in, then closes itself.
@@ -96,17 +94,25 @@ pub(crate) enum SettingsTab {
     Midi,
     /// The colour theme list.
     Appearance,
+    /// Every command and its keys, with the fixed keys after them
+    /// (`keyboard_tab.rs`).
+    Keyboard,
 }
 
 impl SettingsTab {
     /// Every tab, in tab-strip order.
-    pub(crate) const ALL: [SettingsTab; 2] = [SettingsTab::Midi, SettingsTab::Appearance];
+    pub(crate) const ALL: [SettingsTab; 3] = [
+        SettingsTab::Midi,
+        SettingsTab::Appearance,
+        SettingsTab::Keyboard,
+    ];
 
     /// The tab strip's label.
     pub(crate) fn label(self) -> &'static str {
         match self {
             SettingsTab::Midi => "MIDI",
             SettingsTab::Appearance => "APPEARANCE",
+            SettingsTab::Keyboard => "KEYBOARD",
         }
     }
 
@@ -142,8 +148,9 @@ mod tests {
     #[test]
     fn stepping_a_tab_wraps_at_both_ends() {
         assert_eq!(SettingsTab::Midi.stepped(1), SettingsTab::Appearance);
-        assert_eq!(SettingsTab::Appearance.stepped(1), SettingsTab::Midi);
-        assert_eq!(SettingsTab::Midi.stepped(-1), SettingsTab::Appearance);
-        assert_eq!(SettingsTab::Appearance.stepped(-1), SettingsTab::Midi);
+        assert_eq!(SettingsTab::Appearance.stepped(1), SettingsTab::Keyboard);
+        assert_eq!(SettingsTab::Keyboard.stepped(1), SettingsTab::Midi);
+        assert_eq!(SettingsTab::Midi.stepped(-1), SettingsTab::Keyboard);
+        assert_eq!(SettingsTab::Keyboard.stepped(-1), SettingsTab::Appearance);
     }
 }

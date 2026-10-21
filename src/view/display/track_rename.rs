@@ -12,7 +12,7 @@
 //! shared with the header's BPM field).
 
 use egui::text_selection::CCursorRange;
-use egui::{FontId, Frame, Id, Key, Margin, Rect, TextEdit, Ui, UiBuilder, pos2};
+use egui::{Align, FontId, Frame, Id, Key, Margin, Rect, Response, TextEdit, Ui, UiBuilder, pos2};
 
 use crate::core::config::TRACK_NAME_MAX_CHARS;
 use crate::core::input_event::InputEvent;
@@ -221,9 +221,10 @@ impl Display {
 
 /// Shows `field` as the app's name fields look — `fg` text on a `bg` fill in
 /// the focus-edge stroke, inset by `margin` — filling `rect` of the canvas
-/// `ui`. Its first frame (`*shown` false) takes the egui focus and selects
-/// the whole text. The track rename field and Save As's
-/// (`rendering/modals/project_dialog.rs`) both use it.
+/// `ui`, its line centred vertically. Its first frame (`*shown` false) takes
+/// the egui focus and selects the whole text. The track rename field, Save As's
+/// (`rendering/modals/project_dialog.rs`) and the Keyboard tab's search use
+/// it; the search reads the returned response for a change.
 pub(super) fn show_name_field(
     ui: &mut Ui,
     field: TextEdit<'_>,
@@ -231,7 +232,7 @@ pub(super) fn show_name_field(
     rect: Rect,
     margin: Margin,
     shown: &mut bool,
-) {
+) -> Response {
     let field = field
         .id(id)
         .text_color(theme::fg())
@@ -244,7 +245,12 @@ pub(super) fn show_name_field(
                 .corner_radius(2)
                 .inner_margin(margin),
         )
-        .desired_width(rect.width());
+        .desired_width(rect.width())
+        // Fill `rect` and centre the line in it, caret and hint included, as
+        // a single-line field does everywhere; egui lays text out from the
+        // top of the frame otherwise.
+        .min_size(rect.size())
+        .vertical_align(Align::Center);
     let mut output = field.show(&mut ui.new_child(UiBuilder::new().max_rect(rect)));
     if !*shown {
         *shown = true;
@@ -255,6 +261,7 @@ pub(super) fn show_name_field(
         output.state.store(ui.ctx(), id);
         output.response.request_focus();
     }
+    output.response.response
 }
 
 #[cfg(test)]

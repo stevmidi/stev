@@ -301,9 +301,9 @@ fn is_alt_typed(key: Key) -> bool {
 }
 
 /// One row of [`ACTIONS`]: everything the keymap and the Keyboard tab know
-/// about an action. The id, label and category are for the Keyboard tab
-/// and `settings.json` (`320` phases 2 and 3); until then only the tests
-/// read them.
+/// about an action. The label and category are the Keyboard tab's
+/// (`view/display/keyboard_tab.rs`); the id is for `settings.json` (`320`
+/// phase 3), and until then only the tests read it.
 pub(crate) struct ActionInfo {
     /// The action.
     pub(crate) action: Action,
@@ -311,10 +311,8 @@ pub(crate) struct ActionInfo {
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) id: &'static str,
     /// What the Keyboard tab calls it.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) label: &'static str,
     /// The Keyboard tab's group.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) category: &'static str,
     /// Where its chords are live.
     pub(crate) scope: Scope,

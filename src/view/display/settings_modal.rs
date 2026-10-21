@@ -1,7 +1,8 @@
 //! The settings modal (`⌘/Ctrl+,`), an overlay over the view: opening and
 //! closing it, its tab chords, the theme list's scroll window, its mouse,
-//! and applying a theme. The MIDI tab's own state is `midi_state.rs`; the
-//! keys inside a tab are `input/modal.rs`; drawing and the click hit-test
+//! and applying a theme. The MIDI tab's own state is `midi_state.rs`, the
+//! Keyboard tab's `keyboard_tab.rs`; the keys inside a tab are
+//! `input/modal.rs`; drawing and the click hit-test
 //! share one layout in `rendering/modals/settings.rs`. See
 //! `020-views-and-state.md` and `030-ui-design.md` § Settings modal.
 
@@ -13,6 +14,7 @@ use crate::core::settings::clamp_midi_out_offset_ms;
 use crate::view::theme;
 
 use super::browser::scroll_to_show;
+use super::keyboard_tab::{KeyboardTab, reset_keyboard_tab};
 use super::{Display, MidiSettingsFocus, Overlay, PortSide, SettingsTab};
 
 /// Theme rows the Appearance tab shows at once; the rest scroll.
@@ -26,9 +28,11 @@ pub(super) struct SettingsModal {
     pub(super) tab: SettingsTab,
     /// First visible row of the theme list.
     pub(super) theme_scroll: usize,
-    /// Wheel travel over the theme list not yet turned into whole rows, in
-    /// points.
+    /// Wheel travel over the theme list or the Keyboard tab's list not yet
+    /// turned into whole rows, in points.
     pub(super) wheel: f32,
+    /// The Keyboard tab's search, selection and scroll.
+    pub(super) keys: KeyboardTab,
 }
 
 /// What a click in the settings modal lands on.
@@ -43,6 +47,9 @@ pub(super) enum SettingsHit {
     Port(PortSide, usize),
     /// A theme, by index.
     Theme(usize),
+    /// A row of the Keyboard tab, counted among the rows the search
+    /// matches.
+    Shortcut(usize),
     /// Anywhere else inside the panel.
     Panel,
 }
@@ -81,10 +88,12 @@ pub(super) fn window_start(scroll: usize, len: usize, visible: usize) -> usize {
 impl Display {
     /// Opens the settings modal over the view on the tab last used:
     /// the MIDI focus back on IN PORT, each port list's cursor on its
-    /// connected port, the theme list scrolled to the active theme. The port
-    /// lists are already current — the `"midiwatcher"` keeps them so.
+    /// connected port, the theme list scrolled to the active theme, the
+    /// Keyboard tab's search empty. The port lists are already current — the
+    /// `"midiwatcher"` keeps them so.
     pub(super) fn open_settings(&mut self) {
         self.overlay = Some(Overlay::Settings);
+        reset_keyboard_tab(&mut self.settings.keys);
         self.midi.focus = MidiSettingsFocus::InPort;
         self.midi.input.select_current();
         self.midi.output.select_current();
@@ -170,15 +179,16 @@ impl Display {
                 }
             }
             SettingsHit::Theme(idx) => self.apply_theme(idx),
+            SettingsHit::Shortcut(row) => self.settings.keys.selection = row,
             SettingsHit::Panel => {}
         }
     }
 
     /// A wheel or trackpad scroll in the settings modal: scrolls the theme
-    /// list a row per row height of travel. The MIDI tab's lists follow
-    /// their cursors only.
+    /// list or the Keyboard tab's list a row per row height of travel. The
+    /// MIDI tab's lists follow their cursors only.
     pub(super) fn scroll_settings(&mut self, delta_y: f32) {
-        if self.settings.tab != SettingsTab::Appearance {
+        if self.settings.tab == SettingsTab::Midi {
             return;
         }
         let row_h = Self::SETTINGS_ROW_H;
@@ -190,6 +200,10 @@ impl Display {
         self.settings.wheel -= rows * row_h;
         // Content follows the fingers: a positive delta (scrolling up)
         // brings earlier rows into view.
+        if self.settings.tab == SettingsTab::Keyboard {
+            self.scroll_keyboard_list(-(rows as isize));
+            return;
+        }
         self.settings.theme_scroll = scroll_by(
             self.settings.theme_scroll,
             -(rows as isize),

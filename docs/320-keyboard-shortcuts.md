@@ -1,6 +1,6 @@
 # Keyboard Shortcuts as a Settings Tab, with Rebinding
 
-**Status: design agreed 2026-10-21; phase 1 (the keymap) built 2026-10-21 on `feature/keyboard-shortcuts-tab`, phases 2–3 not started.** The `280` candidate *Keyboard shortcuts as a settings tab, with rebinding* (user direction 2026-10-07). Today the bindings are inline `match` arms and the `?` help overlay is a hand-written copy of a subset of them. This doc moves the commands into one keymap, makes the settings modal show and rebind it, and retires the overlay. Read `010-keybindings.md` (the bindings and where each is matched) and `020-views-and-state.md` § Views (overlays, key focus) first.
+**Status: design agreed 2026-10-21; phase 1 (the keymap) built 2026-10-21 on `feature/keyboard-shortcuts-tab`; phase 2 (the read-only Keyboard tab, the overlay retired) built 2026-10-21 on `feature/keyboard-tab`; phase 3 not started.** The `280` candidate *Keyboard shortcuts as a settings tab, with rebinding* (user direction 2026-10-07). Today the bindings are inline `match` arms and the `?` help overlay is a hand-written copy of a subset of them. This doc moves the commands into one keymap, makes the settings modal show and rebind it, and retires the overlay. Read `010-keybindings.md` (the bindings and where each is matched) and `020-views-and-state.md` § Views (overlays, key focus) first.
 
 ## Decisions (2026-10-21)
 
@@ -68,6 +68,17 @@ What phase 1 settled that the design above left open:
 - **Exact matching retired some accidental chords** that matched before because an arm ignored modifiers: `⌘\`, `⇧Space`, `⌥M` (arranger mute), `⌘⌫` and `⇧Delete` (carve), `⌘Delete` in the clip view (delete notes) and the like now do nothing. `⌃` chords on macOS are their own chords too.
 - **The plugin-editor key guard has one path**: every reserved key goes on as a raw `KeyPressed` and is resolved where `Display` drains the input channel, which also handles `TogglePluginEditor` there (the old "toggle pending" flag is gone).
 - **The help overlay** still matches `?` and `⌘,` by hand (`key_taken_before_keymap`, ahead of the keymap), and its `HELP` table is unchanged.
+
+## As built (phase 2)
+
+- **`view/display/keyboard_tab.rs`** holds the tab: its state (`KeyboardTab`: the search, the selection counted among the matching rows, the scroll in lines), the rows (`shortcut_rows`: `ACTIONS` with their default chords, then `FIXED`), the search filter and the lines it shows (`shortcut_lines`, headings over each group's first match), the key labels (`key_label`, `chord_glyphs`) and `?` (`is_keyboard_tab_key`). The lines are rebuilt from the search where they are used, never stored. Drawing, the field and the hit-test are in `rendering/modals/settings.rs` (`keyboard_tab_layout`).
+- **The fixed rows are a hand-written table, `FIXED`**, in seven groups after the commands: Files & settings (`⌘S`, `⇧⌘S`, `⌘N`, `⌘,`, `?`), Navigation, Enter & Esc (including the take session's), Clipboard, Mouse, Browser and Computer keyboard. They are matched by hand where they are handled (decision 1), so nothing can generate them; `AGENTS.md` says to update a row when its key changes.
+- **The tab shows each action's `defaults`**, not the live keymap: the defaults are the only keymap until phase 3, which reads the chords from `Keymap` instead.
+- **The search field is the app's name field** (`show_name_field`, which now returns its `Response`), shown over the panel in the canvas `ui` and holding the egui focus while the tab is up, so typing always lands there; the modal's handler still sees every key, and acts only on `↑`/`↓`, Esc and the tab chords. A change to the text puts the selection and the scroll back at the top.
+- **`?` inside the modal** shows the Keyboard tab from the other tabs; on the Keyboard tab it is typing, for the search. Opening the modal, by either way in, starts a fresh search.
+- **A click on a row selects it** (`SettingsHit::Shortcut`); phase 3 makes a click on the chords record.
+- **Only a fixed row's keys are `fg_dim`**, not the whole row as the Layout bullet above has it: an all-dim row read like the dim group headings. The label keeps `fg`, and a heading sits at the foot of its line so the room above it starts the group.
+- **Not in phase 2**: the unbound red, the changed dot and the recorder (`Enter`, `⌫`, `⌘⌫`, Reset all) — they need overrides, phase 3.
 
 ## Phases
 

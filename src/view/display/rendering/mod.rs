@@ -2,7 +2,7 @@
 //! timeline + track headers), `clip_view.rs` (the piano roll), `piano_keys.rs`
 //! (the keyboard gutter), `timeline.rs` (the ruler / region strip),
 //! `overlays.rs` (cursor line, playhead, live-rec), `modals/` (the settings
-//! modal, the help overlay and the project dialogs), `browser.rs` (the browser
+//! modal and the project dialogs), `browser.rs` (the browser
 //! side panel). This file owns `render` — the per-frame entry — and the
 //! shared layout maths. See `030-ui-design.md`.
 
@@ -1391,13 +1391,13 @@ impl eframe::App for Display {
 
                 match self.overlay {
                     Some(Overlay::Settings) => self.draw_settings_view(painter, rect),
-                    Some(Overlay::Help) => self.draw_help_view(painter, rect),
                     #[cfg(target_os = "macos")]
                     Some(Overlay::RestoringInstruments) => {
                         self.draw_instrument_restore_view(painter, rect);
                     }
                     None => {}
                 }
+                self.show_keyboard_search(ui);
                 self.show_project_dialog(ui, rect);
             });
 
