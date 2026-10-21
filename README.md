@@ -14,7 +14,7 @@ anywhere, it can drive a DAW or external gear over MIDI.
 
 *A* stev *is a short Norwegian folk verse, traditionally improvised.*
 
-![Stev: six tracks of captured clips in the arranger, with the clip panel open on a bass line](docs/images/arranger.png)
+![Stev: six tracks of captured clips in the arranger, with the clip panel open on a mallet part](docs/images/arranger.png)
 
 > **Status:** 0.5.0, source releases only (no prebuilt app yet). Developed and
 > tested on macOS. Linux and Windows build in CI and may work (MIDI Out only, no
