@@ -1,6 +1,6 @@
 //! The settings modal (`⌘/Ctrl+,`), an overlay over the view: opening and
 //! closing it, its tab chords, the theme list's scroll window, its mouse,
-//! and applying a theme. The MIDI tab's own state is `midi_state.rs`, the
+//! and applying a theme. The MIDI tab's own state is `midi_tab.rs`, the
 //! Keyboard tab's `keyboard_tab.rs`; the keys inside a tab are
 //! `input/modal.rs`; drawing and the click hit-test
 //! share one layout in `rendering/modals/settings.rs`. See
@@ -15,6 +15,7 @@ use crate::view::theme;
 
 use super::browser::scroll_to_show;
 use super::keyboard_tab::{KeyboardTab, reset_keyboard_tab};
+use super::midi_tab::MidiTab;
 use super::{Display, MidiSettingsFocus, Overlay, PortSide, SettingsTab};
 
 /// Theme rows the Appearance tab shows at once; the rest scroll.
@@ -22,10 +23,13 @@ pub(super) const THEME_ROWS: usize = 14;
 
 /// The settings modal's view-local state. Session-only: it opens on the tab
 /// last used, MIDI after launch. Whether it is up is `Display::overlay`.
-#[derive(Default)]
 pub(super) struct SettingsModal {
     /// The tab showing.
     pub(super) tab: SettingsTab,
+    /// The MIDI tab — port lists, the row selections and focus,
+    /// connected-port badges, the output-offset mirror, and the reconnect
+    /// channel ends.
+    pub(super) midi: MidiTab,
     /// First visible row of the theme list.
     pub(super) theme_scroll: usize,
     /// Wheel travel over the theme list or the Keyboard tab's list not yet
@@ -33,6 +37,20 @@ pub(super) struct SettingsModal {
     pub(super) wheel: f32,
     /// The Keyboard tab's search, selection and scroll.
     pub(super) keys: KeyboardTab,
+}
+
+impl SettingsModal {
+    /// The modal as the app starts: on the MIDI tab, holding `midi`, every
+    /// list at its top.
+    pub(super) fn new(midi: MidiTab) -> Self {
+        SettingsModal {
+            tab: SettingsTab::default(),
+            midi,
+            theme_scroll: 0,
+            wheel: 0.0,
+            keys: KeyboardTab::default(),
+        }
+    }
 }
 
 /// What a click in the settings modal lands on.
@@ -94,9 +112,9 @@ impl Display {
     pub(super) fn open_settings(&mut self) {
         self.overlay = Some(Overlay::Settings);
         reset_keyboard_tab(&mut self.settings.keys);
-        self.midi.focus = MidiSettingsFocus::InPort;
-        self.midi.input.select_current();
-        self.midi.output.select_current();
+        self.settings.midi.focus = MidiSettingsFocus::InPort;
+        self.settings.midi.input.select_current();
+        self.settings.midi.output.select_current();
         self.settings.theme_scroll = scroll_to_show(
             self.settings.theme_scroll,
             theme::active_theme_index(),
@@ -131,12 +149,12 @@ impl Display {
     /// `config::MIDI_OUT_OFFSET_STEP_MS`, then has the sequencer apply and
     /// save it.
     pub(super) fn nudge_midi_out_offset(&mut self, steps: i32) {
-        self.midi.out_offset_ms = clamp_midi_out_offset_ms(
-            self.midi.out_offset_ms + steps * config::MIDI_OUT_OFFSET_STEP_MS,
+        self.settings.midi.out_offset_ms = clamp_midi_out_offset_ms(
+            self.settings.midi.out_offset_ms + steps * config::MIDI_OUT_OFFSET_STEP_MS,
         );
         self.input_event_tx
             .send(InputEvent::SetMidiOutOffset {
-                out_offset_ms: self.midi.out_offset_ms,
+                out_offset_ms: self.settings.midi.out_offset_ms,
             })
             .ok();
     }
@@ -145,14 +163,14 @@ impl Display {
     /// sequencer save both connected ports (Enter, or a double-click on a
     /// port). Nothing on the offset row, whose nudges already apply.
     pub(super) fn connect_focused_port(&mut self) {
-        let Some(side) = self.midi.focus.port_side() else {
+        let Some(side) = self.settings.midi.focus.port_side() else {
             return;
         };
-        self.midi.list_mut(side).connect();
+        self.settings.midi.list_mut(side).connect();
         self.input_event_tx
             .send(InputEvent::ConfirmMidiPorts {
-                in_port: self.midi.input.current_name(),
-                out_port: self.midi.output.current_name(),
+                in_port: self.settings.midi.input.current_name(),
+                out_port: self.settings.midi.output.current_name(),
             })
             .ok();
     }
@@ -170,10 +188,10 @@ impl Display {
         };
         match hit {
             SettingsHit::Tab(tab) => self.settings.tab = tab,
-            SettingsHit::Section(focus) => self.midi.focus = focus,
+            SettingsHit::Section(focus) => self.settings.midi.focus = focus,
             SettingsHit::Port(side, idx) => {
-                self.midi.focus = side.focus();
-                self.midi.list_mut(side).select(idx);
+                self.settings.midi.focus = side.focus();
+                self.settings.midi.list_mut(side).select(idx);
                 if double {
                     self.connect_focused_port();
                 }

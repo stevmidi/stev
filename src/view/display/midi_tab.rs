@@ -2,9 +2,10 @@
 //! (scanned ports, cursor, scroll window, connected port, reconnect channel
 //! end), which row has the focus, and the editable output-offset mirror.
 //!
-//! Grouped out of [`Display`](super::Display) as `Display::midi`; every method that drives it
-//! stays on `Display` and reaches in through `self.midi`. See
-//! `020-views-and-state.md` and `160-midi-out-offset.md`.
+//! Held by the settings modal as `SettingsModal::midi`, beside the Keyboard
+//! tab's state; every method that drives it stays on
+//! [`Display`](super::Display) and reaches in through `self.settings.midi`.
+//! See `020-views-and-state.md` and `160-midi-out-offset.md`.
 
 use crossbeam_channel::Sender;
 
@@ -104,8 +105,8 @@ impl PortList {
     }
 }
 
-/// The settings modal's MIDI tab state, grouped out of [`Display`](super::Display).
-pub(super) struct MidiSettingsState {
+/// The settings modal's MIDI tab state, held as `SettingsModal::midi`.
+pub(super) struct MidiTab {
     /// The input-port list.
     pub(super) input: PortList,
     /// The output-port list.
@@ -117,7 +118,7 @@ pub(super) struct MidiSettingsState {
     pub(super) out_offset_ms: i32,
 }
 
-impl MidiSettingsState {
+impl MidiTab {
     /// Builds the tab state with its reconnect channel ends, the ports
     /// already connected at startup, and the persisted output offset. The port
     /// lists start empty and fill from the first `MidiPortsRefreshed`.
@@ -128,7 +129,7 @@ impl MidiSettingsState {
         midi_out_current_port: Option<String>,
         out_offset_ms: i32,
     ) -> Self {
-        MidiSettingsState {
+        MidiTab {
             input: PortList::new(midi_in_reconnect_tx, midi_in_current_port),
             output: PortList::new(midi_out_reconnect_tx, midi_out_current_port),
             focus: MidiSettingsFocus::InPort,

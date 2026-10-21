@@ -26,10 +26,9 @@
 //!   the three subtrees above share: the pointer hover/drag/hit-test payloads
 //!   and the modal focus enums. Kept here, not under a renderer, because input,
 //!   rendering and the `UiEvent` drain all touch them.
-//! - `midi_state.rs` / `project_state.rs` / `gesture_state.rs` /
-//!   `render_state.rs` — concern-groups of `Display`'s fields folded into one
-//!   sub-struct each (`Display::midi`, `Display::project`, `Display::gesture`,
-//!   `Display::render`), the same shape as `instrument.rs`'s `InstrumentHost`: the driving
+//! - `project_state.rs` / `gesture_state.rs` / `render_state.rs` —
+//!   concern-groups of `Display`'s fields folded into one sub-struct each
+//!   (`Display::project`, `Display::gesture`, `Display::render`), the same shape as `instrument.rs`'s `InstrumentHost`: the driving
 //!   methods stay on `Display` and reach in through the matching `self.<group>`.
 //! - `status_message.rs` — the footer's passing message (`StatusMessage`).
 //! - `computer_keys.rs` — driving the computer keyboard (the letter keys
@@ -58,7 +57,7 @@ mod instrument;
 mod instrument_restore;
 mod keyboard_tab;
 mod meter_field;
-mod midi_state;
+mod midi_tab;
 mod modal_focus;
 mod output_menu;
 mod pane;
@@ -81,7 +80,7 @@ use self::input::DragPointer;
 #[cfg(target_os = "macos")]
 use self::instrument::InstrumentHost;
 use self::meter_field::MeterChip;
-use self::midi_state::MidiSettingsState;
+use self::midi_tab::MidiTab;
 use self::output_menu::OutputMenuHit;
 use self::pane::{
     KeyFocus, Pane, PaneRects, PanelSize, clip_event_tick_at, clip_pane_frame_value, pane_rects,
@@ -291,13 +290,9 @@ pub(crate) struct Display {
     /// The modal overlay that is up, if any — the one switch every "does an
     /// overlay own the input?" check reads.
     overlay: Option<Overlay>,
-    /// The settings modal: its tab, the theme list's scroll, the Keyboard
-    /// tab's search. See [`SettingsModal`].
+    /// The settings modal: its tab, the MIDI tab's port lists, the theme
+    /// list's scroll, the Keyboard tab's search. See [`SettingsModal`].
     settings: SettingsModal,
-    /// The settings modal's MIDI tab — port lists, the row selections and
-    /// focus, connected-port badges, the output-offset mirror, and the
-    /// reconnect channel ends. See [`MidiSettingsState`].
-    midi: MidiSettingsState,
 
     // --- Selection / gesture state ---
     /// The view-local selection and pointer-gesture state — the arranger time
@@ -466,15 +461,14 @@ impl Display {
             input_was_clip_view: false,
             performance_lane_selected: false,
             overlay: None,
-            settings: SettingsModal::default(),
-            tracks: TrackLane::defaults(),
-            midi: MidiSettingsState::new(
+            settings: SettingsModal::new(MidiTab::new(
                 midi_in_reconnect_tx,
                 midi_out_reconnect_tx,
                 midi_in_current_port,
                 midi_out_current_port,
                 midi_out_offset_ms,
-            ),
+            )),
+            tracks: TrackLane::defaults(),
             gesture: GestureState::default(),
             recording_clip_id: None,
             live_rec_state,

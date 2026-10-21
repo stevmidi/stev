@@ -10,7 +10,7 @@ use egui::{Id, Margin, Pos2, RichText, TextEdit, Ui};
 use crate::view::display::keyboard_tab::{
     ShortcutLine, ShortcutRow, line_of_row, row_count, row_of_line, shortcut_lines,
 };
-use crate::view::display::midi_state::{MidiSettingsState, PORT_ROWS, PortList};
+use crate::view::display::midi_tab::{MidiTab, PORT_ROWS, PortList};
 use crate::view::display::modal_focus::{PortSide, SettingsTab};
 use crate::view::display::settings_modal::{SettingsHit, THEME_ROWS, window_start};
 use crate::view::display::track_rename::show_name_field;
@@ -174,7 +174,7 @@ impl Display {
 
     /// The MIDI tab in `content` for `midi`'s port lists: the input section,
     /// the output section under it, then the offset. Pure geometry.
-    fn midi_tab_layout(content: Rect, midi: &MidiSettingsState) -> MidiTabLayout {
+    fn midi_tab_layout(content: Rect, midi: &MidiTab) -> MidiTabLayout {
         let mut top = content.min.y;
         let ports = PortSide::ALL.map(|side| {
             let list = midi.list(side);
@@ -241,12 +241,12 @@ impl Display {
         }
         let hit = match self.settings.tab {
             SettingsTab::Midi => {
-                let midi = Self::midi_tab_layout(layout.content, &self.midi);
+                let midi = Self::midi_tab_layout(layout.content, &self.settings.midi);
                 PortSide::ALL
                     .into_iter()
                     .zip(midi.ports)
                     .find_map(|(side, section)| {
-                        let start = self.midi.list(side).window_start();
+                        let start = self.settings.midi.list(side).window_start();
                         section
                             .rows
                             .hit(p)
@@ -416,12 +416,12 @@ impl Display {
     /// The MIDI tab: the input and output port lists and the output-offset
     /// row.
     fn draw_midi_tab(&self, painter: &Painter, content: Rect) {
-        let focus = self.midi.focus;
-        let layout = Self::midi_tab_layout(content, &self.midi);
+        let focus = self.settings.midi.focus;
+        let layout = Self::midi_tab_layout(content, &self.settings.midi);
         for (side, section) in PortSide::ALL.into_iter().zip(layout.ports) {
             let focused = focus == side.focus();
             Self::draw_settings_header(painter, section, side.label(), focused);
-            Self::draw_port_list(painter, section, self.midi.list(side), focused);
+            Self::draw_port_list(painter, section, self.settings.midi.list(side), focused);
         }
 
         // A number, not a list: ↑/↓ nudge it while focused, applied at once.
@@ -432,7 +432,7 @@ impl Display {
         Self::draw_settings_row(
             painter,
             row,
-            &format!("{} ms", self.midi.out_offset_ms),
+            &format!("{} ms", self.settings.midi.out_offset_ms),
             offset_focused,
             true,
             false,
@@ -584,7 +584,7 @@ mod tests {
     use egui::{Rect, pos2, vec2};
 
     use super::{Display, ListRows};
-    use crate::view::display::midi_state::{MidiSettingsState, PORT_ROWS};
+    use crate::view::display::midi_tab::{MidiTab, PORT_ROWS};
     use crate::view::display::settings_modal::THEME_ROWS;
 
     /// A canvas the size of a laptop window.
@@ -594,9 +594,9 @@ mod tests {
 
     /// MIDI tab state with `inputs` / `outputs` ports, the input connected
     /// to `in_current` and the output to nothing.
-    fn midi(inputs: usize, outputs: usize, in_current: Option<&str>) -> MidiSettingsState {
+    fn midi(inputs: usize, outputs: usize, in_current: Option<&str>) -> MidiTab {
         let names = |n: usize| (0..n).map(|i| format!("port {i}")).collect();
-        let mut midi = MidiSettingsState::new(
+        let mut midi = MidiTab::new(
             unbounded().0,
             unbounded().0,
             in_current.map(str::to_owned),

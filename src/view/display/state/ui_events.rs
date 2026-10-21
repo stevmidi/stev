@@ -225,8 +225,8 @@ impl Display {
                     in_ports,
                     out_ports,
                 } => {
-                    self.midi.input.set_ports(in_ports);
-                    self.midi.output.set_ports(out_ports);
+                    self.settings.midi.input.set_ports(in_ports);
+                    self.settings.midi.output.set_ports(out_ports);
                 }
                 UiEvent::TracksChanged { tracks, shift } => {
                     self.tracks = tracks;

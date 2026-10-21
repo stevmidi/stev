@@ -50,7 +50,7 @@ impl Display {
     fn handle_midi_tab_key(&mut self, key: Key) {
         let step = match key {
             Key::Tab | Key::ArrowLeft | Key::ArrowRight => {
-                self.midi.focus = self.midi.focus.next();
+                self.settings.midi.focus = self.settings.midi.focus.next();
                 return;
             }
             Key::Enter => {
@@ -61,8 +61,8 @@ impl Display {
             Key::ArrowDown => 1,
             _ => return,
         };
-        match self.midi.focus.port_side() {
-            Some(side) => self.midi.list_mut(side).move_selection(step),
+        match self.settings.midi.focus.port_side() {
+            Some(side) => self.settings.midi.list_mut(side).move_selection(step),
             // Up raises the offset.
             None => self.nudge_midi_out_offset(-step as i32),
         }
