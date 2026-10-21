@@ -175,12 +175,12 @@ impl Display {
         let Some(rename) = self.browser.rename.as_mut() else {
             return;
         };
-        let field = TextEdit::singleline(&mut rename.text)
-            .char_limit(PROJECT_NAME_MAX_CHARS)
-            .font(FontId::proportional(BROWSER_FONT_SIZE));
+        let field = TextEdit::singleline(&mut rename.text).char_limit(PROJECT_NAME_MAX_CHARS);
         show_name_field(
             &mut ui.new_child(UiBuilder::new().layer_id(Self::browser_layer())),
             field,
+            FontId::proportional(BROWSER_FONT_SIZE),
+            None,
             Id::new("browser-rename"),
             rect,
             Margin::symmetric(3, 0),

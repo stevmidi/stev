@@ -12,7 +12,9 @@
 //! shared with the header's BPM field).
 
 use egui::text_selection::CCursorRange;
-use egui::{Align, FontId, Frame, Id, Key, Margin, Rect, Response, TextEdit, Ui, UiBuilder, pos2};
+use egui::{
+    Align, FontId, Frame, Id, Key, Margin, Rect, Response, RichText, TextEdit, Ui, UiBuilder, pos2,
+};
 
 use crate::core::config::TRACK_NAME_MAX_CHARS;
 use crate::core::input_event::InputEvent;
@@ -204,13 +206,12 @@ impl Display {
         let Some(rename) = self.track_rename.as_mut() else {
             return;
         };
-        let field = TextEdit::singleline(&mut rename.text)
-            .char_limit(TRACK_NAME_MAX_CHARS)
-            .font(FontId::proportional(TRACK_NAME_FONT_SIZE))
-            .hint_text(track_number_label(track_idx));
+        let field = TextEdit::singleline(&mut rename.text).char_limit(TRACK_NAME_MAX_CHARS);
         show_name_field(
             ui,
             field,
+            FontId::proportional(TRACK_NAME_FONT_SIZE),
+            Some(&track_number_label(track_idx)),
             Id::new("track-rename"),
             rect,
             Margin::symmetric(3, 0),
@@ -219,22 +220,32 @@ impl Display {
     }
 }
 
-/// Shows `field` as the app's name fields look — `fg` text on a `bg` fill in
-/// the focus-edge stroke, inset by `margin` — filling `rect` of the canvas
-/// `ui`, its line centred vertically. Its first frame (`*shown` false) takes
-/// the egui focus and selects the whole text. The track rename field, Save As's
-/// (`rendering/modals/project_dialog.rs`) and the Keyboard tab's search use
-/// it; the search reads the returned response for a change.
+/// Shows `field` as every text field in the app looks — `fg` text in
+/// `font` on a `bg` fill in the focus-edge stroke, inset by `margin` —
+/// filling `rect` of the canvas `ui`, its line centred vertically, with
+/// `hint` in the same font while it is empty. Its first frame (`*shown`
+/// false) takes the egui focus and selects the whole text. Returns the
+/// field's response, for a caller that watches it change.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn show_name_field(
     ui: &mut Ui,
     field: TextEdit<'_>,
+    font: FontId,
+    hint: Option<&str>,
     id: Id,
     rect: Rect,
     margin: Margin,
     shown: &mut bool,
 ) -> Response {
+    // The hint in the field's font: egui draws a hint in its default font
+    // otherwise, and places the empty field's caret against it.
+    let field = match hint {
+        Some(hint) => field.hint_text(RichText::new(hint).font(font.clone())),
+        None => field,
+    };
     let field = field
         .id(id)
+        .font(font)
         .text_color(theme::fg())
         // A custom frame replaces `TextEdit::margin`: the inset lives on the
         // frame.

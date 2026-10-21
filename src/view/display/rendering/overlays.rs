@@ -222,11 +222,7 @@ impl Display {
             Align2::CENTER_CENTER,
             "?",
             value_font,
-            toggle_icon_color(
-                self.overlay == Some(Overlay::Settings)
-                    && self.settings.tab == SettingsTab::Keyboard,
-                self.is_pointer_on_help_chip(),
-            ),
+            toggle_icon_color(self.keyboard_tab_showing(), self.is_pointer_on_help_chip()),
         );
 
         self.draw_keyboard_chip(painter, rect);

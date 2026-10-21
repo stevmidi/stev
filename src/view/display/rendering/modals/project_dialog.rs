@@ -137,12 +137,12 @@ impl Display {
             ),
             vec2(layout.body.width(), Self::FIELD_H),
         );
-        let field = TextEdit::singleline(&mut save_as.text)
-            .char_limit(PROJECT_NAME_MAX_CHARS)
-            .font(FontId::proportional(Self::FONT_LIST));
+        let field = TextEdit::singleline(&mut save_as.text).char_limit(PROJECT_NAME_MAX_CHARS);
         show_name_field(
             ui,
             field,
+            FontId::proportional(Self::FONT_LIST),
+            None,
             Id::new("project-save-as"),
             field_rect,
             Margin::symmetric(6, 2),

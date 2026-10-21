@@ -14,7 +14,7 @@ use crate::core::settings::clamp_midi_out_offset_ms;
 use crate::view::theme;
 
 use super::browser::scroll_to_show;
-use super::keyboard_tab::{KeyboardTab, reset_keyboard_tab};
+use super::keyboard_tab::KeyboardTab;
 use super::midi_tab::MidiTab;
 use super::{Display, MidiSettingsFocus, Overlay, PortSide, SettingsTab};
 
@@ -111,7 +111,7 @@ impl Display {
     /// `"midiwatcher"` keeps them so.
     pub(super) fn open_settings(&mut self) {
         self.overlay = Some(Overlay::Settings);
-        reset_keyboard_tab(&mut self.settings.keys);
+        self.settings.keys = KeyboardTab::default();
         self.settings.midi.focus = MidiSettingsFocus::InPort;
         self.settings.midi.input.select_current();
         self.settings.midi.output.select_current();
@@ -218,16 +218,22 @@ impl Display {
         self.settings.wheel -= rows * row_h;
         // Content follows the fingers: a positive delta (scrolling up)
         // brings earlier rows into view.
-        if self.settings.tab == SettingsTab::Keyboard {
-            self.scroll_keyboard_list(-(rows as isize));
-            return;
+        let rows = -(rows as isize);
+        match self.settings.tab {
+            SettingsTab::Midi => {}
+            SettingsTab::Appearance => {
+                self.settings.theme_scroll = scroll_by(
+                    self.settings.theme_scroll,
+                    rows,
+                    theme::theme_count(),
+                    THEME_ROWS,
+                );
+            }
+            SettingsTab::Keyboard => {
+                let visible = self.keyboard_visible_lines();
+                self.settings.keys.scroll(rows, visible);
+            }
         }
-        self.settings.theme_scroll = scroll_by(
-            self.settings.theme_scroll,
-            -(rows as isize),
-            theme::theme_count(),
-            THEME_ROWS,
-        );
     }
 }
 

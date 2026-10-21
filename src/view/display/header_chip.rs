@@ -57,12 +57,12 @@ pub(super) fn show_header_field(
     let Some(rects) = rects else {
         return;
     };
-    let edit = TextEdit::singleline(&mut field.text)
-        .char_limit(FIELD_MAX_CHARS)
-        .font(font);
+    let edit = TextEdit::singleline(&mut field.text).char_limit(FIELD_MAX_CHARS);
     show_name_field(
         ui,
         edit,
+        font,
+        None,
         Id::new(id),
         rects.value,
         Margin::symmetric(4, 0),

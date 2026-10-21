@@ -16,30 +16,72 @@ use egui::Key;
 use crate::core::input_event::KeyModifiers;
 use crate::core::keymap::{ACTIONS, Chord};
 
-use super::Display;
 use super::browser::scroll_to_show;
 use super::modal_focus::SettingsTab;
 use super::settings_modal::{scroll_by, window_start};
+use super::{Display, Overlay};
 
 /// The Keyboard tab's view-local state. Session-only; a fresh search each
-/// time the modal opens.
+/// time the modal opens (the default).
 #[derive(Default)]
 pub(super) struct KeyboardTab {
     /// The search field's text.
     pub(super) search: String,
-    /// The selected row, counted among the rows the search matches.
+    /// The selected row, counted among the rows the search matches — always
+    /// one of them, since a change to the search puts it back at 0.
     pub(super) selection: usize,
     /// The first visible line of the list (headers count).
     pub(super) scroll: usize,
-    /// Whether the search field has shown since the modal opened: its first
-    /// frame selects the text.
-    pub(super) field_shown: bool,
 }
 
-/// `keys` as the modal opens: no search, the first row selected, the list
-/// at the top, the field due to select its text again.
-pub(super) fn reset_keyboard_tab(keys: &mut KeyboardTab) {
-    *keys = KeyboardTab::default();
+impl KeyboardTab {
+    /// The tab's keys, with the list showing `visible` lines: ↑/↓ move the
+    /// selection through the rows the search matches, scrolling to keep it
+    /// in view, and Esc clears a non-empty search. Returns whether it took
+    /// the key — on this tab `?` too, which is typing; every other key is
+    /// left to the modal and the search field.
+    pub(super) fn handle_key(&mut self, key: Key, visible: usize) -> bool {
+        let step = match key {
+            Key::ArrowUp => -1,
+            Key::ArrowDown => 1,
+            Key::Escape => return self.clear_search(),
+            Key::Questionmark => return true,
+            _ => return false,
+        };
+        let lines = shortcut_lines(&self.search);
+        let rows = row_lines(&lines);
+        let Some(last) = rows.len().checked_sub(1) else {
+            return true;
+        };
+        self.selection = self.selection.saturating_add_signed(step).min(last);
+        let scroll = window_start(self.scroll, lines.len(), visible);
+        self.scroll = scroll_to_show_line(scroll, rows[self.selection], &lines, visible);
+        true
+    }
+
+    /// Clears a non-empty search, back to the tab as it opens; returns
+    /// whether there was one to clear.
+    fn clear_search(&mut self) -> bool {
+        if self.search.is_empty() {
+            return false;
+        }
+        *self = KeyboardTab::default();
+        true
+    }
+
+    /// The selection and the scroll back at the top — when the search
+    /// changes what the list holds.
+    pub(super) fn reset_list(&mut self) {
+        self.selection = 0;
+        self.scroll = 0;
+    }
+
+    /// A wheel scroll: `rows` lines down (up when negative), kept inside a
+    /// list showing `visible` lines.
+    pub(super) fn scroll(&mut self, rows: isize, visible: usize) {
+        let len = shortcut_lines(&self.search).len();
+        self.scroll = scroll_by(self.scroll, rows, len, visible);
+    }
 }
 
 /// One row of the tab: a label and the keys that do it.
@@ -237,23 +279,24 @@ fn shortcut_rows() -> Vec<ShortcutRow> {
     commands.chain(fixed).collect()
 }
 
-/// Whether `row` matches the search `query`: a case-blind substring of its
-/// label or of its keys (so "cmd+l" finds Set loop, and so does "loop").
+/// Whether `row` matches `query`, already trimmed and lowercased: a
+/// substring of its label or of its keys, case-blind (so "cmd+l" finds Set
+/// loop, and so does "loop").
 fn row_matches(row: &ShortcutRow, query: &str) -> bool {
-    let query = query.trim().to_lowercase();
     query.is_empty()
-        || row.label.to_lowercase().contains(&query)
-        || row.keys.to_lowercase().contains(&query)
+        || row.label.to_lowercase().contains(query)
+        || row.keys.to_lowercase().contains(query)
 }
 
-/// The list the tab shows for `query`: the matching rows, each group's
-/// heading over its first match. Empty when nothing matches.
+/// The list the tab shows for the search `query`: the matching rows, each
+/// group's heading over its first match. Empty when nothing matches.
 pub(super) fn shortcut_lines(query: &str) -> Vec<ShortcutLine> {
+    let query = query.trim().to_lowercase();
     let mut lines = Vec::new();
     let mut category = None;
     for row in shortcut_rows()
         .into_iter()
-        .filter(|row| row_matches(row, query))
+        .filter(|row| row_matches(row, &query))
     {
         if category != Some(row.category) {
             category = Some(row.category);
@@ -264,28 +307,14 @@ pub(super) fn shortcut_lines(query: &str) -> Vec<ShortcutLine> {
     lines
 }
 
-/// How many rows `lines` holds (its headers aside).
-pub(super) fn row_count(lines: &[ShortcutLine]) -> usize {
-    lines
-        .iter()
-        .filter(|line| matches!(line, ShortcutLine::Row(_)))
-        .count()
-}
-
-/// The line `lines` shows row `row` on, if there is such a row.
-pub(super) fn line_of_row(lines: &[ShortcutLine], row: usize) -> Option<usize> {
+/// The line each row of `lines` is on, in order — row `i` is on line
+/// `row_lines(lines)[i]`, and a line is a row where it is found here.
+pub(super) fn row_lines(lines: &[ShortcutLine]) -> Vec<usize> {
     lines
         .iter()
         .enumerate()
-        .filter(|(_, line)| matches!(line, ShortcutLine::Row(_)))
-        .nth(row)
-        .map(|(i, _)| i)
-}
-
-/// The row line `line` of `lines` is, counted among the rows — `None` on a
-/// heading or past the end.
-pub(super) fn row_of_line(lines: &[ShortcutLine], line: usize) -> Option<usize> {
-    matches!(lines.get(line)?, ShortcutLine::Row(_)).then(|| row_count(&lines[..line]))
+        .filter_map(|(i, line)| matches!(line, ShortcutLine::Row(_)).then_some(i))
+        .collect()
 }
 
 /// `scroll` moved just enough that a `visible`-line window shows the row on
@@ -312,57 +341,9 @@ impl Display {
         self.settings.tab = SettingsTab::Keyboard;
     }
 
-    /// The Keyboard tab's keys: ↑/↓ move the selection through the rows the
-    /// search matches, scrolling to keep it in view. Every other key is the
-    /// search field's.
-    pub(super) fn handle_keyboard_tab_key(&mut self, key: Key) {
-        let step: isize = match key {
-            Key::ArrowUp => -1,
-            Key::ArrowDown => 1,
-            _ => return,
-        };
-        let lines = shortcut_lines(&self.settings.keys.search);
-        let count = row_count(&lines);
-        if count == 0 {
-            return;
-        }
-        let keys = &mut self.settings.keys;
-        keys.selection = keys
-            .selection
-            .min(count - 1)
-            .saturating_add_signed(step)
-            .min(count - 1);
-        if let Some(line) = line_of_row(&lines, keys.selection) {
-            let visible = Self::keyboard_visible_lines();
-            let scroll = window_start(keys.scroll, lines.len(), visible);
-            keys.scroll = scroll_to_show_line(scroll, line, &lines, visible);
-        }
-    }
-
-    /// Esc on the Keyboard tab: clears a non-empty search and returns
-    /// `true`; `false` when there is none, and Esc closes the modal.
-    pub(super) fn clear_keyboard_search(&mut self) -> bool {
-        if self.settings.keys.search.is_empty() {
-            return false;
-        }
-        self.reset_keyboard_list();
-        self.settings.keys.search.clear();
-        true
-    }
-
-    /// The selection and the scroll back at the top — when the search
-    /// changes what the list holds.
-    pub(super) fn reset_keyboard_list(&mut self) {
-        self.settings.keys.selection = 0;
-        self.settings.keys.scroll = 0;
-    }
-
-    /// A wheel scroll over the Keyboard tab: `rows` lines down (up when
-    /// negative), kept inside the list.
-    pub(super) fn scroll_keyboard_list(&mut self, rows: isize) {
-        let len = shortcut_lines(&self.settings.keys.search).len();
-        let keys = &mut self.settings.keys;
-        keys.scroll = scroll_by(keys.scroll, rows, len, Self::keyboard_visible_lines());
+    /// Whether the settings modal is up on its Keyboard tab.
+    pub(super) fn keyboard_tab_showing(&self) -> bool {
+        self.overlay == Some(Overlay::Settings) && self.settings.tab == SettingsTab::Keyboard
     }
 }
 
@@ -373,8 +354,8 @@ mod tests {
     use egui::Key;
 
     use super::{
-        FIXED, ShortcutLine, chord_glyphs, is_keyboard_tab_key, key_label_for, line_of_row,
-        row_count, row_of_line, scroll_to_show_line, shortcut_lines, shortcut_rows,
+        FIXED, KeyboardTab, ShortcutLine, chord_glyphs, is_keyboard_tab_key, key_label_for,
+        row_lines, scroll_to_show_line, shortcut_lines, shortcut_rows,
     };
     use crate::core::input_event::KeyModifiers;
     use crate::core::keymap::{ACTIONS, Chord};
@@ -515,7 +496,7 @@ mod tests {
     #[test]
     fn an_empty_search_lists_everything_under_its_headings() {
         let lines = shortcut_lines("");
-        assert_eq!(row_count(&lines), shortcut_rows().len());
+        assert_eq!(row_lines(&lines).len(), shortcut_rows().len());
         assert_eq!(
             lines[0],
             ShortcutLine::Header(ACTIONS[0].category),
@@ -552,15 +533,57 @@ mod tests {
     }
 
     #[test]
-    fn rows_and_lines_convert_both_ways() {
+    fn row_lines_skip_the_headings() {
         let lines = shortcut_lines("");
-        for row in 0..row_count(&lines) {
-            let line = line_of_row(&lines, row).unwrap();
-            assert_eq!(row_of_line(&lines, line), Some(row));
+        let rows = row_lines(&lines);
+        assert_eq!(rows[0], 1, "the first heading is no row");
+        for &line in &rows {
+            assert!(matches!(lines[line], ShortcutLine::Row(_)));
         }
-        assert_eq!(row_of_line(&lines, 0), None, "a heading is no row");
-        assert_eq!(line_of_row(&lines, row_count(&lines)), None);
-        assert_eq!(row_of_line(&lines, lines.len()), None);
+    }
+
+    #[test]
+    fn the_arrows_move_the_selection_and_stop_at_the_ends() {
+        let mut tab = KeyboardTab::default();
+        assert!(tab.handle_key(Key::ArrowUp, 10));
+        assert_eq!(tab.selection, 0);
+        assert!(tab.handle_key(Key::ArrowDown, 10));
+        assert_eq!(tab.selection, 1);
+        let count = row_lines(&shortcut_lines("")).len();
+        for _ in 0..count + 5 {
+            tab.handle_key(Key::ArrowDown, 10);
+        }
+        assert_eq!(tab.selection, count - 1);
+        // The last row is in the window.
+        let lines = shortcut_lines("");
+        assert!(tab.scroll + 10 > row_lines(&lines)[count - 1]);
+        // Nothing matched: the arrows are still the tab's, and do nothing.
+        tab.search = "no such shortcut".into();
+        tab.reset_list();
+        assert!(tab.handle_key(Key::ArrowDown, 10));
+        assert_eq!(tab.selection, 0);
+    }
+
+    #[test]
+    fn escape_clears_a_search_before_it_closes_the_modal() {
+        let mut tab = KeyboardTab {
+            search: "loop".into(),
+            selection: 1,
+            scroll: 2,
+        };
+        assert!(tab.handle_key(Key::Escape, 10));
+        assert!(tab.search.is_empty());
+        assert_eq!((tab.selection, tab.scroll), (0, 0));
+        // No search left: Esc is the modal's.
+        assert!(!tab.handle_key(Key::Escape, 10));
+    }
+
+    #[test]
+    fn a_question_mark_is_typing_and_other_keys_are_the_modals() {
+        let mut tab = KeyboardTab::default();
+        assert!(tab.handle_key(Key::Questionmark, 10));
+        assert!(!tab.handle_key(Key::Enter, 10));
+        assert!(!tab.handle_key(Key::A, 10));
     }
 
     #[test]

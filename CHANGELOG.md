@@ -41,6 +41,13 @@ Breaking entries are marked **Breaking** and say what to do about them.
 - **`⇧F5` / `⇧F6` no longer step the colour theme.** Pick it in Settings →
   Appearance (`⌘,`).
 
+### Fixed
+
+- **Text fields centre their text and caret**, and a field's hint (the
+  track number in an unnamed track's rename field) is drawn in the field's
+  own font, so an empty field's caret sits where a typed one does. Save As's
+  name field is taller, so its caret no longer touches the field's edges.
+
 ## [0.4.0] - 2026-10-20
 
 ### Added

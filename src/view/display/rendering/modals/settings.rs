@@ -5,11 +5,9 @@
 //! `keyboard_tab.rs`). The layout is shared with the click hit-test
 //! ([`settings_hit_at`](Display::settings_hit_at)), so the two can't drift.
 
-use egui::{Id, Margin, Pos2, RichText, TextEdit, Ui};
+use egui::{Id, Margin, Pos2, TextEdit, Ui};
 
-use crate::view::display::keyboard_tab::{
-    ShortcutLine, ShortcutRow, line_of_row, row_count, row_of_line, shortcut_lines,
-};
+use crate::view::display::keyboard_tab::{ShortcutLine, ShortcutRow, row_lines, shortcut_lines};
 use crate::view::display::midi_tab::{MidiTab, PORT_ROWS, PortList};
 use crate::view::display::modal_focus::{PortSide, SettingsTab};
 use crate::view::display::settings_modal::{SettingsHit, THEME_ROWS, window_start};
@@ -215,14 +213,15 @@ impl Display {
         }
     }
 
+    /// The Keyboard tab on the canvas, as drawn and hit-tested.
+    fn keyboard_tab_on_canvas(&self) -> KeyboardTabLayout {
+        Self::keyboard_tab_layout(Self::settings_layout(self.render.canvas_rect).content)
+    }
+
     /// How many lines the Keyboard tab's list shows at once — the window its
     /// selection and wheel keep the scroll inside.
-    pub(in crate::view::display) fn keyboard_visible_lines() -> usize {
-        // The content's height is fixed, so any canvas gives the same count.
-        let canvas = Rect::from_min_size(Pos2::ZERO, vec2(4096.0, 4096.0));
-        Self::keyboard_tab_layout(Self::settings_layout(canvas).content)
-            .lines
-            .count
+    pub(in crate::view::display) fn keyboard_visible_lines(&self) -> usize {
+        self.keyboard_tab_on_canvas().lines.count
     }
 
     /// What canvas point `p` is on in the settings panel — `None` outside
@@ -274,9 +273,10 @@ impl Display {
                 let window = Self::keyboard_tab_layout(layout.content).lines;
                 let lines = shortcut_lines(&self.settings.keys.search);
                 let start = window_start(self.settings.keys.scroll, lines.len(), window.count);
-                window
-                    .hit(p)
-                    .and_then(|i| row_of_line(&lines, start + i))
+                let line = window.hit(p)? + start;
+                row_lines(&lines)
+                    .binary_search(&line)
+                    .ok()
                     .map(SettingsHit::Shortcut)
             }
         };
@@ -344,6 +344,17 @@ impl Display {
         );
     }
 
+    /// Paints the cursor row's tint over `row`: accent while its list has
+    /// the focus, a faint `fg_dim` otherwise.
+    fn draw_settings_cursor(painter: &Painter, row: Rect, is_focused: bool) {
+        let tint = if is_focused {
+            theme::accent().gamma_multiply(0.15)
+        } else {
+            theme::fg_dim().gamma_multiply(0.08)
+        };
+        painter.rect_filled(row, CornerRadius::ZERO, tint);
+    }
+
     /// Paints one list row: the cursor's tint (accent when its list has the
     /// focus), the connected / active bar along its left edge, and `text`.
     fn draw_settings_row(
@@ -355,12 +366,7 @@ impl Display {
         is_active: bool,
     ) {
         if is_cursor {
-            let tint = if is_focused {
-                theme::accent().gamma_multiply(0.15)
-            } else {
-                theme::fg_dim().gamma_multiply(0.08)
-            };
-            painter.rect_filled(row, CornerRadius::ZERO, tint);
+            Self::draw_settings_cursor(painter, row, is_focused);
         }
         if is_active {
             painter.vline(
@@ -485,10 +491,7 @@ impl Display {
             );
             return;
         }
-        let selected = line_of_row(
-            &lines,
-            self.settings.keys.selection.min(row_count(&lines) - 1),
-        );
+        let selected = row_lines(&lines).get(self.settings.keys.selection).copied();
         let start = window_start(self.settings.keys.scroll, lines.len(), window.count);
         for (i, line) in lines.iter().enumerate().skip(start).take(window.count) {
             let rect = window.row(i - start);
@@ -518,11 +521,7 @@ impl Display {
     /// label stays as legible as any.
     fn draw_shortcut_row(painter: &Painter, rect: Rect, row: &ShortcutRow, is_selected: bool) {
         if is_selected {
-            painter.rect_filled(
-                rect,
-                CornerRadius::ZERO,
-                theme::accent().gamma_multiply(0.15),
-            );
+            Self::draw_settings_cursor(painter, rect, true);
         }
         let color = accent_if(is_selected, theme::fg());
         let keys_color = if row.fixed { theme::fg_dim() } else { color };
@@ -549,31 +548,28 @@ impl Display {
     /// and a change to its text puts the selection and the list back at the
     /// top.
     pub(in crate::view::display) fn show_keyboard_search(&mut self, ui: &mut Ui) {
-        if self.overlay != Some(Overlay::Settings) || self.settings.tab != SettingsTab::Keyboard {
+        if !self.keyboard_tab_showing() {
             return;
         }
-        let rect =
-            Self::keyboard_tab_layout(Self::settings_layout(self.render.canvas_rect).content).field;
+        let rect = self.keyboard_tab_on_canvas().field;
         let keys = &mut self.settings.keys;
-        let font = FontId::proportional(Self::FONT_LIST);
-        // The hint in the field's font: egui draws it in the default one
-        // otherwise, and places the empty field's caret against it.
-        let field = TextEdit::singleline(&mut keys.search)
-            .font(font.clone())
-            .hint_text(RichText::new("Search").font(font));
+        // Always "shown": the search opens empty, so there is no text to
+        // select, and the focus is asked for below on every frame.
         let response = show_name_field(
             ui,
-            field,
+            TextEdit::singleline(&mut keys.search),
+            FontId::proportional(Self::FONT_LIST),
+            Some("Search"),
             Id::new("keyboard-search"),
             rect,
             Margin::symmetric(6, 2),
-            &mut keys.field_shown,
+            &mut true,
         );
         if !response.has_focus() {
             response.request_focus();
         }
         if response.changed() {
-            self.reset_keyboard_list();
+            keys.reset_list();
         }
     }
 }
@@ -665,7 +661,6 @@ mod tests {
         assert!(layout.lines.first.min.y > layout.field.max.y);
         assert!(layout.lines.count >= 10);
         assert!(layout.lines.row(layout.lines.count - 1).max.y <= content.max.y + 0.01);
-        assert_eq!(Display::keyboard_visible_lines(), layout.lines.count);
     }
 
     #[test]
