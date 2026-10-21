@@ -19,8 +19,8 @@ use crate::core::time::{
 };
 
 use super::Display;
-use super::header_chip::{HeaderChipRects, HeaderTextField, show_header_field};
-use super::track_rename::{FieldEvent, field_event};
+use super::header_chip::{HeaderChipRects, show_header_field};
+use super::text_field::{FieldEvent, TextField, field_event};
 
 /// Vertical pixels of drag per tempo step.
 const DRAG_PX_PER_STEP: f32 = 3.0;
@@ -57,7 +57,7 @@ pub(super) struct TempoChip {
     /// The drag in progress.
     drag: Option<TempoDrag>,
     /// The open field.
-    field: Option<HeaderTextField>,
+    field: Option<TextField>,
 }
 
 impl TempoChip {
@@ -177,7 +177,7 @@ impl Display {
     pub(super) fn open_tempo_field(&mut self) {
         self.tempo_chip.drag = None;
         self.close_output_menu();
-        self.tempo_chip.field = Some(HeaderTextField::new(format_bpm(self.tempo_us())));
+        self.tempo_chip.field = Some(TextField::new(format_bpm(self.tempo_us())));
     }
 
     /// Closes the field, setting the tempo to what was typed. Nothing when it
@@ -200,7 +200,7 @@ impl Display {
     }
 
     /// While the field is open it gets first look at every event, by the
-    /// track rename field's rule ([`field_event`]). Returns whether the
+    /// inline text fields' rule ([`field_event`]). Returns whether the
     /// event was consumed.
     pub(super) fn handle_tempo_field_input_event(&mut self, event: &InputEvent) -> bool {
         if !self.tempo_chip.editing() {

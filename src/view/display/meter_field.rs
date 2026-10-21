@@ -11,8 +11,8 @@ use crate::core::input_event::InputEvent;
 use crate::core::time::Meter;
 
 use super::Display;
-use super::header_chip::{HeaderChipRects, HeaderTextField, show_header_field};
-use super::track_rename::{FieldEvent, field_event};
+use super::header_chip::{HeaderChipRects, show_header_field};
+use super::text_field::{FieldEvent, TextField, field_event};
 
 /// The meter chip's state: where it is and the open field.
 #[derive(Default)]
@@ -20,7 +20,7 @@ pub(super) struct MeterChip {
     /// Where it was painted last frame; `None` before the first frame.
     pub(super) rects: Option<HeaderChipRects>,
     /// The open field.
-    field: Option<HeaderTextField>,
+    field: Option<TextField>,
 }
 
 impl MeterChip {
@@ -40,7 +40,7 @@ impl Display {
     /// in it selected.
     pub(super) fn open_meter_field(&mut self) {
         self.close_output_menu();
-        self.meter_chip.field = Some(HeaderTextField::new(self.meter().to_string()));
+        self.meter_chip.field = Some(TextField::new(self.meter().to_string()));
     }
 
     /// The meter the open field's text means, if it is one.
@@ -60,7 +60,7 @@ impl Display {
     }
 
     /// While the field is open it gets first look at every event, by the
-    /// track rename field's rule ([`field_event`]). Returns whether the
+    /// inline text fields' rule ([`field_event`]). Returns whether the
     /// event was consumed.
     pub(super) fn handle_meter_field_input_event(&mut self, event: &InputEvent) -> bool {
         if !self.meter_chip.editing() {

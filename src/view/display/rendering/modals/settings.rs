@@ -5,13 +5,13 @@
 //! `keyboard_tab.rs`). The layout is shared with the click hit-test
 //! ([`settings_hit_at`](Display::settings_hit_at)), so the two can't drift.
 
-use egui::{Id, Margin, Pos2, TextEdit, Ui};
+use egui::{Id, Pos2, Ui};
 
 use crate::view::display::keyboard_tab::{ShortcutLine, ShortcutRow, row_lines, shortcut_lines};
 use crate::view::display::midi_tab::{MidiTab, PORT_ROWS, PortList};
 use crate::view::display::modal_focus::{PortSide, SettingsTab};
 use crate::view::display::settings_modal::{SettingsHit, THEME_ROWS, window_start};
-use crate::view::display::track_rename::show_name_field;
+use crate::view::display::text_field::{FieldStyle, MODAL_MARGIN};
 
 use super::*;
 
@@ -271,7 +271,7 @@ impl Display {
             }),
             SettingsTab::Keyboard => {
                 let window = Self::keyboard_tab_layout(layout.content).lines;
-                let lines = shortcut_lines(&self.settings.keys.search);
+                let lines = shortcut_lines(&self.settings.keys.search.text);
                 let start = window_start(self.settings.keys.scroll, lines.len(), window.count);
                 let line = window.hit(p)? + start;
                 row_lines(&lines)
@@ -479,7 +479,7 @@ impl Display {
     /// starts the group.
     fn draw_keyboard_tab(&self, painter: &Painter, content: Rect) {
         let window = Self::keyboard_tab_layout(content).lines;
-        let lines = shortcut_lines(&self.settings.keys.search);
+        let lines = shortcut_lines(&self.settings.keys.search.text);
         if lines.is_empty() {
             let row = window.row(0);
             Self::draw_settings_text(
@@ -553,18 +553,11 @@ impl Display {
         }
         let rect = self.keyboard_tab_on_canvas().field;
         let keys = &mut self.settings.keys;
-        // Always "shown": the search opens empty, so there is no text to
-        // select, and the focus is asked for below on every frame.
-        let response = show_name_field(
-            ui,
-            TextEdit::singleline(&mut keys.search),
-            FontId::proportional(Self::FONT_LIST),
-            Some("Search"),
-            Id::new("keyboard-search"),
-            rect,
-            Margin::symmetric(6, 2),
-            &mut true,
-        );
+        let style =
+            FieldStyle::new(FontId::proportional(Self::FONT_LIST), MODAL_MARGIN).hint("Search");
+        let response = keys
+            .search
+            .show(ui, Id::new("keyboard-search"), rect, style);
         if !response.has_focus() {
             response.request_focus();
         }

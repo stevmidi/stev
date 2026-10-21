@@ -7,11 +7,11 @@
 //! is refused with a footer message. Renaming the open project renames what
 //! ⌘S saves to. See `020-views-and-state.md` § Views.
 //!
-//! The field and its keymap are the track rename's ([`show_name_field`],
-//! [`field_event`]); this module decides where it goes and what a commit
+//! The field and its keymap are the app's one text field
+//! ([`TextField`], [`field_event`]); this module decides where it goes and what a commit
 //! does.
 
-use egui::{FontId, Id, Margin, Rect, TextEdit, Ui, UiBuilder, pos2, vec2};
+use egui::{FontId, Id, Rect, Ui, UiBuilder, pos2, vec2};
 
 use crate::core::config::PROJECT_NAME_MAX_CHARS;
 use crate::core::input_event::InputEvent;
@@ -22,7 +22,7 @@ use super::browser::{
     BROWSER_FONT_SIZE, BROWSER_LIST_PAD_Y, BrowserItem, browser_row_rect, browser_text_x,
 };
 use super::status_message::StatusMessage;
-use super::track_rename::{FieldEvent, field_event, field_rect, show_name_field};
+use super::text_field::{FieldEvent, FieldStyle, ROW_MARGIN, TextField, field_event, field_rect};
 
 /// Right inset of the field from the panel's edge.
 const FIELD_RIGHT_X: f32 = 6.0;
@@ -31,11 +31,8 @@ const FIELD_RIGHT_X: f32 = 6.0;
 pub(super) struct BrowserRename {
     /// The project or `.mid` row being renamed.
     item: BrowserItem,
-    /// The name as typed so far — the file's to start with, selected whole.
-    text: String,
-    /// Whether the field has shown yet: its first frame takes the egui focus
-    /// and selects the text.
-    shown: bool,
+    /// The field — the file's name to start with.
+    field: TextField,
 }
 
 impl Display {
@@ -51,9 +48,8 @@ impl Display {
         };
         tree.delete_armed = false;
         self.browser.rename = Some(BrowserRename {
-            text,
             item,
-            shown: false,
+            field: TextField::new(text),
         });
     }
 
@@ -134,10 +130,10 @@ impl Display {
             BrowserItem::Clip(name) => (None, name),
             _ => return,
         };
-        if rename.text.trim().is_empty() {
+        if rename.field.text.trim().is_empty() {
             return;
         }
-        let Some(new) = project_name_from_input(&rename.text) else {
+        let Some(new) = project_name_from_input(&rename.field.text) else {
             self.render.status = Some(StatusMessage::new(format!(
                 "Could not rename {old}: not a valid name"
             )));
@@ -177,16 +173,13 @@ impl Display {
         let Some(rename) = self.browser.rename.as_mut() else {
             return;
         };
-        let field = TextEdit::singleline(&mut rename.text).char_limit(PROJECT_NAME_MAX_CHARS);
-        show_name_field(
+        let style = FieldStyle::new(FontId::proportional(BROWSER_FONT_SIZE), ROW_MARGIN)
+            .max_chars(PROJECT_NAME_MAX_CHARS);
+        rename.field.show(
             &mut ui.new_child(UiBuilder::new().layer_id(Self::browser_layer())),
-            field,
-            FontId::proportional(BROWSER_FONT_SIZE),
-            None,
             Id::new("browser-rename"),
             rect,
-            Margin::symmetric(3, 0),
-            &mut rename.shown,
+            style,
         );
     }
 }

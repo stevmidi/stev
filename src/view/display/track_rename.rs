@@ -6,121 +6,32 @@
 //! number back. The commit is one undoable `RenameTrackEdit` on the
 //! sequencer thread. See `020-views-and-state.md` § Track rename.
 //!
-//! The text editing itself — caret, selection, IME, the clipboard — is an
-//! egui [`TextEdit`]; this module decides when it shows and what its keys
-//! and presses mean to the rest of the app ([`field_event`], unit-tested,
-//! shared with the header's BPM field).
+//! The field and its keymap are the app's one text field
+//! (`text_field.rs`); this module decides where it goes and what a commit
+//! does.
 
-use egui::text_selection::CCursorRange;
-use egui::{
-    Align, FontId, Frame, Id, Key, Margin, Rect, Response, RichText, TextEdit, Ui, UiBuilder, pos2,
-    vec2,
-};
+use egui::{FontId, Id, Rect, Ui};
 
 use crate::core::config::TRACK_NAME_MAX_CHARS;
 use crate::core::input_event::InputEvent;
 use crate::models::track::track_name_from_input;
-use crate::view::theme;
 
 use super::pane::KeyFocus;
-use super::rendering::focus_edge_stroke;
+use super::text_field::{FieldEvent, FieldStyle, ROW_MARGIN, TextField, field_event, field_rect};
 use super::{Display, Pane};
 
 /// Text size of a track's name — on the header's name row and in the rename
 /// field over it, so the text doesn't jump when the field opens.
 pub(super) const TRACK_NAME_FONT_SIZE: f32 = 12.0;
 
-/// The UI font's line height over its size: 1.3 for Plex at every size the
-/// fields use. Measured, and pinned by `the_line_height_matches_the_font`.
-const LINE_H_PER_PT: f32 = 1.3;
-
-/// How much taller than its line egui draws a text field's caret: 1.5 points
-/// above and below (`cursor_rect`).
-const CARET_OVERHANG: f32 = 3.0;
-
-/// The room a text field leaves above and below its caret, per point of its
-/// font: a fifth, about what a native macOS field leaves.
-const CARET_ROOM_PER_PT: f32 = 0.2;
-
-/// Where a text field in `font_size` text over `rect` goes: `rect`, grown
-/// about its centre to at least the caret's height plus
-/// [`CARET_ROOM_PER_PT`] of room above and below — so the caret never runs
-/// the field's full height, or past it, in a field laid over a row barely
-/// taller than its text (a track's name row, a header chip). Its text stays
-/// centred where the row's was. Applied where an inline field's rect comes
-/// from, so what it is drawn in ([`show_name_field`]) and what a press is
-/// tested against ([`field_event`]) are one rect.
-pub(super) fn field_rect(rect: Rect, font_size: f32) -> Rect {
-    let min_h = font_size * (LINE_H_PER_PT + 2.0 * CARET_ROOM_PER_PT) + CARET_OVERHANG;
-    rect.expand2(vec2(0.0, ((min_h - rect.height()) / 2.0).max(0.0)))
-}
-
 /// The open rename field.
 pub(super) struct TrackRename {
     /// The track being renamed, by position.
     track_idx: usize,
-    /// The text as typed so far — the track's name to start with, selected
-    /// whole.
-    text: String,
-    /// Whether the field has shown yet: its first frame takes the egui focus
-    /// and selects the text.
-    shown: bool,
+    /// The field — the track's name to start with.
+    field: TextField,
     /// Who had the keyboard before the field opened, to hand it back.
     return_focus: KeyFocus,
-}
-
-/// What an event does while a text field (the rename field, the header's BPM
-/// field) is open — [`field_event`].
-#[derive(Debug, PartialEq, Eq)]
-pub(super) enum FieldEvent {
-    /// Keep what was typed (Enter).
-    Commit,
-    /// Drop it (Esc).
-    Cancel,
-    /// The field's alone: typing, a clipboard chord, a press on the field.
-    Swallow,
-    /// A press off the field: keep what was typed, then the press acts as
-    /// usual.
-    CommitAndPass,
-    /// Not the field's business.
-    Pass,
-}
-
-impl FieldEvent {
-    /// Whether the field consumed the event, so nothing else sees it.
-    pub(super) fn consumed(&self) -> bool {
-        !matches!(self, FieldEvent::CommitAndPass | FieldEvent::Pass)
-    }
-}
-
-/// A text field's keymap: Enter commits, Esc cancels, every other key is the
-/// text field's alone.
-fn field_key(key: Key) -> FieldEvent {
-    match key {
-        Key::Enter => FieldEvent::Commit,
-        Key::Escape => FieldEvent::Cancel,
-        _ => FieldEvent::Swallow,
-    }
-}
-
-/// What `event` does to an open text field at `field` (`None` when it isn't
-/// on screen): it takes every key ([`field_key`]) and the clipboard chords; a
-/// press on the field is the field's, a press anywhere else commits and then
-/// goes on to act as usual. The rule both fields share — each maps the
-/// answer to its own commit and close.
-pub(super) fn field_event(event: &InputEvent, field: Option<Rect>) -> FieldEvent {
-    match *event {
-        InputEvent::KeyPressed { key, .. } => field_key(key),
-        InputEvent::Copy { .. } | InputEvent::Cut { .. } | InputEvent::Paste => FieldEvent::Swallow,
-        InputEvent::MouseClicked { x, y, .. } | InputEvent::MouseDoubleClicked { x, y } => {
-            if field.is_some_and(|field| field.contains(pos2(x, y))) {
-                FieldEvent::Swallow
-            } else {
-                FieldEvent::CommitAndPass
-            }
-        }
-        _ => FieldEvent::Pass,
-    }
 }
 
 /// The track's number — what its header shows while it is unnamed, and the
@@ -145,8 +56,7 @@ impl Display {
         };
         self.track_rename = Some(TrackRename {
             track_idx,
-            text: self.tracks[track_idx].name.clone().unwrap_or_default(),
-            shown: false,
+            field: TextField::new(self.tracks[track_idx].name.clone().unwrap_or_default()),
             return_focus,
         });
     }
@@ -189,7 +99,7 @@ impl Display {
             self.input_event_tx
                 .send(InputEvent::RenameTrack {
                     track_idx: rename.track_idx,
-                    name: track_name_from_input(&rename.text),
+                    name: track_name_from_input(&rename.field.text),
                 })
                 .ok();
         }
@@ -233,180 +143,10 @@ impl Display {
         let Some(rename) = self.track_rename.as_mut() else {
             return;
         };
-        let field = TextEdit::singleline(&mut rename.text).char_limit(TRACK_NAME_MAX_CHARS);
-        show_name_field(
-            ui,
-            field,
-            FontId::proportional(TRACK_NAME_FONT_SIZE),
-            Some(&track_number_label(track_idx)),
-            Id::new("track-rename"),
-            rect,
-            Margin::symmetric(3, 0),
-            &mut rename.shown,
-        );
-    }
-}
-
-/// Shows `field` as every text field in the app looks — `fg` text in
-/// `font` on a `bg` fill in the focus-edge stroke, inset by `margin` —
-/// filling `rect` of the canvas `ui`, its line centred vertically, with
-/// `hint` in the same font while it is empty. Its first frame (`*shown`
-/// false) takes the egui focus and selects the whole text. Returns the
-/// field's response, for a caller that watches it change.
-#[allow(clippy::too_many_arguments)]
-pub(super) fn show_name_field(
-    ui: &mut Ui,
-    field: TextEdit<'_>,
-    font: FontId,
-    hint: Option<&str>,
-    id: Id,
-    rect: Rect,
-    margin: Margin,
-    shown: &mut bool,
-) -> Response {
-    // The hint in the field's font: egui draws a hint in its default font
-    // otherwise, and places the empty field's caret against it.
-    let field = match hint {
-        Some(hint) => field.hint_text(RichText::new(hint).font(font.clone())),
-        None => field,
-    };
-    let field = field
-        .id(id)
-        .font(font)
-        .text_color(theme::fg())
-        // A custom frame replaces `TextEdit::margin`: the inset lives on the
-        // frame.
-        .frame(
-            Frame::NONE
-                .fill(theme::bg())
-                .stroke(focus_edge_stroke())
-                .corner_radius(2)
-                .inner_margin(margin),
-        )
-        .desired_width(rect.width())
-        // Fill `rect` and centre the line in it, caret and hint included, as
-        // a single-line field does everywhere; egui lays text out from the
-        // top of the frame otherwise.
-        .min_size(rect.size())
-        .vertical_align(Align::Center);
-    let mut output = field.show(&mut ui.new_child(UiBuilder::new().max_rect(rect)));
-    if !*shown {
-        *shown = true;
-        output
-            .state
-            .cursor
-            .set_char_range(Some(CCursorRange::select_all(&output.galley)));
-        output.state.store(ui.ctx(), id);
-        output.response.request_focus();
-    }
-    output.response.response
-}
-
-#[cfg(test)]
-mod tests {
-    use egui::{Key, Rect, pos2};
-
-    use crate::core::input_event::{InputEvent, KeyModifiers};
-
-    use egui::FontId;
-    use egui::epaint::{Fonts, TextOptions};
-
-    use crate::view::display::browser::BROWSER_FONT_SIZE;
-    use crate::view::theme::FONT_SIZE_HEADER_VALUE;
-    use crate::view::theme::fonts::font_definitions;
-
-    use super::{
-        CARET_OVERHANG, FieldEvent, LINE_H_PER_PT, TRACK_NAME_FONT_SIZE, field_event, field_key,
-        field_rect,
-    };
-
-    #[test]
-    fn the_line_height_matches_the_font() {
-        let mut fonts = Fonts::new(TextOptions::default(), font_definitions());
-        let mut fonts = fonts.with_pixels_per_point(2.0);
-        for size in [
-            TRACK_NAME_FONT_SIZE,
-            BROWSER_FONT_SIZE,
-            FONT_SIZE_HEADER_VALUE,
-        ] {
-            let row_h = fonts.row_height(&FontId::proportional(size));
-            assert!(
-                (row_h - size * LINE_H_PER_PT).abs() <= 0.25,
-                "{size}: {row_h}"
-            );
-        }
-    }
-
-    /// The track name's 16pt row is shorter than its caret: the field grows
-    /// about the row's centre to fit it with room to spare.
-    #[test]
-    fn a_field_grows_past_its_caret_about_the_row_centre() {
-        let row = Rect::from_min_max(pos2(10.0, 100.0), pos2(90.0, 116.0));
-        let field = field_rect(row, TRACK_NAME_FONT_SIZE);
-        let caret_h = TRACK_NAME_FONT_SIZE * LINE_H_PER_PT + CARET_OVERHANG;
-        assert_eq!(field.center(), row.center());
-        assert_eq!(field.x_range(), row.x_range());
-        assert!(field.height() - caret_h >= 2.0 * 2.0, "{}", field.height());
-    }
-
-    /// A field already roomier than that (a modal's) is left as it is.
-    #[test]
-    fn a_roomy_field_keeps_its_rect() {
-        let row = Rect::from_min_max(pos2(10.0, 100.0), pos2(90.0, 140.0));
-        assert_eq!(field_rect(row, TRACK_NAME_FONT_SIZE), row);
-    }
-
-    #[test]
-    fn enter_commits_and_escape_cancels() {
-        assert_eq!(field_key(Key::Enter), FieldEvent::Commit);
-        assert_eq!(field_key(Key::Escape), FieldEvent::Cancel);
-    }
-
-    /// Nothing typed into the field reaches the arranger — not Delete
-    /// (remove the track), Space (play) or `R` (record).
-    #[test]
-    fn every_other_key_is_typing() {
-        for key in [
-            Key::Delete,
-            Key::Backspace,
-            Key::Space,
-            Key::R,
-            Key::ArrowUp,
-        ] {
-            assert_eq!(field_key(key), FieldEvent::Swallow);
-        }
-    }
-
-    /// A press on the field is the field's; one anywhere else commits and
-    /// goes on — and with the field off screen every press is "elsewhere".
-    #[test]
-    fn a_press_off_the_field_commits_and_passes_on() {
-        let field = Rect::from_min_max(pos2(10.0, 10.0), pos2(50.0, 30.0));
-        let press = |x, y| InputEvent::MouseClicked {
-            x,
-            y,
-            modifiers: KeyModifiers::default(),
-        };
-        assert_eq!(
-            field_event(&press(20.0, 20.0), Some(field)),
-            FieldEvent::Swallow
-        );
-        assert_eq!(
-            field_event(&press(100.0, 20.0), Some(field)),
-            FieldEvent::CommitAndPass
-        );
-        assert_eq!(
-            field_event(&press(20.0, 20.0), None),
-            FieldEvent::CommitAndPass
-        );
-        assert!(!FieldEvent::CommitAndPass.consumed());
-        assert_eq!(
-            field_event(&InputEvent::Paste, Some(field)),
-            FieldEvent::Swallow
-        );
-        assert_eq!(
-            field_event(&InputEvent::MouseReleased, Some(field)),
-            FieldEvent::Pass
-        );
+        let hint = track_number_label(track_idx);
+        let style = FieldStyle::new(FontId::proportional(TRACK_NAME_FONT_SIZE), ROW_MARGIN)
+            .hint(&hint)
+            .max_chars(TRACK_NAME_MAX_CHARS);
+        rename.field.show(ui, Id::new("track-rename"), rect, style);
     }
 }

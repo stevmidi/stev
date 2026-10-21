@@ -17,8 +17,8 @@
 //! ([`sync_window_close`](Display::sync_window_close)) until the sequencer
 //! approves it.
 //!
-//! This module decides what the keys and buttons do ([`save_as_key`],
-//! [`unsaved_key`], unit-tested); `rendering/modals/project_dialog.rs` draws
+//! This module decides what the keys and buttons do (Save As's are the text
+//! fields' [`field_key`]; [`unsaved_key`], unit-tested); `rendering/modals/project_dialog.rs` draws
 //! the dialogs and lays out their buttons. See `060-persistence.md`
 //! § Unsaved changes.
 
@@ -28,6 +28,7 @@ use crate::core::input_event::{InputEvent, KeyModifiers};
 use crate::core::project::{ProjectAction, project_name_from_input};
 
 use super::Display;
+use super::text_field::{FieldEvent, TextField, field_key};
 
 /// What Save As starts with for a project that has never been saved.
 const UNTITLED: &str = "Untitled";
@@ -47,12 +48,9 @@ pub(super) enum ProjectDialog {
 
 /// Save As's name field.
 pub(super) struct SaveAs {
-    /// The name as typed so far — the open project's (or [`UNTITLED`]) to
-    /// start with, selected whole.
-    pub(super) text: String,
-    /// Whether the field has shown yet: its first frame takes the egui focus
-    /// and selects the text.
-    pub(super) shown: bool,
+    /// The name field — the open project's name (or [`UNTITLED`]) to start
+    /// with.
+    pub(super) field: TextField,
     /// What runs once the save is sent: the action the unsaved-changes
     /// prompt's Save was answered for, on a project never saved. Esc drops it
     /// with the dialog.
@@ -117,16 +115,6 @@ impl UnsavedButton {
             UnsavedButton::DontSave => DialogKey::Discard,
             UnsavedButton::Save => DialogKey::Confirm,
         }
-    }
-}
-
-/// Save As's keymap: Enter saves, Esc cancels, every other key is the text
-/// field's alone.
-fn save_as_key(key: Key) -> DialogKey {
-    match key {
-        Key::Enter => DialogKey::Confirm,
-        Key::Escape => DialogKey::Cancel,
-        _ => DialogKey::Swallow,
     }
 }
 
@@ -209,8 +197,7 @@ impl Display {
             .clone()
             .unwrap_or_else(|| UNTITLED.to_owned());
         self.project_dialog = Some(ProjectDialog::SaveAs(SaveAs {
-            text,
-            shown: false,
+            field: TextField::new(text),
             then,
         }));
     }
@@ -267,7 +254,14 @@ impl Display {
             return false;
         };
         let key = match (event, dialog) {
-            (&InputEvent::KeyPressed { key, .. }, ProjectDialog::SaveAs(_)) => save_as_key(key),
+            // The text fields' keymap, but no click-away commit: a modal
+            // takes every press.
+            (&InputEvent::KeyPressed { key, .. }, ProjectDialog::SaveAs(_)) => match field_key(key)
+            {
+                FieldEvent::Commit => DialogKey::Confirm,
+                FieldEvent::Cancel => DialogKey::Cancel,
+                _ => DialogKey::Swallow,
+            },
             (
                 &InputEvent::KeyPressed { key, modifiers },
                 &ProjectDialog::Unsaved { selected, .. },
@@ -305,10 +299,12 @@ impl Display {
     /// action again — through Save As for a project never saved.
     fn confirm_project_dialog(&mut self) {
         match self.project_dialog.take() {
-            Some(ProjectDialog::SaveAs(save_as)) => match project_name_from_input(&save_as.text) {
-                Some(name) => self.save_project_as(name, save_as.then),
-                None => self.project_dialog = Some(ProjectDialog::SaveAs(save_as)),
-            },
+            Some(ProjectDialog::SaveAs(save_as)) => {
+                match project_name_from_input(&save_as.field.text) {
+                    Some(name) => self.save_project_as(name, save_as.then),
+                    None => self.project_dialog = Some(ProjectDialog::SaveAs(save_as)),
+                }
+            }
             Some(ProjectDialog::Unsaved { action, .. }) => self.save_project(Some(action)),
             None => {}
         }
@@ -333,22 +329,7 @@ mod tests {
 
     use crate::core::input_event::KeyModifiers;
 
-    use super::{DialogKey, UnsavedButton, save_as_key, unsaved_key};
-
-    #[test]
-    fn save_as_saves_on_enter_and_cancels_on_escape() {
-        assert_eq!(save_as_key(Key::Enter), DialogKey::Confirm);
-        assert_eq!(save_as_key(Key::Escape), DialogKey::Cancel);
-    }
-
-    /// Nothing typed into the name reaches the app — not `D` (which the
-    /// prompt reads as Don't Save), Space (play) or Delete.
-    #[test]
-    fn every_other_save_as_key_is_typing() {
-        for key in [Key::D, Key::Space, Key::Delete, Key::Backspace, Key::S] {
-            assert_eq!(save_as_key(key), DialogKey::Swallow);
-        }
-    }
+    use super::{DialogKey, UnsavedButton, unsaved_key};
 
     /// Enter presses whichever button is selected; `D` — bare or ⌘/Ctrl+D —
     /// and Esc don't care which.

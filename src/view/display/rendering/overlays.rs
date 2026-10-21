@@ -14,7 +14,7 @@ use crate::core::time::{Meter, format_bpm, sixteenth_straight_ticks};
 use crate::view::display::browser::browser_toggle_rect;
 use crate::view::display::header_chip::HeaderChipRects;
 use crate::view::display::status_message::export_progress_text;
-use crate::view::display::track_rename::field_rect;
+use crate::view::display::text_field::field_rect;
 
 use super::*;
 

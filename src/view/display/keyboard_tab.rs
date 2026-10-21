@@ -19,14 +19,15 @@ use crate::core::keymap::{ACTIONS, Chord};
 use super::browser::scroll_to_show;
 use super::modal_focus::SettingsTab;
 use super::settings_modal::{scroll_by, window_start};
+use super::text_field::TextField;
 use super::{Display, Overlay};
 
 /// The Keyboard tab's view-local state. Session-only; a fresh search each
 /// time the modal opens (the default).
 #[derive(Default)]
 pub(super) struct KeyboardTab {
-    /// The search field's text.
-    pub(super) search: String,
+    /// The search field.
+    pub(super) search: TextField,
     /// The selected row, counted among the rows the search matches — always
     /// one of them, since a change to the search puts it back at 0.
     pub(super) selection: usize,
@@ -48,7 +49,7 @@ impl KeyboardTab {
             Key::Questionmark => return true,
             _ => return false,
         };
-        let lines = shortcut_lines(&self.search);
+        let lines = shortcut_lines(&self.search.text);
         let rows = row_lines(&lines);
         let Some(last) = rows.len().checked_sub(1) else {
             return true;
@@ -62,7 +63,7 @@ impl KeyboardTab {
     /// Clears a non-empty search, back to the tab as it opens; returns
     /// whether there was one to clear.
     fn clear_search(&mut self) -> bool {
-        if self.search.is_empty() {
+        if self.search.text.is_empty() {
             return false;
         }
         *self = KeyboardTab::default();
@@ -79,7 +80,7 @@ impl KeyboardTab {
     /// A wheel scroll: `rows` lines down (up when negative), kept inside a
     /// list showing `visible` lines.
     pub(super) fn scroll(&mut self, rows: isize, visible: usize) {
-        let len = shortcut_lines(&self.search).len();
+        let len = shortcut_lines(&self.search.text).len();
         self.scroll = scroll_by(self.scroll, rows, len, visible);
     }
 }
@@ -353,6 +354,8 @@ mod tests {
 
     use egui::Key;
 
+    use crate::view::display::text_field::TextField;
+
     use super::{
         FIXED, KeyboardTab, ShortcutLine, chord_glyphs, is_keyboard_tab_key, key_label_for,
         row_lines, scroll_to_show_line, shortcut_lines, shortcut_rows,
@@ -558,7 +561,7 @@ mod tests {
         let lines = shortcut_lines("");
         assert!(tab.scroll + 10 > row_lines(&lines)[count - 1]);
         // Nothing matched: the arrows are still the tab's, and do nothing.
-        tab.search = "no such shortcut".into();
+        tab.search = TextField::new("no such shortcut".into());
         tab.reset_list();
         assert!(tab.handle_key(Key::ArrowDown, 10));
         assert_eq!(tab.selection, 0);
@@ -567,12 +570,12 @@ mod tests {
     #[test]
     fn escape_clears_a_search_before_it_closes_the_modal() {
         let mut tab = KeyboardTab {
-            search: "loop".into(),
+            search: TextField::new("loop".into()),
             selection: 1,
             scroll: 2,
         };
         assert!(tab.handle_key(Key::Escape, 10));
-        assert!(tab.search.is_empty());
+        assert!(tab.search.text.is_empty());
         assert_eq!((tab.selection, tab.scroll), (0, 0));
         // No search left: Esc is the modal's.
         assert!(!tab.handle_key(Key::Escape, 10));

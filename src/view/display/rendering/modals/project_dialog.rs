@@ -4,15 +4,14 @@
 //! ([`unsaved_button_at`](Display::unsaved_button_at)).
 
 use egui::{
-    Align2, CornerRadius, FontId, Id, Margin, Painter, Pos2, Rect, Stroke, StrokeKind, TextEdit,
-    Ui, pos2, vec2,
+    Align2, CornerRadius, FontId, Id, Painter, Pos2, Rect, Stroke, StrokeKind, Ui, pos2, vec2,
 };
 
 use crate::core::config::PROJECT_NAME_MAX_CHARS;
 use crate::core::project::{ProjectAction, project_exists, project_name_from_input};
 use crate::view::display::project_dialog::{ProjectDialog, SaveAs, UnsavedButton};
 use crate::view::display::project_state::ProjectViewState;
-use crate::view::display::track_rename::show_name_field;
+use crate::view::display::text_field::{FieldStyle, MODAL_MARGIN};
 
 use super::*;
 
@@ -137,20 +136,14 @@ impl Display {
             ),
             vec2(layout.body.width(), Self::FIELD_H),
         );
-        let field = TextEdit::singleline(&mut save_as.text).char_limit(PROJECT_NAME_MAX_CHARS);
-        show_name_field(
-            ui,
-            field,
-            FontId::proportional(Self::FONT_LIST),
-            None,
-            Id::new("project-save-as"),
-            field_rect,
-            Margin::symmetric(6, 2),
-            &mut save_as.shown,
-        );
+        let style = FieldStyle::new(FontId::proportional(Self::FONT_LIST), MODAL_MARGIN)
+            .max_chars(PROJECT_NAME_MAX_CHARS);
+        save_as
+            .field
+            .show(ui, Id::new("project-save-as"), field_rect, style);
 
         let folder = project.project_current_folder.as_deref();
-        let note = match project_name_from_input(&save_as.text) {
+        let note = match project_name_from_input(&save_as.field.text) {
             None => "Not a valid file name".to_owned(),
             Some(name)
                 if project.project_current_name.as_deref() != Some(name.as_str())

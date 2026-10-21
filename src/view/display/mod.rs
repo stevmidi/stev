@@ -70,6 +70,7 @@ mod settings_modal;
 mod state;
 mod status_message;
 mod tempo_field;
+mod text_field;
 mod track_rename;
 mod ui_event;
 
