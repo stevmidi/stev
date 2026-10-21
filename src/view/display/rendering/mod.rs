@@ -1207,8 +1207,13 @@ impl eframe::App for Display {
         let ctx = ui.ctx().clone();
         let ctx = &ctx;
 
+        // A raw key press from outside the poller (the plugin-editor key
+        // guard) is resolved through the keymap here, as the poller's are in
+        // `forward_input_event`. What that forwarded is already resolved: a
+        // `KeyPressed` it sent on is one the keymap doesn't bind.
         while let Ok(event) = self.input_event_rx.try_recv() {
             if !self.try_consume_as_modal(&event) {
+                let event = self.resolve_action(event);
                 self.event_handlers.handle_input_event(&event);
             }
         }

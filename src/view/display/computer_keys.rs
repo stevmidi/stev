@@ -6,19 +6,12 @@
 //! frame read them. See `010-keybindings.md` § Computer keyboard and
 //! `030-ui-design.md` § Header & Footer.
 
-use egui::{Context, Key};
+use egui::Context;
 
-use crate::core::input_event::KeyModifiers;
 use crate::core::midi::message::Midi3;
 use crate::core::time::monotonic_nanos;
 
 use super::Display;
-
-/// `⌘/Ctrl+K` — turns the computer keyboard on or off (Logic Pro's Musical
-/// Typing chord).
-pub(super) fn is_computer_keyboard_chord(key: Key, modifiers: KeyModifiers) -> bool {
-    key == Key::K && modifiers.command && !modifiers.shift && !modifiers.alt
-}
 
 impl Display {
     /// Turns the computer keyboard on or off; turning it off ends the notes
@@ -71,26 +64,5 @@ impl Display {
         for message in messages {
             self.computer_keys_tx.send((message, now)).ok();
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_toggle_is_command_k_alone() {
-        let command = KeyModifiers {
-            command: true,
-            ..KeyModifiers::default()
-        };
-        assert!(is_computer_keyboard_chord(Key::K, command));
-        assert!(!is_computer_keyboard_chord(Key::K, KeyModifiers::default()));
-        let shifted = KeyModifiers {
-            shift: true,
-            ..command
-        };
-        assert!(!is_computer_keyboard_chord(Key::K, shifted));
-        assert!(!is_computer_keyboard_chord(Key::J, command));
     }
 }

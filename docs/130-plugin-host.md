@@ -305,7 +305,7 @@ methods take a track's position and look the slot up in its `tracks` mirror
 | `export_writer.rs` | The `"audio-export"` thread: `start_export_writer`, `ExportWriter::write` (one `WavWriter` per stem plus `Mix.wav`, drained from the rings until the mixer has ended that export's id, then `SequencerCommand::AudioExportWritten`), progress into `AudioExportAtomics::written_ms`, `stop_reason` (a stream error, or 3 s with nothing from the mixer). A failed file stops being written but its ring is still drained. It never removes files: a cancelled or stopped run's go in the handler (`event_handlers/audio_export.rs`). Unit-tested: draining across the ring's wrap, a failed write, a written export on disk, an abandoned export's leftovers, `stop_reason`. |
 | `shutdown.rs` | `HostShutdown` - app-exit coordination (`requested` + `in_process`), one instance shared by the mixer and the reclaim thread. Unit-tested. |
 | `window.rs` | `PluginWindow` - a minimal native `NSWindow` parent for an embedded plugin GUI; `show` (`orderFront:`), `is_visible`, `frame_top_left` / a `top_left` argument to `new` (position carried across a close/reopen), `set_content_size` (anchored at the top-left corner), `take_closed` (the title-bar close button, refused by the `CloseInterceptor` delegate so the editor can tear down first, or the window off screen by any other route); registers/deregisters itself with `key_guard` on construction/`Drop`. It is closed by `Drop`, not hidden - there is no `hide`. Format-agnostic. |
-| `key_guard.rs` | App-wide `NSEvent` local monitor reserving bare `Space`/`v`/`.`/`0` even while an embedded editor window has OS keyboard focus - `install_key_guard`, `take_toggle_editor_pending`, `register_window` / `unregister_window`. See the module doc and the caveat below. Format-agnostic. |
+| `key_guard.rs` | App-wide `NSEvent` local monitor reserving the keymap's bare play / stop, stop and editor keys (`Space`/`0`/`v` by default) even while an embedded editor window has OS keyboard focus - `install_key_guard`, `set_guarded_keys` (from `Display::guard_plugin_editor_keys`), `take_toggle_editor_pending`, `register_window` / `unregister_window`. See the module doc and the caveat below. Format-agnostic. |
 
 ### `clap/` - the CLAP format
 
@@ -801,16 +801,19 @@ positions), persisted base64-encoded in the `.stev` and re-applied on load:
   imperceptible; if the app is fully idle (visible editor, plugin requesting no
   timer) the drop-to-normal on switching *away* can also lag a frame. Not worth
   a continuous repaint or an activation observer to close.
-- **Bare `Space`/`v`/`.`/`0` are reserved even while an embedded editor has OS
-  keyboard focus** (`key_guard.rs`) — an app-wide `NSEvent` local monitor
-  intercepts them before AppKit routes them to whichever window is key, but
-  only while the focused window is one of our own tracked embedded editor
-  windows, never the main app window, so in-focus behavior is untouched.
-  `.`/`0` mirror the in-focus bindings' classic DAW numpad transport pair
-  (stop / play from cursor); the monitor deliberately does **not** treat
-  `NumericPad` as a blocking modifier, or the guard would silently never fire
-  from the numpad the pairing is named for. The unavoidable tradeoff: while an
-  editor window is focused, none of these four can be typed as a literal
+- **The bare play / stop, stop and editor keys are reserved even while an
+  embedded editor has OS keyboard focus** (`key_guard.rs`) — an app-wide
+  `NSEvent` local monitor intercepts them before AppKit routes them to
+  whichever window is key, but only while the focused window is one of our
+  own tracked embedded editor windows, never the main app window, so in-focus
+  behavior is untouched. Which keys follows the keymap (`core/keymap.rs`):
+  `Display::guard_plugin_editor_keys` hands over the bare chords of
+  `TogglePlayback`, `Stop` and `TogglePluginEditor` (`Space`, `0`, `v` by
+  default), and the transport keys go on as raw `KeyPressed`, resolved like
+  any other. The monitor deliberately does **not** treat `NumericPad` as a
+  blocking modifier, or the guard would silently never fire from the numpad's
+  `0`. The unavoidable tradeoff: while an
+  editor window is focused, none of these keys can be typed as a literal
   character into anything inside the plugin's own UI (a preset-name field,
   say) — every other key, and any modified chord (⌘V, Shift+V, …), still
   reaches the plugin normally. Does **not** apply to a floating plugin GUI
@@ -986,7 +989,7 @@ Manual smoke test (`cargo run --release --package stev --bin stev`):
 10. Click into an open plugin editor window (so it visibly takes OS keyboard
     focus, e.g. click a knob) — bare Space should still start/stop the
     transport (both directions — starting again after a stop, not just
-    stopping), numpad `0`/`.` should play-from-cursor/stop the same way, and
+    stopping), numpad `0` should stop the same way, and
     bare `v` should still close the editor, with no click back to the main
     window needed first and no stray mouse movement needed to "unstick" it
     either. Try a modified chord too (⌘V, Shift+V) — it should reach the

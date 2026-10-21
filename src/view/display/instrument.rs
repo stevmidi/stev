@@ -26,10 +26,11 @@ use crate::core::config::MAX_TRACKS;
 use uuid::Uuid;
 
 use crate::core::input_event::InputEvent;
+use crate::core::keymap::Action;
 use crate::core::plugin_host::catalog::PluginCatalogEntry;
 use crate::core::plugin_host::{
-    InstrumentEditor, PluginAudioHandle, PluginHostCommand, PreparedInstrument, load_instrument,
-    prepare_instrument, take_toggle_editor_pending,
+    GuardedKeys, InstrumentEditor, PluginAudioHandle, PluginHostCommand, PreparedInstrument,
+    load_instrument, prepare_instrument, set_guarded_keys, take_toggle_editor_pending,
 };
 use crate::models::track::{InstrumentRef, TrackOutput};
 
@@ -168,6 +169,21 @@ impl InstrumentHost {
 }
 
 impl Display {
+    /// Hands the plugin-editor key guard the bare keys it reserves while an
+    /// editor window has OS keyboard focus: the keymap's bare chords for
+    /// play / stop, stop and the editor toggle. Called once from `main`,
+    /// beside `install_key_guard`.
+    pub(crate) fn guard_plugin_editor_keys(&self) {
+        let transport = [Action::TogglePlayback, Action::Stop]
+            .into_iter()
+            .flat_map(|action| self.keymap.bare_keys(action))
+            .collect();
+        set_guarded_keys(GuardedKeys {
+            transport,
+            editor: self.keymap.bare_keys(Action::TogglePluginEditor),
+        });
+    }
+
     /// Per-frame: finish any pending per-track teardown, service a `v` the
     /// key guard (`key_guard`) intercepted while an editor window had OS
     /// keyboard focus, then pump every editor and schedule the next repaint

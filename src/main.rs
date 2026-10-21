@@ -70,6 +70,7 @@ mod core {
     pub mod config;
     pub mod event_handlers;
     pub mod input_event;
+    pub mod keymap;
     pub mod metronome;
     pub mod midi;
     pub mod note_logger;
@@ -309,7 +310,10 @@ fn main() {
             // closure guarantees — installing it any earlier is unsafe. See
             // `core::plugin_host::key_guard`.
             #[cfg(target_os = "macos")]
-            install_key_guard(shared_channels.input_event_tx, repaint_ctx.clone());
+            {
+                install_key_guard(shared_channels.input_event_tx, repaint_ctx.clone());
+                display.guard_plugin_editor_keys();
+            }
             // ⌘Q closes the window rather than terminating, so quitting goes
             // through the unsaved-changes check (`view::appkit`).
             #[cfg(target_os = "macos")]

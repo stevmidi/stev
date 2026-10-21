@@ -20,6 +20,17 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ## [Unreleased]
 
+### Changed
+
+- **Commands go through one keymap** (`src/core/keymap.rs`), the groundwork
+  for rebinding them in Settings (`docs/320-keyboard-shortcuts.md`). The
+  default keys are unchanged, but a key now needs its exact modifiers: a
+  stray one that used to be ignored is a different chord, so `⌘\`, `⇧Space`
+  or `⌘⌫` (carve) no longer do anything. Layouts that type `\`, `/`, `[`,
+  `]` or `+` with Shift, ⌥ or AltGr still reach them. While a plugin window
+  has the keyboard, `.` now reaches the plugin; it was reserved for a Stop it
+  hasn't been bound to for a long time.
+
 ## [0.4.0] - 2026-10-20
 
 ### Added

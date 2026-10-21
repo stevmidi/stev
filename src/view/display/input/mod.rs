@@ -1,5 +1,6 @@
 //! `Display`'s per-frame input handling: `forward_input_event` — the dispatch
-//! loop that resolves anything view-local (scroll, cursor placement, the drag
+//! loop that resolves a command key through the keymap (`core/keymap.rs`),
+//! resolves anything view-local (scroll, cursor placement, the drag
 //! rectangles, the `⌘/Ctrl+L` / `Delete` operand) against `Display` state and
 //! forwards the rest to `EventHandlers`. `gestures.rs` holds the drag state
 //! machines; `modal.rs` the settings modal's keymap and mouse, `help.rs` the
@@ -10,6 +11,7 @@ use egui::Key;
 
 use crate::core::config::ZOOM_KEY_STEP;
 use crate::core::input_event::{KeyModifiers, is_pane_focus_key};
+use crate::core::keymap::Action;
 use crate::core::project::{ProjectAction, clip_path};
 use crate::core::time::PPQN;
 
@@ -23,7 +25,6 @@ pub(super) use midi_drag::DragPointer;
 
 use self::gestures::past_drag_threshold;
 use super::browser::BrowserPress;
-use super::computer_keys::is_computer_keyboard_chord;
 use super::help_overlay::is_help_key;
 use super::settings_modal::is_settings_chord;
 
@@ -496,44 +497,47 @@ impl Display {
         }
     }
 
-    /// Consumes ⇧F5 / ⇧F6 to step the theme — applied and saved, as in the
-    /// settings modal's Appearance tab; returns whether it handled the event.
-    fn handle_theme_input_event(&mut self, input_event: &InputEvent) -> bool {
-        let direction = match input_event {
-            InputEvent::KeyPressed {
-                key: Key::F5,
-                modifiers,
-            } if modifiers.shift => Some(-1),
-            InputEvent::KeyPressed {
-                key: Key::F6,
-                modifiers,
-            } if modifiers.shift => Some(1),
-            _ => None,
+    /// The command a key press is, for the pane with the keyboard; `None`
+    /// for any other event and for a key the keymap doesn't bind.
+    fn action_of(&self, event: &InputEvent) -> Option<Action> {
+        let InputEvent::KeyPressed { key, modifiers } = *event else {
+            return None;
         };
+        self.keymap
+            .resolve_press(key, modifiers, self.focused_pane())
+    }
 
-        let Some(direction) = direction else {
-            return false;
+    /// `event` with a key press the keymap binds turned into
+    /// `InputEvent::Action`; anything else unchanged.
+    pub(super) fn resolve_action(&self, event: InputEvent) -> InputEvent {
+        self.action_of(&event).map_or(event, InputEvent::Action)
+    }
+
+    /// Consumes ⇧F5 / ⇧F6 (`PreviousTheme` / `NextTheme`) to step the theme
+    /// — applied and saved, as in the settings modal's Appearance tab;
+    /// returns whether it handled the event. Ahead of the overlays, so it
+    /// works with the settings modal up.
+    fn handle_theme_input_event(&mut self, input_event: &InputEvent) -> bool {
+        let direction = match self.action_of(input_event) {
+            Some(Action::PreviousTheme) => -1,
+            Some(Action::NextTheme) => 1,
+            _ => return false,
         };
         self.step_theme(direction);
         true
     }
 
-    /// Consumes the project chords; returns whether it handled the event.
+    /// Consumes the project commands; returns whether it handled the event.
     /// ⌘/Ctrl+S saves at once under the project's name, or opens Save As for
     /// a project never saved; ⌘/Ctrl+⇧+S always opens Save As
     /// (`project_dialog.rs`). ⌘/Ctrl+N asks for a new project, through the
-    /// unsaved-changes check.
+    /// unsaved-changes check. Ahead of the overlays and the browser's keys,
+    /// so they work from any key focus.
     fn handle_project_input_event(&mut self, input_event: &InputEvent) -> bool {
-        let InputEvent::KeyPressed { key, modifiers } = input_event else {
-            return false;
-        };
-        if !modifiers.command {
-            return false;
-        }
-        match key {
-            Key::S if modifiers.shift => self.open_save_as(None),
-            Key::S => self.save_project(None),
-            Key::N => self.request_project_action(ProjectAction::New),
+        match self.action_of(input_event) {
+            Some(Action::SaveAs) => self.open_save_as(None),
+            Some(Action::Save) => self.save_project(None),
+            Some(Action::NewProject) => self.request_project_action(ProjectAction::New),
             _ => return false,
         }
         true
@@ -561,95 +565,100 @@ impl Display {
         matches!(event, InputEvent::KeyPressed { .. }) && self.handle_overlay_input_event(event)
     }
 
-    /// The main input dispatch: resolves anything view-local and forwards the
-    /// rest to `EventHandlers`. Returns whether processing should continue.
+    /// Whether a key press is taken before the keymap sees it, acting on it
+    /// if so: every key but the nudge itself during a keyboard marquee nudge,
+    /// and the fixed `⌘/Ctrl+,` and `?`, the ways into Settings and the help.
+    fn key_taken_before_keymap(&mut self, key: Key, modifiers: KeyModifiers) -> bool {
+        // A keyboard-armed marquee nudge (`⌘/Ctrl+←`/`→`, ⌘/Ctrl held)
+        // owns the keyboard the way it owns the pointer: every other key
+        // is consumed as a no-op until `MoveModifierReleased` commits it
+        // or Esc cancels it. ⌘/Ctrl is held for the drag's whole life, so
+        // every key here is a ⌘/Ctrl chord — `⌘↑` is a chord with no
+        // binding, not "release ⌘, then ↑" — and letting it fall through
+        // to the plain `↑`/`↓` track cycling changed the selected track
+        // under a live ghost, wiping the marquee tint via
+        // `sync_time_selection_to_cursor` while the frozen drag rect
+        // still committed on the original tracks. First so nothing can act
+        // mid-nudge either — and with ⌘/Ctrl held that includes every
+        // real `⌘/Ctrl+X` command (`⌘S`, `⌘Z`, `⌘D`, `⌘L`, ...), which is
+        // right: none of them should fire under a live ghost. `⌘⇧←` is
+        // refused by the nudge arm (`!shift`) and would otherwise reach
+        // the marquee-resize arm.
+        if key != Key::Escape
+            && (modifiers.shift
+                || modifiers.alt
+                || !matches!(key, Key::ArrowLeft | Key::ArrowRight))
+            && self
+                .gesture
+                .clip_move_drag
+                .is_some_and(|drag| drag.via_keyboard)
+        {
+            return true;
+        }
+        // ⌘/Ctrl+, opens the settings modal over the arranger or the clip
+        // view, from any key focus (`settings_modal.rs`); inside it the
+        // modal keymap closes it again. View-local: the view it returns
+        // to and the tab it opens on are the view's.
+        if is_settings_chord(key, modifiers) {
+            self.open_settings();
+            return true;
+        }
+        // `?` opens the help overlay, from any key focus
+        // (`help_overlay.rs`); inside it its own keymap closes it again.
+        if is_help_key(key, modifiers) {
+            self.open_help();
+            return true;
+        }
+        false
+    }
+
+    /// The main input dispatch: resolves a command key through the keymap,
+    /// anything view-local against `Display` state, and forwards the rest to
+    /// `EventHandlers`. Returns whether processing should continue.
+    ///
+    /// A key press first meets the guards that take keys ahead of the
+    /// keymap ([`key_taken_before_keymap`](Self::key_taken_before_keymap)),
+    /// and is then resolved once through the keymap (`resolve_action`): a
+    /// command arrives at the arms below as `InputEvent::Action`, a key that
+    /// is not one (arrows, Esc, Enter, Tab) stays `KeyPressed`.
     ///
     /// Governing rule for what gets intercepted below vs. sent through
-    /// unchanged: pre-resolve a `KeyPressed`/mouse event here only when it
-    /// needs view-local state (e.g. `time_selection`, marquee/drag anchors)
-    /// as an operand that `EventHandlers::handle_input_event` has no access
-    /// to. Everything else — the large majority of keys — passes through as
-    /// a raw `KeyPressed` for the handler to dispatch on `view_state`/
-    /// `clip_context` itself. When adding a new binding, only reach for a
-    /// purpose-built `InputEvent` variant (and an arm here) if it fails that
-    /// test; otherwise let it fall through to the catch-all `other` arm.
+    /// unchanged: handle an event here only when it needs view-local state
+    /// (e.g. `time_selection`, marquee/drag anchors, the zoom) as an operand
+    /// that `EventHandlers::handle_input_event` has no access to. Everything
+    /// else — most commands — passes through to the handler to dispatch on
+    /// `view_state`/`clip_context` itself. When adding a binding, only reach
+    /// for a purpose-built `InputEvent` variant (and an arm here) if it fails
+    /// that test; otherwise let it fall through to the catch-all `other` arm.
     fn forward_input_event(&mut self, input_event: InputEvent, ctx: &egui::Context) -> bool {
-        match input_event {
-            // A keyboard-armed marquee nudge (`⌘/Ctrl+←`/`→`, ⌘/Ctrl held)
-            // owns the keyboard the way it owns the pointer: every other key
-            // is consumed as a no-op until `MoveModifierReleased` commits it
-            // or Esc cancels it. ⌘/Ctrl is held for the drag's whole life, so
-            // every key here is a ⌘/Ctrl chord — `⌘↑` is a chord with no
-            // binding, not "release ⌘, then ↑" — and letting it fall through
-            // to the plain `↑`/`↓` track cycling changed the selected track
-            // under a live ghost, wiping the marquee tint via
-            // `sync_time_selection_to_cursor` while the frozen drag rect
-            // still committed on the original tracks. First arm so nothing
-            // below can act mid-nudge either — and with ⌘/Ctrl held that
-            // now includes every real `⌘/Ctrl+X` command (`⌘S`, `⌘Z`,
-            // `⌘D`, `⌘L`, ...), which is right: none of them should fire
-            // under a live ghost. `⌘⇧←` is refused by the nudge arm
-            // (`!shift`) and would otherwise reach the marquee-resize arm.
-            InputEvent::KeyPressed { key, modifiers }
-                if key != Key::Escape
-                    && (modifiers.shift
-                        || modifiers.alt
-                        || !matches!(key, Key::ArrowLeft | Key::ArrowRight))
-                    && self
-                        .gesture
-                        .clip_move_drag
-                        .is_some_and(|drag| drag.via_keyboard) =>
-            {
-                true
-            }
-            // ⌘/Ctrl+, opens the settings modal over the arranger or the clip
-            // view, from any key focus (`settings_modal.rs`); inside it the
-            // modal keymap closes it again. View-local: the view it returns
-            // to and the tab it opens on are the view's.
-            InputEvent::KeyPressed { key, modifiers } if is_settings_chord(key, modifiers) => {
-                self.open_settings();
-                true
-            }
+        if let InputEvent::KeyPressed { key, modifiers } = input_event
+            && self.key_taken_before_keymap(key, modifiers)
+        {
+            return true;
+        }
+        match self.resolve_action(input_event) {
             // ⌘/Ctrl+K turns the computer keyboard on or off, from any key
             // focus (`computer_keys.rs`). View-local: the keyboard is
             // `Display`'s.
-            InputEvent::KeyPressed { key, modifiers }
-                if is_computer_keyboard_chord(key, modifiers) =>
-            {
+            InputEvent::Action(Action::ToggleComputerKeyboard) => {
                 self.toggle_computer_keyboard();
-                true
-            }
-            // `?` opens the help overlay, from any key focus
-            // (`help_overlay.rs`); inside it its own keymap closes it again.
-            InputEvent::KeyPressed { key, modifiers } if is_help_key(key, modifiers) => {
-                self.open_help();
                 true
             }
             // ⌘⌥B (Ableton's browser toggle) shows and focuses the browser
             // panel, or hides it; ⌘O shows it with the Projects tree in focus.
             // View-local layout state, like ⌘⌥E below.
-            InputEvent::KeyPressed {
-                key: Key::B,
-                modifiers,
-            } if modifiers.command && modifiers.alt && !modifiers.shift => {
+            InputEvent::Action(Action::ToggleBrowser) => {
                 self.toggle_browser();
                 true
             }
-            InputEvent::KeyPressed {
-                key: Key::O,
-                modifiers,
-            } if modifiers.command && !modifiers.alt && !modifiers.shift => {
+            InputEvent::Action(Action::ShowProjects) => {
                 self.show_browser();
                 true
             }
             // ⌘⌥E — the clip panel between maximized and docked below the
             // arranger (`archive/210-docked-clip-panel.md`). View-local layout state.
             // With the panel hidden it only flips the size it will show at.
-            // Ahead of the ⌘E split arm, which refuses ⌥ too.
-            InputEvent::KeyPressed {
-                key: Key::E,
-                modifiers,
-            } if modifiers.command && modifiers.alt && !modifiers.shift => {
+            InputEvent::Action(Action::ToggleClipPanelSize) => {
                 self.toggle_clip_panel_size();
                 true
             }
@@ -678,14 +687,11 @@ impl Display {
                 self.render.clip_panel.visible = false;
                 true
             }
-            // `v` — show/hide the selected track's hosted CLAP plugin editor.
+            // `v` — show/hide the selected track's hosted plugin editor.
             // View-local (owns the `!Send` editors), so it never reaches
-            // `EventHandlers`. Only plain `v`; `⌘V` arrives as `InputEvent::Paste`.
+            // `EventHandlers`. `⌘V` arrives as `InputEvent::Paste`.
             #[cfg(target_os = "macos")]
-            InputEvent::KeyPressed {
-                key: Key::V,
-                modifiers,
-            } if !modifiers.command && self.view_state() == ViewState::Arranger => {
+            InputEvent::Action(Action::TogglePluginEditor) => {
                 self.toggle_instrument_editor(self.selected_track_idx);
                 true
             }
@@ -721,19 +727,12 @@ impl Display {
             }
             // `+`/`=` and `-` zoom the arranger or clip view around the cursor
             // (Ableton, Bitwig). View-local (the scale is `Display` state), so
-            // bound here. Shift is
-            // allowed because `+` is Shift+`=` on many layouts. ⌘/Ctrl is
-            // refused: ⌘+/⌘- belong to egui's UI-scale zoom. ⌥ is refused:
-            // `⌥=`/`⌥-` stretch the clip, in the handler.
-            InputEvent::KeyPressed {
-                key: key @ (Key::Plus | Key::Equals | Key::Minus),
-                modifiers,
-            } if !modifiers.command
-                && !modifiers.alt
-                && (self.view_state() == ViewState::Arranger
-                    || self.is_pane_visible(Pane::Clip)) =>
+            // bound here. ⌘+/⌘- belong to egui's UI-scale zoom; `⌥=`/`⌥-`
+            // stretch the clip, in the handler.
+            InputEvent::Action(action @ (Action::ZoomIn | Action::ZoomOut))
+                if self.view_state() == ViewState::Arranger || self.is_pane_visible(Pane::Clip) =>
             {
-                let factor = if key == Key::Minus {
+                let factor = if action == Action::ZoomOut {
                     1.0 / ZOOM_KEY_STEP
                 } else {
                     ZOOM_KEY_STEP
@@ -964,19 +963,10 @@ impl Display {
             // notes in `Clip`) — and bare `X` — step back to the
             // framing the last `Z` replaced: Ableton's pair, exactly.
             // View-local (the scale, scroll and history are `Display` state).
-            // Only the bare key: `⌘/Ctrl+Z` is undo and must fall through to
-            // the handler, and `⌘/Ctrl+X` arrives as `InputEvent::Cut`, never
-            // as a `KeyPressed`.
-            InputEvent::KeyPressed {
-                key: key @ (Key::Z | Key::X),
-                modifiers,
-            } if !modifiers.command
-                && !modifiers.shift
-                && !modifiers.alt
-                && (self.view_state() == ViewState::Arranger
-                    || self.is_pane_visible(Pane::Clip)) =>
+            InputEvent::Action(action @ (Action::ZoomToFit | Action::ZoomBack))
+                if self.view_state() == ViewState::Arranger || self.is_pane_visible(Pane::Clip) =>
             {
-                if key == Key::Z {
+                if action == Action::ZoomToFit {
                     self.zoom_timeline_to_fit();
                 } else {
                     self.zoom_timeline_back();
@@ -1117,17 +1107,9 @@ impl Display {
             // arrangement — see `select_all_clips`. View-local like
             // Shift+click: the operand (`render.clip_shapes`) and the
             // result (`time_selection`) both live here, and nothing is sent
-            // so the cursor and selected track stay put. Only the exact
-            // chord — a stray ⇧ or ⌥ on top refuses rather than selecting
-            // everything by accident.
-            InputEvent::KeyPressed {
-                key: Key::A,
-                modifiers,
-            } if modifiers.command
-                && !modifiers.shift
-                && !modifiers.alt
-                && self.view_state() == ViewState::Arranger =>
-            {
+            // so the cursor and selected track stay put. The clip view's
+            // form is the handler's.
+            InputEvent::Action(Action::SelectAll) if self.view_state() == ViewState::Arranger => {
                 self.select_all_clips();
                 true
             }
@@ -1185,10 +1167,7 @@ impl Display {
             // the precedence rule to the handler; a collapsed selection yields
             // `None`, which the handler turns into a bare loop toggle. Bare `L`
             // is deliberately unbound (it used to match any modifiers).
-            InputEvent::KeyPressed {
-                key: Key::L,
-                modifiers,
-            } if modifiers.command && self.view_state() == ViewState::Arranger => self
+            InputEvent::Action(Action::SetLoop) => self
                 .input_event_tx
                 .send(InputEvent::SetRegionToTimeSelectionOrToggleLoop {
                     time_bounds: self.gesture.time_selection.map(|r| (r.start, r.end)),
@@ -1200,13 +1179,7 @@ impl Display {
             // advance the selection so repeated presses chain. Bypasses the
             // marquee's track range, like Shift+⌘/Ctrl+C/X. Selection-only,
             // like `I` — nothing is sent without a real time selection.
-            InputEvent::KeyPressed {
-                key: Key::D,
-                modifiers,
-            } if modifiers.command
-                && modifiers.shift
-                && self.view_state() == ViewState::Arranger =>
-            {
+            InputEvent::Action(Action::DuplicateTime) => {
                 self.send_for_time_selection(|rect| InputEvent::DuplicateTimeInSelection {
                     start: rect.start,
                     end: rect.end,
@@ -1218,89 +1191,49 @@ impl Display {
             // shifts, no time is inserted. Marquee-only like above. Bare `D`
             // (no modifier) has no Arranger binding — ⌘D/Shift+⌘D cover
             // Duplicate entirely.
-            InputEvent::KeyPressed {
-                key: Key::D,
-                modifiers,
-            } if modifiers.command
-                && !modifiers.shift
-                && self.view_state() == ViewState::Arranger =>
-            {
+            InputEvent::Action(Action::DuplicateClips) => {
                 self.send_for_time_selection(|rect| InputEvent::DuplicateClipsInSelection { rect })
             }
             // ⌘/Ctrl+T — add an empty MIDI track after the selected one
-            // (Ableton's chord). Exact chord, like ⌘/Ctrl+J.
-            InputEvent::KeyPressed {
-                key: Key::T,
-                modifiers,
-            } if modifiers.command
-                && !modifiers.shift
-                && !modifiers.alt
-                && self.view_state() == ViewState::Arranger =>
-            {
-                self.input_event_tx
-                    .send(InputEvent::AddTrack { track_idx: None })
-                    .is_ok()
-            }
+            // (Ableton's chord).
+            InputEvent::Action(Action::AddTrack) => self
+                .input_event_tx
+                .send(InputEvent::AddTrack { track_idx: None })
+                .is_ok(),
             // ⌘/Ctrl+R — rename the selected track (Ableton's chord): the
-            // rename field over its header's name. Exact chord; bound here,
-            // ahead of bare `R` (record), which ⌘ no longer fires.
-            InputEvent::KeyPressed {
-                key: Key::R,
-                modifiers,
-            } if modifiers.command
-                && !modifiers.shift
-                && !modifiers.alt
-                && self.view_state() == ViewState::Arranger =>
-            {
+            // rename field over its header's name.
+            InputEvent::Action(Action::RenameTrack) => {
                 self.open_track_rename(self.selected_track_idx);
                 true
             }
             // ⌘/Ctrl+J — "Merge Clips" (Ableton's Consolidate): bake the
             // marquee into one clip per marqueed track. Marquee-only like
-            // ⌘/Ctrl+D; exact chord, a stray modifier refuses.
-            InputEvent::KeyPressed {
-                key: Key::J,
-                modifiers,
-            } if modifiers.command
-                && !modifiers.shift
-                && !modifiers.alt
-                && self.view_state() == ViewState::Arranger =>
-            {
+            // ⌘/Ctrl+D.
+            InputEvent::Action(Action::Merge) => {
                 self.send_for_time_selection(|rect| InputEvent::MergeClipsInSelection { rect })
             }
             // The exact opposite of ⌘/Ctrl+I: same no-single-clip-fallback
             // shape (a duration-driven op is meaningless without a real time
             // selection), but closes the gap instead of opening one. Bound to
             // ⌘/Ctrl+Delete rather than bare Delete/Backspace, for the same
-            // reason ⌘/Ctrl+I moved off bare `I` — matched ahead of the plain
-            // Delete/Backspace arm below, which has no modifier guard and
-            // would otherwise catch this chord first.
-            InputEvent::KeyPressed {
-                key: Key::Delete,
-                modifiers,
-            } if modifiers.command && self.view_state() == ViewState::Arranger => self
-                .send_for_time_selection(|rect| InputEvent::DeleteTimeInSelection {
+            // reason ⌘/Ctrl+I moved off bare `I`.
+            InputEvent::Action(Action::DeleteTime) => {
+                self.send_for_time_selection(|rect| InputEvent::DeleteTimeInSelection {
                     start: rect.start,
                     end: rect.end,
-                }),
+                })
+            }
             // Marquee-only, like `Q` below: the old selected-clip fallback
             // (delete a clip just by clicking it) is gone, so with no time
             // selection the press is consumed and nothing is sent.
-            InputEvent::KeyPressed {
-                key: Key::Delete | Key::Backspace,
-                modifiers: _,
-            } if self.view_state() == ViewState::Arranger => {
+            InputEvent::Action(Action::DeleteSelection) => {
                 self.send_for_time_selection(|rect| InputEvent::RemoveClipsInSelection { rect })
             }
             // ⌘/Ctrl+⇧+E — "Export MIDI Clip" (Ableton's chord): the lead
             // clip to a `.mid` next to the project. In both views; the
             // arranger's marquee rides along so an export over several
-            // clips is refused, never resolved to one of them. Ahead of the
-            // ⌘E split arm, which refuses ⇧.
-            InputEvent::KeyPressed {
-                key: Key::E,
-                modifiers,
-            } if modifiers.command && modifiers.shift && !modifiers.alt => {
+            // clips is refused, never resolved to one of them.
+            InputEvent::Action(Action::ExportClip) => {
                 let (time_bounds, name) = self.export_scope();
                 self.input_event_tx
                     .send(InputEvent::ExportClip { time_bounds, name })
@@ -1308,12 +1241,8 @@ impl Display {
             }
             // ⌘/Ctrl+⇧+R — "Export Audio" (Ableton's chord): the marquee's
             // time as WAV stems plus a mix. Without a marquee, and in the
-            // clip view, the sequencer says to make one. Ahead of the ⌘R
-            // rename arm, which refuses ⇧ anyway.
-            InputEvent::KeyPressed {
-                key: Key::R,
-                modifiers,
-            } if modifiers.command && modifiers.shift && !modifiers.alt => {
+            // clip view, the sequencer says to make one.
+            InputEvent::Action(Action::ExportAudio) => {
                 let (time_bounds, name) = self.export_scope();
                 self.input_event_tx
                     .send(InputEvent::ExportAudio { time_bounds, name })
@@ -1322,49 +1251,27 @@ impl Display {
             // Ableton-style split at the cursor: same shape as Delete above,
             // the view resolves the time selection it owns and passes it down.
             // Bound to ⌘/Ctrl+E (not bare `E`) for consistency with the other
-            // now-marquee-scoped range keys. ⌥ is refused: ⌘⌥E is the clip
-            // panel size (it used to fire the split too); so is ⇧, the
-            // clip export above.
-            InputEvent::KeyPressed {
-                key: Key::E,
-                modifiers,
-            } if modifiers.command
-                && !modifiers.alt
-                && !modifiers.shift
-                && self.view_state() == ViewState::Arranger =>
-            {
-                self.input_event_tx
-                    .send(InputEvent::SplitClipsInTimeSelectionOrClip {
-                        time_bounds: self.gesture.time_selection,
-                    })
-                    .is_ok()
-            }
+            // now-marquee-scoped range keys.
+            InputEvent::Action(Action::Split) => self
+                .input_event_tx
+                .send(InputEvent::SplitClipsInTimeSelectionOrClip {
+                    time_bounds: self.gesture.time_selection,
+                })
+                .is_ok(),
             // Ableton's "Insert MIDI Clip" (⇧⌘/Ctrl+M): an empty clip over
-            // the marquee, or one bar at the cursor with none. Ahead of the
-            // bare `M` arm below, which matches any modifiers. Plain ⌘M is
+            // the marquee, or one bar at the cursor with none. Plain ⌘M is
             // left to the OS (macOS minimize).
-            InputEvent::KeyPressed {
-                key: Key::M,
-                modifiers,
-            } if modifiers.command
-                && modifiers.shift
-                && self.view_state() == ViewState::Arranger =>
-            {
-                self.input_event_tx
-                    .send(InputEvent::InsertEmptyClip {
-                        time_bounds: self.gesture.time_selection,
-                    })
-                    .is_ok()
-            }
+            InputEvent::Action(Action::InsertEmptyClip) => self
+                .input_event_tx
+                .send(InputEvent::InsertEmptyClip {
+                    time_bounds: self.gesture.time_selection,
+                })
+                .is_ok(),
             // Ableton-style "Deactivate Time Selection": marquee-only, same
-            // shape as Delete above — intercepted here (Arranger only) ahead
-            // of the bare `Key::M` arm in `input_handler.rs`, which toggles
-            // the selected events' mute inside `Clip`. With no time
-            // selection the press is consumed.
-            InputEvent::KeyPressed {
-                key: Key::M,
-                modifiers: _,
-            } if self.view_state() == ViewState::Arranger => {
+            // shape as Delete above. The clip view's `M` is `MuteNotes`, in
+            // `input_handler.rs`. With no time selection the press is
+            // consumed.
+            InputEvent::Action(Action::MuteRange) => {
                 self.send_for_time_selection(|rect| InputEvent::MuteClipsInSelection { rect })
             }
             // Ableton/Bitwig-style "Insert Silence": same resolved-operand
@@ -1373,14 +1280,12 @@ impl Display {
             // by, so nothing is sent (the key press is just consumed) when
             // there's no active time selection. Bound to ⌘/Ctrl+I (not bare
             // `I`), for the same reason Split moved off bare `E`.
-            InputEvent::KeyPressed {
-                key: Key::I,
-                modifiers,
-            } if modifiers.command && self.view_state() == ViewState::Arranger => self
-                .send_for_time_selection(|rect| InputEvent::InsertSilenceInSelection {
+            InputEvent::Action(Action::InsertSilence) => {
+                self.send_for_time_selection(|rect| InputEvent::InsertSilenceInSelection {
                     start: rect.start,
                     end: rect.end,
-                }),
+                })
+            }
             // Shift+⌘/Ctrl+C copy-time-selection: arrives as `InputEvent::Copy`
             // (egui-winit swallows the raw `C` key for the copy chord; `shift`
             // is sampled separately since the bare chord event carries no

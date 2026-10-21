@@ -2,17 +2,19 @@
 //! [`InputEvent`] the view forwards, and
 //! the per-binding `handle_*` helpers it calls.
 //!
-//! Most arms match a raw `KeyPressed` / mouse variant and branch on
-//! `view_state` + [`ClipContext`] here; a few match a purpose-built variant the
-//! view pre-resolved (see `input_event.rs`). Keyboard is the primary surface —
-//! `010-keybindings.md` catalogues the bindings, `020-views-and-state.md`
-//! the transitions.
+//! The commands arrive resolved, as `InputEvent::Action` (`core/keymap.rs`);
+//! the keys that are not commands (arrows, Esc, Enter, Tab) as `KeyPressed`.
+//! Arms branch on `view_state` + [`ClipContext`] here; a few match a
+//! purpose-built variant the view pre-resolved (see `input_event.rs`).
+//! Keyboard is the primary surface — `010-keybindings.md` catalogues the
+//! bindings, `020-views-and-state.md` the transitions.
 
 use egui::Key;
 
 use crate::core::sequencer::TempoGesture;
 use crate::core::{
     input_event::{InputEvent, KeyModifiers, is_pane_focus_key},
+    keymap::Action,
     settings::{clamp_midi_out_offset_ms, update_settings},
 };
 use crate::models::clip::ClipEdge;
@@ -46,9 +48,9 @@ const GRID_NUDGE_TICKS: i32 = sixteenth_straight_ticks() / 4;
 
 impl EventHandlers {
     // --- Event handlers ---
-    /// Dispatches every `InputEvent` the view forwards. Most arms match a
-    /// raw `KeyPressed`/mouse variant directly and branch on `view_state`/
-    /// `clip_context` here; a handful of arms instead match a purpose-built
+    /// Dispatches every `InputEvent` the view forwards. Most arms match an
+    /// `Action`, a fixed `KeyPressed` or a mouse variant directly and branch
+    /// on `view_state`/`clip_context` here; a handful of arms instead match a purpose-built
     /// variant (e.g. `SetRegionToTimeSelectionOrToggleLoop`,
     /// `RemoveClipsInSelection`) that `Display::forward_input_event`
     /// pre-resolved because the operand — a view-local time selection or drag
@@ -77,34 +79,21 @@ impl EventHandlers {
                 modifiers,
             } => self.handle_prev_next_keys(1, modifiers),
 
-            InputEvent::KeyPressed {
-                key: Key::Plus | Key::Equals,
-                modifiers,
-            } => self.handle_plus_minus_keys(1, modifiers),
-
-            InputEvent::KeyPressed {
-                key: Key::Minus,
-                modifiers,
-            } => self.handle_plus_minus_keys(-1, modifiers),
+            // `⌥=`/`⌥-` stretch the whole clip a bar longer/shorter.
+            InputEvent::Action(Action::StretchClipLonger) => self.handle_clip_stretch(1),
+            InputEvent::Action(Action::StretchClipShorter) => self.handle_clip_stretch(-1),
 
             // `0` (main row or numpad — egui-winit maps both to `Key::Num0`):
             // Cubase-style transport "Stop", paired with `⌥Space`'s "Start"
             // below.
-            InputEvent::KeyPressed {
-                key: Key::Num0,
-                modifiers: _,
-            } => self.send_transport(TransportCommand::Stop),
+            InputEvent::Action(Action::Stop) => self.send_transport(TransportCommand::Stop),
 
             // `⌥Space`: Cubase-style transport "Start" — an unconditional
             // restart, running or not. In the clip view it starts from the
             // clip cursor (the arranger cursor stays put). In `Arranger` it
-            // falls through to the bare `Space` toggle below. Moved off bare
-            // `Enter`, now spare.
-            InputEvent::KeyPressed {
-                key: Key::Space,
-                modifiers,
-            } if modifiers.alt
-                && matches!(
+            // is the bare `Space` toggle.
+            InputEvent::Action(Action::PlayFromCursor)
+                if matches!(
                     self.clip_context(),
                     ClipContext::Clip | ClipContext::ClipWithSelection
                 ) =>
@@ -112,40 +101,26 @@ impl EventHandlers {
                 self.send_sequencer(SequencerCommand::PlayFromClipCursor);
             }
 
-            InputEvent::KeyPressed {
-                key: Key::Space,
-                modifiers: _,
-            } => self.send_transport(TransportCommand::TogglePlayback),
+            InputEvent::Action(Action::TogglePlayback | Action::PlayFromCursor) => {
+                self.send_transport(TransportCommand::TogglePlayback);
+            }
 
-            // Bare `R` (⌘/Ctrl+R is rename track, bound in `Display`).
-            InputEvent::KeyPressed {
-                key: Key::R,
-                modifiers,
-            } if !modifiers.command => self.handle_toggle_live_recording(),
+            InputEvent::Action(Action::ToggleLiveRecord) => self.handle_toggle_live_recording(),
 
             // `\` or `/` (main row or numpad — egui-winit maps both to
-            // `Key::Slash`, and nothing else claims either). `\` is the one
-            // shown: a single press beside `[` `]` on US ANSI and Norwegian (Windows)
-            // layouts. `/` stays for the numpad and for layouts where `\`
-            // takes a chord (Swedish, Danish and German among them).
-            InputEvent::KeyPressed {
-                key: Key::Backslash | Key::Slash,
-                modifiers: _,
-            } => self.send_sequencer(SequencerCommand::Commit),
+            // `Key::Slash`). `\` is the one shown: a single press beside `[`
+            // `]` on US ANSI and Norwegian (Windows) layouts. `/` stays for
+            // the numpad and for layouts where `\` takes a chord (Swedish,
+            // Danish and German among them).
+            InputEvent::Action(Action::Commit) => self.send_sequencer(SequencerCommand::Commit),
 
-            InputEvent::KeyPressed {
-                key: Key::M,
-                modifiers: _,
-            } => self.handle_mute(),
+            InputEvent::Action(Action::MuteNotes) => self.handle_mute(),
 
             // `Q` quantizes in `Clip` only: the selected notes, or the whole
             // clip window with none selected. No Arranger `Q` — see
             // `070-quantization.md`.
-            InputEvent::KeyPressed {
-                key: Key::Q,
-                modifiers,
-            } if !modifiers.command
-                && matches!(
+            InputEvent::Action(Action::Quantize)
+                if matches!(
                     self.clip_context(),
                     ClipContext::Clip | ClipContext::ClipWithSelection
                 ) =>
@@ -156,27 +131,14 @@ impl EventHandlers {
             // ⌘/Ctrl+A — Select All. The Arranger form (marquee every clip)
             // never arrives here: `Display::forward_input_event` consumes it
             // because its operand is view-local.
-            InputEvent::KeyPressed {
-                key: Key::A,
-                modifiers,
-            } if modifiers.command && !modifiers.shift && !modifiers.alt => {
-                self.handle_select_all();
-            }
+            InputEvent::Action(Action::SelectAll) => self.handle_select_all(),
 
             // Note: ⇧F5/⇧F6 (theme cycling) are intentionally absent here. They are
             // consumed view-locally by `Display::handle_theme_input_event` before
             // input reaches this handler — the theme is a `static` in `view::theme`
             // plus view-local shape colors, so no core state is involved.
-            InputEvent::KeyPressed {
-                key: Key::Z,
-                modifiers,
-            } if modifiers.command => {
-                if modifiers.shift {
-                    self.send_sequencer(SequencerCommand::Redo);
-                } else {
-                    self.send_sequencer(SequencerCommand::Undo);
-                }
-            }
+            InputEvent::Action(Action::Undo) => self.send_sequencer(SequencerCommand::Undo),
+            InputEvent::Action(Action::Redo) => self.send_sequencer(SequencerCommand::Redo),
 
             // ⌘/Ctrl+V pastes the clip clipboard at the cursor in the Arranger
             // and the note clipboard at the clip cursor in the clip view.
@@ -208,12 +170,8 @@ impl EventHandlers {
             // ⌘/Ctrl+D and Shift+⌘/Ctrl+D are handled by
             // Display::forward_input_event before they reach here, since they
             // need the view-local time selection. Bare `D` is spare.
-            InputEvent::KeyPressed {
-                key: Key::D,
-                modifiers,
-            } if modifiers.command
-                && !modifiers.shift
-                && matches!(self.clip_context(), ClipContext::ClipWithSelection) =>
+            InputEvent::Action(Action::DuplicateNotes)
+                if matches!(self.clip_context(), ClipContext::ClipWithSelection) =>
             {
                 self.send_sequencer(SequencerCommand::DuplicateSelectedEvents);
             }
@@ -230,24 +188,14 @@ impl EventHandlers {
 
             // `[`/`]` move the start/end edge of a clip to the cursor
             // (`220-capture-without-pending-view.md`): an arrangement trim in
-            // the arranger, a start/end marker in the clip view. Any
-            // modifier but ⌘/Ctrl, so layouts that type the brackets with
-            // ⌥ or ⇧ (Nordic, German) reach them too.
-            InputEvent::KeyPressed {
-                key: key @ (Key::OpenBracket | Key::CloseBracket),
-                modifiers,
-            } if !modifiers.command => {
-                let edge = if *key == Key::OpenBracket {
-                    ClipEdge::Start
-                } else {
-                    ClipEdge::End
-                };
-                if matches!(
-                    self.clip_context(),
-                    ClipContext::Arranger | ClipContext::Clip | ClipContext::ClipWithSelection
-                ) {
-                    self.send_sequencer(SequencerCommand::SetClipEdgeToCursor(edge));
-                }
+            // the arranger, a start/end marker in the clip view. Layouts
+            // that type the brackets with ⌥ or ⇧ (Nordic, German) reach them
+            // too: the keymap drops those modifiers (`Chord::from_press`).
+            InputEvent::Action(Action::ClipStartToCursor) => {
+                self.send_sequencer(SequencerCommand::SetClipEdgeToCursor(ClipEdge::Start));
+            }
+            InputEvent::Action(Action::ClipEndToCursor) => {
+                self.send_sequencer(SequencerCommand::SetClipEdgeToCursor(ClipEdge::End));
             }
 
             // Bare `Enter` fits the tempo to the project's only clip, in the
@@ -261,10 +209,7 @@ impl EventHandlers {
                 self.send_sequencer(SequencerCommand::FitTempo);
             }
 
-            InputEvent::KeyPressed {
-                key: Key::Delete | Key::Backspace,
-                modifiers: _,
-            } => self.handle_delete(),
+            InputEvent::Action(Action::DeleteNotes) => self.handle_delete(),
 
             InputEvent::KeyPressed {
                 key: Key::Escape,
@@ -369,18 +314,11 @@ impl EventHandlers {
                 update_settings("theme", |settings| settings.theme_index = *theme_index);
             }
 
-            // `K` without ⌘/Ctrl (`⌘/Ctrl+K` is the computer keyboard,
-            // bound in `Display`).
-            InputEvent::KeyPressed {
-                key: Key::K,
-                modifiers,
-            } if !modifiers.command => self.send_transport(TransportCommand::ToggleMetronomeMute),
+            InputEvent::Action(Action::ToggleMetronome) => {
+                self.send_transport(TransportCommand::ToggleMetronomeMute);
+            }
 
-            // Bare `T` (⌘/Ctrl+T is add track, bound in `Display`).
-            InputEvent::KeyPressed {
-                key: Key::T,
-                modifiers,
-            } if !modifiers.command => self.send_sequencer(SequencerCommand::TapTempo),
+            InputEvent::Action(Action::TapTempo) => self.send_sequencer(SequencerCommand::TapTempo),
 
             InputEvent::FocusPane { pane } => {
                 self.send_sequencer(SequencerCommand::FocusPane(*pane));
@@ -727,8 +665,8 @@ impl EventHandlers {
             ClipContext::Clip => self.handle_clip_cursor_movement(direction, modifiers),
             // Position: L/R nudges the selected events at the grid step;
             // Cmd/Ctrl+L/R nudges by a much finer step. Shift+L/R nudges
-            // event length instead of position (moved off +/-, see
-            // `handle_plus_minus_keys`).
+            // event length instead of position (moved off +/-, now the
+            // clip stretch's `⌥=`/`⌥-` and zoom).
             ClipContext::ClipWithSelection if modifiers.shift => self.send_sequencer(
                 SequencerCommand::NudgeSelectedEventsLength(direction * GRID_NUDGE_TICKS),
             ),
@@ -771,22 +709,15 @@ impl EventHandlers {
         }
     }
 
-    /// `+`/`-` reaching the handler: `⌥=`/`⌥-` clip stretch in `Clip`.
-    fn handle_plus_minus_keys(&self, direction: i32, modifiers: &KeyModifiers) {
+    /// `⌥=`/`⌥-` in `Clip`: stretch the whole clip a bar longer/shorter,
+    /// retiming its notes to fill the new length
+    /// (`RetimeClipEdit::rescale_selected`) — Logic's Option-drag
+    /// time-stretch. A whole-clip op, so the event selection is irrelevant.
+    fn handle_clip_stretch(&self, direction: i32) {
         match self.clip_context() {
             ClipContext::Arranger => {}
-            // ⌥=/⌥- stretches the whole clip a bar longer/shorter — Logic's
-            // Option-drag time-stretch. A whole-clip op, so the event
-            // selection is irrelevant and it works in both views. Plain and
-            // Shift+ +/- never arrive here from these views: they zoom,
-            // consumed view-side in `Display::forward_input_event`. (Shift+-
-            // used to clear the selection; that is Esc's job alone now.)
             ClipContext::Clip | ClipContext::ClipWithSelection => {
-                // Retimes the notes to fill the new length
-                // (`RetimeClipEdit::rescale_selected`).
-                if modifiers.alt && !modifiers.command {
-                    self.send_sequencer(SequencerCommand::RescaleSelectedClipTempo(direction));
-                }
+                self.send_sequencer(SequencerCommand::RescaleSelectedClipTempo(direction));
             }
         }
     }
@@ -902,13 +833,16 @@ mod tests {
 
     use crate::core::event_handlers::test_harness::harness;
     use crate::core::input_event::{InputEvent, KeyModifiers};
+    use crate::core::keymap::{Action, Keymap};
     use crate::core::sequencer::SequencerCommand;
+    use crate::core::view_state::Pane;
 
-    /// `\` and `/` are both the commit key, with or without modifiers (on a
-    /// layout where `\` takes a chord, it arrives with them).
+    /// `\` and `/` are both the commit key, and `\` typed as a chord (on a
+    /// layout where it takes one, it arrives with them) still is.
     #[test]
     fn backslash_and_slash_both_commit() {
         let h = harness();
+        let keymap = Keymap::default();
         let chord = KeyModifiers {
             shift: true,
             alt: true,
@@ -919,15 +853,14 @@ mod tests {
             (Key::Slash, KeyModifiers::default()),
             (Key::Backslash, chord),
         ] {
+            let action = keymap.resolve_press(key, modifiers, Pane::Arranger);
+            assert_eq!(action, Some(Action::Commit), "{key:?}");
             h.handlers
-                .handle_input_event(&InputEvent::KeyPressed { key, modifiers });
-            assert!(
-                matches!(
-                    h.sequencer_commands.try_recv(),
-                    Ok(SequencerCommand::Commit)
-                ),
-                "{key:?} should commit"
-            );
+                .handle_input_event(&InputEvent::Action(Action::Commit));
+            assert!(matches!(
+                h.sequencer_commands.try_recv(),
+                Ok(SequencerCommand::Commit)
+            ));
         }
     }
 }

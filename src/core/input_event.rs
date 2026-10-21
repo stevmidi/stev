@@ -16,6 +16,10 @@
 //! view sends nothing without a time selection, so the payload is bare.
 //! Clipboard chords (`Copy`/`Cut`/`Paste`) arrive as bare intents because
 //! egui-winit swallows the raw key press. See `020-views-and-state.md`.
+//!
+//! A key press that is a command arrives as `Action`, resolved once through
+//! the keymap (`core/keymap.rs`); the keys that are not commands (arrows,
+//! Esc, Enter, Tab) stay `KeyPressed`. See `docs/320-keyboard-shortcuts.md`.
 
 use std::path::PathBuf;
 
@@ -23,7 +27,7 @@ use egui::{Key, Modifiers};
 use uuid::Uuid;
 
 use crate::{
-    core::{project::ProjectAction, time::Meter, view_state::Pane},
+    core::{keymap::Action, project::ProjectAction, time::Meter, view_state::Pane},
     models::{
         clip::{Clip, ClipEdge, NoteDrag},
         track::TrackOutput,
@@ -81,15 +85,21 @@ impl TimeSelectionRect {
 /// the `...InTimeSelectionOrClip` / `...InSelection` operand conventions.
 #[derive(Clone, Debug)]
 pub(crate) enum InputEvent {
-    /// A key went down, with the modifier state at that moment. The app is
-    /// keyboard-first; most bindings resolve from here in
-    /// `event_handlers/input_handler.rs`.
+    /// A key went down, with the modifier state at that moment. `Display`
+    /// turns a press the keymap binds into [`Action`](Self::Action); what
+    /// stays a `KeyPressed` is a key that is not a command — the arrows, Esc,
+    /// Enter, Tab — matched in `Display` and `event_handlers/input_handler.rs`.
     KeyPressed {
         /// The key that went down.
         key: Key,
         /// Modifier state at the moment of the event.
         modifiers: KeyModifiers,
     },
+    /// A key press the keymap resolved to a command, for the pane that had
+    /// the keyboard (`Keymap::resolve`). Matched in `Display` where the
+    /// command needs view state, in `event_handlers/input_handler.rs`
+    /// otherwise.
+    Action(Action),
 
     /// Pointer moved to `(x, y)` in screen space. Drives hover and any
     /// in-progress drag.

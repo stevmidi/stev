@@ -112,6 +112,7 @@ use egui::{Color32, Rect, pos2};
 use uuid::Uuid;
 
 use crate::core::audio::AudioLoad;
+use crate::core::keymap::Keymap;
 use crate::core::midi::message::Midi3;
 #[cfg(target_os = "macos")]
 use crate::core::plugin_host::PluginAudioHandle;
@@ -317,6 +318,9 @@ pub(crate) struct Display {
     // --- Input ---
     /// Polls egui's native input each frame into `InputEvent`s.
     input_poller: InputPoller,
+    /// The command keymap a key press is resolved through
+    /// (`input/mod.rs`'s `resolve_action`).
+    keymap: Keymap,
     /// The computer keyboard — the letter keys played as a piano while it is
     /// on. See `computer_keys.rs`.
     computer_keyboard: ComputerKeyboard,
@@ -479,6 +483,7 @@ impl Display {
             recording_clip_id: None,
             live_rec_state,
             input_poller: InputPoller::new(),
+            keymap: Keymap::default(),
             computer_keyboard: ComputerKeyboard::default(),
             computer_keys_tx,
             #[cfg(target_os = "macos")]

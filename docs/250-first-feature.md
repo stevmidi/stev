@@ -25,9 +25,11 @@ The rest of this file is the same path read by hand. It's worth skimming even wh
                                                      ── "main" (UI) thread ──
 key press (egui)
   → InputPoller           → InputEvent::KeyPressed { key: M, .. }   view/input_poller.rs
-  → Display::forward_input_event   (intercepts only keys that need   view/display/input/mod.rs
-                                    view-local state; M in the clip
-                                    view passes through)
+  → Display::forward_input_event   → Keymap::resolve:               view/display/input/mod.rs
+                                     InputEvent::Action(MuteNotes)   core/keymap.rs
+                                   (intercepts only commands that
+                                    need view-local state; the clip
+                                    view's M passes through)
   → EventHandlers::handle_input_event → handle_mute                  core/event_handlers/input_handler.rs
   → send SequencerCommand::MuteSelectedEvents  ──── channel ────┐    core/sequencer/commands.rs
                                                      ── "sequencer" thread ──
@@ -43,15 +45,14 @@ key press (egui)
 
 ## Step by step
 
-### 1. The key: `InputEvent` → `SequencerCommand`
+### 1. The key: `Action` → `SequencerCommand`
 
-egui's key presses arrive as `InputEvent::KeyPressed { key, modifiers }` (`core/input_event.rs`). Most of them travel unchanged to `EventHandlers::handle_input_event`, one big `match` in `input_handler.rs`:
+egui's key presses arrive as `InputEvent::KeyPressed { key, modifiers }` (`core/input_event.rs`). A command key is resolved once, in `Display::forward_input_event`, through the keymap (`core/keymap.rs`): the chord and the pane with the keyboard pick an `Action`, and the press travels on as `InputEvent::Action`. Each command is a row in the keymap's `ACTIONS` table: a stable id, a label, a category, a scope (`Global`, `Arranger` or `Clip`) and its default chords. The clip view's `M` is its own action, `MuteNotes`, scoped to `Clip`; the arranger's `M` is `MuteRange`. A new command adds a variant to `Action` and a row to `ACTIONS`, and a test there checks no two overlapping actions share a chord.
+
+Most actions travel on to `EventHandlers::handle_input_event`, one big `match` in `input_handler.rs`:
 
 ```rust
-InputEvent::KeyPressed {
-    key: Key::M,
-    modifiers: _,
-} => self.handle_mute(),
+InputEvent::Action(Action::MuteNotes) => self.handle_mute(),
 ```
 
 `handle_mute` decides whether the key means anything *here*. The clip view's `M` only acts with notes selected, so it checks the `ClipContext` (the view plus whether notes are selected) and sends one command:
@@ -66,7 +67,7 @@ fn handle_mute(&self) {
 
 The handler only reads atomics (the view, whether there's a selection) and sends. It never reads or changes clips: those live on the other thread.
 
-**Keys that need view state.** A few bindings need something only `Display` knows, such as the arranger's marquee rectangle. Those are intercepted earlier, in `Display::forward_input_event` (its doc comment states the rule), and sent on as a purpose-built `InputEvent` carrying that state. The arranger's `M` is one: it mutes the marqueed range, so `Display` resolves it. If your key doesn't need view-local state, don't add an arm there.
+**Keys that need view state.** A few commands need something only `Display` knows, such as the arranger's marquee rectangle. Those are matched earlier, in `Display::forward_input_event` (its doc comment states the rule), and sent on as a purpose-built `InputEvent` carrying that state. The arranger's `M` (`MuteRange`) is one: it mutes the marqueed range, so `Display` resolves it. If your command doesn't need view-local state, don't add an arm there.
 
 **The command** is a variant of `SequencerCommand` (`core/sequencer/commands.rs`), with a doc comment saying what it does, whether it's undoable, and where it's bound:
 
@@ -145,6 +146,7 @@ When the handler side has logic of its own (a follow-up after recording, gesture
 The docs are written for the next person or agent to change the code, so they change with it, in the same commit (`AGENTS.md`, "Docs stay in sync"). For a new key and edit:
 
 - **`010-keybindings.md`**: the binding, where it applies, and what it does there.
+- **The keymap**: the action's row in `ACTIONS` (`core/keymap.rs`), with its label and category — the settings modal's Keyboard tab will be built from it.
 - **The help overlay**: the `HELP` table in `src/view/display/help_overlay.rs` (`("M", "Mute notes")` in the clip view's section). It's hand-written, so nothing reminds you.
 - **`050-undo-redo.md`**: add the new variant to the list of current `SequencerEdit` variants, and any new `EditResult` variant to its section.
 - Anything else you changed that a topic file describes: view state (`020`), persistence (`060`), threading (`000`). `AGENTS.md`'s table says which file covers what.
@@ -157,7 +159,7 @@ Run the build gate from `AGENTS.md` (`cargo check`, `cargo clippy --all-targets`
 
 ## Checklist
 
-1. A free key (`010`), matched in `handle_input_event`, gated on the view and selection it applies to.
+1. A free key (`010`; the keymap's conflict test agrees), an `Action` with its row in `ACTIONS`, matched in `handle_input_event`, gated on the view and selection it applies to.
 2. A `SequencerCommand` variant with a doc comment.
 3. An arm in `handle_sequencer_command` calling `record_edit` with the edit's constructor.
 4. The edit: `clip_events_edit!` for selected notes, hand-written for anything larger; its constructor returns `None` when there's nothing to do.

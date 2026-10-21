@@ -24,6 +24,7 @@ Undo/redo uses the [`undo` crate](https://docs.rs/undo) (`Record<SequencerEdit>`
 ```
 ⌘/Ctrl+Z keystroke
   → InputEvent::KeyPressed { Z, command }
+  → Keymap::resolve → InputEvent::Action(Action::Undo)
   → send SequencerCommand::Undo
   → sequencer thread select! arm
   → undo_record.undo(sequencer) → EditResult

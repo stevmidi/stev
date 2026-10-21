@@ -1,6 +1,7 @@
-//! App-wide reservation of four bare keys — `Space`, `v`, `.`, `0` — for
-//! transport control and editor visibility, even while a hosted plugin's
-//! **embedded** editor window has macOS keyboard focus.
+//! App-wide reservation of a few bare keys — the keymap's bare chords for
+//! play / stop, stop and the plugin editor (`Space`, `0` and `v` by default)
+//! — for transport control and editor visibility, even while a hosted
+//! plugin's **embedded** editor window has macOS keyboard focus.
 //!
 //! Once the user clicks into an embedded plugin editor, AppKit gives that
 //! window key focus and the eframe window stops receiving keyboard events
@@ -17,16 +18,22 @@
 //! called by [`super::window::PluginWindow`]'s constructor/`Drop`) —
 //! never the main app window, so normal in-focus behavior (the existing
 //! egui-based bindings) is completely untouched. It only ever intercepts the
-//! bare key (no Shift/Control/Option/Command) — narrower than the in-focus
-//! `v` binding, which also accepts Shift/Option/Control — so it never eats a
-//! modified chord a plugin's own UI might use. `NumericPad` and `CapsLock`
-//! are deliberately *not* treated as blocking modifiers — see the comment at
-//! the check itself for why (numpad `0`/`.` is the whole point of this
-//! feature; Caps Lock being toggled on would otherwise defeat it entirely).
+//! bare key (no Shift/Control/Option/Command), so it never eats a modified
+//! chord a plugin's own UI might use. `NumericPad` and `CapsLock` are
+//! deliberately *not* treated as blocking modifiers — see the comment at the
+//! check itself for why (numpad `0` is the whole point of this feature; Caps
+//! Lock being toggled on would otherwise defeat it entirely).
+//!
+//! Which keys it reserves follows the keymap (`core/keymap.rs`): `Display`
+//! hands over the bare chords of `TogglePlayback`, `Stop` and
+//! `TogglePluginEditor` ([`set_guarded_keys`]), so a moved Play key keeps
+//! working inside a plugin window and the old one isn't eaten for nothing.
+//! The transport keys go on as raw `KeyPressed`, resolved through the keymap
+//! like any other.
 //!
 //! **Tradeoff, unavoidable without introspecting the plugin's own focused
 //! control (which this host has no access to):** while an editor window is
-//! focused, none of these four can be typed as a literal character into
+//! focused, none of these keys can be typed as a literal character into
 //! anything inside the plugin's own UI (e.g. a preset-name field) — every
 //! other key still reaches the plugin normally.
 //!
@@ -54,10 +61,12 @@ thread_local! {
     /// currently owns — main-thread-only, like everything else here, so a
     /// plain `RefCell` (no `Send`/`Sync` needed) is enough.
     static EDITOR_WINDOWS: RefCell<Vec<usize>> = const { RefCell::new(Vec::new()) };
-    /// Set when the monitor intercepts a bare `v` while an editor window is
-    /// focused; drained once per frame by `Display` via
+    /// Set when the monitor intercepts the editor key (`v`) while an editor
+    /// window is focused; drained once per frame by `Display` via
     /// [`take_toggle_editor_pending`].
     static TOGGLE_EDITOR_PENDING: Cell<bool> = const { Cell::new(false) };
+    /// The keys the monitor reserves; empty until [`set_guarded_keys`] runs.
+    static GUARDED_KEYS: RefCell<GuardedKeys> = RefCell::new(GuardedKeys::default());
     /// Where an intercepted Space is forwarded — the same channel the normal
     /// egui-driven binding already sends through. `None` until
     /// [`install_key_guard`] runs.
@@ -69,6 +78,24 @@ thread_local! {
     /// Keeps the block and the monitor token alive for the app's lifetime —
     /// dropping either would tear the monitor down.
     static MONITOR: RefCell<Option<MonitorHandle>> = const { RefCell::new(None) };
+}
+
+/// The bare keys the monitor reserves while an editor window is focused,
+/// from the keymap.
+#[derive(Default)]
+pub(crate) struct GuardedKeys {
+    /// Forwarded as a raw `KeyPressed`: the bare chords of play / stop and
+    /// stop.
+    pub(crate) transport: Vec<Key>,
+    /// Toggles the selected track's editor: the bare chords of
+    /// `TogglePluginEditor`.
+    pub(crate) editor: Vec<Key>,
+}
+
+/// Sets the keys the monitor reserves. Main thread only; call again when
+/// the keymap changes.
+pub(crate) fn set_guarded_keys(keys: GuardedKeys) {
+    GUARDED_KEYS.with(|guarded| *guarded.borrow_mut() = keys);
 }
 
 /// Keeps the local-event-monitor token and its block alive; dropping either
@@ -96,9 +123,9 @@ fn is_editor_window(window: usize) -> bool {
     EDITOR_WINDOWS.with(|w| w.borrow().contains(&window))
 }
 
-/// Forwards a bare key press into the same channel — and so the same
-/// dispatch (`EventHandlers::handle_input_event`) — a normal in-focus
-/// keypress already goes through.
+/// Forwards a bare key press into the same channel a normal in-focus
+/// keypress goes through, to be resolved through the keymap and dispatched
+/// by `EventHandlers::handle_input_event`.
 fn send_key_pressed(key: Key) {
     INPUT_EVENT_TX.with(|tx| {
         if let Some(tx) = tx.borrow().as_ref() {
@@ -162,9 +189,8 @@ fn handle_key_event(event: NonNull<NSEvent>) -> *mut NSEvent {
     // Only the modifiers that actually change what a bare keypress means —
     // deliberately *not* `DeviceIndependentFlagsMask` (Apple's usual
     // "any meaningful modifier" pattern), which also bundles in `NumericPad`
-    // and `CapsLock`. `NumericPad` matters here specifically: the classic DAW
-    // transport pairing this guards (numpad `0` = play, numpad `.` = stop)
-    // always carries that flag, and `CapsLock` reflects the toggle's current
+    // and `CapsLock`. `NumericPad` matters here specifically: the numpad
+    // transport key this guards (`0`, Stop) always carries that flag, and `CapsLock` reflects the toggle's current
     // state on *every* keypress, not just while physically held — either one
     // in the reject set would have silently defeated the guard for anyone
     // using the numpad or with Caps Lock on.
@@ -190,20 +216,26 @@ fn handle_key_event(event: NonNull<NSEvent>) -> *mut NSEvent {
     }
     // `charactersIgnoringModifiers` (not `keyCode`, which is a US-layout
     // virtual key code) so this respects the user's actual keyboard layout.
-    let Some(chars) = event.charactersIgnoringModifiers() else {
+    let Some(key) = event
+        .charactersIgnoringModifiers()
+        .and_then(|chars| Key::from_name(&chars.to_string()))
+    else {
         return raw;
     };
 
-    match chars.to_string().as_str() {
-        " " => send_key_pressed(Key::Space),
-        // Stop — the classic DAW numpad transport shortcut pair with `0`
-        // below (both always carry `NumericPad` on a real numpad, already
-        // excluded above).
-        "." => send_key_pressed(Key::Period),
-        // Play from cursor.
-        "0" => send_key_pressed(Key::Num0),
-        "v" => TOGGLE_EDITOR_PENDING.with(|f| f.set(true)),
-        _ => return raw,
+    let (transport, editor) = GUARDED_KEYS.with(|guarded| {
+        let guarded = guarded.borrow();
+        (
+            guarded.transport.contains(&key),
+            guarded.editor.contains(&key),
+        )
+    });
+    if transport {
+        send_key_pressed(key);
+    } else if editor {
+        TOGGLE_EDITOR_PENDING.with(|f| f.set(true));
+    } else {
+        return raw;
     }
 
     // Pushing onto `input_event_tx` / setting the pending flag only queues
