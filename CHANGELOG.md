@@ -34,7 +34,10 @@ Breaking entries are marked **Breaking** and say what to do about them.
   Tab, Enter and Esc. Changes are saved at once in `settings.json`, only
   the ones you made, so a later version's new defaults still reach every
   command you never touched. A row whose key the computer keyboard plays
-  while it is on says so.
+  while it is on says so. The search field and the list take turns at the
+  keyboard: ↓, Enter or Tab moves into the list, and ↑ on the first row,
+  ⇧Tab or a click on the field moves back; nothing is typed into the
+  search while the list has it.
 
 ### Changed
 
