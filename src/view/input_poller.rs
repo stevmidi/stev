@@ -8,9 +8,11 @@
 //! own auto-repeat for the four arrow keys (DAS/ARR — an initial delay, then a
 //! steady repeat rate — see [`KeyRepeat`]) rather than relying on the OS's
 //! native key-repeat events, so the feel is tunable and doesn't fire for keys
-//! that shouldn't auto-repeat (`Enter`, `R`, etc.); egui's own `repeat: true`
-//! events are ignored, except for unmodified `+`/`=`/`-` (the arranger zoom
-//! keys), which ride the OS repeat — see the comment at that arm for why.
+//! that shouldn't auto-repeat (`Enter`, `R`, etc.); OS repeat presses are
+//! ignored, except for unmodified `+`/`=`/`-` (the arranger zoom keys), which
+//! ride the OS repeat — see the comment at that arm for why. What counts as a
+//! repeat is decided here, by physical key ([`HeldKeys`]), not by egui's
+//! `repeat` flag, which a shifted key can wedge.
 //!
 //! While the computer keyboard is on (`poll`'s `note_keys`), the key events it
 //! takes (`computer_keyboard::takes_key_event`) — presses *and* releases —
@@ -49,6 +51,47 @@ const REPEAT_DELAY_SECS: f64 = 0.35;
 /// Interval between repeats once auto-repeat is active ("ARR" — auto-repeat
 /// rate), seconds.
 const REPEAT_INTERVAL_SECS: f64 = 0.06;
+
+/// The keys held down, by physical key — what decides whether a press is
+/// the OS repeating a held key. egui's own `repeat` flag can't: it tracks
+/// the *logical* key, and a shifted key's release can arrive as another one
+/// (`?` typed as `⇧/` and let go after Shift is released as `/`), so egui
+/// goes on thinking `?` is held and calls the next real press a repeat. The
+/// physical key is the same on the way down and up, whatever Shift did.
+/// Pure and `egui`-context-free, so it's unit-testable.
+#[derive(Default)]
+struct HeldKeys {
+    /// The keys down now, by physical key (the logical one where egui gives
+    /// no physical key). A handful at most.
+    down: Vec<Key>,
+}
+
+impl HeldKeys {
+    /// Records a key edge — `key` the physical key, else the logical one —
+    /// and returns whether a press is a repeat: its key was already down.
+    /// A release is never a repeat.
+    fn edge(&mut self, key: Key, pressed: bool) -> bool {
+        let held = self.down.iter().position(|&down| down == key);
+        match (pressed, held) {
+            (true, Some(_)) => true,
+            (true, None) => {
+                self.down.push(key);
+                false
+            }
+            (false, Some(idx)) => {
+                self.down.swap_remove(idx);
+                false
+            }
+            (false, None) => false,
+        }
+    }
+
+    /// Forgets every key — when the window loses focus, whose releases may
+    /// never arrive, so no key stays wedged down.
+    fn clear(&mut self) {
+        self.down.clear();
+    }
+}
 
 /// Auto-repeat timing for one held key — when its next repeat should fire.
 /// Pure and `egui`-independent so it's unit-testable without a live
@@ -140,6 +183,8 @@ pub(super) struct InputPoller {
     left_mouse_down: bool,
     /// Primary-button double-click detection, on the second press.
     double_click: DoubleClick,
+    /// The keys held down, which decide whether a key press is a repeat.
+    held_keys: HeldKeys,
     /// Auto-repeat state, index-parallel with [`REPEATABLE_KEYS`]; `None`
     /// while that key is up.
     key_repeat: [Option<KeyRepeat>; REPEATABLE_KEYS.len()],
@@ -191,6 +236,7 @@ impl InputPoller {
             last_mouse_pos: None,
             left_mouse_down: false,
             double_click: DoubleClick::default(),
+            held_keys: HeldKeys::default(),
             key_repeat: [const { None }; REPEATABLE_KEYS.len()],
             move_modifier_down: false,
             files_hovering: false,
@@ -318,7 +364,19 @@ impl InputPoller {
             self.move_modifier_down = move_modifier_down;
 
             // Key presses — egui delivers these as events, not state
+            if !i.focused {
+                self.held_keys.clear();
+            }
             for event in &i.events {
+                let repeat = match event {
+                    Event::Key {
+                        key,
+                        physical_key,
+                        pressed,
+                        ..
+                    } => self.held_keys.edge(physical_key.unwrap_or(*key), *pressed),
+                    _ => false,
+                };
                 match event {
                     // The computer keyboard's keys, while it plays: set
                     // aside whole (an OS repeat included, so a held note key
@@ -326,7 +384,6 @@ impl InputPoller {
                     Event::Key {
                         physical_key,
                         pressed,
-                        repeat,
                         modifiers: mods,
                         ..
                     } if note_keys
@@ -339,10 +396,9 @@ impl InputPoller {
                     Event::Key {
                         key,
                         pressed: true,
-                        repeat: false,
                         modifiers: mods,
                         ..
-                    } => {
+                    } if !repeat => {
                         self.input_events.push(InputEvent::KeyPressed {
                             key: *key,
                             modifiers: KeyModifiers::from(*mods),
@@ -360,10 +416,9 @@ impl InputPoller {
                     Event::Key {
                         key: key @ (Key::Plus | Key::Equals | Key::Minus),
                         pressed: true,
-                        repeat: true,
                         modifiers: mods,
                         ..
-                    } if !mods.shift && !mods.command && !mods.alt => {
+                    } if repeat && !mods.shift && !mods.command && !mods.alt => {
                         self.input_events.push(InputEvent::KeyPressed {
                             key: *key,
                             modifiers: KeyModifiers::default(),
@@ -451,6 +506,44 @@ impl InputPoller {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `?` typed as `⇧/` and let go after Shift: egui names the press `?`
+    /// and the release `/`, but both are the physical `/` key, so the next
+    /// `?` is a fresh press, not a repeat (it was dropped as one).
+    #[test]
+    fn a_shifted_key_released_after_shift_is_pressed_fresh_next_time() {
+        let mut held = HeldKeys::default();
+        assert!(!held.edge(Key::Slash, true));
+        held.edge(Key::Slash, false);
+        assert!(!held.edge(Key::Slash, true));
+    }
+
+    #[test]
+    fn a_press_while_the_key_is_down_is_a_repeat() {
+        let mut held = HeldKeys::default();
+        assert!(!held.edge(Key::Space, true));
+        assert!(held.edge(Key::Space, true));
+        // Another key held alongside is its own fresh press.
+        assert!(!held.edge(Key::R, true));
+        assert!(!held.edge(Key::Space, false));
+        assert!(!held.edge(Key::Space, true));
+    }
+
+    /// A release lost while the window was away can't wedge a key down.
+    #[test]
+    fn losing_focus_forgets_the_held_keys() {
+        let mut held = HeldKeys::default();
+        held.edge(Key::Slash, true);
+        held.clear();
+        assert!(!held.edge(Key::Slash, true));
+    }
+
+    #[test]
+    fn a_release_with_no_press_does_nothing() {
+        let mut held = HeldKeys::default();
+        assert!(!held.edge(Key::C, false));
+        assert!(!held.edge(Key::C, true));
+    }
 
     #[test]
     fn does_not_fire_before_the_delay_elapses() {

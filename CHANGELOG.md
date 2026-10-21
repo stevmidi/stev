@@ -43,6 +43,9 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ### Fixed
 
+- **Keys typed with Shift no longer stop responding.** Letting go of Shift
+  before the key itself (`?` typed as `⇧/`, `+` as `⇧=`, a Nordic `/` as
+  `⇧7`) made the next few presses of it do nothing.
 - **Text fields centre their text and caret**, and a field's hint (the
   track number in an unnamed track's rename field) is drawn in the field's
   own font, so an empty field's caret sits where a typed one does. Save As's
