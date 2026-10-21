@@ -29,6 +29,8 @@ use super::*;
 use crate::core::audio::meter::{ChannelLevel, amplitude_db};
 use crate::core::config::MAX_TRACKS;
 #[cfg(target_os = "macos")]
+use crate::core::keymap::Action;
+#[cfg(target_os = "macos")]
 use crate::core::plugin_host::exit_without_destructors;
 use crate::core::time::monotonic_nanos;
 
@@ -1212,9 +1214,16 @@ impl eframe::App for Display {
         // `forward_input_event`. What that forwarded is already resolved: a
         // `KeyPressed` it sent on is one the keymap doesn't bind.
         while let Ok(event) = self.input_event_rx.try_recv() {
-            if !self.try_consume_as_modal(&event) {
-                let event = self.resolve_action(event);
-                self.event_handlers.handle_input_event(&event);
+            if self.try_consume_as_modal(&event) {
+                continue;
+            }
+            match self.resolve_action(event) {
+                // The guard's editor key: view-local, like `forward_input_event`'s arm.
+                #[cfg(target_os = "macos")]
+                InputEvent::Action(Action::TogglePluginEditor) => {
+                    self.toggle_instrument_editor(self.selected_track_idx);
+                }
+                event => self.event_handlers.handle_input_event(&event),
             }
         }
 

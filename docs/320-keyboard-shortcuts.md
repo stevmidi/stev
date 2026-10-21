@@ -60,10 +60,13 @@ A third tab, `SettingsTab::Keyboard`, after Appearance. It opens there from `?` 
 
 What phase 1 settled that the design above left open:
 
-- **`⌥Space` is one global action, `PlayFromCursor`**: in the clip view it restarts from the clip cursor, in the arranger it is the play / stop toggle, as before. Splitting it into a `Clip` action would have left the arranger's `⌥Space` unbound or put a global and a scoped action on one chord.
+- **`⌥Space` is one global action, `PlayFromCursor`**: in the clip view it restarts from the clip cursor, in the arranger it is the play / stop toggle, as before. Splitting it into a `Clip` action would have left the arranger's `⌥Space` unbound or put a global and a scoped action on one chord. It is the one action whose meaning follows the pane, and the one place arm order still matters (`input_handler.rs`: its clip-view arm comes first). Phase 3 could let a scoped action and a global fallback share a default chord instead, since `resolve` already prefers the scoped one.
+- **`⌘A` is two actions**, `SelectAllClips` (arranger) and `SelectAllNotes` (clip), like `M`, `⌘D` and `Delete`. The scope is the only pane gate: the handlers no longer re-check the view for a scoped action, only state the keymap can't see (notes selected or not).
 - **The theme step (`⇧F5`/`⇧F6`) and `⌘S`/`⇧⌘S`/`⌘N` are actions** (`PreviousTheme`, `NextTheme`, `Save`, `SaveAs`, `NewProject`), resolved where they were matched — ahead of the overlays and the browser's keys (`handle_theme_input_event`, `handle_project_input_event`, through `Display::action_of`) — so they keep working with the settings modal up or the browser focused.
 - **Deleting is `DeleteSelection` (arranger) and `DeleteNotes` (clip), each on `Delete` and `Backspace`**; `⌘Delete` is `DeleteTime`. The track headers' `Delete` stays hand-matched (decision 1).
 - **Exact matching retired some accidental chords** that matched before because an arm ignored modifiers: `⌘\`, `⇧Space`, `⌥M` (arranger mute), `⌘⌫` and `⇧Delete` (carve), `⌘Delete` in the clip view (delete notes) and the like now do nothing. `⌃` chords on macOS are their own chords too.
+- **The plugin-editor key guard has one path**: every reserved key goes on as a raw `KeyPressed` and is resolved where `Display` drains the input channel, which also handles `TogglePluginEditor` there (the old "toggle pending" flag is gone).
+- **Open for phase 2**: the theme and project actions resolve ahead of the overlays, so with the recorder in the settings modal, `⌘S` or `⇧F5` pressed while recording would act instead of being recorded. Before the recorder lands, resolve once after the text fields and let a recording overlay take every key first (or mark those actions as reaching over overlays and dispatch them in one place).
 - **The help overlay** still matches `?` and `⌘,` by hand (`key_taken_before_keymap`, ahead of the keymap), and its `HELP` table is unchanged.
 
 ## Phases

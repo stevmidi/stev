@@ -29,16 +29,16 @@ use crate::core::input_event::InputEvent;
 use crate::core::keymap::Action;
 use crate::core::plugin_host::catalog::PluginCatalogEntry;
 use crate::core::plugin_host::{
-    GuardedKeys, InstrumentEditor, PluginAudioHandle, PluginHostCommand, PreparedInstrument,
-    load_instrument, prepare_instrument, set_guarded_keys, take_toggle_editor_pending,
+    InstrumentEditor, PluginAudioHandle, PluginHostCommand, PreparedInstrument, load_instrument,
+    prepare_instrument, set_guarded_keys,
 };
 use crate::models::track::{InstrumentRef, TrackOutput};
 
+use super::Display;
 use super::browser::BrowserPlugin;
 use super::instrument_restore::InstrumentRestore;
 use super::modal_focus::Overlay;
 use super::status_message::StatusMessage;
-use super::{Display, ViewState};
 
 /// How often a project load waiting on the plugin catalog scan looks again
 /// (`restore_next_instrument`).
@@ -174,19 +174,19 @@ impl Display {
     /// play / stop, stop and the editor toggle. Called once from `main`,
     /// beside `install_key_guard`.
     pub(crate) fn guard_plugin_editor_keys(&self) {
-        let transport = [Action::TogglePlayback, Action::Stop]
+        set_guarded_keys(
+            [
+                Action::TogglePlayback,
+                Action::Stop,
+                Action::TogglePluginEditor,
+            ]
             .into_iter()
             .flat_map(|action| self.keymap.bare_keys(action))
-            .collect();
-        set_guarded_keys(GuardedKeys {
-            transport,
-            editor: self.keymap.bare_keys(Action::TogglePluginEditor),
-        });
+            .collect(),
+        );
     }
 
-    /// Per-frame: finish any pending per-track teardown, service a `v` the
-    /// key guard (`key_guard`) intercepted while an editor window had OS
-    /// keyboard focus, then pump every editor and schedule the next repaint
+    /// Per-frame: finish any pending per-track teardown, then pump every editor and schedule the next repaint
     /// at the shortest plugin timer cadence.
     pub(super) fn pump_instrument_editors(&mut self, ctx: &egui::Context) {
         // Drain the background catalog scan. It reports once per plugin
@@ -217,17 +217,6 @@ impl Display {
             if changed || disconnected {
                 self.sync_browser_plugins();
             }
-        }
-
-        // Mirrors the in-focus `v` binding's own guard (`forward_input_event`)
-        // — the key guard has no access to `view_state`, so it always
-        // swallows a bare `v` aimed at one of our editor windows and leaves
-        // this check to us.
-        if take_toggle_editor_pending()
-            && self.view_state() == ViewState::Arranger
-            && self.overlay.is_none()
-        {
-            self.toggle_instrument_editor(self.selected_track_idx);
         }
 
         // Complete teardown for slots whose voice the mixer has now dropped.

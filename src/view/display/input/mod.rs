@@ -1108,8 +1108,8 @@ impl Display {
             // Shift+click: the operand (`render.clip_shapes`) and the
             // result (`time_selection`) both live here, and nothing is sent
             // so the cursor and selected track stay put. The clip view's
-            // form is the handler's.
-            InputEvent::Action(Action::SelectAll) if self.view_state() == ViewState::Arranger => {
+            // `SelectAllNotes` is the handler's.
+            InputEvent::Action(Action::SelectAllClips) => {
                 self.select_all_clips();
                 true
             }

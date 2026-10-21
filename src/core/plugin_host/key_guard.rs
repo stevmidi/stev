@@ -28,8 +28,8 @@
 //! hands over the bare chords of `TogglePlayback`, `Stop` and
 //! `TogglePluginEditor` ([`set_guarded_keys`]), so a moved Play key keeps
 //! working inside a plugin window and the old one isn't eaten for nothing.
-//! The transport keys go on as raw `KeyPressed`, resolved through the keymap
-//! like any other.
+//! Each goes on as a raw `KeyPressed`, resolved through the keymap like any
+//! other where `Display` drains the input channel.
 //!
 //! **Tradeoff, unavoidable without introspecting the plugin's own focused
 //! control (which this host has no access to):** while an editor window is
@@ -41,7 +41,7 @@
 //! `130-plugin-host.md`; most plugins don't support it) owns its own native
 //! window, invisible to this registry, so this fix does not apply to it.
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::ptr::NonNull;
 use std::sync::{Arc, OnceLock};
 
@@ -61,13 +61,9 @@ thread_local! {
     /// currently owns — main-thread-only, like everything else here, so a
     /// plain `RefCell` (no `Send`/`Sync` needed) is enough.
     static EDITOR_WINDOWS: RefCell<Vec<usize>> = const { RefCell::new(Vec::new()) };
-    /// Set when the monitor intercepts the editor key (`v`) while an editor
-    /// window is focused; drained once per frame by `Display` via
-    /// [`take_toggle_editor_pending`].
-    static TOGGLE_EDITOR_PENDING: Cell<bool> = const { Cell::new(false) };
     /// The keys the monitor reserves; empty until [`set_guarded_keys`] runs.
-    static GUARDED_KEYS: RefCell<GuardedKeys> = RefCell::new(GuardedKeys::default());
-    /// Where an intercepted Space is forwarded — the same channel the normal
+    static GUARDED_KEYS: RefCell<Vec<Key>> = const { RefCell::new(Vec::new()) };
+    /// Where an intercepted key is forwarded — the same channel the normal
     /// egui-driven binding already sends through. `None` until
     /// [`install_key_guard`] runs.
     static INPUT_EVENT_TX: RefCell<Option<Sender<InputEvent>>> = const { RefCell::new(None) };
@@ -80,21 +76,10 @@ thread_local! {
     static MONITOR: RefCell<Option<MonitorHandle>> = const { RefCell::new(None) };
 }
 
-/// The bare keys the monitor reserves while an editor window is focused,
-/// from the keymap.
-#[derive(Default)]
-pub(crate) struct GuardedKeys {
-    /// Forwarded as a raw `KeyPressed`: the bare chords of play / stop and
-    /// stop.
-    pub(crate) transport: Vec<Key>,
-    /// Toggles the selected track's editor: the bare chords of
-    /// `TogglePluginEditor`.
-    pub(crate) editor: Vec<Key>,
-}
-
-/// Sets the keys the monitor reserves. Main thread only; call again when
-/// the keymap changes.
-pub(crate) fn set_guarded_keys(keys: GuardedKeys) {
+/// Sets the bare keys the monitor reserves while an editor window is
+/// focused, from the keymap. Main thread only; call again when the keymap
+/// changes.
+pub(crate) fn set_guarded_keys(keys: Vec<Key>) {
     GUARDED_KEYS.with(|guarded| *guarded.borrow_mut() = keys);
 }
 
@@ -136,15 +121,6 @@ fn send_key_pressed(key: Key) {
             .ok();
         }
     });
-}
-
-/// Drains the "toggle the selected track's editor" flag set by the key
-/// monitor. Call once per frame; the caller still owns the guards the
-/// in-focus `v` binding gets for free (the arranger has the keyboard, the
-/// settings modal is closed), since this module has no access to `Display`'s
-/// state.
-pub(crate) fn take_toggle_editor_pending() -> bool {
-    TOGGLE_EDITOR_PENDING.with(|f| f.replace(false))
 }
 
 /// Installs the app-wide key guard. Call once, from the `eframe::run_native`
@@ -223,23 +199,12 @@ fn handle_key_event(event: NonNull<NSEvent>) -> *mut NSEvent {
         return raw;
     };
 
-    let (transport, editor) = GUARDED_KEYS.with(|guarded| {
-        let guarded = guarded.borrow();
-        (
-            guarded.transport.contains(&key),
-            guarded.editor.contains(&key),
-        )
-    });
-    if transport {
-        send_key_pressed(key);
-    } else if editor {
-        TOGGLE_EDITOR_PENDING.with(|f| f.set(true));
-    } else {
+    if !GUARDED_KEYS.with(|guarded| guarded.borrow().contains(&key)) {
         return raw;
     }
+    send_key_pressed(key);
 
-    // Pushing onto `input_event_tx` / setting the pending flag only queues
-    // the work — it's drained on `Display`'s next `update()` call, which
+    // Pushing onto `input_event_tx` only queues the work — it's drained on `Display`'s next `update()` call, which
     // eframe only runs in response to an actual window/repaint event. Unlike
     // a normal keypress (which arrives *as* such an event), ours came from
     // outside eframe's own input pipeline entirely, so nothing wakes it: if

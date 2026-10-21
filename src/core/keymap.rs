@@ -65,8 +65,10 @@ pub(crate) enum Action {
     Undo,
     /// Redo.
     Redo,
-    /// Select every clip (arranger) or every note (clip view).
-    SelectAll,
+    /// Marquee every clip (arranger).
+    SelectAllClips,
+    /// Select every note (clip view).
+    SelectAllNotes,
     /// The clip panel between docked and maximized.
     ToggleClipPanelSize,
     /// Zoom the focused pane in.
@@ -210,6 +212,11 @@ impl Chord {
 
     /// The chord a press of `key` with `modifiers` is, on this platform.
     pub(crate) fn from_press(key: Key, modifiers: KeyModifiers) -> Self {
+        Chord::from_press_on(key, modifiers, cfg!(target_os = "macos"))
+    }
+
+    /// The chord a press of `key` with `modifiers` is, on macOS when `mac`.
+    fn from_press_on(key: Key, modifiers: KeyModifiers, mac: bool) -> Self {
         Chord {
             key,
             command: modifiers.command,
@@ -217,7 +224,7 @@ impl Chord {
             shift: modifiers.shift,
             ctrl: modifiers.ctrl,
         }
-        .normalized(cfg!(target_os = "macos"))
+        .normalized(mac)
     }
 
     /// This chord with what a keyboard layout adds dropped, `mac` choosing
@@ -495,14 +502,6 @@ pub(crate) const ACTIONS: &[ActionInfo] = &[
         &[Chord::cmd(Key::Z).shift()],
     ),
     row(
-        Action::SelectAll,
-        "edit.select_all",
-        "Select every clip / note",
-        PROJECT,
-        Scope::Global,
-        &[Chord::cmd(Key::A)],
-    ),
-    row(
         Action::ToggleClipPanelSize,
         "view.clip_panel_size",
         "Dock / maximize the clip panel",
@@ -575,6 +574,14 @@ pub(crate) const ACTIONS: &[ActionInfo] = &[
         &[Chord::plain(Key::F6).shift()],
     ),
     // --- Arranger ---
+    row(
+        Action::SelectAllClips,
+        "arranger.select_all",
+        "Select every clip",
+        ARRANGER,
+        Scope::Arranger,
+        &[Chord::cmd(Key::A)],
+    ),
     row(
         Action::DeleteSelection,
         "arranger.delete",
@@ -673,6 +680,14 @@ pub(crate) const ACTIONS: &[ActionInfo] = &[
     ),
     // --- Clip ---
     row(
+        Action::SelectAllNotes,
+        "clip.select_all",
+        "Select every note",
+        CLIP,
+        Scope::Clip,
+        &[Chord::cmd(Key::A)],
+    ),
+    row(
         Action::DeleteNotes,
         "clip.delete",
         "Delete notes",
@@ -764,11 +779,11 @@ impl Keymap {
     /// The action `chord` triggers while `pane` has the keyboard: an action
     /// scoped to that pane ahead of a global one.
     pub(crate) fn resolve(&self, chord: Chord, pane: Pane) -> Option<Action> {
-        let candidates = self.by_chord.get(&chord)?;
-        let live = || candidates.iter().filter(|(scope, _)| scope.contains(pane));
-        live()
-            .find(|(scope, _)| *scope != Scope::Global)
-            .or_else(|| live().next())
+        self.by_chord
+            .get(&chord)?
+            .iter()
+            .filter(|(scope, _)| scope.contains(pane))
+            .max_by_key(|(scope, _)| *scope != Scope::Global)
             .map(|&(_, action)| action)
     }
 
@@ -819,14 +834,7 @@ mod tests {
     }
 
     fn press(key: Key, modifiers: KeyModifiers, mac: bool) -> Chord {
-        Chord {
-            key,
-            command: modifiers.command,
-            alt: modifiers.alt,
-            shift: modifiers.shift,
-            ctrl: modifiers.ctrl,
-        }
-        .normalized(mac)
+        Chord::from_press_on(key, modifiers, mac)
     }
 
     #[test]
@@ -976,6 +984,12 @@ mod tests {
         let m = Chord::plain(Key::M);
         assert_eq!(keymap.resolve(m, Pane::Arranger), Some(Action::MuteRange));
         assert_eq!(keymap.resolve(m, Pane::Clip), Some(Action::MuteNotes));
+        let a = Chord::cmd(Key::A);
+        assert_eq!(
+            keymap.resolve(a, Pane::Arranger),
+            Some(Action::SelectAllClips)
+        );
+        assert_eq!(keymap.resolve(a, Pane::Clip), Some(Action::SelectAllNotes));
         let q = Chord::plain(Key::Q);
         assert_eq!(keymap.resolve(q, Pane::Arranger), None);
         assert_eq!(keymap.resolve(q, Pane::Clip), Some(Action::Quantize));
