@@ -14,6 +14,7 @@
 use egui::text_selection::CCursorRange;
 use egui::{
     Align, FontId, Frame, Id, Key, Margin, Rect, Response, RichText, TextEdit, Ui, UiBuilder, pos2,
+    vec2,
 };
 
 use crate::core::config::TRACK_NAME_MAX_CHARS;
@@ -28,6 +29,31 @@ use super::{Display, Pane};
 /// Text size of a track's name — on the header's name row and in the rename
 /// field over it, so the text doesn't jump when the field opens.
 pub(super) const TRACK_NAME_FONT_SIZE: f32 = 12.0;
+
+/// The UI font's line height over its size: 1.3 for Plex at every size the
+/// fields use. Measured, and pinned by `the_line_height_matches_the_font`.
+const LINE_H_PER_PT: f32 = 1.3;
+
+/// How much taller than its line egui draws a text field's caret: 1.5 points
+/// above and below (`cursor_rect`).
+const CARET_OVERHANG: f32 = 3.0;
+
+/// The room a text field leaves above and below its caret, per point of its
+/// font: a fifth, about what a native macOS field leaves.
+const CARET_ROOM_PER_PT: f32 = 0.2;
+
+/// Where a text field in `font_size` text over `rect` goes: `rect`, grown
+/// about its centre to at least the caret's height plus
+/// [`CARET_ROOM_PER_PT`] of room above and below — so the caret never runs
+/// the field's full height, or past it, in a field laid over a row barely
+/// taller than its text (a track's name row, a header chip). Its text stays
+/// centred where the row's was. Applied where an inline field's rect comes
+/// from, so what it is drawn in ([`show_name_field`]) and what a press is
+/// tested against ([`field_event`]) are one rect.
+pub(super) fn field_rect(rect: Rect, font_size: f32) -> Rect {
+    let min_h = font_size * (LINE_H_PER_PT + 2.0 * CARET_ROOM_PER_PT) + CARET_OVERHANG;
+    rect.expand2(vec2(0.0, ((min_h - rect.height()) / 2.0).max(0.0)))
+}
 
 /// The open rename field.
 pub(super) struct TrackRename {
@@ -130,8 +156,8 @@ impl Display {
         self.track_rename.as_ref().map(|rename| rename.track_idx)
     }
 
-    /// Where the rename field over `track_idx`'s name row goes — `None` when
-    /// that row isn't on screen (no such track, the arranger hidden). The one
+    /// Where the rename field over `track_idx`'s name row goes, grown to fit
+    /// its caret ([`field_rect`]) — `None` when that row isn't on screen (no such track, the arranger hidden). The one
     /// validity rule, shared by opening, drawing, the click test and
     /// [`drop_stale_track_rename`](Self::drop_stale_track_rename), so the
     /// field never takes the keyboard while it can't be seen.
@@ -140,6 +166,7 @@ impl Display {
             return None;
         }
         self.in_pane(Pane::Arranger, |display| display.track_name_rect(track_idx))
+            .map(|row| field_rect(row, TRACK_NAME_FONT_SIZE))
     }
 
     /// Once a frame, before input: closes the field, keeping the old name,
@@ -281,7 +308,53 @@ mod tests {
 
     use crate::core::input_event::{InputEvent, KeyModifiers};
 
-    use super::{FieldEvent, field_event, field_key};
+    use egui::FontId;
+    use egui::epaint::{Fonts, TextOptions};
+
+    use crate::view::display::browser::BROWSER_FONT_SIZE;
+    use crate::view::theme::FONT_SIZE_HEADER_VALUE;
+    use crate::view::theme::fonts::font_definitions;
+
+    use super::{
+        CARET_OVERHANG, FieldEvent, LINE_H_PER_PT, TRACK_NAME_FONT_SIZE, field_event, field_key,
+        field_rect,
+    };
+
+    #[test]
+    fn the_line_height_matches_the_font() {
+        let mut fonts = Fonts::new(TextOptions::default(), font_definitions());
+        let mut fonts = fonts.with_pixels_per_point(2.0);
+        for size in [
+            TRACK_NAME_FONT_SIZE,
+            BROWSER_FONT_SIZE,
+            FONT_SIZE_HEADER_VALUE,
+        ] {
+            let row_h = fonts.row_height(&FontId::proportional(size));
+            assert!(
+                (row_h - size * LINE_H_PER_PT).abs() <= 0.25,
+                "{size}: {row_h}"
+            );
+        }
+    }
+
+    /// The track name's 16pt row is shorter than its caret: the field grows
+    /// about the row's centre to fit it with room to spare.
+    #[test]
+    fn a_field_grows_past_its_caret_about_the_row_centre() {
+        let row = Rect::from_min_max(pos2(10.0, 100.0), pos2(90.0, 116.0));
+        let field = field_rect(row, TRACK_NAME_FONT_SIZE);
+        let caret_h = TRACK_NAME_FONT_SIZE * LINE_H_PER_PT + CARET_OVERHANG;
+        assert_eq!(field.center(), row.center());
+        assert_eq!(field.x_range(), row.x_range());
+        assert!(field.height() - caret_h >= 2.0 * 2.0, "{}", field.height());
+    }
+
+    /// A field already roomier than that (a modal's) is left as it is.
+    #[test]
+    fn a_roomy_field_keeps_its_rect() {
+        let row = Rect::from_min_max(pos2(10.0, 100.0), pos2(90.0, 140.0));
+        assert_eq!(field_rect(row, TRACK_NAME_FONT_SIZE), row);
+    }
 
     #[test]
     fn enter_commits_and_escape_cancels() {

@@ -22,7 +22,7 @@ use super::browser::{
     BROWSER_FONT_SIZE, BROWSER_LIST_PAD_Y, BrowserItem, browser_row_rect, browser_text_x,
 };
 use super::status_message::StatusMessage;
-use super::track_rename::{FieldEvent, field_event, show_name_field};
+use super::track_rename::{FieldEvent, field_event, field_rect, show_name_field};
 
 /// Right inset of the field from the panel's edge.
 const FIELD_RIGHT_X: f32 = 6.0;
@@ -57,7 +57,8 @@ impl Display {
         });
     }
 
-    /// Where the field goes, in window space (the panel isn't shifted) —
+    /// Where the field goes, in window space (the panel isn't shifted), grown
+    /// to fit its caret ([`field_rect`]) —
     /// `None` when its row isn't on screen (the panel hidden, the row
     /// scrolled away or gone after a reload). The one validity rule, shared
     /// by drawing, the click test and
@@ -80,13 +81,14 @@ impl Display {
         if row.min.y < list_top || row.max.y > self.browser_list_bottom() {
             return None;
         }
-        Some(Rect::from_min_max(
+        let field = Rect::from_min_max(
             pos2(
                 row.min.x + browser_text_x(&rows[idx]) - 4.0,
                 row.min.y + 1.0,
             ),
             pos2(row.max.x - FIELD_RIGHT_X, row.max.y - 1.0),
-        ))
+        );
+        Some(field_rect(field, BROWSER_FONT_SIZE))
     }
 
     /// Once a frame, before input: closes the field, renaming nothing, when

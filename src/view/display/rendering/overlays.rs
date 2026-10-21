@@ -14,6 +14,7 @@ use crate::core::time::{Meter, format_bpm, sixteenth_straight_ticks};
 use crate::view::display::browser::browser_toggle_rect;
 use crate::view::display::header_chip::HeaderChipRects;
 use crate::view::display::status_message::export_progress_text;
+use crate::view::display::track_rename::field_rect;
 
 use super::*;
 
@@ -198,7 +199,10 @@ impl Display {
                 let value_x = cx + chip_pad_x + label_w + label_value_gap * 0.5;
                 *rects = Some(HeaderChipRects {
                     chip,
-                    value: Rect::from_min_max(pos2(value_x, chip.min.y), chip.max),
+                    value: field_rect(
+                        Rect::from_min_max(pos2(value_x, chip.min.y), chip.max),
+                        value_font.size,
+                    ),
                 });
             }
             painter.rect_filled(chip, CornerRadius::ZERO, Self::header_chip_fill());

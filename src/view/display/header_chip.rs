@@ -16,8 +16,11 @@ const FIELD_MAX_CHARS: usize = 6;
 pub(super) struct HeaderChipRects {
     /// The whole chip, label and value — what a press or a double-click hits.
     pub(super) chip: Rect,
-    /// The value's part of it — where the field goes, the label left
-    /// showing.
+    /// Where the field goes: the value's part of the chip, the label left
+    /// showing, grown to fit the caret ([`field_rect`](super::track_rename::field_rect))
+    /// — past the chip's top and bottom, the value's font being nearly the
+    /// chip's height. What the field is drawn in and what a press is tested
+    /// against.
     pub(super) value: Rect,
 }
 

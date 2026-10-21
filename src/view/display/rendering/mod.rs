@@ -150,7 +150,7 @@ impl ArrangerLayout {
 /// Shortest an arranger lane gets: the track header's stack — name row,
 /// S/M row and bars (67px, `track_header_rects`) — with room around it. Below this the lanes stop
 /// shrinking and the arranger scrolls vertically instead.
-pub(super) const ARRANGER_MIN_LANE_H: f32 = 72.0;
+pub(super) const ARRANGER_MIN_LANE_H: f32 = 76.0;
 
 /// How far screen `y` lies past the band `[top, top + h]`, in points:
 /// positive above it, negative below, `0` inside — the direction and speed
@@ -227,7 +227,9 @@ pub(super) struct TrackHeaderRects {
     /// The pan bar.
     pub(super) pan: Rect,
     /// The meter: a thin strip right of the controls, in the column's right
-    /// padding, the stack's full height.
+    /// padding, the lane's height less [`TRACK_HEADER_PAD_Y`] at each end.
+    /// Drawn with its ends moved onto whole pixels the same distance from
+    /// the lane seams in every lane ([`seam_inset_band`]).
     pub(super) meter: Rect,
 }
 
@@ -258,8 +260,8 @@ const CLIP_SEAM_CLEARANCE: f32 = 1.25;
 /// seams visible above and below rather than filling it edge to edge. Derived
 /// from the seam: half of it intrudes into each lane (it is centred on the
 /// boundary), plus `CLIP_SEAM_CLEARANCE` — so retuning `ARRANGER_LANE_SEAM_W`
-/// carries the clip margin along. 2.0 at the current values: a whole point,
-/// so both clip edges snap the same way in every lane.
+/// carries the clip margin along. 2.0 at the current values; drawn as the
+/// whole pixels nearest that, measured from the seams ([`clip_body_band`]).
 /// Drawing-only (via `clip_body_band`, in `draw_arranger_view`): hit-testing —
 /// clip selection and the `clip_resize_band` grab band — stays lane-relative,
 /// and this inset is small enough that the drawn header still sits well inside
@@ -267,22 +269,14 @@ const CLIP_SEAM_CLEARANCE: f32 = 1.25;
 pub(super) const CLIP_V_INSET: f32 = ARRANGER_LANE_SEAM_W / 2.0 + CLIP_SEAM_CLEARANCE;
 
 /// The pixel-snapped `[top, bottom)` screen-y span of a clip body within its
-/// lane in the arranger: the lane bounds inset by `CLIP_V_INSET` top and
-/// bottom, then rounded to whole pixels. `draw_clip_body` goes through this so
-/// clips in adjacent lanes land on the exact same pixel rows and read as flush
-/// — an unrounded inset left the two edges antialiased across different pixel
-/// columns depending on `lane_h`. Pure geometry, unit-tested.
-pub(super) fn clip_body_band(lane_y: f32, lane_h: f32) -> (f32, f32) {
-    snapped_inset_band(lane_y, lane_h, CLIP_V_INSET)
-}
-
-/// `[lane_y, lane_y + lane_h)` inset by `inset` top and bottom, both edges
-/// rounded to whole pixels and at least one pixel apart: the snapping rule a
-/// clip body and a track meter share.
-fn snapped_inset_band(lane_y: f32, lane_h: f32, inset: f32) -> (f32, f32) {
-    let top = (lane_y + inset).round();
-    let bottom = (lane_y + lane_h - inset).round().max(top + 1.0);
-    (top, bottom)
+/// lane in the arranger: `CLIP_V_INSET` in from the lane bounds, in whole
+/// physical pixels the same distance from the seams in every lane
+/// ([`seam_inset_band`]). `draw_clip_body` goes through this so every clip's
+/// edges are crisp and its gap to the seams is the same in every lane — an
+/// unrounded inset antialiased the edges, and one rounded to whole points
+/// left the gap a pixel off from lane to lane. Pure geometry, unit-tested.
+pub(super) fn clip_body_band(lane_y: f32, lane_h: f32, ppp: f32) -> (f32, f32) {
+    seam_inset_band(lane_y, lane_y + lane_h, CLIP_V_INSET, ppp)
 }
 
 /// Width of the arranger's horizontal lane boundaries — the track-to-track
@@ -311,6 +305,22 @@ pub(super) fn seam_y(y: f32, width: f32, pixels_per_point: f32) -> f32 {
         physical_y.round()
     };
     snapped / pixels_per_point
+}
+
+/// The `[top, bottom)` span between two arranger lane boundaries at `top` and
+/// `bottom`, measured from the seams drawn on them ([`seam_y`],
+/// [`ARRANGER_LANE_SEAM_W`]): `inset` from each boundary, in whole physical
+/// pixels and the same number of them in every lane. Rounding the inset
+/// boundary to whole points instead ignored where the seam snapped, so with
+/// fractional lane heights the gap to the seam came out a pixel or two
+/// different from lane to lane. What a track meter and a clip body
+/// ([`clip_body_band`]) are drawn in.
+pub(super) fn seam_inset_band(top: f32, bottom: f32, inset: f32, ppp: f32) -> (f32, f32) {
+    let half_seam = (ARRANGER_LANE_SEAM_W * ppp).round() / 2.0;
+    let gap = (inset * ppp - half_seam).round();
+    let top_px = (seam_y(top, ARRANGER_LANE_SEAM_W, ppp) * ppp + half_seam).round() + gap;
+    let bottom_px = (seam_y(bottom, ARRANGER_LANE_SEAM_W, ppp) * ppp - half_seam).round() - gap;
+    (top_px / ppp, bottom_px.max(top_px + 1.0) / ppp)
 }
 
 /// The arranger grid's groove tone — shared by the horizontal lane seams
@@ -402,7 +412,7 @@ const TRACK_NAME_ROW_GAP: f32 = 4.0;
 /// top to the tops of the name's capitals and of the meter, and from the
 /// meter's bottom (and, in the shortest lane, the pan bar's) to the lane's
 /// bottom.
-const TRACK_HEADER_PAD_Y: f32 = 4.0;
+const TRACK_HEADER_PAD_Y: f32 = 6.0;
 /// How far below the name row's top the name's capitals start: the
 /// `TRACK_NAME_FONT_SIZE` line (Plex, 15.5pt tall) centred in
 /// `TRACK_NAME_ROW_H`, plus the room the font leaves above its capitals.
@@ -436,9 +446,8 @@ fn name_row_at(top: f32, left: f32, right: f32) -> Rect {
 /// filling the rest of the row), then the two full-width bars (volume then
 /// pan), the whole stack at the top of `[lane_top, lane_top + lane_h)`
 /// ([`header_band_top`]), and the meter right of `right`, the lane's height
-/// less [`TRACK_HEADER_PAD_Y`] at each end, pixel-snapped, so it grows with
-/// the lane: in the
-/// column's right padding ([`TRACK_HEADER_METER_PAD_X`]), so it
+/// less [`TRACK_HEADER_PAD_Y`] at each end, so it grows with the lane: in
+/// the column's right padding ([`TRACK_HEADER_METER_PAD_X`]), so it
 /// narrows nothing. `None` when the lane is too short to hold the stack with a
 /// little margin, or the column too narrow — [`track_name_row`] then still
 /// places the name on its own. The button row and the bars are always part
@@ -483,10 +492,12 @@ fn track_header_rects(
     let pan_top = volume_top + TRACK_MIX_BAR_H + TRACK_MIX_BAR_GAP;
     let pan = Rect::from_min_max(pos2(left, pan_top), pos2(right, pan_top + TRACK_MIX_BAR_H));
     let meter_left = right + TRACK_METER_GAP;
-    let (meter_top, meter_bottom) = snapped_inset_band(lane_top, lane_h, TRACK_HEADER_PAD_Y);
     let meter = Rect::from_min_max(
-        pos2(meter_left, meter_top),
-        pos2(meter_left + TRACK_METER_STRIP_W, meter_bottom),
+        pos2(meter_left, lane_top + TRACK_HEADER_PAD_Y),
+        pos2(
+            meter_left + TRACK_METER_STRIP_W,
+            lane_top + lane_h - TRACK_HEADER_PAD_Y,
+        ),
     );
 
     Some(TrackHeaderRects {
@@ -1570,9 +1581,9 @@ mod tests {
 
     use super::{
         ADD_TRACK_ROW_H, ARRANGER_LANE_SEAM_W, ARRANGER_MIN_LANE_H, ArrangerLayout, CLIP_HEADER_H,
-        CLIP_V_INSET, TRACK_BTN_H, TRACK_BTN_W, TRACK_NAME_ROW_H, arranger_add_row_h,
-        arranger_lane_h, arranger_max_scroll_y, arranger_scroll_y_to_show, clip_body_band,
-        clip_resize_band, gap_spans, seam_y, tick_overlap, track_header_rects, track_name_row,
+        TRACK_BTN_H, TRACK_BTN_W, TRACK_NAME_ROW_H, arranger_add_row_h, arranger_lane_h,
+        arranger_max_scroll_y, arranger_scroll_y_to_show, clip_body_band, clip_resize_band,
+        gap_spans, seam_inset_band, seam_y, tick_overlap, track_header_rects, track_name_row,
     };
     use super::{
         MeterBar, TRACK_METER_CHANNEL_GAP, TRACK_METER_FALL, TRACK_METER_GAP, TRACK_METER_W,
@@ -1615,6 +1626,34 @@ mod tests {
     }
 
     #[test]
+    fn seam_inset_band_keeps_the_same_gap_to_the_seams_in_every_lane() {
+        for ppp in [1.0_f32, 1.5, 2.0, 3.0] {
+            let seam_px = (ARRANGER_LANE_SEAM_W * ppp).round();
+            let mut gaps = Vec::new();
+            for k in 0..40 {
+                // Fractional lane edges, as `lane_h` is the area over the
+                // track count.
+                let top = 83.0 + k as f32 * 77.137;
+                let bottom = top + 77.137;
+                let (band_top, band_bottom) = seam_inset_band(top, bottom, 6.0, ppp);
+                let seam_top = seam_y(top, ARRANGER_LANE_SEAM_W, ppp) * ppp;
+                let seam_bottom = seam_y(bottom, ARRANGER_LANE_SEAM_W, ppp) * ppp;
+                let above = band_top * ppp - (seam_top + seam_px / 2.0);
+                let below = (seam_bottom - seam_px / 2.0) - band_bottom * ppp;
+                assert!((band_top * ppp).fract().abs() < 1e-3, "ppp {ppp}, k {k}");
+                assert!((band_bottom * ppp).fract().abs() < 1e-3, "ppp {ppp}, k {k}");
+                gaps.push((above.round(), below.round()));
+            }
+            let (above, below) = gaps[0];
+            assert_eq!(above, below, "ppp {ppp}");
+            assert!(
+                gaps.iter().all(|&g| g == (above, below)),
+                "ppp {ppp}: {gaps:?}"
+            );
+        }
+    }
+
+    #[test]
     fn retina_seam_widths_pick_centre_or_edge() {
         // 1.5pt at 2× = 3px (odd): centred on a pixel centre.
         assert_eq!(seam_y(10.3, 1.5, 2.0), 10.25);
@@ -1625,11 +1664,11 @@ mod tests {
     }
 
     #[test]
-    fn clip_body_band_insets_and_pixel_snaps() {
-        // Whole-pixel lane: inset by CLIP_V_INSET top and bottom, snapped.
-        let (top, bottom) = clip_body_band(100.0, 60.0);
-        assert_eq!(top, (100.0 + CLIP_V_INSET).round());
-        assert_eq!(bottom, (160.0 - CLIP_V_INSET).round());
+    fn clip_body_band_insets_from_the_seams() {
+        // 2×: the 3px seam on 200px snaps to 200.5 (its bottom edge 202),
+        // the one on 320px to 320.5 (its top edge 319); the 2pt inset less
+        // half the seam is 2.5px, rounded to 3.
+        assert_eq!(clip_body_band(100.0, 60.0, 2.0), (102.5, 158.0));
     }
 
     #[test]
@@ -1641,7 +1680,7 @@ mod tests {
         for k in 0..40 {
             let lane_y = 100.0 + k as f32 * 0.173;
             let lane_h = 59.6;
-            let (top, bottom) = clip_body_band(lane_y, lane_h);
+            let (top, bottom) = clip_body_band(lane_y, lane_h, 2.0);
             assert!(
                 top - (lane_y + half_seam) >= 0.5,
                 "lane_y {lane_y}: top {top}"
@@ -1658,10 +1697,12 @@ mod tests {
         // Fractional lane top/height (lane_h = viewport_h / track count rarely
         // divides evenly) must still land on integer pixel rows so clips in
         // adjacent lanes read as flush.
-        let (top, bottom) = clip_body_band(100.37, 59.6);
-        assert_eq!(top, top.round());
-        assert_eq!(bottom, bottom.round());
-        assert!(bottom > top);
+        for ppp in [1.0_f32, 2.0] {
+            let (top, bottom) = clip_body_band(100.37, 59.6, ppp);
+            assert_eq!(top * ppp, (top * ppp).round());
+            assert_eq!(bottom * ppp, (bottom * ppp).round());
+            assert!(bottom > top);
+        }
     }
 
     #[test]
@@ -1742,8 +1783,8 @@ mod tests {
 
     #[test]
     fn clip_body_band_never_collapses_on_a_tiny_lane() {
-        let (top, bottom) = clip_body_band(0.0, 4.0);
-        assert!(bottom >= top + 1.0);
+        let (top, bottom) = clip_body_band(0.0, 4.0, 2.0);
+        assert!(bottom >= top + 0.5);
     }
 
     #[test]

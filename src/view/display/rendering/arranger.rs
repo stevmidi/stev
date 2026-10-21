@@ -125,7 +125,15 @@ impl Display {
                 Some(rects) => {
                     self.draw_track_name(painter, track_idx, rects.name);
                     self.draw_track_header_buttons(painter, track_idx, &rects);
-                    self.draw_track_meter(painter, track_idx, rects.meter);
+                    let (meter_top, meter_bottom) = seam_inset_band(
+                        lane_y,
+                        lane_y + lane_h,
+                        TRACK_HEADER_PAD_Y,
+                        painter.pixels_per_point(),
+                    );
+                    let meter =
+                        Rect::from_x_y_ranges(rects.meter.x_range(), meter_top..=meter_bottom);
+                    self.draw_track_meter(painter, track_idx, meter);
                     if self.track_has_instrument(track_idx) {
                         self.draw_track_mix_bars(painter, track_idx, accent, &rects);
                     }
@@ -393,7 +401,7 @@ impl Display {
             return;
         }
         let lane_y = clip_area_top + track_idx as f32 * lane_h;
-        let (clip_y, clip_bottom) = clip_body_band(lane_y, lane_h);
+        let (clip_y, clip_bottom) = clip_body_band(lane_y, lane_h, painter.pixels_per_point());
         let clip_h = clip_bottom - clip_y;
         let original_x = self.tick_to_x(start_tick);
 

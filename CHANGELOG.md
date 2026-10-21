@@ -30,6 +30,17 @@ Breaking entries are marked **Breaking** and say what to do about them.
   `]` or `+` with Shift, ⌥ or AltGr still reach them. While a plugin window
   has the keyboard, `.` now reaches the plugin; it was reserved for a Stop it
   hasn't been bound to for a long time.
+- **The track header has a little more room at the top and bottom**, so the
+  track name no longer sits against the lane's top edge. The shortest lane
+  grows from 72 to 76 points to keep the whole header in it. Each track
+  meter now sits the same distance from its lane's top and bottom edges in
+  every lane, and so does each clip; both used to vary by a pixel or two
+  from track to track.
+- **Text fields leave room around the blinking caret.** The track rename
+  field (`⌘R`) and the header's BPM and meter fields were barely taller
+  than their text, so the caret ran their full height or past it; they now
+  grow a little past the row or chip they open over, with the text where
+  it was.
 
 ### Removed
 
