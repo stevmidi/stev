@@ -412,6 +412,7 @@ impl Display {
         last_project_folder: Option<String>,
         midi_out_offset_ms: i32,
         browser_width: f32,
+        keymap: Keymap,
         tempo: Arc<AtomicI32>,
         meter: Arc<AtomicU16>,
         running: Arc<AtomicBool>,
@@ -474,7 +475,7 @@ impl Display {
             recording_clip_id: None,
             live_rec_state,
             input_poller: InputPoller::new(),
-            keymap: Keymap::default(),
+            keymap,
             computer_keyboard: ComputerKeyboard::default(),
             computer_keys_tx,
             #[cfg(target_os = "macos")]

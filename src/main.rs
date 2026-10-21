@@ -22,6 +22,7 @@ use eframe::NativeOptions;
 use egui::{Context, ViewportBuilder};
 
 use crate::core::{
+    keymap::Keymap,
     settings::{clamp_midi_out_offset_ms, load_settings},
     setup::{
         setup_clock, setup_display, setup_event_handlers, setup_metronome,
@@ -200,6 +201,7 @@ fn main() {
         settings.last_project_folder.clone(),
         midi_out_offset_ms,
         settings.browser_width,
+        Keymap::from_overrides(&settings.keymap),
     );
 
     // The unified audio engine: one cpal output stream, seeded with the

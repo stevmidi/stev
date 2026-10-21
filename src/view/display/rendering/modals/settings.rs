@@ -7,7 +7,9 @@
 
 use egui::{Id, Pos2, Ui};
 
-use crate::view::display::keyboard_tab::{ShortcutLine, ShortcutRow, row_lines, shortcut_lines};
+use crate::view::display::keyboard_tab::{
+    KeyboardFocus, Recording, ShortcutLine, ShortcutRow, UNBOUND, row_lines, shortcut_lines,
+};
 use crate::view::display::midi_tab::{MidiTab, PORT_ROWS, PortList};
 use crate::view::display::modal_focus::{PortSide, SettingsTab};
 use crate::view::display::settings_modal::{SettingsHit, THEME_ROWS, window_start};
@@ -83,6 +85,8 @@ struct KeyboardTabLayout {
     field: Rect,
     /// The window the list shows through, a line per row.
     lines: ListRows,
+    /// The foot row, under the list: Reset all at its right.
+    foot: Rect,
 }
 
 impl Display {
@@ -107,6 +111,10 @@ impl Display {
     const SETTINGS_HEADING_PAD: f32 = 3.0 * Self::M_SCALE;
     /// Inset of a row's text from the content's left edge.
     const SETTINGS_TEXT_INSET: f32 = 8.0 * Self::M_SCALE;
+    /// Width of the Keyboard tab's Reset all button: room for its confirm.
+    const RESET_ALL_W: f32 = 240.0 * Self::M_SCALE;
+    /// Radius of the dot by a rebound command's chords.
+    const CHANGED_DOT_R: f32 = 2.5 * Self::M_SCALE;
 
     /// The content height: the taller of the fullest MIDI tab (three
     /// headers; two port lists of `PORT_ROWS` plus a ghost row each; the
@@ -195,12 +203,17 @@ impl Display {
         }
     }
 
-    /// The Keyboard tab in `content`: the search field, then as many list
-    /// lines as fit under it. Pure geometry.
+    /// The Keyboard tab in `content`: the search field, as many list lines
+    /// as fit under it, and the foot row along the bottom. Pure geometry.
     fn keyboard_tab_layout(content: Rect) -> KeyboardTabLayout {
         let field = Rect::from_min_size(content.min, vec2(content.width(), Self::FIELD_H));
+        let foot = Rect::from_min_max(
+            pos2(content.min.x, content.max.y - Self::SETTINGS_ROW_H),
+            content.max,
+        );
         let top = field.max.y + Self::SETTINGS_STRIP_GAP;
-        let count = ((content.max.y - top) / Self::SETTINGS_ROW_H).floor() as usize;
+        let bottom = foot.min.y - Self::SETTINGS_STRIP_GAP;
+        let count = ((bottom - top) / Self::SETTINGS_ROW_H).floor() as usize;
         KeyboardTabLayout {
             field,
             lines: ListRows {
@@ -210,7 +223,14 @@ impl Display {
                 ),
                 count,
             },
+            foot,
         }
+    }
+
+    /// The Reset all button in the foot row `foot`, sized for its longest
+    /// text and right-aligned. Pure geometry.
+    fn reset_all_rect(foot: Rect) -> Rect {
+        Rect::from_min_max(pos2(foot.max.x - Self::RESET_ALL_W, foot.min.y), foot.max)
     }
 
     /// The Keyboard tab on the canvas, as drawn and hit-tested.
@@ -270,25 +290,36 @@ impl Display {
                 )
             }),
             SettingsTab::Keyboard => {
-                let window = Self::keyboard_tab_layout(layout.content).lines;
-                let lines = shortcut_lines(&self.settings.keys.search.text);
+                let tab = Self::keyboard_tab_layout(layout.content);
+                if tab.field.contains(p) {
+                    return Some(SettingsHit::Search);
+                }
+                if Self::reset_all_rect(tab.foot).contains(p) {
+                    return Some(SettingsHit::ResetAll);
+                }
+                let window = tab.lines;
+                let lines = shortcut_lines(&self.settings.keys.search.text, &self.keymap);
                 let start = window_start(self.settings.keys.scroll, lines.len(), window.count);
                 let line = window.hit(p)? + start;
                 row_lines(&lines)
                     .binary_search(&line)
                     .ok()
-                    .map(SettingsHit::Shortcut)
+                    .map(|row| SettingsHit::Shortcut {
+                        row,
+                        keys: p.x >= window.first.center().x,
+                    })
             }
         };
         Some(hit.unwrap_or(SettingsHit::Panel))
     }
 
     /// Whether the pointer is on something in the settings panel a click
-    /// acts on — for the pointing-hand cursor.
+    /// acts on — for the pointing-hand cursor. Not the search field, which
+    /// keeps egui's text cursor.
     pub(in crate::view::display) fn is_pointer_on_settings_item(&self) -> bool {
         self.canvas_pointer()
             .and_then(|p| self.settings_hit_at(p))
-            .is_some_and(|hit| hit != SettingsHit::Panel)
+            .is_some_and(|hit| !matches!(hit, SettingsHit::Panel | SettingsHit::Search))
     }
 
     /// Paints the settings modal into the canvas `rect`.
@@ -475,11 +506,15 @@ impl Display {
     /// The Keyboard tab's list under its search field (the field itself is
     /// [`show_keyboard_search`](Self::show_keyboard_search)): the rows the
     /// search matches under their groups' headings, the selected row
-    /// tinted. A heading sits at the foot of its line, so the room above it
-    /// starts the group.
+    /// tinted (accent while the list has the keyboard, faint while the
+    /// field has it), and Reset all at the foot. A heading sits at the foot of its
+    /// line, so the room above it starts the group.
     fn draw_keyboard_tab(&self, painter: &Painter, content: Rect) {
-        let window = Self::keyboard_tab_layout(content).lines;
-        let lines = shortcut_lines(&self.settings.keys.search.text);
+        let layout = Self::keyboard_tab_layout(content);
+        self.draw_reset_all(painter, layout.foot);
+        let window = layout.lines;
+        let keys = &self.settings.keys;
+        let lines = shortcut_lines(&keys.search.text, &self.keymap);
         if lines.is_empty() {
             let row = window.row(0);
             Self::draw_settings_text(
@@ -491,8 +526,9 @@ impl Display {
             );
             return;
         }
-        let selected = row_lines(&lines).get(self.settings.keys.selection).copied();
-        let start = window_start(self.settings.keys.scroll, lines.len(), window.count);
+        let selected = row_lines(&lines).get(keys.selection).copied();
+        let list_focused = keys.focus == KeyboardFocus::List;
+        let start = window_start(keys.scroll, lines.len(), window.count);
         for (i, line) in lines.iter().enumerate().skip(start).take(window.count) {
             let rect = window.row(i - start);
             match line {
@@ -509,29 +545,113 @@ impl Display {
                     );
                 }
                 ShortcutLine::Row(row) => {
-                    Self::draw_shortcut_row(painter, rect, row, selected == Some(i));
+                    let recording = keys
+                        .recording
+                        .filter(|recording| row.action == Some(recording.action));
+                    let is_selected = selected == Some(i);
+                    Self::draw_shortcut_row(
+                        painter,
+                        rect,
+                        row,
+                        is_selected,
+                        list_focused,
+                        recording,
+                    );
                 }
             }
         }
     }
 
-    /// Paints one row of the Keyboard tab: the selection's tint, the label
+    /// Paints Reset all at the right of the foot row: dim while every
+    /// command is on its defaults, accented while it waits for the
+    /// confirming second click.
+    fn draw_reset_all(&self, painter: &Painter, foot: Rect) {
+        let armed = self.settings.keys.reset_all_armed;
+        let (text, color) = if armed {
+            ("Reset every shortcut? Click again", theme::accent())
+        } else if self.keymap.is_all_default() {
+            ("Reset all", theme::fg_dim())
+        } else {
+            ("Reset all", theme::fg())
+        };
+        painter.text(
+            pos2(foot.max.x - Self::SETTINGS_TEXT_INSET, foot.center().y),
+            Align2::RIGHT_CENTER,
+            text,
+            FontId::proportional(Self::FONT_LIST),
+            color,
+        );
+    }
+
+    /// The text in place of a row's keys: what the recorder waits for while
+    /// the row records, [`UNBOUND`] for a command with no chord, else the
+    /// keys.
+    fn shortcut_keys_text(row: &ShortcutRow, recording: Option<Recording>) -> String {
+        match recording {
+            Some(Recording {
+                replacing: Some((_, other)),
+                ..
+            }) => format!("Replaces {} — press again", other.info().label),
+            Some(_) => "Press a key…".to_owned(),
+            None if row.is_unbound() => UNBOUND.to_owned(),
+            None => row.keys.clone(),
+        }
+    }
+
+    /// Paints one row of the Keyboard tab: the selection's tint (accent
+    /// only while the list `is_focused`), the label
     /// on the left, cut short of the keys, and the keys on the right. A
     /// fixed key's keys read `fg_dim` — listed, not rebindable — and its
-    /// label stays as legible as any.
-    fn draw_shortcut_row(painter: &Painter, rect: Rect, row: &ShortcutRow, is_selected: bool) {
-        if is_selected {
-            Self::draw_settings_cursor(painter, rect, true);
+    /// label stays as legible as any. An unbound command reads
+    /// [`UNBOUND`] in `track_mute`; a recording row reads what it waits
+    /// for, accented. A dot left of the keys marks a command off its
+    /// defaults, and a dim note one the computer keyboard shadows while it
+    /// plays.
+    fn draw_shortcut_row(
+        painter: &Painter,
+        rect: Rect,
+        row: &ShortcutRow,
+        is_selected: bool,
+        is_focused: bool,
+        recording: Option<Recording>,
+    ) {
+        if is_selected || recording.is_some() {
+            Self::draw_settings_cursor(painter, rect, is_focused);
         }
-        let color = accent_if(is_selected, theme::fg());
-        let keys_color = if row.fixed { theme::fg_dim() } else { color };
+        let color = accent_if(is_selected && is_focused, theme::fg());
+        let keys_color = if recording.is_some() {
+            theme::accent()
+        } else if row.action.is_none() {
+            theme::fg_dim()
+        } else if row.is_unbound() {
+            theme::track_mute()
+        } else {
+            color
+        };
         let keys = painter.text(
             pos2(rect.max.x - Self::SETTINGS_TEXT_INSET, rect.center().y),
             Align2::RIGHT_CENTER,
-            &row.keys,
+            Self::shortcut_keys_text(row, recording),
             FontId::proportional(Self::FONT_LIST),
             keys_color,
         );
+        let mut keys_left = keys.min.x;
+        if recording.is_none() && row.changed {
+            let r = Self::CHANGED_DOT_R;
+            let centre = pos2(keys_left - Self::SETTINGS_TEXT_INSET, rect.center().y);
+            painter.circle_filled(centre, r, theme::accent());
+            keys_left = centre.x - r;
+        }
+        if recording.is_none() && row.piano {
+            let note = painter.text(
+                pos2(keys_left - Self::SETTINGS_TEXT_INSET, rect.center().y),
+                Align2::RIGHT_CENTER,
+                "not while playing notes",
+                FontId::proportional(Self::FONT_HINT),
+                theme::fg_dim(),
+            );
+            keys_left = note.min.x;
+        }
         let label_x = rect.min.x + Self::SETTINGS_TEXT_INSET;
         Self::draw_modal_text(
             painter,
@@ -539,26 +659,32 @@ impl Display {
             row.label,
             FontId::proportional(Self::FONT_LIST),
             color,
-            keys.min.x - Self::SETTINGS_TEXT_INSET - label_x,
+            keys_left - Self::SETTINGS_TEXT_INSET - label_x,
         );
     }
 
     /// Shows the Keyboard tab's search field while that tab is up, in the
-    /// canvas `ui`. It keeps the egui focus, so typing always lands in it,
-    /// and a change to its text puts the selection and the list back at the
-    /// top.
+    /// canvas `ui`. It holds the egui focus while it has the tab's keyboard
+    /// (`KeyboardFocus::Search`), so typing lands in it; while the list has
+    /// it, or a row records a shortcut, the focus is given up before the
+    /// field is shown, so this frame's keys never reach it and it shows no
+    /// caret. A change to its text puts the selection and the list back at
+    /// the top.
     pub(in crate::view::display) fn show_keyboard_search(&mut self, ui: &mut Ui) {
         if !self.keyboard_tab_showing() {
             return;
         }
         let rect = self.keyboard_tab_on_canvas().field;
         let keys = &mut self.settings.keys;
+        let id = Id::new("keyboard-search");
+        let focused = keys.focus == KeyboardFocus::Search && keys.recording.is_none();
+        if !focused {
+            ui.memory_mut(|memory| memory.surrender_focus(id));
+        }
         let style =
             FieldStyle::new(FontId::proportional(Self::FONT_LIST), MODAL_MARGIN).hint("Search");
-        let response = keys
-            .search
-            .show(ui, Id::new("keyboard-search"), rect, style);
-        if !response.has_focus() {
+        let response = keys.search.show(ui, id, rect, style);
+        if focused && !response.has_focus() {
             response.request_focus();
         }
         if response.changed() {
@@ -653,7 +779,10 @@ mod tests {
         assert_eq!(layout.field.min, content.min);
         assert!(layout.lines.first.min.y > layout.field.max.y);
         assert!(layout.lines.count >= 10);
-        assert!(layout.lines.row(layout.lines.count - 1).max.y <= content.max.y + 0.01);
+        assert!(layout.lines.row(layout.lines.count - 1).max.y <= layout.foot.min.y + 0.01);
+        assert_eq!(layout.foot.max, content.max);
+        let reset_all = Display::reset_all_rect(layout.foot);
+        assert!(layout.foot.contains_rect(reset_all));
     }
 
     #[test]

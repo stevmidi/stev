@@ -66,8 +66,17 @@ pub(super) enum SettingsHit {
     /// A theme, by index.
     Theme(usize),
     /// A row of the Keyboard tab, counted among the rows the search
-    /// matches.
-    Shortcut(usize),
+    /// matches; `keys` when on its chords (a click there records).
+    Shortcut {
+        /// The row, counted among the rows the search matches.
+        row: usize,
+        /// Whether the press is on the row's chords half.
+        keys: bool,
+    },
+    /// The Keyboard tab's search field.
+    Search,
+    /// The Keyboard tab's Reset all.
+    ResetAll,
     /// Anywhere else inside the panel.
     Panel,
 }
@@ -176,11 +185,20 @@ impl Display {
     }
 
     /// A press in the settings modal: a tab shows it, a section focuses its
-    /// row, a port is focused with its cursor there, a theme is applied, and
-    /// a press outside the panel closes the modal. `double` (the second
-    /// press of a double-click) then acts as Enter on a port.
+    /// row, a port is focused with its cursor there, a theme is applied, a
+    /// shortcut row is selected (and records on its chords), Reset all arms
+    /// or confirms, and a press outside the panel closes the modal. `double`
+    /// (the second press of a double-click) then acts as Enter on a port.
+    /// Any press ends a shortcut's recording.
     pub(super) fn click_settings(&mut self, x: f32, y: f32, double: bool) {
-        let Some(hit) = self.settings_hit_at(pos2(x, y)) else {
+        let hit = self.settings_hit_at(pos2(x, y));
+        if !matches!(
+            hit,
+            Some(SettingsHit::Shortcut { .. } | SettingsHit::ResetAll)
+        ) {
+            self.settings.keys.click_away();
+        }
+        let Some(hit) = hit else {
             if !double {
                 self.close_overlay();
             }
@@ -197,7 +215,14 @@ impl Display {
                 }
             }
             SettingsHit::Theme(idx) => self.apply_theme(idx),
-            SettingsHit::Shortcut(row) => self.settings.keys.selection = row,
+            SettingsHit::Shortcut { row, keys } => {
+                self.settings.keys.click_row(row, keys, &self.keymap);
+            }
+            SettingsHit::Search => self.settings.keys.click_search(),
+            SettingsHit::ResetAll => {
+                let result = self.settings.keys.click_reset_all(&mut self.keymap);
+                self.apply_tab_key(result);
+            }
             SettingsHit::Panel => {}
         }
     }
@@ -231,7 +256,7 @@ impl Display {
             }
             SettingsTab::Keyboard => {
                 let visible = self.keyboard_visible_lines();
-                self.settings.keys.scroll(rows, visible);
+                self.settings.keys.scroll(rows, visible, &self.keymap);
             }
         }
     }

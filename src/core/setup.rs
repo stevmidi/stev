@@ -16,6 +16,7 @@ use crate::core::config::{
     MIDI_OUT_OFFSET_DEFAULT_MS, REGION_LENGTH_DEFAULT, TEMPO_US_DEFAULT,
 };
 use crate::core::{
+    keymap::Keymap,
     shared_atomics::{AudioExportAtomics, LiveRecState, TrackMixAtomics},
     time::Meter,
     timer::Timer,
@@ -222,6 +223,7 @@ pub(crate) fn setup_display(
     last_project_folder: Option<String>,
     midi_out_offset_ms: i32,
     browser_width: f32,
+    keymap: Keymap,
 ) -> Display {
     Display::new(
         event_handlers,
@@ -236,6 +238,7 @@ pub(crate) fn setup_display(
         last_project_folder,
         midi_out_offset_ms,
         browser_width,
+        keymap,
         shared_atomics.tempo.clone(),
         shared_atomics.meter.clone(),
         shared_atomics.running.clone(),

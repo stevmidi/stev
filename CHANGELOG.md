@@ -20,8 +20,26 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ## [Unreleased]
 
+### Added
+
+- **Rebind the commands in Settings → Keyboard (`?`).** Select a command
+  and press Enter, or click its keys, then press the new key: it becomes
+  the command's only key. A key another command has asks for a second
+  press, and that command is left unbound (shown in red) until it gets a
+  new one. Backspace unbinds the selected command, `⌘Backspace` puts its
+  default keys back, and Reset all at the foot of the tab puts back every
+  one. A dot marks a command off its defaults. Keys that can't be commands
+  are refused with the reason in the footer: the clipboard, the system's
+  `⌘Q` / `⌘H` / `⌘M`, `⌘,` and `?`, save and new project, and the arrows,
+  Tab, Enter and Esc. Changes are saved at once in `settings.json`, only
+  the ones you made, so a later version's new defaults still reach every
+  command you never touched. A row whose key the computer keyboard plays
+  while it is on says so.
+
 ### Changed
 
+- **`⇧Tab` steps back through the rows of Settings → MIDI**; it used to
+  step forward, like `Tab`.
 - **Commands go through one keymap** (`src/core/keymap.rs`), the groundwork
   for rebinding them in Settings (`docs/320-keyboard-shortcuts.md`). The
   default keys are unchanged, but a key now needs its exact modifiers: a

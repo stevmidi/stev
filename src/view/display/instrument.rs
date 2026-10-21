@@ -171,8 +171,9 @@ impl InstrumentHost {
 impl Display {
     /// Hands the plugin-editor key guard the bare keys it reserves while an
     /// editor window has OS keyboard focus: the keymap's bare chords for
-    /// play / stop, stop and the editor toggle. Called once from `main`,
-    /// beside `install_key_guard`.
+    /// play / stop, stop and the editor toggle. Called from `main`, beside
+    /// `install_key_guard`, and again after every rebinding in the Keyboard
+    /// tab.
     pub(crate) fn guard_plugin_editor_keys(&self) {
         set_guarded_keys(
             [

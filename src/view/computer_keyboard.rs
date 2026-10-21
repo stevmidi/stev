@@ -14,6 +14,7 @@
 use egui::{Key, Modifiers};
 
 use crate::core::input_event::KeyModifiers;
+use crate::core::keymap::Chord;
 use crate::core::midi::message::Midi3;
 
 /// The note keys, lowest first: the home row is the white keys from C, the
@@ -104,6 +105,16 @@ pub(crate) fn takes_key_event(
     let modifiers = KeyModifiers::from(modifiers);
     let chord = modifiers.command || modifiers.ctrl || modifiers.alt;
     (!pressed || !chord).then_some(key)
+}
+
+/// Whether the keyboard, while it plays, takes the press `chord` is before
+/// the keymap sees it — a layout key, plain or with Shift (see
+/// [`takes_key_event`]). The keymap's chords hold logical keys and the
+/// keyboard takes physical ones, so this is exact on a US layout and a close
+/// guess elsewhere: the Keyboard tab's note on a row, and the recorder's
+/// refusal of a bare layout key for the toggle itself.
+pub(crate) fn shadows(chord: Chord) -> bool {
+    key_role(chord.key).is_some() && !chord.command && !chord.alt && !chord.ctrl
 }
 
 /// The keyboard's state: on or off, where it sits, how hard it plays, and
@@ -328,5 +339,22 @@ mod tests {
             assert_eq!(takes_key_event(Some(key), true, Modifiers::NONE), None);
         }
         assert_eq!(takes_key_event(None, true, Modifiers::NONE), None);
+    }
+
+    #[test]
+    fn a_layout_key_shadows_its_plain_and_shifted_chords_only() {
+        let t = Chord {
+            key: Key::T,
+            command: false,
+            alt: false,
+            shift: false,
+            ctrl: false,
+        };
+        assert!(shadows(t));
+        assert!(shadows(Chord { shift: true, ..t }));
+        assert!(!shadows(Chord { command: true, ..t }));
+        assert!(!shadows(Chord { alt: true, ..t }));
+        assert!(!shadows(Chord { key: Key::Q, ..t }));
+        assert!(shadows(Chord { key: Key::Z, ..t }));
     }
 }

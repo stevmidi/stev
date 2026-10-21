@@ -44,6 +44,16 @@ impl MidiSettingsFocus {
         }
     }
 
+    /// The previous row, as ⇧Tab cycles them: the reverse of
+    /// [`next`](Self::next).
+    pub(crate) fn previous(self) -> MidiSettingsFocus {
+        match self {
+            MidiSettingsFocus::InPort => MidiSettingsFocus::OutOffset,
+            MidiSettingsFocus::OutPort => MidiSettingsFocus::InPort,
+            MidiSettingsFocus::OutOffset => MidiSettingsFocus::OutPort,
+        }
+    }
+
     /// The port list this row is — `None` for the offset row.
     pub(crate) fn port_side(self) -> Option<PortSide> {
         match self {
@@ -135,6 +145,21 @@ mod tests {
             focus = focus.next();
         }
         assert_eq!(focus, MidiSettingsFocus::InPort);
+    }
+
+    #[test]
+    fn previous_undoes_next() {
+        for focus in [
+            MidiSettingsFocus::InPort,
+            MidiSettingsFocus::OutPort,
+            MidiSettingsFocus::OutOffset,
+        ] {
+            assert_eq!(focus.next().previous(), focus);
+        }
+        assert_eq!(
+            MidiSettingsFocus::InPort.previous(),
+            MidiSettingsFocus::OutOffset
+        );
     }
 
     #[test]

@@ -1,16 +1,17 @@
 //! App-wide settings (not project data): the remembered MIDI ports, the
-//! MIDI-out offset, the last project folder, the theme index and the browser
-//! panel's width. Serialized to
+//! MIDI-out offset, the last project folder, the theme index, the browser
+//! panel's width and the keyboard shortcuts the user rebound. Serialized to
 //! `settings.json` in the platform config directory (`paths::config_dir`).
 //! Like the project DTOs, a new field must be `#[serde(default)]` — but here
 //! the default is often *not* the zero value, so an upgrading user gets
 //! current behaviour.
 
-use std::{fs, io, path::PathBuf};
+use std::{collections::BTreeMap, fs, io, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 
 use super::config::{BROWSER_W_DEFAULT, MIDI_OUT_OFFSET_DEFAULT_MS, MIDI_OUT_OFFSET_MAX_MS};
+use super::keymap::ChordDto;
 use super::paths::{SETTINGS_FILE_NAME, config_dir};
 
 /// The on-disk `settings.json` shape.
@@ -42,6 +43,13 @@ pub(crate) struct SettingsData {
     /// could be dragged: the old fixed width.
     #[serde(default = "default_browser_width")]
     pub(crate) browser_width: f32,
+    /// The keyboard shortcuts the user changed, by action id
+    /// (`core/keymap.rs`): only the actions whose chords differ from their
+    /// defaults, an empty list meaning unbound, so a new default reaches
+    /// every action the user never touched. Absent before rebinding
+    /// existed: the defaults.
+    #[serde(default)]
+    pub(crate) keymap: BTreeMap<String, Vec<ChordDto>>,
 }
 
 /// Serde default for [`SettingsData::browser_width`].
@@ -67,6 +75,7 @@ impl Default for SettingsData {
             midi_out_offset_ms: default_midi_out_offset_ms(),
             theme_index: 0,
             browser_width: default_browser_width(),
+            keymap: BTreeMap::new(),
         }
     }
 }

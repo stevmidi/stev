@@ -13,10 +13,15 @@
 //! [`ACTIONS`] is the single source: the defaults are built from it, and so
 //! is the settings modal's Keyboard tab. Adding a command is adding a row
 //! there and an arm where it is handled.
+//!
+//! The user's rebindings are stored in `settings.json` as differences from
+//! the defaults ([`Keymap::overrides`], [`ChordDto`]), so a new default in a
+//! later version reaches every action the user never touched.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use egui::Key;
+use serde::{Deserialize, Serialize};
 
 use crate::core::{input_event::KeyModifiers, view_state::Pane};
 
@@ -129,8 +134,6 @@ pub(crate) enum Scope {
 impl Scope {
     /// Whether two actions in these scopes could both be live at once, so
     /// must not share a chord: either is global, or both are the same pane.
-    /// The rebinding recorder's conflict check (`320` phase 3).
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn overlaps(self, other: Scope) -> bool {
         self == Scope::Global || other == Scope::Global || self == other
     }
@@ -287,6 +290,23 @@ fn is_punctuation(key: Key) -> bool {
     )
 }
 
+/// Whether `key` is a modifier key itself (⇧, ⌃, ⌥, ⌘, either side).
+/// egui reports a press of one as a key of its own, ahead of the key it
+/// modifies, so the recorder waits past it rather than binding it.
+pub(crate) fn is_modifier(key: Key) -> bool {
+    matches!(
+        key,
+        Key::ShiftLeft
+            | Key::ShiftRight
+            | Key::ControlLeft
+            | Key::ControlRight
+            | Key::AltLeft
+            | Key::AltRight
+            | Key::SuperLeft
+            | Key::SuperRight
+    )
+}
+
 /// Whether some common layout types `key` with ⌥ (macOS) or AltGr.
 fn is_alt_typed(key: Key) -> bool {
     matches!(
@@ -300,15 +320,107 @@ fn is_alt_typed(key: Key) -> bool {
     )
 }
 
+/// Why `chord` can't be bound to any action, as the end of a sentence that
+/// starts with the chord ("⌘C *is the clipboard*"); `None` when it can be.
+/// Refused: the clipboard (egui-winit turns `⌘C`/`⌘X`/`⌘V` into clipboard
+/// events, so the key never arrives), egui's UI scale, the chords macOS
+/// keeps, the ways into Settings and its Keyboard tab (always reachable),
+/// the fixed project chords, the navigation and dialog keys, which stay
+/// hand-matched (`docs/320-keyboard-shortcuts.md` decision 1), and a
+/// modifier key on its own.
+pub(crate) fn refusal(chord: Chord) -> Option<&'static str> {
+    let key = chord.key;
+    if is_modifier(key) {
+        return Some("is a modifier: hold it with another key");
+    }
+    if matches!(
+        key,
+        Key::ArrowLeft
+            | Key::ArrowRight
+            | Key::ArrowUp
+            | Key::ArrowDown
+            | Key::Tab
+            | Key::Enter
+            | Key::Escape
+    ) {
+        return Some("is fixed: arrows, Tab, Enter and Esc navigate");
+    }
+    if key == Key::Questionmark && !chord.command && !chord.alt {
+        return Some("opens this tab");
+    }
+    if [SAVE, SAVE_AS, NEW_PROJECT].contains(&chord) {
+        return Some("is fixed: save, save as and new project");
+    }
+    if !chord.command {
+        return None;
+    }
+    match key {
+        Key::C | Key::X | Key::V => Some("is the clipboard"),
+        Key::Plus | Key::Equals | Key::Minus | Key::Num0 => Some("is the UI scale"),
+        // Quit, hide (`⌥` hides the others) and minimize; `⇧⌘M` is free.
+        Key::Q | Key::H | Key::M if !chord.shift => Some("is the system's"),
+        Key::Comma => Some("opens Settings"),
+        _ => None,
+    }
+}
+
+/// A [`Chord`] as `settings.json` stores it: the key by egui's name
+/// (`Key::name`, read back with `Key::from_name`) and the four modifier
+/// flags, each `false` when absent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct ChordDto {
+    /// The key's egui name (`"Space"`, `"Backslash"`, `"K"`).
+    pub(crate) key: String,
+    /// ⌘ on macOS, Ctrl elsewhere.
+    #[serde(default)]
+    pub(crate) command: bool,
+    /// ⌥ / Alt.
+    #[serde(default)]
+    pub(crate) alt: bool,
+    /// Shift.
+    #[serde(default)]
+    pub(crate) shift: bool,
+    /// macOS's Control.
+    #[serde(default)]
+    pub(crate) ctrl: bool,
+}
+
+impl From<Chord> for ChordDto {
+    fn from(chord: Chord) -> Self {
+        ChordDto {
+            key: chord.key.name().to_owned(),
+            command: chord.command,
+            alt: chord.alt,
+            shift: chord.shift,
+            ctrl: chord.ctrl,
+        }
+    }
+}
+
+impl ChordDto {
+    /// The chord, normalized for this platform; `None` for a key name egui
+    /// doesn't know (an edited file).
+    fn to_chord(&self) -> Option<Chord> {
+        Some(
+            Chord {
+                key: Key::from_name(&self.key)?,
+                command: self.command,
+                alt: self.alt,
+                shift: self.shift,
+                ctrl: self.ctrl,
+            }
+            .normalized(cfg!(target_os = "macos")),
+        )
+    }
+}
+
 /// One row of [`ACTIONS`]: everything the keymap and the Keyboard tab know
 /// about an action. The label and category are the Keyboard tab's
-/// (`view/display/keyboard_tab.rs`); the id is for `settings.json` (`320`
-/// phase 3), and until then only the tests read it.
+/// (`view/display/keyboard_tab.rs`); the id is `settings.json`'s.
 pub(crate) struct ActionInfo {
     /// The action.
     pub(crate) action: Action,
     /// Stable id, stored in `settings.json`: never renamed once released.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) id: &'static str,
     /// What the Keyboard tab calls it.
     pub(crate) label: &'static str,
@@ -699,19 +811,28 @@ pub(crate) const ACTIONS: &[ActionInfo] = &[
 
 impl Action {
     /// This action's row in [`ACTIONS`].
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn info(self) -> &'static ActionInfo {
+        &ACTIONS[self.index()]
+    }
+
+    /// This action's index in [`ACTIONS`].
+    fn index(self) -> usize {
         ACTIONS
             .iter()
-            .find(|info| info.action == self)
+            .position(|info| info.action == self)
             .expect("every action has a row in ACTIONS")
     }
 }
 
-/// The live keymap: each action's chords — the defaults, today — indexed by
-/// chord for [`resolve`](Self::resolve). Main-thread, view-local plain data
-/// held by `Display`.
+/// The live keymap: each action's chords — the defaults with the user's
+/// rebindings applied — indexed by chord for [`resolve`](Self::resolve).
+/// Main-thread, view-local plain data held by `Display`. Never holds a
+/// conflict: every change takes the chords it binds away from the
+/// overlapping actions that had them.
 pub(crate) struct Keymap {
+    /// Each action's chords, index-parallel with [`ACTIONS`]. Empty is
+    /// unbound.
+    chords: Vec<Vec<Chord>>,
     /// Every bound chord and the actions on it, at most one per scope.
     by_chord: HashMap<Chord, Vec<(Scope, Action)>>,
 }
@@ -719,20 +840,152 @@ pub(crate) struct Keymap {
 impl Default for Keymap {
     /// The out-of-the-box keymap: every action on its default chords.
     fn default() -> Self {
-        let mut by_chord: HashMap<Chord, Vec<(Scope, Action)>> = HashMap::new();
-        for info in ACTIONS {
-            for &chord in info.defaults {
-                by_chord
+        Keymap::from_chords(default_chords())
+    }
+}
+
+/// Every action's default chords, index-parallel with [`ACTIONS`].
+fn default_chords() -> Vec<Vec<Chord>> {
+    ACTIONS.iter().map(|info| info.defaults.to_vec()).collect()
+}
+
+impl Keymap {
+    /// The keymap holding `chords` (index-parallel with [`ACTIONS`]), as
+    /// given: the caller keeps it conflict-free.
+    fn from_chords(chords: Vec<Vec<Chord>>) -> Self {
+        let mut keymap = Keymap {
+            chords,
+            by_chord: HashMap::new(),
+        };
+        keymap.reindex();
+        keymap
+    }
+
+    /// The defaults with `overrides` (`settings.json`'s, by action id)
+    /// applied. An unknown id, an unparseable chord or a refused one
+    /// ([`refusal`]) is skipped and the rest kept — a downgrade, a removed
+    /// action, an edited file. An action whose stored chords are all
+    /// skipped keeps its defaults (an empty list stored is unbound, as
+    /// saved). Should what is left conflict, the action later in
+    /// [`ACTIONS`] order loses the chord.
+    pub(crate) fn from_overrides(overrides: &BTreeMap<String, Vec<ChordDto>>) -> Self {
+        let mut chords = default_chords();
+        for (id, dtos) in overrides {
+            let Some(i) = ACTIONS.iter().position(|info| info.id == id) else {
+                continue;
+            };
+            let mut list: Vec<Chord> = Vec::new();
+            for chord in dtos.iter().filter_map(ChordDto::to_chord) {
+                if refusal(chord).is_none() && !list.contains(&chord) {
+                    list.push(chord);
+                }
+            }
+            if list.is_empty() && !dtos.is_empty() {
+                continue;
+            }
+            chords[i] = list;
+        }
+        for (i, info) in ACTIONS.iter().enumerate() {
+            let (earlier, rest) = chords.split_at_mut(i);
+            rest[0].retain(|chord| {
+                !ACTIONS
+                    .iter()
+                    .zip(earlier.iter())
+                    .any(|(other, held)| other.scope.overlaps(info.scope) && held.contains(chord))
+            });
+        }
+        Keymap::from_chords(chords)
+    }
+
+    /// What `settings.json` stores: every action whose chords differ from
+    /// its defaults, by id, an empty list for an unbound one.
+    pub(crate) fn overrides(&self) -> BTreeMap<String, Vec<ChordDto>> {
+        ACTIONS
+            .iter()
+            .zip(&self.chords)
+            .filter(|(info, chords)| info.defaults != chords.as_slice())
+            .map(|(info, chords)| {
+                let dtos = chords.iter().map(|&chord| ChordDto::from(chord)).collect();
+                (info.id.to_owned(), dtos)
+            })
+            .collect()
+    }
+
+    /// `action`'s chords; empty when it is unbound.
+    pub(crate) fn chords(&self, action: Action) -> &[Chord] {
+        &self.chords[action.index()]
+    }
+
+    /// Whether `action` is on its default chords.
+    pub(crate) fn is_default(&self, action: Action) -> bool {
+        self.chords(action) == action.info().defaults
+    }
+
+    /// Whether every action is on its default chords.
+    pub(crate) fn is_all_default(&self) -> bool {
+        ACTIONS.iter().all(|info| self.is_default(info.action))
+    }
+
+    /// The other action binding `chord` would take it from: one in a scope
+    /// overlapping `action`'s that has it.
+    pub(crate) fn conflict(&self, action: Action, chord: Chord) -> Option<Action> {
+        let scope = action.info().scope;
+        self.by_chord
+            .get(&chord)?
+            .iter()
+            .find(|&&(other_scope, other)| other != action && other_scope.overlaps(scope))
+            .map(|&(_, other)| other)
+    }
+
+    /// Records `chord` for `action`: it becomes the action's only chord, and
+    /// an overlapping action that had it loses it — left unbound if it was
+    /// its only one.
+    pub(crate) fn bind(&mut self, action: Action, chord: Chord) {
+        self.set(action, vec![chord]);
+    }
+
+    /// Leaves `action` with no chord.
+    pub(crate) fn unbind(&mut self, action: Action) {
+        self.set(action, Vec::new());
+    }
+
+    /// Puts `action` back on its defaults, taking them from any overlapping
+    /// action that was given one since.
+    pub(crate) fn reset(&mut self, action: Action) {
+        self.set(action, action.info().defaults.to_vec());
+    }
+
+    /// Puts every action back on its defaults.
+    pub(crate) fn reset_all(&mut self) {
+        *self = Keymap::default();
+    }
+
+    /// Makes `chords` `action`'s, taking each from the overlapping actions
+    /// that had it, and rebuilds the index.
+    fn set(&mut self, action: Action, chords: Vec<Chord>) {
+        let scope = action.info().scope;
+        for (info, held) in ACTIONS.iter().zip(&mut self.chords) {
+            if info.action != action && info.scope.overlaps(scope) {
+                held.retain(|chord| !chords.contains(chord));
+            }
+        }
+        self.chords[action.index()] = chords;
+        self.reindex();
+    }
+
+    /// Rebuilds [`by_chord`](Self::by_chord) from [`chords`](Self::chords).
+    fn reindex(&mut self) {
+        self.by_chord.clear();
+        for (info, chords) in ACTIONS.iter().zip(&self.chords) {
+            for &chord in chords {
+                self.by_chord
                     .entry(chord)
                     .or_default()
                     .push((info.scope, info.action));
             }
         }
-        Keymap { by_chord }
     }
-}
 
-impl Keymap {
     /// The action `chord` triggers while `pane` has the keyboard: an action
     /// scoped to that pane ahead of a global one.
     pub(crate) fn resolve(&self, chord: Chord, pane: Pane) -> Option<Action> {
@@ -760,12 +1013,10 @@ impl Keymap {
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub(crate) fn bare_keys(&self, action: Action) -> Vec<Key> {
         let mut keys: Vec<Key> = self
-            .by_chord
+            .chords(action)
             .iter()
-            .filter(|(chord, actions)| {
-                chord.is_bare() && actions.iter().any(|&(_, bound)| bound == action)
-            })
-            .map(|(chord, _)| chord.key)
+            .filter(|chord| chord.is_bare())
+            .map(|chord| chord.key)
             .collect();
         keys.sort_unstable();
         keys
@@ -774,11 +1025,14 @@ impl Keymap {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
+    use std::collections::{BTreeMap, HashSet};
 
     use egui::Key;
 
-    use super::{ACTIONS, Action, Chord, Keymap, NEW_PROJECT, SAVE, SAVE_AS, Scope};
+    use super::{
+        ACTIONS, Action, Chord, ChordDto, Keymap, NEW_PROJECT, SAVE, SAVE_AS, default_chords,
+        refusal,
+    };
     use crate::core::{input_event::KeyModifiers, view_state::Pane};
 
     fn mods(command: bool, alt: bool, shift: bool, ctrl: bool) -> KeyModifiers {
@@ -967,16 +1221,10 @@ mod tests {
     #[test]
     fn a_scoped_action_wins_over_a_global_one() {
         let chord = Chord::plain(Key::U);
-        let keymap = Keymap {
-            by_chord: [(
-                chord,
-                vec![
-                    (Scope::Global, Action::TapTempo),
-                    (Scope::Clip, Action::Quantize),
-                ],
-            )]
-            .into(),
-        };
+        let mut chords = default_chords();
+        chords[Action::TapTempo.index()] = vec![chord];
+        chords[Action::Quantize.index()] = vec![chord];
+        let keymap = Keymap::from_chords(chords);
         assert_eq!(keymap.resolve(chord, Pane::Clip), Some(Action::Quantize));
         assert_eq!(
             keymap.resolve(chord, Pane::Arranger),
@@ -991,5 +1239,264 @@ mod tests {
         assert_eq!(keymap.bare_keys(Action::Stop), vec![Key::Num0]);
         assert_eq!(keymap.bare_keys(Action::TogglePluginEditor), vec![Key::V]);
         assert!(keymap.bare_keys(Action::Undo).is_empty());
+    }
+
+    /// Whether `keymap` puts no chord on two overlapping actions.
+    fn conflict_free(keymap: &Keymap) -> bool {
+        ACTIONS.iter().enumerate().all(|(i, a)| {
+            ACTIONS[i + 1..].iter().all(|b| {
+                !a.scope.overlaps(b.scope)
+                    || !keymap
+                        .chords(a.action)
+                        .iter()
+                        .any(|chord| keymap.chords(b.action).contains(chord))
+            })
+        })
+    }
+
+    #[test]
+    fn binding_a_chord_replaces_the_whole_list() {
+        let mut keymap = Keymap::default();
+        let g = Chord::cmd(Key::G);
+        keymap.bind(Action::Commit, g);
+        assert_eq!(keymap.chords(Action::Commit), &[g]);
+        assert_eq!(keymap.resolve(g, Pane::Arranger), Some(Action::Commit));
+        // Both old chords are gone.
+        assert_eq!(keymap.resolve(Chord::plain(Key::Slash), Pane::Clip), None);
+        assert_eq!(
+            keymap.resolve(Chord::plain(Key::Backslash), Pane::Clip),
+            None
+        );
+        assert!(!keymap.is_default(Action::Commit));
+    }
+
+    #[test]
+    fn a_conflict_leaves_the_loser_unbound() {
+        let mut keymap = Keymap::default();
+        let split = Chord::cmd(Key::E);
+        assert_eq!(keymap.conflict(Action::Merge, split), Some(Action::Split));
+        keymap.bind(Action::Merge, split);
+        assert!(keymap.chords(Action::Split).is_empty());
+        assert_eq!(keymap.resolve(split, Pane::Arranger), Some(Action::Merge));
+        assert!(conflict_free(&keymap));
+    }
+
+    /// Only the chord taken goes: Commit keeps its other default.
+    #[test]
+    fn a_loser_with_another_chord_keeps_it() {
+        let mut keymap = Keymap::default();
+        keymap.bind(Action::TapTempo, Chord::plain(Key::Slash));
+        assert_eq!(
+            keymap.chords(Action::Commit),
+            &[Chord::plain(Key::Backslash)]
+        );
+    }
+
+    /// The panes don't overlap: `M` stays both mutes, and taking it in the
+    /// clip view leaves the arranger's alone.
+    #[test]
+    fn only_overlapping_scopes_conflict() {
+        let mut keymap = Keymap::default();
+        let m = Chord::plain(Key::M);
+        assert_eq!(
+            keymap.conflict(Action::Quantize, m),
+            Some(Action::MuteNotes)
+        );
+        keymap.bind(Action::Quantize, m);
+        assert_eq!(keymap.chords(Action::MuteRange), &[m]);
+        assert!(keymap.chords(Action::MuteNotes).is_empty());
+        // A global action overlaps both.
+        assert!(keymap.conflict(Action::TapTempo, m).is_some());
+        // An action's own chord is no conflict.
+        assert_eq!(keymap.conflict(Action::Quantize, m), None);
+    }
+
+    #[test]
+    fn unbind_reset_and_reset_all() {
+        let mut keymap = Keymap::default();
+        keymap.unbind(Action::Undo);
+        assert!(keymap.chords(Action::Undo).is_empty());
+        assert_eq!(keymap.resolve(Chord::cmd(Key::Z), Pane::Arranger), None);
+        // Resetting takes the default back from whoever got it since.
+        keymap.bind(Action::Redo, Chord::cmd(Key::Z));
+        keymap.reset(Action::Undo);
+        assert!(keymap.is_default(Action::Undo));
+        assert!(keymap.chords(Action::Redo).is_empty());
+        assert!(conflict_free(&keymap));
+        keymap.reset_all();
+        assert!(keymap.is_all_default());
+    }
+
+    #[test]
+    fn the_refused_chords() {
+        for chord in [
+            Chord::cmd(Key::C),
+            Chord::cmd(Key::C).shift(),
+            Chord::cmd(Key::X),
+            Chord::cmd(Key::V),
+            Chord::cmd(Key::Plus),
+            Chord::cmd(Key::Minus),
+            Chord::cmd(Key::Num0),
+            Chord::cmd(Key::Q),
+            Chord::cmd(Key::M),
+            Chord::cmd(Key::H),
+            Chord::cmd(Key::H).alt(),
+            Chord::cmd(Key::Comma),
+            Chord::plain(Key::Questionmark),
+            SAVE,
+            SAVE_AS,
+            NEW_PROJECT,
+            Chord::plain(Key::ArrowLeft),
+            Chord::cmd(Key::ArrowUp),
+            Chord::plain(Key::Enter),
+            Chord::plain(Key::Tab),
+            Chord::plain(Key::Escape),
+            Chord::plain(Key::SuperRight),
+            Chord::cmd(Key::ShiftLeft),
+        ] {
+            assert!(refusal(chord).is_some(), "{chord:?}");
+        }
+        for chord in [
+            Chord::plain(Key::C),
+            Chord::plain(Key::Comma),
+            Chord::cmd(Key::G),
+            Chord::cmd(Key::S).alt(),
+            Chord::plain(Key::F5),
+        ] {
+            assert_eq!(refusal(chord), None, "{chord:?}");
+        }
+        // No default is refused.
+        for info in ACTIONS {
+            for &chord in info.defaults {
+                assert_eq!(refusal(chord), None, "{:?}", info.action);
+            }
+        }
+    }
+
+    #[test]
+    fn the_defaults_store_nothing() {
+        assert!(Keymap::default().overrides().is_empty());
+    }
+
+    #[test]
+    fn overrides_round_trip_through_json() {
+        let mut keymap = Keymap::default();
+        keymap.bind(Action::Merge, Chord::cmd(Key::E));
+        keymap.bind(Action::Commit, Chord::plain(Key::Space).alt().shift());
+        keymap.unbind(Action::Quantize);
+        let overrides = keymap.overrides();
+        // Merge, Split (it lost `⌘E`), Commit and Quantize; nothing else.
+        let ids: Vec<_> = overrides.keys().map(String::as_str).collect();
+        assert_eq!(
+            ids,
+            vec![
+                "arranger.merge",
+                "arranger.split",
+                "capture.commit",
+                "clip.quantize"
+            ]
+        );
+        assert!(overrides["clip.quantize"].is_empty());
+        let json = serde_json::to_string(&overrides).unwrap();
+        let loaded: BTreeMap<String, Vec<ChordDto>> = serde_json::from_str(&json).unwrap();
+        let reloaded = Keymap::from_overrides(&loaded);
+        for info in ACTIONS {
+            assert_eq!(
+                reloaded.chords(info.action),
+                keymap.chords(info.action),
+                "{:?}",
+                info.action
+            );
+        }
+    }
+
+    /// Every default key's name reads back as the key.
+    #[test]
+    fn every_default_key_name_parses_back() {
+        for info in ACTIONS {
+            for &chord in info.defaults {
+                assert_eq!(ChordDto::from(chord).to_chord(), Some(chord));
+            }
+        }
+    }
+
+    #[test]
+    fn unknown_ids_and_bad_chords_are_dropped() {
+        let dto = |key: &str, command: bool| ChordDto {
+            key: key.to_owned(),
+            command,
+            alt: false,
+            shift: false,
+            ctrl: false,
+        };
+        let overrides = BTreeMap::from([
+            ("no.such.action".to_owned(), vec![dto("G", false)]),
+            (
+                "transport.tap_tempo".to_owned(),
+                vec![dto("NoSuchKey", false), dto("C", true), dto("U", false)],
+            ),
+        ]);
+        let keymap = Keymap::from_overrides(&overrides);
+        // The unparseable and the refused chord go; the rest is kept.
+        assert_eq!(keymap.chords(Action::TapTempo), &[Chord::plain(Key::U)]);
+        assert_eq!(keymap.overrides().len(), 1);
+    }
+
+    /// Stored differences only: every action the user never touched gets
+    /// whatever the defaults are now.
+    #[test]
+    fn untouched_actions_get_the_current_defaults() {
+        let overrides = BTreeMap::from([(
+            "transport.tap_tempo".to_owned(),
+            vec![ChordDto::from(Chord::plain(Key::U))],
+        )]);
+        let keymap = Keymap::from_overrides(&overrides);
+        for info in ACTIONS {
+            if info.action != Action::TapTempo {
+                assert!(keymap.is_default(info.action), "{:?}", info.action);
+            }
+        }
+    }
+
+    /// An edited file putting one chord on two overlapping actions: the
+    /// later in table order loses it.
+    #[test]
+    fn a_conflicting_file_costs_the_later_action_its_chord() {
+        // Merge (later) given Split's `⌘E`, Split left alone in the file.
+        let overrides = BTreeMap::from([(
+            "arranger.merge".to_owned(),
+            vec![ChordDto::from(Chord::cmd(Key::E))],
+        )]);
+        let keymap = Keymap::from_overrides(&overrides);
+        assert_eq!(keymap.chords(Action::Split), &[Chord::cmd(Key::E)]);
+        assert!(keymap.chords(Action::Merge).is_empty());
+        assert!(conflict_free(&keymap));
+    }
+
+    #[test]
+    fn bare_keys_follow_a_rebinding() {
+        let mut keymap = Keymap::default();
+        keymap.bind(Action::TogglePlayback, Chord::plain(Key::P));
+        assert_eq!(keymap.bare_keys(Action::TogglePlayback), vec![Key::P]);
+        keymap.bind(Action::Stop, Chord::cmd(Key::P));
+        assert!(keymap.bare_keys(Action::Stop).is_empty());
+    }
+
+    /// Regression: an early recorder bound a lone ⌘ press (`SuperRight`)
+    /// and saved it. Loading such a file gives the action its defaults
+    /// back rather than leaving it unbound.
+    #[test]
+    fn an_override_with_nothing_left_keeps_the_defaults() {
+        let overrides = BTreeMap::from([
+            (
+                "transport.computer_keyboard".to_owned(),
+                vec![ChordDto::from(Chord::plain(Key::SuperRight))],
+            ),
+            ("edit.undo".to_owned(), Vec::new()),
+        ]);
+        let keymap = Keymap::from_overrides(&overrides);
+        assert!(keymap.is_default(Action::ToggleComputerKeyboard));
+        // A list stored empty is still unbound.
+        assert!(keymap.chords(Action::Undo).is_empty());
     }
 }
