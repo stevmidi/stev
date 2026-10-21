@@ -14,7 +14,7 @@ use crate::core::settings::clamp_midi_out_offset_ms;
 use crate::view::theme;
 
 use super::browser::scroll_to_show;
-use super::keyboard_tab::KeyboardTab;
+use super::keyboard_tab::{KeyboardTab, TabClick};
 use super::midi_tab::MidiTab;
 use super::{Display, MidiSettingsFocus, Overlay, PortSide, SettingsTab};
 
@@ -189,14 +189,19 @@ impl Display {
     /// shortcut row is selected (and records on its chords), Reset all arms
     /// or confirms, and a press outside the panel closes the modal. `double`
     /// (the second press of a double-click) then acts as Enter on a port.
-    /// Any press ends a shortcut's recording.
+    /// Any press ends a shortcut's recording (`KeyboardTab::click`, which
+    /// takes the Keyboard tab's own hits).
     pub(super) fn click_settings(&mut self, x: f32, y: f32, double: bool) {
         let hit = self.settings_hit_at(pos2(x, y));
-        if !matches!(
-            hit,
-            Some(SettingsHit::Shortcut { .. } | SettingsHit::ResetAll)
-        ) {
-            self.settings.keys.click_away();
+        let click = match hit {
+            Some(SettingsHit::Shortcut { row, keys }) => TabClick::Row { row, keys },
+            Some(SettingsHit::Search) => TabClick::Search,
+            Some(SettingsHit::ResetAll) => TabClick::ResetAll,
+            _ => TabClick::Elsewhere,
+        };
+        let result = self.settings.keys.click(click, &mut self.keymap);
+        if self.apply_tab_key(result) {
+            return;
         }
         let Some(hit) = hit else {
             if !double {
@@ -215,15 +220,11 @@ impl Display {
                 }
             }
             SettingsHit::Theme(idx) => self.apply_theme(idx),
-            SettingsHit::Shortcut { row, keys } => {
-                self.settings.keys.click_row(row, keys, &self.keymap);
-            }
-            SettingsHit::Search => self.settings.keys.click_search(),
-            SettingsHit::ResetAll => {
-                let result = self.settings.keys.click_reset_all(&mut self.keymap);
-                self.apply_tab_key(result);
-            }
-            SettingsHit::Panel => {}
+            // The Keyboard tab's own, taken above.
+            SettingsHit::Shortcut { .. }
+            | SettingsHit::Search
+            | SettingsHit::ResetAll
+            | SettingsHit::Panel => {}
         }
     }
 

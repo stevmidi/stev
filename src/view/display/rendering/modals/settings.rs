@@ -5,10 +5,12 @@
 //! `keyboard_tab.rs`). The layout is shared with the click hit-test
 //! ([`settings_hit_at`](Display::settings_hit_at)), so the two can't drift.
 
+use std::borrow::Cow;
+
 use egui::{Id, Pos2, Ui};
 
 use crate::view::display::keyboard_tab::{
-    KeyboardFocus, Recording, ShortcutLine, ShortcutRow, UNBOUND, row_lines, shortcut_lines,
+    KeyboardFocus, Recording, ShortcutLine, ShortcutRow, row_lines, shortcut_lines,
 };
 use crate::view::display::midi_tab::{MidiTab, PORT_ROWS, PortList};
 use crate::view::display::modal_focus::{PortSide, SettingsTab};
@@ -574,27 +576,40 @@ impl Display {
         } else {
             ("Reset all", theme::fg())
         };
+        Self::draw_settings_text_right(painter, foot, foot.max.x, text, Self::FONT_LIST, color);
+    }
+
+    /// Paints `text` on one line in `rect`, its right edge an inset short of
+    /// `right`; returns where it went, so the next text can sit left of it.
+    /// The right-aligned sibling of
+    /// [`draw_settings_text`](Self::draw_settings_text).
+    fn draw_settings_text_right(
+        painter: &Painter,
+        rect: Rect,
+        right: f32,
+        text: impl ToString,
+        size: f32,
+        color: Color32,
+    ) -> Rect {
         painter.text(
-            pos2(foot.max.x - Self::SETTINGS_TEXT_INSET, foot.center().y),
+            pos2(right - Self::SETTINGS_TEXT_INSET, rect.center().y),
             Align2::RIGHT_CENTER,
             text,
-            FontId::proportional(Self::FONT_LIST),
+            FontId::proportional(size),
             color,
-        );
+        )
     }
 
     /// The text in place of a row's keys: what the recorder waits for while
-    /// the row records, [`UNBOUND`] for a command with no chord, else the
-    /// keys.
-    fn shortcut_keys_text(row: &ShortcutRow, recording: Option<Recording>) -> String {
+    /// the row records, else the keys (`unbound` for a command with none).
+    fn shortcut_keys_text(row: &ShortcutRow, recording: Option<Recording>) -> Cow<'_, str> {
         match recording {
             Some(Recording {
                 replacing: Some((_, other)),
                 ..
-            }) => format!("Replaces {} — press again", other.info().label),
-            Some(_) => "Press a key…".to_owned(),
-            None if row.is_unbound() => UNBOUND.to_owned(),
-            None => row.keys.clone(),
+            }) => Cow::Owned(format!("Replaces {} — press again", other.info().label)),
+            Some(_) => Cow::Borrowed("Press a key…"),
+            None => Cow::Borrowed(&row.keys),
         }
     }
 
@@ -602,8 +617,8 @@ impl Display {
     /// only while the list `is_focused`), the label
     /// on the left, cut short of the keys, and the keys on the right. A
     /// fixed key's keys read `fg_dim` — listed, not rebindable — and its
-    /// label stays as legible as any. An unbound command reads
-    /// [`UNBOUND`] in `track_mute`; a recording row reads what it waits
+    /// label stays as legible as any. An unbound command reads `unbound`
+    /// in `track_mute`; a recording row reads what it waits
     /// for, accented. A dot left of the keys marks a command off its
     /// defaults, and a dim note one the computer keyboard shadows while it
     /// plays.
@@ -623,16 +638,17 @@ impl Display {
             theme::accent()
         } else if row.action.is_none() {
             theme::fg_dim()
-        } else if row.is_unbound() {
+        } else if row.unbound {
             theme::track_mute()
         } else {
             color
         };
-        let keys = painter.text(
-            pos2(rect.max.x - Self::SETTINGS_TEXT_INSET, rect.center().y),
-            Align2::RIGHT_CENTER,
+        let keys = Self::draw_settings_text_right(
+            painter,
+            rect,
+            rect.max.x,
             Self::shortcut_keys_text(row, recording),
-            FontId::proportional(Self::FONT_LIST),
+            Self::FONT_LIST,
             keys_color,
         );
         let mut keys_left = keys.min.x;
@@ -643,11 +659,12 @@ impl Display {
             keys_left = centre.x - r;
         }
         if recording.is_none() && row.piano {
-            let note = painter.text(
-                pos2(keys_left - Self::SETTINGS_TEXT_INSET, rect.center().y),
-                Align2::RIGHT_CENTER,
+            let note = Self::draw_settings_text_right(
+                painter,
+                rect,
+                keys_left,
                 "not while playing notes",
-                FontId::proportional(Self::FONT_HINT),
+                Self::FONT_HINT,
                 theme::fg_dim(),
             );
             keys_left = note.min.x;

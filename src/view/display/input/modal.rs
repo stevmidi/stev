@@ -6,8 +6,9 @@
 //! `settings_modal.rs`. The showing tab sees a key before the modal's Esc
 //! and `?` do, so the Keyboard tab's Esc clears a search first and its `?`
 //! is typing; every other key there is the search field's. A Keyboard tab
-//! row recording a shortcut sees every key first, `⌘,` and the tab chords
-//! included. See `020-views-and-state.md`.
+//! row recording a shortcut sees every key before this does
+//! (`handle_shortcut_recorder_input_event`, earlier in the input chain).
+//! See `020-views-and-state.md`.
 
 use crate::view::display::keyboard_tab::is_keyboard_tab_key;
 use crate::view::display::modal_focus::SettingsTab;
@@ -21,11 +22,6 @@ impl Display {
     /// swallowed, so nothing under it reacts.
     pub(super) fn handle_settings_input_event(&mut self, input_event: &InputEvent) {
         match *input_event {
-            // A row recording a shortcut takes every key, so `⌘,` and the
-            // tab chords can be refused or recorded like any other.
-            InputEvent::KeyPressed { key, modifiers } if self.recording_shortcut() => {
-                self.handle_keyboard_tab_key(key, modifiers);
-            }
             InputEvent::KeyPressed { key, modifiers } => {
                 // `⌘/Ctrl+,` and the tab chords are the modal's on every
                 // tab; then the showing tab has first look, and what it
@@ -46,9 +42,6 @@ impl Display {
             InputEvent::MouseClicked { x, y, .. } => self.click_settings(x, y, false),
             InputEvent::MouseDoubleClicked { x, y } => self.click_settings(x, y, true),
             InputEvent::TimelineScroll { delta_y, .. } => self.scroll_settings(delta_y),
-            InputEvent::Copy { .. } | InputEvent::Cut { .. } | InputEvent::Paste => {
-                self.settings_clipboard_event(input_event);
-            }
             _ => {}
         }
     }

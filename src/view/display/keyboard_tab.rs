@@ -13,7 +13,8 @@
 //! one. A chord another command has asks for a second press, and that
 //! command loses it. Each change is saved at once (`Display::keymap_changed`).
 //!
-//! The rows are generated: the commands from [`ACTIONS`] with their chords
+//! The rows are generated: the commands from
+//! [`ACTIONS`](crate::core::keymap::ACTIONS) with their chords
 //! in the live [`Keymap`], the fixed keys from [`FIXED`]. Drawing, the
 //! field and the click hit-test share one layout in
 //! `rendering/modals/settings.rs`; the keys are `input/modal.rs`. See
@@ -22,7 +23,7 @@
 use egui::Key;
 
 use crate::core::input_event::{InputEvent, KeyModifiers};
-use crate::core::keymap::{ACTIONS, Action, Chord, Keymap, is_modifier, refusal};
+use crate::core::keymap::{Action, Chord, Keymap, refusal};
 use crate::core::settings::update_settings;
 use crate::view::computer_keyboard;
 
@@ -77,6 +78,25 @@ pub(super) struct Recording {
     pub(super) replacing: Option<(Chord, Action)>,
 }
 
+/// Where a click in the settings modal lands, as the Keyboard tab sees it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) enum TabClick {
+    /// Row `row`, counted among the rows the search matches; `keys` when on
+    /// its chords.
+    Row {
+        /// The row, counted among the rows the search matches.
+        row: usize,
+        /// Whether the click is on the row's chords half.
+        keys: bool,
+    },
+    /// The search field.
+    Search,
+    /// Reset all.
+    ResetAll,
+    /// Anywhere else, inside the modal or out.
+    Elsewhere,
+}
+
 /// What the Keyboard tab did with a key press or a click.
 #[derive(Debug, PartialEq)]
 pub(super) enum TabKey {
@@ -91,9 +111,9 @@ pub(super) enum TabKey {
 }
 
 impl KeyboardTab {
-    /// The tab's keys, with the list showing `visible` lines. While a row
-    /// records, every key is the recorder's ([`record`](Self::record)).
-    /// Otherwise Esc clears a non-empty search (back in the field) from
+    /// The tab's keys while no row records (a recording row takes them
+    /// first, [`record`](Self::record), from `Display`'s input chain), with
+    /// the list showing `visible` lines. Esc clears a non-empty search (back in the field) from
     /// either part, Tab and ⇧Tab move to the other part (the next and the
     /// previous stop, wrapping — with two stops, either one), and the rest
     /// depends on the focus:
@@ -113,9 +133,6 @@ impl KeyboardTab {
         visible: usize,
         keymap: &mut Keymap,
     ) -> TabKey {
-        if self.recording.is_some() {
-            return self.record(Chord::from_press(key, modifiers), keymap);
-        }
         self.reset_all_armed = false;
         if key == Key::Escape {
             return if self.clear_search() {
@@ -178,67 +195,41 @@ impl KeyboardTab {
         TabKey::Taken
     }
 
-    /// A press while a row records, as the chord it is. A modifier key
-    /// pressed on its own (egui reports ⌘ going down as a key of its own,
-    /// ahead of the key it modifies) changes nothing: the row keeps
-    /// waiting for the key, in either state. Waiting for a key: Esc cancels, a refused chord says why and keeps waiting, a chord
-    /// another command has asks for a second press, and any other chord
-    /// becomes the command's only one. Waiting for that second press: the
-    /// same chord binds it, any other key cancels.
-    fn record(&mut self, chord: Chord, keymap: &mut Keymap) -> TabKey {
-        if is_modifier(chord.key) {
-            return TabKey::Taken;
-        }
-        let Some(recording) = self.recording.take() else {
-            return TabKey::Left;
-        };
+    /// `chord` pressed while `recording`. Waiting for a key: Esc cancels, a
+    /// refused chord says why and keeps waiting, a chord another command has
+    /// asks for a second press, and any other chord becomes the command's
+    /// only one. Waiting for that second press: the same chord binds it, any
+    /// other key cancels.
+    pub(super) fn record(
+        &mut self,
+        recording: Recording,
+        chord: Chord,
+        keymap: &mut Keymap,
+    ) -> TabKey {
         let action = recording.action;
+        self.recording = None;
         if let Some((pending, _)) = recording.replacing {
-            if chord == pending {
-                keymap.bind(action, chord);
-                return TabKey::Changed;
+            if chord != pending {
+                return TabKey::Taken;
             }
-            return TabKey::Taken;
-        }
-        if chord.key == Key::Escape {
-            return TabKey::Taken;
-        }
-        if let Some(reason) = refusal_for(action, chord) {
-            self.recording = Some(recording);
-            return TabKey::Refused(format!("{} {reason}", chord_label(chord)));
-        }
-        match keymap.conflict(action, chord) {
-            Some(other) => {
+        } else {
+            if chord.key == Key::Escape {
+                return TabKey::Taken;
+            }
+            if let Some(reason) = refusal_for(action, chord) {
+                self.recording = Some(recording);
+                return TabKey::Refused(format!("{} {reason}", chord_label(chord)));
+            }
+            if let Some(other) = keymap.conflict(action, chord) {
                 self.recording = Some(Recording {
                     replacing: Some((chord, other)),
                     ..recording
                 });
-                TabKey::Taken
-            }
-            None => {
-                keymap.bind(action, chord);
-                TabKey::Changed
+                return TabKey::Taken;
             }
         }
-    }
-
-    /// A clipboard chord while a row records: egui-winit turns `⌘C` / `⌘X`
-    /// / `⌘V` into clipboard events, so the key never arrives. Refused
-    /// while waiting for a key; a cancel while waiting for a second press,
-    /// like any other key.
-    pub(super) fn record_clipboard(&mut self) -> TabKey {
-        match self.recording {
-            Some(Recording {
-                replacing: None, ..
-            }) => {
-                let keys = key_label("⌘C  X  V");
-                TabKey::Refused(format!("{keys} are the clipboard"))
-            }
-            _ => {
-                self.recording = None;
-                TabKey::Taken
-            }
-        }
+        keymap.bind(action, chord);
+        TabKey::Changed
     }
 
     /// Moves the keyboard into the list, its selection kept on a row that
@@ -259,43 +250,32 @@ impl KeyboardTab {
         });
     }
 
-    /// A click on row `row` (counted among the rows the search matches):
-    /// ends any recording and disarms Reset all, focuses the list on the
-    /// row, and on
-    /// its chords (`on_keys`) records a new one for its command.
-    pub(super) fn click_row(&mut self, row: usize, on_keys: bool, keymap: &Keymap) {
+    /// A click in the modal, after which no row records and Reset all is
+    /// disarmed, whatever it landed on. A row takes the list's focus and the
+    /// selection, and on its chords records a new one for its command; the
+    /// search field takes the focus back; Reset all arms, or, armed, puts
+    /// every command back on its defaults. Anything else is left to the
+    /// modal.
+    pub(super) fn click(&mut self, click: TabClick, keymap: &mut Keymap) -> TabKey {
+        let armed = std::mem::take(&mut self.reset_all_armed);
         self.recording = None;
-        self.reset_all_armed = false;
-        self.focus = KeyboardFocus::List;
-        self.selection = row;
-        if on_keys && let Some(action) = self.selected_action(keymap) {
-            self.start_recording(action);
+        match click {
+            TabClick::Row { row, keys } => {
+                self.focus = KeyboardFocus::List;
+                self.selection = row;
+                if keys && let Some(action) = self.selected_action(keymap) {
+                    self.start_recording(action);
+                }
+            }
+            TabClick::Search => self.focus = KeyboardFocus::Search,
+            TabClick::ResetAll if armed => {
+                keymap.reset_all();
+                return TabKey::Changed;
+            }
+            TabClick::ResetAll => self.reset_all_armed = true,
+            TabClick::Elsewhere => return TabKey::Left,
         }
-    }
-
-    /// A click on Reset all: the first arms it, the second puts every
-    /// command back on its defaults.
-    pub(super) fn click_reset_all(&mut self, keymap: &mut Keymap) -> TabKey {
-        self.recording = None;
-        if !self.reset_all_armed {
-            self.reset_all_armed = true;
-            return TabKey::Taken;
-        }
-        self.reset_all_armed = false;
-        keymap.reset_all();
-        TabKey::Changed
-    }
-
-    /// A click anywhere else: ends any recording and disarms Reset all.
-    pub(super) fn click_away(&mut self) {
-        self.recording = None;
-        self.reset_all_armed = false;
-    }
-
-    /// A click on the search field: it takes the keyboard back.
-    pub(super) fn click_search(&mut self) {
-        self.click_away();
-        self.focus = KeyboardFocus::Search;
+        TabKey::Taken
     }
 
     /// The command on the selected row; `None` on a fixed key's row, or
@@ -334,6 +314,28 @@ impl KeyboardTab {
     }
 }
 
+/// The chord a recording row takes `event` as: a key press as pressed, and
+/// a clipboard event as the `⌘C` / `⌘X` / `⌘V` egui-winit made it from
+/// (the key itself never arrives), for the refusal to word. `None` for
+/// anything else.
+fn recorded_chord(event: &InputEvent) -> Option<Chord> {
+    let (key, shift) = match *event {
+        InputEvent::KeyPressed { key, modifiers } => {
+            return Some(Chord::from_press(key, modifiers));
+        }
+        InputEvent::Copy { shift } => (Key::C, shift),
+        InputEvent::Cut { shift } => (Key::X, shift),
+        InputEvent::Paste => (Key::V, false),
+        _ => return None,
+    };
+    let modifiers = KeyModifiers {
+        command: true,
+        shift,
+        ..KeyModifiers::default()
+    };
+    Some(Chord::from_press(key, modifiers))
+}
+
 /// Why `chord` can't be `action`'s, as [`refusal`] words it — and the
 /// computer keyboard's toggle can't be a key the keyboard takes while it
 /// plays, or nothing could turn it off.
@@ -351,24 +353,19 @@ pub(super) struct ShortcutRow {
     pub(super) category: &'static str,
     /// What the keys do.
     pub(super) label: &'static str,
-    /// The keys, spelled out for this platform ([`key_label`]); empty for
-    /// an unbound command.
+    /// The keys, spelled out for this platform ([`key_label`]); [`UNBOUND`]
+    /// for a command with none, which the search then finds too.
     pub(super) keys: String,
     /// The command, or `None` for a key that is not one: listed, never
     /// rebindable.
     pub(super) action: Option<Action>,
+    /// A command with no chord.
+    pub(super) unbound: bool,
     /// A command whose chords differ from its defaults.
     pub(super) changed: bool,
     /// A command with a chord the computer keyboard takes while it plays
     /// ([`computer_keyboard::shadows`]).
     pub(super) piano: bool,
-}
-
-impl ShortcutRow {
-    /// A command with no chord.
-    pub(super) fn is_unbound(&self) -> bool {
-        self.action.is_some() && self.keys.is_empty()
-    }
 }
 
 /// One line of the list: a group's heading, or a row under it.
@@ -479,7 +476,7 @@ const FIXED: &[FixedGroup] = &[
 /// most layouts, and egui-winit reports the logical key, so this is `⇧/` on
 /// US layouts and `⇧+` on Nordic ones.
 pub(super) fn is_keyboard_tab_key(key: Key, modifiers: KeyModifiers) -> bool {
-    key == Key::Questionmark && !modifiers.command && !modifiers.alt
+    Chord::from_press(key, modifiers).opens_keyboard_tab()
 }
 
 /// `keys` as shown on this platform ([`key_label_for`]).
@@ -546,22 +543,24 @@ fn chord_glyphs(chord: Chord) -> String {
 /// Every row, in the tab's order: each command on its chords in `keymap`,
 /// then the fixed keys.
 fn shortcut_rows(keymap: &Keymap) -> Vec<ShortcutRow> {
-    let commands = ACTIONS.iter().map(|info| {
-        let chords = keymap.chords(info.action);
-        ShortcutRow {
-            category: info.category,
-            label: info.label,
-            keys: chords
+    let commands = keymap.iter().map(|(info, chords)| ShortcutRow {
+        category: info.category,
+        label: info.label,
+        keys: if chords.is_empty() {
+            UNBOUND.to_owned()
+        } else {
+            chords
                 .iter()
                 .map(|&chord| chord_label(chord))
                 .collect::<Vec<_>>()
-                .join("  "),
-            action: Some(info.action),
-            changed: !keymap.is_default(info.action),
-            piano: chords
-                .iter()
-                .any(|&chord| computer_keyboard::shadows(chord)),
-        }
+                .join("  ")
+        },
+        action: Some(info.action),
+        unbound: chords.is_empty(),
+        changed: info.defaults != chords,
+        piano: chords
+            .iter()
+            .any(|&chord| computer_keyboard::shadows(chord)),
     });
     let fixed = FIXED.iter().flat_map(|&(category, rows)| {
         rows.iter().map(move |&(keys, label)| ShortcutRow {
@@ -569,6 +568,7 @@ fn shortcut_rows(keymap: &Keymap) -> Vec<ShortcutRow> {
             label,
             keys: key_label(keys),
             action: None,
+            unbound: false,
             changed: false,
             piano: false,
         })
@@ -577,17 +577,15 @@ fn shortcut_rows(keymap: &Keymap) -> Vec<ShortcutRow> {
 }
 
 /// What an unbound command's row reads in place of its keys.
-pub(super) const UNBOUND: &str = "unbound";
+const UNBOUND: &str = "unbound";
 
 /// Whether `row` matches `query`, already trimmed and lowercased: a
 /// substring of its label or of its keys, case-blind (so "cmd+l" finds Set
-/// loop, and so does "loop"). An unbound command's keys read
-/// [`UNBOUND`], so the search finds those too.
+/// loop, and so does "loop", and "unbound" the unbound commands).
 fn row_matches(row: &ShortcutRow, query: &str) -> bool {
-    let keys = if row.is_unbound() { UNBOUND } else { &row.keys };
     query.is_empty()
         || row.label.to_lowercase().contains(query)
-        || keys.to_lowercase().contains(query)
+        || row.keys.to_lowercase().contains(query)
 }
 
 /// The list the tab shows for the search `query` over `keymap`: the
@@ -649,11 +647,25 @@ impl Display {
         self.overlay == Some(Overlay::Settings) && self.settings.tab == SettingsTab::Keyboard
     }
 
-    /// Whether a Keyboard tab row is waiting for a key press — which then
-    /// goes to it ahead of every other key handler, the fixed project chords
-    /// and the modal's own included.
-    pub(super) fn recording_shortcut(&self) -> bool {
-        self.keyboard_tab_showing() && self.settings.keys.recording.is_some()
+    /// The recorder's place in the input chain, ahead of the project
+    /// chords: while a Keyboard tab row waits for a key, every key press —
+    /// and every clipboard event, which is a key egui-winit turned into one
+    /// ([`recorded_chord`]) — is its. Returns whether it took `event`.
+    pub(super) fn handle_shortcut_recorder_input_event(&mut self, event: &InputEvent) -> bool {
+        let Some(recording) = self.settings.keys.recording else {
+            return false;
+        };
+        if !self.keyboard_tab_showing() {
+            return false;
+        }
+        let Some(chord) = recorded_chord(event) else {
+            return false;
+        };
+        let result = self
+            .settings
+            .keys
+            .record(recording, chord, &mut self.keymap);
+        self.apply_tab_key(result)
     }
 
     /// A key press on the Keyboard tab; returns whether the tab took it.
@@ -690,21 +702,6 @@ impl Display {
         #[cfg(target_os = "macos")]
         self.guard_plugin_editor_keys();
     }
-
-    /// A clipboard event while the settings modal is up: refused, or a
-    /// cancel, while a row records (`KeyboardTab::record_clipboard`);
-    /// nothing otherwise.
-    pub(super) fn settings_clipboard_event(&mut self, event: &InputEvent) {
-        if self.recording_shortcut()
-            && matches!(
-                event,
-                InputEvent::Copy { .. } | InputEvent::Cut { .. } | InputEvent::Paste
-            )
-        {
-            let result = self.settings.keys.record_clipboard();
-            self.apply_tab_key(result);
-        }
-    }
 }
 
 #[cfg(test)]
@@ -714,11 +711,11 @@ mod tests {
     use egui::Key;
 
     use super::{
-        FIXED, KeyboardFocus, KeyboardTab, Recording, ShortcutLine, TabKey, TextField,
-        chord_glyphs, is_keyboard_tab_key, key_label_for, row_lines, scroll_to_show_line,
-        shortcut_lines, shortcut_rows,
+        FIXED, KeyboardFocus, KeyboardTab, Recording, ShortcutLine, ShortcutRow, TabClick, TabKey,
+        TextField, chord_glyphs, is_keyboard_tab_key, key_label_for, recorded_chord, row_lines,
+        scroll_to_show_line, shortcut_lines, shortcut_rows,
     };
-    use crate::core::input_event::KeyModifiers;
+    use crate::core::input_event::{InputEvent, KeyModifiers};
     use crate::core::keymap::{ACTIONS, Action, Chord, Keymap};
 
     /// No modifier held.
@@ -756,14 +753,25 @@ mod tests {
         }
     }
 
-    /// `tab` handling a press of `key` with `modifiers`, a ten-line window.
+    /// `tab` handling a press of `key` with `modifiers`, a ten-line window
+    /// — through the recorder while a row records, as `Display`'s input
+    /// chain hands it the key first.
     fn press(
         tab: &mut KeyboardTab,
         key: Key,
         modifiers: KeyModifiers,
         keymap: &mut Keymap,
     ) -> TabKey {
-        tab.handle_key(key, modifiers, 10, keymap)
+        let event = InputEvent::KeyPressed { key, modifiers };
+        match tab.recording {
+            Some(recording) => tab.record(recording, recorded_chord(&event).unwrap(), keymap),
+            None => tab.handle_key(key, modifiers, 10, keymap),
+        }
+    }
+
+    /// The row for `action` among `rows`.
+    fn row_for(rows: &[ShortcutRow], action: Action) -> &ShortcutRow {
+        rows.iter().find(|row| row.action == Some(action)).unwrap()
     }
 
     /// The row labels `lines` shows, in order.
@@ -1064,7 +1072,12 @@ mod tests {
         };
         assert!(message.ends_with("is fixed: save, save as and new project"));
         assert!(tab.recording.is_some());
-        assert!(matches!(tab.record_clipboard(), TabKey::Refused(_)));
+        // ⌘C arrives as a clipboard event, refused as the chord it was.
+        let copy = recorded_chord(&InputEvent::Copy { shift: false }).unwrap();
+        let TabKey::Refused(message) = tab.record(tab.recording.unwrap(), copy, keymap) else {
+            panic!("⌘C is the clipboard");
+        };
+        assert!(message.ends_with("is the clipboard"));
         assert!(tab.recording.is_some());
         assert!(keymap.is_all_default());
     }
@@ -1098,11 +1111,8 @@ mod tests {
         assert!(keymap.chords(Action::Split).is_empty());
         // The loser reads unbound.
         let rows = shortcut_rows(keymap);
-        let split = rows
-            .iter()
-            .find(|row| row.action == Some(Action::Split))
-            .unwrap();
-        assert!(split.is_unbound() && split.changed);
+        let split = row_for(&rows, Action::Split);
+        assert!(split.unbound && split.changed);
     }
 
     #[test]
@@ -1142,14 +1152,20 @@ mod tests {
     fn a_click_on_the_keys_records_and_anywhere_else_cancels() {
         let keymap = &mut Keymap::default();
         let mut tab = KeyboardTab::default();
-        tab.click_row(0, false, keymap);
+        tab.click(
+            TabClick::Row {
+                row: 0,
+                keys: false,
+            },
+            keymap,
+        );
         assert_eq!(tab.recording, None);
-        tab.click_row(0, true, keymap);
+        tab.click(TabClick::Row { row: 0, keys: true }, keymap);
         assert_eq!(
             tab.recording.map(|recording| recording.action),
             Some(ACTIONS[0].action)
         );
-        tab.click_away();
+        tab.click(TabClick::Elsewhere, keymap);
         assert_eq!(tab.recording, None);
     }
 
@@ -1158,12 +1174,12 @@ mod tests {
         let keymap = &mut Keymap::default();
         keymap.unbind(Action::Undo);
         let mut tab = KeyboardTab::default();
-        assert_eq!(tab.click_reset_all(keymap), TabKey::Taken);
+        assert_eq!(tab.click(TabClick::ResetAll, keymap), TabKey::Taken);
         assert!(!keymap.is_all_default());
         // A key in between disarms it.
         press(&mut tab, Key::ArrowDown, NONE, keymap);
-        assert_eq!(tab.click_reset_all(keymap), TabKey::Taken);
-        assert_eq!(tab.click_reset_all(keymap), TabKey::Changed);
+        assert_eq!(tab.click(TabClick::ResetAll, keymap), TabKey::Taken);
+        assert_eq!(tab.click(TabClick::ResetAll, keymap), TabKey::Changed);
         assert!(keymap.is_all_default());
     }
 
@@ -1172,11 +1188,8 @@ mod tests {
         let mut keymap = Keymap::default();
         keymap.bind(Action::Quantize, Chord::from_press(Key::G, CMD));
         let rows = shortcut_rows(&keymap);
-        let quantize = rows
-            .iter()
-            .find(|row| row.action == Some(Action::Quantize))
-            .unwrap();
-        assert!(quantize.changed && !quantize.is_unbound());
+        let quantize = row_for(&rows, Action::Quantize);
+        assert!(quantize.changed && !quantize.unbound);
         assert!(quantize.keys.ends_with("+G"));
         // Searching "unbound" finds the unbound commands.
         keymap.unbind(Action::Undo);
@@ -1187,12 +1200,7 @@ mod tests {
     #[test]
     fn a_piano_layout_chord_is_noted() {
         let rows = shortcut_rows(&Keymap::default());
-        let piano = |action| {
-            rows.iter()
-                .find(|row| row.action == Some(action))
-                .unwrap()
-                .piano
-        };
+        let piano = |action| row_for(&rows, action).piano;
         assert!(piano(Action::TapTempo));
         assert!(!piano(Action::Quantize));
         assert!(!piano(Action::Undo));
@@ -1260,9 +1268,15 @@ mod tests {
     fn clicks_move_the_focus() {
         let keymap = &mut Keymap::default();
         let mut tab = KeyboardTab::default();
-        tab.click_row(2, false, keymap);
+        tab.click(
+            TabClick::Row {
+                row: 2,
+                keys: false,
+            },
+            keymap,
+        );
         assert_eq!((tab.focus, tab.selection), (KeyboardFocus::List, 2));
-        tab.click_search();
+        tab.click(TabClick::Search, keymap);
         assert_eq!(tab.focus, KeyboardFocus::Search);
     }
 
@@ -1301,42 +1315,23 @@ mod tests {
         assert_eq!(tab.selection, rows - 1);
     }
 
-    /// Regression: holding ⌘ arrives as `SuperRight` before the key, and
-    /// was recorded as the chord. The row waits past it for `⌘P`.
+    /// Regression: holding ⌘ arrived as `SuperRight` before the key and was
+    /// recorded as the chord. The input poller now drops a lone modifier
+    /// press; one reaching the recorder all the same is refused, never
+    /// bound, and the row keeps waiting for `⌘P`.
     #[test]
-    fn a_lone_modifier_press_keeps_the_row_waiting() {
+    fn a_lone_modifier_press_is_never_bound() {
         let keymap = &mut Keymap::default();
         let mut tab = tab_on("Play notes on the keyboard", "", keymap);
         press(&mut tab, Key::Enter, NONE, keymap);
-        assert_eq!(
+        assert!(matches!(
             press(&mut tab, Key::SuperRight, NONE, keymap),
-            TabKey::Taken
-        );
-        assert!(tab.recording.is_some());
+            TabKey::Refused(_)
+        ));
         assert_eq!(press(&mut tab, Key::P, CMD, keymap), TabKey::Changed);
         assert_eq!(
             keymap.chords(Action::ToggleComputerKeyboard),
             &[Chord::from_press(Key::P, CMD)]
-        );
-    }
-
-    /// Holding ⌘ again for the confirming second press doesn't cancel it.
-    #[test]
-    fn a_lone_modifier_press_keeps_the_confirm_waiting() {
-        let keymap = &mut Keymap::default();
-        let mut tab = tab_on("Merge clips", "", keymap);
-        press(&mut tab, Key::Enter, NONE, keymap);
-        press(&mut tab, Key::SuperLeft, NONE, keymap);
-        press(&mut tab, Key::E, CMD, keymap);
-        press(&mut tab, Key::SuperLeft, NONE, keymap);
-        assert!(
-            tab.recording
-                .is_some_and(|recording| recording.replacing.is_some())
-        );
-        assert_eq!(press(&mut tab, Key::E, CMD, keymap), TabKey::Changed);
-        assert_eq!(
-            keymap.chords(Action::Merge),
-            &[Chord::from_press(Key::E, CMD)]
         );
     }
 }

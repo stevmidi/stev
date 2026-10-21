@@ -72,6 +72,8 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ### Fixed
 
+- **Pressing ⌘, ⇧, ⌥ or ⌃ on its own no longer counts as a key press.** It
+  closed a track's output menu, for one.
 - **Keys typed with Shift no longer stop responding.** Letting go of Shift
   before the key itself (`?` typed as `⇧/`, `+` as `⇧=`, a Nordic `/` as
   `⇧7`) made the next few presses of it do nothing.

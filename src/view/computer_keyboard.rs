@@ -102,9 +102,13 @@ pub(crate) fn takes_key_event(
 ) -> Option<Key> {
     let key = physical_key?;
     key_role(key)?;
-    let modifiers = KeyModifiers::from(modifiers);
-    let chord = modifiers.command || modifiers.ctrl || modifiers.alt;
-    (!pressed || !chord).then_some(key)
+    (!pressed || plays_with(KeyModifiers::from(modifiers))).then_some(key)
+}
+
+/// Whether a press of a layout key with `modifiers` plays: plain or with
+/// Shift; with ⌘/Ctrl, ⌃ or ⌥ it stays a chord.
+fn plays_with(modifiers: KeyModifiers) -> bool {
+    !(modifiers.command || modifiers.ctrl || modifiers.alt)
 }
 
 /// Whether the keyboard, while it plays, takes the press `chord` is before
@@ -114,7 +118,13 @@ pub(crate) fn takes_key_event(
 /// guess elsewhere: the Keyboard tab's note on a row, and the recorder's
 /// refusal of a bare layout key for the toggle itself.
 pub(crate) fn shadows(chord: Chord) -> bool {
-    key_role(chord.key).is_some() && !chord.command && !chord.alt && !chord.ctrl
+    let modifiers = KeyModifiers {
+        command: chord.command,
+        alt: chord.alt,
+        shift: chord.shift,
+        ctrl: chord.ctrl,
+    };
+    key_role(chord.key).is_some() && plays_with(modifiers)
 }
 
 /// The keyboard's state: on or off, where it sits, how hard it plays, and

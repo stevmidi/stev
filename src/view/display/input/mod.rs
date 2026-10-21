@@ -436,6 +436,7 @@ impl Display {
                 || self.handle_tempo_field_input_event(&event)
                 || self.handle_meter_field_input_event(&event)
                 || self.handle_output_menu_input_event(&event)
+                || self.handle_shortcut_recorder_input_event(&event)
                 || self.handle_project_input_event(&event)
                 || self.handle_overlay_input_event(&event)
                 || match self.key_focus {
@@ -512,15 +513,13 @@ impl Display {
     /// or opens Save As for a project never saved; ⌘/Ctrl+⇧+S always opens
     /// Save As (`project_dialog.rs`). ⌘/Ctrl+N asks for a new project,
     /// through the unsaved-changes check. Ahead of the overlays and the
-    /// browser's keys, so they work from any key focus — except a Keyboard
-    /// tab row recording a shortcut, which takes every key, to refuse these.
+    /// browser's keys, so they work from any key focus — behind only a
+    /// Keyboard tab row recording a shortcut, which takes every key, to
+    /// refuse these.
     fn handle_project_input_event(&mut self, input_event: &InputEvent) -> bool {
         let InputEvent::KeyPressed { key, modifiers } = *input_event else {
             return false;
         };
-        if self.recording_shortcut() {
-            return false;
-        }
         match Chord::from_press(key, modifiers) {
             SAVE_AS => self.open_save_as(None),
             SAVE => self.save_project(None),
@@ -544,11 +543,14 @@ impl Display {
         true
     }
 
-    /// If a modal overlay is up and `event` is a key press, routes it to the
-    /// overlay's keymap and returns `true` — used by the CLAP key guard to
-    /// feed modal keys from a plugin-focused window.
+    /// If a modal overlay is up and `event` is a key press, routes it to a
+    /// recording shortcut row or the overlay's keymap and returns `true` —
+    /// used by the CLAP key guard to feed modal keys from a plugin-focused
+    /// window.
     pub(crate) fn try_consume_as_modal(&mut self, event: &InputEvent) -> bool {
-        matches!(event, InputEvent::KeyPressed { .. }) && self.handle_overlay_input_event(event)
+        matches!(event, InputEvent::KeyPressed { .. })
+            && (self.handle_shortcut_recorder_input_event(event)
+                || self.handle_overlay_input_event(event))
     }
 
     /// Whether a key press is taken before the keymap sees it, acting on it

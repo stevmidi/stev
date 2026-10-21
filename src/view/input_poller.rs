@@ -19,6 +19,12 @@
 //! are set aside as note keys rather than becoming `KeyPressed`, so a note key
 //! never also fires its usual binding.
 //!
+//! A modifier key going down on its own (egui 0.36 reports ⌘ as
+//! `Key::SuperRight` and the like, ahead of the key it modifies) never
+//! becomes a `KeyPressed`: the modifiers reach every press as its
+//! `KeyModifiers`, and a bare one would read as "any key" to whatever waits
+//! for one — the shortcut recorder bound it as a chord.
+//!
 //! Files dragged in from the file manager become enter / leave / drop edges
 //! (`FileDragEntered` / `FileDragLeft` / `FileDropped`). The pointer keeps
 //! moving during such a drag because `Display::raw_input_hook` feeds egui the
@@ -31,6 +37,7 @@ use egui::{Context, Event, HoveredFile, InputOptions, Key, PointerButton, Pos2, 
 
 use crate::core::{
     input_event::{InputEvent, KeyModifiers},
+    keymap::is_modifier,
     project::is_midi_file,
 };
 use crate::view::computer_keyboard::takes_key_event;
@@ -398,7 +405,7 @@ impl InputPoller {
                         pressed: true,
                         modifiers: mods,
                         ..
-                    } if !repeat => {
+                    } if !repeat && !is_modifier(*key) => {
                         self.input_events.push(InputEvent::KeyPressed {
                             key: *key,
                             modifiers: KeyModifiers::from(*mods),

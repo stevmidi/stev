@@ -247,6 +247,13 @@ impl Chord {
         self
     }
 
+    /// Whether this is `?` with no ⌘/Ctrl or ⌥ — the fixed key that opens
+    /// Settings on the Keyboard tab (⇧ is already dropped, being part of
+    /// typing `?` on most layouts).
+    pub(crate) fn opens_keyboard_tab(self) -> bool {
+        self.key == Key::Questionmark && !self.command && !self.alt
+    }
+
     /// Whether no modifier is held — the chords the plugin-editor key guard
     /// can reserve (`plugin_host/key_guard.rs`).
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
@@ -292,7 +299,8 @@ fn is_punctuation(key: Key) -> bool {
 
 /// Whether `key` is a modifier key itself (⇧, ⌃, ⌥, ⌘, either side).
 /// egui reports a press of one as a key of its own, ahead of the key it
-/// modifies, so the recorder waits past it rather than binding it.
+/// modifies; the input poller drops those, and [`refusal`] refuses one
+/// read from `settings.json`.
 pub(crate) fn is_modifier(key: Key) -> bool {
     matches!(
         key,
@@ -345,7 +353,7 @@ pub(crate) fn refusal(chord: Chord) -> Option<&'static str> {
     ) {
         return Some("is fixed: arrows, Tab, Enter and Esc navigate");
     }
-    if key == Key::Questionmark && !chord.command && !chord.alt {
+    if chord.opens_keyboard_tab() {
         return Some("opens this tab");
     }
     if [SAVE, SAVE_AS, NEW_PROJECT].contains(&chord) {
@@ -401,16 +409,13 @@ impl ChordDto {
     /// The chord, normalized for this platform; `None` for a key name egui
     /// doesn't know (an edited file).
     fn to_chord(&self) -> Option<Chord> {
-        Some(
-            Chord {
-                key: Key::from_name(&self.key)?,
-                command: self.command,
-                alt: self.alt,
-                shift: self.shift,
-                ctrl: self.ctrl,
-            }
-            .normalized(cfg!(target_os = "macos")),
-        )
+        let modifiers = KeyModifiers {
+            command: self.command,
+            alt: self.alt,
+            shift: self.shift,
+            ctrl: self.ctrl,
+        };
+        Some(Chord::from_press(Key::from_name(&self.key)?, modifiers))
     }
 }
 
@@ -863,10 +868,11 @@ impl Keymap {
 
     /// The defaults with `overrides` (`settings.json`'s, by action id)
     /// applied. An unknown id, an unparseable chord or a refused one
-    /// ([`refusal`]) is skipped and the rest kept — a downgrade, a removed
-    /// action, an edited file. An action whose stored chords are all
-    /// skipped keeps its defaults (an empty list stored is unbound, as
-    /// saved). Should what is left conflict, the action later in
+    /// ([`refusal`]) is skipped and the rest kept — a downgrade (a key
+    /// name or a rule this version doesn't know), a removed action, an
+    /// edited file. An action whose stored chords are all skipped keeps its
+    /// defaults rather than going unbound by accident; an empty list stored
+    /// is unbound, as saved. Should what is left conflict, the action later in
     /// [`ACTIONS`] order loses the chord.
     pub(crate) fn from_overrides(overrides: &BTreeMap<String, Vec<ChordDto>>) -> Self {
         let mut chords = default_chords();
@@ -900,10 +906,8 @@ impl Keymap {
     /// What `settings.json` stores: every action whose chords differ from
     /// its defaults, by id, an empty list for an unbound one.
     pub(crate) fn overrides(&self) -> BTreeMap<String, Vec<ChordDto>> {
-        ACTIONS
-            .iter()
-            .zip(&self.chords)
-            .filter(|(info, chords)| info.defaults != chords.as_slice())
+        self.iter()
+            .filter(|(info, chords)| info.defaults != *chords)
             .map(|(info, chords)| {
                 let dtos = chords.iter().map(|&chord| ChordDto::from(chord)).collect();
                 (info.id.to_owned(), dtos)
@@ -917,13 +921,19 @@ impl Keymap {
     }
 
     /// Whether `action` is on its default chords.
+    #[cfg(test)]
     pub(crate) fn is_default(&self, action: Action) -> bool {
         self.chords(action) == action.info().defaults
     }
 
     /// Whether every action is on its default chords.
     pub(crate) fn is_all_default(&self) -> bool {
-        ACTIONS.iter().all(|info| self.is_default(info.action))
+        self.iter().all(|(info, chords)| info.defaults == chords)
+    }
+
+    /// Every action's row in [`ACTIONS`] with its chords, in table order.
+    pub(crate) fn iter(&self) -> impl Iterator<Item = (&'static ActionInfo, &[Chord])> {
+        ACTIONS.iter().zip(self.chords.iter().map(Vec::as_slice))
     }
 
     /// The other action binding `chord` would take it from: one in a scope
@@ -1031,7 +1041,7 @@ mod tests {
 
     use super::{
         ACTIONS, Action, Chord, ChordDto, Keymap, NEW_PROJECT, SAVE, SAVE_AS, default_chords,
-        refusal,
+        is_modifier, refusal,
     };
     use crate::core::{input_event::KeyModifiers, view_state::Pane};
 
@@ -1482,9 +1492,9 @@ mod tests {
         assert!(keymap.bare_keys(Action::Stop).is_empty());
     }
 
-    /// Regression: an early recorder bound a lone ⌘ press (`SuperRight`)
-    /// and saved it. Loading such a file gives the action its defaults
-    /// back rather than leaving it unbound.
+    /// Every stored chord unusable (a lone modifier here, as an early
+    /// recorder saved; a key a downgrade can't read): the action keeps its
+    /// defaults rather than going unbound by accident.
     #[test]
     fn an_override_with_nothing_left_keeps_the_defaults() {
         let overrides = BTreeMap::from([
@@ -1498,5 +1508,24 @@ mod tests {
         assert!(keymap.is_default(Action::ToggleComputerKeyboard));
         // A list stored empty is still unbound.
         assert!(keymap.chords(Action::Undo).is_empty());
+    }
+
+    /// Each side of each of the four is a modifier; nothing else is.
+    #[test]
+    fn the_modifier_keys() {
+        for key in [
+            Key::ShiftLeft,
+            Key::ShiftRight,
+            Key::ControlLeft,
+            Key::ControlRight,
+            Key::AltLeft,
+            Key::AltRight,
+            Key::SuperLeft,
+            Key::SuperRight,
+        ] {
+            assert!(is_modifier(key), "{key:?}");
+        }
+        assert!(!is_modifier(Key::P));
+        assert!(!is_modifier(Key::Space));
     }
 }
