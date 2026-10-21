@@ -135,10 +135,6 @@ impl EventHandlers {
                 self.send_sequencer(SequencerCommand::SelectAllEvents);
             }
 
-            // Note: ⇧F5/⇧F6 (theme cycling) are intentionally absent here. They are
-            // consumed view-locally by `Display::handle_theme_input_event` before
-            // input reaches this handler — the theme is a `static` in `view::theme`
-            // plus view-local shape colors, so no core state is involved.
             InputEvent::Action(Action::Undo) => self.send_sequencer(SequencerCommand::Undo),
             InputEvent::Action(Action::Redo) => self.send_sequencer(SequencerCommand::Redo),
 

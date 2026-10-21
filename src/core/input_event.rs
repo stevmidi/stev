@@ -675,7 +675,7 @@ pub(crate) enum InputEvent {
         /// The new MIDI-output offset, in milliseconds.
         out_offset_ms: i32,
     },
-    /// The theme changed (the settings modal's Appearance tab, ⇧F5/⇧F6):
+    /// The theme changed (the settings modal's Appearance tab):
     /// save it as the theme the app starts with. The view has already
     /// applied it.
     SaveTheme {

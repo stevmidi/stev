@@ -31,6 +31,11 @@ Breaking entries are marked **Breaking** and say what to do about them.
   has the keyboard, `.` now reaches the plugin; it was reserved for a Stop it
   hasn't been bound to for a long time.
 
+### Removed
+
+- **`⇧F5` / `⇧F6` no longer step the colour theme.** Pick it in Settings →
+  Appearance (`⌘,`).
+
 ## [0.4.0] - 2026-10-20
 
 ### Added

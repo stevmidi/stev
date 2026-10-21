@@ -11,7 +11,7 @@ use egui::Key;
 
 use crate::core::config::ZOOM_KEY_STEP;
 use crate::core::input_event::{KeyModifiers, is_pane_focus_key};
-use crate::core::keymap::Action;
+use crate::core::keymap::{Action, Chord, NEW_PROJECT, SAVE, SAVE_AS};
 use crate::core::project::{ProjectAction, clip_path};
 use crate::core::time::PPQN;
 
@@ -394,7 +394,7 @@ impl Display {
     }
 
     // --- Event handlers ---
-    /// Polls input and routes each event: theme / project chords first, then
+    /// Polls input and routes each event: the project chords first, then
     /// the modal keymap, the browser panel's or the track headers' keys while
     /// they have the keyboard, or the main `forward_input_event` dispatch. An
     /// open project dialog gets first look at every event
@@ -425,8 +425,8 @@ impl Display {
         self.input_was_clip_view = in_clip_view;
         let mut events = self.input_poller.take_input_events();
         // Nothing acts while a project being opened loads its plugins — not
-        // even the handlers ahead of the overlay below (project chords,
-        // theme keys): the open project must stay exactly as it is.
+        // even the project chords ahead of the overlay below: the open
+        // project must stay exactly as it is.
         #[cfg(target_os = "macos")]
         if self.overlay == Some(Overlay::RestoringInstruments) {
             events.clear();
@@ -438,7 +438,6 @@ impl Display {
                 || self.handle_tempo_field_input_event(&event)
                 || self.handle_meter_field_input_event(&event)
                 || self.handle_output_menu_input_event(&event)
-                || self.handle_theme_input_event(&event)
                 || self.handle_project_input_event(&event)
                 || self.handle_overlay_input_event(&event)
                 || match self.key_focus {
@@ -497,47 +496,33 @@ impl Display {
         }
     }
 
-    /// The command a key press is, for the pane with the keyboard; `None`
-    /// for any other event and for a key the keymap doesn't bind.
-    fn action_of(&self, event: &InputEvent) -> Option<Action> {
-        let InputEvent::KeyPressed { key, modifiers } = *event else {
-            return None;
+    /// `event` with a key press the keymap binds turned into
+    /// `InputEvent::Action`, for the pane with the keyboard; anything else
+    /// unchanged.
+    pub(super) fn resolve_action(&self, event: InputEvent) -> InputEvent {
+        let InputEvent::KeyPressed { key, modifiers } = event else {
+            return event;
         };
         self.keymap
             .resolve_press(key, modifiers, self.focused_pane())
+            .map_or(event, InputEvent::Action)
     }
 
-    /// `event` with a key press the keymap binds turned into
-    /// `InputEvent::Action`; anything else unchanged.
-    pub(super) fn resolve_action(&self, event: InputEvent) -> InputEvent {
-        self.action_of(&event).map_or(event, InputEvent::Action)
-    }
-
-    /// Consumes ⇧F5 / ⇧F6 (`PreviousTheme` / `NextTheme`) to step the theme
-    /// — applied and saved, as in the settings modal's Appearance tab;
-    /// returns whether it handled the event. Ahead of the overlays, so it
-    /// works with the settings modal up.
-    fn handle_theme_input_event(&mut self, input_event: &InputEvent) -> bool {
-        let direction = match self.action_of(input_event) {
-            Some(Action::PreviousTheme) => -1,
-            Some(Action::NextTheme) => 1,
-            _ => return false,
-        };
-        self.step_theme(direction);
-        true
-    }
-
-    /// Consumes the project commands; returns whether it handled the event.
-    /// ⌘/Ctrl+S saves at once under the project's name, or opens Save As for
-    /// a project never saved; ⌘/Ctrl+⇧+S always opens Save As
-    /// (`project_dialog.rs`). ⌘/Ctrl+N asks for a new project, through the
-    /// unsaved-changes check. Ahead of the overlays and the browser's keys,
-    /// so they work from any key focus.
+    /// Consumes the project chords — fixed, not rebindable (`SAVE`,
+    /// `SAVE_AS`, `NEW_PROJECT` in `core/keymap.rs`); returns whether it
+    /// handled the event. ⌘/Ctrl+S saves at once under the project's name,
+    /// or opens Save As for a project never saved; ⌘/Ctrl+⇧+S always opens
+    /// Save As (`project_dialog.rs`). ⌘/Ctrl+N asks for a new project,
+    /// through the unsaved-changes check. Ahead of the overlays and the
+    /// browser's keys, so they work from any key focus.
     fn handle_project_input_event(&mut self, input_event: &InputEvent) -> bool {
-        match self.action_of(input_event) {
-            Some(Action::SaveAs) => self.open_save_as(None),
-            Some(Action::Save) => self.save_project(None),
-            Some(Action::NewProject) => self.request_project_action(ProjectAction::New),
+        let InputEvent::KeyPressed { key, modifiers } = *input_event else {
+            return false;
+        };
+        match Chord::from_press(key, modifiers) {
+            SAVE_AS => self.open_save_as(None),
+            SAVE => self.save_project(None),
+            NEW_PROJECT => self.request_project_action(ProjectAction::New),
             _ => return false,
         }
         true

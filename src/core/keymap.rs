@@ -51,12 +51,6 @@ pub(crate) enum Action {
     ToggleComputerKeyboard,
     /// Snap the loop to the time selection, or toggle looping.
     SetLoop,
-    /// Save the project.
-    Save,
-    /// Save the project under a typed name.
-    SaveAs,
-    /// A new project, through the unsaved-changes check.
-    NewProject,
     /// Show the browser panel with the Projects tree focused.
     ShowProjects,
     /// Show and focus the browser panel, or hide it.
@@ -83,10 +77,6 @@ pub(crate) enum Action {
     ExportClip,
     /// Export the arranger's time selection as audio.
     ExportAudio,
-    /// Step to the previous colour theme.
-    PreviousTheme,
-    /// Step to the next colour theme.
-    NextTheme,
     /// Carve the marquee out (arranger).
     DeleteSelection,
     /// Mute the marquee's range (arranger).
@@ -261,6 +251,15 @@ impl Chord {
         !self.command && !self.alt && !self.shift && !self.ctrl
     }
 }
+
+/// `⌘/Ctrl+S`: save. Fixed, like the other project chords — never an
+/// [`Action`], so it can't be rebound and works from any key focus, ahead
+/// of the overlays (`Display::handle_project_input_event`).
+pub(crate) const SAVE: Chord = Chord::cmd(Key::S);
+/// `⇧⌘/Ctrl+S`: save as. Fixed, like [`SAVE`].
+pub(crate) const SAVE_AS: Chord = Chord::cmd(Key::S).shift();
+/// `⌘/Ctrl+N`: a new project. Fixed, like [`SAVE`].
+pub(crate) const NEW_PROJECT: Chord = Chord::cmd(Key::N);
 
 /// Whether `key` is a punctuation key, whose logical identity already
 /// reflects Shift (see [`Chord::normalized`]).
@@ -446,30 +445,6 @@ pub(crate) const ACTIONS: &[ActionInfo] = &[
     ),
     // --- Project & app ---
     row(
-        Action::Save,
-        "project.save",
-        "Save",
-        PROJECT,
-        Scope::Global,
-        &[Chord::cmd(Key::S)],
-    ),
-    row(
-        Action::SaveAs,
-        "project.save_as",
-        "Save as",
-        PROJECT,
-        Scope::Global,
-        &[Chord::cmd(Key::S).shift()],
-    ),
-    row(
-        Action::NewProject,
-        "project.new",
-        "New project",
-        PROJECT,
-        Scope::Global,
-        &[Chord::cmd(Key::N)],
-    ),
-    row(
         Action::ShowProjects,
         "project.open",
         "Open (the browser)",
@@ -556,22 +531,6 @@ pub(crate) const ACTIONS: &[ActionInfo] = &[
         PROJECT,
         Scope::Global,
         &[Chord::cmd(Key::R).shift()],
-    ),
-    row(
-        Action::PreviousTheme,
-        "view.previous_theme",
-        "Previous theme",
-        PROJECT,
-        Scope::Global,
-        &[Chord::plain(Key::F5).shift()],
-    ),
-    row(
-        Action::NextTheme,
-        "view.next_theme",
-        "Next theme",
-        PROJECT,
-        Scope::Global,
-        &[Chord::plain(Key::F6).shift()],
     ),
     // --- Arranger ---
     row(
@@ -821,7 +780,7 @@ mod tests {
 
     use egui::Key;
 
-    use super::{ACTIONS, Action, Chord, Keymap, Scope};
+    use super::{ACTIONS, Action, Chord, Keymap, NEW_PROJECT, SAVE, SAVE_AS, Scope};
     use crate::core::{input_event::KeyModifiers, view_state::Pane};
 
     fn mods(command: bool, alt: bool, shift: bool, ctrl: bool) -> KeyModifiers {
@@ -888,6 +847,16 @@ mod tests {
                 for mac in [true, false] {
                     assert_eq!(chord.normalized(mac), chord, "{:?}", info.action);
                 }
+            }
+        }
+    }
+
+    /// The project chords are fixed: no action may take them.
+    #[test]
+    fn no_action_takes_a_project_chord() {
+        for info in ACTIONS {
+            for chord in [SAVE, SAVE_AS, NEW_PROJECT] {
+                assert!(!info.defaults.contains(&chord), "{:?}", info.action);
             }
         }
     }
