@@ -14,6 +14,8 @@ anywhere, it can drive a DAW or external gear over MIDI.
 
 *A* stev *is a short Norwegian folk verse, traditionally improvised.*
 
+Website: [stevmidi.com](https://stevmidi.com)
+
 ![Stev: six tracks of captured clips in the arranger, with the clip panel open on a mallet part](docs/images/arranger.png)
 
 > **Status:** 0.5.0, source releases only (no prebuilt app yet). Developed and
