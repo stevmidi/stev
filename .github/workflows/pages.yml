@@ -1,5 +1,5 @@
-# Publishes site/ to GitHub Pages, served at stevmidi.com. Design and the
-# reasons behind it: docs/280-roadmap.md § A website at stevmidi.com.
+# Publishes site/ to GitHub Pages, served at stevmidi.com. As built, with
+# the domain and DNS setup: docs/000-architecture.md § Website.
 name: Pages
 
 on:
