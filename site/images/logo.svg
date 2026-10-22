@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="1 1 62 62" width="62" height="62">
+  <title>Stev</title>
+  <!-- A robin cut into the four lines of a stev, a four-line verse. The pink line,
+       across the breast, is the take you kept. The eye is cut out, so any background shows through. -->
+  <defs>
+    <clipPath id="robin">
+      <ellipse cx="30" cy="36" rx="18" ry="15"/>
+      <circle cx="45" cy="23" r="10"/>
+      <polygon points="53,19.5 61.5,23.5 53,27"/>
+      <polygon points="15,32 2,43 6,48 19,40"/>
+    </clipPath>
+    <mask id="eye">
+      <rect width="64" height="64" fill="#fff"/>
+      <circle cx="47.5" cy="16.5" r="1.9" fill="#000"/>
+    </mask>
+  </defs>
+  <g clip-path="url(#robin)" mask="url(#eye)">
+    <rect y="12" width="64" height="8.5" fill="#6b6b6b"/>
+    <rect y="23" width="64" height="8.5" fill="#6b6b6b"/>
+    <rect y="34" width="64" height="8.5" fill="#ff3daa"/>
+    <rect y="45" width="64" height="8.5" fill="#6b6b6b"/>
+  </g>
+</svg>

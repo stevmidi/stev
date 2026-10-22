@@ -5,7 +5,8 @@ matter. This page explains how the name "Stev" may be used. The goal is that
 people know which app they have and where to report its bugs. It is not meant
 to stop anyone forking.
 
-"Stev" here means the name, and the logo and app icon once there are any.
+"Stev" here means the name, the logo (a robin cut into four lines, the
+third in pink: `site/images/logo.svg`), and the app icon once there is one.
 
 ## Fine without asking
 
