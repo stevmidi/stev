@@ -14,8 +14,10 @@ on:
     paths-ignore:
       - "docs/**"
       - "**.md"
-      # The website (site/, published by pages.yml) is no part of the build.
+      # The website (site/, published by pages.yml) and the scripts that make
+      # its screenshot and recordings are no part of the build.
       - "site/**"
+      - "scripts/site/**"
       - ".github/workflows/pages.yml"
   # Every pull request, contributors' from forks included, before it's merged.
   pull_request:
@@ -24,6 +26,7 @@ on:
       - "docs/**"
       - "**.md"
       - "site/**"
+      - "scripts/site/**"
       - ".github/workflows/pages.yml"
   # The "Run workflow" button in the Actions tab: run any branch before merging.
   workflow_dispatch:
