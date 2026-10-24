@@ -1,0 +1,3 @@
+# Raw pixels for the About tab (scripts/make-vst-logo.sh): never diffed or
+# given line-ending conversion, which would change their length.
+*.rgba binary
