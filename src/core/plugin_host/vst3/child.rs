@@ -32,6 +32,13 @@
 //! Results go to a **file**, not stdout, because plugins print to stdout and
 //! stderr as they initialise and would otherwise corrupt the payload.
 //!
+//! The child stays out of the Dock. Inside `Stev.app` it carries the bundle's
+//! identity, so a plugin that brings up AppKit while it is scanned would make
+//! it a regular app with a second Stev icon. The child sets itself to
+//! `Prohibited` before scanning, and the parent sets
+//! [`QT_FOREGROUND_TRANSFORM_OFF`], since Qt makes its process a regular app
+//! at startup whatever the policy already is.
+//!
 //! The child ends with [`libc::_exit`], never a normal return: a normal exit
 //! runs the loaded plugin's static destructors, which is its own reliable way
 //! to abort (see `180-vst3-host.md`). The child has nothing worth flushing
@@ -43,6 +50,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
+use objc2::MainThreadMarker;
+use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
 use serde::{Deserialize, Serialize};
 
 use crate::core::plugin_host::exit_without_destructors;
@@ -53,6 +62,11 @@ use super::discovery::classes_in_bundle;
 /// The argument that puts a freshly-launched Stev into scan-child mode.
 /// Checked before anything else in `main`.
 pub(crate) const SCAN_FLAG: &str = "--scan-vst3-bundle";
+
+/// The environment variable that stops Qt from making its process a regular,
+/// Dock-icon app when a Qt-based plugin (Kontakt 8) starts its
+/// `QApplication` during a scan. Set on every scan child.
+const QT_FOREGROUND_TRANSFORM_OFF: &str = "QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM";
 
 /// How long a single bundle gets before the parent gives up on it and records
 /// a failure. Generous: the heaviest sampler libraries take several seconds to
@@ -85,6 +99,7 @@ pub(crate) fn run_if_scan_child() {
         exit_without_destructors(2);
     };
 
+    stay_out_of_the_dock();
     // This is the whole point of the child: `main` runs on the main thread, so
     // a plugin that requires it during `bundleEntry` gets it.
     let classes = classes_in_bundle(Path::new(bundle));
@@ -105,6 +120,17 @@ pub(crate) fn run_if_scan_child() {
     exit_without_destructors(code);
 }
 
+/// Makes this scan child a `Prohibited` app, with no Dock icon and no menu
+/// bar, before a plugin can touch AppKit. Inside `Stev.app` the default would
+/// be a regular app, so a plugin that creates `NSApplication` during
+/// `bundleEntry` would flash a second Stev icon in the Dock.
+fn stay_out_of_the_dock() {
+    if let Some(mtm) = MainThreadMarker::new() {
+        NSApplication::sharedApplication(mtm)
+            .setActivationPolicy(NSApplicationActivationPolicy::Prohibited);
+    }
+}
+
 /// Scans one bundle in a child process. `Ok(classes)` on a clean scan (an empty
 /// vector meaning "no instruments here"), `Err` if the child failed, crashed or
 /// timed out — which the caller caches as a failure so it is not retried on
@@ -116,15 +142,7 @@ pub(super) fn scan_bundle_out_of_process(bundle: &Path) -> Result<Vec<CachedClas
     // result if the child dies before writing.
     let _ = std::fs::remove_file(&out_path);
 
-    let mut child = Command::new(exe)
-        .arg(SCAN_FLAG)
-        .arg(bundle)
-        .arg(&out_path)
-        // Plugins are chatty during initialisation and none of it is ours to
-        // relay; the real payload goes to `out_path`.
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .stdin(Stdio::null())
+    let mut child = scan_command(&exe, bundle, &out_path)
         .spawn()
         .map_err(|e| format!("could not spawn a scan child: {e}"))?;
 
@@ -140,6 +158,23 @@ pub(super) fn scan_bundle_out_of_process(bundle: &Path) -> Result<Vec<CachedClas
         Some(result) => Ok(result.classes),
         None => Err(format!("scan child produced no result ({status})")),
     }
+}
+
+/// The command that runs `exe` as a scan child of `bundle`, writing to
+/// `out_path`.
+fn scan_command(exe: &Path, bundle: &Path, out_path: &Path) -> Command {
+    let mut command = Command::new(exe);
+    command
+        .arg(SCAN_FLAG)
+        .arg(bundle)
+        .arg(out_path)
+        .env(QT_FOREGROUND_TRANSFORM_OFF, "1")
+        // Plugins are chatty during initialisation and none of it is ours to
+        // relay; the real payload goes to `out_path`.
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .stdin(Stdio::null());
+    command
 }
 
 /// Waits for `child`, killing it if it outlives `timeout`. Returns a short
@@ -192,6 +227,21 @@ mod tests {
                 .to_string_lossy()
                 .contains("Kontakt8")
         );
+    }
+
+    #[test]
+    fn a_scan_child_keeps_qt_from_giving_it_a_dock_icon() {
+        // Without it, Kontakt 8's scan flashed a second Stev icon in the Dock
+        // inside `Stev.app`: Qt makes its process a regular app at startup.
+        let command = scan_command(
+            Path::new("/Applications/Stev.app/Contents/MacOS/stev"),
+            Path::new("/Library/Audio/Plug-Ins/VST3/Kontakt 8.vst3"),
+            Path::new("/tmp/out.json"),
+        );
+        let set = command
+            .get_envs()
+            .any(|(key, value)| key == QT_FOREGROUND_TRANSFORM_OFF && value.is_some());
+        assert!(set);
     }
 
     #[test]

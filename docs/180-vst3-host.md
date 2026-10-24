@@ -207,6 +207,20 @@ thread — which is free — writes the class list as JSON, and exits.
   worker threads, which is its own reliable way to abort (see the `bundleExit`
   section above — same failure, different trigger). The result file is written
   and closed first.
+- **The child stays out of the Dock.** Inside `Stev.app` the child carries the
+  bundle's identity, so a plugin that brings up AppKit during `bundleEntry`
+  made it a regular app, and a second Stev icon flashed in the Dock during a
+  scan (`330` § 2). The child sets its `NSApplication` to `Prohibited` before
+  scanning, and the parent sets `QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM`
+  on it, because Qt (Kontakt 8) makes its process a regular app at startup
+  whatever the policy already is. Only `LSUIElement` in the plist or that
+  variable stops it. What remains is accepted: creating `NSApplication`
+  checks the child in as a regular app (the plist says so) before the policy
+  call lands, so during a full scan the Dock briefly starts opening a space
+  and closes it again, with no icon. Avoiding that needs the child known as
+  `LSUIElement` from launch (a helper app inside the bundle, or `LSUIElement`
+  on `Stev.app` with the main app made regular at launch), which costs more
+  than the flicker.
 - A child that outlives `SCAN_TIMEOUT` (30 s) is killed and recorded as failed.
   Generous on purpose: the heaviest sampler libraries take seconds to
   initialise, and a false timeout costs the user that plugin.

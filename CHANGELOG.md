@@ -22,6 +22,11 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ### Fixed
 
+- The Dock shows Stev's own icon while the app runs, not egui's default
+  icon.
+- Scanning VST3 plugins no longer flashes a second Stev icon in the Dock
+  when a plugin (such as Kontakt 8) starts its own user interface toolkit
+  while it is scanned.
 - The clip view's ruler numbers bar 1 from the clip's window start, with the
   material before it counting down from 0. A captured clip showed bar
   numbers in the hundreds or thousands the longer a session ran.

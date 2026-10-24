@@ -19,7 +19,7 @@ macro_rules! dprintln {
 use std::sync::{Arc, OnceLock, atomic::Ordering};
 
 use eframe::NativeOptions;
-use egui::{Context, ViewportBuilder};
+use egui::{Context, IconData, ViewportBuilder};
 
 use crate::core::{
     keymap::Keymap,
@@ -112,11 +112,15 @@ mod shapes {
 /// Resizable desktop window, `2560×1440` default inner size, vsync-paced render
 /// loop (`glow_options.vsync` — eframe's default, left as is). No fullscreen /
 /// platform lock — see `030-ui-design.md`.
+///
+/// The empty icon tells eframe to leave the app icon alone. Without one it sets
+/// egui's own at runtime, which replaces `Stev.icns` in the Dock.
 fn native_options() -> NativeOptions {
     NativeOptions {
         viewport: ViewportBuilder::default()
             .with_inner_size([2560.0, 1440.0]) // sensible desktop default
-            .with_title("Stev"),
+            .with_title("Stev")
+            .with_icon(IconData::default()),
         ..Default::default()
     }
 }
@@ -342,4 +346,17 @@ fn main() {
     // `main`'s locals would drop the plugin voices left to leak on purpose.
     #[cfg(target_os = "macos")]
     std::process::exit(0);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_window_leaves_the_bundles_app_icon_alone() {
+        // eframe sets egui's own icon at runtime unless the icon is empty,
+        // which replaced `Stev.icns` in the Dock.
+        let icon = native_options().viewport.icon;
+        assert_eq!(icon.as_deref(), Some(&IconData::default()));
+    }
 }
