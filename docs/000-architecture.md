@@ -80,6 +80,14 @@ cargo test
 cargo doc --no-deps --document-private-items  # 0 warnings
 ```
 
+### The macOS app bundle
+
+```bash
+scripts/macos/bundle.sh [--version x.y.z]
+```
+
+builds `target/macos/Stev.app` and `target/macos/Stev-x.y.z-macos-universal.zip` (`330-macos-app.md` § 1): a release build for `x86_64-apple-darwin` and `aarch64-apple-darwin` (added with `rustup target add`, not in `rust-toolchain.toml`, so the Linux and Windows CI jobs don't download them), both at `MACOSX_DEPLOYMENT_TARGET=11.0`, joined with `lipo`. The bundle gets `Info.plist` from `assets/macos/Info.plist.in` with `Cargo.toml`'s version, `Stev.icns`, and the licences (Stev's, `THIRD-PARTY-NOTICES.md`, Plex's OFL, the VST logo's) in `Contents/Resources/`. It is ad-hoc signed (`codesign --sign -`), which Apple Silicon needs to run it at all, then checked (`lipo -archs`, `codesign --verify --deep --strict`, `plutil -lint`) and zipped with `ditto`. `--version` must match `Cargo.toml`, or the script stops before building. The icon is `assets/macos/Stev.icns`, built by hand with `scripts/macos/make-icon.sh` from `assets/macos/icon.svg` (the website's robin on a macOS rounded tile) and committed, so a bundle build needs only Xcode's command-line tools.
+
 `cargo doc` is in the gate because rustdoc is the only checker for intra-doc
 links — a renamed method leaves `[`old_name`]` pointing at nothing and nothing
 else complains. `--document-private-items` is what makes it useful here: nearly

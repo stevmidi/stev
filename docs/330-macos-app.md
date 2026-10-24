@@ -1,6 +1,6 @@
 # A Downloadable macOS App
 
-**Status: plan agreed 2026-10-24 on `feature/macos-app-bundle`; nothing built yet.** Level 1 of the `280` candidate *A downloadable macOS app*: an unsigned universal `Stev.app` in a zip, attached to each `v*` release, with the items that come with it (the hand test, the About tab with its update check, opening projects from Finder, a log file). Levels 2 (signed + notarized) and 3 (a Homebrew cask) stay in `280`. Read `280` § A downloadable macOS app first, and `080` § Releasing and § Licensing.
+**Status: plan agreed 2026-10-24; phase 1 (the bundle script) built on `feature/macos-app-bundle`, phases 2–6 not started.** Level 1 of the `280` candidate *A downloadable macOS app*: an unsigned universal `Stev.app` in a zip, attached to each `v*` release, with the items that come with it (the hand test, the About tab with its update check, opening projects from Finder, a log file). Levels 2 (signed + notarized) and 3 (a Homebrew cask) stay in `280`. Read `280` § A downloadable macOS app first, and `080` § Releasing and § Licensing.
 
 ## Decisions
 
@@ -33,10 +33,10 @@ Each phase is its own branch and leaves `main` shippable. Phases 1–2 change no
 - The bundle layout:
   - `Contents/Info.plist`: generated from a template (`assets/macos/Info.plist.in`), with the version from `Cargo.toml`. It sets `CFBundleIdentifier` `com.stevmidi.stev`, `CFBundleName`/`CFBundleDisplayName` `Stev`, `CFBundleExecutable` `stev`, `CFBundleIconFile`, `NSHighResolutionCapable`, `LSMinimumSystemVersion`, `NSHumanReadableCopyright`, `LSApplicationCategoryType` `public.app-category.music`.
   - `Contents/MacOS/stev`: the universal binary.
-  - `Contents/Resources/`: `Stev.icns`, `LICENSE-MIT`, `LICENSE-APACHE`, `THIRD-PARTY-NOTICES.md`, the Plex `OFL.txt` (the font is compiled in, so its licence travels with the binary), and the VST logo's `LICENSE.txt`.
+  - `Contents/Resources/`: `Stev.icns`, `LICENSE-MIT`, `LICENSE-APACHE`, `THIRD-PARTY-NOTICES.md`, the Plex `OFL.txt` (the font is compiled in, so its licence travels with the binary) as `IBMPlexSans-OFL.txt`, and the VST logo's `LICENSE.txt` as `VST-Compatible-Logo-LICENSE.txt` (renamed, so two licences don't sit side by side as `LICENSE.txt` and `OFL.txt` with nothing to say whose they are).
 - **An ad-hoc signature over the whole bundle**: `codesign --force --sign - Stev.app`. This step is required, not cosmetic. Apple Silicon refuses to run an unsigned arm64 binary, and `lipo` plus the bundle edits can invalidate the linker's own signature. It doesn't make Gatekeeper trust the app (that is level 2), it just lets the app run at all.
 - **Zipped with `ditto -c -k --keepParent`**, not `zip`, which loses the bundle's extended attributes and symlinks.
-- `scripts/macos/make-icon.sh` builds `Stev.icns` from `assets/macos/icon.svg` with `rsvg-convert` and `iconutil`. It runs by hand when the icon changes, and its output is committed.
+- `scripts/macos/make-icon.sh` builds `Stev.icns` from `assets/macos/icon.svg` with `resvg` (`cargo install resvg`; Homebrew's `librsvg` was tried and builds LLVM from source on an Intel Mac) and `iconutil`. It runs by hand when the icon changes, and its output is committed.
 - Checks: `lipo -archs` names both architectures, `codesign --verify --deep --strict` passes, and `plutil -lint` passes on the plist.
 
 ### 2. The hand test, on the Intel Mac

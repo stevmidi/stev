@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <title>Stev</title>
+  <!-- The app icon: site/images/logo.svg's robin on a macOS-style rounded tile.
+       The tile is Apple's icon grid (824 px square at 100 px in, corner radius
+       185.4), filled with the app's background colour. The robin is the logo
+       unchanged, scaled ×10 and centred. Built into Stev.icns by
+       scripts/macos/make-icon.sh. -->
+  <defs>
+    <clipPath id="robin">
+      <ellipse cx="30" cy="36" rx="18" ry="15"/>
+      <circle cx="45" cy="23" r="10"/>
+      <polygon points="53,19.5 61.5,23.5 53,27"/>
+      <polygon points="15,32 2,43 6,48 19,40"/>
+    </clipPath>
+    <mask id="eye">
+      <rect width="64" height="64" fill="#fff"/>
+      <circle cx="47.5" cy="16.5" r="1.9" fill="#000"/>
+    </mask>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="185.4" fill="#0a0a0a"/>
+  <g transform="translate(192 192) scale(10)">
+    <g clip-path="url(#robin)" mask="url(#eye)">
+      <rect y="12" width="64" height="8.5" fill="#6b6b6b"/>
+      <rect y="23" width="64" height="8.5" fill="#6b6b6b"/>
+      <rect y="34" width="64" height="8.5" fill="#ff3daa"/>
+      <rect y="45" width="64" height="8.5" fill="#6b6b6b"/>
+    </g>
+  </g>
+</svg>
