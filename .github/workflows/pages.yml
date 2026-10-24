@@ -34,14 +34,14 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: actions/configure-pages@v5
+      - uses: actions/configure-pages@v6
 
       # No build step: site/ is the site. Its images and font are symlinks
       # into docs/ and assets/, which the upload follows (it tars with
       # --dereference), so nothing is duplicated in the repo.
-      - uses: actions/upload-pages-artifact@v4
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: site
 
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
