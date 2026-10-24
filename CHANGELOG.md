@@ -20,6 +20,15 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ## [Unreleased]
 
+### Added
+
+- An **About** tab in Settings: the version, the licence, links to
+  stevmidi.com and the repository, and the VST Compatible logo. On macOS it
+  has **Check for updates**, which asks GitHub for the latest release when
+  pressed (never on its own).
+- The macOS app menu's **About Stev** opens the About tab, and it gains
+  **Check for Updates…** and **Settings…** (`⌘,`).
+
 ### Fixed
 
 - The Dock shows Stev's own icon while the app runs, not egui's default

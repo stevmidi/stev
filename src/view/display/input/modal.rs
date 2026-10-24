@@ -1,8 +1,8 @@
 //! `handle_settings_input_event` — the settings modal's keymap and mouse: Esc
 //! or `⌘/Ctrl+,` closes it, the tab chords switch tabs, `?` shows the
 //! Keyboard tab, and inside a tab the arrows move a cursor (the MIDI rows,
-//! the theme list, the Keyboard tab's rows), Enter connects a port or
-//! records a shortcut, and a click or wheel is resolved by
+//! the theme list, the Keyboard tab's rows), Enter connects a port, records
+//! a shortcut or (About, macOS) checks for updates, and a click or wheel is resolved by
 //! `settings_modal.rs`. The showing tab sees a key before the modal's Esc
 //! and `?` do, so the Keyboard tab's Esc clears a search first and its `?`
 //! is typing; every other key there is the search field's. A Keyboard tab
@@ -52,7 +52,23 @@ impl Display {
             SettingsTab::Midi => self.handle_midi_tab_key(key, modifiers),
             SettingsTab::Appearance => self.handle_appearance_tab_key(key),
             SettingsTab::Keyboard => self.handle_keyboard_tab_key(key, modifiers),
+            #[cfg(target_os = "macos")]
+            SettingsTab::About => self.handle_about_tab_key(key),
+            // No check off macOS, so no keys.
+            #[cfg(not(target_os = "macos"))]
+            SettingsTab::About => false,
         }
+    }
+
+    /// The About tab's keys: Enter checks for updates, as the button does.
+    /// Returns whether it took the key.
+    #[cfg(target_os = "macos")]
+    fn handle_about_tab_key(&mut self, key: Key) -> bool {
+        if key == Key::Enter {
+            self.settings.about.request_check();
+            return true;
+        }
+        false
     }
 
     /// The MIDI tab's keys: Tab and ←/→ cycle the three rows, ⇧Tab

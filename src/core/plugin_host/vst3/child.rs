@@ -234,7 +234,7 @@ mod tests {
         // Without it, Kontakt 8's scan flashed a second Stev icon in the Dock
         // inside `Stev.app`: Qt makes its process a regular app at startup.
         let command = scan_command(
-            Path::new("/Applications/Stev.app/Contents/MacOS/stev"),
+            Path::new("/Applications/Stev.app/Contents/MacOS/Stev"),
             Path::new("/Library/Audio/Plug-Ins/VST3/Kontakt 8.vst3"),
             Path::new("/tmp/out.json"),
         );

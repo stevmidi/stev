@@ -1,6 +1,6 @@
 # A Downloadable macOS App
 
-**Status: plan agreed 2026-10-24; phase 1 (the bundle script) merged, phase 2 (the hand test) run 2026-10-24 with its results below and two bundle-only Dock bugs being fixed, phases 3–6 not started.** Level 1 of the `280` candidate *A downloadable macOS app*: an unsigned universal `Stev.app` in a zip, attached to each `v*` release, with the items that come with it (the hand test, the About tab with its update check, opening projects from Finder, a log file). Levels 2 (signed + notarized) and 3 (a Homebrew cask) stay in `280`. Read `280` § A downloadable macOS app first, and `080` § Releasing and § Licensing.
+**Status: plan agreed 2026-10-24; phase 1 (the bundle script) merged, phase 2 (the hand test) run 2026-10-24 with its results below and its two bundle-only Dock bugs fixed, phase 3 (the About tab and the app menu) built and hand-tested 2026-10-24, phases 4–6 not started.** Level 1 of the `280` candidate *A downloadable macOS app*: an unsigned universal `Stev.app` in a zip, attached to each `v*` release, with the items that come with it (the hand test, the About tab with its update check, opening projects from Finder, a log file). Levels 2 (signed + notarized) and 3 (a Homebrew cask) stay in `280`. Read `280` § A downloadable macOS app first, and `080` § Releasing and § Licensing.
 
 ## Decisions
 
@@ -31,8 +31,8 @@ Each phase is its own branch and leaves `main` shippable. Phases 1–2 change no
 
 - `rustup target add` both Apple targets (they are not added to `rust-toolchain.toml`, because the Linux and Windows CI jobs would download them for nothing), then `cargo build --release --target …` for each, with `MACOSX_DEPLOYMENT_TARGET` set, and `lipo -create` into one `stev`.
 - The bundle layout:
-  - `Contents/Info.plist`: generated from a template (`assets/macos/Info.plist.in`), with the version from `Cargo.toml`. It sets `CFBundleIdentifier` `com.stevmidi.stev`, `CFBundleName`/`CFBundleDisplayName` `Stev`, `CFBundleExecutable` `stev`, `CFBundleIconFile`, `NSHighResolutionCapable`, `LSMinimumSystemVersion`, `NSHumanReadableCopyright`, `LSApplicationCategoryType` `public.app-category.music`.
-  - `Contents/MacOS/stev`: the universal binary.
+  - `Contents/Info.plist`: generated from a template (`assets/macos/Info.plist.in`), with the version from `Cargo.toml`. It sets `CFBundleIdentifier` `com.stevmidi.stev`, `CFBundleName`/`CFBundleDisplayName` `Stev`, `CFBundleExecutable` `Stev` (phase 3), `CFBundleIconFile`, `NSHighResolutionCapable`, `LSMinimumSystemVersion`, `NSHumanReadableCopyright`, `LSApplicationCategoryType` `public.app-category.music`.
+  - `Contents/MacOS/Stev`: the universal binary, capitalised since phase 3 so the app menu's items read "About Stev" (phase 2 found winit titles them with the executable's name).
   - `Contents/Resources/`: `Stev.icns`, `LICENSE-MIT`, `LICENSE-APACHE`, `THIRD-PARTY-NOTICES.md`, the Plex `OFL.txt` (the font is compiled in, so its licence travels with the binary) as `IBMPlexSans-OFL.txt`, and the VST logo's `LICENSE.txt` as `VST-Compatible-Logo-LICENSE.txt` (renamed, so two licences don't sit side by side as `LICENSE.txt` and `OFL.txt` with nothing to say whose they are).
 - **An ad-hoc signature over the whole bundle**: `codesign --force --sign - Stev.app`. This step is required, not cosmetic. Apple Silicon refuses to run an unsigned arm64 binary, and `lipo` plus the bundle edits can invalidate the linker's own signature. It doesn't make Gatekeeper trust the app (that is level 2), it just lets the app run at all.
 - **Zipped with `ditto -c -k --keepParent`**, not `zip`, which loses the bundle's extended attributes and symlinks.
@@ -81,6 +81,17 @@ A fourth settings tab, `SettingsTab::About`, after Keyboard:
   - **The app's name in the items**: winit titles them with the process name, i.e. the executable's file name, so they would read "About stev", "Quit stev". Phase 2 confirms this inside a bundle. If it holds, the bundle's executable is named `Stev` (`CFBundleExecutable`, phase 1's script), rather than retitling items one by one.
 - **Tests** (`core/update_check.rs`, pure): the version comparison (strips `v`, numeric `major.minor.patch`, an unparseable tag reads as "couldn't check", never "newer"), and parsing the response JSON, including a missing `tag_name`.
 - Docs: `030` (the tab), `010` (the tab's keys, if any, and ⌘, arriving through the menu on macOS), `020` § Views (the tab list), and `060` § Unsaved changes, which points to `appkit.rs` for the menu wiring.
+
+**As built** (2026-10-24), where it differs from or adds to the plan above:
+
+- **The executable is `Stev`** in the bundle (`bundle.sh`, the plist template). The cargo binary stays `stev`.
+- **The answer is taken every frame, not only while the tab is open** (`Display::sync_update_check`): a check started from the menu and the tab then closed still lands, and the `try_recv` costs nothing while no check runs. A click, `Enter` or the menu only asks for a check (`UpdateState::Requested`); the frame starts it, since it has the egui context the thread wakes.
+- **`Enter` on the About tab checks**, as the button does. The tab has no other keys.
+- **Settings… tells its key from a click**: when the event that sent the action is a key press (`NSApplication::currentEvent`), the request is `SettingsKey`, which `Display` pushes ahead of the frame's events as the `⌘,` key itself, so the chord keeps every behaviour it had (toggling, ignored under a text field or dialog). A click opens Settings on the last tab, or leaves it up.
+- **A clicked menu item waits for nothing**: About and Check for Updates… do nothing while a project dialog, a text field or the restore overlay has the keyboard (`keyboard_taken`), rather than queueing.
+- **Links open with `open`** (`explorer`, `xdg-open` off macOS): eframe is built without egui-winit's `links` feature, and the opener is a process that exits at once. Each link is a full-width row, as every row in the modal is a click target.
+- **The logo** is `docs/images/vst/*.rgba`, 48 and 96 px high, from `scripts/make-vst-logo.sh` (resvg, then python3's standard library to unpack the PNG). The app reads each width back from its file's length.
+- **Hand test** (2026-10-24, Intel Mac, the bundle installed from a quarantined zip): the menu reads "About Stev" and "Quit Stev" with Check for Updates… and Settings… under About; About and Check for Updates… open the tab, also with Settings already up; `⌘,` toggles as before and a click on Settings… opens it; a check answers "You're up to date (0.5.0)", and "Couldn't reach GitHub" with Wi-Fi off; the links open in the browser; the logo is sharp; a menu item does nothing under Save As. All as intended. Not tested: the "available" answer and its release link, since no release is newer than 0.5.0.
 
 ### 4. Opening projects from Finder
 

@@ -45,7 +45,9 @@ done
 rm -rf $app $zip
 mkdir -p $app/Contents/MacOS $app/Contents/Resources
 
-lipo -create -output $app/Contents/MacOS/stev $repo/target/${^targets}/release/stev
+# Named Stev, not stev: winit titles the app menu's items with the
+# executable's name ("About Stev", "Quit Stev").
+lipo -create -output $app/Contents/MacOS/Stev $repo/target/${^targets}/release/stev
 sed "s/@VERSION@/$version/g" $repo/assets/macos/Info.plist.in > $app/Contents/Info.plist
 
 # The licences travel with the binary: Stev's own, its dependencies', the
@@ -61,7 +63,7 @@ cp $repo/docs/images/vst/LICENSE.txt $res/VST-Compatible-Logo-LICENSE.txt
 # Gatekeeper trust the app (that needs a Developer ID); it lets it run at all.
 codesign --force --sign - $app
 
-archs=$(lipo -archs $app/Contents/MacOS/stev)
+archs=$(lipo -archs $app/Contents/MacOS/Stev)
 for arch in x86_64 arm64; do
   [[ " $archs " == *" $arch "* ]] || { echo "binary lacks $arch (has: $archs)" >&2; exit 1; }
 done

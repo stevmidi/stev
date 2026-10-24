@@ -43,7 +43,7 @@ use crate::core::plugin_host::{
 };
 
 #[cfg(target_os = "macos")]
-use crate::view::appkit::route_quit_through_window_close;
+use crate::view::appkit::wire_app_menu;
 use crate::view::theme;
 use crate::view::theme::fonts::font_definitions;
 
@@ -91,6 +91,7 @@ mod core {
     #[cfg(test)]
     pub mod timing_probe;
     pub mod transport;
+    pub mod update_check;
     pub mod view_state;
 }
 /// The UI: the `Display` eframe app, input polling, the computer keyboard,
@@ -321,9 +322,10 @@ fn main() {
                 display.guard_plugin_editor_keys();
             }
             // ⌘Q closes the window rather than terminating, so quitting goes
-            // through the unsaved-changes check (`view::appkit`).
+            // through the unsaved-changes check, and About opens the About
+            // tab (`view::appkit`).
             #[cfg(target_os = "macos")]
-            route_quit_through_window_close(cc);
+            wire_app_menu(cc);
             // The plugin catalog scan starts here, for the same reason, and it
             // is not optional: a VST3 `bundleEntry` starts the plugin's real
             // runtime, and plenty of those touch AppKit (`NSApplication`,

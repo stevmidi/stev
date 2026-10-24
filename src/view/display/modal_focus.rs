@@ -107,14 +107,18 @@ pub(crate) enum SettingsTab {
     /// Every command and its keys, with the fixed keys after them
     /// (`keyboard_tab.rs`).
     Keyboard,
+    /// The version, the links, the VST logo and (macOS) Check for updates
+    /// (`about_tab.rs`).
+    About,
 }
 
 impl SettingsTab {
     /// Every tab, in tab-strip order.
-    pub(crate) const ALL: [SettingsTab; 3] = [
+    pub(crate) const ALL: [SettingsTab; 4] = [
         SettingsTab::Midi,
         SettingsTab::Appearance,
         SettingsTab::Keyboard,
+        SettingsTab::About,
     ];
 
     /// The tab strip's label.
@@ -123,6 +127,7 @@ impl SettingsTab {
             SettingsTab::Midi => "MIDI",
             SettingsTab::Appearance => "APPEARANCE",
             SettingsTab::Keyboard => "KEYBOARD",
+            SettingsTab::About => "ABOUT",
         }
     }
 
@@ -174,8 +179,9 @@ mod tests {
     fn stepping_a_tab_wraps_at_both_ends() {
         assert_eq!(SettingsTab::Midi.stepped(1), SettingsTab::Appearance);
         assert_eq!(SettingsTab::Appearance.stepped(1), SettingsTab::Keyboard);
-        assert_eq!(SettingsTab::Keyboard.stepped(1), SettingsTab::Midi);
-        assert_eq!(SettingsTab::Midi.stepped(-1), SettingsTab::Keyboard);
+        assert_eq!(SettingsTab::Keyboard.stepped(1), SettingsTab::About);
+        assert_eq!(SettingsTab::About.stepped(1), SettingsTab::Midi);
+        assert_eq!(SettingsTab::Midi.stepped(-1), SettingsTab::About);
         assert_eq!(SettingsTab::Keyboard.stepped(-1), SettingsTab::Appearance);
     }
 }

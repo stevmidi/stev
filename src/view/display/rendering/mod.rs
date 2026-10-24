@@ -1265,6 +1265,8 @@ impl eframe::App for Display {
         self.in_pane(Pane::Clip, Self::settle_window_edge_commit);
         self.sync_window_close(ctx);
         self.sync_project_dialog_window(ctx);
+        #[cfg(target_os = "macos")]
+        self.sync_update_check(ctx);
         self.in_pane(Pane::Clip, Self::sync_clip_frame);
         self.in_pane(Pane::Arranger, Self::sync_arranger_scroll);
         self.sync_time_selection_to_cursor();

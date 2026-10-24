@@ -422,6 +422,9 @@ impl Display {
         }
         self.input_was_clip_view = in_clip_view;
         let mut events = self.input_poller.take_input_events();
+        // The app menu's items, ahead of this frame's keys (`about_tab.rs`).
+        #[cfg(target_os = "macos")]
+        self.take_app_menu_request(&mut events);
         // Nothing acts while a project being opened loads its plugins — not
         // even the project chords ahead of the overlay below: the open
         // project must stay exactly as it is.

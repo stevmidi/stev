@@ -1,7 +1,8 @@
 //! The settings modal (`⌘/Ctrl+,`), an overlay over the view: opening and
 //! closing it, its tab chords, the theme list's scroll window, its mouse,
 //! and applying a theme. The MIDI tab's own state is `midi_tab.rs`, the
-//! Keyboard tab's `keyboard_tab.rs`; the keys inside a tab are
+//! Keyboard tab's `keyboard_tab.rs`, the About tab's `about_tab.rs`; the
+//! keys inside a tab are
 //! `input/modal.rs`; drawing and the click hit-test
 //! share one layout in `rendering/modals/settings.rs`. See
 //! `020-views-and-state.md` and `030-ui-design.md` § Settings modal.
@@ -13,6 +14,7 @@ use crate::core::input_event::{InputEvent, KeyModifiers};
 use crate::core::settings::clamp_midi_out_offset_ms;
 use crate::view::theme;
 
+use super::about_tab::{AboutLink, AboutTab};
 use super::browser::scroll_to_show;
 use super::keyboard_tab::{KeyboardTab, TabClick};
 use super::midi_tab::MidiTab;
@@ -37,6 +39,8 @@ pub(super) struct SettingsModal {
     pub(super) wheel: f32,
     /// The Keyboard tab's search, selection and scroll.
     pub(super) keys: KeyboardTab,
+    /// The About tab's update check and logo.
+    pub(super) about: AboutTab,
 }
 
 impl SettingsModal {
@@ -49,6 +53,7 @@ impl SettingsModal {
             theme_scroll: 0,
             wheel: 0.0,
             keys: KeyboardTab::default(),
+            about: AboutTab::default(),
         }
     }
 }
@@ -77,6 +82,11 @@ pub(super) enum SettingsHit {
     Search,
     /// The Keyboard tab's Reset all.
     ResetAll,
+    /// A link on the About tab.
+    Link(AboutLink),
+    /// The About tab's Check for updates (macOS).
+    #[cfg(target_os = "macos")]
+    CheckForUpdates,
     /// Anywhere else inside the panel.
     Panel,
 }
@@ -187,7 +197,8 @@ impl Display {
     /// A press in the settings modal: a tab shows it, a section focuses its
     /// row, a port is focused with its cursor there, a theme is applied, a
     /// shortcut row is selected (and records on its chords), Reset all arms
-    /// or confirms, and a press outside the panel closes the modal. `double`
+    /// or confirms, a link opens in the browser, Check for updates starts a
+    /// check, and a press outside the panel closes the modal. `double`
     /// (the second press of a double-click) then acts as Enter on a port.
     /// Any press ends a shortcut's recording (`KeyboardTab::click`, which
     /// takes the Keyboard tab's own hits).
@@ -220,6 +231,9 @@ impl Display {
                 }
             }
             SettingsHit::Theme(idx) => self.apply_theme(idx),
+            SettingsHit::Link(link) => self.open_about_link(link),
+            #[cfg(target_os = "macos")]
+            SettingsHit::CheckForUpdates => self.settings.about.request_check(),
             // The Keyboard tab's own, taken above.
             SettingsHit::Shortcut { .. }
             | SettingsHit::Search
@@ -230,9 +244,10 @@ impl Display {
 
     /// A wheel or trackpad scroll in the settings modal: scrolls the theme
     /// list or the Keyboard tab's list a row per row height of travel. The
-    /// MIDI tab's lists follow their cursors only.
+    /// MIDI tab's lists follow their cursors only; the About tab doesn't
+    /// scroll.
     pub(super) fn scroll_settings(&mut self, delta_y: f32) {
-        if self.settings.tab == SettingsTab::Midi {
+        if matches!(self.settings.tab, SettingsTab::Midi | SettingsTab::About) {
             return;
         }
         let row_h = Self::SETTINGS_ROW_H;
@@ -246,7 +261,7 @@ impl Display {
         // brings earlier rows into view.
         let rows = -(rows as isize);
         match self.settings.tab {
-            SettingsTab::Midi => {}
+            SettingsTab::Midi | SettingsTab::About => {}
             SettingsTab::Appearance => {
                 self.settings.theme_scroll = scroll_by(
                     self.settings.theme_scroll,

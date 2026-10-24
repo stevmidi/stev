@@ -44,6 +44,7 @@
 //! See `020-views-and-state.md` for the state model and `030-ui-design.md` for
 //! the layout.
 
+mod about_tab;
 mod browser;
 mod browser_rename;
 mod computer_keys;

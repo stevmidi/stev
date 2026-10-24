@@ -1,13 +1,23 @@
 //! The settings modal (`settings_modal.rs`): one fixed-size panel with a tab
 //! strip along its top and the showing tab below — MIDI (the input / output
-//! port lists and the output-offset row), Appearance (the theme list) or
+//! port lists and the output-offset row), Appearance (the theme list),
 //! Keyboard (the search field over every command and fixed key,
-//! `keyboard_tab.rs`). The layout is shared with the click hit-test
+//! `keyboard_tab.rs`) or About (the version, the links, the VST logo and,
+//! on macOS, Check for updates, `about_tab.rs`). The layout is shared with the click hit-test
 //! ([`settings_hit_at`](Display::settings_hit_at)), so the two can't drift.
 
 use std::borrow::Cow;
+use std::env::consts::ARCH;
 
-use egui::{Id, Pos2, Ui};
+use egui::emath::GuiRounding;
+use egui::{Id, Pos2, Theme, Ui};
+
+use crate::core::update_check::CURRENT_VERSION;
+#[cfg(target_os = "macos")]
+use crate::core::update_check::UpdateCheck;
+#[cfg(target_os = "macos")]
+use crate::view::display::about_tab::UpdateState;
+use crate::view::display::about_tab::{AboutLink, VST_LOGO_SIZE};
 
 use crate::view::display::keyboard_tab::{
     KeyboardFocus, Recording, ShortcutLine, ShortcutRow, row_lines, shortcut_lines,
@@ -91,6 +101,28 @@ struct KeyboardTabLayout {
     foot: Rect,
 }
 
+/// Where the About tab's parts sit.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct AboutTabLayout {
+    /// The name line, in the title's larger size.
+    name: Rect,
+    /// The version and the licence, a line each.
+    lines: ListRows,
+    /// The links, a row each in [`AboutLink::LISTED`] order.
+    links: ListRows,
+    /// Check for updates.
+    #[cfg(target_os = "macos")]
+    check: Rect,
+    /// The check's answer, right of the button to the content's edge — a
+    /// link when it found a newer release.
+    #[cfg(target_os = "macos")]
+    status: Rect,
+    /// The VST Compatible logo, at the foot.
+    logo: Rect,
+    /// The trademark sentence's two lines, right of the logo.
+    trademark: ListRows,
+}
+
 impl Display {
     /// Panel width.
     const SETTINGS_W: f32 = 480.0 * Self::M_SCALE;
@@ -117,6 +149,12 @@ impl Display {
     const RESET_ALL_W: f32 = 240.0 * Self::M_SCALE;
     /// Radius of the dot by a rebound command's chords.
     const CHANGED_DOT_R: f32 = 2.5 * Self::M_SCALE;
+    /// Width of the About tab's Check for updates.
+    #[cfg(target_os = "macos")]
+    const CHECK_W: f32 = 130.0 * Self::M_SCALE;
+    /// Line height of the trademark sentence: its two lines fit beside the
+    /// logo.
+    const ABOUT_NOTE_LINE_H: f32 = 1.3 * Self::FONT_HINT;
 
     /// The content height: the taller of the fullest MIDI tab (three
     /// headers; two port lists of `PORT_ROWS` plus a ghost row each; the
@@ -235,6 +273,57 @@ impl Display {
         Rect::from_min_max(pos2(foot.max.x - Self::RESET_ALL_W, foot.min.y), foot.max)
     }
 
+    /// The About tab in `content`: the name, version and licence from the
+    /// top, a row's gap, the links, another gap and (macOS) Check for
+    /// updates; the logo and the trademark sentence along the foot. Pure
+    /// geometry.
+    fn about_tab_layout(content: Rect) -> AboutTabLayout {
+        let row_h = Self::SETTINGS_ROW_H;
+        let row =
+            |top: f32| Rect::from_min_size(pos2(content.min.x, top), vec2(content.width(), row_h));
+        let name = Rect::from_min_size(content.min, vec2(content.width(), 2.0 * row_h));
+        let lines = ListRows {
+            first: row(name.max.y),
+            count: 2,
+        };
+        let links = ListRows {
+            first: row(lines.row(1).max.y + row_h),
+            count: AboutLink::LISTED.len(),
+        };
+        #[cfg(target_os = "macos")]
+        let check_row = row(links.row(links.count - 1).max.y + row_h);
+        #[cfg(target_os = "macos")]
+        let check = Rect::from_min_size(
+            pos2(check_row.min.x + Self::SETTINGS_TEXT_INSET, check_row.min.y),
+            vec2(Self::CHECK_W, row_h),
+        );
+        let logo = Rect::from_min_size(
+            pos2(
+                content.min.x + Self::SETTINGS_TEXT_INSET,
+                content.max.y - VST_LOGO_SIZE.y,
+            ),
+            VST_LOGO_SIZE,
+        );
+        let trademark = ListRows {
+            first: Rect::from_min_size(
+                pos2(logo.max.x, logo.center().y - Self::ABOUT_NOTE_LINE_H),
+                vec2(content.max.x - logo.max.x, Self::ABOUT_NOTE_LINE_H),
+            ),
+            count: 2,
+        };
+        AboutTabLayout {
+            name,
+            lines,
+            links,
+            #[cfg(target_os = "macos")]
+            check,
+            #[cfg(target_os = "macos")]
+            status: Rect::from_min_max(pos2(check.max.x, check_row.min.y), check_row.max),
+            logo,
+            trademark,
+        }
+    }
+
     /// The Keyboard tab on the canvas, as drawn and hit-tested.
     fn keyboard_tab_on_canvas(&self) -> KeyboardTabLayout {
         Self::keyboard_tab_layout(Self::settings_layout(self.render.canvas_rect).content)
@@ -311,8 +400,34 @@ impl Display {
                         keys: p.x >= window.first.center().x,
                     })
             }
+            SettingsTab::About => self.about_hit_at(Self::about_tab_layout(layout.content), p),
         };
         Some(hit.unwrap_or(SettingsHit::Panel))
+    }
+
+    /// What `p` is on in the About tab laid out as `layout`: a link's row,
+    /// Check for updates (not while a check runs), or the check's answer
+    /// when it links a newer release.
+    fn about_hit_at(&self, layout: AboutTabLayout, p: Pos2) -> Option<SettingsHit> {
+        if let Some(i) = layout.links.hit(p) {
+            return Some(SettingsHit::Link(AboutLink::LISTED[i]));
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let about = &self.settings.about;
+            if layout.check.contains(p) && !about.is_checking() {
+                return Some(SettingsHit::CheckForUpdates);
+            }
+            if layout.status.contains(p)
+                && matches!(
+                    about.update,
+                    UpdateState::Done(UpdateCheck::Available { .. })
+                )
+            {
+                return Some(SettingsHit::Link(AboutLink::Release));
+            }
+        }
+        None
     }
 
     /// Whether the pointer is on something in the settings panel a click
@@ -361,7 +476,111 @@ impl Display {
             SettingsTab::Midi => self.draw_midi_tab(painter, layout.content),
             SettingsTab::Appearance => self.draw_appearance_tab(painter, layout.content),
             SettingsTab::Keyboard => self.draw_keyboard_tab(painter, layout.content),
+            SettingsTab::About => self.draw_about_tab(painter, layout.content),
         }
+    }
+
+    /// The About tab: the name, the version with the architecture the
+    /// binary runs as (which tells an Apple Silicon report from an Intel
+    /// one), the licence, the links, (macOS) Check for updates with its
+    /// answer, and the VST Compatible logo with Steinberg's trademark
+    /// sentence — the standard logo on a dark theme, the negative on a
+    /// light one, at the screen's scale.
+    fn draw_about_tab(&self, painter: &Painter, content: Rect) {
+        let layout = Self::about_tab_layout(content);
+        Self::draw_settings_text(
+            painter,
+            layout.name,
+            "Stev",
+            2.0 * Self::FONT_TITLE,
+            theme::fg(),
+        );
+        let version = format!("Version {CURRENT_VERSION} · {ARCH}");
+        let lines = [version.as_str(), "Licence: MIT OR Apache-2.0"];
+        for (i, text) in lines.into_iter().enumerate() {
+            let row = layout.lines.row(i);
+            Self::draw_settings_text(painter, row, text, Self::FONT_LIST, theme::fg_dim());
+        }
+        for (i, link) in AboutLink::LISTED.into_iter().enumerate() {
+            let row = layout.links.row(i);
+            Self::draw_settings_text(painter, row, link.label(), Self::FONT_LIST, theme::accent());
+        }
+        #[cfg(target_os = "macos")]
+        self.draw_update_check(painter, layout);
+
+        let ctx = painter.ctx();
+        let ppp = painter.pixels_per_point();
+        let texture = self
+            .settings
+            .about
+            .logo
+            .texture(ctx, ctx.theme() == Theme::Dark, ppp > 1.5);
+        let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
+        painter.image(
+            texture.id(),
+            layout.logo.round_to_pixels(ppp),
+            uv,
+            Color32::WHITE,
+        );
+        let trademark = [
+            "VST is a registered trademark of",
+            "Steinberg Media Technologies GmbH.",
+        ];
+        for (i, text) in trademark.into_iter().enumerate() {
+            let row = layout.trademark.row(i);
+            Self::draw_settings_text(painter, row, text, Self::FONT_HINT, theme::fg_dim());
+        }
+    }
+
+    /// Check for updates, framed like the project dialogs' buttons ("Checking…"
+    /// and dim while a check runs), and its answer beside it: up to date, a
+    /// newer version as a link to its release, or GitHub out of reach.
+    #[cfg(target_os = "macos")]
+    fn draw_update_check(&self, painter: &Painter, layout: AboutTabLayout) {
+        let about = &self.settings.about;
+        let checking = about.is_checking();
+        let color = if checking {
+            theme::fg_dim()
+        } else {
+            theme::fg()
+        };
+        painter.rect_filled(
+            layout.check,
+            CornerRadius::same(3),
+            theme::fg_dim().gamma_multiply(0.15),
+        );
+        painter.rect_stroke(
+            layout.check,
+            CornerRadius::same(3),
+            Stroke::new(1.0_f32, theme::separator()),
+            StrokeKind::Inside,
+        );
+        painter.text(
+            layout.check.center(),
+            Align2::CENTER_CENTER,
+            if checking {
+                "Checking…"
+            } else {
+                "Check for updates"
+            },
+            FontId::proportional(Self::FONT_HINT),
+            color,
+        );
+        let (text, color) = match &about.update {
+            UpdateState::Done(UpdateCheck::UpToDate) => (
+                format!("You're up to date ({CURRENT_VERSION})"),
+                theme::fg_dim(),
+            ),
+            UpdateState::Done(UpdateCheck::Available { version, .. }) => (
+                format!("Version {version} is available — view the release"),
+                theme::accent(),
+            ),
+            UpdateState::Done(UpdateCheck::Failed) => {
+                ("Couldn't reach GitHub".to_owned(), theme::track_mute())
+            }
+            UpdateState::Idle | UpdateState::Requested | UpdateState::Checking(_) => return,
+        };
+        Self::draw_settings_text(painter, layout.status, &text, Self::FONT_LIST, color);
     }
 
     /// Paints `text` on one line at the left of `rect`, cut with an ellipsis
@@ -800,6 +1019,26 @@ mod tests {
         assert_eq!(layout.foot.max, content.max);
         let reset_all = Display::reset_all_rect(layout.foot);
         assert!(layout.foot.contains_rect(reset_all));
+    }
+
+    #[test]
+    fn the_about_tab_fits_the_content_without_overlapping() {
+        let content = Display::settings_layout(canvas()).content;
+        let layout = Display::about_tab_layout(content);
+        assert!(content.contains_rect(layout.logo));
+        assert_eq!(layout.logo.max.y, content.max.y);
+        let last_link = layout.links.row(layout.links.count - 1);
+        assert!(layout.lines.row(1).max.y < layout.links.first.min.y);
+        assert!(last_link.max.y < layout.trademark.first.min.y);
+        assert!(layout.trademark.first.min.y >= layout.logo.min.y);
+        assert!(layout.trademark.row(1).max.y <= layout.logo.max.y);
+        #[cfg(target_os = "macos")]
+        {
+            assert!(last_link.max.y < layout.check.min.y);
+            assert!(layout.check.max.y < layout.logo.min.y);
+            assert_eq!(layout.status.min.x, layout.check.max.x);
+            assert_eq!(layout.status.max.x, content.max.x);
+        }
     }
 
     #[test]

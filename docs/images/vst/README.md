@@ -6,6 +6,11 @@ VST 3 SDK documentation
 `c8b05bbc29`). The files are published under the MIT licence in
 `LICENSE.txt` beside them.
 
+The `.rgba` files are the two variants rasterised for the About tab, at 1x
+and 2x (raw, unpremultiplied RGBA, 48 and 96 px high), because the app can't
+draw SVG. `scripts/make-vst-logo.sh` makes them; run it again if the SVGs
+change, and commit the result.
+
 The logo and the VST name are Steinberg's trademarks. Copyright allows these
 files to be redistributed, but *using* them is governed by Steinberg's
 [usage guidelines](https://steinbergmedia.github.io/vst3_dev_portal/pages/VST+3+Licensing/Usage+guidelines.html),
