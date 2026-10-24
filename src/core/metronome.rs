@@ -14,6 +14,13 @@
 //! only modulo the loop region's length (`150-clock-position-sync.md`), so a
 //! region that isn't whole bars would move the downbeat at every wrap. While
 //! stopped, playback is parked and the clock tick is what counts in.
+//!
+//! A retime of the project's only clip while playing (Enter's tempo fit)
+//! moves playback with the notes onto the new tempo's beat grid
+//! (`220` § Playback during edits). The last beat of the old grid and the
+//! first of the new can then fall any distance apart — a few milliseconds
+//! sounds as a doubled click — so after one ([`Metronome::playback_retimed`])
+//! a beat less than half a beat after the last click is skipped.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -39,6 +46,12 @@ pub(crate) struct Metronome {
     /// jump, a clock realignment, or the switch between the clock and
     /// playback on a start or stop.
     prev_tick: Option<i32>,
+    /// Clock ticks since the last click — wall time at the tempo, whatever
+    /// the position did meanwhile.
+    ticks_since_click: i32,
+    /// Playback was retimed since the last beat: the next one is skipped if
+    /// it comes too soon after the last click (module docs).
+    retimed: bool,
 }
 
 impl Metronome {
@@ -49,7 +62,16 @@ impl Metronome {
             click_tx,
             last_beat: None,
             prev_tick: None,
+            ticks_since_click: i32::MAX,
+            retimed: false,
         }
+    }
+
+    /// Playback was just moved onto a new tempo's beat grid
+    /// (`Sequencer::take_playback_retimed`): the next beat is skipped if it
+    /// would sound less than half a beat after the last click.
+    pub(crate) fn playback_retimed(&mut self) {
+        self.retimed = true;
     }
 
     /// Called once per clock tick from the sequencer thread, at `at`, with
@@ -66,9 +88,14 @@ impl Metronome {
             self.last_beat = None;
         }
         self.prev_tick = Some(tick);
+        self.ticks_since_click = self.ticks_since_click.saturating_add(1);
 
         let beat_ticks = meter.beat_ticks();
-        if tick.rem_euclid(beat_ticks) != 0 || self.mute.load(Ordering::Relaxed) {
+        if tick.rem_euclid(beat_ticks) != 0 {
+            return;
+        }
+        let too_soon = std::mem::take(&mut self.retimed) && self.ticks_since_click < beat_ticks / 2;
+        if too_soon || self.mute.load(Ordering::Relaxed) {
             return;
         }
 
@@ -86,6 +113,7 @@ impl Metronome {
         // click is the right degradation.
         let _ = self.click_tx.push(ClickEvent { class, at });
         self.last_beat = Some(beat);
+        self.ticks_since_click = 0;
     }
 
     /// Flips the click mute flag.
@@ -164,6 +192,43 @@ mod tests {
         // must let it click again.
         m.on_tick(Instant::now(), -PPQN * 4, Meter::FOUR_FOUR, true);
         assert_eq!(rx.pop().unwrap().class, ClickClass::Strong);
+    }
+
+    /// Plays from `from` to `to` (exclusive), a tick at a time, returning
+    /// the number of clicks.
+    fn play(m: &mut Metronome, rx: &mut Consumer<ClickEvent>, from: i32, to: i32) -> usize {
+        (from..to).for_each(|tick| m.on_tick(Instant::now(), tick, Meter::FOUR_FOUR, true));
+        iter::from_fn(|| rx.pop().ok()).count()
+    }
+
+    /// Enter's tempo fit while playing moves playback onto the new tempo's
+    /// beat grid: a beat of it that would sound a few ticks after the old
+    /// grid's last click — a doubled click — is skipped, and the beat after
+    /// it sounds.
+    #[test]
+    fn a_beat_right_after_a_retime_too_close_to_the_last_click_is_skipped() {
+        let (mut m, mut rx) = make(false);
+        assert_eq!(play(&mut m, &mut rx, PPQN * 2 - 10, PPQN * 2 + 1), 1);
+
+        // The retime moves playback 10 ticks short of the next beat.
+        m.playback_retimed();
+        assert_eq!(play(&mut m, &mut rx, PPQN * 3 - 10, PPQN * 3 + 1), 0);
+        assert_eq!(play(&mut m, &mut rx, PPQN * 3 + 1, PPQN * 4 + 1), 1);
+    }
+
+    /// A retime whose first beat comes half a beat or more after the last
+    /// click leaves it sounding; and without a retime a beat right after a
+    /// jump (a loop wrap onto the region start) still clicks.
+    #[test]
+    fn a_beat_far_enough_after_a_retime_or_after_any_other_jump_sounds() {
+        let (mut m, mut rx) = make(false);
+        assert_eq!(play(&mut m, &mut rx, PPQN - 1, PPQN + 1), 1);
+        m.playback_retimed();
+        assert_eq!(play(&mut m, &mut rx, PPQN * 3 - PPQN / 2, PPQN * 3 + 1), 1);
+
+        let (mut m, mut rx) = make(false);
+        assert_eq!(play(&mut m, &mut rx, PPQN - 1, PPQN + 1), 1);
+        assert_eq!(play(&mut m, &mut rx, -5, 1), 1);
     }
 
     /// Feeds one bar of `meter` tick by tick, from tick 0, and returns the

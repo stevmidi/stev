@@ -99,6 +99,9 @@ pub(crate) fn start_sequencer_thread(
                                     event_handlers.end_live_recording_workflow(&mut sequencer, &mut undo_record);
                                 }
                             }
+                            if sequencer.take_playback_retimed() {
+                                metronome.playback_retimed();
+                            }
                             metronome.on_tick(tick.at, click_tick, sequencer.meter(), running);
                         }
                     }

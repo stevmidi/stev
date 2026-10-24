@@ -135,7 +135,9 @@ flag and the clock channel. Every clock command originates from `Transport`;
   releasing. The `SetRegion` that moves the loop onto the retimed clip
   follows on the transport channel and realigns the clock onto the moved
   playhead; until it lands the clock is a few ticks of command latency out of
-  phase, as after a wrap.
+  phase, as after a wrap. The tick pump also tells the metronome
+  (`Sequencer::take_playback_retimed`), which skips a first beat on the new
+  grid that would come too soon after the last click.
 
 ### Downstream compensators (still needed)
 

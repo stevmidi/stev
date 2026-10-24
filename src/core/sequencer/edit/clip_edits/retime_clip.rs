@@ -491,6 +491,8 @@ mod tests {
         assert!(held.is_empty(), "held through the fit: {held:?}");
         let released = play_until(&mut sequencer, &mut plugin_rx, fitted_off);
         assert_eq!(released, vec![[0x80, 60, 0]], "released on time");
+        assert!(sequencer.take_playback_retimed(), "the metronome is told");
+        assert!(!sequencer.take_playback_retimed(), "once");
     }
 
     /// Undoing the fit while playing is in phase too: the playhead moves back

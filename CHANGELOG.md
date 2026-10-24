@@ -29,6 +29,8 @@ Breaking entries are marked **Breaking** and say what to do about them.
   with the retimed notes, so the clip plays on seamlessly instead of jumping
   to another point of the take until the next loop wrap. The same goes for
   `⌥=`/`⌥-` on a project's only clip, and for undoing or redoing either.
+- The metronome no longer double-clicks when a tempo fit while playing
+  switches it to the new tempo's beats.
 
 ## [0.5.0] - 2026-10-21
 

@@ -143,6 +143,9 @@ pub(crate) struct Sequencer {
     pub(super) meter: Arc<AtomicU16>,
     /// Whether the transport is running, shared.
     pub(super) running: Arc<AtomicBool>,
+    /// A retime moved `playback_tick` onto a new tempo's beat grid since the
+    /// tick pump last asked ([`Sequencer::take_playback_retimed`]).
+    pub(super) playback_retimed: bool,
 
     // --- Recording state ---
     /// The rolling buffer every incoming note is fed into, ready to be
@@ -239,6 +242,7 @@ impl Sequencer {
             tempo,
             meter,
             running,
+            playback_retimed: false,
             capture_clip: Clip::new(),
             capture_clock_offset: None,
             live_rec_clip: Clip::new(),
@@ -283,6 +287,13 @@ impl Sequencer {
     /// Current playback position, in ticks.
     pub(crate) fn playback_tick(&self) -> i32 {
         self.playback_tick.load(Ordering::Relaxed)
+    }
+
+    /// Whether a retime moved playback with its notes since the last call
+    /// (`Sequencer::retime_clip_events`), clearing it — for the tick pump to
+    /// tell the metronome (`Metronome::playback_retimed`).
+    pub(crate) fn take_playback_retimed(&mut self) -> bool {
+        std::mem::take(&mut self.playback_retimed)
     }
 
     /// The transport odometer — musical time played, in ticks. A duration base,

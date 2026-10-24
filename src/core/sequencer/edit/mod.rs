@@ -602,6 +602,7 @@ impl Sequencer {
             .get_mut(track_idx)?
             .retime_clip_events(clip_id, edit)?;
         self.playback_tick.fetch_add(moved, Ordering::Relaxed);
+        self.playback_retimed |= moved != 0;
         Some(edited)
     }
 }
