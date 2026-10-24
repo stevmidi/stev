@@ -3,9 +3,7 @@
 //! prompt's button layout is shared with its click test
 //! ([`unsaved_button_at`](Display::unsaved_button_at)).
 
-use egui::{
-    Align2, CornerRadius, FontId, Id, Painter, Pos2, Rect, Stroke, StrokeKind, Ui, pos2, vec2,
-};
+use egui::{Align2, FontId, Id, Painter, Pos2, Rect, Ui, pos2, vec2};
 
 use crate::core::config::PROJECT_NAME_MAX_CHARS;
 use crate::core::project::{ProjectAction, project_exists, project_name_from_input};
@@ -211,35 +209,18 @@ impl Display {
         );
         painter.galley(text_pos, galley, theme::fg());
 
-        let hint_font = FontId::proportional(Self::FONT_HINT);
         painter.text(
             layout.note.left_center(),
             Align2::LEFT_CENTER,
             "←→ choose · Enter press · D don't save · Esc cancel",
-            hint_font.clone(),
+            FontId::proportional(Self::FONT_HINT),
             theme::fg_dim(),
         );
 
         for (button, button_rect) in UnsavedButton::ALL.into_iter().zip(layout.buttons) {
             let is_selected = button == selected;
-            painter.rect_filled(
-                button_rect,
-                CornerRadius::same(3),
-                accent_if(is_selected, theme::fg_dim()).gamma_multiply(0.15),
-            );
-            painter.rect_stroke(
-                button_rect,
-                CornerRadius::same(3),
-                Stroke::new(1.0_f32, accent_if(is_selected, theme::separator())),
-                StrokeKind::Inside,
-            );
-            painter.text(
-                button_rect.center(),
-                Align2::CENTER_CENTER,
-                button.label(),
-                hint_font.clone(),
-                accent_if(is_selected, theme::fg()),
-            );
+            let color = accent_if(is_selected, theme::fg());
+            Self::draw_modal_button(painter, button_rect, button.label(), is_selected, color);
         }
     }
 }

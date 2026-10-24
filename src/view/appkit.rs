@@ -20,21 +20,21 @@
 //! knows nothing of the About tab; it is pointed at the tab instead, and
 //! Check for Updates… and Settings… are added under it. Each targets a method
 //! added to the delegate's class the same way, which stores an
-//! [`AppMenuRequest`] for `Display` to take on the next frame and wakes it.
+//! [`AppMenuRequest`] for `Display` to take on the next frame and wakes it —
+//! both on the main thread, so a thread-local cell carries it.
 //! See `330-macos-app.md` § The About tab.
 //!
 //! Also [`MainGlContext`]: eframe's OpenGL context, kept so it can be made
 //! current again after plugin code has made its own current.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::ffi::CStr;
-use std::sync::atomic::{AtomicU8, Ordering};
 
 use eframe::CreationContext;
 use egui::Context;
 use objc2::ffi::{class_addMethod, object_getClass};
 use objc2::rc::{Retained, Weak};
-use objc2::runtime::{AnyClass, AnyObject, Imp, Sel};
+use objc2::runtime::{AnyObject, Imp, Sel};
 use objc2::{MainThreadMarker, sel};
 // Deprecated by Apple in favour of Metal, but it is what eframe's glow
 // renderer draws with.
@@ -63,6 +63,9 @@ thread_local! {
     static MAIN_WINDOW: RefCell<Weak<NSWindow>> = RefCell::default();
     /// (main thread) egui's context, woken when a menu item stores a request.
     static REPAINT_CTX: RefCell<Option<Context>> = RefCell::default();
+    /// (main thread) The last request a menu item stored. A later one
+    /// replaces it: the frame between them acts on the latest.
+    static APP_MENU_REQUEST: Cell<Option<AppMenuRequest>> = const { Cell::new(None) };
 }
 
 /// What an app-menu item asked for, taken by `Display` each frame
@@ -70,7 +73,7 @@ thread_local! {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AppMenuRequest {
     /// About Stev: Settings on the About tab.
-    About = 1,
+    About,
     /// Check for Updates…: the About tab, and a check started.
     CheckForUpdates,
     /// Settings… clicked: Settings on the tab last used.
@@ -80,31 +83,14 @@ pub(crate) enum AppMenuRequest {
     SettingsKey,
 }
 
-impl AppMenuRequest {
-    /// Every request, in discriminant order from 1.
-    const ALL: [AppMenuRequest; 4] = [
-        AppMenuRequest::About,
-        AppMenuRequest::CheckForUpdates,
-        AppMenuRequest::Settings,
-        AppMenuRequest::SettingsKey,
-    ];
-}
-
-/// The last request a menu item stored, `0` for none. A later one replaces
-/// it: the frame between them acts on the latest.
-static APP_MENU_REQUEST: AtomicU8 = AtomicU8::new(0);
-
 /// The request an app-menu item stored since the last call, if any.
 pub(crate) fn take_app_menu_request() -> Option<AppMenuRequest> {
-    let stored = APP_MENU_REQUEST.swap(0, Ordering::Relaxed);
-    AppMenuRequest::ALL
-        .into_iter()
-        .find(|&request| request as u8 == stored)
+    APP_MENU_REQUEST.take()
 }
 
 /// Stores `request` for the next frame and wakes it.
 fn send_app_menu_request(request: AppMenuRequest) {
-    APP_MENU_REQUEST.store(request as u8, Ordering::Relaxed);
+    APP_MENU_REQUEST.set(Some(request));
     REPAINT_CTX.with(|ctx| {
         if let Some(ctx) = &*ctx.borrow() {
             ctx.request_repaint();
@@ -157,7 +143,7 @@ pub(crate) fn wire_app_menu(cc: &CreationContext<'_>) {
 /// Points the app menu's About item at the About tab, and adds Check for
 /// Updates… under it, then a separator and Settings… (`⌘,`). Each item
 /// targets the app delegate, whose class gains the method it sends
-/// ([`add_delegate_method`]). Nothing changes if there is no About item.
+/// ([`add_action_method`]). Nothing changes if there is no About item.
 fn add_about_items(app: &NSApplication, app_menu: &NSMenu, mtm: MainThreadMarker) {
     let Some(delegate) = app.delegate() else {
         return;
@@ -170,12 +156,13 @@ fn add_about_items(app: &NSApplication, app_menu: &NSMenu, mtm: MainThreadMarker
     else {
         return;
     };
-    // SAFETY: the delegate's class, which each method is added to before an
-    // item can send it.
-    let class = unsafe { object_getClass(delegate_object) };
-    add_delegate_method(class, sel!(stevShowAbout:), show_about);
-    add_delegate_method(class, sel!(stevCheckForUpdates:), check_for_updates);
-    add_delegate_method(class, sel!(stevShowSettings:), show_settings);
+    add_action_method(delegate_object, sel!(stevShowAbout:), show_about);
+    add_action_method(
+        delegate_object,
+        sel!(stevCheckForUpdates:),
+        check_for_updates,
+    );
+    add_action_method(delegate_object, sel!(stevShowSettings:), show_settings);
     let new_item = |title: &str, action: Sel, key: &str| {
         // SAFETY: a fresh item with the action the delegate now answers; the
         // target is held weakly, and winit's event loop keeps the delegate
@@ -209,17 +196,34 @@ fn add_about_items(app: &NSApplication, app_menu: &NSMenu, mtm: MainThreadMarker
 /// An action method: `void (id self, SEL _cmd, id sender)`.
 type ActionImp = extern "C-unwind" fn(&AnyObject, Sel, Option<&AnyObject>);
 
-/// Adds `imp` to `class` as the action method `sel`.
-fn add_delegate_method(class: *const AnyClass, sel: Sel, imp: ActionImp) {
-    /// `void (id self, SEL _cmd, id sender)`.
-    const TYPES: &CStr = c"v@:@";
-    // SAFETY: `imp` has the C signature `TYPES` describes, the one a menu
-    // item sends its action with; erasing it to `Imp` is how the runtime
-    // stores every method. `class_addMethod` adds nothing if the class
-    // already has the selector.
+/// Adds `imp` to `delegate`'s class (winit's) as the method `sel`, with the
+/// Objective-C type encoding `types`; returns whether it was added
+/// (`class_addMethod` adds nothing if the class already has the selector).
+///
+/// # Safety
+///
+/// `imp` must be a function erased to `Imp` (how the runtime stores every
+/// method) whose C signature is the one `types` describes.
+unsafe fn add_delegate_method(delegate: &AnyObject, sel: Sel, imp: Imp, types: &CStr) -> bool {
+    // SAFETY: the class of a live object; the caller vouches for `imp`.
     unsafe {
-        let imp = std::mem::transmute::<ActionImp, Imp>(imp);
-        class_addMethod(class.cast_mut(), sel, imp, TYPES.as_ptr());
+        let class = object_getClass(delegate).cast_mut();
+        class_addMethod(class, sel, imp, types.as_ptr()).as_bool()
+    }
+}
+
+/// Adds the menu action `imp` to `delegate`'s class as `sel`
+/// ([`add_delegate_method`]).
+fn add_action_method(delegate: &AnyObject, sel: Sel, imp: ActionImp) {
+    // SAFETY: an `ActionImp` has the C signature `v@:@` describes, the one a
+    // menu item sends its action with.
+    unsafe {
+        add_delegate_method(
+            delegate,
+            sel,
+            std::mem::transmute::<ActionImp, Imp>(imp),
+            c"v@:@",
+        );
     }
 }
 
@@ -253,31 +257,20 @@ fn hold_terminate(app: &NSApplication) {
     let Some(delegate) = app.delegate() else {
         return;
     };
-    let delegate_object: &AnyObject = delegate.as_ref();
     /// `NSApplicationTerminateReply (id self, SEL _cmd, NSApplication *sender)`.
-    const TYPES: &CStr = c"Q@:@";
-    // SAFETY: `should_terminate` has the C signature `TYPES` describes, the
-    // one AppKit calls `applicationShouldTerminate:` with; erasing it to `Imp`
-    // is how the runtime stores every method. `class_addMethod` adds nothing
-    // if the class already has the selector.
+    type TerminateImp =
+        extern "C-unwind" fn(&AnyObject, Sel, Option<&AnyObject>) -> NSApplicationTerminateReply;
+    // SAFETY: `should_terminate` has the C signature `Q@:@` describes, the
+    // one AppKit calls `applicationShouldTerminate:` with.
     let added = unsafe {
-        let class = object_getClass(delegate_object).cast_mut();
-        let imp = std::mem::transmute::<
-            extern "C-unwind" fn(
-                &AnyObject,
-                Sel,
-                Option<&AnyObject>,
-            ) -> NSApplicationTerminateReply,
-            Imp,
-        >(should_terminate);
-        class_addMethod(
-            class,
+        add_delegate_method(
+            delegate.as_ref(),
             sel!(applicationShouldTerminate:),
-            imp,
-            TYPES.as_ptr(),
+            std::mem::transmute::<TerminateImp, Imp>(should_terminate),
+            c"Q@:@",
         )
     };
-    if added.as_bool() {
+    if added {
         // The delegate is strongly held by winit's event loop (AppKit's
         // reference is weak) and by `delegate` here, so it survives the swap.
         app.setDelegate(None);

@@ -10,6 +10,7 @@
 //! (`handle_shortcut_recorder_input_event`, earlier in the input chain).
 //! See `020-views-and-state.md`.
 
+use crate::view::display::about_tab::UPDATE_CHECK;
 use crate::view::display::keyboard_tab::is_keyboard_tab_key;
 use crate::view::display::modal_focus::SettingsTab;
 use crate::view::display::settings_modal::{is_settings_chord, settings_tab_step};
@@ -52,19 +53,14 @@ impl Display {
             SettingsTab::Midi => self.handle_midi_tab_key(key, modifiers),
             SettingsTab::Appearance => self.handle_appearance_tab_key(key),
             SettingsTab::Keyboard => self.handle_keyboard_tab_key(key, modifiers),
-            #[cfg(target_os = "macos")]
             SettingsTab::About => self.handle_about_tab_key(key),
-            // No check off macOS, so no keys.
-            #[cfg(not(target_os = "macos"))]
-            SettingsTab::About => false,
         }
     }
 
-    /// The About tab's keys: Enter checks for updates, as the button does.
-    /// Returns whether it took the key.
-    #[cfg(target_os = "macos")]
+    /// The About tab's keys: Enter checks for updates, as the button does
+    /// (`UPDATE_CHECK`; no keys elsewhere). Returns whether it took the key.
     fn handle_about_tab_key(&mut self, key: Key) -> bool {
-        if key == Key::Enter {
+        if UPDATE_CHECK && key == Key::Enter {
             self.settings.about.request_check();
             return true;
         }

@@ -5,22 +5,17 @@
 //! comparison and the response parsing are pure. See
 //! `330-macos-app.md` § The About tab.
 //!
-//! Off macOS only [`CURRENT_VERSION`] is used, but the rest still builds and
-//! its tests run on every CI platform.
-#![cfg_attr(not(target_os = "macos"), allow(dead_code))]
+//! It builds everywhere, but the About tab offers it only on macOS
+//! (`about_tab.rs`, `UPDATE_CHECK`).
 
-#[cfg(target_os = "macos")]
 use std::{process::Command, thread};
 
-#[cfg(target_os = "macos")]
 use crossbeam_channel::{Receiver, bounded};
-#[cfg(target_os = "macos")]
 use egui::Context;
 use serde::Deserialize;
 
 /// GitHub's API for the newest published release (drafts and pre-releases
 /// left out).
-#[cfg(target_os = "macos")]
 const LATEST_RELEASE_URL: &str = "https://api.github.com/repos/stevmidi/stev/releases/latest";
 
 /// The running version, `Cargo.toml`'s.
@@ -87,11 +82,9 @@ pub(crate) fn update_check_result(current: &str, response: Option<&str>) -> Upda
 
 /// Starts a check on an `"update-check"` thread and returns where its one
 /// answer arrives; `ctx` is woken when it does. A thread that can't start
-/// answers [`UpdateCheck::Failed`] at once.
-#[cfg(target_os = "macos")]
+/// drops its sender, which the receiver reads as a failed check.
 pub(crate) fn start_update_check(ctx: Context) -> Receiver<UpdateCheck> {
     let (tx, rx) = bounded(1);
-    let failed = tx.clone();
     let spawned = thread::Builder::new()
         .name("update-check".to_string())
         .spawn(move || {
@@ -108,8 +101,8 @@ pub(crate) fn start_update_check(ctx: Context) -> Receiver<UpdateCheck> {
                 .ok();
             ctx.request_repaint();
         });
-    if spawned.is_err() {
-        failed.send(UpdateCheck::Failed).ok();
+    if let Err(err) = spawned {
+        eprintln!("couldn't start the update check: {err}");
     }
     rx
 }

@@ -422,9 +422,6 @@ impl Display {
         }
         self.input_was_clip_view = in_clip_view;
         let mut events = self.input_poller.take_input_events();
-        // The app menu's items, ahead of this frame's keys (`about_tab.rs`).
-        #[cfg(target_os = "macos")]
-        self.take_app_menu_request(&mut events);
         // Nothing acts while a project being opened loads its plugins — not
         // even the project chords ahead of the overlay below: the open
         // project must stay exactly as it is.
@@ -463,7 +460,8 @@ impl Display {
     /// project dialog, a rename field, the BPM or meter field, a modal
     /// overlay. Keep it in step with that chain — a new handler there that
     /// swallows keys belongs here too, or the computer keyboard plays notes
-    /// while the user types.
+    /// while the user types. The app menu's clicked items read it too
+    /// (`Display::take_app_menu_request`, macOS).
     pub(super) fn keyboard_taken(&self) -> bool {
         self.project_dialog.is_some()
             || self.track_rename.is_some()
@@ -598,7 +596,7 @@ impl Display {
         // `?` opens Settings on the Keyboard tab, from any key focus
         // (`keyboard_tab.rs`); inside it `?` is typing, for the search.
         if is_keyboard_tab_key(key, modifiers) {
-            self.open_keyboard_tab();
+            self.open_settings_on(SettingsTab::Keyboard);
             return true;
         }
         false
@@ -843,7 +841,7 @@ impl Display {
                 // The header's `?` chip opens Settings on the Keyboard tab;
                 // a press outside the panel while it is up closes it again.
                 if self.is_on_help_chip(x, y) {
-                    self.open_keyboard_tab();
+                    self.open_settings_on(SettingsTab::Keyboard);
                     return true;
                 }
                 // The keyboard chip beside it: `⌘/Ctrl+K`'s mouse twin.

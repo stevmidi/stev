@@ -12,12 +12,8 @@ use std::env::consts::ARCH;
 use egui::emath::GuiRounding;
 use egui::{Id, Pos2, Theme, Ui};
 
-use crate::core::update_check::CURRENT_VERSION;
-#[cfg(target_os = "macos")]
-use crate::core::update_check::UpdateCheck;
-#[cfg(target_os = "macos")]
-use crate::view::display::about_tab::UpdateState;
-use crate::view::display::about_tab::{AboutLink, VST_LOGO_SIZE};
+use crate::core::update_check::{CURRENT_VERSION, UpdateCheck};
+use crate::view::display::about_tab::{AboutLink, UPDATE_CHECK, UpdateState, VST_LOGO_SIZE};
 
 use crate::view::display::keyboard_tab::{
     KeyboardFocus, Recording, ShortcutLine, ShortcutRow, row_lines, shortcut_lines,
@@ -111,11 +107,9 @@ struct AboutTabLayout {
     /// The links, a row each in [`AboutLink::LISTED`] order.
     links: ListRows,
     /// Check for updates.
-    #[cfg(target_os = "macos")]
     check: Rect,
     /// The check's answer, right of the button to the content's edge — a
     /// link when it found a newer release.
-    #[cfg(target_os = "macos")]
     status: Rect,
     /// The VST Compatible logo, at the foot.
     logo: Rect,
@@ -150,7 +144,6 @@ impl Display {
     /// Radius of the dot by a rebound command's chords.
     const CHANGED_DOT_R: f32 = 2.5 * Self::M_SCALE;
     /// Width of the About tab's Check for updates.
-    #[cfg(target_os = "macos")]
     const CHECK_W: f32 = 130.0 * Self::M_SCALE;
     /// Line height of the trademark sentence: its two lines fit beside the
     /// logo.
@@ -290,9 +283,7 @@ impl Display {
             first: row(lines.row(1).max.y + row_h),
             count: AboutLink::LISTED.len(),
         };
-        #[cfg(target_os = "macos")]
         let check_row = row(links.row(links.count - 1).max.y + row_h);
-        #[cfg(target_os = "macos")]
         let check = Rect::from_min_size(
             pos2(check_row.min.x + Self::SETTINGS_TEXT_INSET, check_row.min.y),
             vec2(Self::CHECK_W, row_h),
@@ -315,9 +306,7 @@ impl Display {
             name,
             lines,
             links,
-            #[cfg(target_os = "macos")]
             check,
-            #[cfg(target_os = "macos")]
             status: Rect::from_min_max(pos2(check.max.x, check_row.min.y), check_row.max),
             logo,
             trademark,
@@ -412,22 +401,12 @@ impl Display {
         if let Some(i) = layout.links.hit(p) {
             return Some(SettingsHit::Link(AboutLink::LISTED[i]));
         }
-        #[cfg(target_os = "macos")]
-        {
-            let about = &self.settings.about;
-            if layout.check.contains(p) && !about.is_checking() {
-                return Some(SettingsHit::CheckForUpdates);
-            }
-            if layout.status.contains(p)
-                && matches!(
-                    about.update,
-                    UpdateState::Done(UpdateCheck::Available { .. })
-                )
-            {
-                return Some(SettingsHit::Link(AboutLink::Release));
-            }
+        let about = &self.settings.about;
+        if UPDATE_CHECK && layout.check.contains(p) && !about.is_checking() {
+            return Some(SettingsHit::CheckForUpdates);
         }
-        None
+        (layout.status.contains(p) && about.release_url().is_some())
+            .then_some(SettingsHit::Link(AboutLink::Release))
     }
 
     /// Whether the pointer is on something in the settings panel a click
@@ -505,8 +484,9 @@ impl Display {
             let row = layout.links.row(i);
             Self::draw_settings_text(painter, row, link.label(), Self::FONT_LIST, theme::accent());
         }
-        #[cfg(target_os = "macos")]
-        self.draw_update_check(painter, layout);
+        if UPDATE_CHECK {
+            self.draw_update_check(painter, layout);
+        }
 
         let ctx = painter.ctx();
         let ppp = painter.pixels_per_point();
@@ -535,37 +515,15 @@ impl Display {
     /// Check for updates, framed like the project dialogs' buttons ("Checking…"
     /// and dim while a check runs), and its answer beside it: up to date, a
     /// newer version as a link to its release, or GitHub out of reach.
-    #[cfg(target_os = "macos")]
     fn draw_update_check(&self, painter: &Painter, layout: AboutTabLayout) {
         let about = &self.settings.about;
         let checking = about.is_checking();
-        let color = if checking {
-            theme::fg_dim()
+        let (label, color) = if checking {
+            ("Checking…", theme::fg_dim())
         } else {
-            theme::fg()
+            ("Check for updates", theme::fg())
         };
-        painter.rect_filled(
-            layout.check,
-            CornerRadius::same(3),
-            theme::fg_dim().gamma_multiply(0.15),
-        );
-        painter.rect_stroke(
-            layout.check,
-            CornerRadius::same(3),
-            Stroke::new(1.0_f32, theme::separator()),
-            StrokeKind::Inside,
-        );
-        painter.text(
-            layout.check.center(),
-            Align2::CENTER_CENTER,
-            if checking {
-                "Checking…"
-            } else {
-                "Check for updates"
-            },
-            FontId::proportional(Self::FONT_HINT),
-            color,
-        );
+        Self::draw_modal_button(painter, layout.check, label, false, color);
         let (text, color) = match &about.update {
             UpdateState::Done(UpdateCheck::UpToDate) => (
                 format!("You're up to date ({CURRENT_VERSION})"),
@@ -1032,13 +990,10 @@ mod tests {
         assert!(last_link.max.y < layout.trademark.first.min.y);
         assert!(layout.trademark.first.min.y >= layout.logo.min.y);
         assert!(layout.trademark.row(1).max.y <= layout.logo.max.y);
-        #[cfg(target_os = "macos")]
-        {
-            assert!(last_link.max.y < layout.check.min.y);
-            assert!(layout.check.max.y < layout.logo.min.y);
-            assert_eq!(layout.status.min.x, layout.check.max.x);
-            assert_eq!(layout.status.max.x, content.max.x);
-        }
+        assert!(last_link.max.y < layout.check.min.y);
+        assert!(layout.check.max.y < layout.logo.min.y);
+        assert_eq!(layout.status.min.x, layout.check.max.x);
+        assert_eq!(layout.status.max.x, content.max.x);
     }
 
     #[test]

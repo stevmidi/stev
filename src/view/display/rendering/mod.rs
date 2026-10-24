@@ -1203,12 +1203,16 @@ impl eframe::App for Display {
         }
     }
 
-    /// While files from the file manager hover (or land), feeds egui the
-    /// OS's pointer: the windowing layer reports none during a drag, so the
-    /// cursor line and the import ghost would otherwise freeze where the
-    /// pointer last was (`input/midi_drag.rs`).
+    /// Feeds egui what AppKit kept from it. While files from the file
+    /// manager hover (or land), the OS's pointer: the windowing layer
+    /// reports none during a drag, so the cursor line and the import ghost
+    /// would otherwise freeze where the pointer last was
+    /// (`input/midi_drag.rs`). On macOS, the app menu's requests, its
+    /// Settings… `⌘,` among them (`settings_modal.rs`).
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
         self.inject_drag_pointer(ctx, raw_input);
+        #[cfg(target_os = "macos")]
+        self.take_app_menu_request(raw_input);
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
@@ -1265,7 +1269,6 @@ impl eframe::App for Display {
         self.in_pane(Pane::Clip, Self::settle_window_edge_commit);
         self.sync_window_close(ctx);
         self.sync_project_dialog_window(ctx);
-        #[cfg(target_os = "macos")]
         self.sync_update_check(ctx);
         self.in_pane(Pane::Clip, Self::sync_clip_frame);
         self.in_pane(Pane::Arranger, Self::sync_arranger_scroll);

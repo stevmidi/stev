@@ -60,6 +60,35 @@ impl Display {
         (px, py)
     }
 
+    /// Paints a modal's button: a faint fill and an outline, `accent` while
+    /// `is_selected`, with `label` centred in the hint font in `color`.
+    fn draw_modal_button(
+        painter: &Painter,
+        rect: Rect,
+        label: &str,
+        is_selected: bool,
+        color: Color32,
+    ) {
+        painter.rect_filled(
+            rect,
+            CornerRadius::same(3),
+            accent_if(is_selected, theme::fg_dim()).gamma_multiply(0.15),
+        );
+        painter.rect_stroke(
+            rect,
+            CornerRadius::same(3),
+            Stroke::new(1.0_f32, accent_if(is_selected, theme::separator())),
+            StrokeKind::Inside,
+        );
+        painter.text(
+            rect.center(),
+            Align2::CENTER_CENTER,
+            label,
+            FontId::proportional(Self::FONT_HINT),
+            color,
+        );
+    }
+
     /// Paints `text` on one line left-aligned at `left_center`, cut with an
     /// ellipsis at `max_width` — every line of a modal's content.
     fn draw_modal_text(

@@ -8,22 +8,17 @@
 use std::cell::OnceCell;
 use std::process::Command;
 
-#[cfg(target_os = "macos")]
 use crossbeam_channel::{Receiver, TryRecvError};
-#[cfg(target_os = "macos")]
-use egui::Key;
 use egui::{ColorImage, Context, TextureHandle, TextureOptions, Vec2, vec2};
 
-#[cfg(target_os = "macos")]
-use crate::core::input_event::{InputEvent, KeyModifiers};
-#[cfg(target_os = "macos")]
 use crate::core::update_check::{UpdateCheck, start_update_check};
-#[cfg(target_os = "macos")]
-use crate::view::appkit::{AppMenuRequest, take_app_menu_request};
 
 use super::Display;
-#[cfg(target_os = "macos")]
-use super::{Overlay, SettingsTab};
+
+/// Whether the About tab offers Check for updates: only on macOS, the one
+/// platform a binary ships for. Everything else about the check compiles on
+/// every platform; this decides whether its button is drawn, hit and keyed.
+pub(super) const UPDATE_CHECK: bool = cfg!(target_os = "macos");
 
 /// The logo's height in points, as `scripts/make-vst-logo.sh` renders it.
 const VST_LOGO_HEIGHT: usize = 48;
@@ -59,7 +54,6 @@ pub(crate) enum AboutLink {
     /// The GitHub repository.
     Repository,
     /// A newer release's page, once a check found one.
-    #[cfg(target_os = "macos")]
     Release,
 }
 
@@ -72,14 +66,12 @@ impl AboutLink {
         match self {
             AboutLink::Website => "stevmidi.com",
             AboutLink::Repository => "github.com/stevmidi/stev",
-            #[cfg(target_os = "macos")]
             AboutLink::Release => "View the release",
         }
     }
 }
 
 /// Where the update check stands.
-#[cfg(target_os = "macos")]
 #[derive(Default)]
 pub(super) enum UpdateState {
     /// Not asked for since launch.
@@ -122,13 +114,11 @@ impl VstLogo {
 #[derive(Default)]
 pub(super) struct AboutTab {
     /// The update check's progress.
-    #[cfg(target_os = "macos")]
     pub(super) update: UpdateState,
     /// The VST Compatible logo.
     pub(super) logo: VstLogo,
 }
 
-#[cfg(target_os = "macos")]
 impl AboutTab {
     /// Whether a check is asked for or running — the button reads
     /// "Checking…" and takes no press.
@@ -147,7 +137,7 @@ impl AboutTab {
     }
 
     /// The page of the newer release a check found.
-    fn release_url(&self) -> Option<&str> {
+    pub(super) fn release_url(&self) -> Option<&str> {
         match &self.update {
             UpdateState::Done(UpdateCheck::Available { url, .. }) => Some(url),
             _ => None,
@@ -175,7 +165,6 @@ impl Display {
         let url = match link {
             AboutLink::Website => WEBSITE_URL,
             AboutLink::Repository => REPOSITORY_URL,
-            #[cfg(target_os = "macos")]
             AboutLink::Release => match self.settings.about.release_url() {
                 Some(url) => url,
                 None => return,
@@ -186,7 +175,6 @@ impl Display {
 
     /// Once a frame: starts an asked-for update check, and takes a running
     /// one's answer when it arrives. The check wakes the frame itself.
-    #[cfg(target_os = "macos")]
     pub(super) fn sync_update_check(&mut self, ctx: &Context) {
         let update = &mut self.settings.about.update;
         match update {
@@ -199,56 +187,6 @@ impl Display {
                 Err(TryRecvError::Empty) => {}
             },
             UpdateState::Idle | UpdateState::Done(_) => {}
-        }
-    }
-
-    /// Opens Settings on `tab`, or switches to it when Settings is already
-    /// up — the app menu's way in.
-    #[cfg(target_os = "macos")]
-    fn show_settings_tab(&mut self, tab: SettingsTab) {
-        if self.overlay != Some(Overlay::Settings) {
-            self.open_settings();
-        }
-        self.settings.tab = tab;
-    }
-
-    /// Once a frame, ahead of the frame's own events: acts on the app menu's
-    /// About Stev, Check for Updates… and Settings… (`view/appkit.rs`). About
-    /// opens Settings on the About tab; Check for Updates does too and starts
-    /// a check, unless one is running. Settings… clicked opens Settings on the
-    /// tab last used; its `⌘,` arrives as the key itself, pushed onto
-    /// `events`, so the menu changes nothing about the chord. While a project
-    /// dialog, a field or a non-settings overlay has the keyboard, a clicked
-    /// item does nothing — the menu can't end those.
-    #[cfg(target_os = "macos")]
-    pub(super) fn take_app_menu_request(&mut self, events: &mut Vec<InputEvent>) {
-        let Some(request) = take_app_menu_request() else {
-            return;
-        };
-        if request == AppMenuRequest::SettingsKey {
-            let modifiers = KeyModifiers {
-                command: true,
-                ..KeyModifiers::default()
-            };
-            let key = Key::Comma;
-            events.insert(0, InputEvent::KeyPressed { key, modifiers });
-            return;
-        }
-        if self.keyboard_taken() && self.overlay != Some(Overlay::Settings) {
-            return;
-        }
-        match request {
-            AppMenuRequest::About => self.show_settings_tab(SettingsTab::About),
-            AppMenuRequest::CheckForUpdates => {
-                self.show_settings_tab(SettingsTab::About);
-                self.settings.about.request_check();
-            }
-            AppMenuRequest::Settings => {
-                if self.overlay != Some(Overlay::Settings) {
-                    self.open_settings();
-                }
-            }
-            AppMenuRequest::SettingsKey => {}
         }
     }
 }

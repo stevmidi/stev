@@ -636,12 +636,6 @@ fn scroll_to_show_line(
 }
 
 impl Display {
-    /// Opens Settings on the Keyboard tab (`?`, the header's `?` chip).
-    pub(super) fn open_keyboard_tab(&mut self) {
-        self.open_settings();
-        self.settings.tab = SettingsTab::Keyboard;
-    }
-
     /// Whether the settings modal is up on its Keyboard tab.
     pub(super) fn keyboard_tab_showing(&self) -> bool {
         self.overlay == Some(Overlay::Settings) && self.settings.tab == SettingsTab::Keyboard

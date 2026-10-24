@@ -7,11 +7,15 @@
 //! share one layout in `rendering/modals/settings.rs`. See
 //! `020-views-and-state.md` and `030-ui-design.md` § Settings modal.
 
+#[cfg(target_os = "macos")]
+use egui::{Event, Modifiers, RawInput};
 use egui::{Key, pos2};
 
 use crate::core::config;
 use crate::core::input_event::{InputEvent, KeyModifiers};
 use crate::core::settings::clamp_midi_out_offset_ms;
+#[cfg(target_os = "macos")]
+use crate::view::appkit::{AppMenuRequest, take_app_menu_request};
 use crate::view::theme;
 
 use super::about_tab::{AboutLink, AboutTab};
@@ -84,8 +88,7 @@ pub(super) enum SettingsHit {
     ResetAll,
     /// A link on the About tab.
     Link(AboutLink),
-    /// The About tab's Check for updates (macOS).
-    #[cfg(target_os = "macos")]
+    /// The About tab's Check for updates (macOS, `UPDATE_CHECK`).
     CheckForUpdates,
     /// Anywhere else inside the panel.
     Panel,
@@ -139,6 +142,54 @@ impl Display {
             theme::active_theme_index(),
             THEME_ROWS,
         );
+    }
+
+    /// Opens Settings on `tab`, or switches to it when Settings is already
+    /// up: `?` and the header's `?` chip (the Keyboard tab), and the app
+    /// menu's items.
+    pub(super) fn open_settings_on(&mut self, tab: SettingsTab) {
+        if self.overlay != Some(Overlay::Settings) {
+            self.open_settings();
+        }
+        self.settings.tab = tab;
+    }
+
+    /// `App::raw_input_hook`, ahead of the frame's input: acts on the app
+    /// menu's About Stev, Check for Updates… and Settings… (`view/appkit.rs`).
+    /// About opens Settings on the About tab; Check for Updates does too and
+    /// asks for a check; a click on Settings… opens it on the tab last used.
+    /// Settings…'s `⌘,`, which AppKit matched as the item's key equivalent
+    /// before egui saw it, goes back into egui's input as that key, pressed
+    /// and released, so it travels the input chain as it would without the
+    /// menu. While a project dialog, a field or a non-settings overlay has
+    /// the keyboard (`keyboard_taken`), a clicked item does nothing — the menu
+    /// can't end those.
+    #[cfg(target_os = "macos")]
+    pub(super) fn take_app_menu_request(&mut self, raw_input: &mut RawInput) {
+        let Some(request) = take_app_menu_request() else {
+            return;
+        };
+        let tab = match request {
+            AppMenuRequest::SettingsKey => {
+                for pressed in [true, false] {
+                    raw_input.events.push(Event::Key {
+                        key: Key::Comma,
+                        physical_key: Some(Key::Comma),
+                        pressed,
+                        repeat: false,
+                        modifiers: Modifiers::MAC_CMD | Modifiers::COMMAND,
+                    });
+                }
+                return;
+            }
+            _ if self.keyboard_taken() && self.overlay != Some(Overlay::Settings) => return,
+            AppMenuRequest::About | AppMenuRequest::CheckForUpdates => SettingsTab::About,
+            AppMenuRequest::Settings => self.settings.tab,
+        };
+        self.open_settings_on(tab);
+        if request == AppMenuRequest::CheckForUpdates {
+            self.settings.about.request_check();
+        }
     }
 
     /// Makes theme `idx` the active one and, when that changes it, has the
@@ -232,7 +283,6 @@ impl Display {
             }
             SettingsHit::Theme(idx) => self.apply_theme(idx),
             SettingsHit::Link(link) => self.open_about_link(link),
-            #[cfg(target_os = "macos")]
             SettingsHit::CheckForUpdates => self.settings.about.request_check(),
             // The Keyboard tab's own, taken above.
             SettingsHit::Shortcut { .. }
