@@ -1,6 +1,6 @@
 # A Downloadable macOS App
 
-**Status: plan drafted 2026-10-24 on `feature/macos-app-bundle`; nothing built yet.** Level 1 of the `280` candidate *A downloadable macOS app*: an unsigned universal `Stev.app` in a zip, attached to each `v*` release, with the items that come with it (the hand test, the About tab with its update check, a log file). Levels 2 (signed + notarized) and 3 (a Homebrew cask) stay in `280`. Read `280` § A downloadable macOS app first, and `080` § Releasing and § Licensing.
+**Status: plan agreed 2026-10-24 on `feature/macos-app-bundle`; nothing built yet.** Level 1 of the `280` candidate *A downloadable macOS app*: an unsigned universal `Stev.app` in a zip, attached to each `v*` release, with the items that come with it (the hand test, the About tab with its update check, opening projects from Finder, a log file). Levels 2 (signed + notarized) and 3 (a Homebrew cask) stay in `280`. Read `280` § A downloadable macOS app first, and `080` § Releasing and § Licensing.
 
 ## Decisions
 
@@ -14,10 +14,10 @@ Settled with this doc (2026-10-24):
 3. **About is a settings tab**, `SettingsTab::About`, after Keyboard. Not a window and not a `ViewState`, which follows the settings-modal rule (overlays, not views).
 4. **The log file lands before the release workflow**, so the first binary a stranger runs already writes one.
 
-Proposed here, to confirm before the phase that needs them:
+Proposed with this doc and approved 2026-10-24:
 
 5. **Minimum macOS 11 (Big Sur)** for both slices: `MACOSX_DEPLOYMENT_TARGET=11.0` at build time and `LSMinimumSystemVersion` 11.0 in the plist. 11.0 is the floor for `aarch64` anyway, and one number is simpler to state than two. (Phase 1.)
-6. **No document types in the plist.** If `.stev` files were registered, double-clicking one would launch Stev, but nothing would open the project: winit doesn't hand the app the open-file Apple Event. Registering a type that does nothing is worse than leaving it out, so this waits until opening a file from Finder is built. (Phase 1.)
+6. **The `.stev` type is registered only together with the code that opens it** (phase 4), not in phase 1. Registered on its own, a double-click would launch Stev with nothing loaded: winit doesn't hand the app the open-documents Apple Event. That reads as a bug, and is worse than Finder's honest "no application" dialog. Phase 1's plist has no document types.
 7. **The VST Compatible logo is pre-rendered, not rendered from SVG at runtime.** egui can't draw SVG without `egui_extras`' `svg` feature, which pulls in `resvg` and its tree. A script rasterises both SVG variants once, at 1× and 2×, to raw RGBA files beside them in `docs/images/vst/`, and `include_bytes!` + `ColorImage::from_rgba_unmultiplied` loads them. That adds no dependency, and the logo's `LICENSE.txt` already sits beside the files. (Phase 3.)
 8. **The icon is checked in as `Stev.icns`**, made once by a script from `site/images/logo.svg`, so CI installs nothing to build a bundle. The robin goes on a macOS-style rounded tile, sized to Apple's icon grid, as a separate source SVG (`assets/macos/icon.svg`). The website's logo stays unchanged. (Phase 1.)
 
@@ -50,7 +50,7 @@ Run once from the zip, unpacked from a browser download, so the quarantine flag 
 - **Files**: settings and the library land where `core/paths.rs` says, independent of the working directory (`/` inside a `.app`). Finder drag of a `.mid`, save, load, and the browser.
 - **Quit**: ⌘Q, Dock Quit and logout with unsaved changes.
 - **The app menu**: the menu-bar name reads "Stev". Note whether the items read "About stev" / "Hide stev" / "Quit stev" (the process name), which phase 3 fixes.
-- **Output that goes nowhere**: from a `.app`, stdout and stderr are discarded. List every error a user would need that is lost today. That list feeds phase 4.
+- **Output that goes nowhere**: from a `.app`, stdout and stderr are discarded. List every error a user would need that is lost today. That list feeds phase 5.
 
 Fixes for bundle-only bugs go on their own `fix/` branches, each with a regression test where the layer allows it.
 
@@ -72,7 +72,18 @@ A fourth settings tab, `SettingsTab::About`, after Keyboard:
 - **Tests** (`core/update_check.rs`, pure): the version comparison (strips `v`, numeric `major.minor.patch`, an unparseable tag reads as "couldn't check", never "newer"), and parsing the response JSON, including a missing `tag_name`.
 - Docs: `030` (the tab), `010` (the tab's keys, if any, and ⌘, arriving through the menu on macOS), `020` § Views (the tab list), and `060` § Unsaved changes, which points to `appkit.rs` for the menu wiring.
 
-### 4. The log file
+### 4. Opening projects from Finder
+
+Double-clicking a `.stev` (or dropping one on the Dock icon) opens it. Needs phase 3's request route.
+
+- **The plist**: a `CFBundleDocumentTypes` entry (role Editor, `LSHandlerRank` Owner) for an exported type, plus `UTExportedTypeDeclarations` declaring `com.stevmidi.stev.project` (conforming to `public.data`, extension `stev`, description "Stev Project"). Optionally a document icon, made by the same icon script.
+- **Catching the open, including at launch**: macOS delivers the open-documents Apple Event (`kAEOpenDocuments`), which winit doesn't pass on. When the double-click is what launches Stev, the event arrives during launch, before eframe has created the window and before `appkit.rs` wires anything today. So the handler is installed in `main()`, before eframe runs, with `NSAppleEventManager::setEventHandler…` for `kCoreEventClass`/`kAEOpenDocuments` (installing it before launch is how Apple says to receive launch-time opens). Adding `application:openURLs:` to winit's delegate at app creation would miss the launch case.
+- **Into the app**: the handler stores the path (the first `.stev` of the event, others ignored) in a main-thread slot and calls `request_repaint` once a `Context` exists. `Display` takes it each frame, and once the app is up, it goes through the same load path as the browser's Enter on a `.stev`, including the unsaved-changes check when the open project is dirty. A path that arrives at launch waits until the first frame and replaces the startup project.
+- **What it doesn't do**: no recent-documents list, no opening `.mid` from Finder (import stays a drag or the browser), no second window.
+- **Test**: the path-taking and dirty-check routing is pure enough for a test in `view/` (a pending open while dirty asks first, while clean loads). The rest is hand-tested inside the bundle: cold launch by double-click, double-click while running (clean and dirty), drop on the Dock icon, a file whose load fails.
+- Docs: `060` (opening from Finder and the dirty check), `000` (the handler installed in `main()`).
+
+### 5. The log file
 
 The shape agreed 2026-09-24 (memory: logging deferred until distribution):
 
@@ -83,7 +94,7 @@ The shape agreed 2026-09-24 (memory: logging deferred until distribution):
 - **The About tab gains "Show log in Finder"** (`open -R`), and the bug-report form asks for the file.
 - On Linux and Windows, the file goes in the platform's equivalent (`dirs::data_local_dir()/stev/logs`), so CI exercises the same code.
 
-### 5. The release workflow
+### 6. The release workflow
 
 `.github/workflows/release.yml`, on `push: tags: ['v*']`, one macOS job:
 
@@ -95,18 +106,17 @@ The shape agreed 2026-09-24 (memory: logging deferred until distribution):
 
 ## What changes in the docs
 
-- `280`: the candidate points here, and loses the items as each phase lands. Level 1 leaves the list when phase 5 merges, and levels 2 and 3 stay.
+- `280`: the candidate points here, and loses the items as each phase lands. Level 1 leaves the list when phase 6 merges, and levels 2 and 3 stay.
 - `000` § CI: the release workflow. § Build: the bundle script.
 - `030`, `020`: the About tab.
-- `080`: § Releasing (the app is attached by CI) and § Conventions (logging, phase 4).
-- `AGENTS.md`: the logging ground rule (phase 4) and this doc's row in the index.
-- README: Status and Download (phase 5).
+- `080`: § Releasing (the app is attached by CI) and § Conventions (logging, phase 5).
+- `AGENTS.md`: the logging ground rule (phase 5) and this doc's row in the index.
+- README: Status and Download (phase 6).
 
 ## Not in scope
 
 - Signing with a Developer ID, notarization, the hardened runtime and its `disable-library-validation` entitlement, a `.dmg` (level 2).
 - A Homebrew cask (level 3).
 - A self-updater (Sparkle), or an automatic update check.
-- Opening `.stev` files from Finder (decision 6).
-- **More menus than the app menu** (File, Edit, View, Window). Decided 2026-10-24: the app menu holds About, Check for Updates, Settings, Hide and Quit, and nothing else. A menu item's shortcut is matched before egui sees the key, so menu chords would take keys from the keymap. After a rebind, a menu would run the old command or show the wrong chord (`320`), unless it were rebuilt on every keymap change. The Keyboard tab is the one command reference, and egui handles the clipboard in text fields without an Edit menu. If a File menu is wanted later (e.g. once Finder can open `.stev` files), it is generated from the keymap table and shows the current chords without registering them as shortcuts, so the keymap still owns every key.
+- **More menus than the app menu** (File, Edit, View, Window). Decided 2026-10-24: the app menu holds About, Check for Updates, Settings, Hide and Quit, and nothing else. A menu item's shortcut is matched before egui sees the key, so menu chords would take keys from the keymap. After a rebind, a menu would run the old command or show the wrong chord (`320`), unless it were rebuilt on every keymap change. The Keyboard tab is the one command reference, and egui handles the clipboard in text fields without an Edit menu. If a File menu is wanted later (e.g. Open and Save for discoverability), it is generated from the keymap table and shows the current chords without registering them as shortcuts, so the keymap still owns every key.
 - Linux or Windows binaries (`280` § Linux and Windows support, stage 4).
