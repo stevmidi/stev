@@ -1,6 +1,6 @@
 # A Downloadable macOS App
 
-**Status: plan agreed 2026-10-24; phase 1 (the bundle script) built on `feature/macos-app-bundle`, phases 2–6 not started.** Level 1 of the `280` candidate *A downloadable macOS app*: an unsigned universal `Stev.app` in a zip, attached to each `v*` release, with the items that come with it (the hand test, the About tab with its update check, opening projects from Finder, a log file). Levels 2 (signed + notarized) and 3 (a Homebrew cask) stay in `280`. Read `280` § A downloadable macOS app first, and `080` § Releasing and § Licensing.
+**Status: plan agreed 2026-10-24; phase 1 (the bundle script) merged, phase 2 (the hand test) run 2026-10-24 with its results below and two bundle-only Dock bugs being fixed, phases 3–6 not started.** Level 1 of the `280` candidate *A downloadable macOS app*: an unsigned universal `Stev.app` in a zip, attached to each `v*` release, with the items that come with it (the hand test, the About tab with its update check, opening projects from Finder, a log file). Levels 2 (signed + notarized) and 3 (a Homebrew cask) stay in `280`. Read `280` § A downloadable macOS app first, and `080` § Releasing and § Licensing.
 
 ## Decisions
 
@@ -53,6 +53,16 @@ Run once from the zip, unpacked from a browser download, so the quarantine flag 
 - **Output that goes nowhere**: from a `.app`, stdout and stderr are discarded. List every error a user would need that is lost today. That list feeds phase 5.
 
 Fixes for bundle-only bugs go on their own `fix/` branches, each with a regression test where the layer allows it.
+
+**Results** (2026-10-24, macOS 15.6 on the Intel Mac, the 0.5.0 zip from `f16f883`, quarantined as a Safari download and moved to /Applications in Finder):
+
+- **Gatekeeper**: blocked as expected. The dialog is "“Stev.app” Not Opened" (seen in Norwegian), with only *Move to Trash* and *Done*. System Settings → Privacy & Security → *Open Anyway*, then a second confirmation, lets it run, and later launches don't ask. The README takes the English wording and steps from Apple's support page ("Open a Mac app from an unknown developer"), not from a screenshot.
+- **A Local Network prompt** ("find devices on your local network") appears the first time a project is opened. It comes from a plugin the project loads, not from Stev, which has no networking code or networking dependency. A bare `cargo run` never showed it because macOS asks on behalf of Terminal or Zed, which had already answered. Either answer leaves Stev working; denying may cost a plugin its controller or licence lookup. The README's Download section says so (phase 6).
+- **The app menu**: the menu-bar name reads "Stev" (from `CFBundleName`), but the items read "About stev" and "Quit stev" (the executable's name). Confirmed, so phase 3 renames the executable to `Stev`.
+- **Audio and timing, MIDI, files, quit**: all as in a bare `cargo run`. CoreAudio output, the metronome, the DSP meter and an audio export work; MIDI ports, MIDI Out and the virtual port work; settings and the library land in their usual places; a Finder `.mid` drag, save, load and the browser work; ⌘Q, Dock Quit and logout ask about unsaved changes.
+- **Plugins**: a CLAP and a VST3 load and their editors open. **Bug**: during a full VST3 scan (cache deleted) a second Stev icon flashes in the Dock. Inside a bundle the scan child carries the bundle's identity, so a plugin that brings up AppKit while scanning gets it a regular Dock icon. Fixed on its own `fix/` branch, except a brief empty space the Dock opens and closes during a full scan, which is accepted (`180` § The design).
+- **The Dock icon**: Finder and Launchpad show `Stev.icns`, but the running app's Dock icon didn't. eframe sets egui's own icon at runtime (`setApplicationIconImage`) unless the window is given an empty one. Fixed on the same `fix/` branch as the scan child.
+- **Output that goes nowhere** (for phase 5): every `eprintln!` and every panic message. The `eprintln!` sites are a failed settings save (`core/settings.rs`), a MIDI input or output that fails to connect (`threads/midi_watcher.rs`), a failed MIDI send (`threads/midi_output.rs`), the controller thread's MIDI failures (`threads/controller.rs`), a VST3 bundle that fails to load (`vst3/discovery.rs`), the scan child's own errors (`vst3/child.rs`, already discarded by the parent), a CLAP preset not restored (`clap/engine.rs`), and a plugin that fails to load or isn't installed (`view/display/instrument.rs`, five sites). The last is the one a user meets: a project whose plugin isn't installed opens without a word. There is no panic hook, so a crash leaves nothing behind either.
 
 ### 3. The About tab, with Check for updates
 
