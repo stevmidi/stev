@@ -129,7 +129,9 @@ pub(crate) enum TransportCommand {
 /// `"sequencer"` thread. See the module docs.
 pub(crate) struct Transport {
     // --- Playback and cursor state ---
-    /// Playback position, shared with the rest of the app.
+    /// Playback position, shared with the rest of the app. Written only here,
+    /// except by `Sequencer::retime_clip_events`, which moves it with a
+    /// retimed clip's notes (`150-clock-position-sync.md`).
     playback_tick: Arc<AtomicI32>,
     /// Edit-cursor / play-from position, shared.
     cursor_tick: Arc<AtomicI32>,

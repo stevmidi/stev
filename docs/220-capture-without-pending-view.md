@@ -9,7 +9,7 @@ Keep the valuable part of the retired modal `PendingClip` view, the phrase **det
 ## Principles
 
 1. **Everything is an edit.** Every change is a `SequencerEdit`: it lands in the arranger and one ⌘Z takes it back.
-2. **Edits never move the transport**, with one exception (below). No edit changes the loop region, the loop flag or the playhead. If an edit changes the music under a running playhead, the playhead stays where it is: a clip edge edit is heard from there at once (§ Playback during edits); other changes are picked up by the next loop wrap's seek. New transport behaviour during edits is added only when the user asks for it. **The exception, asked for by the user (2026-09-26): while the project has exactly one clip, the loop region is that clip**, so its end can be judged against the wrap before Enter sets the tempo.
+2. **Edits never move the transport**, with one exception (below). No edit changes the loop region, the loop flag or the playhead. If an edit changes the music under a running playhead, the playhead stays where it is: a clip edge edit is heard from there at once (§ Playback during edits); other changes are picked up by the next loop wrap's seek. New transport behaviour during edits is added only when the user asks for it. **The exception, asked for by the user (2026-09-26): while the project has exactly one clip, the loop region is that clip**, so its end can be judged against the wrap before Enter sets the tempo. With it, asked for 2026-10-24: a retime of that clip with the tempo (Enter, `⌥=`/`⌥-`, their undo/redo) moves a running playhead with the notes, so the pass plays on in phase (§ Playback during edits).
 3. **While a project has one clip, that clip's length is the tempo reference, so it is never rounded.** The tempo changes only when the user asks for it (Enter). Nothing about this is stored: every rule reads what's there at the moment of the action.
 4. **Once there's more than one clip, loops are whole bars** (of the project's meter, `archive/270`) unless the user places an edge exactly. A loop that isn't whole bars drifts against the metronome click (`150`). Adapting the clock to arbitrary loop lengths is out of scope, for a later thread.
 
@@ -42,7 +42,7 @@ The pending view looped the phrase while it was open, which is how its end was j
 - **The stopped `/` that makes the project's first clip** loops over it and turns looping on (`TransportCommand::LoopOver`).
 - **Every edge edit on it, and Enter's tempo fit,** move the loop to its new span (`SetRegion`), leaving the loop on/off setting alone: a loop the user switched off stays off.
 - **With a second clip the rule stops applying.** The loop stays where it was, and from then on edits never touch the transport. Unlike the pending view, nothing is restored after Enter: the loop stays on the clip.
-- **The playhead is never moved.** An end pulled in behind a running playhead leaves it past the new loop end, where the transport doesn't wrap, so playback runs on. The user considers that the correct behaviour.
+- **An edge edit never moves the playhead.** An end pulled in behind a running playhead leaves it past the new loop end, where the transport doesn't wrap, so playback runs on. The user considers that the correct behaviour. Enter's fit is the one edit that moves it, to keep the pass in phase (§ Playback during edits).
 
 ### Edge edits `[` / `]`
 
@@ -71,12 +71,13 @@ The mouse edge drag is the arranger trim, snapped to the view grid.
 
 ### Playback during edits
 
-Nothing is done to the transport (principle 2): the playhead, the loop region and the loop flag stay. Specifically:
+Nothing is done to the transport (principle 2): the playhead, the loop region and the loop flag stay — except the one-clip rule's loop and Enter's in-phase playhead. Specifically:
 
 - **An edge edit is heard at once** (changed 2026-10-12). `ResizeClipEdit` goes through `Sequencer::set_clip_bounds` → `Track::set_clip_bounds`: while playback is inside the clip and still inside it afterwards, the clip is re-seeked in place, so it plays its new window from the playhead — a note the switch stops sounding is released, a note sounding at the new point is chased in, and the wheels follow. Most visible for **moving the start in the clip view**: the clip keeps its arrangement start, so the same arrangement tick now maps to another point of the take. The playhead never moves.
   - Why it changed: the first version waited for the next wrap, as "the seamless option" — switching immediately jumps the music mid-bar. That held while `[` kept the clip's length and slid its end along, so the old window could play out intact. When `[` was changed the same day (2026-09-26) to keep the end and move only the start, the clip got shorter at once and its end (and with one clip the loop end) moved in: the old window couldn't play out any more, and the rest of the pass played the old point of the take, cut short, until the wrap — out of phase. The playback rule wasn't revisited then; the user heard it on 2026-10-12. With the band committing on release, the switch happens once per edit, not per pointer move.
 - **Pulling the end in behind the playhead** leaves the playhead past the new end, where the transport doesn't wrap. Playback runs on linearly until the user restarts, which the user considers correct.
-- **Enter while playing** works. The fit rescales the playing clip's ticks while the playhead keeps its tick, so the rest of that pass may play out of phase; the next loop wrap's seek corrects it. The pending view's confirm behaved the same way. Accepted (see Decisions).
+- **Enter while playing stays in phase** (changed 2026-10-24). The fit rescales the playing clip's ticks and the tempo together, so the clip sounds the same in wall-clock time, and the playhead moves with the notes: `RetimeClipEdit` on the project's only clip goes through `Sequencer::retime_clip_events` → `Track::retime_clip_events`, which maps the track's position through the edit's own `EventSpaceRetime` before re-seeking in place and moves `playback_tick` by the same amount. A note sounding at the playhead is still sounding at its new point, so nothing is released or chased; the pass plays on as heard. The loop region follows the clip as before (`loop_sole_clip_workflow`), and that `SetRegion` realigns the clock onto the moved playhead (`150`). The same holds for `⌥=`/`⌥-` on the only clip and for undo/redo of either. With more than one clip a `⌥=`/`⌥-` leaves the tempo, so the clip sounds different, and the playhead stays (its notes that stop sounding are released, as any event edit).
+  - Why it changed: the playhead kept its tick while the clip was rescaled under it, so playback jumped to another point of the take — 1/9 of the way back for a 2¼-bar take fitted to 2 bars — until the next wrap. The pending view's confirm behaved the same way and it was first accepted; the user heard the jump in use and asked for a seamless fit.
 
 ### Behaviour table
 
@@ -89,9 +90,9 @@ Nothing is done to the transport (principle 2): the playhead, the loop region an
 | `]` clip view | more than one | up to the bar line at or after the cursor | same; nothing moved (a playhead left past the end runs on) |
 | `[`/`]` arranger | any | trim at the arranger cursor; with one clip the loop follows | same; the playhead isn't moved |
 | edge drag | any | trim on the grid; one undo step per drag | same |
-| Enter | one | fit the tempo to the clip, once; the loop follows | same; the rest of the pass may be out of phase, corrected at the next wrap |
+| Enter | one | fit the tempo to the clip, once; the loop follows | same; the playhead moves with the notes, so the pass plays on in phase |
 | Enter | more than one | nothing | nothing |
-| ⌘Z on Enter | one | old length, tempo and note timing back | same; corrected at the next wrap |
+| ⌘Z on Enter | one | old length, tempo and note timing back | same; in phase |
 
 The stopped `/` into a lead clip opens a take session (`290`), not an edit; its Enter is one undoable `InsertCaptureEdit` at the clip cursor, playing or stopped; nothing is sent to the transport.
 
@@ -110,8 +111,8 @@ Settled with the user (2026-09-26):
 - **The start detection stays the scored rule.** F4's gap rule was checked on 15 real takes and did worse (6 of 15 started 3.6–9.6 beats late); the takes are pinned as `fixtures/captures/` (`the_detection_picks_every_fixture_start`). Details in the archive.
 - **The loop follows a clip's edges only while the project has one clip**, so the first clip's end can be judged against the wrap before Enter. With more clips the loop never follows.
 - **The clip view never zooms or scrolls on the user's behalf.** It frames the clip's whole reach when the clip is opened and holds that framing through edge edits; a tempo fit maps it onto the retimed notes, so they stay where they were on screen. The arranger is unchanged. What, if anything, the app should adjust automatically is decided later from use.
-- **Enter works while playing.** The playhead is not retimed, so the rest of the pass may be out of phase until the next wrap corrects it. Any fix for that is a separate branch.
-- **Edits never move the transport**, except the one-clip loop. Any transport behaviour during edits is added only when the user asks for it.
+- **Enter works while playing, in phase.** The playhead is retimed with the notes (2026-10-24; first it kept its tick and the pass played out of phase until the next wrap).
+- **Edits never move the transport**, except the one-clip loop and Enter's in-phase playhead. Any transport behaviour during edits is added only when the user asks for it.
 
 ## Known gap: adjusting the detected phrase (found 2026-09-26)
 

@@ -109,8 +109,9 @@ impl EventHandlers {
     /// only clip (`RetimeClipEdit`, undoable), so its length becomes whole
     /// bars. Nothing is stored about it: the edit decides from what's there —
     /// a no-op with more than one clip, or when the clip is already whole
-    /// bars from a bar line. Works while playing; the rest of that pass may
-    /// play out of phase until the next loop wrap re-seeks it.
+    /// bars from a bar line. Works while playing: the edit moves the playhead
+    /// with the retimed notes, so the pass plays on in phase
+    /// (`Sequencer::retime_clip_events`).
     pub(super) fn fit_first_clip_tempo_workflow(
         &self,
         sequencer: &mut Sequencer,
@@ -158,11 +159,12 @@ impl EventHandlers {
 
     /// A clip's edges moved (`EditResult::ClipResized`, either direction — an
     /// edge drag, `[`/`]`, Enter's tempo fit, `⌥=`/`⌥-`, their undo/redo): updates its
-    /// shape and thumbnail and refreshes the open clip view's notes. The
-    /// playhead is left alone: the clip's events didn't move, so the current
-    /// pass plays out and the next loop wrap's seek picks up the new window,
-    /// and `Track::tick` handles notes that cross a moved edge. The project's
-    /// only clip keeps the loop on it (`loop_sole_clip_workflow`).
+    /// shape and thumbnail and refreshes the open clip view's notes. A
+    /// playing clip was re-seeked in place by the edit itself — at the same
+    /// playhead for an edge edit, at the playhead moved with the notes for a
+    /// retime of the only clip (`Sequencer::retime_clip_events`). The
+    /// project's only clip keeps the loop on it (`loop_sole_clip_workflow`),
+    /// whose `SetRegion` also realigns the clock onto the playhead.
     pub(super) fn clip_resized_workflow(
         &self,
         sequencer: &mut Sequencer,
@@ -243,9 +245,10 @@ mod tests {
     /// While the project has one clip the loop is that clip (`220`): an end
     /// pulled in behind the playhead, an edge drag, and Enter's tempo fit
     /// while playing each move the loop to the clip's new span — and do
-    /// nothing else to the transport: the playhead is never moved.
+    /// nothing else to the transport. (Enter's in-phase playhead is moved by
+    /// the edit, `retime_clip.rs`, not by a transport command.)
     #[test]
-    fn the_only_clip_keeps_the_loop_on_it_and_never_moves_the_playhead() {
+    fn the_only_clip_keeps_the_loop_on_it_and_sends_nothing_else() {
         let mut h = playing_a_looped_clip();
         let mut record = Record::new();
         let span = |h: &Harness| {

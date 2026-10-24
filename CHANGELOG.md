@@ -25,6 +25,10 @@ Breaking entries are marked **Breaking** and say what to do about them.
 - The clip view's ruler numbers bar 1 from the clip's window start, with the
   material before it counting down from 0. A captured clip showed bar
   numbers in the hundreds or thousands the longer a session ran.
+- Enter's tempo fit while playing keeps playback in phase: the playhead moves
+  with the retimed notes, so the clip plays on seamlessly instead of jumping
+  to another point of the take until the next loop wrap. The same goes for
+  `⌥=`/`⌥-` on a project's only clip, and for undoing or redoing either.
 
 ## [0.5.0] - 2026-10-21
 

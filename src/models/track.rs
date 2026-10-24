@@ -33,7 +33,7 @@ use uuid::Uuid;
 
 use crate::core::config::TRACK_NAME_MAX_CHARS;
 use crate::models::{
-    clip::{Clip, ClipBounds},
+    clip::{Clip, ClipBounds, EventSpaceRetime},
     event::Event,
     wheels::{NEUTRAL_WHEELS, WheelTracker},
 };
@@ -643,7 +643,30 @@ impl Track {
         clip_id: Uuid,
         edit: impl FnOnce(&mut Clip) -> R,
     ) -> Option<R> {
-        self.edit_clip_in_place(clip_id, false, edit)
+        self.edit_clip_in_place(clip_id, false, |clip| (edit(clip), None))
+            .map(|(result, _)| result)
+    }
+
+    /// Runs `edit` — a retime of the clip's event ticks that keeps its
+    /// wall-clock timing, the tempo changing with them — on `clip_id`,
+    /// keeping playback in phase: `edit` returns its result and how it moved
+    /// the ticks, and a playhead inside the clip moves with them, so the
+    /// notes sounding go on sounding and the pass plays on as heard instead
+    /// of jumping to wherever the old tick falls in the retimed notes (`220`
+    /// § Playback during edits). Returns what `edit` returned and how far the
+    /// playhead moved, in ticks, for the sequencer to move `playback_tick`
+    /// with it — `0` when playback isn't inside the clip. `None` if the track
+    /// has no such clip.
+    pub(crate) fn retime_clip_events<R>(
+        &mut self,
+        clip_id: Uuid,
+        edit: impl FnOnce(&mut Clip) -> (R, EventSpaceRetime),
+    ) -> Option<((R, EventSpaceRetime), i32)> {
+        self.edit_clip_in_place(clip_id, false, |clip| {
+            let edited = edit(clip);
+            let retime = edited.1;
+            (edited, Some(retime))
+        })
     }
 
     /// Moves `clip_id` to `bounds` — an edge edit (`ResizeClipEdit`); `None`
@@ -657,7 +680,8 @@ impl Track {
     /// the end that moved in (decided with the user 2026-10-12; `220`
     /// § Playback during edits). The playhead itself never moves.
     pub(crate) fn set_clip_bounds(&mut self, clip_id: Uuid, bounds: ClipBounds) -> Option<()> {
-        self.edit_clip_in_place(clip_id, true, |clip| clip.set_bounds(bounds))
+        self.edit_clip_in_place(clip_id, true, |clip| (clip.set_bounds(bounds), None))
+            .map(|_| ())
     }
 
     /// Runs `edit` on `clip_id` and, while playback is inside that clip,
@@ -667,25 +691,40 @@ impl Track {
     /// `tick`'s own release and re-seek, which meet the walk as it was; and
     /// the notes and wheel values in force at the new point are chased in —
     /// not when the playhead sits exactly on the clip's start, which is the
-    /// arrival chase's job in [`tick`](Self::tick).
+    /// arrival chase's job in [`tick`](Self::tick). When `edit` returns a
+    /// retime of the clip's event ticks, the playhead first moves with them
+    /// ([`retime_clip_events`](Self::retime_clip_events)). Returns the edit's
+    /// result and how far the playhead moved.
     fn edit_clip_in_place<R>(
         &mut self,
         clip_id: Uuid,
         edge_edit: bool,
-        edit: impl FnOnce(&mut Clip) -> R,
-    ) -> Option<R> {
+        edit: impl FnOnce(&mut Clip) -> (R, Option<EventSpaceRetime>),
+    ) -> Option<(R, i32)> {
         let clip_idx = self.clips.iter().position(|clip| clip.id() == clip_id)?;
         let playing = self.current_clip_idx == Some(clip_idx) && self.awaiting_start_tick.is_none();
-        let tick = self.current_tick;
         let clip = &mut self.clips[clip_idx];
         if !playing {
-            return Some(edit(clip));
+            return Some((edit(clip).0, 0));
         }
 
+        // Only a playhead inside the window moves: the conversion wraps, and
+        // would fold one an end left behind back into the clip.
+        let event_tick = (clip.start_tick()..clip.end_tick())
+            .contains(&self.current_tick)
+            .then(|| clip.event_tick_from_arrangement_tick(self.current_tick));
         let sounding = clip.pending_note_offs();
-        let result = edit(clip);
+        let (result, retime) = edit(clip);
+        let tick = match (retime, event_tick) {
+            (Some(retime), Some(event_tick)) => {
+                clip.arrangement_tick_from_event_tick(retime.map_tick(event_tick))
+            }
+            _ => self.current_tick,
+        };
+        let moved = tick - self.current_tick;
+        self.current_tick = tick;
         if edge_edit && (tick < clip.start_tick() || tick >= clip.end_tick()) {
-            return Some(result);
+            return Some((result, moved));
         }
         clip.seek(tick);
         let key = |event: &Event| (event.midi_channel(), event.note_number());
@@ -707,7 +746,7 @@ impl Track {
             self.pending_note_ons.extend(ons);
             self.wheels.chase(wheels);
         }
-        Some(result)
+        Some((result, moved))
     }
 
     /// Repositions the track to `playback_tick`: picks the clip containing it,

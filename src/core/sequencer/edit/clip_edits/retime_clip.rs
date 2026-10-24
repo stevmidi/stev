@@ -145,27 +145,29 @@ impl RetimeClipEdit {
 
         let current_tempo = sequencer.tempo_us();
         let meter = sequencer.meter();
-        let Some((after, metadata)) =
-            sequencer.edit_clip_events(self.track_idx, self.clip_id, |clip| {
-                let (tempo_us, retime) = match self.retime_kind {
-                    Retime::FitTempo => Sequencer::fit_first_clip_tempo(clip, current_tempo, meter),
-                    Retime::Rescale(target_length) => {
-                        Sequencer::rescale_clip_tempo(clip, current_tempo, target_length, meter)
-                    }
+        let Some(((after, metadata), retime)) = self.edit_clip(sequencer, |clip| {
+            let (tempo_us, retime) = match self.retime_kind {
+                Retime::FitTempo => Sequencer::fit_first_clip_tempo(clip, current_tempo, meter),
+                Retime::Rescale(target_length) => {
+                    Sequencer::rescale_clip_tempo(clip, current_tempo, target_length, meter)
                 }
-                .unwrap_or((current_tempo, EventSpaceRetime::IDENTITY));
-                self.retime = retime.then(clip.align_window_start_to_bar(meter));
-                let after = RetimedState {
-                    bounds: clip.bounds(),
-                    events: clip.events().to_vec(),
-                    tempo_us,
-                    cursor_tick: clip.cursor_tick(),
-                };
-                (after, ClipMetadata::from_clip(self.track_idx, clip))
-            })
-        else {
+            }
+            .unwrap_or((current_tempo, EventSpaceRetime::IDENTITY));
+            let retime = retime.then(clip.align_window_start_to_bar(meter));
+            let after = RetimedState {
+                bounds: clip.bounds(),
+                events: clip.events().to_vec(),
+                tempo_us,
+                cursor_tick: clip.cursor_tick(),
+            };
+            (
+                (after, ClipMetadata::from_clip(self.track_idx, clip)),
+                retime,
+            )
+        }) else {
             return EditResult::NoOp;
         };
+        self.retime = retime;
 
         if self.sets_tempo {
             sequencer.set_tempo(after.tempo_us);
@@ -185,20 +187,38 @@ impl RetimeClipEdit {
         self.restore(sequencer, &self.before, self.retime.inverse())
     }
 
+    /// Runs `edit` on the clip; it returns its result and how it moved the
+    /// clip's event ticks, both handed back. A retime that sets the tempo
+    /// keeps the clip's wall-clock timing, so a running playhead moves with
+    /// the notes ([`Sequencer::retime_clip_events`]); one that leaves the
+    /// tempo changes how the clip sounds, and the playhead stays
+    /// ([`Sequencer::edit_clip_events`]).
+    fn edit_clip<R>(
+        &self,
+        sequencer: &mut Sequencer,
+        edit: impl FnOnce(&mut Clip) -> (R, EventSpaceRetime),
+    ) -> Option<(R, EventSpaceRetime)> {
+        if self.sets_tempo {
+            sequencer.retime_clip_events(self.track_idx, self.clip_id, edit)
+        } else {
+            sequencer.edit_clip_events(self.track_idx, self.clip_id, edit)
+        }
+    }
+
     /// Puts the clip and the tempo back to `state`, in place (the clip keeps
     /// its id and shared atomics); `retime` is how that moves its event ticks.
-    /// Through [`Sequencer::edit_clip_events`], as every event retime.
+    /// Through [`edit_clip`](Self::edit_clip), as every retime.
     fn restore(
         &self,
         sequencer: &mut Sequencer,
         state: &RetimedState,
         retime: EventSpaceRetime,
     ) -> EditResult {
-        let Some(metadata) = sequencer.edit_clip_events(self.track_idx, self.clip_id, |clip| {
+        let Some((metadata, _)) = self.edit_clip(sequencer, |clip| {
             clip.set_bounds(state.bounds);
             clip.restore_events(state.events.clone());
             clip.set_cursor_tick(state.cursor_tick);
-            ClipMetadata::from_clip(self.track_idx, clip)
+            (ClipMetadata::from_clip(self.track_idx, clip), retime)
         }) else {
             return EditResult::NoOp;
         };
@@ -423,39 +443,80 @@ mod tests {
         (sequencer, plugin_rx)
     }
 
-    /// Regression: Enter while a note sounds must release it when the fit
-    /// moves it out from under the playhead (it now ends before it).
-    #[test]
-    fn the_fit_releases_a_note_it_moves_out_from_under_the_playhead() {
-        let (mut sequencer, mut plugin_rx) = running_with_unfitted_clip();
-        sequencer.reset_to_tick(Meter::FOUR_FOUR.bars_to_ticks(2));
+    /// Starts playback at `tick` and plays that tick, as the tick pump does.
+    fn play_from(sequencer: &mut Sequencer, tick: i32) {
+        sequencer.reset_to_tick(tick);
+        sequencer.playback_tick.store(tick, Ordering::Relaxed);
         sequencer.tick(Instant::now());
+    }
+
+    /// Plays on a tick at a time until the playhead reaches `until`,
+    /// returning everything playback sent.
+    fn play_until(
+        sequencer: &mut Sequencer,
+        plugin_rx: &mut Consumer<ClipInstrumentEvent>,
+        until: i32,
+    ) -> Vec<[u8; 3]> {
+        let mut heard = Vec::new();
+        while sequencer.playback_tick() < until {
+            sequencer.playback_tick.fetch_add(1, Ordering::Relaxed);
+            sequencer.tick(Instant::now());
+            heard.extend(drain(plugin_rx));
+        }
+        heard
+    }
+
+    /// Enter while the only clip plays keeps playback in phase: the playhead
+    /// moves to the same point of the fitted window, so the note sounding
+    /// there goes on sounding — not cut, not sounded again — and ends where
+    /// its fitted note-off falls. Before, the playhead stayed on its tick and
+    /// the pass jumped to another point of the retimed notes.
+    #[test]
+    fn the_fit_keeps_playback_in_phase_and_a_sounding_note_sounding() {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        let (mut sequencer, mut plugin_rx) = running_with_unfitted_clip();
+        play_from(&mut sequencer, bar * 2);
         assert_eq!(drain(&mut plugin_rx), vec![[0x90, 60, 100]]);
 
         let mut edit = RetimeClipEdit::fit_sole_clip(&sequencer).unwrap();
         edit.edit(&mut sequencer);
-        sequencer.tick(Instant::now());
 
-        assert_eq!(drain(&mut plugin_rx), vec![[0x80, 60, 0]]);
+        let fitted = &sequencer.tracks()[0].clips()[0];
+        let (fitted_on, fitted_off) = (fitted.events()[0].tick(), fitted.events()[1].tick());
+        assert!(
+            (sequencer.playback_tick() - fitted_on).abs() <= 1,
+            "still on the note it was on"
+        );
+        let held = play_until(&mut sequencer, &mut plugin_rx, fitted_off - 1);
+        assert!(held.is_empty(), "held through the fit: {held:?}");
+        let released = play_until(&mut sequencer, &mut plugin_rx, fitted_off);
+        assert_eq!(released, vec![[0x80, 60, 0]], "released on time");
     }
 
-    /// Regression: undoing the fit swaps the whole event list back; a note
-    /// sounding at the playhead that the swap moves later must be released,
-    /// not left hanging.
+    /// Undoing the fit while playing is in phase too: the playhead moves back
+    /// to the same point of the unfitted window, and the note sounding there
+    /// holds to its original note-off.
     #[test]
-    fn undoing_the_fit_releases_a_note_it_moves_out_from_under_the_playhead() {
+    fn undoing_the_fit_keeps_playback_in_phase_and_a_sounding_note_sounding() {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
         let (mut sequencer, mut plugin_rx) = running_with_unfitted_clip();
         let mut edit = RetimeClipEdit::fit_sole_clip(&sequencer).unwrap();
         edit.edit(&mut sequencer);
         let fitted_on = sequencer.tracks()[0].clips()[0].events()[0].tick();
-        sequencer.reset_to_tick(fitted_on);
-        sequencer.tick(Instant::now());
+        play_from(&mut sequencer, fitted_on);
         assert_eq!(drain(&mut plugin_rx), vec![[0x90, 60, 100]]);
 
         edit.undo(&mut sequencer);
-        sequencer.tick(Instant::now());
 
-        assert_eq!(drain(&mut plugin_rx), vec![[0x80, 60, 0]]);
+        assert!(
+            (sequencer.playback_tick() - bar * 2).abs() <= 1,
+            "still on the note it was on"
+        );
+        let off = bar * 2 + bar / 8;
+        let held = play_until(&mut sequencer, &mut plugin_rx, off - 1);
+        assert!(held.is_empty(), "held through the undo: {held:?}");
+        let released = play_until(&mut sequencer, &mut plugin_rx, off);
+        assert_eq!(released, vec![[0x80, 60, 0]], "released on time");
     }
 
     /// Adds `clip` to track 0 of `sequencer` and selects it.
@@ -519,8 +580,7 @@ mod tests {
     fn rescale_leaves_the_tempo_with_a_second_clip_and_skips_a_one_bar_shrink() {
         let bar = Meter::FOUR_FOUR.bar_ticks();
         let (mut sequencer, _) = sequencer_with(false);
-        let mut other = clip_at(0, bar);
-        other.set_start_tick(bar * 20);
+        let other = clip_at(bar * 20, bar);
         sequencer.tracks_mut()[0].add_clip(&other);
         add_selected(&mut sequencer, &clip_at(0, bar));
         let tempo = sequencer.tempo_us();
@@ -544,19 +604,22 @@ mod tests {
     /// Regression: a `⌥-` rescale while a note sounds must release it when
     /// the retime takes it out from under the playhead — the halved note now
     /// ends before the playhead, where the walk would never meet its off.
+    /// With a second clip the tempo stays, so the playhead does too (the
+    /// only clip's rescale keeps playback in phase, as Enter's fit does).
     #[test]
     fn rescale_releases_a_note_it_moves_out_from_under_the_playhead() {
         let bar = Meter::FOUR_FOUR.bar_ticks();
         let (mut sequencer, mut plugin_rx) = sequencer_with(true);
         instrument_track_0(&mut sequencer);
+        let other = clip_at(bar * 20, bar);
+        sequencer.tracks_mut()[0].add_clip(&other);
         let mut clip = clip_at(0, bar * 2);
         clip.add_event(note_on(bar));
         clip.add_event(note_off(bar + bar / 2));
         add_selected(&mut sequencer, &clip);
 
         sequencer.running.store(true, Ordering::Relaxed);
-        sequencer.reset_to_tick(bar);
-        sequencer.tick(Instant::now());
+        play_from(&mut sequencer, bar);
         assert_eq!(drain(&mut plugin_rx), vec![[0x90, 60, 100]]);
 
         rescale(&mut sequencer, &mut Record::new(), -1);

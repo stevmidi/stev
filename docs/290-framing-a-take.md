@@ -122,6 +122,6 @@ Settled with the user (2026-10-12):
 - **Detection:** `the_detection_picks_every_fixture_start`, and the new clip's window and Enter's fit (`stopped_commit_window_is_the_retired_confirms`, `stopped_first_clip_is_exact_and_enter_fits_it`). The take's initial start is the new clip's start.
 - **The running insert** and its window rules (`100`), and `insert_running_capture_is_undoable`.
 - **The stopped insert changes on purpose**: `stopped_insert_lands_the_detected_phrase_at_the_clip_cursor` is rewritten for the session's Enter (whole phrase, notes kept whole) in phase 2; `stopped_insert_is_undoable_and_keeps_the_selection` keeps its meaning.
-- **Edits never move the transport**; only the one-clip rule moves the loop (`the_only_clip_keeps_the_loop_on_it_and_never_moves_the_playhead`, `with_two_clips_an_edge_edit_sends_nothing_to_the_transport`).
+- **Edits never move the transport**; only the one-clip rule moves the loop (`the_only_clip_keeps_the_loop_on_it_and_sends_nothing_else`, `with_two_clips_an_edge_edit_sends_nothing_to_the_transport`).
 - **Notes crossing a window edge** play and release correctly (`track.rs`), including while the session swaps the temporary notes under a running playhead.
 - **A commit never changes the event selection or the loop region.**

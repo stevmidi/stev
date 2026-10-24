@@ -128,6 +128,14 @@ flag and the clock channel. Every clock command originates from `Transport`;
   parked at the cursor while the clock keeps free-running as the coordinate live
   capture and the metronome are counting in; aligning to a parked playback
   position would drag that coordinate backwards mid-phrase.
+  One playback move rides on it: a retime of the project's only clip while
+  playing (Enter's fit, `RetimeClipEdit`) moves `playback_tick` with the notes
+  from inside the edit (`Sequencer::retime_clip_events`, `220` § Playback
+  during edits), without a `TransportEvent` — nothing needs re-seeking or
+  releasing. The `SetRegion` that moves the loop onto the retimed clip
+  follows on the transport channel and realigns the clock onto the moved
+  playhead; until it lands the clock is a few ticks of command latency out of
+  phase, as after a wrap.
 
 ### Downstream compensators (still needed)
 

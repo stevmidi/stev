@@ -19,6 +19,8 @@
 //! `selected_track_idx`/`selected_clip_id` when the operation might have
 //! removed the selected clip.
 
+use std::sync::atomic::Ordering;
+
 use uuid::Uuid;
 
 use crate::core::input_event::TimeSelectionRect;
@@ -578,6 +580,29 @@ impl Sequencer {
         self.tracks_mut()
             .get_mut(track_idx)?
             .edit_clip_events(clip_id, edit)
+    }
+
+    /// As [`edit_clip_events`](Self::edit_clip_events), for a retime that
+    /// keeps the clip's wall-clock timing: a running playhead inside the clip
+    /// moves with its notes, and `playback_tick` with it
+    /// ([`Track::retime_clip_events`](crate::models::track::Track::retime_clip_events)).
+    /// The one writer of `playback_tick` outside `Transport`; the caller's
+    /// `SetRegion` realigns the clock (`150`).
+    pub(crate) fn retime_clip_events<R>(
+        &mut self,
+        track_idx: usize,
+        clip_id: Uuid,
+        edit: impl FnOnce(&mut Clip) -> (R, EventSpaceRetime),
+    ) -> Option<(R, EventSpaceRetime)> {
+        if !self.is_running() {
+            return self.clip_on_mut(track_idx, clip_id).map(edit);
+        }
+        let (edited, moved) = self
+            .tracks_mut()
+            .get_mut(track_idx)?
+            .retime_clip_events(clip_id, edit)?;
+        self.playback_tick.fetch_add(moved, Ordering::Relaxed);
+        Some(edited)
     }
 }
 
