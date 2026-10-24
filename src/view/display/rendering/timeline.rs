@@ -96,6 +96,20 @@ impl Display {
 
         let tl_font = FontId::proportional(theme::FONT_SIZE_TL);
         let ticks_per_bar = self.meter().bar_ticks();
+        // Where the ruler counts bar 1 from: the arrangement's start in the
+        // arranger, the lead clip's window start in the clip view, so a clip
+        // reads 1… however far into the free-running capture clock its event
+        // space sits. The committed window (or the one a released band drag
+        // is committing), not a live drag's preview: the numbers are the
+        // frame the handle is dragged against.
+        let label_origin = if self.active_pane() == Pane::Clip {
+            self.gesture
+                .window_edge_commit
+                .map_or_else(|| self.region_bounds_for_render(), |commit| commit.after)
+                .0
+        } else {
+            0
+        };
 
         for i in first_visible..(first_visible + num_visible) {
             let tick = i * step_ticks;
@@ -137,8 +151,10 @@ impl Display {
             // Bar number label — baseline sits on the region band's top edge
             // (shared `REGION_BAND_H`) so the two never overlap. Thinned to
             // `label_ticks` so numbers never collide zoomed out.
-            let bar_num = tick / ticks_per_bar + 1;
-            if role == GridRole::Bar && bar_num > 0 && tiers.is_labelled(tick) {
+            let bar_num = ruler_bar_number(tick, label_origin, ticks_per_bar);
+            if let Some(bar_num) =
+                bar_num.filter(|_| role == GridRole::Bar && tiers.is_labelled(tick))
+            {
                 painter.text(
                     pos2(x + 3.0, strip_bottom - REGION_BAND_H),
                     Align2::LEFT_BOTTOM,
@@ -390,6 +406,16 @@ fn timeline_step_span(
     (first, count)
 }
 
+/// The ruler's number for the bar line at `tick`: bar 1 is the bar holding
+/// `origin` (its bar line at or before it), so a window starting between bar
+/// lines numbers the bar it starts in as 1. Bars before it count down from 0.
+/// `None` before tick 0, where neither the arrangement nor a clip's event
+/// space holds anything.
+fn ruler_bar_number(tick: i32, origin: i32, bar_ticks: i32) -> Option<i32> {
+    let first_bar = origin.div_euclid(bar_ticks);
+    (tick >= 0).then(|| tick.div_euclid(bar_ticks) - first_bar + 1)
+}
+
 /// Screen-x of a region bound at `tick`, rounded to the pixel grid with the
 /// same formula as the ruler's bar ticks (`draw_timeline`), the playhead and
 /// `Display::tick_to_screen_x`. Keeping every time-anchored line on one rounding
@@ -453,7 +479,8 @@ fn region_band_span(
 #[cfg(test)]
 mod tests {
     use super::{
-        grid_line_x, region_band_span, region_bound_x, timeline_step_span, window_edge_hit,
+        grid_line_x, region_band_span, region_bound_x, ruler_bar_number, timeline_step_span,
+        window_edge_hit,
     };
     use crate::core::time::{self, Meter};
     use crate::models::clip::ClipEdge;
@@ -647,5 +674,44 @@ mod tests {
             Some(ClipEdge::Start)
         );
         assert_eq!(window_edge_hit(200.0, None, None, 5.0), None);
+    }
+
+    #[test]
+    fn the_arranger_ruler_counts_from_tick_zero() {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        assert_eq!(ruler_bar_number(0, 0, bar), Some(1));
+        assert_eq!(ruler_bar_number(3 * bar, 0, bar), Some(4));
+        assert_eq!(ruler_bar_number(-bar, 0, bar), None);
+    }
+
+    #[test]
+    fn a_clip_ruler_counts_bar_one_from_its_window_start() {
+        // A fresh capture ~19 minutes into a session: window on bar line 431.
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        let start = 431 * bar;
+        assert_eq!(ruler_bar_number(start, start, bar), Some(1));
+        assert_eq!(ruler_bar_number(start + bar, start, bar), Some(2));
+        // The captured material before the window counts down from 0.
+        assert_eq!(ruler_bar_number(start - bar, start, bar), Some(0));
+        assert_eq!(ruler_bar_number(start - 7 * bar, start, bar), Some(-6));
+        // Nothing before the event space's tick 0.
+        assert_eq!(ruler_bar_number(-bar, start, bar), None);
+    }
+
+    #[test]
+    fn a_window_starting_between_bar_lines_numbers_its_own_bar_one() {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        let start = 5 * bar + 3 * time::PPQN;
+        assert_eq!(ruler_bar_number(5 * bar, start, bar), Some(1));
+        assert_eq!(ruler_bar_number(6 * bar, start, bar), Some(2));
+        assert_eq!(ruler_bar_number(4 * bar, start, bar), Some(0));
+    }
+
+    #[test]
+    fn a_clip_ruler_follows_the_meters_bar_lines() {
+        let bar = Meter::new(3, 4).unwrap().bar_ticks();
+        let start = 10 * bar;
+        assert_eq!(ruler_bar_number(12 * bar, start, bar), Some(3));
+        assert_eq!(ruler_bar_number(start + bar - 1, start, bar), Some(1));
     }
 }

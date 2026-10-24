@@ -20,6 +20,12 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ## [Unreleased]
 
+### Fixed
+
+- The clip view's ruler numbers bar 1 from the clip's window start, with the
+  material before it counting down from 0. A captured clip showed bar
+  numbers in the hundreds or thousands the longer a session ran.
+
 ## [0.5.0] - 2026-10-21
 
 ### Added
