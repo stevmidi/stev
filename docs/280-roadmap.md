@@ -57,7 +57,7 @@ Comes with it:
   - **Not a self-updater.** Downloading and installing in place (Sparkle) needs level 2's signing plus an EdDSA-signed appcast, and overlaps with level 3's cask. Optional after level 2, not before.
 - **A log file** in `~/Library/Logs/stev/` behind the `log` facade, replacing `dprintln!` where a user's bug report needs it. Deferred until now on purpose: it matters once strangers run a build they didn't compile.
 
-Suggested start: level 1, when there's a release worth handing to non-developers.
+Level 1 is being planned in `330-macos-app.md` (2026-10-24), in five phases: the bundle, a hand test, an About settings tab with the update check, the log file, and the release workflow.
 
 ### Detecting the meter on Enter
 
