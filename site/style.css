@@ -206,26 +206,62 @@ kbd {
 .clip p { margin: 0; color: var(--fg-dim); font-size: 0.9375rem; }
 .clip h3 kbd { margin-right: 0.35em; }
 
-/* The capture table: a 2×2 grid with the ruler's readout strip on top. */
-.grid {
+/* The four captures, one panel each. A loop is shown at 550 CSS px, its
+   recorded 1100 pixels on a 2x screen, so the browser never resamples it:
+   shrunk, the 1 px playhead lands between pixels and flickers as it moves. */
+.captures {
+  list-style: none;
+  margin: 1.5rem 0;
+  padding: 0;
   display: grid;
+  gap: 1rem;
+}
+.captures > li {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 1.5rem;
+  align-items: center;
+  background: var(--bg-panel);
   border: 1px solid var(--separator);
   border-radius: 4px;
-  overflow: hidden;
-  margin: 1.5rem 0;
-  max-width: 52rem;
+  padding: 1rem;
 }
-.grid > div {
-  display: grid;
-  grid-template-columns: 7rem 1fr 1fr;
-  border-top: 1px solid var(--separator);
+.captures .capture {
+  display: block;
+  box-sizing: content-box;
+  width: 550px;
+  max-width: calc(100% - 2px);
+  height: auto;
+  background: var(--bg);
+  border: 1px solid var(--separator);
+  border-radius: 4px;
 }
-.grid > div:first-child { border-top: 0; }
-.grid span { padding: 0.75rem 1rem; }
-.grid span + span { border-left: 1px solid var(--separator); }
-.grid-head { background: var(--bg-timeline); color: var(--fg-dim); font-size: 0.9375rem; }
-.grid [role="rowheader"] { background: var(--bg-panel); color: var(--fg-dim); }
-.grid [role="cell"] { background: var(--bg-lane); }
+.captures .capture:not([controls]) { cursor: pointer; }
+.captures p { margin: 0; max-width: 28rem; color: var(--fg); font-size: 1rem; }
+/* The steps seen in the loop, in order: a numbered list in the clip
+   header's small type, so the text runs most of the loop's height. */
+.captures .keys {
+  margin: 1rem 0 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: key;
+  max-width: 28rem;
+  color: var(--fg-dim);
+  font-size: 0.9375rem;
+}
+.captures .keys li {
+  padding-left: 1.75rem;
+  position: relative;
+  counter-increment: key;
+}
+.captures .keys li + li { margin-top: 0.4rem; }
+.captures .keys li::before {
+  content: counter(key);
+  position: absolute;
+  left: 0;
+  width: 1.25rem;
+  color: var(--fg);
+}
 
 .two {
   display: grid;
@@ -286,8 +322,11 @@ section.wrap > p.aside {
   .nav a:not(.wordmark):not(.nav-repo) { display: none; }
   .hero { padding: 3rem 0 2.5rem; }
   section.wrap { margin-top: 3.5rem; }
-  .grid > div { grid-template-columns: 5rem 1fr 1fr; }
-  .grid span { padding: 0.6rem 0.6rem; font-size: 0.9375rem; }
+}
+
+/* Too narrow for a loop and its text side by side: the text goes under. */
+@media (max-width: 56rem) {
+  .captures > li { grid-template-columns: 1fr; gap: 0.75rem; }
 }
 
 @media (prefers-reduced-motion: reduce) {

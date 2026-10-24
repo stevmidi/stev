@@ -7,7 +7,7 @@
 #
 #   take   name given to the recorder, e.g. stopped-empty
 #   start  where the loop starts in the .mov, seconds or hh:mm:ss.ms
-#   end    where it ends (6–12 s after start)
+#   end    where it ends; the four site loops run 7–19 s
 #   crop   optional ffmpeg crop w:h:x:y in recorded pixels. Defaults to the
 #          1100×700 window without its 28 px title bar; all four takes use
 #          the same crop, so they look alike.
@@ -15,6 +15,8 @@
 # The encoded width is the recorded (or cropped) width, which is already
 # about twice a ~600 CSS px table cell, so it stays sharp on a 2x screen.
 # WIDTH=… scales it and CRF=… sets the quality if a take comes out over ~1 MB.
+# The default 18 keeps the 1 px playhead steady: at 26 its brightness jumped
+# from frame to frame in the encoded video.
 # Needs ffmpeg (brew install ffmpeg).
 set -euo pipefail
 
@@ -30,7 +32,7 @@ out_dir=$repo/site/videos
 out=$out_dir/capture-$take.mp4
 poster=$out_dir/capture-$take.jpg
 width=${WIDTH:-}
-crf=${CRF:-26}
+crf=${CRF:-18}
 
 filters="fps=30,crop=$crop"
 [[ -n $width ]] && filters+=",scale=$width:-2:flags=lanczos"

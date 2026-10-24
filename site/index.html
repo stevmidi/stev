@@ -93,23 +93,65 @@
     your latest take. It works the same in the arranger and in the clip view.
     Where the take goes depends on what is under the cursor:
   </p>
-  <div class="grid" role="table" aria-label="Where a capture goes">
-    <div role="row" class="grid-head">
-      <span role="columnheader"></span>
-      <span role="columnheader">Empty space</span>
-      <span role="columnheader">A clip</span>
-    </div>
-    <div role="row">
-      <span role="rowheader">Stopped</span>
-      <span role="cell">The phrase you just played becomes a new clip at the cursor.</span>
-      <span role="cell">The phrase goes into that clip, at the cursor.</span>
-    </div>
-    <div role="row">
-      <span role="rowheader">Playing</span>
-      <span role="cell">The last loop pass becomes a new clip at the cursor.</span>
-      <span role="cell">The last loop pass goes into that clip.</span>
-    </div>
-  </div>
+  <ul class="captures">
+    <li>
+      <video class="capture" src="videos/capture-stopped-empty.mp4" poster="videos/capture-stopped-empty.jpg"
+             width="1100" height="672" muted loop playsinline preload="none"
+             aria-label="On an empty track, a played phrase becomes a clip; its start and end are nudged by ear until it loops naturally, and Enter sets the tempo from this first clip"></video>
+      <div>
+        <h3>A new clip, while stopped</h3>
+        <p>The phrase you just played becomes a new clip at the cursor.</p>
+        <ol class="keys">
+          <li>Play a phrase.</li>
+          <li><kbd>\</kbd> makes it a clip.</li>
+          <li>Listen as it loops, and nudge the start and end until it comes round naturally.</li>
+          <li>If it's the first clip, <kbd>Enter</kbd> sets the tempo from it.</li>
+        </ol>
+      </div>
+    </li>
+    <li>
+      <video class="capture" src="videos/capture-stopped-clip.mp4" poster="videos/capture-stopped-clip.jpg"
+             width="1100" height="672" muted loop playsinline preload="none"
+             aria-label="With the cursor in a clip, the take opens already framed on the last phrase, playing in place, and Enter keeps it"></video>
+      <div>
+        <h3>Into a clip, while stopped</h3>
+        <p>The phrase goes into that clip, at the cursor.</p>
+        <ol class="keys">
+          <li>Play a phrase, with the cursor in a clip.</li>
+          <li><kbd>\</kbd> opens the take, already framed on the phrase and playing in place.</li>
+          <li><kbd>Enter</kbd> keeps it; <kbd>Esc</kbd> drops it.</li>
+        </ol>
+      </div>
+    </li>
+    <li>
+      <video class="capture" src="videos/capture-playing-empty.mp4" poster="videos/capture-playing-empty.jpg"
+             width="1100" height="672" muted loop playsinline preload="none"
+             aria-label="While the loop plays, a part played on a second track becomes a new clip"></video>
+      <div>
+        <h3>A new clip, while playing</h3>
+        <p>The last loop pass becomes a new clip at the cursor.</p>
+        <ol class="keys">
+          <li><kbd>Space</kbd> starts the loop.</li>
+          <li>Play a part on another track.</li>
+          <li><kbd>\</kbd> keeps the last pass as a new clip.</li>
+        </ol>
+      </div>
+    </li>
+    <li>
+      <video class="capture" src="videos/capture-playing-clip.mp4" poster="videos/capture-playing-clip.jpg"
+             width="1100" height="672" muted loop playsinline preload="none"
+             aria-label="While the loop plays, notes played over a clip are added to it"></video>
+      <div>
+        <h3>Into a clip, while playing</h3>
+        <p>The last loop pass goes into that clip.</p>
+        <ol class="keys">
+          <li><kbd>Space</kbd> starts the loop.</li>
+          <li>Play over the clip as it loops.</li>
+          <li><kbd>\</kbd> adds the last pass to it.</li>
+        </ol>
+      </div>
+    </li>
+  </ul>
   <p>
     So you can noodle with the transport stopped and keep the phrase you liked,
     or play over a running loop and keep the pass that worked, and either way
@@ -177,6 +219,29 @@
   </p>
   <p class="fine">VST is a registered trademark of Steinberg Media Technologies GmbH.</p>
 </footer>
+
+<script>
+  // Plays a capture loop only while it is on screen, from the start each
+  // time it comes into view; a click restarts it. Under reduced motion
+  // nothing plays by itself: the poster shows the result, and the controls
+  // let a visitor play it.
+  const still = matchMedia("(prefers-reduced-motion: reduce)");
+  const restart = (video) => {
+    video.currentTime = 0;
+    video.play().catch(() => {});
+  };
+  const seen = new IntersectionObserver((entries) => {
+    for (const { target, isIntersecting } of entries) {
+      if (isIntersecting && !still.matches) restart(target);
+      else target.pause();
+    }
+  }, { threshold: 0.5 });
+  for (const video of document.querySelectorAll("video.capture")) {
+    video.controls = still.matches;
+    if (!still.matches) video.addEventListener("click", () => restart(video));
+    seen.observe(video);
+  }
+</script>
 
 </body>
 </html>

@@ -39,17 +39,7 @@ Stage 1 of § Linux and Windows support, staged, taken first as macOS work. Park
 
 ### The website: what's left
 
-The site is live at stevmidi.com (2026-10-22; as built in `000` § Website). One thing it was designed with is still missing: **screen recordings of a capture**, the author's own, as the screenshots are. Planned 2026-10-22:
-
-- **Four short loops, one per cell of the page's Capture table** (stopped / playing × empty space / a clip), each 6–12 s beside the sentence it shows. Not one long video: a 40 s tour of all four can't be read at a glance. The screenshot stays the hero for now; the first loop may join it there later.
-- **One project that grows, recorded in the table's order:**
-  1. *Stopped, empty space*: an empty project, play, `\`, the clip appears; Enter fits the tempo.
-  2. *Stopped, a clip*: the cursor in that clip, play a second phrase, `\` opens the take session, `[`/`]` frame it, Enter inserts it (`290`). The longest of the four.
-  3. *Playing, empty space*: Space, play a part on a second track over the loop, `\` makes the new clip.
-  4. *Playing, a clip*: layer onto an existing clip while the loop runs.
-- **Recording:** `screencapture -v -R x,y,w,h` over a fixed rectangle, with the window at a fixed position and size (1100×700, smaller than the screenshot's so the text stays readable in a table cell), so retakes match (`scripts/site/record-take.applescript`, `000` § Website). A `.stev` saved before each take, so a failed one restarts from the same state. The clip panel open in all four, so the arranger shows a new clip and the piano roll shows an insert, and the four look alike. The Magenta Pulse theme. No sound: the built-in recorders can't capture the app's output without a loopback driver; an unmute version is a later option.
-- **Encoding:** a table cell is about 500–600 px wide, so all four are cropped to the same region (or the view zoomed in) and encoded as H.264 MP4 with ffmpeg (`-an`, `yuv420p`, `+faststart`; `scripts/site/encode-take.sh`), about 1 MB each. Kept small because `main` is append-only, so every re-recording stays in history. No GIFs.
-- **The page:** `<video muted loop playsinline preload="none">`, each with its last frame as the poster, so the result shows before it plays; a few lines of script play a loop only while it's in view and not at all under `prefers-reduced-motion`. The keys pressed go in the cell's text, not as an on-screen overlay. On a phone the table stacks, video above its sentence. When it lands, `000` § Website's assets line names the recordings.
+The site is live at stevmidi.com (2026-10-22), and the four capture loops in its Capture section landed 2026-10-24; both as built in `000` § Website. Two options remain, neither promised: a loop beside or in place of the hero screenshot, and versions with sound, which need a loopback driver to record the app's output.
 
 ### A downloadable macOS app
 
