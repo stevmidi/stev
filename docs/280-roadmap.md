@@ -37,10 +37,6 @@ Stage 1 of § Linux and Windows support, staged, taken first as macOS work. Park
   | Surface Pro 3, Windows 10 | idle / loaded | | | |
   | Raspberry Pi 4 (optional) | idle / loaded | | | — |
 
-### The website: what's left
-
-The site is live at stevmidi.com (2026-10-22), and the four capture loops in its Capture section landed 2026-10-24; both as built in `000` § Website. Two options remain, neither promised: a loop beside or in place of the hero screenshot, and versions with sound, which need a loopback driver to record the app's output.
-
 ### A downloadable macOS app
 
 There is no binary today. A release carries only GitHub's source archives, and running Stev means installing Rust and the Xcode Command Line Tools, then building with `cargo run --release` (README § Building). That's fine for developers but a wall for most musicians. There are three levels, each building on the last:
@@ -90,6 +86,10 @@ Added 2026-10-11: everything macOS has today, on Linux and Windows too, built in
 4. **Packaging per OS** (installer or archive per platform, as § A downloadable macOS app does for macOS), only once stage 3 is solid.
 
 Stage 1 is § MIDI Out timing, listed with the engine work above. Stages 2–4 come after the downloadable macOS app.
+
+### Website extras
+
+The site is live at stevmidi.com (2026-10-22), with the four capture loops in its Capture section since 2026-10-24; both as built in `000` § Website. Two options remain, neither promised: a loop beside or in place of the hero screenshot, and versions of the loops with sound, which need a loopback driver to record the app's output.
 
 ## Not planned
 
