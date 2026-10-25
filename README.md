@@ -18,9 +18,39 @@ Website: [stevmidi.com](https://stevmidi.com)
 
 ![Stev: six tracks of captured clips in the arranger, with the clip panel open on a mallet part](docs/images/arranger.png)
 
-> **Status:** 0.5.0, source releases only (no prebuilt app yet). Developed and
-> tested on macOS. Linux and Windows build in CI and may work (MIDI Out only, no
-> plugin host), but are untested; ports welcome.
+> **Status:** 0.5.0. Developed and tested on macOS, with a prebuilt app from
+> 0.6.0 on ([Download](#download)). Linux and Windows build in CI and may work
+> (MIDI Out only, no plugin host), but are untested; ports welcome.
+
+## Download
+
+Each release from 0.6.0 on carries the macOS app as
+`Stev-x.y.z-macos-universal.zip`, under **Assets** on the
+[Releases](https://github.com/stevmidi/stev/releases/latest) page. It needs
+macOS 11 (Big Sur) or later. Unzip it and move `Stev.app` to Applications.
+
+The app isn't signed by Apple yet, so macOS blocks its first launch with
+"“Stev.app” Not Opened". To open it anyway (Apple's
+[Open a Mac app from an unknown developer](https://support.apple.com/guide/mac-help/open-a-mac-app-from-an-unknown-developer-mh40616/mac)):
+
+1. Try to open Stev once, and click **Done** in that dialog.
+2. Choose Apple menu > **System Settings**, then click **Privacy & Security**
+   in the sidebar.
+3. Under **Security**, click **Open Anyway**. The button is there for about an
+   hour after the blocked launch.
+4. Confirm, and enter your login password. Later launches don't ask.
+
+The app is universal, but only the Intel build has been tested so far. If you
+run it on Apple Silicon, an issue saying whether it works is welcome. The first
+time a project with plugins opens, macOS may ask whether Stev can find devices
+on your local network. That request comes from a plugin, not from Stev, which
+goes online only when you press **Check for updates** (Settings → About). Stev
+works either way, though a plugin may need it for its licence or controller.
+
+Each zip has a `.sha256` beside it; download both, and
+`shasum -a 256 -c Stev-x.y.z-macos-universal.zip.sha256` checks the zip.
+
+To build it yourself instead, see [Building](#building).
 
 ## Quickstart
 

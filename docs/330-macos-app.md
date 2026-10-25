@@ -1,13 +1,13 @@
 # A Downloadable macOS App
 
-**Status: plan agreed 2026-10-24; phase 1 (the bundle script) merged, phase 2 (the hand test) run 2026-10-24 with its results below and its two bundle-only Dock bugs fixed, phase 3 (the About tab and the app menu) built and hand-tested 2026-10-24, phase 4 (opening projects from Finder) built and hand-tested 2026-10-25, phase 5 (the log file) built and hand-tested 2026-10-25, phase 6 not started.** Level 1 of the `280` candidate *A downloadable macOS app*: an unsigned universal `Stev.app` in a zip, attached to each `v*` release, with the items that come with it (the hand test, the About tab with its update check, opening projects from Finder, a log file). Levels 2 (signed + notarized) and 3 (a Homebrew cask) stay in `280`. Read `280` § A downloadable macOS app first, and `080` § Releasing and § Licensing.
+**Status: plan agreed 2026-10-24; phase 1 (the bundle script) merged, phase 2 (the hand test) run 2026-10-24 with its results below and its two bundle-only Dock bugs fixed, phase 3 (the About tab and the app menu) built and hand-tested 2026-10-24, phase 4 (opening projects from Finder) built and hand-tested 2026-10-25, phase 5 (the log file) built and hand-tested 2026-10-25, phase 6 (the release workflow) built 2026-10-25, its first real run due with 0.6.0.** Level 1 of the downloadable macOS app: an unsigned universal `Stev.app` in a zip, attached to each `v*` release, with the items that come with it (the hand test, the About tab with its update check, opening projects from Finder, a log file). Levels 2 (signed + notarized) and 3 (a Homebrew cask) stay in `280` § A signed macOS app. Read `080` § Releasing and § Licensing first.
 
 ## Decisions
 
 Settled before this doc (2026-10-24, in `280`):
 
 1. **A universal binary** (`x86_64` + `aarch64`, joined with `lipo`), even though only Intel can be tested. The README and release notes say Apple Silicon is untested until someone confirms it runs.
-2. **A manual "Check for updates"**: `/usr/bin/curl` against GitHub's `/releases/latest`, on a background thread, only when the button is pressed. No HTTP crate, no setting, no throttle, no self-updater.
+2. **A manual "Check for updates"**: `/usr/bin/curl` against GitHub's `/releases/latest`, on a background thread, only when the button is pressed. No HTTP crate, no setting, no throttle, no self-updater. curl adds no dependency, no licence review (`ureq` + rustls would pull in `webpki-roots`, `CDLA-Permissive-2.0`, not in `deny.toml`) and no TLS stack to keep patched, and it uses the system trust store, which Apple keeps updated. Switch to `ureq` (with `rustls-platform-verifier`, so the Keychain's roots replace `webpki-roots`) only if Stev needs HTTP elsewhere or a Linux/Windows binary ships. An automatic, opt-in check could reuse the same code later; only the trigger would change.
 
 Settled with this doc (2026-10-24):
 
@@ -150,6 +150,16 @@ The shape agreed 2026-09-24 (memory: logging deferred until distribution):
 - `permissions: contents: write`, and nothing else. No secrets until level 2.
 - Same change: the README's **Status** line and a new **Download** section (the zip, *Open Anyway* with phase 2's exact wording, "Apple Silicon untested"), `080` § Releasing (the workflow attaches the app, so the release is published after it finishes), `000` § CI (the new workflow), and a `CHANGELOG.md` line.
 - **First real run**: the next version tag after this merges. Before that, test it on a throwaway tag in a fork, or with `workflow_dispatch` to a draft. Tags on `stevmidi/stev` are never deleted, so no test tags go there.
+
+**As built** (2026-10-25), where it differs from or adds to the plan above:
+
+- **`.github/workflows/release.yml`**, one job on `macos-26` (Apple Silicon, the x86_64 slice built as a cross target), pinned like `ci.yml`. It builds without a cache: a release is built from scratch. The tag's version check is `bundle.sh`'s own (`--version` against `Cargo.toml`).
+- **The checksum file names the zip without a path** (`shasum -a 256` run beside it), so `shasum -a 256 -c` checks a download, as the README's Download section says.
+- **A draft is created only when the tag has no release**, with the title `Stev x.y.z` and empty notes, so the `/release` skill's notes go in with `gh release edit`. A release the author made first just gets the files.
+- **The dry run is the "Run workflow" button** (`workflow_dispatch`), on any branch: it builds the zip and keeps it, with its checksum, as the run's artifact, and touches no release. A dry run in a fork wasn't needed. The button appears once the workflow is on `main`, so the first dry run follows the merge.
+- **The README**: a **Download** section (the zip on the Releases page, macOS 11, *Open Anyway* in Apple's steps with phase 2's dialog title, Apple Silicon untested, the Local Network prompt from plugins, the checksum), and the **Status** line names the app "from 0.6.0 on", so neither needs rewording when 0.6.0 is released. The website keeps *Build from source* until that release's commit (`000` § Website), since it redeploys on merge, before any zip exists.
+- **`280`**: the candidate became *A signed macOS app* (levels 2 and 3, and the self-updater after them). The update check's curl-over-`ureq` reasoning moved to § Decisions here.
+- **Not yet run for real.** Before 0.6.0 is tagged, a dry run from `main` checks the build on the runner; the first tagged run checks the upload.
 
 ## What changes in the docs
 

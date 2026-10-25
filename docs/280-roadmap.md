@@ -13,7 +13,7 @@ What Stev may do next, and what it won't. It picks up where the release plan (`a
 - **CI compiles and tests all three** (`000` § CI).
 - **The `cfg` boundary stays clean**, so a port stays a port and not an untangling job. Platform code lives behind `cfg(target_os = …)`, with no new macOS-only assumptions in the format-agnostic host core (`InstrumentMixer`, the merged catalog, instrument persistence; `130`) or anywhere else outside the platform modules. CI enforces the compiling half of this; the rest is review.
 
-What a port would need is in `260-porting.md`. Binaries, when they come, are macOS only (§ Candidates, a downloadable macOS app).
+What a port would need is in `260-porting.md`. Binaries are macOS only (`330-macos-app.md`).
 
 Full Linux and Windows support is now a staged candidate (§ Candidates, Linux and Windows support, staged; added 2026-10-11). Until a stage lands, the above holds: nothing beyond CI is promised.
 
@@ -37,11 +37,10 @@ Stage 1 of § Linux and Windows support, staged, taken first as macOS work. Park
   | Surface Pro 3, Windows 10 | idle / loaded | | | |
   | Raspberry Pi 4 (optional) | idle / loaded | | | — |
 
-### A downloadable macOS app
+### A signed macOS app
 
-There is no binary today. A release carries only GitHub's source archives, and running Stev means installing Rust and the Xcode Command Line Tools, then building with `cargo run --release` (README § Building). That's fine for developers but a wall for most musicians. There are three levels, each building on the last:
+Level 1, an unsigned universal `Stev.app` in a zip attached to each release by CI, is built (`330-macos-app.md`, 2026-10-25). Its first launch needs Gatekeeper's one-time *Open Anyway* (README § Download). The Apple Silicon slice is untested: the author's one machine is an Intel Mac, so an Apple Silicon bug report is the first signal to act on. The levels left build on it:
 
-1. **An unsigned `.app` in a zip.** An `Info.plist` (bundle id `com.stevmidi.stev`), an icon, and `THIRD-PARTY-NOTICES.md` inside the bundle. A GitHub Actions job builds it when a `v*` tag is pushed and attaches it to that release. Free. Gatekeeper blocks the first launch ("can't be verified"), so the README explains the one-time System Settings → Privacy & Security → *Open Anyway*.
 2. **A signed and notarized `.app` / `.dmg`.** Opens without a warning. Needs the Apple Developer Program ($99/year) and signing + notarization secrets in the release workflow. Notarization requires the hardened runtime, which refuses to load code signed by anyone else. The app therefore needs the `com.apple.security.cs.disable-library-validation` entitlement, or no CLAP/VST3 plugin will load (every DAW ships with it).
 
    Decided 2026-10-25: not yet. The fee recurs for as long as releases are signed, and nothing yet shows who downloads Stev. Level 1's *Open Anyway* is a one-time step, and the bundle script and release workflow carry over, with signing slotted in at the end. Enrol when one of these happens:
@@ -52,18 +51,7 @@ There is no binary today. A release carries only GitHub's source archives, and r
    An individual account signs as the author's own name. Signing as "Stev" needs a legal entity and a D-U-N-S number.
 3. **A Homebrew cask** (`brew install --cask stev`), on top of level 2.
 
-Comes with it:
-
-- **Architectures:** a universal binary (`x86_64` + `aarch64`, joined with `lipo`), so one download serves every Mac. Decided 2026-10-24: ship universal, even though only Intel can be tested today (the author's one machine is an Intel Mac). The release notes and README say the Apple Silicon build is untested until someone confirms it runs, and an Apple Silicon bug report is the first signal to act on.
-- **Test the bundle by hand once.** The macOS-only paths (CoreAudio, the clock timer, the virtual MIDI port, Finder file drag, quit) have only ever run as a bare `cargo run` binary, never from inside a `.app`.
-- **An About box** (or a settings tab) with the VST Compatible logo and the trademark sentence. Steinberg's guidelines say the logo should appear there (`080` § Licensing).
-- **A manual "Check for updates" button** in the About box, next to the installed version (added 2026-10-24). Pressing it fetches `https://api.github.com/repos/stevmidi/stev/releases/latest` on a background thread, never on the audio or render path. It compares the release's `tag_name` (`v0.3.0`) with `CARGO_PKG_VERSION`, and the answer appears beside the button: "You're up to date (0.2.0)", "Version 0.3.0 is available" with a link to the release page, or "Couldn't reach GitHub". Decisions:
-  - **Manual only.** Nothing goes over the network unless the user presses the button, so there's no setting, no throttle and no persisted last-check time. An automatic, opt-in check could reuse the same code later; only the trigger would change.
-  - **`/usr/bin/curl` via `std::process::Command`, not an HTTP crate.** It adds no dependencies, no licence review (`ureq` + rustls would pull in `webpki-roots`, `CDLA-Permissive-2.0`, not in `deny.toml`), and no TLS stack to keep patched. curl uses the system trust store and Apple keeps it updated. It is gated behind `cfg(target_os = "macos")`, since only the macOS app ships. Switch to `ureq` (with `rustls-platform-verifier`, so the Keychain's roots replace `webpki-roots`) only if Stev needs HTTP elsewhere or a Linux/Windows binary ships.
-  - **The version comparison is a pure helper with tests.** It strips the `v` and compares numeric `major.minor.patch`, so a tag that won't parse reads as "couldn't check", never as "newer". `/releases/latest` already skips drafts and pre-releases.
-  - **Not a self-updater.** Downloading and installing in place (Sparkle) needs level 2's signing plus an EdDSA-signed appcast, and overlaps with level 3's cask. Optional after level 2, not before.
-
-Level 1 is planned in `330-macos-app.md` (2026-10-24), in six phases: the bundle, a hand test, an About settings tab with the update check, opening projects from Finder, the log file, and the release workflow. The bundle and the hand test are done, and so are the About tab, opening projects from Finder (2026-10-25) and the log file (2026-10-25); the release workflow is not started.
+A **self-updater** (Sparkle) downloading and installing in place needs level 2's signing plus an EdDSA-signed appcast, and overlaps with level 3's cask: optional after level 2, not before. The manual Check for updates (`330` § 3) stays until then.
 
 ### Detecting the meter on Enter
 
@@ -94,9 +82,9 @@ Added 2026-10-11: everything macOS has today, on Linux and Windows too, built in
 1. **Timing: the probe and the fixes** (§ MIDI Out timing above). The timing probe, the precise `"midiout"` deadline wait, one absolute-deadline clock timer, and best-effort thread priority. All of it helped macOS too, so it was done as macOS work ahead of the rest of this candidate (2026-10-14); what's left is measuring Linux and Windows. It clears the first and largest porting hurdle.
 2. **MIDI Out parity on Windows 11 and Ubuntu 24.04.** Run the smoke test (`260` § Smoke test) and fix what it finds: no virtual MIDI port on Windows (midir can't create one; at least document loopMIDI or Windows MIDI Services), quit with unsaved changes, `.mid` file drag, MIDI hot-plug, and the library and log folders. When this lands, Stev is a supported MIDI Out sequencer on all three, with plugins on macOS only, and the README, § Platforms and § Not planned say so.
 3. **The plugin host, Windows first.** Windows has far more musicians and VST3 plugins, and the author has a Windows 11 machine. The host core is format-agnostic (`130`); what's needed is the platform glue: plugin search paths per OS, VST3 bundle layout (`180`), editor windows parented to Win32 (and X11 later), MMCSS as the workgroup join's counterpart (`170`), and expect another round of the GL-context clash with plugins that bring their own GL (NI, Qt). Linux CLAP/VST3 follows Windows; its plugin ecosystem is thin. Decide on this stage only after living with stage 2.
-4. **Packaging per OS** (installer or archive per platform, as § A downloadable macOS app does for macOS), only once stage 3 is solid.
+4. **Packaging per OS** (installer or archive per platform, as `330-macos-app.md` does for macOS), only once stage 3 is solid.
 
-Stage 1 is § MIDI Out timing, listed with the engine work above. Stages 2–4 come after the downloadable macOS app.
+Stage 1 is § MIDI Out timing, listed with the engine work above. Stages 2–4 come after the downloadable macOS app (built 2026-10-25, `330`).
 
 ### Website extras
 

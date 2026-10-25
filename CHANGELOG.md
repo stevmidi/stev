@@ -22,6 +22,11 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ### Added
 
+- A downloadable macOS app: each release from this one on carries
+  `Stev-x.y.z-macos-universal.zip` (and its SHA-256), built by CI from the
+  release's tag. It is unsigned, so the first launch needs System Settings →
+  Privacy & Security → **Open Anyway**; the README's Download section has the
+  steps. It is universal, but only tested on Intel so far.
 - An **About** tab in Settings: the version, the licence, links to
   stevmidi.com and the repository, and the VST Compatible logo. On macOS it
   has **Check for updates**, which asks GitHub for the latest release when

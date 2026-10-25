@@ -1,0 +1,87 @@
+# Builds the downloadable macOS app for a version tag and attaches it to that
+# tag's GitHub release. Design and the reasons behind it:
+# docs/330-macos-app.md § 6 and docs/000-architecture.md § CI.
+name: Release
+
+on:
+  # A pushed version tag (`080` § Releasing): build, then attach to its release.
+  push:
+    tags: ["v*"]
+  # The "Run workflow" button in the Actions tab: a dry run on any branch. It
+  # builds the zip and keeps it as the run's artifact, and touches no release,
+  # since tags on stevmidi/stev are never deleted and so never made to test.
+  workflow_dispatch:
+
+# Attaching to a release, or creating its draft, needs this; nothing else does.
+# No secrets until the app is signed (`280` § A downloadable macOS app, level 2).
+permissions:
+  contents: write
+
+# Never cancel a run that may be halfway through an upload.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  app:
+    name: Build Stev.app
+    # Pinned like ci.yml's runners. Apple Silicon, which builds the x86_64
+    # slice as a cross target.
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v5
+
+      # The version pinned in rust-toolchain.toml; bundle.sh adds the two Apple
+      # targets. No build cache: a release is built from scratch.
+      - name: Install Rust
+        run: rustup toolchain install
+
+      # bundle.sh fails before building if the tag and Cargo.toml's version
+      # disagree. A dry run takes Cargo.toml's.
+      - name: Build the bundle
+        run: |
+          if [[ $GITHUB_REF_TYPE == tag ]]; then
+            scripts/macos/bundle.sh --version "${GITHUB_REF_NAME#v}"
+          else
+            scripts/macos/bundle.sh
+          fi
+
+      # Written beside the zip, naming it without a path, so
+      # `shasum -a 256 -c Stev-….zip.sha256` checks a download.
+      - name: Checksum
+        id: zip
+        working-directory: target/macos
+        run: |
+          zip=$(ls Stev-*-macos-universal.zip)
+          shasum -a 256 "$zip" | tee "$zip.sha256"
+          echo "name=$zip" >> "$GITHUB_OUTPUT"
+
+      - name: Keep the dry run's zip
+        if: github.ref_type != 'tag'
+        uses: actions/upload-artifact@v7
+        with:
+          name: stev-macos-universal
+          path: |
+            target/macos/${{ steps.zip.outputs.name }}
+            target/macos/${{ steps.zip.outputs.name }}.sha256
+
+      # Creates the release as a draft if the tag has none yet, so the author
+      # still writes and publishes the notes, which carry the VST logo and the
+      # trademark sentence (`080` § Releasing). --clobber replaces the files
+      # when a run is re-run.
+      - name: Attach to the release
+        if: github.ref_type == 'tag'
+        working-directory: target/macos
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          ZIP: ${{ steps.zip.outputs.name }}
+        run: |
+          if ! gh release view "$TAG" > /dev/null 2>&1; then
+            gh release create "$TAG" --draft --verify-tag --title "Stev ${TAG#v}" --notes ""
+          fi
+          gh release upload "$TAG" "$ZIP" "$ZIP.sha256" --clobber
