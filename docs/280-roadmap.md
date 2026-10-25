@@ -43,6 +43,13 @@ There is no binary today. A release carries only GitHub's source archives, and r
 
 1. **An unsigned `.app` in a zip.** An `Info.plist` (bundle id `com.stevmidi.stev`), an icon, and `THIRD-PARTY-NOTICES.md` inside the bundle. A GitHub Actions job builds it when a `v*` tag is pushed and attaches it to that release. Free. Gatekeeper blocks the first launch ("can't be verified"), so the README explains the one-time System Settings → Privacy & Security → *Open Anyway*.
 2. **A signed and notarized `.app` / `.dmg`.** Opens without a warning. Needs the Apple Developer Program ($99/year) and signing + notarization secrets in the release workflow. Notarization requires the hardened runtime, which refuses to load code signed by anyone else. The app therefore needs the `com.apple.security.cs.disable-library-validation` entitlement, or no CLAP/VST3 plugin will load (every DAW ships with it).
+
+   Decided 2026-10-25: not yet. The fee recurs for as long as releases are signed, and nothing yet shows who downloads Stev. Level 1's *Open Anyway* is a one-time step, and the bundle script and release workflow carry over, with signing slotted in at the end. Enrol when one of these happens:
+   - People report trouble with the first launch, or someone is heard to have given up at it.
+   - The Homebrew cask (level 3) is wanted. Homebrew has been phasing out casks that fail Gatekeeper, so check its current policy then.
+   - Stev is put in front of a wider audience: a forum post, a video, a store-like listing.
+
+   An individual account signs as the author's own name. Signing as "Stev" needs a legal entity and a D-U-N-S number.
 3. **A Homebrew cask** (`brew install --cask stev`), on top of level 2.
 
 Comes with it:
