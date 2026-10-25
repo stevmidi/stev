@@ -20,6 +20,8 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-25
+
 ### Added
 
 - A downloadable macOS app: each release from this one on carries
