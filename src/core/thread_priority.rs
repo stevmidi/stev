@@ -14,6 +14,7 @@
 //! logged and the thread runs on at normal priority. The audio workers
 //! deliberately take no such policy (`170-multicore-scheduling.md`).
 
+use log::warn;
 #[cfg(target_os = "macos")]
 use mach2::kern_return::KERN_SUCCESS;
 #[cfg(target_os = "macos")]
@@ -60,8 +61,8 @@ pub(crate) fn raise_timing_priority(wanted: TimeConstraint) {
             && (wanted.period == 0 || wanted.constraint <= wanted.period),
         "time constraint out of range"
     );
-    if let Err(_e) = raise(wanted) {
-        dprintln!("timing priority refused: {_e}");
+    if let Err(e) = raise(wanted) {
+        warn!("timing priority refused: {e}");
     }
 }
 

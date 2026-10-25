@@ -70,6 +70,7 @@ use std::thread;
 use std::time::Duration;
 
 use crossbeam_channel::{Receiver, Sender, unbounded};
+use log::{debug, info};
 use rtrb::{Consumer, Producer, RingBuffer};
 
 use catalog::{PluginCatalogEntry, PluginFormat};
@@ -201,7 +202,7 @@ pub(crate) fn start_plugin_host(
     );
     start_export_writer(audio_export_jobs, writer, sequencer_command_tx);
 
-    dprintln!("plugin host: mixer attached to the audio engine");
+    debug!("plugin host: mixer attached to the audio engine");
 
     Ok(PluginAudioHandle {
         cmd_tx,
@@ -337,7 +338,7 @@ pub(crate) fn prepare_instrument(
     for msg in note_reset_messages() {
         voice.queue_midi(msg, 0);
     }
-    dprintln!(
+    info!(
         "plugin host: loaded {} '{}' on track {}",
         entry.format.label(),
         entry.name,

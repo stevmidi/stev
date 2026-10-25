@@ -9,6 +9,7 @@
 
 use crossbeam_channel::{Receiver, Sender, after, select};
 use egui::Context;
+use log::warn;
 use midir::MidiInputConnection;
 
 use std::sync::{Arc, OnceLock};
@@ -134,7 +135,7 @@ fn connect_input(
 ) -> Option<MidiInputConnection<()>> {
     forwarder
         .forward_messages_to_named(port_name)
-        .inspect_err(|e| eprintln!("Failed to connect MIDI input '{}': {}", port_name, e))
+        .inspect_err(|e| warn!("Failed to connect MIDI input '{}': {}", port_name, e))
         .ok()
 }
 
@@ -145,7 +146,7 @@ fn connect_output(port_name: &str, tx: &Sender<MidiOutputConnection>) -> Option<
     let mut conn = MidiOutputConnection::new();
     let opened = conn
         .connect_to_named(port_name)
-        .inspect_err(|e| eprintln!("Failed to connect MIDI output '{}': {}", port_name, e))
+        .inspect_err(|e| warn!("Failed to connect MIDI output '{}': {}", port_name, e))
         .ok();
     tx.send(conn).ok();
     opened

@@ -8,6 +8,7 @@
 
 use crossbeam_channel::Sender;
 use egui::Key;
+use log::error;
 use midir::{Ignore, MidiInput};
 
 use std::thread::{self, JoinHandle};
@@ -26,7 +27,7 @@ pub(crate) fn start_controller_thread(input_event_tx: Sender<InputEvent>) -> Joi
             let mut midi_in = match MidiInput::new("Controller Input") {
                 Ok(m) => m,
                 Err(e) => {
-                    eprintln!("Controller: failed to create MIDI input: {}", e);
+                    error!("Controller: failed to create MIDI input: {}", e);
                     return;
                 }
             };
@@ -44,7 +45,7 @@ pub(crate) fn start_controller_thread(input_event_tx: Sender<InputEvent>) -> Joi
             let port = match port {
                 Some(p) => p,
                 None => {
-                    eprintln!(
+                    error!(
                         "Controller: '{}' not found. Available ports: {}",
                         config::CONTROLLER_DEVICE_NAME,
                         ports

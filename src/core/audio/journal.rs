@@ -18,7 +18,7 @@
 //! the ring itself is bounded and drops on overflow, which the summary also
 //! reports.
 //!
-//! Release builds keep all of this: unlike `dprintln!`, the journal is meant
+//! Release builds keep all of this: unlike `debug!`, the journal is meant
 //! for the build that is actually played. It costs nothing while no overrun
 //! happens.
 
@@ -37,6 +37,7 @@ use rtrb::{Consumer, Producer, RingBuffer};
 
 use super::INSTRUMENTS_SOURCE;
 use crate::core::config::MAX_TRACKS;
+use crate::core::paths::logs_dir;
 
 /// Records the ring can hold between drains. At one record per block that is
 /// ~a third of a second of continuous overload at 256 / 48 kHz; anything past
@@ -130,17 +131,10 @@ pub(crate) fn start() -> JournalWriter {
     JournalWriter { tx, dropped }
 }
 
-/// Where the journal lives: `~/Library/Logs/stev/` on macOS, the
-/// platform's local-data directory (`…/stev/logs/`) elsewhere, falling
-/// back to the current directory.
+/// Where the journal lives: `audio-overruns.log` in the logs folder
+/// (`~/Library/Logs/stev/` on macOS), beside `stev.log`.
 pub(crate) fn journal_path() -> PathBuf {
-    let dir = if cfg!(target_os = "macos") {
-        dirs::home_dir().map(|h| h.join("Library/Logs/stev"))
-    } else {
-        dirs::data_local_dir().map(|d| d.join("stev/logs"))
-    };
-    dir.unwrap_or_else(|| PathBuf::from("."))
-        .join("audio-overruns.log")
+    logs_dir().join("audio-overruns.log")
 }
 
 /// The journal thread body: wake, drain, write, repeat — for as long as the

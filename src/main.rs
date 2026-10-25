@@ -2,27 +2,16 @@
 //! `000-architecture.md`), hand `eframe` the [`Display`](crate::view::display)
 //! app. `native_options()` owns the window config.
 
-/// Debug-only `println!` — compiles to `()` in `--release`. Use this, never
-/// `println!` (`080-conventions.md`).
-#[cfg(debug_assertions)]
-macro_rules! dprintln {
-    ($($t:tt)*) => { println!($($t)*) };
-}
-/// Release build of [`dprintln!`] — expands to nothing.
-#[cfg(not(debug_assertions))]
-macro_rules! dprintln {
-    ($($t:tt)*) => {
-        ()
-    };
-}
-
 use std::sync::{Arc, OnceLock, atomic::Ordering};
 
 use eframe::NativeOptions;
 use egui::{Context, IconData, ViewportBuilder};
+#[cfg(target_os = "macos")]
+use log::error;
 
 use crate::core::{
     keymap::Keymap,
+    logging,
     settings::{clamp_midi_out_offset_ms, load_settings},
     setup::{
         setup_clock, setup_display, setup_event_handlers, setup_metronome,
@@ -72,6 +61,7 @@ mod core {
     pub mod event_handlers;
     pub mod input_event;
     pub mod keymap;
+    pub mod logging;
     pub mod metronome;
     pub mod midi;
     pub mod note_logger;
@@ -136,6 +126,9 @@ fn main() {
     // window of its own.
     #[cfg(target_os = "macos")]
     run_if_scan_child();
+
+    // Before anything else can log or panic (`080-conventions.md` § Logging).
+    logging::init();
 
     // Before any MIDI thread starts, or hot-plugged devices never show up —
     // see `anchor_coremidi_to_main_thread`. Held until `main` returns.
@@ -248,7 +241,7 @@ fn main() {
                 // the eframe creation closure below.
                 plugin_host_started = true;
             }
-            Err(_e) => dprintln!("plugin host disabled: {_e}"),
+            Err(e) => error!("plugin host disabled: {e}"),
         }
     } else {
         // No writer will take an export's files: let the send fail.

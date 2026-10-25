@@ -21,6 +21,7 @@
 use std::cell::UnsafeCell;
 use std::ffi::c_void;
 
+use log::debug;
 use vst3::Steinberg::Vst::{Event, String128};
 use vst3::Steinberg::Vst::{
     IAttributeList_iid, IComponentHandler, IComponentHandlerTrait, IEventList, IEventListTrait,
@@ -193,7 +194,7 @@ impl HostEventList {
         // overlapping access.
         let events = unsafe { &mut *self.events.get() };
         if events.len() == events.capacity() {
-            dprintln!("vst3: event buffer full ({}); dropping", events.capacity());
+            debug!("vst3: event buffer full ({}); dropping", events.capacity());
             return;
         }
         events.push(event);

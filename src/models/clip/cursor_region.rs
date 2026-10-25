@@ -13,6 +13,8 @@ use std::sync::{
     atomic::{AtomicI32, Ordering},
 };
 
+use log::debug;
+
 use crate::core::time::{self, Meter};
 
 use super::Clip;
@@ -285,7 +287,7 @@ impl Clip {
         self.region
             .set_region(None, Some(self.region.start() + target_length));
 
-        dprintln!(
+        debug!(
             "Adjusted clip region to tempo: {} -> {}, snapped to {} ticks",
             self.region.start(),
             self.region.end(),

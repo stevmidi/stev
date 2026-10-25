@@ -12,6 +12,7 @@ use std::{process::Command, thread};
 
 use crossbeam_channel::{Receiver, bounded};
 use egui::Context;
+use log::warn;
 use serde::Deserialize;
 
 /// GitHub's API for the newest published release (drafts and pre-releases
@@ -102,7 +103,7 @@ pub(crate) fn start_update_check(ctx: Context) -> Receiver<UpdateCheck> {
             ctx.request_repaint();
         });
     if let Err(err) = spawned {
-        eprintln!("couldn't start the update check: {err}");
+        warn!("couldn't start the update check: {err}");
     }
     rx
 }

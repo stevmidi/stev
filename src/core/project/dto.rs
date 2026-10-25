@@ -15,6 +15,7 @@ use std::path::PathBuf;
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
+use log::warn;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -210,10 +211,9 @@ fn meter_from_list(list: &[MeterData]) -> Meter {
         return Meter::FOUR_FOUR;
     };
     Meter::new(first.numerator, first.denominator).unwrap_or_else(|| {
-        dprintln!(
+        warn!(
             "Unsupported meter {}/{} in project, using 4/4",
-            first.numerator,
-            first.denominator
+            first.numerator, first.denominator
         );
         Meter::FOUR_FOUR
     })

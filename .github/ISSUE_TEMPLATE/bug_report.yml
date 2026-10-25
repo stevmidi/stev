@@ -57,6 +57,14 @@ body:
       required: false
 
   - type: textarea
+    id: log
+    attributes:
+      label: Log
+      description: Attach `stev.log` from Settings → About → Show log in Finder (`~/Library/Logs/stev/`). After a crash, the run that crashed is `stev.1.log` beside it, once Stev has been opened again.
+    validations:
+      required: false
+
+  - type: textarea
     id: overruns
     attributes:
       label: Audio overrun log

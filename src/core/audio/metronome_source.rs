@@ -3,6 +3,7 @@
 
 use std::time::Instant;
 
+use log::debug;
 use rtrb::Consumer;
 
 use super::click_voice::ClickVoice;
@@ -72,7 +73,7 @@ impl AudioSource for MetronomeSource {
             if self.pending.len() < self.pending.capacity() {
                 self.pending.push((target, ev.class));
             } else {
-                dprintln!("metronome: pending-click buffer full, dropping a click");
+                debug!("metronome: pending-click buffer full, dropping a click");
             }
         }
 

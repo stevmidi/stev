@@ -48,6 +48,7 @@ use std::sync::{Arc, OnceLock};
 use block2::RcBlock;
 use crossbeam_channel::Sender;
 use egui::Key;
+use log::warn;
 use objc2::MainThreadMarker;
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
@@ -148,7 +149,7 @@ pub(crate) fn install_key_guard(
                 _block: block,
             })
         }),
-        None => dprintln!("plugin host: failed to install the key guard monitor"),
+        None => warn!("plugin host: failed to install the key guard monitor"),
     }
 }
 

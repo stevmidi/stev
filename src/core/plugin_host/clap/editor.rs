@@ -19,6 +19,7 @@ use std::time::{Duration, Instant};
 
 use clack_extensions::gui::{GuiApiType, GuiConfiguration, PluginGui, Window as ClapWindow};
 use clack_host::prelude::*;
+use log::{debug, error, warn};
 use objc2_foundation::NSPoint;
 
 use super::host::StevClapHost;
@@ -129,8 +130,8 @@ impl InstrumentEditor for ClapEditor {
         match state_ext.save(&plugin, &mut blob) {
             Ok(()) if !blob.is_empty() => Some(blob),
             Ok(()) => None,
-            Err(_e) => {
-                dprintln!("clap host: plugin state save failed: {_e}");
+            Err(e) => {
+                error!("clap host: plugin state save failed: {e}");
                 None
             }
         }
@@ -232,7 +233,7 @@ impl ClapEditor {
     /// native window), once. Leaves `created` false on any failure.
     fn create(&mut self) {
         let Some(gui) = self.instance.access_shared_handler(|s| s.plugin_gui()) else {
-            dprintln!("clap host: plugin exposes no gui extension");
+            warn!("clap host: plugin exposes no gui extension");
             return;
         };
 
@@ -251,13 +252,13 @@ impl ClapEditor {
     /// Creates a plugin-owned floating editor window.
     fn create_floating(&mut self, gui: PluginGui) {
         let plugin = self.instance.plugin_handle();
-        if let Err(_e) = gui.create(&plugin, COCOA_FLOATING) {
-            dprintln!("clap host: gui.create (floating) failed: {_e}");
+        if let Err(e) = gui.create(&plugin, COCOA_FLOATING) {
+            warn!("clap host: gui.create (floating) failed: {e}");
             return;
         }
         gui.suggest_title(&plugin, &to_cstring(&self.title));
         self.created = true;
-        dprintln!("clap host: plugin editor created (floating)");
+        debug!("clap host: plugin editor created (floating)");
     }
 
     /// Creates the plugin view embedded in one of our own native windows (for
@@ -266,13 +267,11 @@ impl ClapEditor {
         {
             let plugin = self.instance.plugin_handle();
             if !gui.is_api_supported(&plugin, COCOA_EMBEDDED) {
-                dprintln!(
-                    "clap host: plugin supports neither a floating nor an embedded cocoa gui"
-                );
+                warn!("clap host: plugin supports neither a floating nor an embedded cocoa gui");
                 return;
             }
-            if let Err(_e) = gui.create(&plugin, COCOA_EMBEDDED) {
-                dprintln!("clap host: gui.create (embedded) failed: {_e}");
+            if let Err(e) = gui.create(&plugin, COCOA_EMBEDDED) {
+                warn!("clap host: gui.create (embedded) failed: {e}");
                 return;
             }
         }
@@ -285,13 +284,13 @@ impl ClapEditor {
         };
 
         let Some(window) = PluginWindow::new(&self.title, w, h, self.window_top_left) else {
-            dprintln!("clap host: could not create plugin window");
+            warn!("clap host: could not create plugin window");
             let plugin = self.instance.plugin_handle();
             gui.destroy(&plugin);
             return;
         };
         let Some(view_ptr) = window.content_view_ptr() else {
-            dprintln!("clap host: plugin window has no content view");
+            warn!("clap host: plugin window has no content view");
             let plugin = self.instance.plugin_handle();
             gui.destroy(&plugin);
             return;
@@ -305,8 +304,8 @@ impl ClapEditor {
                 let parent = ClapWindow::from_cocoa_nsview(view_ptr);
                 gui.set_parent(&plugin, parent)
             };
-            if let Err(_e) = result {
-                dprintln!("clap host: gui.set_parent failed: {_e}");
+            if let Err(e) = result {
+                warn!("clap host: gui.set_parent failed: {e}");
                 gui.destroy(&plugin);
                 return;
             }
@@ -322,7 +321,7 @@ impl ClapEditor {
 
         self.window = Some(window);
         self.created = true;
-        dprintln!("clap host: plugin editor created (embedded, {w:.0}x{h:.0})");
+        debug!("clap host: plugin editor created (embedded, {w:.0}x{h:.0})");
     }
 }
 

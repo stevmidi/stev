@@ -14,6 +14,7 @@
 use std::{env, fs, io, path::PathBuf};
 
 use chrono::Local;
+use log::debug;
 use serde::{Deserialize, Serialize};
 
 #[cfg(test)]
@@ -107,8 +108,8 @@ impl CaptureFixture {
             .and_then(|()| self.to_json())
             .and_then(|json| fs::write(&path, json));
         match written {
-            Ok(()) => dprintln!("capture fixture: {}", path.display()),
-            Err(err) => dprintln!("capture fixture: {} not written: {err}", path.display()),
+            Ok(()) => debug!("capture fixture: {}", path.display()),
+            Err(err) => debug!("capture fixture: {} not written: {err}", path.display()),
         }
     }
 
@@ -277,10 +278,10 @@ mod tests {
                 .iter()
                 .find_map(|clip| picked_start_in(&fixture, clip))
             else {
-                dprintln!("{}: no matching clip", path.display());
+                debug!("{}: no matching clip", path.display());
                 continue;
             };
-            dprintln!(
+            debug!(
                 "{}: detected {} picked {} ({:+} ticks)",
                 path.display(),
                 fixture.detected_start,

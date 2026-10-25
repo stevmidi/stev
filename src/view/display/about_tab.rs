@@ -1,4 +1,4 @@
-//! The settings modal's About tab: its links, the VST Compatible logo's
+//! The settings modal's About tab: its links (and the log file's), the VST Compatible logo's
 //! textures, and (macOS) the update check's progress, which the frame steps
 //! (`Display::sync_update_check`). The app menu's About and Check for
 //! Updates items open this tab (`view/appkit.rs`). Drawing and the hit-test
@@ -6,11 +6,14 @@
 //! modal and `330-macos-app.md` § The About tab.
 
 use std::cell::OnceCell;
+use std::ffi::OsStr;
 use std::process::Command;
 
 use crossbeam_channel::{Receiver, TryRecvError};
 use egui::{ColorImage, Context, TextureHandle, TextureOptions, Vec2, vec2};
+use log::warn;
 
+use crate::core::logging::log_path;
 use crate::core::update_check::{UpdateCheck, start_update_check};
 
 use super::Display;
@@ -55,11 +58,14 @@ pub(crate) enum AboutLink {
     Repository,
     /// A newer release's page, once a check found one.
     Release,
+    /// This run's log file, shown in the file manager.
+    Log,
 }
 
 impl AboutLink {
     /// The links always shown, in their rows' order.
-    pub(super) const LISTED: [AboutLink; 2] = [AboutLink::Website, AboutLink::Repository];
+    pub(super) const LISTED: [AboutLink; 3] =
+        [AboutLink::Website, AboutLink::Repository, AboutLink::Log];
 
     /// The text a listed link reads as.
     pub(super) fn label(self) -> &'static str {
@@ -67,6 +73,10 @@ impl AboutLink {
             AboutLink::Website => "stevmidi.com",
             AboutLink::Repository => "github.com/stevmidi/stev",
             AboutLink::Release => "View the release",
+            #[cfg(target_os = "macos")]
+            AboutLink::Log => "Show log in Finder",
+            #[cfg(not(target_os = "macos"))]
+            AboutLink::Log => "Show log folder",
         }
     }
 }
@@ -145,22 +155,40 @@ impl AboutTab {
     }
 }
 
-/// Opens `url` in the default browser. The opener is left to finish on its
-/// own: it hands the URL over and exits at once.
-fn open_in_browser(url: &str) {
-    #[cfg(target_os = "macos")]
-    const OPENER: &str = "open";
-    #[cfg(target_os = "windows")]
-    const OPENER: &str = "explorer";
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    const OPENER: &str = "xdg-open";
-    if let Err(err) = Command::new(OPENER).arg(url).spawn() {
-        eprintln!("couldn't open {url}: {err}");
+/// The platform's opener: hands a URL to the browser, or a folder to the
+/// file manager, and exits at once, so it is left to finish on its own.
+#[cfg(target_os = "macos")]
+const OPENER: &str = "open";
+/// The platform's opener (see the macOS one).
+#[cfg(target_os = "windows")]
+const OPENER: &str = "explorer";
+/// The platform's opener (see the macOS one).
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+const OPENER: &str = "xdg-open";
+
+/// Runs the opener with `args`.
+fn open_with(args: &[&OsStr]) {
+    if let Err(err) = Command::new(OPENER).args(args).spawn() {
+        warn!(
+            "couldn't open {}: {err}",
+            args.join(OsStr::new(" ")).display()
+        );
+    }
+}
+
+/// Shows this run's log file: selected in a Finder window on macOS
+/// (`open -R`), its folder opened elsewhere.
+fn show_log() {
+    let path = log_path();
+    if cfg!(target_os = "macos") {
+        open_with(&[OsStr::new("-R"), path.as_os_str()]);
+    } else if let Some(dir) = path.parent() {
+        open_with(&[dir.as_os_str()]);
     }
 }
 
 impl Display {
-    /// Opens `link` in the browser.
+    /// Opens `link`: a page in the browser, or the log file in Finder.
     pub(super) fn open_about_link(&self, link: AboutLink) {
         let url = match link {
             AboutLink::Website => WEBSITE_URL,
@@ -169,8 +197,9 @@ impl Display {
                 Some(url) => url,
                 None => return,
             },
+            AboutLink::Log => return show_log(),
         };
-        open_in_browser(url);
+        open_with(&[OsStr::new(url)]);
     }
 
     /// Once a frame: starts an asked-for update check, and takes a running

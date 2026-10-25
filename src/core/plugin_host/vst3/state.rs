@@ -18,6 +18,7 @@
 //! stored in the same base64 field of the `.stev`. See `060-persistence.md` and
 //! `docs/180-vst3-host.md`.
 
+use log::warn;
 use vst3::ComPtr;
 use vst3::ComWrapper;
 use vst3::Steinberg::Vst::{IComponent, IComponentTrait, IEditController, IEditControllerTrait};
@@ -141,7 +142,7 @@ pub(super) unsafe fn apply(
     bytes: &[u8],
 ) -> bool {
     let Some((component_state, controller_state)) = decode(bytes) else {
-        dprintln!("vst3: ignoring a state blob that is not ours or is truncated");
+        warn!("vst3: ignoring a state blob that is not ours or is truncated");
         return false;
     };
 

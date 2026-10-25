@@ -478,8 +478,8 @@ fn timing_probe() {
     };
     let clock_over = CLOCK_PERIOD_MS as i64 * ONE_MS_NANOS + ONE_MS_NANOS;
 
-    // `println!`, not `dprintln!`: the probe runs in release, where
-    // `dprintln!` compiles away, and the report is its whole point.
+    // `println!`, not the log: the probe is a test, which installs no
+    // logger, and the report on stdout is its whole point.
     println!();
     println!(
         "timing probe: {OS} {ARCH}, {cores} cores, {secs} s, {}, {}, offset {offset_ms} ms",

@@ -30,6 +30,7 @@
 use std::cell::{Cell, UnsafeCell};
 use std::sync::Mutex;
 
+use log::debug;
 use rtrb::{Consumer, Producer, RingBuffer};
 use vst3::Steinberg::Vst::{
     IParamValueQueue, IParamValueQueueTrait, IParameterChanges, IParameterChangesTrait, ParamID,
@@ -71,7 +72,7 @@ impl ParamSender {
             return;
         };
         if tx.push((id, value)).is_err() {
-            dprintln!("vst3: parameter ring full; dropped a change to {id}");
+            debug!("vst3: parameter ring full; dropped a change to {id}");
         }
     }
 }
@@ -101,7 +102,7 @@ impl ParamReceiver {
     /// that finds the block full is dropped: it has no ring to wait in.
     pub(super) fn push(&mut self, id: ParamID, value: ParamValue) {
         if !self.changes.push(id, value) {
-            dprintln!("vst3: more than {MAX_PARAMS_PER_BLOCK} parameters in one block");
+            debug!("vst3: more than {MAX_PARAMS_PER_BLOCK} parameters in one block");
         }
     }
 

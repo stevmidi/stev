@@ -32,6 +32,7 @@ pub(crate) use midi_watcher::start_midi_watcher_thread;
 pub(crate) use sequencer_pump::start_sequencer_thread;
 
 use crossbeam_channel::Sender;
+use log::error;
 use rtrb::Consumer;
 
 use crate::core::audio::{AudioEngine, AudioSource, ClickEvent, EngineHandle, MetronomeSource};
@@ -60,8 +61,8 @@ pub(crate) fn start_audio_engine(metronome_click_rx: Consumer<ClickEvent>) -> Op
         ]
     }) {
         Ok(handle) => Some(handle),
-        Err(_e) => {
-            dprintln!("audio engine disabled: {_e}");
+        Err(e) => {
+            error!("audio engine disabled: {e}");
             None
         }
     }

@@ -14,6 +14,7 @@
 use std::ffi::c_char;
 use std::path::Path;
 
+use log::{info, warn};
 use vst3::ComPtr;
 use vst3::Steinberg::{
     IPluginFactory, IPluginFactory2Trait, IPluginFactory3Trait, IPluginFactoryTrait, PClassInfo,
@@ -79,7 +80,7 @@ pub(super) fn scan_catalog() -> Vec<PluginCatalogEntry> {
         let classes = match cache.get(bundle) {
             Some(cached) => {
                 if cached.failed {
-                    dprintln!(
+                    info!(
                         "vst3: skipping {} — a previous scan of it failed",
                         bundle.display()
                     );
@@ -92,8 +93,8 @@ pub(super) fn scan_catalog() -> Vec<PluginCatalogEntry> {
                     cache.insert(bundle, classes.clone(), false);
                     classes
                 }
-                Err(_e) => {
-                    dprintln!("vst3: scan of {} failed: {_e}", bundle.display());
+                Err(e) => {
+                    warn!("vst3: scan of {} failed: {e}", bundle.display());
                     cache.insert(bundle, Vec::new(), true);
                     continue;
                 }
@@ -122,8 +123,8 @@ pub(super) fn classes_in_bundle(bundle: &Path) -> Vec<CachedClass> {
     let found = with_module(bundle, |module| classes(module.factory()));
     let found = match found {
         Ok(classes) => classes,
-        Err(_e) => {
-            eprintln!("vst3: {}: {_e}", bundle.display());
+        Err(e) => {
+            warn!("vst3: {}: {e}", bundle.display());
             return Vec::new();
         }
     };

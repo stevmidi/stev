@@ -4,6 +4,7 @@
 //! discontinuity ends up in `reanchor_playback`: re-seek tracks, realign the
 //! clock's *phase*, flush sounding notes. See `150-clock-position-sync.md`.
 
+use log::debug;
 use undo::Record;
 
 use crate::core::sequencer::SequencerEdit;
@@ -93,7 +94,7 @@ impl EventHandlers {
         match cmd {
             TransportCommand::SetRegion { start, end } => {
                 transport.region_mut().set_region(*start, *end);
-                dprintln!("Set region: {:?} - {:?}", start, end);
+                debug!("Set region: {:?} - {:?}", start, end);
 
                 // Region changed without resetting playback ticks; request a
                 // phase sync now so the next loop boundary is already aligned.
@@ -101,7 +102,7 @@ impl EventHandlers {
             }
             TransportCommand::SetRegionOrToggleLoop { start, end } => {
                 let region_changed = transport.set_region_or_toggle_loop(*start, *end);
-                dprintln!(
+                debug!(
                     "Set region to clip or toggle loop: {} - {} (region_changed={}, loop_enabled={})",
                     start,
                     end,
@@ -117,11 +118,11 @@ impl EventHandlers {
             }
             TransportCommand::LoopOver { start, end } => {
                 transport.loop_over(*start, *end);
-                dprintln!("Loop over: {} - {}", start, end);
+                debug!("Loop over: {} - {}", start, end);
             }
             TransportCommand::ToggleLoop => {
                 transport.toggle_loop_enabled();
-                dprintln!("Toggle loop: loop_enabled={}", transport.is_loop_enabled());
+                debug!("Toggle loop: loop_enabled={}", transport.is_loop_enabled());
             }
             TransportCommand::SetLoop { enabled } => {
                 transport.set_loop_enabled(*enabled);

@@ -26,6 +26,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 use std::time::Duration;
 
+use log::{debug, warn};
 use objc2_foundation::NSPoint;
 use vst3::Steinberg::Vst::ViewType::kEditor;
 use vst3::Steinberg::Vst::{
@@ -84,7 +85,7 @@ impl IPlugFrameTrait for HostPlugFrame {
         // SAFETY: the plugin passes a `ViewRect` it owns for the duration of
         // this call; it is only read here, and the values are copied out.
         let (width, height) = rect_size(&unsafe { *new_size });
-        dprintln!("vst3: plugin asked to resize to {width:.0}x{height:.0}");
+        debug!("vst3: plugin asked to resize to {width:.0}x{height:.0}");
 
         self.resizing.set(true);
         window.set_content_size(width, height);
@@ -148,7 +149,7 @@ impl Vst3Editor {
     /// both `None` on any failure, so the instrument still plays without a UI.
     fn create(&mut self) {
         let Some(controller) = &self.plugin.controller else {
-            dprintln!("vst3: plugin has no edit controller, so no editor");
+            warn!("vst3: plugin has no edit controller, so no editor");
             return;
         };
 
@@ -158,21 +159,21 @@ impl Vst3Editor {
         // local of the matching type whose `tresult` is checked before use.
         unsafe {
             let Some(view) = ComPtr::from_raw(controller.createView(kEditor)) else {
-                dprintln!("vst3: plugin exposes no editor view");
+                warn!("vst3: plugin exposes no editor view");
                 return;
             };
             if view.isPlatformTypeSupported(kPlatformTypeNSView) != kResultOk {
-                dprintln!("vst3: plugin's editor does not support NSView");
+                warn!("vst3: plugin's editor does not support NSView");
                 return;
             }
 
             let (w, h) = view_size(&view).unwrap_or(FALLBACK_SIZE);
             let Some(window) = PluginWindow::new(&self.title, w, h, self.window_top_left) else {
-                dprintln!("vst3: could not create plugin window");
+                warn!("vst3: could not create plugin window");
                 return;
             };
             let Some(view_ptr) = window.content_view_ptr() else {
-                dprintln!("vst3: plugin window has no content view");
+                warn!("vst3: plugin window has no content view");
                 return;
             };
             let window = Rc::new(window);
@@ -188,7 +189,7 @@ impl Vst3Editor {
             // is moved into `self.window` below and kept alive until
             // `view.removed()` runs in `teardown_gui`.
             if view.attached(view_ptr, kPlatformTypeNSView) != kResultOk {
-                dprintln!("vst3: the plugin's editor refused to attach");
+                warn!("vst3: the plugin's editor refused to attach");
                 view.setFrame(std::ptr::null_mut());
                 return;
             }
@@ -205,9 +206,7 @@ impl Vst3Editor {
 
             self.window = Some(window);
             self.view = Some(view);
-            dprintln!(
-                "vst3: plugin editor created ({w:.0}x{h:.0}, {attached_size:?} once attached)"
-            );
+            debug!("vst3: plugin editor created ({w:.0}x{h:.0}, {attached_size:?} once attached)");
         }
     }
 

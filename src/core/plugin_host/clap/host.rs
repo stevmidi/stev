@@ -1,7 +1,9 @@
 //! The host-side callback handlers for the CLAP format. [`StevClapHost`]
 //! declares these host extensions:
 //!
-//! - **log** — plugin log messages are routed to `dprintln!`.
+//! - **log** — plugin log messages are routed to `debug!`, which any
+//!   thread may call, the audio thread included, so they never reach a
+//!   release log.
 //! - **gui** — floating-window lifecycle callbacks (`closed`, resize requests).
 //! - **timer** — the plugin registers periodic timers that the UI thread ticks
 //!   from [`ClapEditor::pump`](crate::core::plugin_host::InstrumentEditor::pump).
@@ -27,6 +29,7 @@ use clack_extensions::state::{HostState, HostStateImpl, PluginState};
 use clack_extensions::thread_check::{HostThreadCheck, HostThreadCheckImpl};
 use clack_extensions::timer::{HostTimer, HostTimerImpl, PluginTimer, TimerId};
 use clack_host::prelude::*;
+use log::debug;
 use objc2::MainThreadMarker;
 
 use crate::core::audio::is_audio_thread;
@@ -184,11 +187,11 @@ impl<'a> SharedHandler<'a> for ClapHostShared {
 }
 
 impl HostLogImpl for ClapHostShared {
-    fn log(&self, severity: LogSeverity, _message: &str) {
+    fn log(&self, severity: LogSeverity, message: &str) {
         if severity == LogSeverity::Debug {
             return;
         }
-        dprintln!("clap plugin [{severity}]: {_message}");
+        debug!("clap plugin [{severity}]: {message}");
     }
 }
 
@@ -277,14 +280,14 @@ impl<'a> HostStateImpl for ClapHostMainThread<'a> {
     /// so there is nothing to track here — just log it. A future "unsaved
     /// plugin changes" indicator would hook in here.
     fn mark_dirty(&self) {
-        dprintln!("clap host: plugin marked its state dirty");
+        debug!("clap host: plugin marked its state dirty");
     }
 }
 
 impl<'a> HostTimerImpl for ClapHostMainThread<'a> {
     fn register_timer(&self, period_ms: u32) -> Result<TimerId, HostError> {
         let id = self.timers.borrow_mut().register(period_ms);
-        dprintln!("clap host: plugin registered timer {id} @ {period_ms}ms");
+        debug!("clap host: plugin registered timer {id} @ {period_ms}ms");
         // `register_timer` runs during `gui.create`/`show`, i.e. inside the same
         // `update` that opened the editor — wake the UI so the next frame picks
         // up the new repaint cadence.

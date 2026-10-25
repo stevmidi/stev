@@ -20,6 +20,7 @@ use std::sync::{
 };
 
 use crossbeam_channel::Sender;
+use log::debug;
 
 use crate::core::clock::ClockCommand;
 use crate::core::time::step_to_grid;
@@ -235,7 +236,7 @@ impl Transport {
     /// whatever running state it was in.
     pub(crate) fn restart_from_cursor(&mut self) {
         let tick = self.cursor_tick.load(Ordering::Relaxed);
-        dprintln!("Restarting from cursor at tick: {}", tick);
+        debug!("Restarting from cursor at tick: {}", tick);
         self.jump_and_chase(tick);
     }
 

@@ -21,6 +21,7 @@ use std::sync::atomic::{AtomicI32, Ordering};
 use std::time::Duration;
 
 use crossbeam_channel::{Receiver, TryRecvError};
+use log::{error, warn};
 
 use crate::core::config::MAX_TRACKS;
 use uuid::Uuid;
@@ -337,7 +338,7 @@ impl Display {
                 self.sync_live_instrument_target();
             }
             Err(e) => {
-                eprintln!("plugin host: failed to load '{}': {e}", entry.name);
+                error!("plugin host: failed to load '{}': {e}", entry.name);
             }
         }
     }
@@ -473,7 +474,7 @@ impl Display {
                 let state = parked.as_deref().unwrap_or(&want.state);
                 self.load_slot_instrument(slot, idx, state, None);
             }
-            None => eprintln!("plugin host: '{}' is not installed", want.display_name),
+            None => warn!("plugin host: '{}' is not installed", want.display_name),
         }
     }
 
@@ -550,7 +551,7 @@ impl Display {
             Ok(editor) => {
                 self.instruments.track_instruments[slot] = Some(TrackInstrument { editor, entry });
             }
-            Err(e) => eprintln!("plugin host: failed to load '{}': {e}", entry.name),
+            Err(e) => error!("plugin host: failed to load '{}': {e}", entry.name),
         }
     }
 
@@ -623,7 +624,7 @@ impl Display {
             .catalog_index_of(&want.bundle_path, &want.plugin_id)
             .and_then(|idx| self.plugin_catalog().get(idx).cloned())
         else {
-            eprintln!("plugin host: '{}' is not installed", want.display_name);
+            warn!("plugin host: '{}' is not installed", want.display_name);
             return;
         };
         let Some(handle) = self.instruments.audio.as_mut() else {
@@ -639,7 +640,7 @@ impl Display {
                     });
                 }
             }
-            Err(e) => eprintln!("plugin host: failed to load '{}': {e}", entry.name),
+            Err(e) => error!("plugin host: failed to load '{}': {e}", entry.name),
         }
     }
 

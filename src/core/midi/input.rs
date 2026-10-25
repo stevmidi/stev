@@ -14,6 +14,7 @@
 //! `150-clock-position-sync.md`.
 
 use crossbeam_channel::Sender;
+use log::{debug, info};
 use midir::{MidiInput, MidiInputConnection};
 use rtrb::Producer;
 use std::{
@@ -235,9 +236,9 @@ impl MidiInputForwarder {
 
         #[cfg(unix)]
         if port_name == VIRTUAL_PORT_NAME {
-            dprintln!("Creating virtual input port: {}", port_name);
+            debug!("Creating virtual input port: {}", port_name);
             let conn = midi_in.create_virtual(port_name, callback, ())?;
-            dprintln!("Created virtual input port: {}", port_name);
+            info!("Created virtual input port: {}", port_name);
             return Ok(conn);
         }
 
@@ -247,9 +248,9 @@ impl MidiInputForwarder {
             .find(|p| midi_in.port_name(p).ok().as_deref() == Some(port_name))
             .ok_or_else(|| format!("error: MIDI input port '{}' not found", port_name))?;
 
-        dprintln!("Using input port: {}", port_name);
+        debug!("Using input port: {}", port_name);
         let midi_in_connection = midi_in.connect(in_port, "midi-in", callback, ())?;
-        dprintln!("Connected to input port: {}", port_name);
+        info!("Connected to input port: {}", port_name);
         Ok(midi_in_connection)
     }
 }

@@ -32,6 +32,17 @@ Breaking entries are marked **Breaking** and say what to do about them.
   Stev's Dock icon, opens it (asking first if the open project has unsaved
   changes). A project from outside `Documents/Stev/Projects` is copied into
   it first; the original is left alone.
+- A log file, `stev.log` in `~/Library/Logs/stev/`, with the previous run
+  kept as `stev.1.log`. It records what a bug report needs, such as a plugin
+  that won't load or a MIDI port that won't connect, and any crash. Settings
+  → About → **Show log in Finder** shows it.
+
+### Changed
+
+- **Breaking** for forks: the `dprintln!` macro is gone. Stev logs through
+  the `log` crate's macros (`debug!` for what `dprintln!` printed), and the
+  `AGENTS.md` ground rule says so; `docs/080-conventions.md` § Logging has
+  the levels.
 
 ### Fixed
 

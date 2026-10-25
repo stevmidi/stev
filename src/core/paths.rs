@@ -1,8 +1,8 @@
 //! Where the app keeps things on disk: the user's library under Documents
 //! (`Stev/`, holding only user content — `Projects/` and the audio export's
-//! `Exports/` today, sibling root folders for forks), app settings in the platform config directory, and
-//! rebuildable caches in the platform cache directory. See
-//! `060-persistence.md`.
+//! `Exports/` today, sibling root folders for forks), app settings in the platform config directory,
+//! rebuildable caches in the platform cache directory, and logs in the
+//! platform's logs folder. See `060-persistence.md`.
 
 use std::{fs, path::PathBuf};
 
@@ -72,4 +72,18 @@ pub(crate) fn config_dir() -> PathBuf {
 #[cfg(target_os = "macos")]
 pub(crate) fn cache_dir() -> PathBuf {
     app_dir(dirs::cache_dir())
+}
+
+/// The app's logs folder, beside the user's other apps' logs: `stev.log`
+/// (`core::logging`) and the audio overrun journal. `~/Library/Logs/stev`
+/// on macOS, the local-data directory's `stev/logs` elsewhere, falling back
+/// to the current directory. Not created here: each writer makes it when it
+/// first writes.
+pub(crate) fn logs_dir() -> PathBuf {
+    let dir = if cfg!(target_os = "macos") {
+        dirs::home_dir().map(|h| h.join("Library/Logs").join(APP_DIR_NAME))
+    } else {
+        dirs::data_local_dir().map(|d| d.join(APP_DIR_NAME).join("logs"))
+    };
+    dir.unwrap_or_else(|| PathBuf::from("."))
 }

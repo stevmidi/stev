@@ -1,6 +1,6 @@
 # A Downloadable macOS App
 
-**Status: plan agreed 2026-10-24; phase 1 (the bundle script) merged, phase 2 (the hand test) run 2026-10-24 with its results below and its two bundle-only Dock bugs fixed, phase 3 (the About tab and the app menu) built and hand-tested 2026-10-24, phase 4 (opening projects from Finder) built and hand-tested 2026-10-25, phases 5–6 not started.** Level 1 of the `280` candidate *A downloadable macOS app*: an unsigned universal `Stev.app` in a zip, attached to each `v*` release, with the items that come with it (the hand test, the About tab with its update check, opening projects from Finder, a log file). Levels 2 (signed + notarized) and 3 (a Homebrew cask) stay in `280`. Read `280` § A downloadable macOS app first, and `080` § Releasing and § Licensing.
+**Status: plan agreed 2026-10-24; phase 1 (the bundle script) merged, phase 2 (the hand test) run 2026-10-24 with its results below and its two bundle-only Dock bugs fixed, phase 3 (the About tab and the app menu) built and hand-tested 2026-10-24, phase 4 (opening projects from Finder) built and hand-tested 2026-10-25, phase 5 (the log file) built 2026-10-25, phase 6 not started.** Level 1 of the `280` candidate *A downloadable macOS app*: an unsigned universal `Stev.app` in a zip, attached to each `v*` release, with the items that come with it (the hand test, the About tab with its update check, opening projects from Finder, a log file). Levels 2 (signed + notarized) and 3 (a Homebrew cask) stay in `280`. Read `280` § A downloadable macOS app first, and `080` § Releasing and § Licensing.
 
 ## Decisions
 
@@ -125,6 +125,18 @@ The shape agreed 2026-09-24 (memory: logging deferred until distribution):
 - **Plugin stdout noise** (plugins that write to fd 1 directly): in a bundle it goes nowhere, which is fine. Redirecting fd 1/2 into the log is not attempted.
 - **The About tab gains "Show log in Finder"** (`open -R`), and the bug-report form asks for the file.
 - On Linux and Windows, the file goes in the platform's equivalent (`dirs::data_local_dir()/stev/logs`), so CI exercises the same code.
+
+**As built** (2026-10-25), where it differs from or adds to the plan above:
+
+- **`fern`**, which adds one crate (MIT) to `log`, already in the tree via egui and midir. `simplelog` would have brought `time` and `termcolor`. Timestamps come from `chrono`, already a dependency.
+- **`core/logging.rs`**: `init` (stderr and the file) runs in `main()` right after the scan-child check. The scan child gets `init_scan_child`, stderr only, so a scan never rotates the running app's log. A file that can't be created leaves stderr alone, with a `warn!` saying so. The line is `time LEVEL [thread] module: message`, the crate's own name dropped from the module.
+- **The logs folder is one function**, `paths::logs_dir()`, which the overrun journal now uses too.
+- **A panic hook** (not in the plan, but the bug report needs the crash as much as the run): it logs the panic with its thread name and a forced backtrace, and replaces the default hook, since the log's stderr output already prints it.
+- **Levels**: each site was given the level its reader needs (`080` § Logging), not a blanket `debug!`. The release log keeps the audio device, port connections, plugin loads and VST3 scan results at `info!`, and every former `eprintln!` as `warn!` or `error!`. Sites on the audio thread, or that a plugin may call from it (CLAP's log extension), stay `debug!`, so they never reach a release build.
+- **No `println!` was kept** in the app. The timing probe's report stays a `println!`: it is a test, which installs no logger.
+- **The About tab's row** reads "Show log in Finder" (`open -R`, the file selected). Elsewhere it reads "Show log folder" and opens the folder, as `open_with` does for the links.
+- **The bug-report form** gains a Log field that asks for `stev.log`, and `stev.1.log` after a crash.
+- **Tests**: `rotate_and_create` (a first run with no folder, the previous run kept, the one before it gone) and `short_target`. The About tab's layout test covers the third link row.
 
 ### 6. The release workflow
 

@@ -18,6 +18,7 @@ use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64};
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::Receiver;
+use log::debug;
 
 use crate::core::time::{self, PPQN};
 use crate::core::timer::Timer;
@@ -160,7 +161,7 @@ impl Clock {
                             region_start,
                             region_length,
                         ) {
-                            dprintln!(
+                            debug!(
                                 "Clock realigned with playback: {} -> {} ({:+} ticks, region phase {} -> {}); keeping capture buffer intact",
                                 current,
                                 aligned,

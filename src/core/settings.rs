@@ -8,6 +8,7 @@
 
 use std::{collections::BTreeMap, fs, io, path::PathBuf};
 
+use log::error;
 use serde::{Deserialize, Serialize};
 
 use super::config::{BROWSER_W_DEFAULT, MIDI_OUT_OFFSET_DEFAULT_MS, MIDI_OUT_OFFSET_MAX_MS};
@@ -113,6 +114,6 @@ pub(crate) fn update_settings(what: &str, change: impl FnOnce(&mut SettingsData)
     let mut settings = load_settings();
     change(&mut settings);
     if let Err(e) = save_settings(&settings) {
-        eprintln!("Failed to save {what}: {e}");
+        error!("Failed to save {what}: {e}");
     }
 }

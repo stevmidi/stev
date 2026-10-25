@@ -7,6 +7,7 @@ use std::sync::{Arc, OnceLock};
 
 use clack_extensions::audio_ports::{AudioPortInfoBuffer, PluginAudioPorts};
 use clack_host::prelude::*;
+use log::{debug, warn};
 
 use crate::core::plugin_host::buffers::AudioIoLayout;
 use crate::core::plugin_host::catalog::available_bundles_hint;
@@ -130,8 +131,8 @@ pub(super) fn load(
                     .map_err(|e| format!("state.load: {e}"))
             });
         match restored {
-            Ok(()) => dprintln!("clap host: restored {} bytes of plugin state", blob.len()),
-            Err(reason) => eprintln!("clap host: preset for '{name}' not restored ({reason})"),
+            Ok(()) => debug!("clap host: restored {} bytes of plugin state", blob.len()),
+            Err(reason) => warn!("clap host: preset for '{name}' not restored ({reason})"),
         }
     }
 

@@ -50,10 +50,12 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
+use log::error;
 use objc2::MainThreadMarker;
 use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
 use serde::{Deserialize, Serialize};
 
+use crate::core::logging::init_scan_child;
 use crate::core::plugin_host::exit_without_destructors;
 
 use super::cache::CachedClass;
@@ -92,10 +94,11 @@ pub(crate) fn run_if_scan_child() {
     let Some(flag_at) = args.iter().position(|a| a == SCAN_FLAG) else {
         return;
     };
+    init_scan_child();
     let (Some(bundle), Some(out_path)) = (args.get(flag_at + 1), args.get(flag_at + 2)) else {
         // Malformed invocation: fail loudly rather than fall through into the
         // app, which would open a second window and a second audio device.
-        eprintln!("{SCAN_FLAG} needs <bundle path> <output path>");
+        error!("{SCAN_FLAG} needs <bundle path> <output path>");
         exit_without_destructors(2);
     };
 
@@ -108,12 +111,12 @@ pub(crate) fn run_if_scan_child() {
         Ok(text) => match std::fs::write(out_path, text) {
             Ok(()) => 0,
             Err(e) => {
-                eprintln!("vst3 scan child: could not write {out_path}: {e}");
+                error!("vst3 scan child: could not write {out_path}: {e}");
                 1
             }
         },
         Err(e) => {
-            eprintln!("vst3 scan child: could not serialise the result: {e}");
+            error!("vst3 scan child: could not serialise the result: {e}");
             1
         }
     };

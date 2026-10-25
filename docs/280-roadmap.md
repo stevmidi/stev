@@ -55,9 +55,8 @@ Comes with it:
   - **`/usr/bin/curl` via `std::process::Command`, not an HTTP crate.** It adds no dependencies, no licence review (`ureq` + rustls would pull in `webpki-roots`, `CDLA-Permissive-2.0`, not in `deny.toml`), and no TLS stack to keep patched. curl uses the system trust store and Apple keeps it updated. It is gated behind `cfg(target_os = "macos")`, since only the macOS app ships. Switch to `ureq` (with `rustls-platform-verifier`, so the Keychain's roots replace `webpki-roots`) only if Stev needs HTTP elsewhere or a Linux/Windows binary ships.
   - **The version comparison is a pure helper with tests.** It strips the `v` and compares numeric `major.minor.patch`, so a tag that won't parse reads as "couldn't check", never as "newer". `/releases/latest` already skips drafts and pre-releases.
   - **Not a self-updater.** Downloading and installing in place (Sparkle) needs level 2's signing plus an EdDSA-signed appcast, and overlaps with level 3's cask. Optional after level 2, not before.
-- **A log file** in `~/Library/Logs/stev/` behind the `log` facade, replacing `dprintln!` where a user's bug report needs it. Deferred until now on purpose: it matters once strangers run a build they didn't compile.
 
-Level 1 is planned in `330-macos-app.md` (2026-10-24), in six phases: the bundle, a hand test, an About settings tab with the update check, opening projects from Finder, the log file, and the release workflow. The bundle and the hand test are done, and so is the About tab; and so is opening projects from Finder (2026-10-25); the rest are not started.
+Level 1 is planned in `330-macos-app.md` (2026-10-24), in six phases: the bundle, a hand test, an About settings tab with the update check, opening projects from Finder, the log file, and the release workflow. The bundle and the hand test are done, and so are the About tab, opening projects from Finder (2026-10-25) and the log file (2026-10-25); the release workflow is not started.
 
 ### Detecting the meter on Enter
 

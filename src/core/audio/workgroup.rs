@@ -35,6 +35,8 @@ use cpal::traits::DeviceTrait;
 #[cfg(target_os = "macos")]
 use libc::{RTLD_DEFAULT, dlsym};
 #[cfg(target_os = "macos")]
+use log::{debug, info};
+#[cfg(target_os = "macos")]
 use objc2_core_audio::{
     AudioObjectGetPropertyData, AudioObjectID, AudioObjectPropertyAddress,
     kAudioDevicePropertyIOThreadOSWorkgroup, kAudioHardwarePropertyTranslateUIDToDevice,
@@ -66,7 +68,7 @@ impl DeviceWorkgroup {
         {
             let workgroup = device.id().ok().and_then(|id| device_workgroup(id.id()));
             if workgroup.is_none() {
-                dprintln!("audio engine: no device workgroup; workers stay outside one");
+                info!("audio engine: no device workgroup; workers stay outside one");
             }
             Self {
                 workgroup,
@@ -208,7 +210,7 @@ impl Workgroup {
         // SAFETY: `raw` is a live workgroup and `token` a live, writable token.
         let result = unsafe { (self.join)(self.raw.as_ptr(), &raw mut *token) };
         if result != 0 {
-            dprintln!("audio worker: os_workgroup_join refused ({result})");
+            debug!("audio worker: os_workgroup_join refused ({result})");
             return None;
         }
         Some(token)

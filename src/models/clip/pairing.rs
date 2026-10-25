@@ -10,6 +10,7 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::ops::Range;
 
+use log::debug;
 use uuid::Uuid;
 
 use crate::models::event::{Event, EventType};
@@ -270,7 +271,7 @@ impl Clip {
             let note_off = Self::note_off_for(&self.events[on_idx], tick);
             self.events.push(note_off);
 
-            dprintln!("Closing open note idx {} at tick {}", on_idx, tick);
+            debug!("Closing open note idx {} at tick {}", on_idx, tick);
         }
 
         self.sort_events_by_tick();

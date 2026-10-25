@@ -4,9 +4,16 @@
 
 - **New commands go through channels**: add a variant to the relevant enum (`SequencerCommand`, `TransportCommand`), send via `EventHandlers`, and handle in the sequencer thread's `select!` loop.
 - **No locks on the render path**: UI-visible state must use `Arc<AtomicX>` in `SharedAtomics`, not channels or mutexes.
-- **`dprintln!` for debug logging**: compiles away in release via `#[cfg(debug_assertions)]`. Use it instead of `println!`.
 - **Platform guards**: use `[target.'cfg(...)'.dependencies]` for platform-specific crates (on macOS `mach2`, the plugin host's crates and the AppKit bindings; `libc` on Linux and `windows-sys` on Windows for the timing threads' priority) and `#[cfg(target_os = "...")]` for per-OS code (e.g. the plugin host's `#[cfg(target_os = "macos")]` module in `main.rs`). The one Linux-only entry re-declares `eframe` with its `x11` + `wayland` window backends, which `default-features = false` otherwise drops (`000` § CI). `cpal` (the unified audio engine, `src/core/audio/`) is an all-platform dependency.
 - **Edition 2024**: use current Rust idioms freely.
+
+## Logging
+
+- **The `log` macros, never `println!` or `eprintln!`.** `core/logging.rs` installs the backend (`fern`) first thing in `main`, after the VST3 scan child has split off. Every line goes to stderr and to `stev.log` in `paths::logs_dir()` (`~/Library/Logs/stev/`, beside the overrun journal), as `time LEVEL [thread] module: message`. The file is rotated once at launch, the previous run kept as `stev.1.log`, so the run that crashed survives the relaunch. A panic is logged with its thread and a backtrace (the hook replaces the default one, whose stderr line the log repeats). From a `.app` stderr goes nowhere, so the file is what a user attaches to a bug report (About → Show log in Finder).
+- **Pick the level for the reader of a bug report.** `debug!` for developer detail (a region set, a clock realign, an editor created). `release_max_level_info` compiles it out of release builds, as `dprintln!` once was. `info!` for what a report wants to see happen once (the audio device and its rate, a port connected, a plugin loaded). `warn!` for a failure the app works around (a port that won't connect, an editor a plugin won't show). `error!` for one the user loses something to (a failed save, a plugin that won't load, no audio). Other crates log at `warn!` and above.
+- **Only `debug!` on the audio thread**, and in anything a plugin may call from it (CLAP's log extension, `clap/host.rs`). A line takes the file's lock, and `debug!` doesn't exist in the build that's played. A release-build report from there goes through a lock-free ring to a thread of its own, like the overrun journal (`170`).
+- **The VST3 scan child logs to stderr only** (`logging::init_scan_child`), which the parent discards. It never opens the file, whose rotation would move the running app's log away.
+- **The one `println!`** is the timing probe's report (`core/timing_probe.rs`): a test, which installs no logger, whose output is its whole point.
 
 ## EventHandlers
 

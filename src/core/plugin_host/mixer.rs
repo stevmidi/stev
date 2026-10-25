@@ -53,6 +53,7 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
+use log::debug;
 use rtrb::{Consumer, Producer};
 
 use crate::core::audio::meter::ChannelLevel;
@@ -310,7 +311,7 @@ impl InstrumentMixer {
     /// Appends an event to `pending`, assigning it the next arrival sequence.
     fn push_pending(&mut self, target_frame: i64, track: usize, message: Midi3) {
         if self.pending.len() >= self.pending.capacity() {
-            dprintln!(
+            debug!(
                 "plugin host: pending-event buffer at capacity ({}); audio callback may be starved",
                 self.pending.capacity()
             );

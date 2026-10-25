@@ -10,6 +10,7 @@ use cpal::{
     BufferSize, Device, Error, ErrorKind, FromSample, I24, SampleFormat, SizedSample, Stream,
     StreamConfig, SupportedBufferSize, default_host,
 };
+use log::{debug, error, info};
 use rtrb::{Consumer, Producer, RingBuffer};
 
 use super::journal::{self, JournalWriter, MAX_JOURNAL_SOURCES, OverrunRecord};
@@ -116,7 +117,7 @@ impl AudioEngine {
                 if matches!(config.buffer_size, BufferSize::Fixed(_))
                     && !probe_buffer_size_supported(&device, &config, sample_format)
                 {
-                    dprintln!(
+                    info!(
                         "audio engine: fixed buffer size rejected by the device; using the device default"
                     );
                     config.buffer_size = BufferSize::Default;
@@ -132,13 +133,13 @@ impl AudioEngine {
                 );
                 let stream = match build_stream(&device, &config, sample_format, channels, mixer) {
                     Ok(stream) => stream,
-                    Err(_e) => {
-                        dprintln!("audio engine disabled: {_e}");
+                    Err(e) => {
+                        error!("audio engine disabled: {e}");
                         return;
                     }
                 };
-                if let Err(_e) = stream.play() {
-                    dprintln!("audio engine: stream.play() failed: {_e}");
+                if let Err(e) = stream.play() {
+                    error!("audio engine: stream.play() failed: {e}");
                     return;
                 }
                 // The stream lives exactly as long as this thread — held here;
@@ -149,8 +150,8 @@ impl AudioEngine {
             })
             .expect("failed to spawn audio-engine thread");
 
-        dprintln!("audio engine: started @ {sample_rate} Hz, {channels} channel(s)");
-        dprintln!(
+        info!("audio engine: started @ {sample_rate} Hz, {channels} channel(s)");
+        info!(
             "audio engine: overrun journal at {}",
             journal::journal_path().display()
         );
@@ -255,7 +256,7 @@ impl Mixer {
             if self.sources.len() < self.sources.capacity() {
                 self.sources.push(source);
             } else {
-                dprintln!("audio engine: source list full, dropping added source");
+                debug!("audio engine: source list full, dropping added source");
             }
         }
 
@@ -409,7 +410,7 @@ fn build_stream(
     mixer: Mixer,
 ) -> Result<Stream, Error> {
     with_sample_type!(sample_format, T => build_typed::<T>(device, config, channels, mixer), _ => {
-        dprintln!("audio engine: unsupported sample format {sample_format:?}");
+        error!("audio engine: unsupported sample format {sample_format:?}");
         Err(ErrorKind::UnsupportedConfig.into())
     })
 }
@@ -438,7 +439,7 @@ where
                 load.record_xrun();
             } else {
                 load.record_stream_error();
-                dprintln!("audio engine stream error: {e}");
+                error!("audio engine stream error: {e}");
             }
         },
         None,

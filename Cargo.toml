@@ -32,6 +32,11 @@ dirs = "7"
 hound = "3.5"
 undo = "0.52"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
+# The app's log (`core::logging`, `080-conventions.md` § Logging): the `log`
+# facade, already in the tree via egui and midir, capped at `info` in release
+# so `debug!` compiles away there; `fern` is the backend, the one new crate.
+log = { version = "0.4", features = ["release_max_level_info"] }
+fern = "0.7"
 # Built-in audio metronome click (all platforms). See core::audio_metronome.
 cpal = "0.18"
 # Realtime-safe SPSC ring buffer for the plugin host's audio-callback-side MIDI

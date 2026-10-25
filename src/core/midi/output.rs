@@ -4,6 +4,7 @@
 
 use std::error::Error;
 
+use log::info;
 #[cfg(unix)]
 use midir::os::unix::VirtualOutput;
 use midir::{MidiOutput, MidiOutputConnection as MidirOutputConnection};
@@ -57,7 +58,7 @@ impl MidiOutputConnection {
             .iter()
             .find(|p| midi_out.port_name(p).ok().as_deref() == Some(port_name))
             .ok_or_else(|| format!("error: MIDI output port '{}' not found", port_name))?;
-        dprintln!("Connecting to output port: {}", port_name);
+        info!("Connecting to output port: {}", port_name);
         self.midi_output_connection = Some(midi_out.connect(out_port, "midi_output")?);
         Ok(())
     }
@@ -68,7 +69,7 @@ impl MidiOutputConnection {
     fn connect_virtual(&mut self, name: &str) -> Result<(), Box<dyn Error>> {
         self.midi_output_connection = None;
         let midi_out = MidiOutput::new("MIDI Output")?;
-        dprintln!("Creating virtual output port: {}", name);
+        info!("Creating virtual output port: {}", name);
         self.midi_output_connection = Some(midi_out.create_virtual(name)?);
         Ok(())
     }

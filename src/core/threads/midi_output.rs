@@ -9,6 +9,7 @@
 //! See `160-midi-out-offset.md`.
 
 use crossbeam_channel::{Receiver, Sender, select};
+use log::warn;
 
 use std::error::Error;
 use std::hint::spin_loop;
@@ -107,7 +108,7 @@ impl MidiSink for MidiOutputConnection {
 /// which is what makes dropping the delay queue on a stop safe.
 fn send_midi_out<S: MidiSink>(sink: &mut S, logger: &mut NoteLogger, msg: Vec<u8>) {
     if let Err(e) = sink.send(&msg) {
-        eprintln!("Failed to send MIDI message: {}", e);
+        warn!("Failed to send MIDI message: {}", e);
     } else {
         logger.log_clip_event(&msg);
     }
