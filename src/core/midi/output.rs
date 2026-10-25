@@ -58,8 +58,8 @@ impl MidiOutputConnection {
             .iter()
             .find(|p| midi_out.port_name(p).ok().as_deref() == Some(port_name))
             .ok_or_else(|| format!("error: MIDI output port '{}' not found", port_name))?;
-        info!("Connecting to output port: {}", port_name);
         self.midi_output_connection = Some(midi_out.connect(out_port, "midi_output")?);
+        info!("Connected to output port: {}", port_name);
         Ok(())
     }
 
@@ -69,8 +69,8 @@ impl MidiOutputConnection {
     fn connect_virtual(&mut self, name: &str) -> Result<(), Box<dyn Error>> {
         self.midi_output_connection = None;
         let midi_out = MidiOutput::new("MIDI Output")?;
-        info!("Creating virtual output port: {}", name);
         self.midi_output_connection = Some(midi_out.create_virtual(name)?);
+        info!("Created virtual output port: {}", name);
         Ok(())
     }
 

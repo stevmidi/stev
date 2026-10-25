@@ -50,12 +50,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use log::error;
 use objc2::MainThreadMarker;
 use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
 use serde::{Deserialize, Serialize};
 
-use crate::core::logging::init_scan_child;
 use crate::core::plugin_host::exit_without_destructors;
 
 use super::cache::CachedClass;
@@ -94,11 +92,9 @@ pub(crate) fn run_if_scan_child() {
     let Some(flag_at) = args.iter().position(|a| a == SCAN_FLAG) else {
         return;
     };
-    init_scan_child();
     let (Some(bundle), Some(out_path)) = (args.get(flag_at + 1), args.get(flag_at + 2)) else {
-        // Malformed invocation: fail loudly rather than fall through into the
-        // app, which would open a second window and a second audio device.
-        error!("{SCAN_FLAG} needs <bundle path> <output path>");
+        // Malformed invocation: fail rather than fall through into the app,
+        // which would open a second window and a second audio device.
         exit_without_destructors(2);
     };
 
@@ -107,20 +103,13 @@ pub(crate) fn run_if_scan_child() {
     // a plugin that requires it during `bundleEntry` gets it.
     let classes = classes_in_bundle(Path::new(bundle));
 
-    let code = match serde_json::to_string(&ScanResult { classes }) {
-        Ok(text) => match std::fs::write(out_path, text) {
-            Ok(()) => 0,
-            Err(e) => {
-                error!("vst3 scan child: could not write {out_path}: {e}");
-                1
-            }
-        },
-        Err(e) => {
-            error!("vst3 scan child: could not serialise the result: {e}");
-            1
-        }
-    };
-    exit_without_destructors(code);
+    // A child installs no logger (its stderr is discarded anyway, and it must
+    // never rotate the app's log), so its exit status is what it reports: the
+    // parent logs it with the failure (`scan_bundle_out_of_process`).
+    let written = serde_json::to_string(&ScanResult { classes })
+        .ok()
+        .and_then(|text| std::fs::write(out_path, text).ok());
+    exit_without_destructors(if written.is_some() { 0 } else { 1 });
 }
 
 /// Makes this scan child a `Prohibited` app, with no Dock icon and no menu

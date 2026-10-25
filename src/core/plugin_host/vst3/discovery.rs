@@ -118,15 +118,11 @@ pub(super) fn scan_catalog() -> Vec<PluginCatalogEntry> {
 /// scan child (see [`child::run_if_scan_child`](super::child::run_if_scan_child)),
 /// on that child's main thread. A load failure yields an empty list — the
 /// caller cannot distinguish "no instruments" from "would not load", and does
-/// not need to: both mean nothing to offer from this bundle.
+/// not need to: both mean nothing to offer from this bundle. Nor is the
+/// reason logged: a scan child has no logger.
 pub(super) fn classes_in_bundle(bundle: &Path) -> Vec<CachedClass> {
-    let found = with_module(bundle, |module| classes(module.factory()));
-    let found = match found {
-        Ok(classes) => classes,
-        Err(e) => {
-            warn!("vst3: {}: {e}", bundle.display());
-            return Vec::new();
-        }
+    let Ok(found) = with_module(bundle, |module| classes(module.factory())) else {
+        return Vec::new();
     };
     found
         .into_iter()

@@ -25,12 +25,17 @@ use fern::Dispatch;
 use log::{LevelFilter, error, info, warn};
 
 use crate::core::paths::logs_dir;
+use crate::core::update_check::CURRENT_VERSION;
 
 /// File name of this run's log, in the logs folder.
 const LOG_FILE_NAME: &str = "stev.log";
 
 /// File name the previous run's log is kept under.
 const PREVIOUS_LOG_FILE_NAME: &str = "stev.1.log";
+
+/// How both log files in the logs folder, this one and the overrun journal,
+/// write a line's local time, so their lines compare side by side.
+pub(crate) const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S%.3f";
 
 /// This crate's name, the first segment of every target it logs under.
 const CRATE_NAME: &str = env!("CARGO_CRATE_NAME");
@@ -42,41 +47,16 @@ pub(crate) fn log_path() -> PathBuf {
 }
 
 /// Installs the logger and the panic hook. Called once, early in `main`,
-/// after the VST3 scan child has split off (macOS, `init_scan_child`). An
-/// unwritable logs folder leaves stderr alone, and says so there.
+/// after the VST3 scan child has split off: a child installs no logger, so
+/// it never rotates the running app's log away. An unwritable logs folder
+/// leaves stderr alone, and says so there.
 pub(crate) fn init() {
     let path = log_path();
-    let (dispatch, file_error) = match rotate_and_create(&path) {
-        Ok(file) => (dispatch().chain(file), None),
-        Err(e) => (dispatch(), Some(e)),
-    };
-    if dispatch.apply().is_err() {
-        // A logger is already set: never in the app, which calls this once.
-        return;
-    }
-    install_panic_hook();
-
-    info!("Stev {} ({OS}, {ARCH})", env!("CARGO_PKG_VERSION"));
-    match file_error {
-        None => info!("log file: {}", path.display()),
-        Some(e) => warn!("no log file at {}: {e}", path.display()),
-    }
-}
-
-/// The VST3 scan child's logger: stderr alone, which the parent discards.
-/// Never the file, whose rotation would move the running app's log away.
-#[cfg(target_os = "macos")]
-pub(crate) fn init_scan_child() {
-    let _ = dispatch().apply();
-}
-
-/// The levels, the line format and stderr, shared by both loggers.
-fn dispatch() -> Dispatch {
-    Dispatch::new()
+    let dispatch = Dispatch::new()
         .format(|out, message, record| {
             out.finish(format_args!(
                 "{} {:<5} [{}] {}: {message}",
-                Local::now().format("%Y-%m-%d %H:%M:%S%.3f"),
+                Local::now().format(TIMESTAMP_FORMAT),
                 record.level(),
                 thread::current().name().unwrap_or("unnamed"),
                 short_target(record.target()),
@@ -85,15 +65,25 @@ fn dispatch() -> Dispatch {
         .level(LevelFilter::Warn)
         // `Debug`, capped at `Info` in release by `release_max_level_info`.
         .level_for(CRATE_NAME, LevelFilter::Debug)
-        .chain(io::stderr())
+        .chain(io::stderr());
+    let (dispatch, file_error) = match rotate_and_create(&path) {
+        Ok(file) => (dispatch.chain(file), None),
+        Err(e) => (dispatch, Some(e)),
+    };
+    // Fails only if a logger is already set, which `main` never does.
+    let _ = dispatch.apply();
+    install_panic_hook();
+
+    info!("Stev {CURRENT_VERSION} ({OS}, {ARCH})");
+    match file_error {
+        None => info!("log file: {}", path.display()),
+        Some(e) => warn!("no log file at {}: {e}", path.display()),
+    }
 }
 
 /// Keeps the log at `path`, if any, as the previous run's (replacing the one
 /// before it), and creates a fresh, empty one in its place.
 fn rotate_and_create(path: &Path) -> io::Result<File> {
-    if let Some(dir) = path.parent() {
-        fs::create_dir_all(dir)?;
-    }
     // No log yet on a first run; any other failure leaves `create` to
     // truncate the old one instead.
     let _ = fs::rename(path, path.with_file_name(PREVIOUS_LOG_FILE_NAME));
@@ -127,6 +117,7 @@ mod tests {
     fn scratch_dir(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("stev-log-{}-{tag}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
         dir
     }
 
@@ -136,7 +127,7 @@ mod tests {
         let path = dir.join(LOG_FILE_NAME);
         let previous = dir.join(PREVIOUS_LOG_FILE_NAME);
 
-        // First run: the folder doesn't exist yet.
+        // First run: no log yet.
         rotate_and_create(&path).unwrap();
         assert!(path.exists());
         assert!(!previous.exists());

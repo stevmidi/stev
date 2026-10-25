@@ -37,6 +37,7 @@ use rtrb::{Consumer, Producer, RingBuffer};
 
 use super::INSTRUMENTS_SOURCE;
 use crate::core::config::MAX_TRACKS;
+use crate::core::logging::TIMESTAMP_FORMAT;
 use crate::core::paths::logs_dir;
 
 /// Records the ring can hold between drains. At one record per block that is
@@ -190,9 +191,6 @@ fn drain_loop(mut rx: Consumer<OverrunRecord>, dropped: Arc<AtomicU32>) {
 /// that has outgrown [`ROTATE_AT_BYTES`].
 fn open_journal() -> Result<File, io::Error> {
     let path = journal_path();
-    if let Some(dir) = path.parent() {
-        let _ = fs::create_dir_all(dir);
-    }
     if fs::metadata(&path).is_ok_and(|m| m.len() > ROTATE_AT_BYTES) {
         let _ = fs::rename(&path, path.with_extension("log.1"));
     }
@@ -225,7 +223,7 @@ fn session_header(first: &OverrunRecord) -> String {
 /// Local wall-clock time with milliseconds.
 fn timestamp(at: SystemTime) -> String {
     let local: DateTime<Local> = at.into();
-    local.format("%Y-%m-%d %H:%M:%S%.3f").to_string()
+    local.format(TIMESTAMP_FORMAT).to_string()
 }
 
 /// One journal line. Pure, unit-tested. Reads as:

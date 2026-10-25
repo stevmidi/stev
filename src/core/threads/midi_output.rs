@@ -106,11 +106,31 @@ impl MidiSink for MidiOutputConnection {
 /// Writes one message to the port and records note on/off with the logger, so
 /// `ReleaseNotes` releases exactly the notes that actually reached the device —
 /// which is what makes dropping the delay queue on a stop safe.
-fn send_midi_out<S: MidiSink>(sink: &mut S, logger: &mut NoteLogger, msg: Vec<u8>) {
-    if let Err(e) = sink.send(&msg) {
-        warn!("Failed to send MIDI message: {}", e);
-    } else {
-        logger.log_clip_event(&msg);
+///
+/// Sends fail in bursts (a device unplugged mid-playback fails every message
+/// until the watcher swaps the port), so only a burst's first failure is
+/// logged, and its size once a send gets through: `failed` counts it. This
+/// is the timing thread, where a log line per message would cost.
+fn send_midi_out<S: MidiSink>(
+    sink: &mut S,
+    logger: &mut NoteLogger,
+    failed: &mut u32,
+    msg: Vec<u8>,
+) {
+    match sink.send(&msg) {
+        Err(e) => {
+            if *failed == 0 {
+                warn!("Failed to send MIDI message: {e}");
+            }
+            *failed += 1;
+        }
+        Ok(()) => {
+            if *failed > 1 {
+                warn!("{} MIDI messages failed to send in all", *failed);
+            }
+            *failed = 0;
+            logger.log_clip_event(&msg);
+        }
     }
 }
 
@@ -163,13 +183,14 @@ pub(crate) fn run_midi_output_loop<S: MidiSink>(
         constraint: PRECISE_WINDOW.as_nanos() as u64,
     });
     let mut queue = MidiOutQueue::new();
+    let mut failed_sends = 0;
 
     loop {
         // Flush what has come due, then wait as `plan_wait` says: blocking
         // while the next deadline is far off, polling once it's near.
         let now = Instant::now();
         while let Some(msg) = queue.pop_due(now) {
-            send_midi_out(&mut sink, &mut logger, msg);
+            send_midi_out(&mut sink, &mut logger, &mut failed_sends, msg);
         }
         let wait = plan_wait(queue.next_deadline(), now);
 
@@ -181,7 +202,7 @@ pub(crate) fn run_midi_output_loop<S: MidiSink>(
                 let offset = midi_out_offset_ms.load(Ordering::Relaxed);
                 match deadline_for(msg.at, offset, Instant::now()) {
                     Some(deadline) => queue.push(deadline, msg.bytes),
-                    None => send_midi_out(&mut sink, &mut logger, msg.bytes),
+                    None => send_midi_out(&mut sink, &mut logger, &mut failed_sends, msg.bytes),
                 }
             }
             recv(note_logger_command_rx) -> command => {
