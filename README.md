@@ -34,11 +34,21 @@ The app isn't signed by Apple yet, so macOS blocks its first launch with
 [Open a Mac app from an unknown developer](https://support.apple.com/guide/mac-help/open-a-mac-app-from-an-unknown-developer-mh40616/mac)):
 
 1. Try to open Stev once, and click **Done** in that dialog.
+
+   <img src="docs/images/gatekeeper-not-opened.png" width="260" alt="The dialog: “Stev.app” Not Opened, with Done and Move to Bin">
+
 2. Choose Apple menu > **System Settings**, then click **Privacy & Security**
    in the sidebar.
-3. Under **Security**, click **Open Anyway**. The button is there for about an
-   hour after the blocked launch.
+3. Under **Security**, next to "“Stev.app” was blocked to protect your Mac.",
+   click **Open Anyway**. The button is there for about an hour after the
+   blocked launch.
+
+   <img src="docs/images/gatekeeper-open-anyway.png" width="715" alt="Privacy & Security: under Security, “Stev.app” was blocked to protect your Mac, with an Open Anyway button">
+
 4. Confirm, and enter your login password. Later launches don't ask.
+
+The screenshots are from macOS 15; other versions may look a little
+different.
 
 The app is universal, but only the Intel build has been tested so far. If you
 run it on Apple Silicon, an issue saying whether it works is welcome. The first
