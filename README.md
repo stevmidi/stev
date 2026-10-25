@@ -27,7 +27,12 @@ Website: [stevmidi.com](https://stevmidi.com)
 Each release from 0.6.0 on carries the macOS app as
 `Stev-x.y.z-macos-universal.zip`, under **Assets** on the
 [Releases](https://github.com/stevmidi/stev/releases/latest) page. It needs
-macOS 11 (Big Sur) or later. Unzip it and move `Stev.app` to Applications.
+macOS 11 (Big Sur) or later.
+
+Safari unzips the download for you; with another browser, double-click the zip
+in Downloads. Then drag `Stev.app` into **Applications** in Finder before you
+open it the first time. Opened from Downloads, macOS runs it from a temporary
+read-only copy, and in Applications the next version replaces it in place.
 
 The app isn't signed by Apple yet, so macOS blocks its first launch with
 "“Stev.app” Not Opened". To open it anyway (Apple's
