@@ -127,19 +127,14 @@ impl EventHandlers {
         }
         match project::copy_project_in(path) {
             Err(e) => {
-                let name = path.file_stem().unwrap_or_default().to_string_lossy();
+                let name = project::file_stem(path);
                 self.send_status_ui_event(format!("Could not open {name}: {e}"));
                 self.set_view_state(ViewState::Arranger);
             }
-            Ok((data, filename)) => {
+            Ok(filename) => {
                 self.ui_event_tx.send(UiEvent::ProjectFilesChanged).ok();
                 self.send_status_ui_event(format!("Copied {filename} into Projects"));
-                let project = StagedProject {
-                    data,
-                    filename,
-                    folder: None,
-                };
-                self.open_read_project_workflow(sequencer, undo_record, saved, staged, project);
+                self.open_project_workflow(sequencer, undo_record, saved, staged, None, &filename);
             }
         }
     }

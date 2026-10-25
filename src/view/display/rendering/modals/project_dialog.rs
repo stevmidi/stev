@@ -6,7 +6,7 @@
 use egui::{Align2, FontId, Id, Painter, Pos2, Rect, Ui, pos2, vec2};
 
 use crate::core::config::PROJECT_NAME_MAX_CHARS;
-use crate::core::project::{ProjectAction, project_exists, project_name_from_input};
+use crate::core::project::{ProjectAction, file_stem, project_exists, project_name_from_input};
 use crate::view::display::project_dialog::{ProjectDialog, SaveAs, UnsavedButton};
 use crate::view::display::project_state::ProjectViewState;
 use crate::view::display::text_field::{FieldStyle, MODAL_MARGIN};
@@ -191,10 +191,7 @@ impl Display {
         let before = match action {
             ProjectAction::New => "before starting a new project".to_owned(),
             ProjectAction::Open { filename, .. } => format!("before opening {filename}"),
-            ProjectAction::OpenFile { path } => format!(
-                "before opening {}",
-                path.file_stem().unwrap_or_default().to_string_lossy()
-            ),
+            ProjectAction::OpenFile { path } => format!("before opening {}", file_stem(path)),
             ProjectAction::Quit => "before quitting".to_owned(),
         };
         let question = match name {

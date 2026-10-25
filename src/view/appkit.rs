@@ -81,11 +81,6 @@ thread_local! {
     /// (main thread) The `.stev` Finder last asked to open, until `Display`
     /// takes it. A later one replaces it.
     static OPEN_DOCUMENT: RefCell<Option<PathBuf>> = RefCell::default();
-    /// (main thread) The open-documents handler, kept for the whole run:
-    /// neither the notification centre nor the Apple Event manager retains
-    /// it.
-    static OPEN_DOCUMENTS_HANDLER: RefCell<Option<Retained<OpenDocuments>>> =
-        RefCell::default();
 }
 
 /// What an app-menu item asked for, taken by `Display` each frame
@@ -159,7 +154,7 @@ define_class!(
             let manager = NSAppleEventManager::sharedAppleEventManager();
             // SAFETY: `self` answers the selector with an Apple Event
             // handler's signature (the event, then the reply) and lives for
-            // the rest of the run (`OPEN_DOCUMENTS_HANDLER`). The event
+            // the rest of the run (never released). The event
             // class and ID are `FourCharCode`s, `u32`s.
             unsafe {
                 let _: () = msg_send![
@@ -224,7 +219,7 @@ pub(crate) fn install_open_documents_handler() {
     let handler: Retained<OpenDocuments> = unsafe { msg_send![super(this), init] };
     let observer: &AnyObject = handler.as_ref();
     // SAFETY: `handler` answers the selector, taking the notification. The
-    // centre holds it unretained; `OPEN_DOCUMENTS_HANDLER` keeps it.
+    // centre holds it unretained, and it is never released (below).
     unsafe {
         NSNotificationCenter::defaultCenter().addObserver_selector_name_object(
             observer,
@@ -233,7 +228,9 @@ pub(crate) fn install_open_documents_handler() {
             None,
         );
     }
-    OPEN_DOCUMENTS_HANDLER.set(Some(handler));
+    // Kept for the whole run: neither the notification centre nor the Apple
+    // Event manager retains it.
+    std::mem::forget(handler);
 }
 
 /// Wires the app menu: routes every quit through the new window's

@@ -144,9 +144,15 @@ pub(crate) fn load_project(
     folder: Option<&str>,
     name: &str,
 ) -> Result<ProjectData, Box<dyn Error>> {
-    let json = fs::read_to_string(stev_path(&resolve_dir(folder), name))?;
-    let data = serde_json::from_str(&json)?;
+    let (_, data) = read_project(&stev_path(&resolve_dir(folder), name))?;
     Ok(data)
+}
+
+/// The `.stev` at `path`: its JSON as written, and the project it holds.
+fn read_project(path: &Path) -> Result<(String, ProjectData), Box<dyn Error>> {
+    let json = fs::read_to_string(path)?;
+    let data = serde_json::from_str(&json)?;
+    Ok((json, data))
 }
 
 /// Where the `.stev` at `path` sits in the library, named as the browser
@@ -161,7 +167,7 @@ pub(crate) fn library_project(path: &Path) -> Option<(Option<String>, String)> {
 
 /// [`library_project`] with the projects root `root`, both paths as given.
 fn project_in(path: &Path, root: &Path) -> Option<(Option<String>, String)> {
-    if path.extension()? != PROJECT_EXTENSION {
+    if !is_project_file(path) {
         return None;
     }
     let name = path.file_stem()?.to_str()?;
@@ -182,18 +188,17 @@ fn project_in(path: &Path, root: &Path) -> Option<(Option<String>, String)> {
 }
 
 /// Copies the project at `path`, from outside the library, into the projects
-/// root, and returns it with its name there. The file is read and parsed
-/// first, so one that won't load is never copied. Its name is the file's
+/// root, and returns its name there. The file is read and parsed first, so
+/// one that won't load is never copied. Its name is the file's
 /// (or [`COPIED_PROJECT_FALLBACK_NAME`] when that is no project name), with
 /// `_2`, `_3`, … after it while the name is taken: nothing is overwritten.
-pub(crate) fn copy_project_in(path: &Path) -> Result<(ProjectData, String), Box<dyn Error>> {
+pub(crate) fn copy_project_in(path: &Path) -> Result<String, Box<dyn Error>> {
     copy_project_into(path, &project_dir())
 }
 
 /// [`copy_project_in`] with the projects root `root`.
-fn copy_project_into(path: &Path, root: &Path) -> Result<(ProjectData, String), Box<dyn Error>> {
-    let json = fs::read_to_string(path)?;
-    let data: ProjectData = serde_json::from_str(&json)?;
+fn copy_project_into(path: &Path, root: &Path) -> Result<String, Box<dyn Error>> {
+    let (json, _) = read_project(path)?;
     let stem = path
         .file_stem()
         .and_then(|stem| stem.to_str())
@@ -208,12 +213,18 @@ fn copy_project_into(path: &Path, root: &Path) -> Result<(ProjectData, String), 
         .create_new(true)
         .open(stev_path(root, &name))?
         .write_all(json.as_bytes())?;
-    Ok((data, name))
+    Ok(name)
 }
 
-/// Whether `path` names a project file (`.stev`, any case) — what Finder
-/// hands over when one is double-clicked (macOS).
-#[cfg(target_os = "macos")]
+/// `path`'s file name without its extension, for the footer.
+pub(crate) fn file_stem(path: &Path) -> String {
+    path.file_stem()
+        .map_or_else(String::new, |stem| stem.to_string_lossy().into_owned())
+}
+
+/// Whether `path` names a project file (`.stev`, any case): what Finder
+/// hands over when one is double-clicked (macOS), and what
+/// [`library_project`] places.
 pub(crate) fn is_project_file(path: &Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())
@@ -506,6 +517,11 @@ mod tests {
             place("/docs/Stev/Projects/Album/Song.stev"),
             Some((Some("Album".to_owned()), "Song".to_owned()))
         );
+        // As Finder names it: the extension in any case.
+        assert_eq!(
+            place("/docs/Stev/Projects/Song.STEV"),
+            Some((None, "Song".to_owned()))
+        );
         for outside in [
             "/Downloads/Song.stev",
             "/docs/Stev/Song.stev",
@@ -513,7 +529,6 @@ mod tests {
             "/docs/Stev/Projects/Clips/Song.stev",
             "/docs/Stev/Projects/.hidden/Song.stev",
             "/docs/Stev/Projects/.Song.stev",
-            "/docs/Stev/Projects/Song.STEV",
             "/docs/Stev/Projects/Song.mid",
         ] {
             assert_eq!(place(outside), None, "{outside}");
@@ -530,10 +545,8 @@ mod tests {
         fs::write(&source, &json).unwrap();
         fs::write(root.join("Song.stev"), "taken").unwrap();
 
-        let (_, name) = copy_project_into(&source, &root).unwrap();
-        assert_eq!(name, "Song_2");
-        let (_, name) = copy_project_into(&source, &root).unwrap();
-        assert_eq!(name, "Song_3");
+        assert_eq!(copy_project_into(&source, &root).unwrap(), "Song_2");
+        assert_eq!(copy_project_into(&source, &root).unwrap(), "Song_3");
         assert_eq!(fs::read_to_string(root.join("Song_3.stev")).unwrap(), json);
         assert_eq!(fs::read_to_string(root.join("Song.stev")).unwrap(), "taken");
         assert_eq!(fs::read_to_string(&source).unwrap(), json);

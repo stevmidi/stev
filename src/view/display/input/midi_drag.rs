@@ -22,7 +22,7 @@ use objc2::rc::Retained;
 #[cfg(target_os = "macos")]
 use objc2_app_kit::NSView;
 
-use crate::core::project::{is_midi_file, load_midi_clip};
+use crate::core::project::{file_stem, is_midi_file, load_midi_clip};
 use crate::core::time::Meter;
 use crate::metadata::clip_metadata::ClipMetadata;
 use crate::models::clip::Clip;
@@ -31,12 +31,6 @@ use crate::shapes::clip_shape::ClipShape;
 use crate::view::appkit::content_view;
 
 use super::*;
-
-/// `path`'s file name without its extension, for the footer.
-fn file_stem(path: &Path) -> String {
-    path.file_stem()
-        .map_or_else(String::new, |stem| stem.to_string_lossy().into_owned())
-}
 
 impl MidiDrag {
     /// Reads the `.mid` at `path` for a drag, with no target yet. Anything
