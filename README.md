@@ -35,7 +35,7 @@ open it the first time. Opened from Downloads, macOS runs it from a temporary
 read-only copy, and in Applications the next version replaces it in place.
 
 The app isn't signed by Apple yet, so macOS blocks its first launch with
-"“Stev.app” Not Opened". To open it anyway (Apple's
+*“Stev.app” Not Opened*. To open it anyway (Apple's
 [Open a Mac app from an unknown developer](https://support.apple.com/guide/mac-help/open-a-mac-app-from-an-unknown-developer-mh40616/mac)):
 
 1. Try to open Stev once, and click **Done** in that dialog.
@@ -44,7 +44,7 @@ The app isn't signed by Apple yet, so macOS blocks its first launch with
 
 2. Choose Apple menu > **System Settings**, then click **Privacy & Security**
    in the sidebar.
-3. Under **Security**, next to "“Stev.app” was blocked to protect your Mac.",
+3. Under **Security**, next to *“Stev.app” was blocked to protect your Mac.*,
    click **Open Anyway**. The button is there for about an hour after the
    blocked launch.
 
