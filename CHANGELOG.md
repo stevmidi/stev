@@ -28,6 +28,10 @@ Breaking entries are marked **Breaking** and say what to do about them.
   pressed (never on its own).
 - The macOS app menu's **About Stev** opens the About tab, and it gains
   **Check for Updates…** and **Settings…** (`⌘,`).
+- On macOS, double-clicking a `.stev` project in Finder, or dropping one on
+  Stev's Dock icon, opens it (asking first if the open project has unsaved
+  changes). A project from outside `Documents/Stev/Projects` is copied into
+  it first; the original is left alone.
 
 ### Fixed
 

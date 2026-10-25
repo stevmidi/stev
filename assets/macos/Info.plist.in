@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!-- Stev.app's Info.plist. scripts/macos/bundle.sh replaces @VERSION@ with
-     Cargo.toml's version. No document types yet: .stev is registered together
-     with the code that opens it (docs/330-macos-app.md, phase 4). -->
+     Cargo.toml's version. The .stev type is declared here and opened by
+     src/view/appkit.rs (docs/330-macos-app.md, phase 4). -->
 <plist version="1.0">
 <dict>
 	<key>CFBundleDevelopmentRegion</key>
@@ -31,6 +31,41 @@
 	<string>public.app-category.music</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Stev Project</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>LSHandlerRank</key>
+			<string>Owner</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.stevmidi.stev.project</string>
+			</array>
+		</dict>
+	</array>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.stevmidi.stev.project</string>
+			<key>UTTypeDescription</key>
+			<string>Stev Project</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>stev</string>
+				</array>
+			</dict>
+		</dict>
+	</array>
 	<key>NSHumanReadableCopyright</key>
 	<string>Copyright © 2025 Terje Mjørud. MIT OR Apache-2.0.</string>
 </dict>

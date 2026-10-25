@@ -2,8 +2,10 @@
 //! guarded by the unsaved-changes prompt (`060-persistence.md` § Unsaved
 //! changes).
 
+use std::path::PathBuf;
+
 /// Something that throws the open project away: ⌘/Ctrl+N, opening another
-/// project from the browser, or quitting. Each goes to the sequencer thread
+/// project from the browser or from Finder, or quitting. Each goes to the sequencer thread
 /// first, which runs it at once when nothing changed since the last save or
 /// load, or asks the view to prompt (`UiEvent::UnsavedChanges`).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -16,6 +18,15 @@ pub(crate) enum ProjectAction {
         filename: String,
         /// Project folder, or the projects root when `None`.
         folder: Option<String>,
+    },
+    /// Open the `.stev` at `path`, handed over by Finder (macOS): as
+    /// [`Open`](Self::Open) when it is in the library, else copied into the
+    /// projects root first (`060-persistence.md` § Opening from Finder).
+    /// Only macOS's AppKit glue sends it.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    OpenFile {
+        /// The project file, anywhere.
+        path: PathBuf,
     },
     /// Close the window and quit the app.
     Quit,

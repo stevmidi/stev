@@ -191,6 +191,10 @@ impl Display {
         let before = match action {
             ProjectAction::New => "before starting a new project".to_owned(),
             ProjectAction::Open { filename, .. } => format!("before opening {filename}"),
+            ProjectAction::OpenFile { path } => format!(
+                "before opening {}",
+                path.file_stem().unwrap_or_default().to_string_lossy()
+            ),
             ProjectAction::Quit => "before quitting".to_owned(),
         };
         let question = match name {

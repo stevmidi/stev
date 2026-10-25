@@ -893,6 +893,47 @@ mod tests {
         assert_eq!(last_project_reply(&h), Some(None));
     }
 
+    /// A project opened from Finder goes through the same check: a changed
+    /// project prompts first and stays as it is; an unchanged one goes
+    /// ahead, and a file that won't load says so and keeps the project.
+    #[test]
+    fn opening_from_finder_is_checked_first() {
+        let mut h = harness();
+        let mut record: Record<SequencerEdit> = Record::new();
+        let path = std::env::temp_dir().join(format!("stev-missing-{}.stev", std::process::id()));
+        let open = || project_action(ProjectAction::OpenFile { path: path.clone() }, false);
+        run_command(
+            &mut h,
+            &mut record,
+            SequencerCommand::AddTrack { track_idx: None },
+        );
+        let tracks = h.sequencer.tracks().len();
+
+        run_command(&mut h, &mut record, open());
+        assert_eq!(
+            last_project_reply(&h),
+            Some(Some(ProjectAction::OpenFile { path: path.clone() }))
+        );
+        assert_eq!(h.sequencer.tracks().len(), tracks);
+
+        run_command(&mut h, &mut record, SequencerCommand::Undo);
+        run_command(&mut h, &mut record, open());
+        let status = h
+            .ui_events
+            .try_iter()
+            .find_map(|event| match event {
+                UiEvent::Status { message } => Some(message),
+                UiEvent::UnsavedChanges { .. } => panic!("an unchanged project prompted"),
+                _ => None,
+            })
+            .expect("a failed open says why");
+        assert!(
+            status.starts_with("Could not open stev-missing-"),
+            "{status}"
+        );
+        assert_eq!(h.sequencer.tracks().len(), tracks - 1);
+    }
+
     /// The check compares what would be saved, not whether anything
     /// happened: undoing back to the loaded state leaves nothing unsaved,
     /// and a change no undo step records (a track's volume) still counts.

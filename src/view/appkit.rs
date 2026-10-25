@@ -24,27 +24,39 @@
 //! both on the main thread, so a thread-local cell carries it.
 //! See `330-macos-app.md` § The About tab.
 //!
+//! A `.stev` double-clicked in Finder, or dropped on the Dock icon, arrives
+//! as the open-documents Apple Event, which winit doesn't pass on.
+//! [`install_open_documents_handler`] catches it, at launch too, and keeps
+//! the path for `Display` ([`take_open_document`]). See `330-macos-app.md`
+//! § Opening projects from Finder.
+//!
 //! Also [`MainGlContext`]: eframe's OpenGL context, kept so it can be made
 //! current again after plugin code has made its own current.
 
 use std::cell::{Cell, RefCell};
 use std::ffi::CStr;
+use std::path::PathBuf;
 
 use eframe::CreationContext;
 use egui::Context;
 use objc2::ffi::{class_addMethod, object_getClass};
 use objc2::rc::{Retained, Weak};
-use objc2::runtime::{AnyObject, Imp, Sel};
-use objc2::{MainThreadMarker, sel};
+use objc2::runtime::{AnyObject, Imp, NSObject, Sel};
+use objc2::{MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
 // Deprecated by Apple in favour of Metal, but it is what eframe's glow
 // renderer draws with.
 #[allow(deprecated)]
 use objc2_app_kit::NSOpenGLContext;
 use objc2_app_kit::{
-    NSApplication, NSApplicationTerminateReply, NSEventType, NSMenu, NSMenuItem, NSView, NSWindow,
+    NSApplication, NSApplicationTerminateReply, NSApplicationWillFinishLaunchingNotification,
+    NSEventType, NSMenu, NSMenuItem, NSView, NSWindow,
 };
-use objc2_foundation::NSString;
+use objc2_foundation::{
+    NSAppleEventDescriptor, NSAppleEventManager, NSNotification, NSNotificationCenter, NSString,
+};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+
+use crate::core::project::is_project_file;
 
 /// eframe's content view of the new window, retained, or `None` without an
 /// AppKit one.
@@ -66,6 +78,14 @@ thread_local! {
     /// (main thread) The last request a menu item stored. A later one
     /// replaces it: the frame between them acts on the latest.
     static APP_MENU_REQUEST: Cell<Option<AppMenuRequest>> = const { Cell::new(None) };
+    /// (main thread) The `.stev` Finder last asked to open, until `Display`
+    /// takes it. A later one replaces it.
+    static OPEN_DOCUMENT: RefCell<Option<PathBuf>> = RefCell::default();
+    /// (main thread) The open-documents handler, kept for the whole run:
+    /// neither the notification centre nor the Apple Event manager retains
+    /// it.
+    static OPEN_DOCUMENTS_HANDLER: RefCell<Option<Retained<OpenDocuments>>> =
+        RefCell::default();
 }
 
 /// What an app-menu item asked for, taken by `Display` each frame
@@ -91,11 +111,129 @@ pub(crate) fn take_app_menu_request() -> Option<AppMenuRequest> {
 /// Stores `request` for the next frame and wakes it.
 fn send_app_menu_request(request: AppMenuRequest) {
     APP_MENU_REQUEST.set(Some(request));
+    wake_frame();
+}
+
+/// Wakes the next frame, once [`wire_app_menu`] has stored egui's context.
+/// Before that, the first frame is still to come.
+fn wake_frame() {
     REPAINT_CTX.with(|ctx| {
         if let Some(ctx) = &*ctx.borrow() {
             ctx.request_repaint();
         }
     });
+}
+
+/// The `.stev` Finder asked to open since the last call, if any. `Display`
+/// calls it only when it can act on it, so a path that arrives while a
+/// dialog is up waits here.
+pub(crate) fn take_open_document() -> Option<PathBuf> {
+    OPEN_DOCUMENT.take()
+}
+
+/// `kCoreEventClass`.
+const CORE_EVENT_CLASS: u32 = u32::from_be_bytes(*b"aevt");
+/// `kAEOpenDocuments`.
+const OPEN_DOCUMENTS_EVENT: u32 = u32::from_be_bytes(*b"odoc");
+/// `keyDirectObject`: the open-documents event's list of files.
+const DIRECT_OBJECT_KEYWORD: u32 = u32::from_be_bytes(*b"----");
+
+define_class!(
+    /// Receives the open-documents Apple Event. Installed as its handler
+    /// once AppKit is about to finish launching
+    /// ([`install_open_documents_handler`]).
+    // SAFETY: `NSObject` has no subclassing requirements, and this class
+    // implements no `Drop`.
+    #[unsafe(super(NSObject))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "StevOpenDocuments"]
+    struct OpenDocuments;
+
+    impl OpenDocuments {
+        /// `NSApplicationWillFinishLaunchingNotification`: makes this the
+        /// open-documents handler. AppKit installs its own while it
+        /// launches, which would replace one installed earlier, and
+        /// dispatches a launch-time open after this notification.
+        #[unsafe(method(applicationWillFinishLaunching:))]
+        fn will_finish_launching(&self, _notification: &NSNotification) {
+            let manager = NSAppleEventManager::sharedAppleEventManager();
+            // SAFETY: `self` answers the selector with an Apple Event
+            // handler's signature (the event, then the reply) and lives for
+            // the rest of the run (`OPEN_DOCUMENTS_HANDLER`). The event
+            // class and ID are `FourCharCode`s, `u32`s.
+            unsafe {
+                let _: () = msg_send![
+                    &manager,
+                    setEventHandler: self,
+                    andSelector: sel!(handleOpenDocuments:withReplyEvent:),
+                    forEventClass: CORE_EVENT_CLASS,
+                    andEventID: OPEN_DOCUMENTS_EVENT
+                ];
+            }
+        }
+
+        /// The open-documents event: keeps its first `.stev` for `Display`
+        /// and wakes it. Others in the same event are ignored.
+        #[unsafe(method(handleOpenDocuments:withReplyEvent:))]
+        fn handle_open_documents(
+            &self,
+            event: &NSAppleEventDescriptor,
+            _reply: &NSAppleEventDescriptor,
+        ) {
+            if let Some(path) = first_project_file(event) {
+                OPEN_DOCUMENT.set(Some(path));
+                wake_frame();
+            }
+        }
+    }
+);
+
+/// The first `.stev` among the open-documents event's files: its direct
+/// object, a list of file references (counted from 1), or a lone one.
+fn first_project_file(event: &NSAppleEventDescriptor) -> Option<PathBuf> {
+    // SAFETY: `paramDescriptorForKeyword:` takes an `AEKeyword` (a `u32`)
+    // and returns a descriptor or nil.
+    let files: Option<Retained<NSAppleEventDescriptor>> =
+        unsafe { msg_send![event, paramDescriptorForKeyword: DIRECT_OBJECT_KEYWORD] };
+    let files = files?;
+    let count = files.numberOfItems();
+    let items: Vec<_> = if count == 0 {
+        vec![files]
+    } else {
+        (1..=count)
+            .filter_map(|i| files.descriptorAtIndex(i))
+            .collect()
+    };
+    items
+        .iter()
+        .filter_map(|item| item.fileURLValue()?.to_file_path())
+        .find(|path| is_project_file(path))
+}
+
+/// Has Finder's opens reach the app ([`OpenDocuments`]): observes AppKit's
+/// will-finish-launching notification, which then installs the handler.
+/// Call from `main()`, before eframe runs: a double-click that launches Stev
+/// delivers its event during the launch, before the window or the app menu
+/// exist.
+pub(crate) fn install_open_documents_handler() {
+    let Some(mtm) = MainThreadMarker::new() else {
+        return;
+    };
+    let this = OpenDocuments::alloc(mtm).set_ivars(());
+    // SAFETY: `init` is `NSObject`'s designated initializer.
+    let handler: Retained<OpenDocuments> = unsafe { msg_send![super(this), init] };
+    let observer: &AnyObject = handler.as_ref();
+    // SAFETY: `handler` answers the selector, taking the notification. The
+    // centre holds it unretained; `OPEN_DOCUMENTS_HANDLER` keeps it.
+    unsafe {
+        NSNotificationCenter::defaultCenter().addObserver_selector_name_object(
+            observer,
+            sel!(applicationWillFinishLaunching:),
+            Some(NSApplicationWillFinishLaunchingNotification),
+            None,
+        );
+    }
+    OPEN_DOCUMENTS_HANDLER.set(Some(handler));
 }
 
 /// Wires the app menu: routes every quit through the new window's

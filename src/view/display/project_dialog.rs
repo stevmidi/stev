@@ -26,8 +26,12 @@ use egui::{Context, Key, ViewportCommand, pos2};
 
 use crate::core::input_event::{InputEvent, KeyModifiers};
 use crate::core::project::{ProjectAction, project_name_from_input};
+#[cfg(target_os = "macos")]
+use crate::view::appkit::take_open_document;
 
 use super::Display;
+#[cfg(target_os = "macos")]
+use super::Overlay;
 use super::text_field::{FieldEvent, TextField, field_key};
 
 /// What Save As starts with for a project that has never been saved.
@@ -177,6 +181,22 @@ impl Display {
                 self.project_dialog = None;
             }
             self.request_project_action(ProjectAction::Quit);
+        }
+    }
+
+    /// Once a frame (macOS): asks to open the `.stev` Finder handed over
+    /// (`appkit::take_open_document`), through the unsaved-changes check,
+    /// like the browser's Enter. It waits while a project dialog, a field or
+    /// the plugin restore has the keyboard; Settings stays up over the
+    /// opened project, as for the app menu's items. At launch it waits for
+    /// the first frame, and replaces the empty startup project.
+    #[cfg(target_os = "macos")]
+    pub(super) fn sync_open_document(&mut self) {
+        if self.keyboard_taken() && self.overlay != Some(Overlay::Settings) {
+            return;
+        }
+        if let Some(path) = take_open_document() {
+            self.request_project_action(ProjectAction::OpenFile { path });
         }
     }
 

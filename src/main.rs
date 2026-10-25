@@ -43,7 +43,7 @@ use crate::core::plugin_host::{
 };
 
 #[cfg(target_os = "macos")]
-use crate::view::appkit::wire_app_menu;
+use crate::view::appkit::{install_open_documents_handler, wire_app_menu};
 use crate::view::theme;
 use crate::view::theme::fonts::font_definitions;
 
@@ -141,6 +141,11 @@ fn main() {
     // see `anchor_coremidi_to_main_thread`. Held until `main` returns.
     #[cfg(target_os = "macos")]
     let _coremidi_anchor = anchor_coremidi_to_main_thread();
+
+    // Before eframe runs: a `.stev` double-clicked in Finder that launches
+    // Stev is handed over during the launch (`view::appkit`).
+    #[cfg(target_os = "macos")]
+    install_open_documents_handler();
 
     let shared_atomics = setup_shared_atomics();
     let shared_channels = setup_shared_channels();

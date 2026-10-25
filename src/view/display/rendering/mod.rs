@@ -1268,6 +1268,8 @@ impl eframe::App for Display {
         }
         self.in_pane(Pane::Clip, Self::settle_window_edge_commit);
         self.sync_window_close(ctx);
+        #[cfg(target_os = "macos")]
+        self.sync_open_document();
         self.sync_project_dialog_window(ctx);
         self.sync_update_check(ctx);
         self.in_pane(Pane::Clip, Self::sync_clip_frame);

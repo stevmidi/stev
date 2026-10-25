@@ -1,6 +1,6 @@
 # A Downloadable macOS App
 
-**Status: plan agreed 2026-10-24; phase 1 (the bundle script) merged, phase 2 (the hand test) run 2026-10-24 with its results below and its two bundle-only Dock bugs fixed, phase 3 (the About tab and the app menu) built and hand-tested 2026-10-24, phases 4–6 not started.** Level 1 of the `280` candidate *A downloadable macOS app*: an unsigned universal `Stev.app` in a zip, attached to each `v*` release, with the items that come with it (the hand test, the About tab with its update check, opening projects from Finder, a log file). Levels 2 (signed + notarized) and 3 (a Homebrew cask) stay in `280`. Read `280` § A downloadable macOS app first, and `080` § Releasing and § Licensing.
+**Status: plan agreed 2026-10-24; phase 1 (the bundle script) merged, phase 2 (the hand test) run 2026-10-24 with its results below and its two bundle-only Dock bugs fixed, phase 3 (the About tab and the app menu) built and hand-tested 2026-10-24, phase 4 (opening projects from Finder) built and hand-tested 2026-10-25, phases 5–6 not started.** Level 1 of the `280` candidate *A downloadable macOS app*: an unsigned universal `Stev.app` in a zip, attached to each `v*` release, with the items that come with it (the hand test, the About tab with its update check, opening projects from Finder, a log file). Levels 2 (signed + notarized) and 3 (a Homebrew cask) stay in `280`. Read `280` § A downloadable macOS app first, and `080` § Releasing and § Licensing.
 
 ## Decisions
 
@@ -104,6 +104,16 @@ Double-clicking a `.stev` (or dropping one on the Dock icon) opens it. Needs pha
 - **What it doesn't do**: no recent-documents list, no opening `.mid` from Finder (import stays a drag or the browser), no second window.
 - **Test**: the path-taking and dirty-check routing is pure enough for a test in `view/` (a pending open while dirty asks first, while clean loads). The rest is hand-tested inside the bundle: cold launch by double-click, double-click while running (clean and dirty), drop on the Dock icon, a file whose load fails.
 - Docs: `060` (opening from Finder and the dirty check), `000` (the handler installed in `main()`).
+
+**As built** (2026-10-25), where it differs from or adds to the plan above:
+
+- **A file outside the library is copied in** (decided 2026-10-25). The plan's load path names a project by `(folder, name)` under the projects root, and a double-clicked file can be anywhere. A file in the root or one project folder down opens as the browser opens it. Any other file is read and parsed, then copied into the projects root under a free name (`_2`, `_3`, …) and opened as that copy, and the footer says so. A file that won't load is never copied. Opening in place was set aside: it would make a project's identity a full path everywhere `(folder, name)` travels today, a refactor of its own. `060` § Opening from Finder has the details.
+- **The handler is installed on will-finish-launching, not straight from `main()`.** AppKit installs its default open-documents handler while it launches, which would replace one installed earlier. `main()` installs an observer of `NSApplicationWillFinishLaunchingNotification` instead, and the observer installs the handler. That is still before a launch-time open is dispatched.
+- **One new action, `ProjectAction::OpenFile { path }`**: the view sends the path as it came, and the `"sequencer"` thread decides between opening and copying in, after the unsaved-changes check. So Cancel on the prompt copies nothing.
+- **No document icon**: Finder draws the app's icon on a page, which is enough for now.
+- **The path waits in AppKit's slot** while a dialog, a field or the plugin restore has the keyboard, and is taken once nothing does. Unlike the app menu's clicks, an open is never dropped. Settings doesn't hold it.
+- **Tests**: `project_in` (where a path sits in the library), `copy_project_into` (names, never overwriting, a broken file not copied), and `opening_from_finder_is_checked_first` (`sequencer_handler.rs`: a changed project prompts, an unchanged one goes ahead).
+- **Hand test** (2026-10-25, Intel Mac, the bundle unzipped locally into /Applications): a cold launch by double-click; a double-click while running, clean and dirty (Save, Don't Save, Cancel); a drop on the Dock icon; a file from outside the library (copied in, `_2` the second time); a file already in a project folder (opened in place, no copy); with Settings open (the project opens under it); with Save As open (nothing until Save As is saved or cancelled, then it opens). All as intended. Not tested: a broken file, which the unit tests cover (`a_file_that_wont_load_is_not_copied_in`).
 
 ### 5. The log file
 

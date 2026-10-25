@@ -2,6 +2,8 @@
 //! unsaved-changes check ([`SavedProject`]), and the MIDI clip export and
 //! import. See `060-persistence.md`.
 
+use std::path::Path;
+
 use undo::Record;
 
 use crate::{
@@ -93,6 +95,49 @@ impl EventHandlers {
                     data,
                     filename: filename.to_owned(),
                     folder: folder.map(str::to_owned),
+                };
+                self.open_read_project_workflow(sequencer, undo_record, saved, staged, project);
+            }
+        }
+    }
+
+    /// Opens the `.stev` at `path` (from Finder): one in the library as the
+    /// browser opens it; one outside copied into the projects root first
+    /// (`project::copy_project_in`), which the footer says and a shown
+    /// browser lists, then opened as that copy. A file that won't load is never copied: the footer says
+    /// why, and the open project stays.
+    fn open_file_workflow(
+        &self,
+        sequencer: &mut Sequencer,
+        undo_record: &mut Record<SequencerEdit>,
+        saved: &mut SavedProject,
+        staged: &mut Option<StagedProject>,
+        path: &Path,
+    ) {
+        if let Some((folder, filename)) = project::library_project(path) {
+            self.open_project_workflow(
+                sequencer,
+                undo_record,
+                saved,
+                staged,
+                folder.as_deref(),
+                &filename,
+            );
+            return;
+        }
+        match project::copy_project_in(path) {
+            Err(e) => {
+                let name = path.file_stem().unwrap_or_default().to_string_lossy();
+                self.send_status_ui_event(format!("Could not open {name}: {e}"));
+                self.set_view_state(ViewState::Arranger);
+            }
+            Ok((data, filename)) => {
+                self.ui_event_tx.send(UiEvent::ProjectFilesChanged).ok();
+                self.send_status_ui_event(format!("Copied {filename} into Projects"));
+                let project = StagedProject {
+                    data,
+                    filename,
+                    folder: None,
                 };
                 self.open_read_project_workflow(sequencer, undo_record, saved, staged, project);
             }
@@ -195,6 +240,9 @@ impl EventHandlers {
                     folder.as_deref(),
                     filename,
                 );
+            }
+            ProjectAction::OpenFile { path } => {
+                self.open_file_workflow(sequencer, undo_record, saved, staged, path);
             }
             ProjectAction::Quit => {
                 self.ui_event_tx.send(UiEvent::QuitApproved).ok();

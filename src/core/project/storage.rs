@@ -7,7 +7,8 @@
 use std::{
     cmp::Reverse,
     error::Error,
-    fs, io,
+    fs,
+    io::{self, Write},
     iter::once,
     path::{Path, PathBuf},
     time::SystemTime,
@@ -27,6 +28,13 @@ use super::{dto::ProjectData, smf::read_smf};
 /// The extension of the MIDI files the app writes and lists.
 const MIDI_EXTENSION: &str = "mid";
 
+/// The extension of a project file.
+const PROJECT_EXTENSION: &str = "stev";
+
+/// The name a project copied into the library takes when its file name is no
+/// project name ([`project_name_from_input`]).
+const COPIED_PROJECT_FALLBACK_NAME: &str = "Untitled";
+
 /// `folder: None` resolves to `project_dir()` itself — the fallback used when
 /// saving a brand-new project before any project folder has been selected
 /// (see `060-persistence.md`).
@@ -39,7 +47,7 @@ fn resolve_dir(folder: Option<&str>) -> PathBuf {
 
 /// The `.stev` file for project `name` in `dir`.
 fn stev_path(dir: &Path, name: &str) -> PathBuf {
-    dir.join(format!("{name}.stev"))
+    dir.join(format!("{name}.{PROJECT_EXTENSION}"))
 }
 
 /// `(file stem, mtime)` for every `.<extension>` file directly in `dir`,
@@ -66,7 +74,7 @@ fn list_files_with_extension(dir: &Path, extension: &str) -> Vec<(String, System
 
 /// `(project name, mtime)` for every `.stev` file directly in `dir`.
 fn list_stev_names(dir: &Path) -> Vec<(String, SystemTime)> {
-    list_files_with_extension(dir, "stev")
+    list_files_with_extension(dir, PROJECT_EXTENSION)
 }
 
 /// The folder under `project_dir()` that holds the MIDI clips: where a clip
@@ -139,6 +147,77 @@ pub(crate) fn load_project(
     let json = fs::read_to_string(stev_path(&resolve_dir(folder), name))?;
     let data = serde_json::from_str(&json)?;
     Ok(data)
+}
+
+/// Where the `.stev` at `path` sits in the library, named as the browser
+/// names it: `(folder, name)` for one directly in the projects root (folder
+/// `None`) or in one of its project folders; `None` anywhere else — outside
+/// the library, deeper, or in the clips folder or a hidden one. Both paths
+/// are compared resolved, so a symlink on either side doesn't matter.
+pub(crate) fn library_project(path: &Path) -> Option<(Option<String>, String)> {
+    let canonical = |p: &Path| fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    project_in(&canonical(path), &canonical(&project_dir()))
+}
+
+/// [`library_project`] with the projects root `root`, both paths as given.
+fn project_in(path: &Path, root: &Path) -> Option<(Option<String>, String)> {
+    if path.extension()? != PROJECT_EXTENSION {
+        return None;
+    }
+    let name = path.file_stem()?.to_str()?;
+    if name.starts_with('.') {
+        return None;
+    }
+    let parent = path.parent()?;
+    let folder = if parent == root {
+        None
+    } else {
+        let folder = parent.file_name()?.to_str()?;
+        if parent.parent()? != root || !is_project_folder_name(folder) {
+            return None;
+        }
+        Some(folder.to_owned())
+    };
+    Some((folder, name.to_owned()))
+}
+
+/// Copies the project at `path`, from outside the library, into the projects
+/// root, and returns it with its name there. The file is read and parsed
+/// first, so one that won't load is never copied. Its name is the file's
+/// (or [`COPIED_PROJECT_FALLBACK_NAME`] when that is no project name), with
+/// `_2`, `_3`, … after it while the name is taken: nothing is overwritten.
+pub(crate) fn copy_project_in(path: &Path) -> Result<(ProjectData, String), Box<dyn Error>> {
+    copy_project_into(path, &project_dir())
+}
+
+/// [`copy_project_in`] with the projects root `root`.
+fn copy_project_into(path: &Path, root: &Path) -> Result<(ProjectData, String), Box<dyn Error>> {
+    let json = fs::read_to_string(path)?;
+    let data: ProjectData = serde_json::from_str(&json)?;
+    let stem = path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .and_then(project_name_from_input)
+        .unwrap_or_else(|| COPIED_PROJECT_FALLBACK_NAME.to_owned());
+    let name = first_free_name(
+        |n| n.map_or_else(|| stem.clone(), |n| format!("{stem}_{n}")),
+        |name| stev_path(root, name).exists(),
+    );
+    fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(stev_path(root, &name))?
+        .write_all(json.as_bytes())?;
+    Ok((data, name))
+}
+
+/// Whether `path` names a project file (`.stev`, any case) — what Finder
+/// hands over when one is double-clicked (macOS).
+#[cfg(target_os = "macos")]
+pub(crate) fn is_project_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case(PROJECT_EXTENSION))
 }
 
 /// Removes `folder/name.stev` from disk (`None`: the projects root).
@@ -411,6 +490,69 @@ mod tests {
             .collect();
         names.sort();
         names
+    }
+
+    /// A project in the root or one project folder down is named as the
+    /// browser names it; anything else is outside the library.
+    #[test]
+    fn a_project_file_is_placed_in_the_library_or_outside_it() {
+        let root = Path::new("/docs/Stev/Projects");
+        let place = |path: &str| project_in(Path::new(path), root);
+        assert_eq!(
+            place("/docs/Stev/Projects/Song.stev"),
+            Some((None, "Song".to_owned()))
+        );
+        assert_eq!(
+            place("/docs/Stev/Projects/Album/Song.stev"),
+            Some((Some("Album".to_owned()), "Song".to_owned()))
+        );
+        for outside in [
+            "/Downloads/Song.stev",
+            "/docs/Stev/Song.stev",
+            "/docs/Stev/Projects/Album/Old/Song.stev",
+            "/docs/Stev/Projects/Clips/Song.stev",
+            "/docs/Stev/Projects/.hidden/Song.stev",
+            "/docs/Stev/Projects/.Song.stev",
+            "/docs/Stev/Projects/Song.STEV",
+            "/docs/Stev/Projects/Song.mid",
+        ] {
+            assert_eq!(place(outside), None, "{outside}");
+        }
+    }
+
+    #[test]
+    fn a_project_copied_in_keeps_its_name_and_never_overwrites() {
+        let dir = scratch_dir("copy-in");
+        let root = dir.join("Projects");
+        fs::create_dir(&root).unwrap();
+        let source = dir.join("Song.stev");
+        let json = serde_json::to_string(&ProjectData::default()).unwrap();
+        fs::write(&source, &json).unwrap();
+        fs::write(root.join("Song.stev"), "taken").unwrap();
+
+        let (_, name) = copy_project_into(&source, &root).unwrap();
+        assert_eq!(name, "Song_2");
+        let (_, name) = copy_project_into(&source, &root).unwrap();
+        assert_eq!(name, "Song_3");
+        assert_eq!(fs::read_to_string(root.join("Song_3.stev")).unwrap(), json);
+        assert_eq!(fs::read_to_string(root.join("Song.stev")).unwrap(), "taken");
+        assert_eq!(fs::read_to_string(&source).unwrap(), json);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A file that is no project is refused before anything is written.
+    #[test]
+    fn a_file_that_wont_load_is_not_copied_in() {
+        let dir = scratch_dir("copy-in-broken");
+        let root = dir.join("Projects");
+        fs::create_dir(&root).unwrap();
+        let source = dir.join("Broken.stev");
+        fs::write(&source, "not json").unwrap();
+
+        assert!(copy_project_into(&source, &root).is_err());
+        assert!(copy_project_into(&dir.join("Missing.stev"), &root).is_err());
+        assert!(names_in(&root).is_empty());
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
