@@ -56,7 +56,8 @@ pub(crate) enum Action {
     ToggleComputerKeyboard,
     /// Snap the loop to the time selection, or toggle looping.
     SetLoop,
-    /// Show the browser panel with the Projects tree focused.
+    /// Show the browser panel with the Projects tree focused, or hide it
+    /// when it already has the keyboard.
     ShowProjects,
     /// Show and focus the browser panel, or hide it.
     ToggleBrowser,
@@ -564,7 +565,7 @@ pub(crate) const ACTIONS: &[ActionInfo] = &[
     row(
         Action::ShowProjects,
         "project.open",
-        "Open (the browser)",
+        "Open (the browser), or hide it",
         PROJECT,
         Scope::Global,
         &[Chord::cmd(Key::O)],

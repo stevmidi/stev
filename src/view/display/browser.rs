@@ -975,14 +975,31 @@ impl Display {
     /// `⌘⌥B`: shows and focuses a hidden panel, hides a shown one.
     pub(super) fn toggle_browser(&mut self) {
         if self.browser.visible {
-            self.browser.visible = false;
-            if self.key_focus == KeyFocus::Browser {
-                self.key_focus = KeyFocus::Pane;
-            }
-            self.browser.tree.delete_armed = false;
+            self.hide_browser();
         } else {
             self.show_browser();
         }
+    }
+
+    /// `⌘O`: hides the panel when it already has the keyboard, else shows
+    /// and focuses it — so a shown panel the canvas has the keyboard from
+    /// is focused, not hidden.
+    pub(super) fn open_or_hide_browser(&mut self) {
+        if self.browser.visible && self.key_focus == KeyFocus::Browser {
+            self.hide_browser();
+        } else {
+            self.show_browser();
+        }
+    }
+
+    /// Hides the panel, handing its keyboard back to the view underneath
+    /// and disarming a pending delete.
+    fn hide_browser(&mut self) {
+        self.browser.visible = false;
+        if self.key_focus == KeyFocus::Browser {
+            self.key_focus = KeyFocus::Pane;
+        }
+        self.browser.tree.delete_armed = false;
     }
 
     /// Keeps the selected row on screen after a keyboard move.

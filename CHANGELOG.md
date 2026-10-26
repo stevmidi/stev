@@ -20,6 +20,10 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ## [Unreleased]
 
+### Changed
+
+- ⌘O pressed again while the browser panel has the keyboard hides the panel.
+
 ## [0.7.0] - 2026-10-26
 
 ### Added

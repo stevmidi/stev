@@ -635,14 +635,15 @@ impl Display {
                 true
             }
             // ⌘⌥B (Ableton's browser toggle) shows and focuses the browser
-            // panel, or hides it; ⌘O shows it with the Projects tree in focus.
-            // View-local layout state, like ⌘⌥E below.
+            // panel, or hides it; ⌘O shows it with the Projects tree in focus,
+            // or hides it when it already has the keyboard. View-local layout
+            // state, like ⌘⌥E below.
             InputEvent::Action(Action::ToggleBrowser) => {
                 self.toggle_browser();
                 true
             }
             InputEvent::Action(Action::ShowProjects) => {
-                self.show_browser();
+                self.open_or_hide_browser();
                 true
             }
             // ⌘⇧N (Finder's New Folder) shows the browser with the keyboard
