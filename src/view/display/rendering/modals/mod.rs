@@ -13,7 +13,7 @@ use egui::{
     Align2, Color32, CornerRadius, FontId, Painter, Pos2, Rect, Stroke, StrokeKind, pos2, vec2,
 };
 
-use crate::view::display::rendering::output_menu::draw_truncated;
+use crate::view::display::rendering::output_menu::{draw_hover_wash, draw_truncated};
 
 use super::*;
 

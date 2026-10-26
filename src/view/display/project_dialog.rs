@@ -458,16 +458,12 @@ impl Display {
         };
         match key {
             DialogKey::Confirm => match self.open_folder_list() {
-                Some(save_as) => {
-                    if let Some(row) = save_as.list {
-                        save_as.choose_folder(row);
-                    }
-                }
+                Some((save_as, row)) => save_as.choose_folder(row),
                 None => self.confirm_project_dialog(),
             },
             DialogKey::Discard => self.discard_project_changes(),
             DialogKey::Cancel => match self.open_folder_list() {
-                Some(save_as) => save_as.list = None,
+                Some((save_as, _)) => save_as.list = None,
                 None => self.project_dialog = None,
             },
             DialogKey::Folder(step) => {
@@ -486,10 +482,10 @@ impl Display {
         true
     }
 
-    /// Save As, while its folder list is open.
-    fn open_folder_list(&mut self) -> Option<&mut SaveAs> {
+    /// Save As and its highlighted row, while its folder list is open.
+    fn open_folder_list(&mut self) -> Option<(&mut SaveAs, usize)> {
         match &mut self.project_dialog {
-            Some(ProjectDialog::SaveAs(save_as)) if save_as.list.is_some() => Some(save_as),
+            Some(ProjectDialog::SaveAs(save_as)) => save_as.list.map(|row| (save_as, row)),
             _ => None,
         }
     }
@@ -546,9 +542,7 @@ mod tests {
     use egui::Key;
 
     use crate::core::input_event::KeyModifiers;
-
     use crate::view::display::browser::{BrowserCategory, BrowserItem};
-
     use crate::view::display::text_field::TextField;
 
     use super::{

@@ -308,11 +308,7 @@ impl Display {
                 theme::bg()
             } else {
                 if hover.is_some_and(|p| row.contains(p)) {
-                    painter.rect_filled(
-                        row.shrink(1.0),
-                        radius,
-                        theme::accent().gamma_multiply(0.25),
-                    );
+                    draw_hover_wash(painter, row.shrink(1.0));
                 }
                 if idx == save_as.folder_idx() {
                     theme::fg()
