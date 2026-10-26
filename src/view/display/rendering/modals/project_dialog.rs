@@ -3,11 +3,16 @@
 //! prompt's button layout is shared with its click test
 //! ([`unsaved_button_at`](Display::unsaved_button_at)).
 
-use egui::{Align2, FontId, Id, Painter, Pos2, Rect, Ui, pos2, vec2};
+use egui::{
+    Align2, CornerRadius, FontId, Id, Painter, Pos2, Rect, Shape, Stroke, StrokeKind, Ui, pos2,
+    vec2,
+};
 
 use crate::core::config::PROJECT_NAME_MAX_CHARS;
 use crate::core::project::{ProjectAction, file_stem, project_exists, project_name_from_input};
-use crate::view::display::project_dialog::{ProjectDialog, SaveAs, UnsavedButton};
+use crate::view::display::project_dialog::{
+    ProjectDialog, SaveAs, SaveAsHit, UnsavedButton, list_window,
+};
 use crate::view::display::project_state::ProjectViewState;
 use crate::view::display::text_field::{FieldStyle, MODAL_MARGIN};
 
@@ -19,6 +24,10 @@ struct DialogLayout {
     panel: Rect,
     /// The text: Save As's name field, the prompt's question.
     body: Rect,
+    /// Save As's label for the destination row (empty on the prompt).
+    folder_label: Rect,
+    /// The dropdown's box, where the chosen folder shows.
+    folder_box: Rect,
     /// The line under it: Save As's note, the prompt's key hints.
     note: Rect,
     /// The prompt's buttons, left to right as in [`UnsavedButton::ALL`].
@@ -35,6 +44,14 @@ impl Display {
     /// The text's height: the name field, or the prompt's question (two
     /// lines at most).
     const DIALOG_BODY_H: f32 = 44.0 * Self::M_SCALE;
+    /// Height of Save As's destination row.
+    const DIALOG_FOLDER_H: f32 = 34.0 * Self::M_SCALE;
+    /// Width of the row's "Save in" label.
+    const DIALOG_FOLDER_LABEL_W: f32 = 84.0 * Self::M_SCALE;
+    /// Inset of the dropdown's text from its box and rows.
+    const DIALOG_BOX_PAD: f32 = 8.0 * Self::M_SCALE;
+    /// Height of one entry of the dropdown's list.
+    const DIALOG_LIST_ROW_H: f32 = 26.0 * Self::M_SCALE;
     /// The note line's height.
     const DIALOG_NOTE_H: f32 = 22.0 * Self::M_SCALE;
     /// A prompt button's size.
@@ -51,8 +68,14 @@ impl Display {
         } else {
             0.0
         };
+        let folder_h = if with_buttons {
+            0.0
+        } else {
+            Self::DIALOG_FOLDER_H
+        };
         let panel_h = Self::DIALOG_HEADER_H
             + Self::DIALOG_BODY_H
+            + folder_h
             + Self::DIALOG_NOTE_H
             + buttons_h
             + Self::DIALOG_PAD * 0.75;
@@ -65,8 +88,17 @@ impl Display {
             ),
             vec2(inner_w, Self::DIALOG_BODY_H),
         );
+        let folder_row = Rect::from_min_size(pos2(body.min.x, body.max.y), vec2(inner_w, folder_h));
+        let folder_label = Rect::from_min_size(
+            folder_row.min,
+            vec2(Self::DIALOG_FOLDER_LABEL_W.min(inner_w), folder_h),
+        );
+        let folder_box = Rect::from_min_max(
+            pos2(folder_label.max.x, folder_row.min.y + 2.0),
+            pos2(folder_row.max.x, folder_row.max.y - 2.0),
+        );
         let note = Rect::from_min_size(
-            pos2(body.min.x, body.max.y),
+            pos2(body.min.x, folder_row.max.y),
             vec2(inner_w, Self::DIALOG_NOTE_H),
         );
         let buttons_top = note.max.y + Self::DIALOG_PAD * 0.25;
@@ -81,9 +113,49 @@ impl Display {
         DialogLayout {
             panel,
             body,
+            folder_label,
+            folder_box,
             note,
             buttons,
         }
+    }
+
+    /// The open dropdown list: `rows` entries stacked under the box.
+    fn folder_list_rect(folder_box: Rect, rows: usize) -> Rect {
+        Rect::from_min_size(
+            folder_box.left_bottom(),
+            vec2(folder_box.width(), rows as f32 * Self::DIALOG_LIST_ROW_H),
+        )
+    }
+
+    /// The `slot`th shown row of the list `list`.
+    fn folder_list_row(list: Rect, slot: usize) -> Rect {
+        Rect::from_min_size(
+            pos2(
+                list.min.x,
+                list.min.y + slot as f32 * Self::DIALOG_LIST_ROW_H,
+            ),
+            vec2(list.width(), Self::DIALOG_LIST_ROW_H),
+        )
+    }
+
+    /// What a press at canvas point `pos` lands on in the open Save As: a row
+    /// of the open folder list, or the dropdown's box.
+    pub(in crate::view::display) fn save_as_hit_at(&self, pos: Pos2) -> Option<SaveAsHit> {
+        let Some(ProjectDialog::SaveAs(save_as)) = &self.project_dialog else {
+            return None;
+        };
+        let layout = Self::dialog_layout(self.render.canvas_rect, false);
+        if let Some(highlight) = save_as.list_highlight() {
+            let window = list_window(highlight, save_as.folder_count());
+            let list = Self::folder_list_rect(layout.folder_box, window.len());
+            if let Some(slot) =
+                (0..window.len()).find(|&slot| Self::folder_list_row(list, slot).contains(pos))
+            {
+                return Some(SaveAsHit::Row(window.start + slot));
+            }
+        }
+        layout.folder_box.contains(pos).then_some(SaveAsHit::Box)
     }
 
     /// The unsaved-changes prompt's button under canvas point `pos`, if any.
@@ -139,17 +211,19 @@ impl Display {
         save_as
             .field
             .show(ui, Id::new("project-save-as"), field_rect, style);
+        let hover = ui.input(|i| i.pointer.hover_pos());
 
-        let folder = project.project_current_folder.as_deref();
+        let folder = save_as.folder();
+        let is_open_project = |name: &str| {
+            project.project_current_folder.as_deref() == folder
+                && project.project_current_name.as_deref() == Some(name)
+        };
         let note = match project_name_from_input(&save_as.field.text) {
             None => "Not a valid file name".to_owned(),
-            Some(name)
-                if project.project_current_name.as_deref() != Some(name.as_str())
-                    && project_exists(folder, &name) =>
-            {
+            Some(name) if !is_open_project(&name) && project_exists(folder, &name) => {
                 format!("Replaces the existing {name}")
             }
-            Some(_) => format!("Saves into {}", folder.unwrap_or("Projects")),
+            Some(_) => String::new(),
         };
         let painter = ui.painter();
         let hint_font = FontId::proportional(Self::FONT_HINT);
@@ -161,12 +235,98 @@ impl Display {
             theme::fg_dim(),
         );
         painter.text(
+            layout.folder_label.left_center(),
+            Align2::LEFT_CENTER,
+            "Save in",
+            hint_font.clone(),
+            theme::fg_dim(),
+        );
+        Self::draw_folder_dropdown(painter, layout.folder_box, save_as, hover);
+        painter.text(
             layout.note.right_center(),
             Align2::RIGHT_CENTER,
             "Enter save · Esc cancel",
             hint_font,
             theme::fg_dim(),
         );
+    }
+
+    /// The folder dropdown: the box with the chosen folder and a triangle,
+    /// and under it, while open, the list: the highlighted row in the accent
+    /// colour, the row under `hover` washed, the chosen folder's name bright.
+    fn draw_folder_dropdown(
+        painter: &Painter,
+        folder_box: Rect,
+        save_as: &SaveAs,
+        hover: Option<Pos2>,
+    ) {
+        let font = FontId::proportional(Self::FONT_LIST);
+        let radius = CornerRadius::same(3);
+        let outline = Stroke::new(1.0, Self::modal_outline().color);
+        let label = |text: &str, color: Color32| {
+            LayoutJob::single_section(
+                text.to_owned(),
+                TextFormat {
+                    font_id: font.clone(),
+                    color,
+                    ..Default::default()
+                },
+            )
+        };
+        painter.rect_filled(folder_box, radius, theme::bg());
+        painter.rect_stroke(folder_box, radius, outline, StrokeKind::Inside);
+        draw_truncated(
+            painter,
+            pos2(
+                folder_box.min.x + Self::DIALOG_BOX_PAD,
+                folder_box.center().y,
+            ),
+            label(save_as.folder_label(save_as.folder_idx()), theme::fg()),
+            folder_box.width() - 3.0 * Self::DIALOG_BOX_PAD - Self::FONT_LIST,
+        );
+        let tip = pos2(
+            folder_box.max.x - Self::DIALOG_BOX_PAD - 5.0,
+            folder_box.center().y + 2.5,
+        );
+        painter.add(Shape::convex_polygon(
+            vec![tip + vec2(-5.0, -5.0), tip + vec2(5.0, -5.0), tip],
+            theme::fg_dim(),
+            Stroke::NONE,
+        ));
+
+        let Some(highlight) = save_as.list_highlight() else {
+            return;
+        };
+        let window = list_window(highlight, save_as.folder_count());
+        let list = Self::folder_list_rect(folder_box, window.len());
+        painter.rect_filled(list, radius, theme::bg_panel());
+        painter.rect_stroke(list, radius, outline, StrokeKind::Outside);
+        for (slot, idx) in window.enumerate() {
+            let row = Self::folder_list_row(list, slot);
+            let color = if idx == highlight {
+                painter.rect_filled(row.shrink(1.0), radius, theme::accent());
+                theme::bg()
+            } else {
+                if hover.is_some_and(|p| row.contains(p)) {
+                    painter.rect_filled(
+                        row.shrink(1.0),
+                        radius,
+                        theme::accent().gamma_multiply(0.25),
+                    );
+                }
+                if idx == save_as.folder_idx() {
+                    theme::fg()
+                } else {
+                    theme::fg_dim()
+                }
+            };
+            draw_truncated(
+                painter,
+                pos2(row.min.x + Self::DIALOG_BOX_PAD, row.center().y),
+                label(save_as.folder_label(idx), color),
+                row.width() - 2.0 * Self::DIALOG_BOX_PAD,
+            );
+        }
     }
 
     /// The unsaved-changes prompt: the question, the key hints and the three

@@ -283,8 +283,6 @@ pub(super) enum BrowserAction {
         /// The project name.
         name: String,
     },
-    /// Make this folder the current project folder.
-    SetCurrentFolder(String),
     /// Put this plugin on the selected track.
     LoadPlugin(BrowserPlugin),
     /// Import this clip (its file stem) on the selected track at the cursor.
@@ -582,9 +580,10 @@ impl BrowserTree {
     }
 
     /// Enter: confirms a pending delete; else opens the selected project,
-    /// makes the selected folder current (and expands it), imports the
-    /// selected clip, puts the selected plugin on the selected track,
-    /// or expands/collapses a category.
+    /// expands/collapses the selected folder or category, imports the
+    /// selected clip or puts the selected plugin on the selected track.
+    /// A folder is never made current here: Save As picks where a project
+    /// goes, defaulting to the selection (`save_folder_default`).
     pub(super) fn activate(&mut self) -> Option<BrowserAction> {
         let armed = std::mem::take(&mut self.delete_armed);
         let item = self.selected.clone()?;
@@ -592,13 +591,9 @@ impl BrowserTree {
             BrowserItem::Project { folder, name } if armed => {
                 Some(BrowserAction::DeleteProject { folder, name })
             }
-            BrowserItem::Category(_) => {
+            BrowserItem::Category(_) | BrowserItem::Folder(_) => {
                 self.toggle(&item);
                 None
-            }
-            BrowserItem::Folder(ref name) => {
-                self.set_item_expanded(&item, true);
-                Some(BrowserAction::SetCurrentFolder(name.clone()))
             }
             BrowserItem::Plugin(plugin) => Some(BrowserAction::LoadPlugin(plugin)),
             BrowserItem::Scanning => None,
@@ -1000,9 +995,6 @@ impl Display {
                     folder,
                 });
             }
-            BrowserAction::SetCurrentFolder(folder) => {
-                self.set_current_project_folder(Some(folder));
-            }
             BrowserAction::LoadPlugin(plugin) => {
                 self.put_plugin_on_track(self.selected_track_idx, &plugin);
             }
@@ -1021,8 +1013,8 @@ impl Display {
     }
 
     /// Makes `folder` the current project folder (`None`: the projects root)
-    /// — where ⌘/Ctrl+N/S put a new project — persisting it to
-    /// `settings.json` so it's remembered across sessions. A no-op if it
+    /// — where a saved project lives, and Save As's fallback — persisting it
+    /// to `settings.json` so it's remembered across sessions. A no-op if it
     /// already is.
     pub(super) fn set_current_project_folder(&mut self, folder: Option<String>) {
         if self.project.project_current_folder == folder {
@@ -1328,7 +1320,7 @@ mod tests {
     }
 
     #[test]
-    fn enter_opens_a_project_and_makes_a_folder_current() {
+    fn enter_opens_a_project_and_toggles_a_folder() {
         let mut tree = tree();
         tree.select(project(None, "loose"));
         assert_eq!(
@@ -1339,11 +1331,10 @@ mod tests {
             })
         );
         tree.select(folder("b"));
-        assert_eq!(
-            tree.activate(),
-            Some(BrowserAction::SetCurrentFolder("b".into()))
-        );
+        assert_eq!(tree.activate(), None);
         assert!(tree.is_expanded("b"));
+        assert_eq!(tree.activate(), None);
+        assert!(!tree.is_expanded("b"));
     }
 
     #[test]

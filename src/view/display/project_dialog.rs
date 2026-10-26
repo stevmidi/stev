@@ -2,9 +2,12 @@
 //! keyboard while open — every key, nothing falls through:
 //!
 //! - **Save As** (⌘/Ctrl+⇧+S, and ⌘/Ctrl+S on a project never saved): a name
-//!   field, the open project's name (or [`UNTITLED`]) selected. Enter saves
-//!   under the typed name in the current folder and makes it the open
-//!   project; Esc cancels.
+//!   field, the open project's name (or [`UNTITLED`]) selected, and a
+//!   "Save in" dropdown for the destination folder (a click, or ↑/↓, opens
+//!   its list; Enter or a click picks, Esc closes it). It starts at the
+//!   browser's selected folder (see [`save_folder_default`]), else the current
+//!   folder. Enter saves under the typed name there, makes it the open
+//!   project and its folder the current one; Esc cancels.
 //! - **Unsaved changes**: asked for by the sequencer (`UiEvent::UnsavedChanges`)
 //!   when ⌘/Ctrl+N, opening a project from the browser or quitting would
 //!   throw away changes. ←/→ move the selection between its buttons (Save
@@ -22,16 +25,20 @@
 //! `rendering/modals/project_dialog.rs` draws the dialogs and lays out their
 //! buttons. See `060-persistence.md` § Unsaved changes.
 
-use egui::{Context, Key, ViewportCommand, pos2};
+use std::iter::once;
+use std::ops::Range;
+
+use egui::{Context, Key, Pos2, ViewportCommand, pos2};
 
 use crate::core::input_event::{InputEvent, KeyModifiers};
-use crate::core::project::{ProjectAction, project_name_from_input};
+use crate::core::project::{ProjectAction, list_project_folders, project_name_from_input};
 #[cfg(target_os = "macos")]
 use crate::view::appkit::take_open_document;
 
 use super::Display;
 #[cfg(target_os = "macos")]
 use super::Overlay;
+use super::browser::BrowserItem;
 use super::text_field::{FieldEvent, TextField, field_key};
 
 /// What Save As starts with for a project that has never been saved.
@@ -50,20 +57,133 @@ pub(super) enum ProjectDialog {
     },
 }
 
-/// Save As's name field.
+/// Save As's name field and destination folder.
 pub(super) struct SaveAs {
     /// The name field — the open project's name (or [`UNTITLED`]) to start
     /// with.
     pub(super) field: TextField,
+    /// The folders ↑/↓ step through: the projects root (`None`), then each
+    /// project folder. Read from disk when the dialog opens.
+    folders: Vec<Option<String>>,
+    /// Which of `folders` the project is saved into.
+    folder_idx: usize,
+    /// The folder dropdown's highlighted row while its list is open, `None`
+    /// while it is closed.
+    list: Option<usize>,
     /// What runs once the save is sent: the action the unsaved-changes
     /// prompt's Save was answered for, on a project never saved. Esc drops it
     /// with the dialog.
     then: Option<ProjectAction>,
 }
 
+impl SaveAs {
+    /// The folder the project will be saved into, `None` for the projects
+    /// root.
+    pub(super) fn folder(&self) -> Option<&str> {
+        self.folders[self.folder_idx].as_deref()
+    }
+
+    /// How many folders the dropdown offers.
+    pub(super) fn folder_count(&self) -> usize {
+        self.folders.len()
+    }
+
+    /// The dropdown's `idx`th entry as shown.
+    pub(super) fn folder_label(&self, idx: usize) -> &str {
+        self.folders[idx].as_deref().unwrap_or(ROOT_LABEL)
+    }
+
+    /// The chosen entry's index in the dropdown.
+    pub(super) fn folder_idx(&self) -> usize {
+        self.folder_idx
+    }
+
+    /// The open list's highlighted row, `None` while it is closed.
+    pub(super) fn list_highlight(&self) -> Option<usize> {
+        self.list
+    }
+
+    /// A press on the dropdown's box: opens the list on the chosen folder,
+    /// or closes it.
+    fn toggle_list(&mut self) {
+        self.list = match self.list {
+            Some(_) => None,
+            None => Some(self.folder_idx),
+        };
+    }
+
+    /// ↑/↓: opens a closed list on the chosen folder; on an open one moves
+    /// the highlight `step` rows, stopping at either end.
+    fn move_highlight(&mut self, step: isize) {
+        let last = self.folders.len() as isize - 1;
+        self.list = Some(match self.list {
+            Some(row) => (row as isize + step).clamp(0, last) as usize,
+            None => self.folder_idx,
+        });
+    }
+
+    /// Chooses the dropdown's `idx`th folder and closes the list.
+    fn choose_folder(&mut self, idx: usize) {
+        self.folder_idx = idx.min(self.folders.len() - 1);
+        self.list = None;
+    }
+}
+
+/// What a press in Save As lands on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SaveAsHit {
+    /// The dropdown's box.
+    Box,
+    /// This entry of the open list.
+    Row(usize),
+}
+
+/// How the root of the projects folder reads in the dropdown.
+const ROOT_LABEL: &str = "Projects";
+
+/// Most rows the open dropdown list shows at once.
+pub(super) const LIST_MAX_ROWS: usize = 8;
+
+/// The rows of a `len`-row list shown while `highlight` is highlighted: at
+/// most [`LIST_MAX_ROWS`], the window sliding to keep the highlight in view.
+pub(super) fn list_window(highlight: usize, len: usize) -> Range<usize> {
+    let start = (highlight + 1).saturating_sub(LIST_MAX_ROWS);
+    start..(start + LIST_MAX_ROWS).min(len)
+}
+
+/// Where Save As starts saving: the folder the browser has selected — the
+/// folder itself, or the one holding the selected project — while the panel
+/// is shown (`selected` is `None` otherwise); anything else selected, or
+/// nothing, leaves `current`, the open project's folder. `None` is the
+/// projects root.
+fn save_folder_default(selected: Option<&BrowserItem>, current: Option<&str>) -> Option<String> {
+    match selected {
+        Some(BrowserItem::Folder(name)) => Some(name.clone()),
+        Some(BrowserItem::Project { folder, .. }) => folder.clone(),
+        _ => current.map(str::to_owned),
+    }
+}
+
+/// Save As's keymap: ↑/↓ open the folder list and move through it, Enter
+/// saves (or picks the highlighted folder while the list is open), Esc
+/// cancels (or closes the list), the rest is typing ([`field_key`]).
+fn save_as_key(key: Key) -> DialogKey {
+    match key {
+        Key::ArrowUp => DialogKey::Folder(-1),
+        Key::ArrowDown => DialogKey::Folder(1),
+        _ => field_key(key).into(),
+    }
+}
+
 /// What a key does while a project dialog is open.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 enum DialogKey {
+    /// Save As: ↑/↓ — opens the folder list, then moves its highlight this
+    /// many rows.
+    Folder(isize),
+    /// Save As: a press at this canvas point, on the folder dropdown or
+    /// away from it.
+    Click(Pos2),
     /// Save As: save under the typed name. The prompt: save, then go on.
     Confirm,
     /// The prompt: go on without saving.
@@ -228,8 +348,27 @@ impl Display {
             .project_current_name
             .clone()
             .unwrap_or_else(|| UNTITLED.to_owned());
+        let selected = self
+            .browser
+            .visible
+            .then(|| self.browser.tree.selected())
+            .flatten();
+        let default = save_folder_default(selected, self.project.project_current_folder.as_deref());
+        let mut folders: Vec<Option<String>> = once(None)
+            .chain(list_project_folders().into_iter().map(Some))
+            .collect();
+        let folder_idx = folders
+            .iter()
+            .position(|f| *f == default)
+            .unwrap_or_else(|| {
+                folders.push(default);
+                folders.len() - 1
+            });
         self.project_dialog = Some(ProjectDialog::SaveAs(SaveAs {
             field: TextField::new(text),
+            folders,
+            folder_idx,
+            list: None,
             then,
         }));
     }
@@ -245,21 +384,27 @@ impl Display {
         }
     }
 
-    /// Saves the project under `name` in the current folder, which makes
-    /// `name` the open project, then asks for `then`. Each live plugin's
+    /// Saves the project under `name` in `folder`, which becomes the current
+    /// folder and `name` the open project, then asks for `then`. Each live plugin's
     /// preset is captured first: those events queue ahead of
     /// `ConfirmFilename` on the same channel, so the sequencer applies them
     /// before it serializes the project — and `then` queues after it, so the
     /// sequencer runs it now that nothing is unsaved, or prompts again if the
     /// save failed.
-    fn save_project_as(&mut self, name: String, then: Option<ProjectAction>) {
+    fn save_project_as(
+        &mut self,
+        name: String,
+        folder: Option<String>,
+        then: Option<ProjectAction>,
+    ) {
         self.project.project_current_name = Some(name.clone());
+        self.set_current_project_folder(folder.clone());
         #[cfg(target_os = "macos")]
         self.capture_instrument_states();
         self.input_event_tx
             .send(InputEvent::ConfirmFilename {
                 filename: name,
-                folder: self.project.project_current_folder.clone(),
+                folder,
             })
             .ok();
         if let Some(action) = then {
@@ -272,7 +417,10 @@ impl Display {
     /// Save (its action).
     pub(super) fn save_project(&mut self, then: Option<ProjectAction>) {
         match self.project.project_current_name.clone() {
-            Some(name) => self.save_project_as(name, then),
+            Some(name) => {
+                let folder = self.project.project_current_folder.clone();
+                self.save_project_as(name, folder, then);
+            }
             None => self.open_save_as(then),
         }
     }
@@ -288,9 +436,7 @@ impl Display {
         let key = match (event, dialog) {
             // The text fields' keymap, but no click-away commit: a modal
             // takes every press.
-            (&InputEvent::KeyPressed { key, .. }, ProjectDialog::SaveAs(_)) => {
-                field_key(key).into()
-            }
+            (&InputEvent::KeyPressed { key, .. }, ProjectDialog::SaveAs(_)) => save_as_key(key),
             (
                 &InputEvent::KeyPressed { key, modifiers },
                 &ProjectDialog::Unsaved { selected, .. },
@@ -298,8 +444,10 @@ impl Display {
             (&InputEvent::MouseClicked { x, y, .. }, ProjectDialog::Unsaved { .. }) => self
                 .unsaved_button_at(pos2(x, y))
                 .map_or(DialogKey::Swallow, UnsavedButton::key),
-            (InputEvent::MouseClicked { .. }, ProjectDialog::SaveAs(_))
-            | (
+            (&InputEvent::MouseClicked { x, y, .. }, ProjectDialog::SaveAs(_)) => {
+                DialogKey::Click(pos2(x, y))
+            }
+            (
                 InputEvent::Copy { .. }
                 | InputEvent::Cut { .. }
                 | InputEvent::Paste
@@ -309,9 +457,25 @@ impl Display {
             _ => return false,
         };
         match key {
-            DialogKey::Confirm => self.confirm_project_dialog(),
+            DialogKey::Confirm => match self.open_folder_list() {
+                Some(save_as) => {
+                    if let Some(row) = save_as.list {
+                        save_as.choose_folder(row);
+                    }
+                }
+                None => self.confirm_project_dialog(),
+            },
             DialogKey::Discard => self.discard_project_changes(),
-            DialogKey::Cancel => self.project_dialog = None,
+            DialogKey::Cancel => match self.open_folder_list() {
+                Some(save_as) => save_as.list = None,
+                None => self.project_dialog = None,
+            },
+            DialogKey::Folder(step) => {
+                if let Some(ProjectDialog::SaveAs(save_as)) = &mut self.project_dialog {
+                    save_as.move_highlight(step);
+                }
+            }
+            DialogKey::Click(pos) => self.click_save_as(pos),
             DialogKey::Select(button) => {
                 if let Some(ProjectDialog::Unsaved { selected, .. }) = &mut self.project_dialog {
                     *selected = button;
@@ -322,6 +486,28 @@ impl Display {
         true
     }
 
+    /// Save As, while its folder list is open.
+    fn open_folder_list(&mut self) -> Option<&mut SaveAs> {
+        match &mut self.project_dialog {
+            Some(ProjectDialog::SaveAs(save_as)) if save_as.list.is_some() => Some(save_as),
+            _ => None,
+        }
+    }
+
+    /// A press in Save As: the dropdown's box opens or closes the list, a row
+    /// of the open list chooses that folder, anywhere else closes the list.
+    fn click_save_as(&mut self, pos: Pos2) {
+        let hit = self.save_as_hit_at(pos);
+        let Some(ProjectDialog::SaveAs(save_as)) = &mut self.project_dialog else {
+            return;
+        };
+        match hit {
+            Some(SaveAsHit::Box) => save_as.toggle_list(),
+            Some(SaveAsHit::Row(idx)) => save_as.choose_folder(idx),
+            None => save_as.list = None,
+        }
+    }
+
     /// Enter, or the prompt's Save. Save As with a name that isn't one
     /// stays open (its hint says why); with one, it saves and asks for the
     /// action waiting on it, if any. The prompt saves and asks for its
@@ -330,7 +516,10 @@ impl Display {
         match self.project_dialog.take() {
             Some(ProjectDialog::SaveAs(save_as)) => {
                 match project_name_from_input(&save_as.field.text) {
-                    Some(name) => self.save_project_as(name, save_as.then),
+                    Some(name) => {
+                        let folder = save_as.folder().map(str::to_owned);
+                        self.save_project_as(name, folder, save_as.then);
+                    }
                     None => self.project_dialog = Some(ProjectDialog::SaveAs(save_as)),
                 }
             }
@@ -358,7 +547,99 @@ mod tests {
 
     use crate::core::input_event::KeyModifiers;
 
-    use super::{DialogKey, UnsavedButton, field_key, unsaved_key};
+    use crate::view::display::browser::{BrowserCategory, BrowserItem};
+
+    use crate::view::display::text_field::TextField;
+
+    use super::{
+        DialogKey, LIST_MAX_ROWS, SaveAs, UnsavedButton, field_key, list_window, save_as_key,
+        save_folder_default, unsaved_key,
+    };
+
+    /// A Save As over the root and folders `a`, `b`, `c`, starting at `idx`.
+    fn save_as(idx: usize) -> SaveAs {
+        SaveAs {
+            field: TextField::new(String::new()),
+            folders: vec![None, Some("a".into()), Some("b".into()), Some("c".into())],
+            folder_idx: idx,
+            list: None,
+            then: None,
+        }
+    }
+
+    /// The list opens on the chosen folder, ↑/↓ move the highlight (stopping
+    /// at the ends) without choosing, and picking a row closes the list.
+    #[test]
+    fn the_folder_list_opens_moves_and_picks() {
+        let mut save_as = save_as(2);
+        assert_eq!(save_as.folder(), Some("b"));
+        save_as.move_highlight(1);
+        assert_eq!(save_as.list_highlight(), Some(2));
+        save_as.move_highlight(5);
+        assert_eq!(save_as.list_highlight(), Some(3));
+        assert_eq!(save_as.folder(), Some("b"));
+        save_as.choose_folder(0);
+        assert_eq!((save_as.folder(), save_as.list_highlight()), (None, None));
+        assert_eq!(save_as.folder_label(0), "Projects");
+        save_as.toggle_list();
+        assert_eq!(save_as.list_highlight(), Some(0));
+        save_as.toggle_list();
+        assert_eq!(save_as.list_highlight(), None);
+    }
+
+    /// A long list shows a window of rows that follows the highlight.
+    #[test]
+    fn the_list_window_follows_the_highlight() {
+        assert_eq!(list_window(0, 3), 0..3);
+        assert_eq!(list_window(2, 3), 0..3);
+        assert_eq!(list_window(0, 20), 0..LIST_MAX_ROWS);
+        assert_eq!(list_window(LIST_MAX_ROWS - 1, 20), 0..LIST_MAX_ROWS);
+        assert_eq!(list_window(LIST_MAX_ROWS, 20), 1..LIST_MAX_ROWS + 1);
+        assert_eq!(list_window(19, 20), 20 - LIST_MAX_ROWS..20);
+    }
+
+    /// The selected folder, or the folder of the selected project, is where
+    /// Save As starts; anything else selected leaves the current folder.
+    #[test]
+    fn save_as_starts_in_the_selected_folder() {
+        let folder = BrowserItem::Folder("b".into());
+        let in_a = BrowserItem::Project {
+            folder: Some("a".into()),
+            name: "song".into(),
+        };
+        let loose = BrowserItem::Project {
+            folder: None,
+            name: "song".into(),
+        };
+        let category = BrowserItem::Category(BrowserCategory::Projects);
+        let clip = BrowserItem::Clip("riff".into());
+        assert_eq!(
+            save_folder_default(Some(&folder), Some("a")),
+            Some("b".into())
+        );
+        assert_eq!(
+            save_folder_default(Some(&in_a), Some("c")),
+            Some("a".into())
+        );
+        assert_eq!(save_folder_default(Some(&loose), Some("c")), None);
+        assert_eq!(
+            save_folder_default(Some(&category), Some("c")),
+            Some("c".into())
+        );
+        assert_eq!(save_folder_default(Some(&clip), None), None);
+        assert_eq!(save_folder_default(None, Some("a")), Some("a".into()));
+        assert_eq!(save_folder_default(None, None), None);
+    }
+
+    /// ↑/↓ drive the folder list; the rest of Save As's keys are unchanged.
+    #[test]
+    fn save_as_arrows_drive_the_folder_list() {
+        assert_eq!(save_as_key(Key::ArrowUp), DialogKey::Folder(-1));
+        assert_eq!(save_as_key(Key::ArrowDown), DialogKey::Folder(1));
+        assert_eq!(save_as_key(Key::Enter), DialogKey::Confirm);
+        assert_eq!(save_as_key(Key::Escape), DialogKey::Cancel);
+        assert_eq!(save_as_key(Key::D), DialogKey::Swallow);
+    }
 
     /// Save As reads the text fields' keymap: Enter saves, Esc cancels, and
     /// nothing typed reaches the app — not `D`, which the prompt reads as

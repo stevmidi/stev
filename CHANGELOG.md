@@ -20,6 +20,14 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ## [Unreleased]
 
+### Changed
+
+- Save As now has a "Save in" dropdown to choose the folder the project goes
+  in. It starts at the folder selected in the browser (or the one holding the
+  selected project) while the browser is shown, else the open project's folder.
+  Enter on a browser folder now only expands or collapses it; it no longer
+  silently changes where new projects are saved.
+
 ## [0.6.0] - 2026-10-25
 
 ### Added
