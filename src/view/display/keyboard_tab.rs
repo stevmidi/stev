@@ -519,6 +519,16 @@ pub(super) fn chord_label(chord: Chord) -> String {
     key_label(&chord_glyphs(chord))
 }
 
+/// A command's `chords` as shown on this platform, two spaces apart:
+/// `\  /`. The tab's rows and the footer's hints.
+pub(super) fn chords_label(chords: &[Chord]) -> String {
+    chords
+        .iter()
+        .map(|&chord| chord_label(chord))
+        .collect::<Vec<_>>()
+        .join("  ")
+}
+
 /// `chord` written as [`FIXED`]'s keys are: the modifier glyphs, then the
 /// key's symbol or name (`\`, `Space`, `Delete`).
 fn chord_glyphs(chord: Chord) -> String {
@@ -550,11 +560,7 @@ fn shortcut_rows(keymap: &Keymap) -> Vec<ShortcutRow> {
         keys: if chords.is_empty() {
             UNBOUND.to_owned()
         } else {
-            chords
-                .iter()
-                .map(|&chord| chord_label(chord))
-                .collect::<Vec<_>>()
-                .join("  ")
+            chords_label(chords)
         },
         action: Some(info.action),
         unbound: chords.is_empty(),

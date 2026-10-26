@@ -470,11 +470,12 @@ impl Display {
     }
 
     /// The footer band: a framed bottom edge across the whole window, under
-    /// the browser panel too, holding the passing message. It is painted on
-    /// the canvas's layer but reaches left of the canvas by the panel's
-    /// width (`footer_rect`), so it doesn't move when the panel shows or
-    /// hides.
-    pub(super) fn draw_status_bar(&self, painter: &Painter) {
+    /// the browser panel too, holding the passing message, an armed
+    /// browser delete's question, or else `hint`,
+    /// the hovered control's key (`footer_hint.rs`). It is painted on the
+    /// canvas's layer but reaches left of the canvas by the panel's width
+    /// (`footer_rect`), so it doesn't move when the panel shows or hides.
+    pub(super) fn draw_status_bar(&self, painter: &Painter, hint: Option<&str>) {
         let rect = self.footer_rect();
         // Set, not `with_clip_rect`: that intersects with the canvas's clip,
         // which stops at canvas x = 0, short of the band's left part.
@@ -497,9 +498,11 @@ impl Display {
 
         // The passing message (`UiEvent::Status`): left-aligned past the
         // toggle and on its centre line, dim, fading out once its time is up.
-        // Otherwise a running audio export's progress, or an open take
-        // session's name, for as long as it is open: the one place the mode
-        // shows beyond the take itself.
+        // Otherwise an armed browser delete's question, in `fg` like the
+        // other standing lines, until it is answered. Otherwise the hovered
+        // control's key, dim, for as long as the pointer stays on it. Otherwise a running audio export's progress,
+        // or an open take session's name, for as long as it is open: the one
+        // place the mode shows beyond the take itself.
         let text_pos = pos2(toggle.max.x + Self::STATUS_TEXT_GAP_X, rect.center().y);
         let font = FontId::proportional(theme::FONT_SIZE_LABEL);
         if let Some(status) = &self.render.status
@@ -512,6 +515,10 @@ impl Display {
                 font,
                 theme::fg_dim().gamma_multiply(opacity),
             );
+        } else if let Some(prompt) = self.browser.tree.delete_prompt() {
+            painter.text(text_pos, Align2::LEFT_CENTER, prompt, font, theme::fg());
+        } else if let Some(hint) = hint {
+            painter.text(text_pos, Align2::LEFT_CENTER, hint, font, theme::fg_dim());
         } else if self.is_exporting_audio() {
             let progress = &self.audio_export;
             painter.text(

@@ -9,7 +9,9 @@ use egui::{
 };
 
 use crate::core::config::PROJECT_NAME_MAX_CHARS;
+use crate::core::keymap::Action;
 use crate::core::project::{ProjectAction, file_stem, project_exists, project_name_from_input};
+use crate::view::display::keyboard_tab::chords_label;
 use crate::view::display::project_dialog::{
     ProjectDialog, SaveAs, SaveAsFocus, SaveAsHit, UnsavedButton, list_window,
 };
@@ -195,7 +197,8 @@ impl Display {
     pub(in crate::view::display) fn show_project_dialog(&mut self, ui: &mut Ui, rect: Rect) {
         match &mut self.project_dialog {
             Some(ProjectDialog::SaveAs(save_as)) => {
-                Self::show_save_as(ui, rect, save_as, &self.project)
+                let new_folder_keys = chords_label(self.keymap.chords(Action::NewProjectFolder));
+                Self::show_save_as(ui, rect, save_as, &self.project, &new_folder_keys)
             }
             Some(ProjectDialog::Unsaved { action, selected }) => Self::draw_unsaved_prompt(
                 ui.painter(),
@@ -211,11 +214,19 @@ impl Display {
     /// Save As: the name field, the folder dropdown and its `+` — or, while
     /// it is open, the new folder's field over the box — and a note under
     /// them: why the name (or the new folder's) won't do, that the project
-    /// replaces another. The name field's
+    /// replaces another. Right of the note, the keys of whatever has the
+    /// keyboard — or, with the pointer on the `+`, `new_folder_keys`, its
+    /// key (none while unbound). The name field's
     /// first frame selects its text; it and the new folder's field hold the
     /// egui focus by turns (`SaveAs::focus`), so typing lands in the one with
     /// the keyboard — neither while the dropdown or the `+` has it.
-    fn show_save_as(ui: &mut Ui, rect: Rect, save_as: &mut SaveAs, project: &ProjectViewState) {
+    fn show_save_as(
+        ui: &mut Ui,
+        rect: Rect,
+        save_as: &mut SaveAs,
+        project: &ProjectViewState,
+        new_folder_keys: &str,
+    ) {
         let layout = Self::dialog_layout(rect, false);
         Self::draw_modal_frame(
             ui.painter(),
@@ -292,14 +303,16 @@ impl Display {
             Self::draw_folder_dropdown(painter, layout.folder_box, save_as, hover);
         }
         Self::draw_save_as_plus(painter, layout.new_folder, save_as, hover);
+        let on_plus = !typing_folder && hover.is_some_and(|p| layout.new_folder.contains(p));
         let keys = match save_as.focus {
-            SaveAsFocus::Folder => "Enter choose · Esc back",
+            _ if on_plus && !new_folder_keys.is_empty() => format!("{new_folder_keys} new folder"),
+            SaveAsFocus::Folder => "Enter choose · Esc back".to_owned(),
             SaveAsFocus::Dropdown if save_as.list_highlight().is_some() => {
-                "Enter choose · Esc close"
+                "Enter choose · Esc close".to_owned()
             }
-            SaveAsFocus::Dropdown => "↑↓ folder · Enter save · Esc cancel",
-            SaveAsFocus::NewFolder => "Enter new folder · Esc cancel",
-            SaveAsFocus::Name => "Enter save · Esc cancel",
+            SaveAsFocus::Dropdown => "↑↓ folder · Enter save · Esc cancel".to_owned(),
+            SaveAsFocus::NewFolder => "Enter new folder · Esc cancel".to_owned(),
+            SaveAsFocus::Name => "Enter save · Esc cancel".to_owned(),
         };
         painter.text(
             layout.note.right_center(),

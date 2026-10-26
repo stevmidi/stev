@@ -1423,7 +1423,8 @@ impl eframe::App for Display {
                     }
                 }
                 self.draw_pane_split(painter, panes, rect);
-                self.draw_status_bar(painter);
+                let hint = self.footer_hint();
+                self.draw_status_bar(painter, hint.as_deref());
                 self.show_track_rename(ui);
                 self.show_tempo_field(ui, Self::header_value_font());
                 self.show_meter_field(ui, Self::header_value_font());

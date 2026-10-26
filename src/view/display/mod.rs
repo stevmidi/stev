@@ -48,6 +48,7 @@ mod about_tab;
 mod browser;
 mod browser_rename;
 mod computer_keys;
+mod footer_hint;
 mod gesture_state;
 mod grid;
 mod header_chip;

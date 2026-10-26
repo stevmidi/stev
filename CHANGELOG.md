@@ -20,8 +20,19 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ## [Unreleased]
 
+### Added
+
+- Pointing at a control that has a shortcut shows the shortcut in the footer:
+  the browser panel toggle, the browser's new-folder `+`, the header's piano
+  and `?` chips, the arranger's add-track row and the output menu's Rename.
+  In Save As, pointing at the `+` shows its shortcut in the dialog. A
+  rebound shortcut shows as rebound.
+
 ### Changed
 
+- Deleting a project or folder in the browser asks in the footer, where the
+  whole question shows however narrow the panel is, in the footer's plain
+  colour rather than red; the row keeps its name.
 - ⌘O pressed again while the browser panel has the keyboard hides the panel.
 
 ## [0.7.0] - 2026-10-26

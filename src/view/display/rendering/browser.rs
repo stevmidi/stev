@@ -476,10 +476,9 @@ impl Display {
                 );
             }
 
-            let prompt = is_selected.then(|| tree.delete_prompt()).flatten();
-            let (text, color) = if let Some(prompt) = prompt {
-                (prompt, theme::track_mute())
-            } else if matches!(
+            // An armed delete's row is drawn as any selected row: its
+            // question is the footer's (`draw_status_bar`).
+            let (text, color) = if matches!(
                 row.item,
                 BrowserItem::Clip(_) | BrowserItem::Scanning | BrowserItem::Category(_)
             ) && !(is_selected && focused)

@@ -592,9 +592,9 @@ impl BrowserTree {
         }
     }
 
-    /// What an armed delete asks on the selected row, in place of its name:
-    /// a folder says how many projects go with it. `None` with no delete
-    /// armed.
+    /// What an armed delete asks of the selected row, in the footer (its
+    /// width no matter how narrow the panel): a folder says how many
+    /// projects go with it. `None` with no delete armed.
     pub(super) fn delete_prompt(&self) -> Option<String> {
         if !self.delete_armed {
             return None;
@@ -611,7 +611,7 @@ impl BrowserTree {
             }
             _ => return None,
         };
-        Some(format!("Delete {what}?  Enter / Esc"))
+        Some(format!("Delete {what}? Enter deletes, Esc cancels"))
     }
 
     /// Selects `item` and disarms a pending delete.
@@ -1104,7 +1104,14 @@ impl Display {
             Key::ArrowDown => tree.move_selection(1),
             Key::ArrowRight => tree.expand(),
             Key::ArrowLeft => tree.collapse(),
-            Key::Delete | Key::Backspace => tree.arm_delete(),
+            Key::Delete | Key::Backspace => {
+                tree.arm_delete();
+                // The question is the newest line: a passing message still
+                // held (the last delete's) must not hide it.
+                if tree.delete_armed {
+                    self.render.status = None;
+                }
+            }
             Key::Enter => {
                 if let Some(action) = tree.activate() {
                     self.run_browser_action(action);
@@ -1629,19 +1636,19 @@ mod tests {
         };
         assert_eq!(
             prompt(&mut tree, folder("two")).as_deref(),
-            Some("Delete two and its 2 projects?  Enter / Esc")
+            Some("Delete two and its 2 projects? Enter deletes, Esc cancels")
         );
         assert_eq!(
             prompt(&mut tree, folder("one")).as_deref(),
-            Some("Delete one and its project?  Enter / Esc")
+            Some("Delete one and its project? Enter deletes, Esc cancels")
         );
         assert_eq!(
             prompt(&mut tree, folder("none")).as_deref(),
-            Some("Delete none?  Enter / Esc")
+            Some("Delete none? Enter deletes, Esc cancels")
         );
         assert_eq!(
             prompt(&mut tree, project(None, "loose")).as_deref(),
-            Some("Delete loose?  Enter / Esc")
+            Some("Delete loose? Enter deletes, Esc cancels")
         );
     }
 
