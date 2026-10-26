@@ -21,7 +21,7 @@
 //! what Enter means), unit-tested; the `impl Display` below drives it from
 //! input and reads the filesystem.
 
-use std::{collections::HashSet, path::PathBuf};
+use std::{collections::HashSet, path::PathBuf, time::Instant};
 
 use egui::{Key, Pos2, Vec2, vec2};
 
@@ -387,9 +387,11 @@ pub(super) struct BrowserTree {
     rows: Vec<BrowserRow>,
     /// The selected item, `None` until something is selected.
     selected: Option<BrowserItem>,
-    /// Whether the selected project or folder awaits its delete confirm
-    /// (the second Enter). Any selection change disarms it.
-    pub(super) delete_armed: bool,
+    /// When the selected project or folder was armed to be deleted, while
+    /// it awaits its confirm (the second Enter): the footer shows the newer
+    /// of its question and a passing message. Any selection change disarms
+    /// it.
+    pub(super) delete_armed: Option<Instant>,
     /// Whether the [`NewFolder`](BrowserItem::NewFolder) row is listed: while
     /// its name field is open. Set and cleared with the field only
     /// (`open_new_folder_field`, `close_browser_rename`), so the two never
@@ -424,7 +426,7 @@ impl BrowserTree {
         self.disk = disk;
         self.expanded
             .retain(|name| self.disk.folder_projects(name).is_some());
-        self.delete_armed = false;
+        self.delete_armed = None;
         self.relist(old_index);
     }
 
@@ -596,9 +598,7 @@ impl BrowserTree {
     /// width no matter how narrow the panel): a folder says how many
     /// projects go with it. `None` with no delete armed.
     pub(super) fn delete_prompt(&self) -> Option<String> {
-        if !self.delete_armed {
-            return None;
-        }
+        self.delete_armed?;
         let what = match self.selected.as_ref()? {
             BrowserItem::Project { name, .. } => name.clone(),
             BrowserItem::Folder(name) => {
@@ -617,7 +617,7 @@ impl BrowserTree {
     /// Selects `item` and disarms a pending delete.
     pub(super) fn select(&mut self, item: BrowserItem) {
         self.selected = Some(item);
-        self.delete_armed = false;
+        self.delete_armed = None;
     }
 
     /// The first time the panel shows (nothing selected yet): expands the
@@ -701,7 +701,7 @@ impl BrowserTree {
     /// A folder is never made current here: Save As picks where a project
     /// goes, defaulting to the selection (`save_folder_default`).
     pub(super) fn activate(&mut self) -> Option<BrowserAction> {
-        let armed = std::mem::take(&mut self.delete_armed);
+        let armed = self.delete_armed.take().is_some();
         let item = self.selected.clone()?;
         match item {
             BrowserItem::Project { folder, name } if armed => {
@@ -727,7 +727,8 @@ impl BrowserTree {
         self.delete_armed = matches!(
             self.selected,
             Some(BrowserItem::Project { .. } | BrowserItem::Folder(_))
-        );
+        )
+        .then(Instant::now);
     }
 }
 
@@ -999,7 +1000,7 @@ impl Display {
         if self.key_focus == KeyFocus::Browser {
             self.key_focus = KeyFocus::Pane;
         }
-        self.browser.tree.delete_armed = false;
+        self.browser.tree.delete_armed = None;
     }
 
     /// Keeps the selected row on screen after a keyboard move.
@@ -1094,7 +1095,7 @@ impl Display {
         }
         if is_pane_focus_key(*key, *modifiers) {
             // A delete armed and left behind must not fire on a later Enter.
-            self.browser.tree.delete_armed = false;
+            self.browser.tree.delete_armed = None;
             self.key_focus = KeyFocus::Pane;
             return true;
         }
@@ -1104,14 +1105,7 @@ impl Display {
             Key::ArrowDown => tree.move_selection(1),
             Key::ArrowRight => tree.expand(),
             Key::ArrowLeft => tree.collapse(),
-            Key::Delete | Key::Backspace => {
-                tree.arm_delete();
-                // The question is the newest line: a passing message still
-                // held (the last delete's) must not hide it.
-                if tree.delete_armed {
-                    self.render.status = None;
-                }
-            }
+            Key::Delete | Key::Backspace => tree.arm_delete(),
             Key::Enter => {
                 if let Some(action) = tree.activate() {
                     self.run_browser_action(action);
@@ -1123,7 +1117,7 @@ impl Display {
                 let plugin = self.gesture.plugin_drag.take();
                 if midi.is_some() || plugin.is_some() {
                     self.browser.press = None;
-                } else if !std::mem::take(&mut tree.delete_armed) {
+                } else if tree.delete_armed.take().is_none() {
                     self.key_focus = KeyFocus::Pane;
                 }
             }
@@ -1462,7 +1456,7 @@ mod tests {
 
         tree.select(BrowserItem::Plugin(plugin("Diva", "CLAP")));
         tree.arm_delete();
-        assert!(!tree.delete_armed, "plugins are never deleted");
+        assert!(tree.delete_armed.is_none(), "plugins are never deleted");
     }
 
     #[test]
@@ -1587,7 +1581,7 @@ mod tests {
             Some(BrowserAction::ImportClip("a1_T1_B1".into()))
         );
         tree.arm_delete();
-        assert!(!tree.delete_armed);
+        assert!(tree.delete_armed.is_none());
     }
 
     #[test]
@@ -1605,7 +1599,7 @@ mod tests {
 
         tree.arm_delete();
         tree.move_selection(-1);
-        assert!(!tree.delete_armed);
+        assert!(tree.delete_armed.is_none());
 
         tree.select(folder("a"));
         tree.arm_delete();
@@ -1616,7 +1610,7 @@ mod tests {
 
         tree.select(projects());
         tree.arm_delete();
-        assert!(!tree.delete_armed, "a category is never deleted");
+        assert!(tree.delete_armed.is_none(), "a category is never deleted");
     }
 
     /// A folder's prompt says how many projects go with it.

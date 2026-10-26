@@ -1,47 +1,83 @@
 //! The footer's shortcut hint: while the pointer is on a control that has a
 //! key of its own, the footer names the key — `New project folder —
-//! Cmd+Shift+N`. Only controls whose press does what the key does carry one,
-//! and only these: the footer's panel toggle, the browser's new-folder `+`,
-//! the header's piano and `?` chips, the arranger's add-track row and the
-//! output menu's `Rename`. A command's hint follows its rebinding (the live
-//! [`Keymap`](crate::core::keymap::Keymap)); an unbound command has none.
-//! Drawn by `draw_status_bar`, under a passing message. See
-//! `030-ui-design.md` § Header & Footer.
+//! Cmd+Shift+N`. The clickable controls are one list ([`HoveredControl`]):
+//! it gives the pointing hand, and each control whose press does what a key
+//! does gives its hint. A command's hint follows its rebinding (the live
+//! [`Keymap`]); an unbound command has none. Drawn by `draw_status_bar`,
+//! under a passing message. See `030-ui-design.md` § Header & Footer.
 
-use crate::core::keymap::{Action, Chord};
+use crate::core::keymap::{Action, Chord, Keymap};
 
 use super::Display;
-use super::keyboard_tab::chords_label;
+use super::keyboard_tab::{KEYBOARD_TAB_ROW, chords_label};
 use super::output_menu::OutputMenuHit;
 
+/// A clickable control under the pointer: what shows the pointing hand,
+/// bar the track header's S/M buttons (their own hover state).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) enum HoveredControl {
+    /// An item of the open output menu, which hangs over the rest.
+    OutputMenu(OutputMenuHit),
+    /// The arranger's add-track row.
+    AddTrack,
+    /// The header's `?` chip.
+    HelpChip,
+    /// The header's piano chip.
+    KeyboardChip,
+    /// The footer's panel toggle.
+    BrowserToggle,
+    /// The browser's new-folder `+`.
+    NewFolder,
+}
+
+impl HoveredControl {
+    /// The control's footer hint under `keymap`: its key, when its press
+    /// does what a key does and that key is bound.
+    fn hint(self, keymap: &Keymap) -> Option<String> {
+        let action = match self {
+            HoveredControl::OutputMenu(OutputMenuHit::Rename) => Action::RenameTrack,
+            HoveredControl::OutputMenu(_) => return None,
+            HoveredControl::AddTrack => Action::AddTrack,
+            HoveredControl::HelpChip => {
+                let (keys, label) = KEYBOARD_TAB_ROW;
+                return Some(hint_text(label, keys));
+            }
+            HoveredControl::KeyboardChip => Action::ToggleComputerKeyboard,
+            HoveredControl::BrowserToggle => Action::ToggleBrowser,
+            HoveredControl::NewFolder => Action::NewProjectFolder,
+        };
+        command_hint(action.info().label, keymap.chords(action))
+    }
+}
+
 impl Display {
+    /// The clickable control under the pointer, if any.
+    pub(super) fn hovered_control(&mut self) -> Option<HoveredControl> {
+        if let Some(item) = self.hovered_output_menu_item() {
+            Some(HoveredControl::OutputMenu(item))
+        } else if self.is_pointer_on_add_track_row() {
+            Some(HoveredControl::AddTrack)
+        } else if self.is_pointer_on_help_chip() {
+            Some(HoveredControl::HelpChip)
+        } else if self.is_pointer_on_keyboard_chip() {
+            Some(HoveredControl::KeyboardChip)
+        } else if self.is_pointer_on_browser_toggle() {
+            Some(HoveredControl::BrowserToggle)
+        } else if self.is_pointer_on_browser_new_folder() {
+            Some(HoveredControl::NewFolder)
+        } else {
+            None
+        }
+    }
+
     /// The hint for the control under the pointer, if it has one: none
     /// while a modal or a project dialog has the pointer.
     pub(super) fn footer_hint(&mut self) -> Option<String> {
         if self.overlay.is_some() || self.project_dialog.is_some() {
             return None;
         }
-        let action = if self.is_pointer_on_browser_toggle() {
-            Action::ToggleBrowser
-        } else if self.is_pointer_on_browser_new_folder() {
-            Action::NewProjectFolder
-        } else if self.is_pointer_on_keyboard_chip() {
-            Action::ToggleComputerKeyboard
-        } else if self.is_pointer_on_help_chip() {
-            return Some(hint_text(Self::KEYBOARD_TAB_LABEL, "?"));
-        } else if self.is_pointer_on_add_track_row() {
-            Action::AddTrack
-        } else if self.hovered_output_menu_item() == Some(OutputMenuHit::Rename) {
-            Action::RenameTrack
-        } else {
-            return None;
-        };
-        command_hint(action.info().label, self.keymap.chords(action))
+        self.hovered_control()?.hint(&self.keymap)
     }
-
-    /// What the `?` chip's hint calls the Keyboard tab — its row in the
-    /// tab's fixed keys.
-    const KEYBOARD_TAB_LABEL: &str = "Keyboard shortcuts";
 }
 
 /// A command's hint: its `label` and its `chords`, or `None` while it is
@@ -59,9 +95,10 @@ fn hint_text(label: &str, keys: &str) -> String {
 mod tests {
     use egui::Key;
 
-    use super::{command_hint, hint_text};
+    use super::{HoveredControl, command_hint, hint_text};
     use crate::core::input_event::KeyModifiers;
-    use crate::core::keymap::Chord;
+    use crate::core::keymap::{Chord, Keymap};
+    use crate::view::display::output_menu::OutputMenuHit;
 
     #[test]
     fn a_hint_names_the_command_then_its_keys() {
@@ -83,6 +120,26 @@ mod tests {
         assert_eq!(
             command_hint("Commit", &chords).as_deref(),
             Some("Commit — \\  /")
+        );
+    }
+
+    /// Only a control whose press does what a key does has a hint.
+    #[test]
+    fn only_controls_with_a_key_twin_hint() {
+        let keymap = Keymap::default();
+        assert_eq!(
+            HoveredControl::HelpChip.hint(&keymap).as_deref(),
+            Some("Keyboard shortcuts — ?")
+        );
+        assert!(HoveredControl::NewFolder.hint(&keymap).is_some());
+        assert!(
+            HoveredControl::OutputMenu(OutputMenuHit::Rename)
+                .hint(&keymap)
+                .is_some()
+        );
+        assert_eq!(
+            HoveredControl::OutputMenu(OutputMenuHit::DeleteTrack).hint(&keymap),
+            None
         );
     }
 }

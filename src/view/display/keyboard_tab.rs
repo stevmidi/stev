@@ -377,6 +377,10 @@ pub(super) enum ShortcutLine {
     Row(ShortcutRow),
 }
 
+/// [`FIXED`]'s row for `?`, the way into this tab — the header's `?` chip's
+/// footer hint too.
+pub(super) const KEYBOARD_TAB_ROW: (&str, &str) = ("?", "Keyboard shortcuts");
+
 /// One read-only group of [`FIXED`]: its heading and `(keys, label)` rows,
 /// the keys written with macOS's `⌘` `⌥` `⇧` like a chord label.
 type FixedGroup = (&'static str, &'static [(&'static str, &'static str)]);
@@ -395,7 +399,7 @@ const FIXED: &[FixedGroup] = &[
             ("⌘⇧S", "Save as"),
             ("⌘N", "New project"),
             ("⌘,", "Settings"),
-            ("?", "Keyboard shortcuts"),
+            KEYBOARD_TAB_ROW,
         ],
     ),
     (

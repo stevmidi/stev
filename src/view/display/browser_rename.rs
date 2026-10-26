@@ -50,7 +50,7 @@ impl Display {
         let Some(text) = item.renamable_name().map(str::to_owned) else {
             return;
         };
-        tree.delete_armed = false;
+        tree.delete_armed = None;
         self.browser.rename = Some(BrowserRename {
             item,
             field: TextField::new(text),
@@ -68,7 +68,7 @@ impl Display {
             self.show_browser();
         }
         let tree = &mut self.browser.tree;
-        tree.delete_armed = false;
+        tree.delete_armed = None;
         tree.set_new_folder(true);
         let row = tree.index_of(&BrowserItem::NewFolder);
         self.browser.rename = Some(BrowserRename {

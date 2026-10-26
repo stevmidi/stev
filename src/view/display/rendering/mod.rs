@@ -1357,14 +1357,7 @@ impl eframe::App for Display {
         {
             ctx.set_cursor_icon(CursorIcon::ResizeVertical);
         }
-        if self.gesture.track_button_hover.is_some()
-            || self.is_pointer_on_output_menu_item()
-            || self.is_pointer_on_add_track_row()
-            || self.is_pointer_on_help_chip()
-            || self.is_pointer_on_keyboard_chip()
-            || self.is_pointer_on_browser_toggle()
-            || self.is_pointer_on_browser_new_folder()
-        {
+        if self.gesture.track_button_hover.is_some() || self.hovered_control().is_some() {
             ctx.set_cursor_icon(CursorIcon::PointingHand);
         }
         if self.is_pointer_on_browser_edge() {

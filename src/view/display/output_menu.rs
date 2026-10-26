@@ -203,12 +203,6 @@ impl Display {
         self.gesture.output_menu = None;
     }
 
-    /// Whether the pointer is on one of the open menu's items — for the
-    /// pointing-hand cursor.
-    pub(super) fn is_pointer_on_output_menu_item(&mut self) -> bool {
-        self.hovered_output_menu_item().is_some()
-    }
-
     /// The open menu's item under the pointer, if any.
     pub(super) fn hovered_output_menu_item(&mut self) -> Option<OutputMenuHit> {
         let pointer = self.canvas_pointer()?;

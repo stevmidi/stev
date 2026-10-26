@@ -496,48 +496,45 @@ impl Display {
         let toggle = browser_toggle_rect(rect);
         self.draw_browser_toggle(&painter, toggle);
 
-        // The passing message (`UiEvent::Status`): left-aligned past the
-        // toggle and on its centre line, dim, fading out once its time is up.
-        // Otherwise an armed browser delete's question, in `fg` like the
-        // other standing lines, until it is answered. Otherwise the hovered
-        // control's key, dim, for as long as the pointer stays on it. Otherwise a running audio export's progress,
-        // or an open take session's name, for as long as it is open: the one
-        // place the mode shows beyond the take itself.
-        let text_pos = pos2(toggle.max.x + Self::STATUS_TEXT_GAP_X, rect.center().y);
-        let font = FontId::proportional(theme::FONT_SIZE_LABEL);
-        if let Some(status) = &self.render.status
-            && let Some(opacity) = status.opacity(Instant::now())
-        {
-            painter.text(
-                text_pos,
-                Align2::LEFT_CENTER,
-                &status.text,
-                font,
-                theme::fg_dim().gamma_multiply(opacity),
-            );
+        // One line, left-aligned past the toggle and on its centre line:
+        // the passing message (`UiEvent::Status`), dim, fading out once its
+        // time is up — unless an armed browser delete's question is newer
+        // (`StatusMessage::outranks`), which shows in `fg` like the other
+        // standing lines until it is answered. Otherwise the hovered
+        // control's key, dim, while the pointer stays on it. Otherwise a
+        // running audio export's progress, or an open take session's name,
+        // for as long as it is open: the one place the mode shows beyond the
+        // take itself.
+        let asked_at = self.browser.tree.delete_armed;
+        let status = self.render.status.as_ref().and_then(|status| {
+            let opacity = status.opacity(Instant::now())?;
+            status.outranks(asked_at).then_some((status, opacity))
+        });
+        let line = if let Some((status, opacity)) = status {
+            Some((status.text.clone(), theme::fg_dim().gamma_multiply(opacity)))
         } else if let Some(prompt) = self.browser.tree.delete_prompt() {
-            painter.text(text_pos, Align2::LEFT_CENTER, prompt, font, theme::fg());
+            Some((prompt, theme::fg()))
         } else if let Some(hint) = hint {
-            painter.text(text_pos, Align2::LEFT_CENTER, hint, font, theme::fg_dim());
+            Some((hint.to_owned(), theme::fg_dim()))
         } else if self.is_exporting_audio() {
             let progress = &self.audio_export;
-            painter.text(
-                text_pos,
-                Align2::LEFT_CENTER,
-                export_progress_text(
-                    progress.written_ms.load(Ordering::Relaxed),
-                    progress.total_ms.load(Ordering::Relaxed),
-                ),
-                font,
-                theme::fg(),
+            let text = export_progress_text(
+                progress.written_ms.load(Ordering::Relaxed),
+                progress.total_ms.load(Ordering::Relaxed),
             );
-        } else if self.take_session.is_some() {
+            Some((text, theme::fg()))
+        } else {
+            self.take_session
+                .is_some()
+                .then(|| (Self::TAKE_SESSION_TEXT.to_owned(), theme::fg()))
+        };
+        if let Some((text, color)) = line {
             painter.text(
-                text_pos,
+                pos2(toggle.max.x + Self::STATUS_TEXT_GAP_X, rect.center().y),
                 Align2::LEFT_CENTER,
-                Self::TAKE_SESSION_TEXT,
-                font,
-                theme::fg(),
+                text,
+                FontId::proportional(theme::FONT_SIZE_LABEL),
+                color,
             );
         }
     }

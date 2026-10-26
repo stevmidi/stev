@@ -304,15 +304,19 @@ impl Display {
         }
         Self::draw_save_as_plus(painter, layout.new_folder, save_as, hover);
         let on_plus = !typing_folder && hover.is_some_and(|p| layout.new_folder.contains(p));
-        let keys = match save_as.focus {
-            _ if on_plus && !new_folder_keys.is_empty() => format!("{new_folder_keys} new folder"),
-            SaveAsFocus::Folder => "Enter choose · Esc back".to_owned(),
+        let focus_keys = match save_as.focus {
+            SaveAsFocus::Folder => "Enter choose · Esc back",
             SaveAsFocus::Dropdown if save_as.list_highlight().is_some() => {
-                "Enter choose · Esc close".to_owned()
+                "Enter choose · Esc close"
             }
-            SaveAsFocus::Dropdown => "↑↓ folder · Enter save · Esc cancel".to_owned(),
-            SaveAsFocus::NewFolder => "Enter new folder · Esc cancel".to_owned(),
-            SaveAsFocus::Name => "Enter save · Esc cancel".to_owned(),
+            SaveAsFocus::Dropdown => "↑↓ folder · Enter save · Esc cancel",
+            SaveAsFocus::NewFolder => "Enter new folder · Esc cancel",
+            SaveAsFocus::Name => "Enter save · Esc cancel",
+        };
+        let keys = if on_plus && !new_folder_keys.is_empty() {
+            format!("{new_folder_keys} new folder")
+        } else {
+            focus_keys.to_owned()
         };
         painter.text(
             layout.note.right_center(),

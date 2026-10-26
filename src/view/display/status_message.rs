@@ -31,6 +31,14 @@ impl StatusMessage {
         }
     }
 
+    /// Whether the message outranks a standing question asked at `asked_at`
+    /// (`None`: none asked): the newer of the two has the footer, so a
+    /// message still held from the last action never hides a fresh
+    /// question.
+    pub(super) fn outranks(&self, asked_at: Option<Instant>) -> bool {
+        asked_at.is_none_or(|asked_at| self.shown_at > asked_at)
+    }
+
     /// The fade's frame interval: the only stretch that needs a steady
     /// cadence.
     const FADE_FRAME: Duration = Duration::from_millis(33);
@@ -96,6 +104,14 @@ mod tests {
             export_progress_text(5_010, 5_000),
             "Exporting… 0:05 / 0:05 — Esc cancels"
         );
+    }
+
+    #[test]
+    fn the_newer_of_a_message_and_a_question_has_the_footer() {
+        let message = StatusMessage::new("Deleted Jams".to_owned());
+        assert!(message.outranks(None));
+        assert!(message.outranks(Some(message.shown_at - Duration::from_millis(1))));
+        assert!(!message.outranks(Some(message.shown_at + Duration::from_millis(1))));
     }
 
     #[test]
