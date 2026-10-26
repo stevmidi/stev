@@ -14,10 +14,11 @@ use super::*;
 
 /// Right inset of a plugin row's format label.
 const FORMAT_RIGHT_X: f32 = 10.0;
-/// Radius of the dot before the open project's icon. A dot, not a bar at the
-/// panel's edge: an edge bar reads as the selection.
+/// Radius of the dot before the current folder's and the open project's
+/// first mark. A dot, not a bar at the panel's edge: an edge bar reads as the
+/// selection.
 const OPEN_DOT_R: f32 = 3.0;
-/// Gap between the open dot and the icon it sits before.
+/// Gap between the open dot and the mark it sits before.
 const OPEN_DOT_GAP: f32 = 4.0;
 /// Half the length of each stroke of the Projects row's `+`.
 const NEW_FOLDER_PLUS_HALF: f32 = 5.0;
@@ -252,11 +253,16 @@ fn round_corners(corners: &[(Pos2, f32)], closed: bool) -> Vec<Pos2> {
     path
 }
 
-/// Where the open dot's centre sits, from the row's left edge, on a project
-/// row at `depth`: just before its icon, in the disclosure triangle's empty
-/// zone, so it indents with the row.
-fn open_dot_x(depth: u8) -> f32 {
-    browser_icon_x(depth) - OPEN_DOT_GAP - OPEN_DOT_R
+/// Where the open dot's centre sits, from the row's left edge, on a row at
+/// `depth`: just before its first mark — a folder's disclosure triangle, a
+/// project's icon (in the triangle's empty zone) — so it indents with the row.
+fn open_dot_x(depth: u8, has_disclosure: bool) -> f32 {
+    let mark_x = if has_disclosure {
+        f32::from(depth) * BROWSER_INDENT_X + BROWSER_DISCLOSURE_W * 0.5 - DISCLOSURE_HALF
+    } else {
+        browser_icon_x(depth)
+    };
+    mark_x - OPEN_DOT_GAP - OPEN_DOT_R
 }
 
 /// A folder's disclosure triangle centred on `centre`: pointing right when
@@ -425,10 +431,11 @@ impl Display {
                 ));
             }
 
-            // The open project gets a dot before its icon.
+            // The current folder and the open project get a dot before their
+            // first mark.
             let (label, is_open) = match &row.item {
                 BrowserItem::Category(category) => (category.label().to_owned(), false),
-                BrowserItem::Folder(name) => (name.clone(), false),
+                BrowserItem::Folder(name) => (name.clone(), current_folder == Some(name.as_str())),
                 BrowserItem::Project { folder, name } => (
                     name.clone(),
                     folder.as_deref() == current_folder && Some(name.as_str()) == current_name,
@@ -460,7 +467,10 @@ impl Display {
             }
             if is_open {
                 painter.circle_filled(
-                    pos2(row_rect.min.x + open_dot_x(row.depth), mid_y),
+                    pos2(
+                        row_rect.min.x + open_dot_x(row.depth, expanded.is_some()),
+                        mid_y,
+                    ),
                     OPEN_DOT_R,
                     theme::region(),
                 );
@@ -517,12 +527,29 @@ mod tests {
     use super::*;
 
     #[test]
-    fn open_dot_sits_before_the_icon_and_indents_with_the_row() {
-        assert_eq!(open_dot_x(2) + OPEN_DOT_R + OPEN_DOT_GAP, browser_icon_x(2));
-        assert_eq!(open_dot_x(2) - open_dot_x(1), BROWSER_INDENT_X);
-        // Inside the row's own (empty) triangle zone, never over the parent
-        // folder's column; the shallowest project is depth 1.
-        assert!(open_dot_x(1) - OPEN_DOT_R >= BROWSER_INDENT_X);
+    fn open_dot_sits_before_the_first_mark_and_indents_with_the_row() {
+        // A folder: left of its disclosure triangle.
+        let triangle_left = BROWSER_INDENT_X + BROWSER_DISCLOSURE_W * 0.5 - DISCLOSURE_HALF;
+        assert_eq!(
+            open_dot_x(1, true) + OPEN_DOT_R + OPEN_DOT_GAP,
+            triangle_left
+        );
+        // A project: left of its icon, in its own (empty) triangle zone, never
+        // over the parent folder's column; the shallowest project is depth 1.
+        assert_eq!(
+            open_dot_x(2, false) + OPEN_DOT_R + OPEN_DOT_GAP,
+            browser_icon_x(2)
+        );
+        assert!(open_dot_x(1, false) - OPEN_DOT_R >= BROWSER_INDENT_X);
+        // One level deeper, one indent further right.
+        assert_eq!(open_dot_x(2, true) - open_dot_x(1, true), BROWSER_INDENT_X);
+        assert_eq!(
+            open_dot_x(2, false) - open_dot_x(1, false),
+            BROWSER_INDENT_X
+        );
+        // Never off the row's left edge: the shallowest folder is depth 1
+        // (categories, at 0, are never current).
+        assert!(open_dot_x(1, true) - OPEN_DOT_R >= 0.0);
     }
 
     #[test]
