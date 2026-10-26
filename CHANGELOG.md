@@ -20,6 +20,8 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-26
+
 ### Added
 
 - Pointing at a control that has a shortcut shows the shortcut in the footer:
