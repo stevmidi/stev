@@ -1243,6 +1243,7 @@ impl eframe::App for Display {
         self.sync_canvas_rect(window);
         let ctx = ui.ctx().clone();
         let ctx = &ctx;
+        self.measure_settings_tabs(ctx);
 
         // A raw key press from outside the poller (the plugin-editor key
         // guard) is resolved through the keymap here, as the poller's are in

@@ -10,7 +10,7 @@ use std::borrow::Cow;
 use std::env::consts::ARCH;
 
 use egui::emath::GuiRounding;
-use egui::{Id, Pos2, Theme, Ui};
+use egui::{Context, Id, Pos2, Theme, Ui};
 
 use crate::core::update_check::{CURRENT_VERSION, UpdateCheck};
 use crate::view::display::about_tab::{AboutLink, UPDATE_CHECK, UpdateState, VST_LOGO_SIZE};
@@ -124,8 +124,8 @@ impl Display {
     const SETTINGS_TAB_INSET: f32 = 20.0 * Self::M_SCALE;
     /// Height of a tab, its label centred in it.
     const SETTINGS_TAB_H: f32 = 30.0 * Self::M_SCALE;
-    /// Width of a tab.
-    const SETTINGS_TAB_W: f32 = 110.0 * Self::M_SCALE;
+    /// Gap between one tab's label and the next.
+    const SETTINGS_TAB_GAP: f32 = 24.0 * Self::M_SCALE;
     /// Gap between the tab strip's line and the tab's content.
     const SETTINGS_STRIP_GAP: f32 = 8.0 * Self::M_SCALE;
     /// Inset of the content from the panel's sides and bottom.
@@ -160,20 +160,38 @@ impl Display {
         midi.max(themes)
     }
 
-    /// The panel's frame in the canvas `rect`, centred. Pure geometry.
-    fn settings_layout(rect: Rect) -> SettingsLayout {
+    /// Measures the tab labels into `settings.tab_label_w` for this frame's
+    /// [`settings_layout`](Self::settings_layout).
+    pub(in crate::view::display) fn measure_settings_tabs(&mut self, ctx: &Context) {
+        self.settings.tab_label_w = ctx.fonts_mut(|fonts| {
+            SettingsTab::ALL.map(|tab| {
+                fonts
+                    .layout_no_wrap(
+                        tab.label().to_owned(),
+                        FontId::proportional(Self::FONT_TITLE),
+                        Color32::WHITE,
+                    )
+                    .size()
+                    .x
+            })
+        });
+    }
+
+    /// The panel's frame in the canvas `rect`, centred. Each tab is its
+    /// label's width from `label_w`, an even gap after it. Pure geometry.
+    fn settings_layout(rect: Rect, label_w: [f32; SettingsTab::ALL.len()]) -> SettingsLayout {
         let strip_h = Self::SETTINGS_TAB_INSET + Self::SETTINGS_TAB_H;
         let panel_h =
             strip_h + Self::SETTINGS_STRIP_GAP + Self::settings_content_h() + Self::SETTINGS_PAD;
         let panel = Rect::from_center_size(rect.center(), vec2(Self::SETTINGS_W, panel_h));
-        let tabs = std::array::from_fn(|i| {
-            Rect::from_min_size(
-                pos2(
-                    panel.min.x + Self::SETTINGS_TAB_INSET + i as f32 * Self::SETTINGS_TAB_W,
-                    panel.min.y + Self::SETTINGS_TAB_INSET,
-                ),
-                vec2(Self::SETTINGS_TAB_W, Self::SETTINGS_TAB_H),
-            )
+        let mut x = panel.min.x + Self::SETTINGS_TAB_INSET;
+        let tabs = label_w.map(|w| {
+            let tab = Rect::from_min_size(
+                pos2(x, panel.min.y + Self::SETTINGS_TAB_INSET),
+                vec2(w, Self::SETTINGS_TAB_H),
+            );
+            x += w + Self::SETTINGS_TAB_GAP;
+            tab
         });
         let content = Rect::from_min_max(
             pos2(
@@ -315,7 +333,9 @@ impl Display {
 
     /// The Keyboard tab on the canvas, as drawn and hit-tested.
     fn keyboard_tab_on_canvas(&self) -> KeyboardTabLayout {
-        Self::keyboard_tab_layout(Self::settings_layout(self.render.canvas_rect).content)
+        Self::keyboard_tab_layout(
+            Self::settings_layout(self.render.canvas_rect, self.settings.tab_label_w).content,
+        )
     }
 
     /// How many lines the Keyboard tab's list shows at once — the window its
@@ -327,7 +347,7 @@ impl Display {
     /// What canvas point `p` is on in the settings panel — `None` outside
     /// it.
     pub(in crate::view::display) fn settings_hit_at(&self, p: Pos2) -> Option<SettingsHit> {
-        let layout = Self::settings_layout(self.render.canvas_rect);
+        let layout = Self::settings_layout(self.render.canvas_rect, self.settings.tab_label_w);
         if !layout.panel.contains(p) {
             return None;
         }
@@ -424,7 +444,7 @@ impl Display {
         painter: &Painter,
         rect: Rect,
     ) {
-        let layout = Self::settings_layout(rect);
+        let layout = Self::settings_layout(rect, self.settings.tab_label_w);
         Self::draw_modal_panel(painter, layout.panel);
 
         for (tab, tab_rect) in SettingsTab::ALL.into_iter().zip(layout.tabs) {
@@ -890,6 +910,9 @@ mod tests {
     use crate::view::display::midi_tab::{MidiTab, PORT_ROWS};
     use crate::view::display::settings_modal::THEME_ROWS;
 
+    /// Tab label widths as short and long as the real ones.
+    const LABEL_W: [f32; 4] = [40.0, 140.0, 110.0, 70.0];
+
     /// A canvas the size of a laptop window.
     fn canvas() -> Rect {
         Rect::from_min_size(pos2(0.0, 0.0), vec2(1400.0, 900.0))
@@ -913,7 +936,7 @@ mod tests {
 
     #[test]
     fn the_panel_is_centred_and_its_content_sits_under_the_tabs() {
-        let layout = Display::settings_layout(canvas());
+        let layout = Display::settings_layout(canvas(), LABEL_W);
         assert_eq!(layout.panel.center(), canvas().center());
         assert!(layout.panel.contains_rect(layout.content));
         for tab in layout.tabs {
@@ -921,12 +944,29 @@ mod tests {
             assert!(tab.max.y <= layout.strip_y());
         }
         assert!(layout.content.min.y > layout.strip_y());
-        assert!(layout.tabs[0].max.x <= layout.tabs[1].min.x);
+    }
+
+    #[test]
+    fn each_tab_is_its_label_wide_with_even_gaps_between() {
+        let layout = Display::settings_layout(canvas(), LABEL_W);
+        for (tab, w) in layout.tabs.iter().zip(LABEL_W) {
+            assert!((tab.width() - w).abs() < 1e-3, "{} vs {w}", tab.width());
+        }
+        let gaps: Vec<f32> = layout
+            .tabs
+            .windows(2)
+            .map(|pair| pair[1].min.x - pair[0].max.x)
+            .collect();
+        assert!(
+            gaps.iter()
+                .all(|gap| (gap - Display::SETTINGS_TAB_GAP).abs() < 1e-3),
+            "{gaps:?}"
+        );
     }
 
     #[test]
     fn the_fullest_midi_tab_and_the_theme_window_both_fit_the_content() {
-        let content = Display::settings_layout(canvas()).content;
+        let content = Display::settings_layout(canvas(), LABEL_W).content;
         let mut full = midi(PORT_ROWS + 3, PORT_ROWS + 3, Some("unplugged"));
         full.output.current = Some("unplugged".into());
         let layout = Display::midi_tab_layout(content, &full);
@@ -937,7 +977,7 @@ mod tests {
 
     #[test]
     fn the_midi_sections_stack_without_overlapping() {
-        let content = Display::settings_layout(canvas()).content;
+        let content = Display::settings_layout(canvas(), LABEL_W).content;
         let layout = Display::midi_tab_layout(content, &midi(2, 0, None));
         let [input, output] = layout.ports;
         assert_eq!(input.area.min.y, content.min.y);
@@ -952,7 +992,7 @@ mod tests {
 
     #[test]
     fn a_ghost_row_takes_a_slot_but_is_not_a_port_row() {
-        let content = Display::settings_layout(canvas()).content;
+        let content = Display::settings_layout(canvas(), LABEL_W).content;
         let [input, _] = Display::midi_tab_layout(content, &midi(1, 1, Some("unplugged"))).ports;
         let ghost = input.rows.row(1);
         assert!(input.area.contains(ghost.center()));
@@ -962,7 +1002,7 @@ mod tests {
 
     #[test]
     fn the_keyboard_tab_lists_under_its_field_inside_the_content() {
-        let content = Display::settings_layout(canvas()).content;
+        let content = Display::settings_layout(canvas(), LABEL_W).content;
         let layout = Display::keyboard_tab_layout(content);
         assert_eq!(layout.field.min, content.min);
         assert!(layout.lines.first.min.y > layout.field.max.y);
@@ -975,7 +1015,7 @@ mod tests {
 
     #[test]
     fn the_about_tab_fits_the_content_without_overlapping() {
-        let content = Display::settings_layout(canvas()).content;
+        let content = Display::settings_layout(canvas(), LABEL_W).content;
         let layout = Display::about_tab_layout(content);
         assert!(content.contains_rect(layout.logo));
         assert_eq!(layout.logo.max.y, content.max.y);

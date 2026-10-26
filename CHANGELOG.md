@@ -39,6 +39,9 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ### Changed
 
+- The settings modal's tabs are evenly spaced: each tab is as wide as its
+  label, with the same gap before the next.
+
 - The Keyboard tab's search field drops its accent edge while the list has the
   keyboard, so the edge always marks where typing goes.
 - Save As now has a "Save in" dropdown to choose the folder the project goes

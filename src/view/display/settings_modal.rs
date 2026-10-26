@@ -45,6 +45,10 @@ pub(super) struct SettingsModal {
     pub(super) keys: KeyboardTab,
     /// The About tab's update check and logo.
     pub(super) about: AboutTab,
+    /// Each tab label's width, in [`SettingsTab::ALL`] order, measured at
+    /// the start of every frame so the strip's layout spaces the labels
+    /// evenly for both drawing and the click hit-test.
+    pub(super) tab_label_w: [f32; SettingsTab::ALL.len()],
 }
 
 impl SettingsModal {
@@ -58,6 +62,7 @@ impl SettingsModal {
             wheel: 0.0,
             keys: KeyboardTab::default(),
             about: AboutTab::default(),
+            tab_label_w: [0.0; SettingsTab::ALL.len()],
         }
     }
 }
