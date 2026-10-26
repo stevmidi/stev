@@ -29,6 +29,13 @@ Breaking entries are marked **Breaking** and say what to do about them.
   with its projects, moving it to the Trash; the prompt says how many projects
   go with it. Deleting the folder of the open project leaves the project open,
   and ⌘S saves it back, as after deleting the open project itself.
+- Save As can save into a new folder: the `+` beside "Save in" (or ⌘⇧N) turns
+  the box into a field for the folder's name; Enter chooses it, Esc goes back,
+  and Tab moves between it and the project name. Without the field, Tab goes
+  name → "Save in" → `+` (⇧Tab back); ↑/↓ and Space work the dropdown only
+  while it has the keyboard, and Enter or Space presses the `+`.
+  The folder is made when the project is saved, so cancelling Save As leaves
+  nothing behind.
 
 ### Changed
 

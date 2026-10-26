@@ -3,11 +3,17 @@
 //!
 //! - **Save As** (⌘/Ctrl+⇧+S, and ⌘/Ctrl+S on a project never saved): a name
 //!   field, the open project's name (or [`UNTITLED`]) selected, and a
-//!   "Save in" dropdown for the destination folder (a click, or ↑/↓, opens
-//!   its list; Enter or a click picks, Esc closes it). It starts at the
-//!   browser's selected folder (see [`save_folder_default`]), else the current
-//!   folder. Enter saves under the typed name there, makes it the open
-//!   project and its folder the current one; Esc cancels.
+//!   "Save in" dropdown for the destination folder (a click, or ↑/↓ or Space
+//!   while it has the keyboard, opens its list; Enter or a click picks, Esc
+//!   closes it), with a `+` beside it
+//!   (or the new-folder chord, ⌘/Ctrl+⇧+N) that turns the box into a field
+//!   for a new folder's name (Enter chooses it, Esc goes back; the folder is
+//!   made by the save, so a cancelled Save As leaves nothing on disk). Tab
+//!   moves the keyboard name → dropdown → `+` (Enter or Space presses it),
+//!   or between the name and the new folder's field while that is open. It
+//!   starts at the browser's selected folder (see [`save_folder_default`]),
+//!   else the current folder. Enter saves under the typed name there, makes
+//!   it the open project and its folder the current one; Esc cancels.
 //! - **Unsaved changes**: asked for by the sequencer (`UiEvent::UnsavedChanges`)
 //!   when ⌘/Ctrl+N, opening a project from the browser or quitting would
 //!   throw away changes. ←/→ move the selection between its buttons (Save
@@ -31,7 +37,10 @@ use std::ops::Range;
 use egui::{Context, Key, Pos2, ViewportCommand, pos2};
 
 use crate::core::input_event::{InputEvent, KeyModifiers};
-use crate::core::project::{ProjectAction, list_project_folders, project_name_from_input};
+use crate::core::keymap::Action;
+use crate::core::project::{
+    ProjectAction, list_project_folders, project_folder_name_from_input, project_name_from_input,
+};
 #[cfg(target_os = "macos")]
 use crate::view::appkit::take_open_document;
 
@@ -63,17 +72,54 @@ pub(super) struct SaveAs {
     /// with.
     pub(super) field: TextField,
     /// The folders ↑/↓ step through: the projects root (`None`), then each
-    /// project folder. Read from disk when the dialog opens.
+    /// project folder. Read from disk when the dialog opens; a new folder
+    /// chosen in [`folder_field`](Self::folder_field) is added at the end,
+    /// made only when the project is saved into it.
     folders: Vec<Option<String>>,
     /// Which of `folders` the project is saved into.
     folder_idx: usize,
     /// The folder dropdown's highlighted row while its list is open, `None`
     /// while it is closed.
     list: Option<usize>,
+    /// The new folder's name field over the dropdown's box, while it is
+    /// open.
+    pub(super) folder_field: Option<TextField>,
+    /// What has the keyboard: moved by Tab, a press, and the new folder's
+    /// field opening (it takes it) and closing (the name gets it back).
+    pub(super) focus: SaveAsFocus,
     /// What runs once the save is sent: the action the unsaved-changes
     /// prompt's Save was answered for, on a project never saved. Esc drops it
     /// with the dialog.
     then: Option<ProjectAction>,
+}
+
+/// What has Save As's keyboard — its Tab stops.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SaveAsFocus {
+    /// The name field.
+    Name,
+    /// The folder dropdown, which ↑/↓ and Space drive. Not a stop while the
+    /// new folder's field covers it.
+    Dropdown,
+    /// The `+`, which Enter and Space press. Not a stop while the new
+    /// folder's field is open.
+    NewFolder,
+    /// The new folder's field, while it is open.
+    Folder,
+}
+
+/// Save As's Tab stops, in order: the name, the dropdown and the `+` — or,
+/// while the new folder's field is open, the name and that field.
+fn focus_stops(folder_field_open: bool) -> &'static [SaveAsFocus] {
+    if folder_field_open {
+        &[SaveAsFocus::Name, SaveAsFocus::Folder]
+    } else {
+        &[
+            SaveAsFocus::Name,
+            SaveAsFocus::Dropdown,
+            SaveAsFocus::NewFolder,
+        ]
+    }
 }
 
 impl SaveAs {
@@ -113,8 +159,12 @@ impl SaveAs {
     }
 
     /// ↑/↓: opens a closed list on the chosen folder; on an open one moves
-    /// the highlight `step` rows, stopping at either end.
+    /// the highlight `step` rows, stopping at either end. Only while the
+    /// dropdown has the keyboard.
     fn move_highlight(&mut self, step: isize) {
+        if self.focus != SaveAsFocus::Dropdown {
+            return;
+        }
         let last = self.folders.len() as isize - 1;
         self.list = Some(match self.list {
             Some(row) => (row as isize + step).clamp(0, last) as usize,
@@ -127,6 +177,105 @@ impl SaveAs {
         self.folder_idx = idx.min(self.folders.len() - 1);
         self.list = None;
     }
+
+    /// The `+`, or the new-folder chord: closes the list and opens the new
+    /// folder's field, empty, with the keyboard — or, already open, gives it
+    /// the keyboard.
+    fn open_folder_field(&mut self) {
+        self.list = None;
+        self.folder_field
+            .get_or_insert_with(|| TextField::new(String::new()));
+        self.focus = SaveAsFocus::Folder;
+    }
+
+    /// Closes the new folder's field, choosing nothing; the name gets the
+    /// keyboard.
+    fn close_folder_field(&mut self) {
+        self.folder_field = None;
+        self.focus = SaveAsFocus::Name;
+    }
+
+    /// Tab (`step` 1) or ⇧Tab (-1): moves the keyboard to the next or
+    /// previous of the [`focus_stops`], round from the last to the first.
+    /// Closes the list.
+    fn switch_focus(&mut self, step: isize) {
+        self.list = None;
+        let stops = focus_stops(self.folder_field.is_some());
+        let idx = stops.iter().position(|&f| f == self.focus).unwrap_or(0) as isize;
+        self.focus = stops[(idx + step).rem_euclid(stops.len() as isize) as usize];
+    }
+
+    /// Space: opens or closes the list while the dropdown has the keyboard,
+    /// presses the `+` while it has it; nothing on a field, which types it.
+    fn press(&mut self) {
+        match self.focus {
+            SaveAsFocus::Dropdown => self.toggle_list(),
+            SaveAsFocus::NewFolder => self.open_folder_field(),
+            SaveAsFocus::Name | SaveAsFocus::Folder => {}
+        }
+    }
+
+    /// Closes the new folder's field, choosing the folder typed in it: one
+    /// already listed under that name (in any case — the volume may not tell
+    /// them apart), else a new entry. A blank name chooses nothing; one that
+    /// isn't a folder name ([`project_folder_name_from_input`]) keeps the
+    /// field open, its note saying why.
+    fn commit_folder_field(&mut self) {
+        let Some(field) = &self.folder_field else {
+            return;
+        };
+        if !field.text.trim().is_empty() {
+            let Some(name) = project_folder_name_from_input(&field.text) else {
+                return;
+            };
+            let key = name.to_lowercase();
+            let listed = self
+                .folders
+                .iter()
+                .position(|f| f.as_ref().is_some_and(|f| f.to_lowercase() == key));
+            self.folder_idx = listed.unwrap_or_else(|| {
+                self.folders.push(Some(name));
+                self.folders.len() - 1
+            });
+        }
+        self.close_folder_field();
+    }
+
+    /// Enter, while the list is open, the `+` has the keyboard or the new
+    /// folder's field is open: picks the highlighted folder, presses the `+`,
+    /// or takes the typed folder. Returns whether that was all — else Enter
+    /// saves. From the name field, the typed folder is taken and the project
+    /// saved into it; a refused folder name stops the save and hands the
+    /// folder's field the keyboard.
+    fn enter(&mut self) -> bool {
+        if let Some(row) = self.list {
+            self.choose_folder(row);
+        } else if self.focus == SaveAsFocus::NewFolder {
+            self.open_folder_field();
+        } else if self.folder_field.is_some() {
+            let from_name = self.focus == SaveAsFocus::Name;
+            self.commit_folder_field();
+            if self.folder_field.is_some() {
+                self.focus = SaveAsFocus::Folder;
+            } else if from_name {
+                return false;
+            }
+        } else {
+            return false;
+        }
+        true
+    }
+
+    /// Esc, while the new folder's field or the list is open: closes it,
+    /// choosing nothing. Returns whether it did — else Esc cancels.
+    fn escape(&mut self) -> bool {
+        if self.folder_field.is_some() {
+            self.close_folder_field();
+            true
+        } else {
+            self.list.take().is_some()
+        }
+    }
 }
 
 /// What a press in Save As lands on.
@@ -136,6 +285,10 @@ pub(super) enum SaveAsHit {
     Box,
     /// This entry of the open list.
     Row(usize),
+    /// The `+` beside the box.
+    NewFolder,
+    /// The name field.
+    Name,
 }
 
 /// How the root of the projects folder reads in the dropdown.
@@ -164,11 +317,19 @@ fn save_folder_default(selected: Option<&BrowserItem>, current: Option<&str>) ->
     }
 }
 
-/// Save As's keymap: ↑/↓ open the folder list and move through it, Enter
-/// saves (or picks the highlighted folder while the list is open), Esc
-/// cancels (or closes the list), the rest is typing ([`field_key`]).
-fn save_as_key(key: Key) -> DialogKey {
+/// Save As's keymap: ↑/↓ open the folder list and move through it, the
+/// new-folder chord (`new_folder`, the keymap's [`Action::NewProjectFolder`])
+/// opens the new folder's field, Tab (⇧Tab) moves the keyboard to the next
+/// (previous) stop ([`focus_stops`]), Space presses the dropdown or the `+`,
+/// Enter saves (or picks the highlighted folder, presses the `+`, or takes
+/// the typed folder), Esc
+/// cancels (or closes the list or the field), the rest is typing
+/// ([`field_key`]).
+fn save_as_key(key: Key, modifiers: KeyModifiers, new_folder: bool) -> DialogKey {
     match key {
+        _ if new_folder => DialogKey::NewFolder,
+        Key::Tab => DialogKey::SwitchFocus(if modifiers.shift { -1 } else { 1 }),
+        Key::Space => DialogKey::Press,
         Key::ArrowUp => DialogKey::Folder(-1),
         Key::ArrowDown => DialogKey::Folder(1),
         _ => field_key(key).into(),
@@ -181,6 +342,13 @@ enum DialogKey {
     /// Save As: ↑/↓ — opens the folder list, then moves its highlight this
     /// many rows.
     Folder(isize),
+    /// Save As: open the new folder's field.
+    NewFolder,
+    /// Save As: move the keyboard this many Tab stops on.
+    SwitchFocus(isize),
+    /// Save As: Space — press the dropdown or the `+`, whichever has the
+    /// keyboard.
+    Press,
     /// Save As: a press at this canvas point, on the folder dropdown or
     /// away from it.
     Click(Pos2),
@@ -369,6 +537,8 @@ impl Display {
             folders,
             folder_idx,
             list: None,
+            folder_field: None,
+            focus: SaveAsFocus::Name,
             then,
         }));
     }
@@ -436,7 +606,12 @@ impl Display {
         let key = match (event, dialog) {
             // The text fields' keymap, but no click-away commit: a modal
             // takes every press.
-            (&InputEvent::KeyPressed { key, .. }, ProjectDialog::SaveAs(_)) => save_as_key(key),
+            (&InputEvent::KeyPressed { key, modifiers }, ProjectDialog::SaveAs(_)) => {
+                let action = self
+                    .keymap
+                    .resolve_press(key, modifiers, self.focused_pane());
+                save_as_key(key, modifiers, action == Some(Action::NewProjectFolder))
+            }
             (
                 &InputEvent::KeyPressed { key, modifiers },
                 &ProjectDialog::Unsaved { selected, .. },
@@ -457,18 +632,35 @@ impl Display {
             _ => return false,
         };
         match key {
-            DialogKey::Confirm => match self.open_folder_list() {
-                Some((save_as, row)) => save_as.choose_folder(row),
-                None => self.confirm_project_dialog(),
-            },
+            DialogKey::Confirm => {
+                if !self.save_as_mut().is_some_and(SaveAs::enter) {
+                    self.confirm_project_dialog();
+                }
+            }
             DialogKey::Discard => self.discard_project_changes(),
-            DialogKey::Cancel => match self.open_folder_list() {
-                Some((save_as, _)) => save_as.list = None,
-                None => self.project_dialog = None,
-            },
+            DialogKey::Cancel => {
+                if !self.save_as_mut().is_some_and(SaveAs::escape) {
+                    self.project_dialog = None;
+                }
+            }
             DialogKey::Folder(step) => {
-                if let Some(ProjectDialog::SaveAs(save_as)) = &mut self.project_dialog {
+                if let Some(save_as) = self.save_as_mut() {
                     save_as.move_highlight(step);
+                }
+            }
+            DialogKey::NewFolder => {
+                if let Some(save_as) = self.save_as_mut() {
+                    save_as.open_folder_field();
+                }
+            }
+            DialogKey::SwitchFocus(step) => {
+                if let Some(save_as) = self.save_as_mut() {
+                    save_as.switch_focus(step);
+                }
+            }
+            DialogKey::Press => {
+                if let Some(save_as) = self.save_as_mut() {
+                    save_as.press();
                 }
             }
             DialogKey::Click(pos) => self.click_save_as(pos),
@@ -482,24 +674,43 @@ impl Display {
         true
     }
 
-    /// Save As and its highlighted row, while its folder list is open.
-    fn open_folder_list(&mut self) -> Option<(&mut SaveAs, usize)> {
+    /// The open Save As, if that is the dialog.
+    fn save_as_mut(&mut self) -> Option<&mut SaveAs> {
         match &mut self.project_dialog {
-            Some(ProjectDialog::SaveAs(save_as)) => save_as.list.map(|row| (save_as, row)),
+            Some(ProjectDialog::SaveAs(save_as)) => Some(save_as),
             _ => None,
         }
     }
 
     /// A press in Save As: the dropdown's box opens or closes the list, a row
-    /// of the open list chooses that folder, anywhere else closes the list.
+    /// of the open list chooses that folder — either giving the dropdown the
+    /// keyboard — the `+` opens the new folder's field, the name field gets
+    /// the keyboard back, anywhere else closes the list. While that field is open, a press on it or on the name field
+    /// gives that field the keyboard, and a press anywhere else takes the
+    /// typed folder.
     fn click_save_as(&mut self, pos: Pos2) {
         let hit = self.save_as_hit_at(pos);
-        let Some(ProjectDialog::SaveAs(save_as)) = &mut self.project_dialog else {
+        let Some(save_as) = self.save_as_mut() else {
             return;
         };
         match hit {
-            Some(SaveAsHit::Box) => save_as.toggle_list(),
-            Some(SaveAsHit::Row(idx)) => save_as.choose_folder(idx),
+            Some(SaveAsHit::Box) if save_as.folder_field.is_some() => {
+                save_as.focus = SaveAsFocus::Folder
+            }
+            Some(SaveAsHit::Name) => {
+                save_as.list = None;
+                save_as.focus = SaveAsFocus::Name;
+            }
+            _ if save_as.folder_field.is_some() => save_as.commit_folder_field(),
+            Some(SaveAsHit::Box) => {
+                save_as.focus = SaveAsFocus::Dropdown;
+                save_as.toggle_list();
+            }
+            Some(SaveAsHit::Row(idx)) => {
+                save_as.focus = SaveAsFocus::Dropdown;
+                save_as.choose_folder(idx);
+            }
+            Some(SaveAsHit::NewFolder) => save_as.open_folder_field(),
             None => save_as.list = None,
         }
     }
@@ -546,8 +757,8 @@ mod tests {
     use crate::view::display::text_field::TextField;
 
     use super::{
-        DialogKey, LIST_MAX_ROWS, SaveAs, UnsavedButton, field_key, list_window, save_as_key,
-        save_folder_default, unsaved_key,
+        DialogKey, LIST_MAX_ROWS, SaveAs, SaveAsFocus, UnsavedButton, field_key, list_window,
+        save_as_key, save_folder_default, unsaved_key,
     };
 
     /// A Save As over the root and folders `a`, `b`, `c`, starting at `idx`.
@@ -557,8 +768,147 @@ mod tests {
             folders: vec![None, Some("a".into()), Some("b".into()), Some("c".into())],
             folder_idx: idx,
             list: None,
+            folder_field: None,
+            focus: SaveAsFocus::Name,
             then: None,
         }
+    }
+
+    /// `save_as` with `text` typed in its new folder's field.
+    fn typed_folder(mut save_as: SaveAs, text: &str) -> SaveAs {
+        save_as.open_folder_field();
+        save_as.folder_field.as_mut().unwrap().text = text.to_owned();
+        save_as
+    }
+
+    /// A new folder's name is chosen as a new entry at the end of the list,
+    /// to be made by the save; a listed folder's name, in any case, chooses
+    /// that folder rather than adding it again.
+    #[test]
+    fn a_typed_folder_is_chosen_new_or_listed() {
+        let mut new = typed_folder(save_as(0), "  Album ");
+        assert!(new.enter());
+        assert_eq!(new.folder(), Some("Album"));
+        assert_eq!(new.folder_count(), 5);
+        assert!(new.folder_field.is_none());
+
+        let mut listed = typed_folder(save_as(0), "B");
+        assert!(listed.enter());
+        assert_eq!((listed.folder(), listed.folder_count()), (Some("b"), 4));
+    }
+
+    /// A blank name closes the field choosing nothing; a name that isn't a
+    /// folder name — the clips folder's too — keeps it open; Esc closes it
+    /// and keeps the folder that was chosen.
+    #[test]
+    fn a_blank_or_refused_folder_name_chooses_nothing() {
+        let mut blank = typed_folder(save_as(2), "  ");
+        assert!(blank.enter());
+        assert_eq!((blank.folder(), blank.folder_count()), (Some("b"), 4));
+        assert!(blank.folder_field.is_none());
+
+        for refused in ["a/b", "Clips", ".hidden"] {
+            let mut save_as = typed_folder(save_as(2), refused);
+            assert!(save_as.enter());
+            assert!(save_as.folder_field.is_some(), "{refused}");
+            assert_eq!(save_as.folder(), Some("b"));
+        }
+
+        let mut escaped = typed_folder(save_as(2), "Album");
+        assert!(escaped.escape());
+        assert_eq!((escaped.folder(), escaped.folder_count()), (Some("b"), 4));
+        assert!(!escaped.escape());
+    }
+
+    /// ↑/↓ and Space drive the list only while the dropdown has the
+    /// keyboard, and Tab away closes it; Space presses the `+` too.
+    #[test]
+    fn only_the_dropdown_with_the_keyboard_opens_its_list() {
+        let mut save_as = save_as(1);
+        save_as.move_highlight(1);
+        save_as.press();
+        assert_eq!(save_as.list_highlight(), None);
+        save_as.switch_focus(1);
+        save_as.move_highlight(1);
+        assert_eq!(save_as.list_highlight(), Some(1));
+        save_as.switch_focus(1);
+        assert_eq!(save_as.list_highlight(), None);
+        save_as.switch_focus(-1);
+        save_as.press();
+        assert_eq!(save_as.list_highlight(), Some(1));
+        save_as.press();
+        assert_eq!(save_as.list_highlight(), None);
+        save_as.switch_focus(1);
+        save_as.press();
+        assert!(save_as.folder_field.is_some());
+    }
+
+    /// The field closes the list, and holds the arrows while it is open;
+    /// with nothing open, Enter and Esc are the dialog's.
+    #[test]
+    fn the_folder_field_takes_enter_escape_and_the_arrows() {
+        let mut save_as = save_as(1);
+        assert!(!save_as.enter());
+        save_as.focus = SaveAsFocus::Dropdown;
+        save_as.move_highlight(1);
+        save_as.open_folder_field();
+        assert_eq!(save_as.list_highlight(), None);
+        save_as.move_highlight(1);
+        assert_eq!(save_as.list_highlight(), None);
+        assert!(save_as.escape());
+        assert!(!save_as.escape());
+    }
+
+    /// Tab goes name → dropdown → `+` and round, ⇧Tab the other way; the
+    /// `+`'s Enter opens the new folder's field with the keyboard; while that
+    /// is open, Tab moves between it and the name, and closing it gives the
+    /// name the keyboard back.
+    #[test]
+    fn tab_moves_through_the_name_the_dropdown_and_the_plus() {
+        use SaveAsFocus::{Dropdown, Folder, Name, NewFolder};
+        let mut save_as = save_as(1);
+        for focus in [Dropdown, NewFolder, Name] {
+            save_as.switch_focus(1);
+            assert_eq!(save_as.focus, focus);
+        }
+        for focus in [NewFolder, Dropdown, Name] {
+            save_as.switch_focus(-1);
+            assert_eq!(save_as.focus, focus);
+        }
+        save_as.switch_focus(-1);
+        assert!(save_as.enter());
+        assert!(save_as.folder_field.is_some());
+        assert_eq!(save_as.focus, Folder);
+        save_as.switch_focus(1);
+        assert_eq!(save_as.focus, Name);
+        save_as.switch_focus(1);
+        assert_eq!(save_as.focus, Folder);
+        save_as.switch_focus(1);
+        save_as.open_folder_field();
+        assert_eq!(save_as.focus, Folder);
+        assert!(save_as.escape());
+        assert_eq!(save_as.focus, Name);
+    }
+
+    /// Enter from the name field takes the typed folder and goes on to save;
+    /// a refused folder name stops it and hands that field the keyboard. From
+    /// the folder's field, Enter only takes the folder.
+    #[test]
+    fn enter_from_the_name_field_takes_the_folder_and_saves() {
+        let mut from_name = typed_folder(save_as(0), "Album");
+        from_name.switch_focus(1);
+        assert!(!from_name.enter());
+        assert_eq!(from_name.folder(), Some("Album"));
+
+        let mut refused = typed_folder(save_as(0), "a/b");
+        refused.switch_focus(1);
+        assert!(refused.enter());
+        assert!(refused.folder_field.is_some());
+        assert_eq!(refused.focus, SaveAsFocus::Folder);
+
+        let mut from_folder = typed_folder(save_as(0), "Album");
+        assert!(from_folder.enter());
+        assert_eq!(from_folder.folder(), Some("Album"));
     }
 
     /// The list opens on the chosen folder, ↑/↓ move the highlight (stopping
@@ -566,6 +916,7 @@ mod tests {
     #[test]
     fn the_folder_list_opens_moves_and_picks() {
         let mut save_as = save_as(2);
+        save_as.focus = SaveAsFocus::Dropdown;
         assert_eq!(save_as.folder(), Some("b"));
         save_as.move_highlight(1);
         assert_eq!(save_as.list_highlight(), Some(2));
@@ -625,14 +976,38 @@ mod tests {
         assert_eq!(save_folder_default(None, None), None);
     }
 
-    /// ↑/↓ drive the folder list; the rest of Save As's keys are unchanged.
+    /// ↑/↓ drive the folder list, the new-folder chord opens the new
+    /// folder's field, Tab and ⇧Tab move the keyboard on and back and Space
+    /// presses; the rest of Save As's keys are unchanged.
     #[test]
     fn save_as_arrows_drive_the_folder_list() {
-        assert_eq!(save_as_key(Key::ArrowUp), DialogKey::Folder(-1));
-        assert_eq!(save_as_key(Key::ArrowDown), DialogKey::Folder(1));
-        assert_eq!(save_as_key(Key::Enter), DialogKey::Confirm);
-        assert_eq!(save_as_key(Key::Escape), DialogKey::Cancel);
-        assert_eq!(save_as_key(Key::D), DialogKey::Swallow);
+        let none = KeyModifiers::default();
+        let shift = KeyModifiers {
+            shift: true,
+            ..KeyModifiers::default()
+        };
+        assert_eq!(
+            save_as_key(Key::ArrowUp, none, false),
+            DialogKey::Folder(-1)
+        );
+        assert_eq!(
+            save_as_key(Key::ArrowDown, none, false),
+            DialogKey::Folder(1)
+        );
+        assert_eq!(save_as_key(Key::Enter, none, false), DialogKey::Confirm);
+        assert_eq!(save_as_key(Key::Escape, none, false), DialogKey::Cancel);
+        assert_eq!(save_as_key(Key::D, none, false), DialogKey::Swallow);
+        assert_eq!(save_as_key(Key::N, none, false), DialogKey::Swallow);
+        assert_eq!(save_as_key(Key::N, none, true), DialogKey::NewFolder);
+        assert_eq!(
+            save_as_key(Key::Tab, none, false),
+            DialogKey::SwitchFocus(1)
+        );
+        assert_eq!(
+            save_as_key(Key::Tab, shift, false),
+            DialogKey::SwitchFocus(-1)
+        );
+        assert_eq!(save_as_key(Key::Space, none, false), DialogKey::Press);
     }
 
     /// Save As reads the text fields' keymap: Enter saves, Esc cancels, and

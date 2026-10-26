@@ -360,6 +360,13 @@ pub(crate) fn project_name_from_input(input: &str) -> Option<String> {
     valid.then(|| name.to_owned())
 }
 
+/// The project folder name typed in `input`: [`project_name_from_input`]'s
+/// rule, and not the clips folder's name (in any case) — what Save As's new
+/// folder takes.
+pub(crate) fn project_folder_name_from_input(input: &str) -> Option<String> {
+    project_name_from_input(input).filter(|name| is_project_folder_name(name))
+}
+
 /// Whether a file system refuses `c` in a name: a control character or one
 /// of [`PROJECT_NAME_FORBIDDEN`].
 fn is_forbidden_in_name(c: char) -> bool {
@@ -725,6 +732,18 @@ mod tests {
         assert!(!is_project_folder_name(CLIPS_FOLDER));
         assert!(!is_project_folder_name("clips"));
         assert!(!is_project_folder_name(".git"));
+    }
+
+    #[test]
+    fn a_new_folder_name_is_a_project_name_but_never_the_clips_folder() {
+        assert_eq!(
+            project_folder_name_from_input("  Album "),
+            Some("Album".to_owned())
+        );
+        assert_eq!(project_folder_name_from_input("clips"), None);
+        assert_eq!(project_folder_name_from_input(CLIPS_FOLDER), None);
+        assert_eq!(project_folder_name_from_input("a/b"), None);
+        assert_eq!(project_folder_name_from_input("   "), None);
     }
 
     #[test]

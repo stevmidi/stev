@@ -11,8 +11,8 @@
 
 use egui::text_selection::CCursorRange;
 use egui::{
-    Align, FontId, Frame, Id, Key, Margin, Rect, Response, RichText, TextEdit, Ui, UiBuilder, pos2,
-    vec2,
+    Align, FontId, Frame, Id, Key, Margin, Rect, Response, RichText, Stroke, TextEdit, Ui,
+    UiBuilder, pos2, vec2,
 };
 
 use crate::core::input_event::InputEvent;
@@ -78,6 +78,9 @@ pub(super) struct FieldStyle<'a> {
     hint: Option<&'a str>,
     /// The longest text it takes, in characters.
     max_chars: usize,
+    /// Its edge: the focus edge (`focus_edge_stroke`) unless given one — a
+    /// field on screen without the keyboard (Save As's) drops the focus edge.
+    edge: Option<Stroke>,
 }
 
 impl<'a> FieldStyle<'a> {
@@ -89,6 +92,7 @@ impl<'a> FieldStyle<'a> {
             margin,
             hint: None,
             max_chars: usize::MAX,
+            edge: None,
         }
     }
 
@@ -104,6 +108,15 @@ impl<'a> FieldStyle<'a> {
     pub(super) fn max_chars(self, max_chars: usize) -> Self {
         FieldStyle { max_chars, ..self }
     }
+
+    /// Edged with `edge` instead of the focus edge: for a field shown while
+    /// something else has the keyboard.
+    pub(super) fn edge(self, edge: Stroke) -> Self {
+        FieldStyle {
+            edge: Some(edge),
+            ..self
+        }
+    }
 }
 
 impl TextField {
@@ -113,7 +126,8 @@ impl TextField {
     }
 
     /// Shows the field as every text field in the app looks — `fg` text on
-    /// a `bg` fill in the focus-edge stroke, in `style` — filling `rect` of
+    /// a `bg` fill in the focus-edge stroke (or `style`'s edge), in `style` —
+    /// filling `rect` of
     /// the canvas `ui`, its line centred vertically. Its first frame takes
     /// the egui focus and selects the whole text. Returns the field's
     /// response, for a caller that watches it change.
@@ -140,7 +154,7 @@ impl TextField {
             .frame(
                 Frame::NONE
                     .fill(theme::bg())
-                    .stroke(focus_edge_stroke())
+                    .stroke(style.edge.unwrap_or_else(focus_edge_stroke))
                     .corner_radius(2)
                     .inner_margin(style.margin),
             )
