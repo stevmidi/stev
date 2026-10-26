@@ -34,8 +34,8 @@ in Downloads. Then drag `Stev.app` into **Applications** in Finder before you
 open it the first time. Opened from Downloads, macOS runs it from a temporary
 read-only copy, and in Applications the next version replaces it in place.
 
-The app isn't signed by Apple yet, so macOS blocks its first launch with
-*“Stev.app” Not Opened*. To open it anyway (Apple's
+The app isn't signed by Apple yet, so macOS blocks the first launch of each new
+version with *“Stev.app” Not Opened*. To open it anyway (Apple's
 [Open a Mac app from an unknown developer](https://support.apple.com/guide/mac-help/open-a-mac-app-from-an-unknown-developer-mh40616/mac)):
 
 1. Try to open Stev once, and click **Done** in that dialog.
@@ -50,10 +50,23 @@ The app isn't signed by Apple yet, so macOS blocks its first launch with
 
    <img src="docs/images/gatekeeper-open-anyway.png" width="715" alt="Privacy & Security: under Security, “Stev.app” was blocked to protect your Mac, with an Open Anyway button">
 
-4. Confirm, and enter your login password. Later launches don't ask.
+4. Confirm, and enter your login password. Later launches of this version
+   don't ask.
 
 The screenshots are from macOS 15; other versions may look a little
 different.
+
+Each update asks again: the approval belongs to one build, and the next
+version is a different one to macOS. If you're comfortable in Terminal, you can
+skip the steps by clearing the download flag macOS put on the app, after moving
+it to Applications:
+
+```
+xattr -dr com.apple.quarantine /Applications/Stev.app
+```
+
+That tells macOS you trust this download, as *Open Anyway* does, so only run it
+on an app from the Releases page.
 
 The app is universal, but only the Intel build has been tested so far. If you
 run it on Apple Silicon, an issue saying whether it works is welcome. The first

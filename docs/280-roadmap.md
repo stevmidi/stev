@@ -39,12 +39,12 @@ Stage 1 of § Linux and Windows support, staged, taken first as macOS work. Park
 
 ### A signed macOS app
 
-Level 1, an unsigned universal `Stev.app` in a zip attached to each release by CI, is built (`330-macos-app.md`, 2026-10-25). Its first launch needs Gatekeeper's one-time *Open Anyway* (README § Download). The Apple Silicon slice is untested: the author's one machine is an Intel Mac, so an Apple Silicon bug report is the first signal to act on. The levels left build on it:
+Level 1, an unsigned universal `Stev.app` in a zip attached to each release by CI, is built (`330-macos-app.md`, 2026-10-25). Its first launch needs Gatekeeper's *Open Anyway* (README § Download), once per version: the approval belongs to one ad-hoc-signed build, so every update asks again (seen 0.6.0 → 0.7.0, 2026-10-26). The README gives `xattr -dr com.apple.quarantine` as the Terminal shortcut. The Apple Silicon slice is untested: the author's one machine is an Intel Mac, so an Apple Silicon bug report is the first signal to act on. The levels left build on it:
 
 2. **A signed and notarized `.app` / `.dmg`.** Opens without a warning. Needs the Apple Developer Program ($99/year) and signing + notarization secrets in the release workflow. Notarization requires the hardened runtime, which refuses to load code signed by anyone else. The app therefore needs the `com.apple.security.cs.disable-library-validation` entitlement, or no CLAP/VST3 plugin will load (every DAW ships with it).
 
-   Decided 2026-10-25: not yet. The fee recurs for as long as releases are signed, and nothing yet shows who downloads Stev. Level 1's *Open Anyway* is a one-time step, and the bundle script and release workflow carry over, with signing slotted in at the end. Enrol when one of these happens:
-   - People report trouble with the first launch, or someone is heard to have given up at it.
+   Decided 2026-10-25: not yet. The fee recurs for as long as releases are signed, and nothing yet shows who downloads Stev. Level 1's *Open Anyway* is asked once per version, so each update costs users the same steps, and the bundle script and release workflow carry over, with signing slotted in at the end. Enrol when one of these happens:
+   - People report trouble with *Open Anyway*, at the first launch or after an update, or someone is heard to have given up at it.
    - The Homebrew cask (level 3) is wanted. Homebrew has been phasing out casks that fail Gatekeeper, so check its current policy then.
    - Stev is put in front of a wider audience: a forum post, a video, a store-like listing.
 
