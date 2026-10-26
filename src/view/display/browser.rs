@@ -23,13 +23,14 @@
 
 use std::{collections::HashSet, path::PathBuf};
 
-use egui::{Key, Pos2, vec2};
+use egui::{Key, Pos2, Vec2, vec2};
 
 use crate::core::{
     config::BROWSER_W_DEFAULT,
     input_event::is_pane_focus_key,
     project::{
-        ProjectAction, clip_path, delete_project, list_clips, list_project_folders, list_projects,
+        ProjectAction, clip_path, delete_project, delete_project_folder, list_clips,
+        list_project_folders, list_projects,
     },
     settings::update_settings,
 };
@@ -113,6 +114,33 @@ pub(super) fn browser_toggle_rect(footer: Rect) -> Rect {
         ),
         vec2(side, side),
     )
+}
+
+/// Side of the `+` on the Projects row: the panel toggle's wash.
+const NEW_FOLDER_BUTTON_SIZE: f32 = 22.0;
+/// Right inset of the `+` from the panel's edge.
+const NEW_FOLDER_BUTTON_RIGHT_X: f32 = 6.0;
+
+/// The `+` on the Projects row `row`: a square at the row's right end,
+/// centred on it.
+pub(super) fn new_folder_button_rect(row: Rect) -> Rect {
+    Rect::from_center_size(
+        pos2(
+            row.max.x - NEW_FOLDER_BUTTON_RIGHT_X - NEW_FOLDER_BUTTON_SIZE * 0.5,
+            row.center().y,
+        ),
+        Vec2::splat(NEW_FOLDER_BUTTON_SIZE),
+    )
+}
+
+/// The footer's word for the folder `name` deleted: moved to the Trash on
+/// macOS; elsewhere only an empty one is removed (`delete_project_folder`).
+fn folder_deleted_message(name: &str) -> String {
+    if cfg!(target_os = "macos") {
+        format!("Moved {name} to the Trash")
+    } else {
+        format!("Deleted {name}")
+    }
 }
 
 /// The panel toggle's gap from the window's left edge.
@@ -221,6 +249,10 @@ pub(super) enum BrowserItem {
     /// The inert "Scanning…" row ending the Plugins category while the
     /// catalog scan runs.
     Scanning,
+    /// The row a new folder is named on: first under Projects while its
+    /// name field is open (⌘⇧N, or the `+` on the Projects row). Nothing is
+    /// on disk until Enter.
+    NewFolder,
 }
 
 impl BrowserItem {
@@ -234,7 +266,9 @@ impl BrowserItem {
                 BrowserItem::Category(BrowserCategory::Projects),
                 BrowserItem::Folder,
             )),
-            BrowserItem::Folder(_) => Some(BrowserItem::Category(BrowserCategory::Projects)),
+            BrowserItem::Folder(_) | BrowserItem::NewFolder => {
+                Some(BrowserItem::Category(BrowserCategory::Projects))
+            }
             BrowserItem::Clip(_) => Some(BrowserItem::Category(BrowserCategory::Clips)),
             BrowserItem::Plugin(_) | BrowserItem::Scanning => {
                 Some(BrowserItem::Category(BrowserCategory::Plugins))
@@ -242,20 +276,25 @@ impl BrowserItem {
         }
     }
 
-    /// A project's or clip's name (its file stem) — the rows ⌘R renames;
-    /// `None` for anything else.
-    pub(super) fn file_name(&self) -> Option<&str> {
+    /// A project's, clip's or folder's name (a file's stem) — the rows ⌘R
+    /// renames; `None` for anything else.
+    pub(super) fn renamable_name(&self) -> Option<&str> {
         match self {
-            BrowserItem::Project { name, .. } | BrowserItem::Clip(name) => Some(name),
+            BrowserItem::Project { name, .. }
+            | BrowserItem::Clip(name)
+            | BrowserItem::Folder(name) => Some(name),
             _ => None,
         }
     }
 
-    /// The same file under `new_name` — what a rename leaves behind; `None`
-    /// for a row that isn't a file.
+    /// The same project, clip or folder under `new_name` — what a rename
+    /// leaves behind; `None` for a row ⌘R doesn't rename.
     pub(super) fn renamed(&self, new_name: String) -> Option<BrowserItem> {
         let mut item = self.clone();
-        let (BrowserItem::Project { name, .. } | BrowserItem::Clip(name)) = &mut item else {
+        let (BrowserItem::Project { name, .. }
+        | BrowserItem::Clip(name)
+        | BrowserItem::Folder(name)) = &mut item
+        else {
             return None;
         };
         *name = new_name;
@@ -294,6 +333,9 @@ pub(super) enum BrowserAction {
         /// The project name.
         name: String,
     },
+    /// Delete this project folder, with its projects (the confirmed second
+    /// Enter).
+    DeleteFolder(String),
 }
 
 /// What [`BrowserTree::reload`] lists from disk.
@@ -329,9 +371,12 @@ pub(super) struct BrowserTree {
     rows: Vec<BrowserRow>,
     /// The selected item, `None` until something is selected.
     selected: Option<BrowserItem>,
-    /// Whether the selected project awaits its delete confirm (the second
-    /// Enter). Any selection change disarms it.
+    /// Whether the selected project or folder awaits its delete confirm
+    /// (the second Enter). Any selection change disarms it.
     pub(super) delete_armed: bool,
+    /// Whether the [`NewFolder`](BrowserItem::NewFolder) row is listed: while
+    /// its name field is open.
+    new_folder: bool,
 }
 
 /// Appends `projects`, in `folder` (`None`: the projects root), as rows at
@@ -393,7 +438,7 @@ impl BrowserTree {
     }
 
     /// Re-derives [`rows`](Self::rows). Under **Projects** (when expanded):
-    /// each folder, followed (when expanded) by its projects newest first;
+    /// the new folder's row while it is named, then each folder, followed (when expanded) by its projects newest first;
     /// then the projects root's loose projects. Under **Clips** (when
     /// expanded): the clips. Under **Plugins** (when listed and expanded):
     /// the plugins, then "Scanning…" while the scan runs.
@@ -403,6 +448,12 @@ impl BrowserTree {
             depth: 0,
         }];
         if self.is_category_expanded(BrowserCategory::Projects) {
+            if self.new_folder {
+                rows.push(BrowserRow {
+                    item: BrowserItem::NewFolder,
+                    depth: 1,
+                });
+            }
             for (name, projects) in &self.disk.folders {
                 rows.push(BrowserRow {
                     item: BrowserItem::Folder(name.clone()),
@@ -498,6 +549,54 @@ impl BrowserTree {
         }
     }
 
+    /// Lists the [`NewFolder`](BrowserItem::NewFolder) row first under
+    /// Projects, expanding the category, or takes it away. The selection
+    /// stays where it is.
+    pub(super) fn set_new_folder(&mut self, shown: bool) {
+        if shown {
+            self.set_item_expanded(&BrowserItem::Category(BrowserCategory::Projects), true);
+        }
+        if self.new_folder != shown {
+            self.new_folder = shown;
+            self.rebuild_rows();
+        }
+    }
+
+    /// Keeps a renamed folder's expansion under its new name — before the
+    /// [`reload`](Self::reload) that lists it, which forgets the old one.
+    pub(super) fn carry_folder_expansion(&mut self, old: &str, new: &str) {
+        if self.expanded.remove(old) {
+            self.expanded.insert(new.to_owned());
+        }
+    }
+
+    /// What an armed delete asks on the selected row, in place of its name:
+    /// a folder says how many projects go with it. `None` with no delete
+    /// armed.
+    pub(super) fn delete_prompt(&self) -> Option<String> {
+        if !self.delete_armed {
+            return None;
+        }
+        let what = match self.selected.as_ref()? {
+            BrowserItem::Project { name, .. } => name.clone(),
+            BrowserItem::Folder(name) => {
+                let count = self
+                    .disk
+                    .folders
+                    .iter()
+                    .find(|(f, _)| f == name)
+                    .map_or(0, |(_, projects)| projects.len());
+                match count {
+                    0 => name.clone(),
+                    1 => format!("{name} and its project"),
+                    n => format!("{name} and its {n} projects"),
+                }
+            }
+            _ => return None,
+        };
+        Some(format!("Delete {what}?  Enter / Esc"))
+    }
+
     /// Selects `item` and disarms a pending delete.
     pub(super) fn select(&mut self, item: BrowserItem) {
         self.selected = Some(item);
@@ -579,7 +678,7 @@ impl BrowserTree {
         }
     }
 
-    /// Enter: confirms a pending delete; else opens the selected project,
+    /// Enter: confirms a pending delete (a project or a folder); else opens the selected project,
     /// expands/collapses the selected folder or category, imports the
     /// selected clip or puts the selected plugin on the selected track.
     /// A folder is never made current here: Save As picks where a project
@@ -591,12 +690,13 @@ impl BrowserTree {
             BrowserItem::Project { folder, name } if armed => {
                 Some(BrowserAction::DeleteProject { folder, name })
             }
+            BrowserItem::Folder(name) if armed => Some(BrowserAction::DeleteFolder(name)),
             BrowserItem::Category(_) | BrowserItem::Folder(_) => {
                 self.toggle(&item);
                 None
             }
             BrowserItem::Plugin(plugin) => Some(BrowserAction::LoadPlugin(plugin)),
-            BrowserItem::Scanning => None,
+            BrowserItem::Scanning | BrowserItem::NewFolder => None,
             BrowserItem::Project { folder, name } => {
                 Some(BrowserAction::OpenProject { folder, name })
             }
@@ -604,9 +704,13 @@ impl BrowserTree {
         }
     }
 
-    /// Delete/Backspace: arms the delete confirm on a selected project.
+    /// Delete/Backspace: arms the delete confirm on a selected project or
+    /// folder.
     pub(super) fn arm_delete(&mut self) {
-        self.delete_armed = matches!(self.selected, Some(BrowserItem::Project { .. }));
+        self.delete_armed = matches!(
+            self.selected,
+            Some(BrowserItem::Project { .. } | BrowserItem::Folder(_))
+        );
     }
 }
 
@@ -865,13 +969,64 @@ impl Display {
     }
 
     /// Keeps the selected row on screen after a keyboard move.
-    fn scroll_browser_to_selection(&mut self) {
-        if let Some(selected) = self.browser.tree.selected_index() {
-            self.browser.scroll =
-                browser_scroll_to_show(self.browser.scroll, selected, self.browser_list_h());
+    pub(super) fn scroll_browser_to_selection(&mut self) {
+        match self.browser.tree.selected_index() {
+            Some(selected) => self.scroll_browser_to_row(selected),
+            None => self.clamp_browser_scroll(),
         }
-        // A collapse can leave the list scrolled past its new end.
+    }
+
+    /// Scrolls the list as little as needed to show row `idx` whole.
+    pub(super) fn scroll_browser_to_row(&mut self, idx: usize) {
+        self.browser.scroll =
+            browser_scroll_to_show(self.browser.scroll, idx, self.browser_list_h());
+        self.clamp_browser_scroll();
+    }
+
+    /// Keeps the scroll within the rows: a collapse can leave the list
+    /// scrolled past its new end.
+    fn clamp_browser_scroll(&mut self) {
         self.browser.scroll = self.browser.scroll.min(self.browser_max_scroll()).max(0.0);
+    }
+
+    /// The `+` on the Projects row, in window space (the panel isn't
+    /// shifted): what a press on makes a new folder. `None` while the
+    /// Projects row is scrolled off the list's top.
+    pub(super) fn browser_new_folder_button(&self) -> Option<Rect> {
+        let idx = self
+            .browser
+            .tree
+            .rows()
+            .iter()
+            .position(|row| row.item == BrowserItem::Category(BrowserCategory::Projects))?;
+        let row = browser_row_rect(
+            self.render.canvas_rect.min,
+            self.browser.width,
+            idx,
+            self.browser.scroll,
+        );
+        (row.min.y >= self.render.canvas_rect.min.y + BROWSER_LIST_PAD_Y)
+            .then(|| new_folder_button_rect(row))
+    }
+
+    /// Whether canvas-space `(x, y)` is on the Projects row's `+`.
+    fn is_on_browser_new_folder(&self, x: f32, y: f32) -> bool {
+        self.browser_new_folder_button().is_some_and(|button| {
+            button
+                .translate(vec2(-self.browser_width(), 0.0))
+                .contains(pos2(x, y))
+        })
+    }
+
+    /// Whether the pointer is on the Projects row's `+`, with the row
+    /// hovered — the button shows then only, its wash and pointing hand.
+    pub(super) fn is_pointer_on_browser_new_folder(&self) -> bool {
+        self.hovered_browser_row().is_some_and(|idx| {
+            self.browser.tree.rows().get(idx).map(|row| &row.item)
+                == Some(&BrowserItem::Category(BrowserCategory::Projects))
+        }) && self
+            .canvas_pointer()
+            .is_some_and(|p| self.is_on_browser_new_folder(p.x, p.y))
     }
 
     /// Scrolls the list by a wheel / two-finger delta (points, positive =
@@ -891,8 +1046,8 @@ impl Display {
         let InputEvent::KeyPressed { key, modifiers } = event else {
             return false;
         };
-        // ⌘/Ctrl+R — rename the selected project or `.mid`, as it renames
-        // the selected track over the lanes. Exact chord.
+        // ⌘/Ctrl+R — rename the selected project, `.mid` or folder, as it
+        // renames the selected track over the lanes. Exact chord.
         if *key == Key::R && modifiers.command && !modifiers.shift && !modifiers.alt {
             self.open_browser_rename();
             return true;
@@ -932,12 +1087,20 @@ impl Display {
     }
 
     /// A press at canvas `(x, y)` inside the panel (`x < 0`): focuses it,
-    /// selects the row under the pointer, and toggles a folder or category
+    /// opens the new folder's field on the Projects row's `+`, else selects
+    /// the row under the pointer, and toggles a folder or category
     /// pressed on its disclosure triangle. `double` is the double-click that
     /// follows a double-click's second press (already handled as a press): it
     /// toggles a folder or category and acts like Enter on anything else.
     pub(super) fn handle_browser_click(&mut self, x: f32, y: f32, double: bool) {
         self.key_focus = KeyFocus::Browser;
+        // The Projects row's `+` makes a new folder, selecting nothing.
+        if self.is_on_browser_new_folder(x, y) {
+            if !double {
+                self.open_new_folder_field();
+            }
+            return;
+        }
         let Some(idx) = browser_row_at(y, self.browser.scroll) else {
             return;
         };
@@ -1009,6 +1172,33 @@ impl Display {
                 self.render.status = Some(StatusMessage::new(message));
                 self.reload_browser();
             }
+            BrowserAction::DeleteFolder(name) => {
+                let message = self.delete_browser_folder(&name);
+                self.render.status = Some(StatusMessage::new(message));
+                self.reload_browser();
+            }
+        }
+    }
+
+    /// Deletes the project folder `name` with its projects — to the Trash
+    /// (macOS) — and returns the footer's message. A project open from it
+    /// stays open, as the open project does when it is deleted, and ⌘S saves
+    /// it back into the folder, made again; with none open from it, a current
+    /// folder deleted hands over to the projects root.
+    fn delete_browser_folder(&mut self, name: &str) -> String {
+        let current = self.project.project_current_folder.as_deref() == Some(name);
+        match delete_project_folder(name) {
+            Ok(()) => {
+                // The open project stays open, and its folder current, as
+                // after deleting the open project: ⌘S writes both back.
+                // With none open from it, a new project's ⌘S must not make
+                // the deleted folder again.
+                if current && self.project.project_current_name.is_none() {
+                    self.set_current_project_folder(None);
+                }
+                folder_deleted_message(name)
+            }
+            Err(e) => format!("Could not delete {name}: {e}"),
         }
     }
 
@@ -1368,7 +1558,86 @@ mod tests {
 
         tree.select(folder("a"));
         tree.arm_delete();
-        assert!(!tree.delete_armed, "folders are never deleted");
+        assert_eq!(
+            tree.activate(),
+            Some(BrowserAction::DeleteFolder("a".into()))
+        );
+
+        tree.select(projects());
+        tree.arm_delete();
+        assert!(!tree.delete_armed, "a category is never deleted");
+    }
+
+    /// A folder's prompt says how many projects go with it.
+    #[test]
+    fn a_folders_delete_prompt_counts_its_projects() {
+        let mut tree = BrowserTree::default();
+        tree.reload(disk(
+            &[("two", &["x", "y"]), ("one", &["x"]), ("none", &[])],
+            &["loose"],
+            &[],
+        ));
+        let prompt = |tree: &mut BrowserTree, item| {
+            tree.select(item);
+            assert_eq!(tree.delete_prompt(), None, "not armed yet");
+            tree.arm_delete();
+            tree.delete_prompt()
+        };
+        assert_eq!(
+            prompt(&mut tree, folder("two")).as_deref(),
+            Some("Delete two and its 2 projects?  Enter / Esc")
+        );
+        assert_eq!(
+            prompt(&mut tree, folder("one")).as_deref(),
+            Some("Delete one and its project?  Enter / Esc")
+        );
+        assert_eq!(
+            prompt(&mut tree, folder("none")).as_deref(),
+            Some("Delete none?  Enter / Esc")
+        );
+        assert_eq!(
+            prompt(&mut tree, project(None, "loose")).as_deref(),
+            Some("Delete loose?  Enter / Esc")
+        );
+    }
+
+    /// The new folder's row comes first under Projects — expanding a
+    /// collapsed category — without taking the selection, and goes again.
+    #[test]
+    fn the_new_folder_row_comes_first_under_projects_and_goes_again() {
+        let mut tree = tree();
+        tree.select(project(None, "loose"));
+        tree.collapse();
+        tree.collapse();
+        assert_eq!(items(&tree), vec![projects(), clips(), clip("a1_T1_B1")]);
+
+        tree.set_new_folder(true);
+        assert_eq!(
+            items(&tree)[..3],
+            [projects(), BrowserItem::NewFolder, folder("a")]
+        );
+        assert_eq!(tree.rows()[1].depth, 1);
+        assert_eq!(tree.selected(), Some(&projects()));
+        assert_eq!(BrowserItem::NewFolder.parent(), Some(projects()));
+        assert_eq!(BrowserItem::NewFolder.renamable_name(), None);
+
+        tree.set_new_folder(false);
+        assert!(!items(&tree).contains(&BrowserItem::NewFolder));
+        assert_eq!(tree.selected(), Some(&projects()));
+    }
+
+    #[test]
+    fn a_renamed_folder_stays_expanded() {
+        let mut tree = tree();
+        tree.select(folder("a"));
+        tree.expand();
+        tree.carry_folder_expansion("a", "z");
+        tree.reload(disk(&[("b", &[]), ("z", &["a1"])], &[], &[]));
+        assert!(tree.is_expanded("z"));
+        assert!(items(&tree).contains(&project(Some("z"), "a1")));
+        // Collapsed, it stays collapsed.
+        tree.carry_folder_expansion("b", "c");
+        assert!(!tree.is_expanded("c"));
     }
 
     #[test]
@@ -1418,21 +1687,23 @@ mod tests {
     }
 
     #[test]
-    fn only_projects_and_clips_are_renamed() {
-        assert_eq!(clip("riff").file_name(), Some("riff"));
+    fn only_projects_clips_and_folders_are_renamed() {
+        assert_eq!(clip("riff").renamable_name(), Some("riff"));
         assert_eq!(clip("riff").renamed("lick".into()), Some(clip("lick")));
         assert_eq!(
             project(None, "loose").renamed("tight".into()),
             Some(project(None, "tight"))
         );
+        assert_eq!(folder("a").renamable_name(), Some("a"));
+        assert_eq!(folder("a").renamed("z".into()), Some(folder("z")));
         for item in [
             projects(),
             clips(),
-            folder("a"),
             BrowserItem::Plugin(plugin("Diva", "CLAP")),
             BrowserItem::Scanning,
+            BrowserItem::NewFolder,
         ] {
-            assert_eq!(item.file_name(), None);
+            assert_eq!(item.renamable_name(), None);
             assert_eq!(item.renamed("x".into()), None);
         }
     }
@@ -1452,6 +1723,17 @@ mod tests {
         assert_eq!(browser_scroll_to_show(0.0, 9, 9.5 * h), 0.5 * h);
         // A list shorter than a row shows the row's top.
         assert_eq!(browser_scroll_to_show(0.0, 4, h * 0.5), 4.0 * h);
+    }
+
+    #[test]
+    fn the_new_folder_button_sits_inside_the_right_end_of_its_row() {
+        let row = browser_row_rect(pos2(0.0, 0.0), 240.0, 0, 0.0);
+        let button = new_folder_button_rect(row);
+        assert!(row.contains_rect(button));
+        assert_eq!(button.max.x, row.max.x - NEW_FOLDER_BUTTON_RIGHT_X);
+        assert_eq!(button.center().y, row.center().y);
+        // Clear of the label, which starts at the row's left.
+        assert!(button.min.x > row.min.x + row.width() * 0.5);
     }
 
     #[test]

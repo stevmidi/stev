@@ -60,6 +60,8 @@ pub(crate) enum Action {
     ShowProjects,
     /// Show and focus the browser panel, or hide it.
     ToggleBrowser,
+    /// Name and make a new project folder in the browser panel.
+    NewProjectFolder,
     /// Undo.
     Undo,
     /// Redo.
@@ -574,6 +576,14 @@ pub(crate) const ACTIONS: &[ActionInfo] = &[
         PROJECT,
         Scope::Global,
         &[Chord::cmd(Key::B).alt()],
+    ),
+    row(
+        Action::NewProjectFolder,
+        "project.new_folder",
+        "New project folder",
+        PROJECT,
+        Scope::Global,
+        &[Chord::cmd(Key::N).shift()],
     ),
     row(
         Action::Undo,

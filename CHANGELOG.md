@@ -20,6 +20,16 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ## [Unreleased]
 
+### Added
+
+- Project folders can be made, renamed and deleted in the browser. ⌘⇧N (or the
+  `+` that shows on the Projects row under the pointer) opens a name field for
+  a new folder; nothing is made until Enter, and Esc makes nothing. ⌘R renames
+  a folder as it renames a project. Backspace, then Enter, deletes a folder
+  with its projects, moving it to the Trash; the prompt says how many projects
+  go with it. Deleting the folder of the open project leaves the project open,
+  and ⌘S saves it back, as after deleting the open project itself.
+
 ### Changed
 
 - Save As now has a "Save in" dropdown to choose the folder the project goes

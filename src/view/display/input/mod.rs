@@ -645,6 +645,13 @@ impl Display {
                 self.show_browser();
                 true
             }
+            // ⌘⇧N (Finder's New Folder) shows the browser with the keyboard
+            // and opens the new folder's name field (`browser_rename.rs`),
+            // from any key focus. View-local, like ⌘O.
+            InputEvent::Action(Action::NewProjectFolder) => {
+                self.open_new_folder_field();
+                true
+            }
             // ⌘⌥E — the clip panel between maximized and docked below the
             // arranger (`archive/210-docked-clip-panel.md`). View-local layout state.
             // With the panel hidden it only flips the size it will show at.

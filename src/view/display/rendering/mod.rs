@@ -1342,6 +1342,7 @@ impl eframe::App for Display {
             || self.is_pointer_on_help_chip()
             || self.is_pointer_on_keyboard_chip()
             || self.is_pointer_on_browser_toggle()
+            || self.is_pointer_on_browser_new_folder()
         {
             ctx.set_cursor_icon(CursorIcon::PointingHand);
         }

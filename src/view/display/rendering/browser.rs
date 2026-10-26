@@ -7,7 +7,7 @@ use egui::{Id, LayerId, Order, Pos2, Shape, StrokeKind, Vec2, epaint::QuadraticB
 
 use super::super::browser::{
     BROWSER_DISCLOSURE_W, BROWSER_FONT_SIZE, BROWSER_ICON_W, BROWSER_INDENT_X, BROWSER_LIST_PAD_Y,
-    BROWSER_ROW_H, BrowserItem, browser_icon_x, browser_row_rect, browser_text_x,
+    BROWSER_ROW_H, BrowserCategory, BrowserItem, browser_icon_x, browser_row_rect, browser_text_x,
 };
 use super::*;
 
@@ -18,6 +18,8 @@ const FORMAT_RIGHT_X: f32 = 10.0;
 const OPEN_DOT_R: f32 = 3.0;
 /// Gap between the open dot and the icon it sits before.
 const OPEN_DOT_GAP: f32 = 4.0;
+/// Half the length of each stroke of the Projects row's `+`.
+const NEW_FOLDER_PLUS_HALF: f32 = 5.0;
 /// Half the size of a folder's disclosure triangle.
 const DISCLOSURE_HALF: f32 = 4.0;
 
@@ -55,7 +57,8 @@ const DOC_LINE_STROKE: f32 = 1.0;
 /// Zed's project panel does. Monochrome, like the text it sits beside.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum BrowserIcon {
-    /// A project folder, drawn open while expanded.
+    /// A project folder, drawn open while expanded (the new folder's row
+    /// too, closed).
     Folder {
         /// Whether the folder is expanded.
         open: bool,
@@ -73,7 +76,7 @@ impl BrowserIcon {
     /// that can't be); `None` for a category or "Scanning…", which have none.
     fn of(item: &BrowserItem, expanded: Option<bool>) -> Option<Self> {
         match item {
-            BrowserItem::Folder(_) => Some(BrowserIcon::Folder {
+            BrowserItem::Folder(_) | BrowserItem::NewFolder => Some(BrowserIcon::Folder {
                 open: expanded == Some(true),
             }),
             BrowserItem::Project { .. } => Some(BrowserIcon::Project),
@@ -435,6 +438,8 @@ impl Display {
                     (plugin.name.clone(), false)
                 }
                 BrowserItem::Scanning => ("Scanning…".to_owned(), false),
+                // Its name field sits over it.
+                BrowserItem::NewFolder => (String::new(), false),
             };
             if let Some(icon) = BrowserIcon::of(&row.item, expanded) {
                 // Whole points, so the lines land on whole pixels on Retina.
@@ -453,8 +458,9 @@ impl Display {
                 );
             }
 
-            let (text, color) = if is_selected && tree.delete_armed {
-                (format!("Delete {label}?  Enter / Esc"), theme::track_mute())
+            let prompt = is_selected.then(|| tree.delete_prompt()).flatten();
+            let (text, color) = if let Some(prompt) = prompt {
+                (prompt, theme::track_mute())
             } else if matches!(
                 row.item,
                 BrowserItem::Clip(_) | BrowserItem::Scanning | BrowserItem::Category(_)
@@ -471,13 +477,39 @@ impl Display {
                 font.clone(),
                 color,
             );
+            if row.item == BrowserItem::Category(BrowserCategory::Projects) && hovered == Some(i) {
+                self.draw_new_folder_button(&painter);
+            }
         }
+    }
+
+    /// The `+` at the right end of the hovered Projects row, which makes a
+    /// new folder: `fg_dim`, and `fg` on a faint neutral square under the
+    /// pointer, as the panel toggle.
+    fn draw_new_folder_button(&self, painter: &Painter) {
+        let Some(button) = self.browser_new_folder_button() else {
+            return;
+        };
+        let hover = self.is_pointer_on_browser_new_folder();
+        if hover {
+            painter.rect_filled(
+                button,
+                CornerRadius::same(4),
+                theme::fg().gamma_multiply(0.07),
+            );
+        }
+        let color = if hover { theme::fg() } else { theme::fg_dim() };
+        let stroke = Stroke::new(ICON_STROKE, color);
+        // Whole points, so the lines land on whole pixels on Retina.
+        let c = button.center().round();
+        let h = NEW_FOLDER_PLUS_HALF;
+        painter.line_segment([c - vec2(h, 0.0), c + vec2(h, 0.0)], stroke);
+        painter.line_segment([c - vec2(0.0, h), c + vec2(0.0, h)], stroke);
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::super::super::browser::BrowserCategory;
     use super::*;
 
     #[test]

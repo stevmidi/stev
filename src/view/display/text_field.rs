@@ -62,7 +62,8 @@ pub(super) struct TextField {
     /// selected whole.
     pub(super) text: String,
     /// Whether the field has shown yet: its first frame takes the egui focus
-    /// and selects the text.
+    /// and selects the text — every frame until the pointer is up, when a
+    /// press opened it.
     shown: bool,
 }
 
@@ -151,7 +152,10 @@ impl TextField {
             .vertical_align(Align::Center);
         let mut output = field.show(&mut ui.new_child(UiBuilder::new().max_rect(rect)));
         if !self.shown {
-            self.shown = true;
+            // A field opened by a press (the browser's `+`) takes the focus
+            // again until that press is released: egui drops it on a click
+            // ending off the field, and the release ends one.
+            self.shown = !ui.input(|i| i.pointer.any_down());
             output
                 .state
                 .cursor

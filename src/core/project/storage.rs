@@ -23,6 +23,9 @@ use crate::{
     models::clip::Clip,
 };
 
+#[cfg(target_os = "macos")]
+use objc2_foundation::{NSFileManager, NSURL};
+
 use super::{dto::ProjectData, smf::read_smf};
 
 /// The extension of the MIDI files the app writes and lists.
@@ -94,9 +97,9 @@ fn is_project_folder_name(name: &str) -> bool {
     !name.starts_with('.') && !name.eq_ignore_ascii_case(CLIPS_FOLDER)
 }
 
-/// Subdirectories of `project_dir()` — each one is a project, created
-/// manually by the user (see `060-persistence.md`). Sorted alphabetically;
-/// hidden (dot) folders and the clips folder are left out.
+/// Subdirectories of `project_dir()` — the project folders, made in the
+/// browser (⌘⇧N) or in Finder (see `060-persistence.md`). Sorted
+/// alphabetically; hidden (dot) folders and the clips folder are left out.
 pub(crate) fn list_project_folders() -> Vec<String> {
     let dir = project_dir();
     let mut names: Vec<String> = fs::read_dir(&dir)
@@ -249,6 +252,71 @@ pub(crate) fn rename_clip(old: &str, new: &str) -> io::Result<()> {
     rename_no_replace(&clip_path(old), &clip_path(new))
 }
 
+/// Makes the project folder `name` under the projects root (and the root
+/// itself when it is missing). Refuses a name that is taken — in any case,
+/// where the volume doesn't tell them apart — and the clips folder's.
+pub(crate) fn create_project_folder(name: &str) -> io::Result<()> {
+    create_folder_in(&project_dir(), name)
+}
+
+/// [`create_project_folder`] with the projects root `root`.
+fn create_folder_in(root: &Path, name: &str) -> io::Result<()> {
+    refuse_clips_folder_name(name)?;
+    fs::create_dir_all(root)?;
+    fs::create_dir(root.join(name)).map_err(|e| match e.kind() {
+        io::ErrorKind::AlreadyExists => name_taken(),
+        _ => e,
+    })
+}
+
+/// Renames the project folder `old` to `new`, refusing to replace anything
+/// ([`rename_no_replace`]) and the clips folder's name.
+pub(crate) fn rename_project_folder(old: &str, new: &str) -> io::Result<()> {
+    rename_folder_in(&project_dir(), old, new)
+}
+
+/// [`rename_project_folder`] with the projects root `root`.
+fn rename_folder_in(root: &Path, old: &str, new: &str) -> io::Result<()> {
+    refuse_clips_folder_name(new)?;
+    rename_no_replace(&root.join(old), &root.join(new))
+}
+
+/// Moves the project folder `name`, with everything in it, to the Trash.
+#[cfg(target_os = "macos")]
+pub(crate) fn delete_project_folder(name: &str) -> io::Result<()> {
+    let dir = project_dir().join(name);
+    let url = NSURL::from_directory_path(&dir)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "not a folder path"))?;
+    NSFileManager::defaultManager()
+        .trashItemAtURL_resultingItemURL_error(&url, None)
+        .map_err(|e| io::Error::other(e.localizedDescription().to_string()))
+}
+
+/// Removes the project folder `name` when it is empty. Off macOS there is
+/// no Trash to move a full one to, and nothing is deleted for good.
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn delete_project_folder(name: &str) -> io::Result<()> {
+    fs::remove_dir(project_dir().join(name))
+}
+
+/// Refuses `name` for a project folder when it is the clips folder's, which
+/// the browser lists apart ([`is_project_folder_name`]).
+fn refuse_clips_folder_name(name: &str) -> io::Result<()> {
+    if is_project_folder_name(name) {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "that name is the clips folder's",
+        ))
+    }
+}
+
+/// The error for a name another file or folder already has.
+fn name_taken() -> io::Error {
+    io::Error::new(io::ErrorKind::AlreadyExists, "that name is taken")
+}
+
 /// Moves `from` to `to` in the same folder unless that would replace another
 /// file: `to` is taken when an entry of exactly its name exists, or when it
 /// exists at all and isn't `from` under a different case (a case-only rename
@@ -270,10 +338,7 @@ fn rename_no_replace(from: &Path, to: &Path) -> io::Result<()> {
         })
     };
     if to.exists() && (!same_but_case || exact_entry()) {
-        return Err(io::Error::new(
-            io::ErrorKind::AlreadyExists,
-            "that name is taken",
-        ));
+        return Err(name_taken());
     }
     fs::rename(from, to)
 }
@@ -602,6 +667,56 @@ mod tests {
         fs::write(dir.join("song.stev"), "a").unwrap();
         rename_no_replace(&dir.join("song.stev"), &dir.join("Song.stev")).unwrap();
         assert_eq!(names_in(&dir), ["Song.stev"]);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_new_folder_is_made_with_the_projects_root() {
+        let dir = scratch_dir("new-folder");
+        let root = dir.join("Projects");
+        create_folder_in(&root, "Album").unwrap();
+        assert_eq!(names_in(&root), ["Album"]);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Not a name already taken — by a folder, a file, or one differing only
+    /// in case where the volume is case-insensitive — nor the clips folder's.
+    #[test]
+    fn a_new_folder_never_takes_a_name_in_use() {
+        let dir = scratch_dir("new-folder-taken");
+        fs::create_dir(dir.join("Album")).unwrap();
+        fs::write(dir.join("Notes"), "n").unwrap();
+        for name in ["Album", "Notes"] {
+            let err = create_folder_in(&dir, name).unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::AlreadyExists, "{name}");
+        }
+        if dir.join("ALBUM").exists() {
+            assert!(create_folder_in(&dir, "ALBUM").is_err());
+        }
+        for name in [CLIPS_FOLDER, "clips"] {
+            let err = create_folder_in(&dir, name).unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::InvalidInput, "{name}");
+        }
+        assert_eq!(names_in(&dir), ["Album", "Notes"]);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_folder_rename_moves_it_with_its_projects_but_never_onto_another() {
+        let dir = scratch_dir("rename-folder");
+        fs::create_dir(dir.join("Album")).unwrap();
+        fs::write(dir.join("Album").join("Song.stev"), "s").unwrap();
+        fs::create_dir(dir.join("Other")).unwrap();
+
+        rename_folder_in(&dir, "Album", "Record").unwrap();
+        assert_eq!(names_in(&dir), ["Other", "Record"]);
+        assert_eq!(names_in(&dir.join("Record")), ["Song.stev"]);
+
+        let err = rename_folder_in(&dir, "Record", "Other").unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+        let err = rename_folder_in(&dir, "Record", CLIPS_FOLDER).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(names_in(&dir), ["Other", "Record"]);
         fs::remove_dir_all(&dir).unwrap();
     }
 
