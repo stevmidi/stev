@@ -23,9 +23,7 @@ use crate::core::project::{
 };
 
 use super::Display;
-use super::browser::{
-    BROWSER_FONT_SIZE, BROWSER_LIST_PAD_Y, BrowserItem, browser_row_rect, browser_text_x,
-};
+use super::browser::{BROWSER_FONT_SIZE, BrowserItem, browser_text_x};
 use super::pane::KeyFocus;
 use super::status_message::StatusMessage;
 use super::text_field::{FieldEvent, FieldStyle, ROW_MARGIN, TextField, field_event, field_rect};
@@ -72,10 +70,7 @@ impl Display {
         let tree = &mut self.browser.tree;
         tree.delete_armed = false;
         tree.set_new_folder(true);
-        let row = tree
-            .rows()
-            .iter()
-            .position(|row| row.item == BrowserItem::NewFolder);
+        let row = tree.index_of(&BrowserItem::NewFolder);
         self.browser.rename = Some(BrowserRename {
             item: BrowserItem::NewFolder,
             field: TextField::new(String::new()),
@@ -99,25 +94,11 @@ impl Display {
     /// [`drop_stale_browser_rename`](Self::drop_stale_browser_rename).
     fn browser_rename_rect(&self) -> Option<Rect> {
         let rename = self.browser.rename.as_ref()?;
-        if !self.browser.visible {
-            return None;
-        }
-        let rows = self.browser.tree.rows();
-        let idx = rows.iter().position(|row| row.item == rename.item)?;
         // Only while its row is wholly in the list: the field isn't clipped.
-        let row = browser_row_rect(
-            self.render.canvas_rect.min,
-            self.browser.width,
-            idx,
-            self.browser.scroll,
-        );
-        let list_top = self.render.canvas_rect.min.y + BROWSER_LIST_PAD_Y;
-        if row.min.y < list_top || row.max.y > self.browser_list_bottom() {
-            return None;
-        }
+        let (idx, row) = self.browser_visible_row(&rename.item)?;
         let field = Rect::from_min_max(
             pos2(
-                row.min.x + browser_text_x(&rows[idx]) - 4.0,
+                row.min.x + browser_text_x(&self.browser.tree.rows()[idx]) - 4.0,
                 row.min.y + 1.0,
             ),
             pos2(row.max.x - FIELD_RIGHT_X, row.max.y - 1.0),
@@ -169,12 +150,12 @@ impl Display {
         }
         // `None` for the new folder, which has no name yet.
         let old = rename.item.renamable_name();
+        let failed = |why: &str| match old {
+            Some(old) => format!("Could not rename {old}: {why}"),
+            None => format!("Could not create the folder: {why}"),
+        };
         let Some(new) = project_name_from_input(&rename.field.text) else {
-            let message = match old {
-                Some(old) => format!("Could not rename {old}: not a valid name"),
-                None => "Could not create the folder: not a valid name".to_owned(),
-            };
-            self.render.status = Some(StatusMessage::new(message));
+            self.render.status = Some(StatusMessage::new(failed("not a valid name")));
             return;
         };
         if old == Some(new.as_str()) {
@@ -187,16 +168,15 @@ impl Display {
             BrowserItem::Clip(old) => rename_clip(old, &new),
             _ => return,
         };
-        let message = match (result, old) {
-            (Ok(()), old) => {
+        let message = match result {
+            Ok(()) => {
                 self.follow_browser_rename(&rename.item, &new);
                 match old {
                     Some(old) => format!("Renamed {old} to {new}"),
                     None => format!("Created the folder {new}"),
                 }
             }
-            (Err(e), Some(old)) => format!("Could not rename {old}: {e}"),
-            (Err(e), None) => format!("Could not create {new}: {e}"),
+            Err(e) => failed(&e.to_string()),
         };
         self.render.status = Some(StatusMessage::new(message));
     }
@@ -222,11 +202,7 @@ impl Display {
             _ => {}
         }
         self.reload_browser();
-        let renamed = match item {
-            BrowserItem::NewFolder => Some(BrowserItem::Folder(new.to_owned())),
-            _ => item.renamed(new.to_owned()),
-        };
-        if let Some(renamed) = renamed {
+        if let Some(renamed) = item.renamed(new.to_owned()) {
             self.browser.tree.select(renamed);
             self.scroll_browser_to_selection();
         }

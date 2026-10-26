@@ -7,7 +7,8 @@ use egui::{Id, LayerId, Order, Pos2, Shape, StrokeKind, Vec2, epaint::QuadraticB
 
 use super::super::browser::{
     BROWSER_DISCLOSURE_W, BROWSER_FONT_SIZE, BROWSER_ICON_W, BROWSER_INDENT_X, BROWSER_LIST_PAD_Y,
-    BROWSER_ROW_H, BrowserCategory, BrowserItem, browser_icon_x, browser_row_rect, browser_text_x,
+    BROWSER_ROW_H, BrowserCategory, BrowserItem, TOGGLE_WASH_SIZE, browser_icon_x,
+    browser_row_rect, browser_text_x,
 };
 use super::*;
 
@@ -30,8 +31,9 @@ const TOGGLE_ICON_W: f32 = 14.0;
 const TOGGLE_ICON_H: f32 = 13.0;
 /// Where the sidebar divider sits, as a fraction of the icon's width.
 const TOGGLE_DIVIDER_AT: f32 = 0.4;
-/// Side of the rounded square washed behind the icon under the pointer.
-const TOGGLE_WASH_SIZE: f32 = 22.0;
+/// Opacity of the `fg` wash behind the panel toggle's icon, or the Projects
+/// row's `+`, under the pointer.
+const TOGGLE_WASH_ALPHA: f32 = 0.07;
 
 /// Opacity of the `fg` wash behind the row under the pointer: well below the
 /// unfocused selection's, so it never reads as one.
@@ -279,6 +281,16 @@ fn disclosure_triangle(centre: Pos2, expanded: bool) -> [Pos2; 3] {
     }
 }
 
+/// The faint neutral square behind a hovered panel control (the footer's
+/// toggle, the Projects row's `+`), centred on `centre`.
+fn draw_toggle_wash(painter: &Painter, centre: Pos2) {
+    painter.rect_filled(
+        Rect::from_center_size(centre, Vec2::splat(TOGGLE_WASH_SIZE)),
+        CornerRadius::same(4),
+        theme::fg().gamma_multiply(TOGGLE_WASH_ALPHA),
+    );
+}
+
 impl Display {
     /// The layer the panel paints on: above the canvas's (background) layer,
     /// which carries the shift, so the panel itself stays put.
@@ -295,11 +307,7 @@ impl Display {
         let hover = self.is_pointer_on_browser_toggle();
 
         if hover {
-            painter.rect_filled(
-                Rect::from_center_size(toggle.center(), Vec2::splat(TOGGLE_WASH_SIZE)),
-                CornerRadius::same(4),
-                theme::fg().gamma_multiply(0.07),
-            );
+            draw_toggle_wash(painter, toggle.center());
         }
 
         let color = toggle_icon_color(false, hover);
@@ -492,13 +500,9 @@ impl Display {
         };
         let hover = self.is_pointer_on_browser_new_folder();
         if hover {
-            painter.rect_filled(
-                button,
-                CornerRadius::same(4),
-                theme::fg().gamma_multiply(0.07),
-            );
+            draw_toggle_wash(painter, button.center());
         }
-        let color = if hover { theme::fg() } else { theme::fg_dim() };
+        let color = toggle_icon_color(false, hover);
         let stroke = Stroke::new(ICON_STROKE, color);
         // Whole points, so the lines land on whole pixels on Retina.
         let c = button.center().round();

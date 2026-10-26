@@ -284,8 +284,7 @@ fn rename_folder_in(root: &Path, old: &str, new: &str) -> io::Result<()> {
 /// Moves the project folder `name`, with everything in it, to the Trash.
 #[cfg(target_os = "macos")]
 pub(crate) fn delete_project_folder(name: &str) -> io::Result<()> {
-    let dir = project_dir().join(name);
-    let url = NSURL::from_directory_path(&dir)
+    let url = NSURL::from_directory_path(resolve_dir(Some(name)))
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "not a folder path"))?;
     NSFileManager::defaultManager()
         .trashItemAtURL_resultingItemURL_error(&url, None)
@@ -296,7 +295,7 @@ pub(crate) fn delete_project_folder(name: &str) -> io::Result<()> {
 /// no Trash to move a full one to, and nothing is deleted for good.
 #[cfg(not(target_os = "macos"))]
 pub(crate) fn delete_project_folder(name: &str) -> io::Result<()> {
-    fs::remove_dir(project_dir().join(name))
+    fs::remove_dir(resolve_dir(Some(name)))
 }
 
 /// Refuses `name` for a project folder when it is the clips folder's, which
