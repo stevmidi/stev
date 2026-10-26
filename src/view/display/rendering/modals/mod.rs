@@ -125,6 +125,6 @@ impl Display {
 
     /// The modal outline and divider stroke — the output menu's too.
     pub(super) fn modal_outline() -> Stroke {
-        Stroke::new(1.0_f32, theme::separator())
+        control_edge(false)
     }
 }

@@ -39,6 +39,8 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ### Changed
 
+- The Keyboard tab's search field drops its accent edge while the list has the
+  keyboard, so the edge always marks where typing goes.
 - Save As now has a "Save in" dropdown to choose the folder the project goes
   in. It starts at the folder selected in the browser (or the one holding the
   selected project) while the browser is shown, else the open project's folder.

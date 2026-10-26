@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 
 use egui::{
     Align2, CentralPanel, Color32, CornerRadius, CursorGrab, CursorIcon, FontId, Frame, Painter,
-    Rect, Stroke, ViewportCommand, emath::TSTransform, pos2, vec2,
+    Pos2, Rect, Stroke, ViewportCommand, emath::TSTransform, pos2, vec2,
 };
 
 use super::state::scrolled_offset;
@@ -80,6 +80,26 @@ const FOCUS_EDGE_W: f32 = 2.0;
 /// and the rename field's outline.
 pub(super) fn focus_edge_stroke() -> Stroke {
     Stroke::new(FOCUS_EDGE_W, theme::accent().gamma_multiply(0.7))
+}
+
+/// A control's edge in a modal — a text field, Save As's dropdown and `+`:
+/// the focus edge while it has the keyboard, else the modal outline
+/// (`Display::modal_outline`).
+pub(super) fn control_edge(focused: bool) -> Stroke {
+    if focused {
+        focus_edge_stroke()
+    } else {
+        Stroke::new(1.0, theme::separator())
+    }
+}
+
+/// A `+` of two `half`-long strokes about `centre` — the browser's and Save
+/// As's new-folder buttons — on whole points, so the lines land on whole
+/// pixels on Retina.
+pub(super) fn draw_plus(painter: &Painter, centre: Pos2, half: f32, stroke: Stroke) {
+    let c = centre.round();
+    painter.line_segment([c - vec2(half, 0.0), c + vec2(half, 0.0)], stroke);
+    painter.line_segment([c - vec2(0.0, half), c + vec2(0.0, half)], stroke);
 }
 
 /// Vertical geometry of the arranger's reserved performance-lane row and

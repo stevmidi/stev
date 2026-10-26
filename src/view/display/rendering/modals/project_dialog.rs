@@ -9,10 +9,7 @@ use egui::{
 };
 
 use crate::core::config::PROJECT_NAME_MAX_CHARS;
-use crate::core::project::{
-    ProjectAction, file_stem, project_exists, project_folder_name_from_input,
-    project_name_from_input,
-};
+use crate::core::project::{ProjectAction, file_stem, project_exists, project_name_from_input};
 use crate::view::display::project_dialog::{
     ProjectDialog, SaveAs, SaveAsFocus, SaveAsHit, UnsavedButton, list_window,
 };
@@ -239,47 +236,22 @@ impl Display {
             FieldStyle::new(FontId::proportional(Self::FONT_LIST), MODAL_MARGIN)
                 .max_chars(PROJECT_NAME_MAX_CHARS)
         };
-        let name_id = Id::new("project-save-as");
-        let folder_id = Id::new("project-save-as-folder");
         let typing_folder = save_as.folder_field.is_some();
-        let focused = match save_as.focus {
-            SaveAsFocus::Name => Some(name_id),
-            SaveAsFocus::Folder => Some(folder_id),
-            SaveAsFocus::Dropdown | SaveAsFocus::NewFolder => None,
-        };
-        ui.memory_mut(|memory| {
-            for id in [name_id, folder_id] {
-                if Some(id) != focused {
-                    memory.surrender_focus(id);
-                }
-            }
-        });
-        // A field without the keyboard is edged as the dropdown is at rest.
-        let edged = |id: Id, style: FieldStyle<'static>| {
-            if Some(id) == focused {
-                style
-            } else {
-                style.edge(Stroke::new(1.0, Self::modal_outline().color))
-            }
-        };
-        let mut responses =
-            vec![
-                save_as
-                    .field
-                    .show(ui, name_id, field_rect, edged(name_id, style())),
-            ];
+        save_as.field.show(
+            ui,
+            Id::new("project-save-as"),
+            field_rect,
+            style(),
+            save_as.focus == SaveAsFocus::Name,
+        );
         if let Some(folder_field) = &mut save_as.folder_field {
-            responses.push(folder_field.show(
+            folder_field.show(
                 ui,
-                folder_id,
+                Id::new("project-save-as-folder"),
                 layout.folder_box,
-                edged(folder_id, style().hint("New folder")),
-            ));
-        }
-        if let Some(response) = responses.iter().find(|r| Some(r.id) == focused)
-            && !response.has_focus()
-        {
-            response.request_focus();
+                style().hint("New folder"),
+                save_as.focus == SaveAsFocus::Folder,
+            );
         }
         let hover = ui.input(|i| i.pointer.hover_pos());
 
@@ -288,13 +260,10 @@ impl Display {
             project.project_current_folder.as_deref() == folder
                 && project.project_current_name.as_deref() == Some(name)
         };
-        let folder_refused = save_as.folder_field.as_ref().is_some_and(|field| {
-            !field.text.trim().is_empty() && project_folder_name_from_input(&field.text).is_none()
-        });
         // While a folder is being typed, `folder` is the one before it: no
         // project there to replace.
         let note = match project_name_from_input(&save_as.field.text) {
-            _ if folder_refused => "Not a valid folder name".to_owned(),
+            _ if save_as.folder_refused() => "Not a valid folder name".to_owned(),
             None => "Not a valid file name".to_owned(),
             Some(name)
                 if !typing_folder && !is_open_project(&name) && project_exists(folder, &name) =>
@@ -322,14 +291,7 @@ impl Display {
         if !typing_folder {
             Self::draw_folder_dropdown(painter, layout.folder_box, save_as, hover);
         }
-        let plus_focused = save_as.focus == SaveAsFocus::NewFolder;
-        Self::draw_save_as_plus(
-            painter,
-            layout.new_folder,
-            !typing_folder,
-            plus_focused,
-            hover,
-        );
+        Self::draw_save_as_plus(painter, layout.new_folder, save_as, hover);
         let keys = match save_as.focus {
             SaveAsFocus::Folder => "Enter choose · Esc back",
             SaveAsFocus::Dropdown if save_as.list_highlight().is_some() => {
@@ -348,25 +310,13 @@ impl Display {
         );
     }
 
-    /// The `+` beside the dropdown, framed like its box: `fg_dim`, and `fg`
-    /// on a hover wash under `hover` — dim and inert while the new folder's
-    /// field is open (`!live`). With the keyboard (`focused`) it wears the
-    /// text fields' focus edge and an accent `+`.
-    fn draw_save_as_plus(
-        painter: &Painter,
-        button: Rect,
-        live: bool,
-        focused: bool,
-        hover: Option<Pos2>,
-    ) {
-        let radius = CornerRadius::same(3);
-        painter.rect_filled(button, radius, theme::bg());
-        let edge = if focused {
-            focus_edge_stroke()
-        } else {
-            Stroke::new(1.0, Self::modal_outline().color)
-        };
-        painter.rect_stroke(button, radius, edge, StrokeKind::Inside);
+    /// The `+` beside the dropdown, framed like its box: `fg_dim`, `fg` on
+    /// a hover wash under `hover`, accent with the keyboard — dim and inert
+    /// while the new folder's field is open.
+    fn draw_save_as_plus(painter: &Painter, button: Rect, save_as: &SaveAs, hover: Option<Pos2>) {
+        let live = save_as.folder_field.is_none();
+        let focused = save_as.focus == SaveAsFocus::NewFolder;
+        Self::draw_control_box(painter, button, focused);
         let hovered = live && hover.is_some_and(|p| button.contains(p));
         if hovered {
             draw_hover_wash(painter, button.shrink(1.0));
@@ -380,12 +330,20 @@ impl Display {
         } else {
             theme::fg_dim().gamma_multiply(0.4)
         };
-        let stroke = Stroke::new(1.5, color);
-        // Whole points, so the lines land on whole pixels on Retina.
-        let c = button.center().round();
-        let h = Self::DIALOG_PLUS_HALF;
-        painter.line_segment([c - vec2(h, 0.0), c + vec2(h, 0.0)], stroke);
-        painter.line_segment([c - vec2(0.0, h), c + vec2(0.0, h)], stroke);
+        draw_plus(
+            painter,
+            button.center(),
+            Self::DIALOG_PLUS_HALF,
+            Stroke::new(1.5, color),
+        );
+    }
+
+    /// A Save As control's box — the dropdown's, the `+`'s: a `bg` fill in
+    /// [`control_edge`].
+    fn draw_control_box(painter: &Painter, rect: Rect, focused: bool) {
+        let radius = CornerRadius::same(3);
+        painter.rect_filled(rect, radius, theme::bg());
+        painter.rect_stroke(rect, radius, control_edge(focused), StrokeKind::Inside);
     }
 
     /// The folder dropdown: the box with the chosen folder and a triangle —
@@ -400,7 +358,7 @@ impl Display {
     ) {
         let font = FontId::proportional(Self::FONT_LIST);
         let radius = CornerRadius::same(3);
-        let outline = Stroke::new(1.0, Self::modal_outline().color);
+        let outline = Self::modal_outline();
         let label = |text: &str, color: Color32| {
             LayoutJob::single_section(
                 text.to_owned(),
@@ -411,13 +369,7 @@ impl Display {
                 },
             )
         };
-        painter.rect_filled(folder_box, radius, theme::bg());
-        let edge = if save_as.focus == SaveAsFocus::Dropdown {
-            focus_edge_stroke()
-        } else {
-            outline
-        };
-        painter.rect_stroke(folder_box, radius, edge, StrokeKind::Inside);
+        Self::draw_control_box(painter, folder_box, save_as.focus == SaveAsFocus::Dropdown);
         draw_truncated(
             painter,
             pos2(

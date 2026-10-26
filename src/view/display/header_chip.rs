@@ -44,5 +44,5 @@ pub(super) fn show_header_field(
         return;
     };
     let style = FieldStyle::new(font, CHIP_MARGIN).max_chars(FIELD_MAX_CHARS);
-    field.show(ui, Id::new(id), rects.value, style);
+    field.show(ui, Id::new(id), rects.value, style, true);
 }

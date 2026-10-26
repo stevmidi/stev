@@ -224,6 +224,7 @@ impl Display {
             Id::new("browser-rename"),
             rect,
             style,
+            true,
         );
     }
 }

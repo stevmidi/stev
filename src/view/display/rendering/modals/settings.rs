@@ -861,8 +861,8 @@ impl Display {
     /// canvas `ui`. It holds the egui focus while it has the tab's keyboard
     /// (`KeyboardFocus::Search`), so typing lands in it; while the list has
     /// it, or a row records a shortcut, the focus is given up before the
-    /// field is shown, so this frame's keys never reach it and it shows no
-    /// caret. A change to its text puts the selection and the list back at
+    /// field is shown, so this frame's keys never reach it, and it shows no
+    /// caret or focus edge (`TextField::show`). A change to its text puts the selection and the list back at
     /// the top.
     pub(in crate::view::display) fn show_keyboard_search(&mut self, ui: &mut Ui) {
         if !self.keyboard_tab_showing() {
@@ -872,15 +872,9 @@ impl Display {
         let keys = &mut self.settings.keys;
         let id = Id::new("keyboard-search");
         let focused = keys.focus == KeyboardFocus::Search && keys.recording.is_none();
-        if !focused {
-            ui.memory_mut(|memory| memory.surrender_focus(id));
-        }
         let style =
             FieldStyle::new(FontId::proportional(Self::FONT_LIST), MODAL_MARGIN).hint("Search");
-        let response = keys.search.show(ui, id, rect, style);
-        if focused && !response.has_focus() {
-            response.request_focus();
-        }
+        let response = keys.search.show(ui, id, rect, style, focused);
         if response.changed() {
             keys.reset_list();
         }

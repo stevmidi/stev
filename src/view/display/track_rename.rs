@@ -147,6 +147,8 @@ impl Display {
         let style = FieldStyle::new(FontId::proportional(TRACK_NAME_FONT_SIZE), ROW_MARGIN)
             .hint(&hint)
             .max_chars(TRACK_NAME_MAX_CHARS);
-        rename.field.show(ui, Id::new("track-rename"), rect, style);
+        rename
+            .field
+            .show(ui, Id::new("track-rename"), rect, style, true);
     }
 }

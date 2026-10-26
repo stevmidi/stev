@@ -513,12 +513,12 @@ impl Display {
             draw_toggle_wash(painter, button.center());
         }
         let color = toggle_icon_color(false, hover);
-        let stroke = Stroke::new(ICON_STROKE, color);
-        // Whole points, so the lines land on whole pixels on Retina.
-        let c = button.center().round();
-        let h = NEW_FOLDER_PLUS_HALF;
-        painter.line_segment([c - vec2(h, 0.0), c + vec2(h, 0.0)], stroke);
-        painter.line_segment([c - vec2(0.0, h), c + vec2(0.0, h)], stroke);
+        draw_plus(
+            painter,
+            button.center(),
+            NEW_FOLDER_PLUS_HALF,
+            Stroke::new(ICON_STROKE, color),
+        );
     }
 }
 

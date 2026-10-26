@@ -11,14 +11,14 @@
 
 use egui::text_selection::CCursorRange;
 use egui::{
-    Align, FontId, Frame, Id, Key, Margin, Rect, Response, RichText, Stroke, TextEdit, Ui,
-    UiBuilder, pos2, vec2,
+    Align, FontId, Frame, Id, Key, Margin, Rect, Response, RichText, TextEdit, Ui, UiBuilder, pos2,
+    vec2,
 };
 
 use crate::core::input_event::InputEvent;
 use crate::view::theme;
 
-use super::rendering::focus_edge_stroke;
+use super::rendering::control_edge;
 
 /// The inset of a field laid over a list row: a track's name, a browser row.
 pub(super) const ROW_MARGIN: Margin = Margin::symmetric(3, 0);
@@ -78,9 +78,6 @@ pub(super) struct FieldStyle<'a> {
     hint: Option<&'a str>,
     /// The longest text it takes, in characters.
     max_chars: usize,
-    /// Its edge: the focus edge (`focus_edge_stroke`) unless given one — a
-    /// field on screen without the keyboard (Save As's) drops the focus edge.
-    edge: Option<Stroke>,
 }
 
 impl<'a> FieldStyle<'a> {
@@ -92,7 +89,6 @@ impl<'a> FieldStyle<'a> {
             margin,
             hint: None,
             max_chars: usize::MAX,
-            edge: None,
         }
     }
 
@@ -108,15 +104,6 @@ impl<'a> FieldStyle<'a> {
     pub(super) fn max_chars(self, max_chars: usize) -> Self {
         FieldStyle { max_chars, ..self }
     }
-
-    /// Edged with `edge` instead of the focus edge: for a field shown while
-    /// something else has the keyboard.
-    pub(super) fn edge(self, edge: Stroke) -> Self {
-        FieldStyle {
-            edge: Some(edge),
-            ..self
-        }
-    }
 }
 
 impl TextField {
@@ -126,18 +113,26 @@ impl TextField {
     }
 
     /// Shows the field as every text field in the app looks — `fg` text on
-    /// a `bg` fill in the focus-edge stroke (or `style`'s edge), in `style` —
-    /// filling `rect` of
-    /// the canvas `ui`, its line centred vertically. Its first frame takes
-    /// the egui focus and selects the whole text. Returns the field's
-    /// response, for a caller that watches it change.
+    /// a `bg` fill, in `style` — filling `rect` of the canvas `ui`, its line
+    /// centred vertically. Its first frame selects the whole text.
+    /// `has_keyboard` says whether typing goes to it (an inline field: always;
+    /// one beside other stops — Save As's, the Keyboard tab's search — by
+    /// turns): with it, the field holds the egui focus and wears the focus
+    /// edge; without, it gives the focus up before it is shown, so this
+    /// frame's keys never reach it, and wears the plain edge
+    /// ([`control_edge`]). Returns the field's response, for a caller that
+    /// watches it change.
     pub(super) fn show(
         &mut self,
         ui: &mut Ui,
         id: Id,
         rect: Rect,
         style: FieldStyle<'_>,
+        has_keyboard: bool,
     ) -> Response {
+        if !has_keyboard {
+            ui.memory_mut(|memory| memory.surrender_focus(id));
+        }
         let field = TextEdit::singleline(&mut self.text).char_limit(style.max_chars);
         // The hint in the field's font: egui draws a hint in its default font
         // otherwise, and places the empty field's caret against it.
@@ -154,7 +149,7 @@ impl TextField {
             .frame(
                 Frame::NONE
                     .fill(theme::bg())
-                    .stroke(style.edge.unwrap_or_else(focus_edge_stroke))
+                    .stroke(control_edge(has_keyboard))
                     .corner_radius(2)
                     .inner_margin(style.margin),
             )
@@ -175,9 +170,12 @@ impl TextField {
                 .cursor
                 .set_char_range(Some(CCursorRange::select_all(&output.galley)));
             output.state.store(ui.ctx(), id);
-            output.response.request_focus();
         }
-        output.response.response
+        let response = output.response.response;
+        if has_keyboard && !response.has_focus() {
+            response.request_focus();
+        }
+        response
     }
 }
 
