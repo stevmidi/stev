@@ -27,6 +27,10 @@ Breaking entries are marked **Breaking** and say what to do about them.
   selected project) while the browser is shown, else the open project's folder.
   Enter on a browser folder now only expands or collapses it; it no longer
   silently changes where new projects are saved.
+- The browser's selected row is now plainly visible: a stronger accent fill
+  while the browser has the keyboard, a grey fill otherwise. The open project
+  is marked with a dot before its icon instead of a bar at the panel's edge,
+  which looked like the selection; its folder is no longer marked.
 
 ## [0.6.0] - 2026-10-25
 

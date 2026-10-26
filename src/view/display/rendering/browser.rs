@@ -13,8 +13,11 @@ use super::*;
 
 /// Right inset of a plugin row's format label.
 const FORMAT_RIGHT_X: f32 = 10.0;
-/// Width of the current-folder / open-project marker bar.
-const MARKER_W: f32 = 3.0;
+/// Radius of the dot before the open project's icon. A dot, not a bar at the
+/// panel's edge: an edge bar reads as the selection.
+const OPEN_DOT_R: f32 = 3.0;
+/// Gap between the open dot and the icon it sits before.
+const OPEN_DOT_GAP: f32 = 4.0;
 /// Half the size of a folder's disclosure triangle.
 const DISCLOSURE_HALF: f32 = 4.0;
 
@@ -28,9 +31,16 @@ const TOGGLE_DIVIDER_AT: f32 = 0.4;
 /// Side of the rounded square washed behind the icon under the pointer.
 const TOGGLE_WASH_SIZE: f32 = 22.0;
 
-/// Opacity of the `fg` wash behind the row under the pointer: fainter than
-/// the unfocused selection's accent wash, so it never reads as one.
+/// Opacity of the `fg` wash behind the row under the pointer: well below the
+/// unfocused selection's, so it never reads as one.
 const HOVER_WASH_ALPHA: f32 = 0.04;
+/// Opacity of the `accent` fill behind the selected row while the panel has
+/// the keyboard.
+const SELECTED_FOCUSED_ALPHA: f32 = 0.30;
+/// Opacity of the neutral `fg` fill behind the selected row while the panel
+/// doesn't have the keyboard: grey like Finder's inactive selection, but plain
+/// to see.
+const SELECTED_UNFOCUSED_ALPHA: f32 = 0.12;
 
 /// Side of the square a row's icon is drawn in.
 const ICON_SIZE: f32 = 14.0;
@@ -237,6 +247,13 @@ fn round_corners(corners: &[(Pos2, f32)], closed: bool) -> Vec<Pos2> {
     path
 }
 
+/// Where the open dot's centre sits, from the row's left edge, on a project
+/// row at `depth`: just before its icon, in the disclosure triangle's empty
+/// zone, so it indents with the row.
+fn open_dot_x(depth: u8) -> f32 {
+    browser_icon_x(depth) - OPEN_DOT_GAP - OPEN_DOT_R
+}
+
 /// A folder's disclosure triangle centred on `centre`: pointing right when
 /// collapsed, down when expanded (Finder, Ableton). Painted rather than a
 /// `▸`/`▾` glyph, which the UI font doesn't have.
@@ -368,12 +385,12 @@ impl Display {
             let indent = f32::from(row.depth) * BROWSER_INDENT_X;
             let is_selected = selected == Some(&row.item);
             if is_selected {
-                let alpha = if focused { 0.18 } else { 0.08 };
-                painter.rect_filled(
-                    row_rect,
-                    CornerRadius::ZERO,
-                    theme::accent().gamma_multiply(alpha),
-                );
+                let fill = if focused {
+                    theme::accent().gamma_multiply(SELECTED_FOCUSED_ALPHA)
+                } else {
+                    theme::fg().gamma_multiply(SELECTED_UNFOCUSED_ALPHA)
+                };
+                painter.rect_filled(row_rect, CornerRadius::ZERO, fill);
             } else if hovered == Some(i) {
                 // Neutral, as the panel toggle's hover: accent means the
                 // keyboard.
@@ -397,11 +414,10 @@ impl Display {
                 ));
             }
 
-            // The current folder and the open project get the region-coloured
-            // marker, icon and text.
-            let (label, is_current) = match &row.item {
+            // The open project gets a dot before its icon.
+            let (label, is_open) = match &row.item {
                 BrowserItem::Category(category) => (category.label().to_owned(), false),
-                BrowserItem::Folder(name) => (name.clone(), current_folder == Some(name.as_str())),
+                BrowserItem::Folder(name) => (name.clone(), false),
                 BrowserItem::Project { folder, name } => (
                     name.clone(),
                     folder.as_deref() == current_folder && Some(name.as_str()) == current_name,
@@ -427,24 +443,18 @@ impl Display {
                     mid_y - ICON_SIZE * 0.5,
                 )
                 .round();
-                let color = if is_current { theme::region() } else { mark };
-                painter.extend(icon.shapes(origin, color));
+                painter.extend(icon.shapes(origin, mark));
             }
-            if is_current {
-                painter.rect_filled(
-                    Rect::from_min_max(
-                        pos2(row_rect.min.x + 2.0, top + 3.0),
-                        pos2(row_rect.min.x + 2.0 + MARKER_W, top + BROWSER_ROW_H - 3.0),
-                    ),
-                    CornerRadius::ZERO,
+            if is_open {
+                painter.circle_filled(
+                    pos2(row_rect.min.x + open_dot_x(row.depth), mid_y),
+                    OPEN_DOT_R,
                     theme::region(),
                 );
             }
 
             let (text, color) = if is_selected && tree.delete_armed {
                 (format!("Delete {label}?  Enter / Esc"), theme::track_mute())
-            } else if is_current {
-                (label, theme::region())
             } else if matches!(
                 row.item,
                 BrowserItem::Clip(_) | BrowserItem::Scanning | BrowserItem::Category(_)
@@ -469,6 +479,15 @@ impl Display {
 mod tests {
     use super::super::super::browser::BrowserCategory;
     use super::*;
+
+    #[test]
+    fn open_dot_sits_before_the_icon_and_indents_with_the_row() {
+        assert_eq!(open_dot_x(2) + OPEN_DOT_R + OPEN_DOT_GAP, browser_icon_x(2));
+        assert_eq!(open_dot_x(2) - open_dot_x(1), BROWSER_INDENT_X);
+        // Inside the row's own (empty) triangle zone, never over the parent
+        // folder's column; the shallowest project is depth 1.
+        assert!(open_dot_x(1) - OPEN_DOT_R >= BROWSER_INDENT_X);
+    }
 
     #[test]
     fn disclosure_triangle_points_right_when_collapsed_and_down_when_expanded() {
