@@ -20,6 +20,8 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-10-27
+
 ### Changed
 
 - The unsaved-changes prompt is shorter: it asks "Save the changes to
