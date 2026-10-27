@@ -1372,13 +1372,21 @@ impl eframe::App for Display {
         } else if self.gesture.key_zoom_hover {
             ctx.set_cursor_icon(CursorIcon::ZoomIn);
         }
-        // A modal overlay swallows the pointer, so hovers under it are
-        // stale: it decides the pointer alone.
+        // A modal swallows the pointer, so hovers under it are stale: it
+        // decides the pointer alone (Save As's fields set egui's text
+        // cursor after this).
         match self.overlay {
             Some(Overlay::Settings) if self.is_pointer_on_settings_item() => {
                 ctx.set_cursor_icon(CursorIcon::PointingHand);
             }
             Some(_) => ctx.set_cursor_icon(CursorIcon::Default),
+            None if self.project_dialog.is_some() => {
+                ctx.set_cursor_icon(if self.is_pointer_on_project_dialog_item() {
+                    CursorIcon::PointingHand
+                } else {
+                    CursorIcon::Default
+                });
+            }
             None => {}
         }
         self.sync_pointer_grab(ctx);

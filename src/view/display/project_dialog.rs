@@ -47,7 +47,8 @@ use crate::view::appkit::take_open_document;
 use super::Display;
 #[cfg(target_os = "macos")]
 use super::Overlay;
-use super::browser::BrowserItem;
+use super::browser::{BrowserItem, scroll_to_show};
+use super::settings_modal::{scroll_by, window_start};
 use super::text_field::{FieldEvent, TextField, field_key};
 
 /// What Save As starts with for a project that has never been saved.
@@ -81,6 +82,11 @@ pub(super) struct SaveAs {
     /// The folder dropdown's highlighted row while its list is open, `None`
     /// while it is closed.
     list: Option<usize>,
+    /// The open list's first shown row: it follows the highlight, and a
+    /// wheel or two-finger scroll moves it on its own.
+    list_scroll: usize,
+    /// Scroll travel not yet a whole row, carried to the next scroll.
+    list_wheel: f32,
     /// The new folder's name field over the dropdown's box, while it is
     /// open.
     pub(super) folder_field: Option<TextField>,
@@ -129,11 +135,6 @@ impl SaveAs {
         self.folders[self.folder_idx].as_deref()
     }
 
-    /// How many folders the dropdown offers.
-    pub(super) fn folder_count(&self) -> usize {
-        self.folders.len()
-    }
-
     /// The dropdown's `idx`th entry as shown.
     pub(super) fn folder_label(&self, idx: usize) -> &str {
         self.folders[idx].as_deref().unwrap_or(ROOT_LABEL)
@@ -149,13 +150,35 @@ impl SaveAs {
         self.list
     }
 
+    /// The rows the open list shows: at most [`LIST_MAX_ROWS`], from its
+    /// scroll.
+    pub(super) fn list_window(&self) -> Range<usize> {
+        let len = self.folders.len();
+        let start = window_start(self.list_scroll, len, LIST_MAX_ROWS);
+        start..(start + LIST_MAX_ROWS).min(len)
+    }
+
+    /// Highlights `row` of the list, opening it, and scrolls it into view.
+    fn highlight(&mut self, row: usize) {
+        self.list = Some(row);
+        self.list_scroll = scroll_to_show(self.list_scroll, row, LIST_MAX_ROWS);
+    }
+
     /// A press on the dropdown's box: opens the list on the chosen folder,
     /// or closes it.
     fn toggle_list(&mut self) {
-        self.list = match self.list {
-            Some(_) => None,
-            None => Some(self.folder_idx),
-        };
+        match self.list {
+            Some(_) => self.list = None,
+            None => self.open_list(),
+        }
+    }
+
+    /// Opens the list on the chosen folder — at the window's foot when it
+    /// is past the first [`LIST_MAX_ROWS`].
+    fn open_list(&mut self) {
+        self.list_scroll = 0;
+        self.list_wheel = 0.0;
+        self.highlight(self.folder_idx);
     }
 
     /// ↑/↓: opens a closed list on the chosen folder; on an open one moves
@@ -166,10 +189,29 @@ impl SaveAs {
             return;
         }
         let last = self.folders.len() as isize - 1;
-        self.list = Some(match self.list {
-            Some(row) => (row as isize + step).clamp(0, last) as usize,
-            None => self.folder_idx,
-        });
+        match self.list {
+            Some(row) => self.highlight((row as isize + step).clamp(0, last) as usize),
+            None => self.open_list(),
+        }
+    }
+
+    /// A wheel or two-finger scroll of `delta_y` points over the open list,
+    /// `row_h` points a row: scrolls it a row per row height of travel,
+    /// content following the fingers, leaving the highlight where it is.
+    /// Nothing while the list is closed.
+    fn scroll_list(&mut self, delta_y: f32, row_h: f32) {
+        if self.list.is_none() {
+            return;
+        }
+        self.list_wheel += delta_y;
+        let rows = (self.list_wheel / row_h).trunc();
+        self.list_wheel -= rows * row_h;
+        self.list_scroll = scroll_by(
+            self.list_scroll,
+            -(rows as isize),
+            self.folders.len(),
+            LIST_MAX_ROWS,
+        );
     }
 
     /// Chooses the dropdown's `idx`th folder and closes the list.
@@ -354,13 +396,6 @@ const ROOT_LABEL: &str = "Projects";
 /// Most rows the open dropdown list shows at once.
 pub(super) const LIST_MAX_ROWS: usize = 8;
 
-/// The rows of a `len`-row list shown while `highlight` is highlighted: at
-/// most [`LIST_MAX_ROWS`], the window sliding to keep the highlight in view.
-pub(super) fn list_window(highlight: usize, len: usize) -> Range<usize> {
-    let start = (highlight + 1).saturating_sub(LIST_MAX_ROWS);
-    start..(start + LIST_MAX_ROWS).min(len)
-}
-
 /// Where Save As starts saving: the folder the browser has selected — the
 /// folder itself, or the one holding the selected project — while the panel
 /// is shown (`selected` is `None` otherwise); anything else selected, or
@@ -409,6 +444,9 @@ enum DialogKey {
     /// Save As: a press at this canvas point, on the folder dropdown or
     /// away from it.
     Click(Pos2),
+    /// Save As: a wheel or two-finger scroll of this many points — the open
+    /// folder list scrolls.
+    Scroll(f32),
     /// Save As: save under the typed name. The prompt: save, then go on.
     Confirm,
     /// The prompt: go on without saving.
@@ -594,6 +632,8 @@ impl Display {
             folders,
             folder_idx,
             list: None,
+            list_scroll: 0,
+            list_wheel: 0.0,
             folder_field: None,
             focus: SaveAsFocus::Name,
             then,
@@ -653,8 +693,10 @@ impl Display {
 
     /// While a project dialog is open it gets first look at every event: it
     /// takes every key and the clipboard chords (Save As's text field reads
-    /// them on its own), and every press — on a prompt button, that button's
-    /// work. Returns whether the event was consumed.
+    /// them on its own), every press — on a prompt button, that button's
+    /// work — and the rest of the pointer: moves, releases, the wheel (Save
+    /// As's open folder list scrolls) and file drags, so the view under it
+    /// never reacts. Returns whether the event was consumed.
     pub(super) fn handle_project_dialog_input_event(&mut self, event: &InputEvent) -> bool {
         let Some(dialog) = &self.project_dialog else {
             return false;
@@ -678,11 +720,24 @@ impl Display {
             (&InputEvent::MouseClicked { x, y, .. }, ProjectDialog::SaveAs(_)) => {
                 DialogKey::Click(pos2(x, y))
             }
+            (&InputEvent::TimelineScroll { delta_y, .. }, ProjectDialog::SaveAs(_)) => {
+                DialogKey::Scroll(delta_y)
+            }
+            // The pointer is the dialog's alone, as the keyboard is: nothing
+            // under it hovers, drags or scrolls.
             (
                 InputEvent::Copy { .. }
                 | InputEvent::Cut { .. }
                 | InputEvent::Paste
-                | InputEvent::MouseDoubleClicked { .. },
+                | InputEvent::MouseDoubleClicked { .. }
+                | InputEvent::MouseMoved { .. }
+                | InputEvent::PointerMotion { .. }
+                | InputEvent::MouseReleased
+                | InputEvent::TimelineScroll { .. }
+                | InputEvent::TimelineZoom { .. }
+                | InputEvent::FileDragEntered { .. }
+                | InputEvent::FileDragLeft
+                | InputEvent::FileDropped { .. },
                 _,
             ) => DialogKey::Swallow,
             _ => return false,
@@ -711,6 +766,11 @@ impl Display {
                 let hit = self.save_as_hit_at(pos);
                 if let Some(save_as) = self.save_as_mut() {
                     save_as.click(hit);
+                }
+            }
+            DialogKey::Scroll(delta_y) => {
+                if let Some(save_as) = self.save_as_mut() {
+                    save_as.scroll_list(delta_y, Self::DIALOG_LIST_ROW_H);
                 }
             }
             DialogKey::Select(button) => {
@@ -774,7 +834,7 @@ mod tests {
 
     use super::{
         DialogKey, LIST_MAX_ROWS, SaveAs, SaveAsFocus, SaveAsHit, UnsavedButton, field_key,
-        list_window, save_as_key, save_folder_default, unsaved_key,
+        save_as_key, save_folder_default, unsaved_key,
     };
 
     /// A Save As over the root and folders `a`, `b`, `c`, starting at `idx`.
@@ -784,10 +844,19 @@ mod tests {
             folders: vec![None, Some("a".into()), Some("b".into()), Some("c".into())],
             folder_idx: idx,
             list: None,
+            list_scroll: 0,
+            list_wheel: 0.0,
             folder_field: None,
             focus: SaveAsFocus::Name,
             then: None,
         }
+    }
+
+    /// A Save As over the root and `len - 1` folders, starting at `idx`.
+    fn save_as_over(len: usize, idx: usize) -> SaveAs {
+        let mut save_as = save_as(idx);
+        save_as.folders = (0..len).map(|i| (i > 0).then(|| format!("f{i}"))).collect();
+        save_as
     }
 
     /// `save_as` with `text` typed in its new folder's field.
@@ -805,12 +874,12 @@ mod tests {
         let mut new = typed_folder(save_as(0), "  Album ");
         assert!(new.enter());
         assert_eq!(new.folder(), Some("Album"));
-        assert_eq!(new.folder_count(), 5);
+        assert_eq!(new.folders.len(), 5);
         assert!(new.folder_field.is_none());
 
         let mut listed = typed_folder(save_as(0), "B");
         assert!(listed.enter());
-        assert_eq!((listed.folder(), listed.folder_count()), (Some("b"), 4));
+        assert_eq!((listed.folder(), listed.folders.len()), (Some("b"), 4));
     }
 
     /// A blank name closes the field choosing nothing; a name that isn't a
@@ -820,7 +889,7 @@ mod tests {
     fn a_blank_or_refused_folder_name_chooses_nothing() {
         let mut blank = typed_folder(save_as(2), "  ");
         assert!(blank.enter());
-        assert_eq!((blank.folder(), blank.folder_count()), (Some("b"), 4));
+        assert_eq!((blank.folder(), blank.folders.len()), (Some("b"), 4));
         assert!(blank.folder_field.is_none());
 
         for refused in ["a/b", "Clips", ".hidden"] {
@@ -832,7 +901,7 @@ mod tests {
 
         let mut escaped = typed_folder(save_as(2), "Album");
         assert!(escaped.escape());
-        assert_eq!((escaped.folder(), escaped.folder_count()), (Some("b"), 4));
+        assert_eq!((escaped.folder(), escaped.folders.len()), (Some("b"), 4));
         assert!(!escaped.escape());
     }
 
@@ -972,12 +1041,50 @@ mod tests {
     /// A long list shows a window of rows that follows the highlight.
     #[test]
     fn the_list_window_follows_the_highlight() {
-        assert_eq!(list_window(0, 3), 0..3);
-        assert_eq!(list_window(2, 3), 0..3);
-        assert_eq!(list_window(0, 20), 0..LIST_MAX_ROWS);
-        assert_eq!(list_window(LIST_MAX_ROWS - 1, 20), 0..LIST_MAX_ROWS);
-        assert_eq!(list_window(LIST_MAX_ROWS, 20), 1..LIST_MAX_ROWS + 1);
-        assert_eq!(list_window(19, 20), 20 - LIST_MAX_ROWS..20);
+        let mut few = save_as(2);
+        few.focus = SaveAsFocus::Dropdown;
+        few.move_highlight(1);
+        assert_eq!(few.list_window(), 0..4);
+
+        let mut many = save_as_over(20, 0);
+        many.focus = SaveAsFocus::Dropdown;
+        many.move_highlight(1);
+        assert_eq!(many.list_window(), 0..LIST_MAX_ROWS);
+        many.move_highlight(LIST_MAX_ROWS as isize);
+        assert_eq!(many.list_window(), 1..LIST_MAX_ROWS + 1);
+        // Back up inside the window, it stays put.
+        many.move_highlight(-1);
+        assert_eq!(many.list_window(), 1..LIST_MAX_ROWS + 1);
+        many.move_highlight(100);
+        assert_eq!(many.list_window(), 20 - LIST_MAX_ROWS..20);
+
+        // Opening on a folder past the first window shows it at the foot.
+        let mut deep = save_as_over(20, 12);
+        deep.toggle_list();
+        assert_eq!(deep.list_window(), 12 + 1 - LIST_MAX_ROWS..13);
+    }
+
+    #[test]
+    fn a_scroll_moves_the_open_list_a_row_per_row_height() {
+        let row_h = 10.0;
+        let mut dialog = save_as_over(20, 0);
+        // A closed list doesn't scroll.
+        dialog.scroll_list(-50.0, row_h);
+        dialog.toggle_list();
+        assert_eq!(dialog.list_window(), 0..LIST_MAX_ROWS);
+        // Fingers up (a negative delta) bring later rows in; the highlight
+        // stays where it was.
+        dialog.scroll_list(-25.0, row_h);
+        assert_eq!(dialog.list_window(), 2..LIST_MAX_ROWS + 2);
+        assert_eq!(dialog.list_highlight(), Some(0));
+        // The half row left over carries to the next scroll.
+        dialog.scroll_list(-5.0, row_h);
+        assert_eq!(dialog.list_window(), 3..LIST_MAX_ROWS + 3);
+        // Clamped at both ends.
+        dialog.scroll_list(-1000.0, row_h);
+        assert_eq!(dialog.list_window(), 20 - LIST_MAX_ROWS..20);
+        dialog.scroll_list(1000.0, row_h);
+        assert_eq!(dialog.list_window(), 0..LIST_MAX_ROWS);
     }
 
     /// The selected folder, or the folder of the selected project, is where

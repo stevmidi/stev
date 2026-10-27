@@ -51,9 +51,12 @@ impl HoveredControl {
 }
 
 impl Display {
-    /// The clickable control under the pointer, if any.
+    /// The clickable control under the pointer, if any: none while a modal
+    /// has the pointer.
     pub(super) fn hovered_control(&mut self) -> Option<HoveredControl> {
-        if let Some(item) = self.hovered_output_menu_item() {
+        if self.modal_up() {
+            None
+        } else if let Some(item) = self.hovered_output_menu_item() {
             Some(HoveredControl::OutputMenu(item))
         } else if self.is_pointer_on_add_track_row() {
             Some(HoveredControl::AddTrack)
@@ -70,12 +73,8 @@ impl Display {
         }
     }
 
-    /// The hint for the control under the pointer, if it has one: none
-    /// while a modal or a project dialog has the pointer.
+    /// The hint for the control under the pointer, if it has one.
     pub(super) fn footer_hint(&mut self) -> Option<String> {
-        if self.overlay.is_some() || self.project_dialog.is_some() {
-            return None;
-        }
         self.hovered_control()?.hint(&self.keymap)
     }
 }

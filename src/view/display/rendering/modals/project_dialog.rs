@@ -13,7 +13,7 @@ use crate::core::keymap::Action;
 use crate::core::project::{ProjectAction, file_stem, project_exists, project_name_from_input};
 use crate::view::display::keyboard_tab::chords_label;
 use crate::view::display::project_dialog::{
-    ProjectDialog, SaveAs, SaveAsFocus, SaveAsHit, UnsavedButton, list_window,
+    ProjectDialog, SaveAs, SaveAsFocus, SaveAsHit, UnsavedButton,
 };
 use crate::view::display::project_state::ProjectViewState;
 use crate::view::display::text_field::{FieldStyle, MODAL_MARGIN};
@@ -60,7 +60,7 @@ impl Display {
     /// Inset of the dropdown's text from its box and rows.
     const DIALOG_BOX_PAD: f32 = 8.0 * Self::M_SCALE;
     /// Height of one entry of the dropdown's list.
-    const DIALOG_LIST_ROW_H: f32 = 26.0 * Self::M_SCALE;
+    pub(in crate::view::display) const DIALOG_LIST_ROW_H: f32 = 26.0 * Self::M_SCALE;
     /// The note line's height.
     const DIALOG_NOTE_H: f32 = 22.0 * Self::M_SCALE;
     /// A prompt button's size.
@@ -165,8 +165,8 @@ impl Display {
             return None;
         };
         let layout = Self::dialog_layout(self.render.canvas_rect, false);
-        if let Some(highlight) = save_as.list_highlight() {
-            let window = list_window(highlight, save_as.folder_count());
+        if save_as.list_highlight().is_some() {
+            let window = save_as.list_window();
             let list = Self::folder_list_rect(layout.folder_box, window.len());
             if let Some(slot) =
                 (0..window.len()).find(|&slot| Self::folder_list_row(list, slot).contains(pos))
@@ -181,6 +181,29 @@ impl Display {
         ]
         .into_iter()
         .find_map(|(rect, hit)| rect.contains(pos).then_some(hit))
+    }
+
+    /// Whether the pointer is on something in the open project dialog a
+    /// click acts on — for the pointing-hand cursor: a prompt button, Save
+    /// As's dropdown, a row of its list, its `+`. Not a text field, which
+    /// keeps egui's text cursor, nor the `+` while the new folder's field
+    /// leaves it inert.
+    pub(in crate::view::display) fn is_pointer_on_project_dialog_item(&self) -> bool {
+        let Some(pointer) = self.canvas_pointer() else {
+            return false;
+        };
+        match &self.project_dialog {
+            Some(ProjectDialog::SaveAs(save_as)) => {
+                let typing_folder = save_as.folder_field.is_some();
+                match self.save_as_hit_at(pointer) {
+                    Some(SaveAsHit::Row(_)) => true,
+                    Some(SaveAsHit::Box | SaveAsHit::NewFolder) => !typing_folder,
+                    Some(SaveAsHit::Name) | None => false,
+                }
+            }
+            Some(ProjectDialog::Unsaved { .. }) => self.unsaved_button_at(pointer).is_some(),
+            None => false,
+        }
     }
 
     /// The unsaved-changes prompt's button under canvas point `pos`, if any.
@@ -409,7 +432,7 @@ impl Display {
         let Some(highlight) = save_as.list_highlight() else {
             return;
         };
-        let window = list_window(highlight, save_as.folder_count());
+        let window = save_as.list_window();
         let list = Self::folder_list_rect(folder_box, window.len());
         painter.rect_filled(list, radius, theme::bg_panel());
         painter.rect_stroke(list, radius, outline, StrokeKind::Outside);

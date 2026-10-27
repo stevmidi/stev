@@ -32,6 +32,10 @@ Breaking entries are marked **Breaking** and say what to do about them.
   ⌘S.
 - A Save As that fails no longer names the project: the next ⌘S opens Save
   As again instead of saving quietly under the name that failed.
+- Save As and the unsaved-changes prompt keep the mouse to themselves, as
+  Settings does: moving, scrolling or dragging over them no longer reaches
+  the arranger or clip view underneath.
+- Save As's folder list scrolls with the trackpad or mouse wheel.
 
 ### Removed
 

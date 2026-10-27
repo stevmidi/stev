@@ -471,6 +471,13 @@ impl Display {
             || self.overlay.is_some()
     }
 
+    /// Whether a modal — an overlay or a project dialog — is up. It takes
+    /// the pointer as well as the keyboard, so nothing under it shows a
+    /// hover.
+    pub(super) fn modal_up(&self) -> bool {
+        self.overlay.is_some() || self.project_dialog.is_some()
+    }
+
     /// The track-header column's keys while it has the keyboard: plain
     /// Delete/Backspace removes the selected track (`RemoveTrack`), Esc gives
     /// the keyboard back to the lanes. Shift+Tab gives it back too and still
