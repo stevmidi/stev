@@ -117,6 +117,17 @@ pub(super) fn settings_tab_step(key: Key, modifiers: KeyModifiers) -> Option<isi
     }
 }
 
+/// Whole rows a wheel or two-finger scroll of `delta_y` points moves a list
+/// of `row_h`-point rows, down when positive: content follows the fingers,
+/// so a positive delta (scrolling up) brings earlier rows into view. The
+/// travel short of a row stays in `carry` for the next scroll.
+pub(super) fn wheel_rows(carry: &mut f32, delta_y: f32, row_h: f32) -> isize {
+    *carry += delta_y;
+    let rows = (*carry / row_h).trunc();
+    *carry -= rows * row_h;
+    -(rows as isize)
+}
+
 /// `scroll` moved by `rows` (down when positive), kept inside a `len`-row
 /// list shown `visible` rows at a time.
 pub(super) fn scroll_by(scroll: usize, rows: isize, len: usize, visible: usize) -> usize {
@@ -305,16 +316,10 @@ impl Display {
         if matches!(self.settings.tab, SettingsTab::Midi | SettingsTab::About) {
             return;
         }
-        let row_h = Self::SETTINGS_ROW_H;
-        self.settings.wheel += delta_y;
-        let rows = (self.settings.wheel / row_h).trunc();
-        if rows == 0.0 {
+        let rows = wheel_rows(&mut self.settings.wheel, delta_y, Self::SETTINGS_ROW_H);
+        if rows == 0 {
             return;
         }
-        self.settings.wheel -= rows * row_h;
-        // Content follows the fingers: a positive delta (scrolling up)
-        // brings earlier rows into view.
-        let rows = -(rows as isize);
         match self.settings.tab {
             SettingsTab::Midi | SettingsTab::About => {}
             SettingsTab::Appearance => {
@@ -337,7 +342,7 @@ impl Display {
 mod tests {
     use egui::Key;
 
-    use super::{is_settings_chord, scroll_by, settings_tab_step, window_start};
+    use super::{is_settings_chord, scroll_by, settings_tab_step, wheel_rows, window_start};
     use crate::core::input_event::KeyModifiers;
 
     /// Modifier state from its four flags.
@@ -399,6 +404,16 @@ mod tests {
         assert_eq!(settings_tab_step(Key::OpenCurlyBracket, chord), Some(-1));
         let no_shift = mods(true, false, false, false);
         assert_eq!(settings_tab_step(Key::CloseBracket, no_shift), None);
+    }
+
+    #[test]
+    fn a_wheel_moves_whole_rows_against_the_delta_and_carries_the_rest() {
+        let mut carry = 0.0;
+        assert_eq!(wheel_rows(&mut carry, -25.0, 10.0), 2);
+        assert_eq!(carry, -5.0);
+        assert_eq!(wheel_rows(&mut carry, -4.0, 10.0), 0);
+        assert_eq!(wheel_rows(&mut carry, 30.0, 10.0), -2);
+        assert_eq!(carry, 1.0);
     }
 
     #[test]

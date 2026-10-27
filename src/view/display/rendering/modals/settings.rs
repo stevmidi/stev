@@ -433,7 +433,7 @@ impl Display {
     /// acts on — for the pointing-hand cursor. Not the search field, which
     /// keeps egui's text cursor.
     pub(in crate::view::display) fn is_pointer_on_settings_item(&self) -> bool {
-        self.canvas_pointer()
+        self.modal_pointer()
             .and_then(|p| self.settings_hit_at(p))
             .is_some_and(|hit| !matches!(hit, SettingsHit::Panel | SettingsHit::Search))
     }

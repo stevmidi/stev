@@ -811,13 +811,9 @@ impl Display {
     }
 
     /// Whether canvas-space `(x, y)` is on the shown panel's right edge (at
-    /// canvas x `0`), where a press drags its width. Not under a modal,
-    /// which swallows the pointer.
+    /// canvas x `0`), where a press drags its width.
     pub(super) fn is_on_browser_edge(&self, x: f32, y: f32) -> bool {
-        self.browser.visible
-            && !self.modal_up()
-            && x.abs() <= BROWSER_EDGE_GRAB_X
-            && y < self.footer_top()
+        self.browser.visible && x.abs() <= BROWSER_EDGE_GRAB_X && y < self.footer_top()
     }
 
     /// Whether the pointer is on the panel's edge or dragging it — the
@@ -859,9 +855,17 @@ impl Display {
     }
 
     /// The pointer in canvas space, as this frame's `InputPoller::poll` saw
-    /// it (the shift lives there only); `None` with no pointer over the
-    /// window.
+    /// it (the shift lives there only), for the view under any modal:
+    /// `None` with no pointer over the window, or while a modal is up and
+    /// has the pointer itself ([`modal_pointer`](Self::modal_pointer)), so
+    /// nothing under it hovers.
     pub(super) fn canvas_pointer(&self) -> Option<Pos2> {
+        self.modal_pointer().filter(|_| !self.modal_up())
+    }
+
+    /// The pointer in canvas space whether or not a modal is up — for the
+    /// modals' own hover tests.
+    pub(super) fn modal_pointer(&self) -> Option<Pos2> {
         self.input_poller.pointer_pos()
     }
 
@@ -870,22 +874,19 @@ impl Display {
         browser_toggle_rect(self.footer_rect()).contains(pos2(x, y))
     }
 
-    /// Whether the pointer is on the panel toggle with no modal up to
-    /// swallow it — its hover wash and pointing hand.
+    /// Whether the pointer is on the panel toggle — its hover wash and
+    /// pointing hand.
     pub(super) fn is_pointer_on_browser_toggle(&self) -> bool {
-        !self.modal_up()
-            && self
-                .canvas_pointer()
-                .is_some_and(|p| self.is_on_browser_toggle(p.x, p.y))
+        self.canvas_pointer()
+            .is_some_and(|p| self.is_on_browser_toggle(p.x, p.y))
     }
 
     /// The row under the pointer — its hover wash — while nothing else owns
-    /// the pointer: no modal, edge drag or row drag, and not on the
+    /// the pointer: no edge drag or row drag, and not on the
     /// edge, whose resize arrows say a press drags rather than selects.
     pub(super) fn hovered_browser_row(&self) -> Option<usize> {
         let p = self.canvas_pointer()?;
-        let free = !self.modal_up()
-            && self.browser.resize_grab.is_none()
+        let free = self.browser.resize_grab.is_none()
             && !self
                 .browser
                 .press

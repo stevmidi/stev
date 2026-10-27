@@ -183,13 +183,25 @@ impl Display {
         .find_map(|(rect, hit)| rect.contains(pos).then_some(hit))
     }
 
+    /// Whether the pointer is on something in the modal that is up a click
+    /// acts on — for the pointing-hand cursor, the modal deciding the
+    /// pointer alone. A project dialog sits over the settings modal, so it
+    /// is asked first.
+    pub(in crate::view::display) fn is_pointer_on_modal_item(&self) -> bool {
+        if self.project_dialog.is_some() {
+            self.is_pointer_on_project_dialog_item()
+        } else {
+            self.overlay == Some(Overlay::Settings) && self.is_pointer_on_settings_item()
+        }
+    }
+
     /// Whether the pointer is on something in the open project dialog a
     /// click acts on — for the pointing-hand cursor: a prompt button, Save
     /// As's dropdown, a row of its list, its `+`. Not a text field, which
     /// keeps egui's text cursor, nor the `+` while the new folder's field
     /// leaves it inert.
-    pub(in crate::view::display) fn is_pointer_on_project_dialog_item(&self) -> bool {
-        let Some(pointer) = self.canvas_pointer() else {
+    fn is_pointer_on_project_dialog_item(&self) -> bool {
+        let Some(pointer) = self.modal_pointer() else {
             return false;
         };
         match &self.project_dialog {

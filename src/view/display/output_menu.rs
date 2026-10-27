@@ -203,10 +203,9 @@ impl Display {
         self.gesture.output_menu = None;
     }
 
-    /// The open menu's item under the pointer, if any — none while a modal
-    /// over it has the pointer.
+    /// The open menu's item under the pointer, if any.
     pub(super) fn hovered_output_menu_item(&mut self) -> Option<OutputMenuHit> {
-        let pointer = self.canvas_pointer().filter(|_| !self.modal_up())?;
+        let pointer = self.canvas_pointer()?;
         self.output_menu()?.1.hit_at(pointer)
     }
 

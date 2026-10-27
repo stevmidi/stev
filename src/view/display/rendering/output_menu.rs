@@ -88,7 +88,6 @@ impl Display {
         };
         let hover = self
             .canvas_pointer()
-            .filter(|_| !self.modal_up())
             .and_then(|pointer| layout.hit_at(pointer));
         let font = FontId::proportional(MENU_FONT_SIZE);
         let format = |color: Color32| TextFormat {

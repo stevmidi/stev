@@ -52,11 +52,9 @@ impl HoveredControl {
 
 impl Display {
     /// The clickable control under the pointer, if any: none while a modal
-    /// has the pointer.
+    /// has the pointer (`canvas_pointer`).
     pub(super) fn hovered_control(&mut self) -> Option<HoveredControl> {
-        if self.modal_up() {
-            None
-        } else if let Some(item) = self.hovered_output_menu_item() {
+        if let Some(item) = self.hovered_output_menu_item() {
             Some(HoveredControl::OutputMenu(item))
         } else if self.is_pointer_on_add_track_row() {
             Some(HoveredControl::AddTrack)

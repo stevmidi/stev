@@ -310,13 +310,11 @@ impl Display {
         Self::keyboard_chip_rect(self.render.canvas_rect).contains(pos2(x, y))
     }
 
-    /// Whether the pointer is on the keyboard chip with no modal up to
-    /// swallow it — its hover highlight and pointing hand.
+    /// Whether the pointer is on the keyboard chip — its hover highlight and
+    /// pointing hand.
     pub(in crate::view::display) fn is_pointer_on_keyboard_chip(&self) -> bool {
-        !self.modal_up()
-            && self
-                .canvas_pointer()
-                .is_some_and(|p| self.is_on_keyboard_chip(p.x, p.y))
+        self.canvas_pointer()
+            .is_some_and(|p| self.is_on_keyboard_chip(p.x, p.y))
     }
 
     /// Whether canvas point `(x, y)` is on the header's `?` chip.
@@ -324,13 +322,11 @@ impl Display {
         Self::help_chip_rect(self.render.canvas_rect).contains(pos2(x, y))
     }
 
-    /// Whether the pointer is on the header's `?` chip with no modal up to
-    /// swallow it — its hover highlight and pointing hand.
+    /// Whether the pointer is on the header's `?` chip — its hover
+    /// highlight and pointing hand.
     pub(in crate::view::display) fn is_pointer_on_help_chip(&self) -> bool {
-        !self.modal_up()
-            && self
-                .canvas_pointer()
-                .is_some_and(|p| self.is_on_help_chip(p.x, p.y))
+        self.canvas_pointer()
+            .is_some_and(|p| self.is_on_help_chip(p.x, p.y))
     }
 
     /// The hover cursor tick, if it was measured in the active pane.

@@ -186,7 +186,7 @@ impl Display {
         let Some(row) = self.add_track_row_rect() else {
             return;
         };
-        let hovered = !self.modal_up() && self.canvas_pointer().is_some_and(|p| row.contains(p));
+        let hovered = self.canvas_pointer().is_some_and(|p| row.contains(p));
         if hovered {
             draw_hover_wash(painter, row);
         }

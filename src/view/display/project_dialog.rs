@@ -48,7 +48,7 @@ use super::Display;
 #[cfg(target_os = "macos")]
 use super::Overlay;
 use super::browser::{BrowserItem, scroll_to_show};
-use super::settings_modal::{scroll_by, window_start};
+use super::settings_modal::{scroll_by, wheel_rows, window_start};
 use super::text_field::{FieldEvent, TextField, field_key};
 
 /// What Save As starts with for a project that has never been saved.
@@ -167,9 +167,8 @@ impl SaveAs {
     /// A press on the dropdown's box: opens the list on the chosen folder,
     /// or closes it.
     fn toggle_list(&mut self) {
-        match self.list {
-            Some(_) => self.list = None,
-            None => self.open_list(),
+        if self.list.take().is_none() {
+            self.open_list();
         }
     }
 
@@ -177,7 +176,6 @@ impl SaveAs {
     /// is past the first [`LIST_MAX_ROWS`].
     fn open_list(&mut self) {
         self.list_scroll = 0;
-        self.list_wheel = 0.0;
         self.highlight(self.folder_idx);
     }
 
@@ -203,15 +201,8 @@ impl SaveAs {
         if self.list.is_none() {
             return;
         }
-        self.list_wheel += delta_y;
-        let rows = (self.list_wheel / row_h).trunc();
-        self.list_wheel -= rows * row_h;
-        self.list_scroll = scroll_by(
-            self.list_scroll,
-            -(rows as isize),
-            self.folders.len(),
-            LIST_MAX_ROWS,
-        );
+        let rows = wheel_rows(&mut self.list_wheel, delta_y, row_h);
+        self.list_scroll = scroll_by(self.list_scroll, rows, self.folders.len(), LIST_MAX_ROWS);
     }
 
     /// Chooses the dropdown's `idx`th folder and closes the list.
