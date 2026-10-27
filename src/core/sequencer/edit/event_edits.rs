@@ -29,7 +29,7 @@ use super::{EditResult, SequencerEdit};
 // empty), and consumes the buffer once.
 // ---------------------------------------------------------------------------
 
-/// A live take inserted into an existing clip: `/` with a lead clip, running
+/// A captured take inserted into an existing clip: `/` with a lead clip, running
 /// ([`Sequencer::build_running_capture_insert`]) or stopped, framed in a take
 /// session first ([`Sequencer::finish_take_framing`]). The notes are worked out at
 /// construction; `edit()` adds them and `undo()` restores the clip's events

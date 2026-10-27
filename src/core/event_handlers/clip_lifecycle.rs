@@ -1,7 +1,6 @@
 //! `EventHandlers` workflows for a clip appearing on / leaving a track through
-//! `CommitClipEdit` — `/`'s `Commit` binding, and the undo/redo of it and of
-//! a live take. See
-//! `050-undo-redo.md`, `090-live-recording.md`, `100-running-capture.md`.
+//! `CommitClipEdit` — `/`'s `Commit` binding, and the undo/redo of it. See
+//! `050-undo-redo.md`, `100-running-capture.md`.
 
 use std::slice;
 

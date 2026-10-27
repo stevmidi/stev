@@ -6,12 +6,10 @@
 //! note keys, routed on the `"computerkeys"` thread) gets one of its own and so
 //! reaches everything a port does.
 //!
-//! Every message is stamped with two tick coordinates ([`InputTicks`]): a
-//! `position` in `clock_tick` space (which a seek repositions) for running
-//! capture, and an `elapsed` odometer value (which a seek never moves) for live
-//! recording. Both carry a sub-tick interpolation so a note landing between
-//! clock firings isn't quantized to the last one — see `precise_input_tick` and
-//! `150-clock-position-sync.md`.
+//! Every message is stamped with the `clock_tick` it landed on — where in the
+//! arrangement it was played — with a sub-tick interpolation so a note landing
+//! between clock firings isn't quantized to the last one — see
+//! `precise_input_tick` and `150-clock-position-sync.md`.
 
 use crossbeam_channel::Sender;
 use log::info;
@@ -33,7 +31,7 @@ use midir::os::unix::VirtualInput;
 use crate::core::midi::port::VIRTUAL_PORT_NAME;
 use crate::core::{
     midi::{
-        input_tick::{input_ticks_at_arrival, precise_input_tick},
+        input_tick::{input_tick_at_arrival, precise_input_tick},
         message::{Midi3, is_recorded, midi3, parse_note, rewrite_channel},
         out_queue::MidiOutMessage,
         port::pickable_port_names,
@@ -46,37 +44,13 @@ use crate::core::{
 /// `MidiInputForwarder::instrument_midi_tx` for why it needs `Arc<Mutex<_>>`.
 type SharedInstrumentMidiProducer = Arc<Mutex<Producer<(usize, Midi3)>>>;
 
-/// The two tick coordinates a live-input message needs, because its two
-/// consumers want different things from a seek.
-///
-/// `position` is `clock_tick` space — where in the arrangement the note landed,
-/// held in region phase with playback and therefore repositioned by
-/// [`ClockCommand::AlignToPlayback`](crate::core::clock::ClockCommand). Running
-/// capture works in it.
-///
-/// `elapsed` is odometer space — how much musical time had been *played* when
-/// the note landed, never repositioned. Live recording places every note by
-/// subtracting the take's start value from it, so a reposition here would move
-/// notes already recorded relative to the ones after it.
-///
-/// Both carry the same sub-tick interpolation; see [`precise_input_tick`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct InputTicks {
-    /// `clock_tick`-space position — where in the arrangement the note landed.
-    /// A seek repositions it.
-    pub(crate) position: i32,
-    /// Odometer-space value — how much musical time had been played. Never
-    /// repositioned; live recording measures from it.
-    pub(crate) elapsed: i32,
-}
-
 /// Owns the live `midir` input connection and fans each message out to its
 /// several consumers. See the module docs.
 pub(crate) struct MidiInputForwarder {
     // Communication channels
-    /// Raw bytes + [`InputTicks`] to the `"sequencer"` thread — only what a
-    /// take records ([`is_recorded`]).
-    midi_in_tx: Sender<(Vec<u8>, InputTicks)>,
+    /// Raw bytes + their `clock_tick` to the `"sequencer"` thread — only what
+    /// a take records ([`is_recorded`]).
+    midi_in_tx: Sender<(Vec<u8>, i32)>,
     /// MIDI-thru to the `"midiout"` thread.
     midi_out_tx: Sender<MidiOutMessage>,
     /// Note-on records to the `NoteLogger`.
@@ -93,16 +67,13 @@ pub(crate) struct MidiInputForwarder {
     instrument_midi_tx: SharedInstrumentMidiProducer,
 
     // State
-    /// The free-running musical tick counter, read to stamp `position`.
+    /// The free-running musical tick counter, read to stamp each message.
     clock_tick: Arc<AtomicI32>,
     /// `time::monotonic_nanos` at which `clock_tick` last advanced — read
     /// alongside `clock_tick` to interpolate a fractional tick for a note that
     /// arrives between clock firings. See [`precise_input_tick`] and the
     /// `input_tick` submodule.
     clock_tick_instant_nanos: Arc<AtomicU64>,
-    /// The transport odometer, stamped alongside `clock_tick` so live
-    /// recording gets a base a seek can't move. See [`InputTicks`].
-    elapsed_ticks: Arc<AtomicI32>,
     /// Tempo (µs per quarter), for the ns→tick conversion in the same interpolation.
     tempo: Arc<AtomicI32>,
     /// MIDI channel (0–15) of the armed track.
@@ -123,13 +94,12 @@ impl MidiInputForwarder {
     /// tempo / arm atomics.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
-        midi_in_tx: Sender<(Vec<u8>, InputTicks)>,
+        midi_in_tx: Sender<(Vec<u8>, i32)>,
         midi_out_tx: Sender<MidiOutMessage>,
         note_logger_command_tx: Sender<NoteLoggerCommand>,
         instrument_midi_tx: Producer<(usize, Midi3)>,
         clock_tick: Arc<AtomicI32>,
         clock_tick_instant_nanos: Arc<AtomicU64>,
-        elapsed_ticks: Arc<AtomicI32>,
         tempo: Arc<AtomicI32>,
         arm_channel: Arc<AtomicU8>,
         performance_lane_armed: Arc<AtomicBool>,
@@ -143,7 +113,6 @@ impl MidiInputForwarder {
             instrument_midi_tx: Arc::new(Mutex::new(instrument_midi_tx)),
             clock_tick,
             clock_tick_instant_nanos,
-            elapsed_ticks,
             tempo,
             arm_channel,
             performance_lane_armed,
@@ -184,14 +153,13 @@ impl MidiInputForwarder {
         }
     }
 
-    /// The [`InputTicks`] of a message that arrived at `arrival_ns` on the
+    /// The `clock_tick` of a message that arrived at `arrival_ns` on the
     /// [`monotonic_nanos`](crate::core::time::monotonic_nanos) timeline — for
     /// a source with no `midir` stamp of its own (the computer keyboard).
-    pub(crate) fn ticks_at(&self, arrival_ns: u64) -> InputTicks {
-        input_ticks_at_arrival(
+    pub(crate) fn tick_at(&self, arrival_ns: u64) -> i32 {
+        input_tick_at_arrival(
             &self.clock_tick,
             &self.clock_tick_instant_nanos,
-            &self.elapsed_ticks,
             &self.tempo,
             arrival_ns,
         )
@@ -210,7 +178,6 @@ impl MidiInputForwarder {
         let mut router = self.router();
         let clock_tick = self.clock_tick.clone();
         let clock_tick_instant_nanos = self.clock_tick_instant_nanos.clone();
-        let elapsed_ticks = self.elapsed_ticks.clone();
         let tempo = self.tempo.clone();
 
         // Smallest `(callback monotonic time − midir stamp)` seen so far — the
@@ -223,15 +190,14 @@ impl MidiInputForwarder {
 
         let callback = move |midir_ts_us: u64, message: &[u8], _: &mut ()| {
             // Capture timing first, before any of the routing work.
-            let recorded_ticks = precise_input_tick(
+            let tick = precise_input_tick(
                 &clock_tick,
                 &clock_tick_instant_nanos,
-                &elapsed_ticks,
                 &tempo,
                 midir_ts_us,
                 &mut min_ts_offset_ns,
             );
-            router.route(message, recorded_ticks);
+            router.route(message, tick);
         };
 
         #[cfg(unix)]
@@ -260,8 +226,8 @@ impl MidiInputForwarder {
 /// the `"computerkeys"` thread — since the held-note tables below belong to
 /// the source whose note-offs they route.
 pub(crate) struct LiveInputRouter {
-    /// Recorded messages + [`InputTicks`] to the `"sequencer"` thread.
-    midi_in_tx: Sender<(Vec<u8>, InputTicks)>,
+    /// Recorded messages + their `clock_tick` to the `"sequencer"` thread.
+    midi_in_tx: Sender<(Vec<u8>, i32)>,
     /// MIDI-thru to the `"midiout"` thread.
     midi_out_tx: Sender<MidiOutMessage>,
     /// Note-on records to the `NoteLogger`.
@@ -291,8 +257,8 @@ pub(crate) struct LiveInputRouter {
 }
 
 impl LiveInputRouter {
-    /// Routes one live-input `message` that landed at `ticks`.
-    pub(crate) fn route(&mut self, message: &[u8], ticks: InputTicks) {
+    /// Routes one live-input `message` that landed at `clock_tick` `tick`.
+    pub(crate) fn route(&mut self, message: &[u8], tick: i32) {
         let arm_channel = self.arm_channel.load(Ordering::Relaxed);
         let mut msg = message.to_vec();
 
@@ -340,7 +306,7 @@ impl LiveInputRouter {
                 .ok();
         }
         if is_recorded(&msg) {
-            self.midi_in_tx.send((msg, ticks)).ok();
+            self.midi_in_tx.send((msg, tick)).ok();
         }
     }
 }
@@ -486,16 +452,13 @@ mod tests {
             held_note_channels: [None; 128],
             held_live_targets: [None; 128],
         };
-        let ticks = InputTicks {
-            position: 0,
-            elapsed: 0,
-        };
+        let tick = 0;
 
-        router.route(&note_on(0), ticks);
+        router.route(&note_on(0), tick);
         audio_export.running.store(true, Ordering::Relaxed);
-        router.route(&[0x90, NOTE + 1, 100], ticks);
-        router.route(&[0xE0, 0, 0x50], ticks);
-        router.route(&note_off(0), ticks);
+        router.route(&[0x90, NOTE + 1, 100], tick);
+        router.route(&[0xE0, 0, 0x50], tick);
+        router.route(&note_off(0), tick);
 
         let sent: Vec<(usize, Midi3)> = iter::from_fn(|| instrument_rx.pop().ok()).collect();
         assert_eq!(sent, [(2, note_on(0)), (2, note_off(0))]);

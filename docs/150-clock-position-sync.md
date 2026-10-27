@@ -16,9 +16,6 @@ in a defined relationship:
 | `SharedAtomics.clock_tick` | `Clock.ticks` (`src/core/clock.rs`), `"clock"` thread | **always**, credited from real elapsed nanos, running or not | `ClockCommand::AlignToPlayback` |
 | `SharedAtomics.playback_tick` | `Transport.playback_tick` (`src/core/transport.rs`), `"sequencer"` thread | **only while running**, +1 per received `ClockTick` (`src/core/threads/sequencer_pump.rs`) | seeks, loop wrap (`Transport::tick`) |
 
-A third, `SharedAtomics.elapsed_ticks`, is not a position at all — see *The
-odometer* below.
-
 ### Why two counters, not one
 
 - The **free-running** counter is required while the transport is stopped — the
@@ -95,8 +92,8 @@ region phase A -> B)"`. A degenerate region (`region_length <= 0`) is a no-op.
 
 Each wrap still pulls the clock back by the few ticks of command latency, so over
 a very long take the clock's absolute progression runs slightly behind true
-elapsed musical time. That is bounded (the phase is re-pinned every wrap) and is
-why durations use the odometer instead.
+elapsed musical time. That is bounded (the phase is re-pinned every wrap), but
+it rules `clock_tick` out as a base for measuring durations.
 
 > **A loop wrap re-anchors playback synchronously, not via `TransportEvent`.**
 > `Transport::tick()` returns `TickOutcome::Wrapped(region_start)` on a wrap and
@@ -152,61 +149,35 @@ them and both stay:
    capture window on insertion order rather than tick magnitude, so events left
    from a pre-snap clock context can't displace it (regression test
    `calculate_running_region_stale_high_tick_event_does_not_displace_window`).
-   The odometer does **not** retire this: capture events stay in `clock_tick`
-   space because the window math needs region-phase alignment with playback.
+   Capture events stay in `clock_tick` space because the window math needs
+   region-phase alignment with playback.
 
-## The odometer: `elapsed_ticks`
+## Input stamping
 
-Some consumers want elapsed musical time, not a position, and repositioning is
-what corrupts them. `SharedAtomics.elapsed_ticks` is the transport odometer. The
-`"clock"` thread credits it in the same place it credits `clock_tick`, so both
-step at the same instant, with two differences that are the whole point:
+The MIDI-input callback stamps every message with the `clock_tick` it landed
+on: `midi_in_tx` carries `(Vec<u8>, i32)`. `precise_input_tick`
+(`src/core/midi/input_tick.rs`) adds the sub-tick correction for a note
+landing between clock firings; the computer keyboard goes through
+`input_tick_at_arrival` with its frame's stamp.
+`Sequencer::handle_midi_input_dispatch` hands the tick to
+`add_midi_event_to_capture`.
 
-- it advances **only while `running`** (it freezes while stopped, so a take
-  armed before play doesn't count the stopped gap), and
-- it is **never** touched by `AlignToPlayback` — the omission is the feature,
-  and the arm carries a comment saying so.
+Structural results:
 
-`playback_tick` cannot serve as the duration base: it wraps at the region end.
-
-Both coordinates are carried from the MIDI-input callback:
-
-```rust
-pub(crate) struct InputTicks {
-    pub(crate) position: i32,  // clock_tick space — running capture
-    pub(crate) elapsed: i32,   // odometer space — live recording
-}
-```
-
-`midi_in_tx` carries `(Vec<u8>, InputTicks)`. `precise_input_tick` loads both
-counters and hands them to the pure `input_ticks_at`, which applies the *same*
-sub-tick correction to each base — valid because the two counters step together.
-The two loads are not atomic with respect to each other; a firing between them
-skews the bases by at most one tick, and a comment says so rather than reaching
-for a lock on a MIDI callback.
-
-`Sequencer::handle_midi_input_dispatch` routes `position` to
-`add_midi_event_to_capture` and `elapsed` to `add_midi_event_to_live_rec`.
-Live recording measures `elapsed_tick() - session.elapsed_start_tick` for note
-placement, auto-end (`should_end_live_recording`) and the progress bar.
-
-Structural results that show the split holds:
-
-- **`Sequencer` holds no `clock_tick`** — only `elapsed_ticks`. Every position it
-  needs arrives stamped on the input message; everything it measures itself is a
-  duration.
-- **`Display` holds no `clock_tick`** — the live-rec overlay measures a span.
-- `clock_tick` is read in exactly two places: the MIDI-input position stamp and
+- **`Sequencer` holds no `clock_tick`**: every position it needs arrives
+  stamped on the input message.
+- **`Display` holds no `clock_tick`.**
+- `clock_tick` is read in exactly two places: the MIDI-input stamp and
   `ClockTick.tick` (the metronome's count-in while stopped).
 
 Ticks stay `i32` like every other tick in the codebase; they wrap after ~12.9
 days of uptime at 120 BPM.
 
-**If live recording misbehaves** — notes landing wrong *from some point partway
-through* a take, a recording overrunning or never auto-ending, or the progress
-bar jumping — suspect a duration consumer that has slipped back onto
-`clock_tick`. A take wrong from its *first* note, or by a constant offset, is
-latency calibration or the recording anchor instead.
+A transport odometer (`elapsed_ticks`, a duration counter that advanced only
+while running and was never realigned) once sat beside `clock_tick` for live
+recording (`R`), whose take measured its length by subtraction. It went with
+live recording; if a duration consumer ever returns, it needs a counter of its
+own like that, not `clock_tick`.
 
 ## Tests
 
@@ -217,16 +188,10 @@ latency calibration or the recording anchor instead.
   so the send paths are asserted: payload, ungated send while stopped, gated
   silence while stopped, gated send while running.
 - `src/core/sequencer/capture.rs` — a three-pass and a twelve-pass running take
-  stamped the way a free-running clock stamps them must commit exactly one cycle;
-  `live_rec_note_placement_survives_a_clock_position_snap`,
-  `running_capture_still_stamps_the_position_coordinate`,
-  `should_end_live_recording_fires_on_odometer_distance`.
-- `src/core/midi/input_tick.rs` — `input_ticks_at` moves both bases by the same
-  correction, each anchored on its own counter.
-- The odometer's freeze-while-stopped lives inside `Clock::start`'s timer
-  closure and is a manual check. `Metronome`'s discontinuity tests cover the
-  re-arm path.
+  stamped the way a free-running clock stamps them must commit exactly one cycle.
+- `src/core/midi/input_tick.rs` — the sub-tick interpolation and the midir
+  epoch calibration.
+- `Metronome`'s discontinuity tests cover the re-arm path.
 
-**Manual check most likely to catch a broken invariant:** live recording and
-running capture across several loop wraps — auto-end fires at the right length,
-and a commit keeps only the last pass.
+**Manual check most likely to catch a broken invariant:** running capture
+across several loop wraps — a commit keeps only the last pass.

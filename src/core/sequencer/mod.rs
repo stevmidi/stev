@@ -13,7 +13,7 @@
 //! - `playback.rs` — the per-tick pump (`tick` / `chase_notes`) and the
 //!   note-release + re-seek paths every discontinuity goes through.
 //! - `capture.rs` — turning the running capture buffer into committed clips
-//!   (`090-live-recording.md`, `100-running-capture.md`).
+//!   (`090-recording-midi-input.md`, `100-running-capture.md`).
 //! - `capture_fixture.rs` — debug builds: dumping stopped captures as test
 //!   fixtures for the phrase-start detection (`220`).
 //! - `stopped_capture.rs` / `region/` — the stopped `/`: framing a take by
@@ -21,7 +21,6 @@
 //!   `220-capture-without-pending-view.md`).
 //! - `take_framing.rs` — the take session the stopped `/` into a clip opens:
 //!   framing the notes to insert, heard in place (`290-framing-a-take.md`).
-//! - `live_recording.rs` — the dual-state live-record path.
 //! - `selection.rs` / `view.rs` — clip & event selection, clip-view snapshots.
 //! - `mix.rs` — the not-undoable per-track mixer writers.
 //! - `export.rs` — the MIDI clip export: which clip, and its `.mid` bytes.
@@ -43,7 +42,6 @@ mod edit;
 mod export;
 mod instrument_event;
 mod instrument_notes;
-mod live_recording;
 mod mix;
 mod performance_lane;
 mod playback;
@@ -82,5 +80,4 @@ pub(crate) use instrument_event::ClipInstrumentEvent;
 #[cfg(target_os = "macos")]
 pub(crate) use instrument_event::EventTime;
 pub(crate) use region::EdgeTarget;
-pub(crate) use state::LiveRecResult;
 pub(crate) use state::Sequencer;

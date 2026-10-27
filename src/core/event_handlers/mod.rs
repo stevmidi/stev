@@ -7,7 +7,7 @@
 //! matches every command; anything that grows past a line or is shared between
 //! arms is extracted to a per-concern file here — `selection.rs`,
 //! `clip_edges.rs`, `clip_lifecycle.rs`, `clip_range_edits.rs`, `clip_view.rs`,
-//! `project.rs`, `tracks.rs`, `live_recording.rs`,
+//! `project.rs`, `tracks.rs`,
 //! `command_helpers.rs`, `edit_result_handler.rs`, … There is no single
 //! `workflows.rs`; this per-concern split *is* the DRY mechanism.
 //!
@@ -44,7 +44,6 @@ mod clip_view;
 mod command_helpers;
 mod edit_result_handler;
 mod input_handler;
-mod live_recording;
 mod performance_lane_handler;
 mod project;
 mod selection;

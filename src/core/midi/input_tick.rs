@@ -1,22 +1,19 @@
 //! Sub-tick timestamping for live MIDI input.
 //!
-//! Both musical counters ([`clock_tick`](crate::core::clock) and the transport
-//! odometer) only advance on the ~1 ms `"clock"` firing, so a note arriving
-//! between firings would be recorded up to ~2 ticks early. These functions
-//! recover the fractional tick: calibrate midir's unknown timestamp epoch
-//! against [`time::monotonic_nanos`], measure how long ago the counters last
-//! stepped, and add that many ticks to *both* bases (they step at the same
-//! instant, so one correction serves both). See `150-clock-position-sync.md`.
+//! [`clock_tick`](crate::core::clock) only advances on the ~1 ms `"clock"`
+//! firing, so a note arriving between firings would be recorded up to ~2 ticks
+//! early. These functions recover the fractional tick: calibrate midir's
+//! unknown timestamp epoch against [`time::monotonic_nanos`], measure how long
+//! ago the counter last stepped, and add that many ticks. See
+//! `150-clock-position-sync.md`.
 //!
 //! [`precise_input_tick`] is the entry point, called once per message from the
-//! `midir` callback in `input.rs`; [`input_ticks_at_arrival`] serves the
+//! `midir` callback in `input.rs`; [`input_tick_at_arrival`] serves the
 //! computer keyboard, whose messages carry a `monotonic_nanos` stamp already.
 
 use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 
 use crate::core::time::{self, PPQN};
-
-use super::input::InputTicks;
 
 /// Upper bound on the fractional-tick correction [`interpolate_input_tick`] adds
 /// — a note can arrive at most one clock period (plus jitter) after `clock_tick`
@@ -24,11 +21,10 @@ use super::input::InputTicks;
 /// counter is stale too; cap rather than inject a wild offset.
 const MAX_INPUT_INTERP_NANOS: u64 = 2_000_000;
 
-/// Best estimate of the two tick coordinates a live-input message landed on —
-/// see [`InputTicks`] for why there are two. Both counters only step on the
-/// ~1 ms `"clock"` firing, so a note arriving between firings would be recorded
-/// up to ~2 ticks early; the same sub-tick correction refines both, which is
-/// valid because they step at the same instant (`Clock::start`).
+/// Best estimate of the `clock_tick` a live-input message landed on — where in
+/// the arrangement it was played. The counter only steps on the ~1 ms
+/// `"clock"` firing, so a note arriving between firings would be recorded up
+/// to ~2 ticks early; this refines it by the time since the last step.
 ///
 /// `midir_ts_us` is midir's per-connection microsecond stamp (`0` when the
 /// backend gave none). `min_offset_ns` is the caller-owned running calibration
@@ -38,11 +34,10 @@ const MAX_INPUT_INTERP_NANOS: u64 = 2_000_000;
 pub(super) fn precise_input_tick(
     clock_tick: &AtomicI32,
     clock_tick_instant_nanos: &AtomicU64,
-    elapsed_ticks: &AtomicI32,
     tempo: &AtomicI32,
     midir_ts_us: u64,
     min_offset_ns: &mut i64,
-) -> InputTicks {
+) -> i32 {
     let now_ns = time::monotonic_nanos();
 
     let arrival_ns = if midir_ts_us == 0 {
@@ -51,57 +46,24 @@ pub(super) fn precise_input_tick(
         calibrated_arrival_ns(now_ns, midir_ts_us as i64 * 1_000, min_offset_ns)
     };
 
-    input_ticks_at_arrival(
-        clock_tick,
-        clock_tick_instant_nanos,
-        elapsed_ticks,
-        tempo,
-        arrival_ns,
-    )
+    input_tick_at_arrival(clock_tick, clock_tick_instant_nanos, tempo, arrival_ns)
 }
 
-/// The two tick coordinates of a message that arrived at `arrival_ns` on the
+/// The `clock_tick` of a message that arrived at `arrival_ns` on the
 /// [`time::monotonic_nanos`] timeline: [`precise_input_tick`] once it has
 /// placed a `midir` stamp there, or a source stamping its messages with that
-/// clock directly (the computer keyboard, `MidiInputForwarder::ticks_at`).
-pub(super) fn input_ticks_at_arrival(
+/// clock directly (the computer keyboard, `MidiInputForwarder::tick_at`).
+pub(super) fn input_tick_at_arrival(
     clock_tick: &AtomicI32,
     clock_tick_instant_nanos: &AtomicU64,
-    elapsed_ticks: &AtomicI32,
     tempo: &AtomicI32,
     arrival_ns: u64,
-) -> InputTicks {
+) -> i32 {
     let last_tick_ns = clock_tick_instant_nanos.load(Ordering::Relaxed);
-    // Two separate loads: a clock firing landing between them leaves one of the
-    // bases a single tick behind the other. That is smaller than the correction
-    // being applied below and far smaller than the ~1 ms the counters step in,
-    // so it is not worth a lock on this callback.
-    let elapsed_base = elapsed_ticks.load(Ordering::Relaxed);
-    let position_base = clock_tick.load(Ordering::Relaxed);
+    let base = clock_tick.load(Ordering::Relaxed);
     let tempo_us = tempo.load(Ordering::Relaxed);
 
-    input_ticks_at(
-        position_base,
-        elapsed_base,
-        tempo_us,
-        arrival_ns.saturating_sub(last_tick_ns),
-    )
-}
-
-/// Applies one sub-tick correction to both counter bases. They step at the same
-/// instant (`Clock::start`), so `since_last_tick_ns` is the age of both — but
-/// each must be interpolated from its *own* base, since the two sit whole loop
-/// lengths apart and mean different things. See [`InputTicks`].
-fn input_ticks_at(
-    position_base: i32,
-    elapsed_base: i32,
-    tempo_us: i32,
-    since_last_tick_ns: u64,
-) -> InputTicks {
-    InputTicks {
-        position: interpolate_input_tick(position_base, tempo_us, since_last_tick_ns),
-        elapsed: interpolate_input_tick(elapsed_base, tempo_us, since_last_tick_ns),
-    }
+    interpolate_input_tick(base, tempo_us, arrival_ns.saturating_sub(last_tick_ns))
 }
 
 /// Maps a message midir stamped `stamp_ns` into its own (unknown, fixed) epoch
@@ -162,37 +124,6 @@ mod tests {
             interpolate_input_tick(1000, TEMPO_120, NS_PER_TICK_120 * 2),
             1002
         );
-    }
-
-    #[test]
-    fn input_ticks_at_applies_the_same_correction_to_both_bases() {
-        // The two counters step at the same instant but sit whole loop lengths
-        // apart, so each must be interpolated from its *own* base by the *same*
-        // sub-tick amount. Deriving one from the other would fold a
-        // repositioned position into the odometer, which is the corruption this
-        // phase exists to remove.
-        const POSITION_BASE: i32 = 40_000;
-        const ELAPSED_BASE: i32 = 137;
-
-        let got = input_ticks_at(POSITION_BASE, ELAPSED_BASE, TEMPO_120, NS_PER_TICK_120 * 2);
-
-        assert_eq!(got.position, POSITION_BASE + 2);
-        assert_eq!(got.elapsed, ELAPSED_BASE + 2);
-        assert_eq!(
-            got.position - POSITION_BASE,
-            got.elapsed - ELAPSED_BASE,
-            "both bases must move by the same sub-tick correction"
-        );
-    }
-
-    #[test]
-    fn input_ticks_at_anchors_each_base_independently() {
-        // No elapsed time means no correction; each coordinate must then come
-        // back as exactly its own counter, not the other one.
-        let got = input_ticks_at(40_000, 137, TEMPO_120, 0);
-
-        assert_eq!(got.position, 40_000);
-        assert_eq!(got.elapsed, 137);
     }
 
     #[test]

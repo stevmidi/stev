@@ -337,7 +337,7 @@ tier needs no reactivation.
   `160-midi-out-offset.md` all exist to land clip MIDI, the click and CLAP audio
   on one instant. Pre-rendered audio still *plays out* at the correct sample, so
   that alignment survives; what does not come free is the requirement that clip
-  events be **known a window ahead**. Loop wraps, live recording into the region
+  events be **known a window ahead**. Loop wraps, a capture committed into the region
   currently playing, and a quantization change all invalidate precisely that
   window.
 - **The app's maximum size already fits.** With 8 tracks (then the fixed count) landing in

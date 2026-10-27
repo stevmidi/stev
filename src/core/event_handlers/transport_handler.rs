@@ -5,9 +5,6 @@
 //! clock's *phase*, flush sounding notes. See `150-clock-position-sync.md`.
 
 use log::debug;
-use undo::Record;
-
-use crate::core::sequencer::SequencerEdit;
 
 use super::*;
 
@@ -75,16 +72,13 @@ impl EventHandlers {
 
     /// Applies one [`TransportCommand`]
     /// against the thread-local `transport` (and, where a command has playback
-    /// side effects, the `sequencer` and `metronome`). `undo_record` is only
-    /// for the stop-family commands that end a live take, which records the
-    /// completed clip as an undoable commit.
+    /// side effects, the `sequencer` and `metronome`).
     pub(crate) fn handle_transport_command(
         &self,
         cmd: &TransportCommand,
         transport: &mut Transport,
         sequencer: &mut Sequencer,
         metronome: &Metronome,
-        undo_record: &mut Record<SequencerEdit>,
     ) {
         // A running audio export keeps the transport to itself
         // (`audio_export.rs`).
@@ -136,9 +130,6 @@ impl EventHandlers {
                 self.sync_clip_selection_to_cursor_workflow(sequencer);
             }
             TransportCommand::PlayFromTick { tick } => {
-                if sequencer.is_running() && sequencer.is_recording() {
-                    self.end_live_recording_workflow(sequencer, undo_record);
-                }
                 sequencer.reset_capture();
                 transport.stop();
                 transport.jump_and_chase(*tick);
@@ -146,9 +137,6 @@ impl EventHandlers {
             }
             TransportCommand::TogglePlayback => {
                 if transport.is_running() {
-                    if sequencer.is_recording() {
-                        self.end_live_recording_workflow(sequencer, undo_record);
-                    }
                     transport.stop();
                 } else {
                     sequencer.reset_capture();
@@ -157,9 +145,6 @@ impl EventHandlers {
                 }
             }
             TransportCommand::Stop => {
-                if sequencer.is_recording() {
-                    self.end_live_recording_workflow(sequencer, undo_record);
-                }
                 sequencer.reset_capture();
                 transport.stop();
                 transport.reset_playback_to_cursor();

@@ -36,7 +36,7 @@ pub(crate) enum SequencerCommand {
     /// docked panes. Only the focus (`ViewState` `Arranger` ⇄ `Clip`) moves;
     /// nothing is shown or hidden. See `archive/210-docked-clip-panel.md`.
     FocusPane(Pane),
-    /// The capture action (the `/` key): commit the live take to a new clip,
+    /// The capture action (the `/` key): commit what was just played to a new clip,
     /// or insert it into the lead clip — the last pass while running, the
     /// detected phrase while stopped. See `sequencer_handler.rs` and
     /// `220-capture-without-pending-view.md`.
@@ -44,9 +44,6 @@ pub(crate) enum SequencerCommand {
     /// Place the clip cursor at an absolute tick — the clip-view equivalent of
     /// a timeline click.
     CommitClipClickByTicks(i32),
-    /// Start or stop live MIDI recording on the armed track (see
-    /// `090-live-recording.md`).
-    ToggleLiveRecording,
 
     // --- Clip operations ---
     /// Inserts an empty clip on the selected track (`CommitClipEdit::from_empty_clip`,
@@ -393,15 +390,15 @@ pub(crate) enum SequencerCommand {
         state: Vec<u8>,
     },
     /// Adds an empty MIDI track at `track_idx` (after the selected one when
-    /// `None`) as one undo step (`AddTrackEdit`). Refused at `MAX_TRACKS` and
-    /// during a live take, with a footer message.
+    /// `None`) as one undo step (`AddTrackEdit`). Refused at `MAX_TRACKS`,
+    /// with a footer message.
     AddTrack {
         /// Where the track goes; `None` = after the selected track.
         track_idx: Option<usize>,
     },
     /// Removes `track_idx` (the selected track when `None`) as one undo step
-    /// (`RemoveTrackEdit`). Refused on the last remaining track and during a
-    /// live take, with a footer message.
+    /// (`RemoveTrackEdit`). Refused on the last remaining track, with a
+    /// footer message.
     RemoveTrack {
         /// The track to remove; `None` = the selected track.
         track_idx: Option<usize>,

@@ -10,7 +10,7 @@
 //! `DeleteInRangeEdit`); `ResizeClipEdit` moves one clip's edges
 //! and nothing else, and `RetimeClipEdit` retimes one clip with the tempo
 //! (Enter's fit, `⌥=`/`⌥-`); `CommitClipEdit` is the one that puts a
-//! brand-new clip (a capture commit, a live take) on
+//! brand-new clip (a capture commit, an empty clip) on
 //! a track. See `050-undo-redo.md` and `020-views-and-state.md`.
 
 use std::collections::HashSet;

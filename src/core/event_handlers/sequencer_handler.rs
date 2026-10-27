@@ -80,14 +80,6 @@ impl EventHandlers {
                 }
             }
 
-            SequencerCommand::ToggleLiveRecording => {
-                if sequencer.is_recording() {
-                    self.end_live_recording_workflow(sequencer, undo_record);
-                } else {
-                    self.start_live_recording_workflow(sequencer);
-                }
-            }
-
             SequencerCommand::InsertEmptyClip { time_bounds } => {
                 self.record_edit(
                     sequencer,
@@ -621,7 +613,6 @@ mod tests {
     use uuid::Uuid;
 
     use crate::core::event_handlers::test_harness::{Harness, add_clip, harness, run_command};
-    use crate::core::midi::input::InputTicks;
     use crate::core::project::ProjectAction;
     use crate::core::sequencer::test_support::stub_instrument;
     use crate::core::sequencer::{SequencerCommand, SequencerEdit};
@@ -811,10 +802,7 @@ mod tests {
         h.handlers.set_view_state(ViewState::Arranger);
         h.cursor_tick.store(480, Ordering::Relaxed);
         for (tick, message) in [(100, [0x90, 64, 100]), (400, [0x80, 64, 0])] {
-            let ticks = InputTicks {
-                position: tick,
-                elapsed: tick,
-            };
+            let ticks = tick;
             h.sequencer.handle_midi_input_dispatch(&message, ticks);
         }
         while h.transport_commands.try_recv().is_ok() {}

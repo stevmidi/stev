@@ -2,12 +2,12 @@
 //! accessors / mutators. The per-tick playback pump and the note-release paths
 //! are in `playback.rs`.
 //!
-//! `Sequencer` owns the tracks (up to `MAX_TRACKS`), the running capture and
-//! live-record clips, the three selections, the performance
+//! `Sequencer` owns the tracks (up to `MAX_TRACKS`), the capture buffer, the
+//! three selections, the performance
 //! lane and the clip clipboard. It holds `Arc<AtomicX>` handles into
 //! `SharedAtomics` for the values the rest of the app reads, but deliberately
 //! *not* `clock_tick` — every position it needs arrives stamped on the input
-//! message, and everything it measures itself is a duration (`elapsed_ticks`).
+//! message.
 //! The concern-specific methods live in the sibling files; see the parent
 //! module docs.
 
@@ -18,7 +18,6 @@ use std::sync::{
 
 use crossbeam_channel::Sender;
 use rtrb::Producer;
-use uuid::Uuid;
 
 use super::audio_export::{AudioExportRun, ExportMark};
 use super::clipboard::ClipClipboard;
@@ -29,10 +28,9 @@ use crate::core::midi::out_queue::MidiOutMessage;
 use crate::{
     core::{
         config,
-        shared_atomics::{AudioExportAtomics, LiveRecState, TrackMixAtomics},
+        shared_atomics::{AudioExportAtomics, TrackMixAtomics},
         time::Meter,
     },
-    metadata::clip_metadata::ClipMetadata,
     models::selection::Selection,
     models::{
         clip::{Clip, CopiedNote},
@@ -40,36 +38,6 @@ use crate::{
         track::{Track, TrackOutput},
     },
 };
-
-/// Book-keeping for one live-recording take. See `live_recording.rs`.
-#[derive(Clone, Copy)]
-pub(crate) struct LiveRecSession {
-    /// Track being recorded onto.
-    pub track_idx: usize,
-    /// Playback tick the take started at — the clip's arrangement position.
-    pub rec_start_tick: i32,
-    /// The odometer value the take started at — see
-    /// [`SharedAtomics::elapsed_ticks`](crate::core::shared_atomics::SharedAtomics::elapsed_ticks).
-    /// Only ever used as the base of a duration, never as a position.
-    pub elapsed_start_tick: i32,
-}
-
-/// Outcome of ending a live-recording take.
-pub(crate) enum LiveRecResult {
-    /// Take was empty or couldn't be placed; the recording clip `rec_clip_id`
-    /// on `track_idx` is gone.
-    Canceled {
-        /// Track the abandoned take was on.
-        track_idx: usize,
-        /// Id of the discarded recording clip.
-        rec_clip_id: Uuid,
-    },
-    /// Take committed; `clip` is the new clip's metadata.
-    Completed {
-        /// The committed clip.
-        clip: ClipMetadata,
-    },
-}
 
 /// The model the `"sequencer"` thread owns. See the module docs.
 pub(crate) struct Sequencer {
@@ -158,19 +126,6 @@ pub(crate) struct Sequencer {
     /// shifts its anchor by it (`capture_clock_shift`). `None` until a note
     /// arrives while running, and cleared with the buffer.
     pub(super) capture_clock_offset: Option<i32>,
-    /// The clip a dedicated live-record take grows into (`live_recording.rs`).
-    pub(super) live_rec_clip: Clip,
-    /// The active live-record session, if any.
-    pub(super) live_rec_session: Option<LiveRecSession>,
-    /// Shared last-note / thumbnail surface the UI draws the take from.
-    pub(super) live_rec_state: LiveRecState,
-    /// The transport odometer. The sequencer deliberately does **not** hold
-    /// `clock_tick`: every position it needs arrives stamped on the input
-    /// message, and everything it measures here is a duration.
-    pub(super) elapsed_ticks: Arc<AtomicI32>,
-    /// Set when a take should stop itself at a known tick (loop-length reached);
-    /// consumed by [`end_live_recording`](Self::end_live_recording).
-    pub(super) auto_end_tick: Option<i32>,
     /// The open take session, if any (`take_framing.rs`): while it is open
     /// the lead clip the clip view shows is the take.
     pub(super) take_framing: Option<TakeFraming>,
@@ -206,7 +161,6 @@ impl Sequencer {
         instrument_midi_tx: Producer<ClipInstrumentEvent>,
         export_mark_tx: Producer<ExportMark>,
         playback_tick: Arc<AtomicI32>,
-        elapsed_ticks: Arc<AtomicI32>,
         cursor_tick: Arc<AtomicI32>,
         region_start: Arc<AtomicI32>,
         region_end: Arc<AtomicI32>,
@@ -218,7 +172,6 @@ impl Sequencer {
         performance_lane_armed: Arc<AtomicBool>,
         track_mix: Arc<TrackMixAtomics>,
         audio_export_atomics: Arc<AudioExportAtomics>,
-        live_rec_state: LiveRecState,
     ) -> Self {
         Sequencer {
             midi_out_tx,
@@ -245,15 +198,10 @@ impl Sequencer {
             playback_retimed: false,
             capture_clip: Clip::new(),
             capture_clock_offset: None,
-            live_rec_clip: Clip::new(),
-            live_rec_session: None,
-            elapsed_ticks,
-            auto_end_tick: None,
             take_framing: None,
             audio_export: None,
             audio_exports_begun: 0,
             audio_export_atomics,
-            live_rec_state,
             performance_lane: PerformanceLane::new(),
             performance_lane_armed,
         }
@@ -263,11 +211,6 @@ impl Sequencer {
     /// Whether the transport is playing.
     pub(crate) fn is_running(&self) -> bool {
         self.running.load(Ordering::Relaxed)
-    }
-
-    /// Whether a dedicated live-record take is in progress.
-    pub(crate) fn is_recording(&self) -> bool {
-        self.live_rec_session.is_some()
     }
 
     /// Current cursor position, in ticks.
@@ -294,12 +237,6 @@ impl Sequencer {
     /// tell the metronome (`Metronome::playback_retimed`).
     pub(crate) fn take_playback_retimed(&mut self) -> bool {
         std::mem::take(&mut self.playback_retimed)
-    }
-
-    /// The transport odometer — musical time played, in ticks. A duration base,
-    /// never a position (`150-clock-position-sync.md`).
-    pub(crate) fn elapsed_tick(&self) -> i32 {
-        self.elapsed_ticks.load(Ordering::Relaxed)
     }
 
     /// Total clip count across all tracks.

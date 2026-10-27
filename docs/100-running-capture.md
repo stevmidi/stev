@@ -52,11 +52,9 @@ would miss a take the clock had stamped loops away, and a take outside the loop 
 commit nothing (or, for a new clip, size itself from the wrong span). The sequencer still doesn't hold `clock_tick`; the offset arrives
 with the input, like every other position it uses.
 
-Running capture is a **position** consumer and stays on `clock_tick`. Live recording
-measures a duration on `SharedAtomics.elapsed_ticks` instead — the
-two coordinates arrive together on each input message as `InputTicks`
-(`src/core/midi/input.rs`), and `handle_midi_input_dispatch` routes one to each. See
-`090-live-recording.md`.
+Running capture is a **position** consumer and stays on `clock_tick`, which arrives
+stamped on each input message (`src/core/midi/input.rs`). See
+`090-recording-midi-input.md`.
 
 **The free-run is what separates one pass of a take from the next.** Each cycle of an
 improvisation is stamped a whole `region_length` further along, so the crop window can pick

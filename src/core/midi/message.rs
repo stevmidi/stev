@@ -31,7 +31,7 @@ pub(crate) fn parse_note(msg: &[u8]) -> Option<(usize, bool)> {
 }
 
 /// One of the two performance wheels a take records beside its notes
-/// (`090-live-recording.md`): the pitch bend wheel and the mod wheel (CC1).
+/// (`090-recording-midi-input.md`): the pitch bend wheel and the mod wheel (CC1).
 /// Every other controller stays live-only.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Wheel {

@@ -46,8 +46,6 @@ pub(crate) enum Action {
     ClipStartToCursor,
     /// Move the end edge of a clip to the cursor.
     ClipEndToCursor,
-    /// Live recording on / off (arranger).
-    ToggleLiveRecord,
     /// Tap tempo.
     TapTempo,
     /// The built-in metronome on / off.
@@ -496,14 +494,6 @@ pub(crate) const ACTIONS: &[ActionInfo] = &[
         TRANSPORT,
         Scope::Global,
         &[Chord::plain(Key::Num0)],
-    ),
-    row(
-        Action::ToggleLiveRecord,
-        "transport.live_record",
-        "Live record on / off",
-        TRANSPORT,
-        Scope::Arranger,
-        &[Chord::plain(Key::R)],
     ),
     row(
         Action::Commit,

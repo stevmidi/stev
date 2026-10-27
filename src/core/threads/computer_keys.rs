@@ -16,7 +16,7 @@ use crate::core::midi::message::Midi3;
 
 /// Starts the `"computerkeys"` thread (see the module docs). Each message on
 /// `computer_keys_rx` is a note-on / note-off and the `monotonic_nanos` the
-/// frame read its key at, which `forwarder` turns into its `InputTicks`.
+/// frame read its key at, which `forwarder` turns into its `clock_tick`.
 pub(crate) fn start_computer_keys_thread(
     forwarder: Arc<MidiInputForwarder>,
     computer_keys_rx: Receiver<(Midi3, u64)>,
@@ -26,7 +26,7 @@ pub(crate) fn start_computer_keys_thread(
         .spawn(move || {
             let mut router = forwarder.router();
             for (message, arrival_ns) in computer_keys_rx {
-                router.route(&message, forwarder.ticks_at(arrival_ns));
+                router.route(&message, forwarder.tick_at(arrival_ns));
             }
         })
         .expect("Failed to spawn computerkeys thread")

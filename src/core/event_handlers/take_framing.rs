@@ -181,7 +181,6 @@ mod tests {
     use undo::Record;
 
     use crate::core::event_handlers::test_harness::{Harness, add_clip, harness, run_command};
-    use crate::core::midi::input::InputTicks;
     use crate::core::project::ProjectAction;
     use crate::core::sequencer::SequencerCommand;
     use crate::core::sequencer::test_support::stub_instrument;
@@ -208,10 +207,7 @@ mod tests {
             (1060, [0x90, 67, 100]),
             (1300, [0x80, 67, 0]),
         ] {
-            let ticks = InputTicks {
-                position: tick,
-                elapsed: tick,
-            };
+            let ticks = tick;
             h.sequencer.handle_midi_input_dispatch(&message, ticks);
         }
         lead_events(h)

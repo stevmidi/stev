@@ -20,7 +20,6 @@ use std::thread::{self, JoinHandle};
 use crate::core::clock::ClockTick;
 use crate::core::event_handlers::{EventHandlers, SavedProject};
 use crate::core::metronome::Metronome;
-use crate::core::midi::input::InputTicks;
 use crate::core::project::ProjectData;
 use crate::core::sequencer::{Sequencer, SequencerCommand, SequencerEdit};
 use crate::core::time::TapTempo;
@@ -37,7 +36,7 @@ pub(crate) fn start_sequencer_thread(
     mut metronome: Metronome,
     event_handlers: Arc<EventHandlers>,
     tick_rx: Receiver<ClockTick>,
-    midi_in_rx: Receiver<(Vec<u8>, InputTicks)>,
+    midi_in_rx: Receiver<(Vec<u8>, i32)>,
     transport_event_rx: Receiver<TransportEvent>,
     sequencer_command_rx: Receiver<SequencerCommand>,
     transport_command_rx: Receiver<TransportCommand>,
@@ -94,10 +93,6 @@ pub(crate) fn start_sequencer_thread(
                                     );
                                 }
                                 sequencer.tick(tick.at);
-
-                                if sequencer.should_end_live_recording() {
-                                    event_handlers.end_live_recording_workflow(&mut sequencer, &mut undo_record);
-                                }
                             }
                             if sequencer.take_playback_retimed() {
                                 metronome.playback_retimed();
@@ -107,11 +102,11 @@ pub(crate) fn start_sequencer_thread(
                     }
 
                     recv(midi_in_rx) -> midi_message => {
-                        if let Ok((message, ticks)) = midi_message {
+                        if let Ok((message, tick)) = midi_message {
                             if sequencer.is_performance_lane_armed() {
                                 event_handlers.handle_performance_lane_midi_input(&mut sequencer, &mut transport, &message);
                             } else {
-                                let kicked = sequencer.handle_midi_input_dispatch(&message, ticks);
+                                let kicked = sequencer.handle_midi_input_dispatch(&message, tick);
                                 // Running, the UI's ~30 fps frames show the
                                 // track's meter (and an extra wake would jitter
                                 // the playhead, `030`); stopped, nothing else
@@ -137,7 +132,7 @@ pub(crate) fn start_sequencer_thread(
 
                     recv(transport_command_rx) -> command => {
                         if let Ok(cmd) = command {
-                            event_handlers.handle_transport_command(&cmd, &mut transport, &mut sequencer, &metronome, &mut undo_record);
+                            event_handlers.handle_transport_command(&cmd, &mut transport, &mut sequencer, &metronome);
                         }
                     }
                 }

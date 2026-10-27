@@ -229,11 +229,7 @@ impl Display {
                 continue;
             }
 
-            let end_tick = if self.is_recording_clip(shape) {
-                self.playback_tick()
-            } else {
-                shape.end_tick()
-            };
+            let end_tick = shape.end_tick();
 
             self.draw_clip_at(
                 painter,
@@ -791,7 +787,7 @@ impl Display {
         );
     }
 
-    /// Draw static note thumbnails and live recording notes if recording.
+    /// Draw the clip's note thumbnails.
     #[allow(clippy::too_many_arguments)]
     fn draw_note_thumbnails(
         &self,
@@ -832,44 +828,6 @@ impl Display {
         let note_color = base.gamma_multiply(note_alpha);
         for &(x_start, x_end, pitch_frac) in shape.note_thumbnails() {
             draw_thumb(note_color, x_start, x_end, pitch_frac);
-        }
-
-        // Draw live recording thumbnails if recording this clip
-        if self.is_recording_clip(shape) {
-            self.draw_live_recording_thumbnails(&draw_thumb);
-        }
-    }
-
-    /// Whether `shape` is the clip being recorded right now.
-    fn is_recording_clip(&self, shape: &ClipShape) -> bool {
-        self.is_recording() && Some(shape.clip_id()) == self.recording_clip_id
-    }
-
-    /// Draw live note thumbnails during active recording of this clip.
-    fn draw_live_recording_thumbnails(&self, draw_thumb: &dyn Fn(Color32, f32, f32, f32)) {
-        const LIVE_NOTE_ALPHA: f32 = 0.75;
-        const MIN_THUMBNAIL_WIDTH_FRAC: f32 = 0.005;
-
-        let elapsed_start = self
-            .live_rec_state
-            .elapsed_start_tick
-            .load(Ordering::Relaxed);
-        let span = (self.elapsed_tick() - elapsed_start).max(1) as f32;
-        let live_color = theme::accent().gamma_multiply(LIVE_NOTE_ALPHA);
-
-        if let Ok(snapshot) = self.live_rec_state.thumbnail_snapshot.lock() {
-            for &(start_tick, end_tick, pitch_frac) in snapshot.iter() {
-                let effective_end = if end_tick == LiveRecState::HELD_NOTE_SENTINEL {
-                    self.elapsed_tick() - elapsed_start
-                } else {
-                    end_tick
-                };
-                let x0 = (start_tick as f32 / span).clamp(0.0, 1.0);
-                let x1 = ((effective_end as f32) / span)
-                    .max(x0 + MIN_THUMBNAIL_WIDTH_FRAC)
-                    .clamp(0.0, 1.0);
-                draw_thumb(live_color, x0, x1, pitch_frac);
-            }
         }
     }
 

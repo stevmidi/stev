@@ -1,7 +1,7 @@
 //! All of `Display`'s painting, split by surface: `arranger.rs` (the clip
 //! timeline + track headers), `clip_view.rs` (the piano roll), `piano_keys.rs`
 //! (the keyboard gutter), `timeline.rs` (the ruler / region strip),
-//! `overlays.rs` (cursor line, playhead, live-rec), `modals/` (the settings
+//! `overlays.rs` (cursor line, playhead), `modals/` (the settings
 //! modal and the project dialogs), `browser.rs` (the browser
 //! side panel). This file owns `render` — the per-frame entry — and the
 //! shared layout maths. See `030-ui-design.md`.
@@ -983,7 +983,6 @@ impl Display {
                     && x < self.tick_to_screen_x(shape.end_tick())
             })
             .map(|shape| shape.clip_id())
-            .filter(|id| Some(*id) != self.recording_clip_id)
             .map(|id| (track_idx, id))
     }
 

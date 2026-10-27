@@ -5,16 +5,15 @@
 //! *real* elapsed time since the previous one as musical time (not a nominal
 //! 1 ms — see `150-clock-position-sync.md` for why), producing zero or more
 //! [`ClockTick`]s with correctly-spaced intended `Instant`s. Each tick steps
-//! two counters: the free-running `tick` (a *position*, held to
+//! the free-running `tick` (a *position*, held to
 //! `clock_tick ≡ playback_tick (mod region_length)` via
-//! [`ClockCommand::AlignToPlayback`]) and, while running, the `elapsed_ticks`
-//! odometer (a *duration*, never repositioned). `archive/140-device-frame-clock.md` is
+//! [`ClockCommand::AlignToPlayback`]). `archive/140-device-frame-clock.md` is
 //! a deferred proposal to credit from the audio device frame count instead.
 
 use std::cell::Cell;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64};
+use std::sync::atomic::{AtomicI32, AtomicU64};
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::Receiver;
@@ -77,16 +76,6 @@ pub(crate) struct Clock {
     /// `time::monotonic_nanos` value published each time `tick` advances, so
     /// the MIDI-input callback can interpolate a fractional tick between firings.
     tick_instant_nanos: Arc<AtomicU64>,
-    /// The transport odometer — see [`SharedAtomics::elapsed_ticks`]. Stepped in
-    /// the same place as `tick` so one `tick_instant_nanos` stamp interpolates
-    /// both, but only while `running`, and never realigned.
-    ///
-    /// [`SharedAtomics::elapsed_ticks`]: crate::core::shared_atomics::SharedAtomics::elapsed_ticks
-    elapsed_ticks: Arc<AtomicI32>,
-    /// Whether the transport is playing — gates `elapsed_ticks` only. `tick`
-    /// free-runs regardless, since the metronome counts in and running capture
-    /// records while stopped.
-    running: Arc<AtomicBool>,
 
     // --- Communication ---
     /// Inbound [`ClockCommand`]s, moved into the timer closure by
@@ -111,16 +100,12 @@ impl Clock {
         tempo: Arc<AtomicI32>,
         tick: Arc<AtomicI32>,
         tick_instant_nanos: Arc<AtomicU64>,
-        elapsed_ticks: Arc<AtomicI32>,
-        running: Arc<AtomicBool>,
     ) -> Self {
         Clock {
             timer,
             tempo,
             tick,
             tick_instant_nanos,
-            elapsed_ticks,
-            running,
             clock_command_rx,
         }
     }
@@ -139,8 +124,6 @@ impl Clock {
             tempo,
             tick: clock_tick,
             tick_instant_nanos,
-            elapsed_ticks,
-            running,
             clock_command_rx,
         } = self;
         let fractional_ticks = Cell::new(0i64);
@@ -219,13 +202,6 @@ impl Clock {
                 let at = prev + Duration::from_nanos(offset_ns);
 
                 let tick = clock_tick.fetch_add(1, Ordering::Relaxed);
-                // The odometer steps here too, so both counters advance at the
-                // same instant and the single stamp below interpolates either.
-                // It is deliberately absent from the `AlignToPlayback` arm
-                // above: never repositioning it is what makes it a duration.
-                if running.load(Ordering::Relaxed) {
-                    elapsed_ticks.fetch_add(1, Ordering::Relaxed);
-                }
                 // Publish when the counter reached this value, for the
                 // MIDI-input callback's fractional-tick interpolation.
                 tick_instant_nanos.store(time::monotonic_nanos_at(at), Ordering::Relaxed);
@@ -278,8 +254,8 @@ impl Clock {
     /// The counters are required to satisfy `clock_tick ≡ playback_tick (mod
     /// region_length)` — **not** absolute equality. Playback wraps at the region
     /// end while the clock free-runs past it, so across a long loop the clock
-    /// legitimately sits whole loop lengths ahead; live-recording length and the
-    /// running-capture window both depend on that absolute progression surviving.
+    /// legitimately sits whole loop lengths ahead; the running-capture window
+    /// depends on that absolute progression surviving.
     ///
     /// The correction is therefore the **smallest signed move that fixes the
     /// phase**, not an assignment of `playback_tick`. Assigning would collapse
@@ -386,8 +362,8 @@ mod tests {
     fn aligned_tick_is_none_when_a_loop_wrap_leaves_phases_equal() {
         // The defining case. Playback wrapped to `region_start + 1`; the clock
         // free-ran one whole loop past it and sits at the same phase. Snapping
-        // here would drag the clock back a loop every wrap and break
-        // live-recording length, which measures a clock-tick difference.
+        // here would drag the clock back a loop every wrap and break the
+        // running-capture window, which needs the clock's absolute progression.
         let start = Meter::FOUR_FOUR.bars_to_ticks(4);
         let len = Meter::FOUR_FOUR.bars_to_ticks(2);
         assert_eq!(

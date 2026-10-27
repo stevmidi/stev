@@ -61,9 +61,6 @@ impl EventHandlers {
         if cfg!(not(target_os = "macos")) {
             return Err(NEEDS_PLUGIN_HOST.to_owned());
         }
-        if sequencer.is_recording() {
-            return Err("Stop recording first".to_owned());
-        }
         let plan = sequencer
             .audio_export_plan(time_bounds)
             .map_err(|refusal| match refusal {

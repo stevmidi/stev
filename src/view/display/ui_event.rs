@@ -86,20 +86,6 @@ pub(crate) enum UiEvent {
         /// Target track index; out-of-range is a no-op.
         track_idx: usize,
     },
-    /// Live recording began; `clip` is the freshly created recording clip.
-    RecordingStarted {
-        /// Render-side snapshot of the clip.
-        clip: ClipMetadata,
-    },
-    /// Live recording finished and committed.
-    RecordingCompleted,
-    /// Live recording was abandoned; the clip `clip_id` on `track_idx` is gone.
-    RecordingCanceled {
-        /// Target track index; out-of-range is a no-op.
-        track_idx: usize,
-        /// Id of the affected clip.
-        clip_id: Uuid,
-    },
     /// A new clip exists — add it to the render-side list.
     ClipAdded {
         /// Render-side snapshot of the clip.

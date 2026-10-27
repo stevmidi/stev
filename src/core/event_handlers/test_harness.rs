@@ -5,7 +5,7 @@
 //! 14-argument `Sequencer::new` setup lives in one place.
 
 use std::sync::{
-    Arc, Mutex, OnceLock,
+    Arc, OnceLock,
     atomic::{AtomicBool, AtomicI32, AtomicU8, AtomicU16},
 };
 
@@ -16,7 +16,7 @@ use uuid::Uuid;
 
 use crate::core::sequencer::test_support::{clip_at, note_off, note_on};
 use crate::core::sequencer::{Sequencer, SequencerCommand, SequencerEdit};
-use crate::core::shared_atomics::{AudioExportAtomics, LiveRecState, TrackMixAtomics};
+use crate::core::shared_atomics::{AudioExportAtomics, TrackMixAtomics};
 use crate::core::time::{Meter, TapTempo};
 use crate::core::transport::TransportCommand;
 use crate::view::display::UiEvent;
@@ -89,7 +89,6 @@ pub(crate) fn harness() -> Harness {
         plugin_midi_tx,
         RingBuffer::new(8).0,
         playback_tick.clone(),
-        Arc::new(AtomicI32::new(0)), // elapsed_ticks
         cursor_tick.clone(),
         region.0.clone(),
         region.1.clone(),
@@ -101,12 +100,6 @@ pub(crate) fn harness() -> Harness {
         Arc::new(AtomicBool::new(false)),
         Arc::new(TrackMixAtomics::new()),
         audio_export.clone(),
-        LiveRecState {
-            last_note_on: Arc::new(AtomicU8::new(0)),
-            last_note_velocity: Arc::new(AtomicU8::new(0)),
-            elapsed_start_tick: Arc::new(AtomicI32::new(0)),
-            thumbnail_snapshot: Arc::new(Mutex::new(Vec::new())),
-        },
     );
     let track_id = sequencer.track_id_by_index(0).unwrap();
     sequencer.select_track(Some(track_id));

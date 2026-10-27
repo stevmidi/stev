@@ -65,17 +65,6 @@ impl Display {
                 UiEvent::TimeSelectionCleared => {
                     self.clear_time_selection();
                 }
-                UiEvent::RecordingStarted { clip } => {
-                    self.recording_clip_id = Some(clip.clip_id);
-                    self.add_clip_shape(clip);
-                }
-                UiEvent::RecordingCompleted => {
-                    self.recording_clip_id = None;
-                }
-                UiEvent::RecordingCanceled { track_idx, clip_id } => {
-                    self.recording_clip_id = None;
-                    self.remove_clip_shape(track_idx, clip_id);
-                }
                 UiEvent::ClipAdded { clip } => {
                     self.add_clip_shape(clip);
                 }

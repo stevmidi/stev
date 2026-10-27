@@ -127,7 +127,7 @@ use crate::{
     core::{
         event_handlers::EventHandlers,
         input_event::{InputEvent, TimeSelectionRect},
-        shared_atomics::{AudioExportAtomics, LiveRecState, TrackMixAtomics},
+        shared_atomics::{AudioExportAtomics, TrackMixAtomics},
         view_state::ViewState,
     },
     metadata::{
@@ -184,9 +184,6 @@ pub(crate) struct Display {
     meter: Arc<AtomicU16>,
     /// Shared "transport running" flag.
     running: Arc<AtomicBool>,
-    /// The transport odometer — the only clock the renderer needs, since the
-    /// live-rec overlay measures a span rather than reading a position.
-    elapsed_ticks: Arc<AtomicI32>,
     /// Shared transport playback position, ticks. The clip pane maps it into
     /// the lead clip (`lead_clip_playback_tick`).
     playback_tick: Arc<AtomicI32>,
@@ -304,12 +301,6 @@ pub(crate) struct Display {
     /// override. See [`GestureState`].
     gesture: GestureState,
 
-    // --- Recording state ---
-    /// The clip currently being live-recorded, if any.
-    recording_clip_id: Option<Uuid>,
-    /// Shared last-note / thumbnail surface for the live-rec overlay.
-    live_rec_state: LiveRecState,
-
     // --- Input ---
     /// Polls egui's native input each frame into `InputEvent`s.
     input_poller: InputPoller,
@@ -418,7 +409,6 @@ impl Display {
         tempo: Arc<AtomicI32>,
         meter: Arc<AtomicU16>,
         running: Arc<AtomicBool>,
-        elapsed_ticks: Arc<AtomicI32>,
         playback_tick: Arc<AtomicI32>,
         cursor_tick: Arc<AtomicI32>,
         region_start: Arc<AtomicI32>,
@@ -428,13 +418,11 @@ impl Display {
         has_event_selection: Arc<AtomicBool>,
         track_mix: Arc<TrackMixAtomics>,
         audio_export: Arc<AudioExportAtomics>,
-        live_rec_state: LiveRecState,
     ) -> Self {
         Display {
             tempo,
             meter,
             running,
-            elapsed_ticks,
             playback_tick,
             cursor_tick,
             region_start,
@@ -474,8 +462,6 @@ impl Display {
             )),
             tracks: TrackLane::defaults(),
             gesture: GestureState::default(),
-            recording_clip_id: None,
-            live_rec_state,
             input_poller: InputPoller::new(),
             keymap,
             computer_keyboard: ComputerKeyboard::default(),
@@ -541,11 +527,6 @@ impl Display {
     /// Whether an audio export is running.
     fn is_exporting_audio(&self) -> bool {
         self.audio_export.is_running()
-    }
-
-    /// Whether a live-record take is in progress.
-    fn is_recording(&self) -> bool {
-        self.recording_clip_id.is_some()
     }
 
     /// Whether playback loops at the region end.
@@ -1121,11 +1102,6 @@ impl Display {
     /// The project's time signature.
     fn meter(&self) -> Meter {
         Meter::from_bits(self.meter.load(Ordering::Relaxed))
-    }
-
-    /// The transport odometer value.
-    fn elapsed_tick(&self) -> i32 {
-        self.elapsed_ticks.load(Ordering::Relaxed)
     }
 
     /// The current transport playback tick.

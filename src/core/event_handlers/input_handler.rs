@@ -113,10 +113,6 @@ impl EventHandlers {
                 self.send_transport(TransportCommand::TogglePlayback);
             }
 
-            InputEvent::Action(Action::ToggleLiveRecord) => {
-                self.send_sequencer(SequencerCommand::ToggleLiveRecording);
-            }
-
             InputEvent::Action(Action::Commit) => self.send_sequencer(SequencerCommand::Commit),
 
             InputEvent::Action(Action::MuteNotes) => self.handle_mute(),

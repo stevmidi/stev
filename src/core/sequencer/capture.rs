@@ -6,13 +6,12 @@
 //! `build_running_capture_insert` picks the slice `InsertCaptureEdit` inserts
 //! into an existing clip, from either pane. The
 //! window that gets frozen is derived from the loop region — see
-//! `100-running-capture.md` for the invariants, and `090-live-recording.md`
-//! for how this differs from the dedicated live-record path.
+//! `100-running-capture.md` for the invariants.
 
 use uuid::Uuid;
 
 use crate::{
-    core::{config, midi::input::InputTicks, time},
+    core::{config, time},
     models::{
         clip::Clip,
         event::{Event, EventType},
@@ -108,12 +107,11 @@ impl Sequencer {
         track.fits(&clip).then_some((track_idx, clip))
     }
 
-    /// Routes one live-input message to both recorders, each in its own tick
-    /// space — running capture needs the arrangement *position*, live recording
-    /// needs *elapsed* time a seek can't move. See [`InputTicks`]. Returns
+    /// Routes one live-input message into the capture buffer at `tick`, the
+    /// `clock_tick` it landed on — its arrangement *position*. Returns
     /// whether a note-on kicked the selected track's meter
     /// ([`kick_live_meter`](Self::kick_live_meter)).
-    pub(crate) fn handle_midi_input_dispatch(&mut self, message: &[u8], ticks: InputTicks) -> bool {
+    pub(crate) fn handle_midi_input_dispatch(&mut self, message: &[u8], tick: i32) -> bool {
         // Track which live keys are down so a transport stop does not release a
         // note the player is holding on an instrument track. See `130-plugin-host.md`.
         let live_target = self.live_instrument_target();
@@ -134,11 +132,10 @@ impl Sequencer {
         // stopped, playback is parked at the cursor while the clock keeps
         // counting in, so the difference would not be whole loops.
         if self.is_running() && is_note_on(message) {
-            self.capture_clock_offset = Some(ticks.position - self.playback_tick());
+            self.capture_clock_offset = Some(tick - self.playback_tick());
         }
 
-        self.add_midi_event_to_capture(message, ticks.position);
-        self.add_midi_event_to_live_rec(message, ticks.elapsed);
+        self.add_midi_event_to_capture(message, tick);
         self.kick_live_meter(message)
     }
 
@@ -1561,24 +1558,16 @@ mod tests {
         assert!(!seq.open_take_framing(ViewState::Clip));
     }
 
-    /// Both recorders take a wheel move off the input like a note.
+    /// The capture buffer takes a wheel move off the input like a note.
     #[test]
-    fn a_wheel_move_reaches_both_recorders() {
+    fn a_wheel_move_reaches_the_capture_buffer() {
         let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut seq = make_sequencer(0, bar * 2);
-        seq.start_live_recording(0).unwrap();
 
-        seq.handle_midi_input_dispatch(
-            &[0xE0, 0x00, 0x50],
-            InputTicks {
-                position: 300,
-                elapsed: 300,
-            },
-        );
+        seq.handle_midi_input_dispatch(&[0xE0, 0x00, 0x50], 300);
 
         let ticks = |clip: &Clip| -> Vec<i32> { clip.events().iter().map(Event::tick).collect() };
         assert_eq!(ticks(&seq.capture_clip), vec![300]);
-        assert_eq!(ticks(&seq.live_rec_clip), vec![300]);
     }
 
     /// Regression: committing used to select the note at the clip cursor
@@ -1878,13 +1867,7 @@ mod tests {
         for (offset, message) in [(600, [0x90, 60, 100]), (900, [0x80, 60, 0])] {
             seq.playback_tick
                 .store(playback + offset, Ordering::Relaxed);
-            seq.handle_midi_input_dispatch(
-                &message,
-                InputTicks {
-                    position: playback + offset + clock_ahead,
-                    elapsed: 0,
-                },
-            );
+            seq.handle_midi_input_dispatch(&message, playback + offset + clock_ahead);
         }
     }
 
@@ -1947,102 +1930,6 @@ mod tests {
         assert!(!is_note_on(&[0x80, 60, 64]));
         assert!(!is_note_on(&[0xB0, 7, 100]));
         assert!(!is_note_on(&[0x90]));
-    }
-
-    // --- live recording vs. a clock reposition ---
-
-    /// Recorded notes are placed from the odometer, so a `clock_tick`
-    /// reposition mid-take cannot move them.
-    ///
-    /// This is what the odometer in `150-clock-position-sync.md` exists for. Before
-    /// the split, one tick fed both recorders: a region edit or an
-    /// arranger↔clip-view switch while recording snapped that tick onto
-    /// playback, and every note after the snap landed at the wrong clip-local
-    /// position — corrupting the take, not just its bounds. Here the `position`
-    /// values are deliberately incoherent; only `elapsed` may be consulted.
-    #[test]
-    fn live_rec_note_placement_survives_a_clock_position_snap() {
-        let bar = Meter::FOUR_FOUR.bar_ticks();
-        let mut seq = make_sequencer(0, bar * 2);
-        seq.start_live_recording(5_000).unwrap();
-
-        // First note, one beat into the take.
-        seq.handle_midi_input_dispatch(
-            &[0x90, 60, 100],
-            InputTicks {
-                position: 900_000,
-                elapsed: 5_480,
-            },
-        );
-        // A reposition lands here — `position` collapses to a small value while
-        // the odometer keeps counting.
-        seq.handle_midi_input_dispatch(
-            &[0x90, 62, 100],
-            InputTicks {
-                position: 7,
-                elapsed: 5_960,
-            },
-        );
-
-        let ticks: Vec<i32> = seq
-            .live_rec_clip
-            .events()
-            .iter()
-            .filter(|e| e.event_type() == Some(EventType::NoteOn))
-            .map(|e| e.tick())
-            .collect();
-
-        assert_eq!(
-            ticks,
-            vec![480, 960],
-            "recorded notes must be placed from the odometer alone, got {ticks:?}"
-        );
-    }
-
-    /// The running-capture side of the same dispatch keeps taking `position`,
-    /// so the two recorders genuinely read different coordinates.
-    #[test]
-    fn running_capture_still_stamps_the_position_coordinate() {
-        let bar = Meter::FOUR_FOUR.bar_ticks();
-        let mut seq = make_sequencer(0, bar * 2);
-
-        seq.handle_midi_input_dispatch(
-            &[0x90, 60, 100],
-            InputTicks {
-                position: 900_000,
-                elapsed: 5_480,
-            },
-        );
-
-        let ticks: Vec<i32> = seq.capture_clip.events().iter().map(|e| e.tick()).collect();
-
-        assert_eq!(ticks, vec![900_000]);
-    }
-
-    /// A take auto-ends on odometer distance, and nothing else moving can
-    /// trigger it early.
-    #[test]
-    fn should_end_live_recording_fires_on_odometer_distance() {
-        let bar = Meter::FOUR_FOUR.bar_ticks();
-        let mut seq = make_sequencer(0, bar * 2);
-        seq.elapsed_ticks.store(5_000, Ordering::Relaxed);
-        seq.start_live_recording(5_000).unwrap();
-
-        // `rec_start_tick` is playback 0 and the region ends at 2 bars, so the
-        // take runs for 2 bars of odometer time.
-        assert!(!seq.should_end_live_recording());
-
-        // Playback and the cursor moving under it change nothing.
-        seq.playback_tick.store(bar * 2, Ordering::Relaxed);
-        seq.cursor_tick.store(bar * 4, Ordering::Relaxed);
-        assert!(!seq.should_end_live_recording());
-
-        seq.elapsed_ticks
-            .store(5_000 + bar * 2 - 1, Ordering::Relaxed);
-        assert!(!seq.should_end_live_recording());
-
-        seq.elapsed_ticks.store(5_000 + bar * 2, Ordering::Relaxed);
-        assert!(seq.should_end_live_recording());
     }
 
     // --- capture_events_to_insert ---

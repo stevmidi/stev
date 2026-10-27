@@ -64,18 +64,13 @@ impl EventHandlers {
 
     /// ⌘T / the `+` row: records an `AddTrackEdit` at `track_idx` (after the
     /// selected track when `None`). Refused, with a footer message, at
-    /// `MAX_TRACKS` and during a live take (whose session names its track by
-    /// position).
+    /// `MAX_TRACKS`.
     pub(super) fn add_track_workflow(
         &self,
         sequencer: &mut Sequencer,
         undo_record: &mut Record<SequencerEdit>,
         track_idx: Option<usize>,
     ) {
-        if sequencer.is_recording() {
-            self.send_status_ui_event("Stop recording to add a track".to_owned());
-            return;
-        }
         let edit = AddTrackEdit::new(sequencer, track_idx);
         if edit.is_none() {
             self.send_status_ui_event(format!("{MAX_TRACKS} tracks is the most a project holds"));
@@ -86,17 +81,13 @@ impl EventHandlers {
 
     /// Delete in track header focus / the output menu's `Delete track`: records a `RemoveTrackEdit` for
     /// `track_idx` (the selected track when `None`). Refused, with a footer
-    /// message, on the last remaining track and during a live take.
+    /// message, on the last remaining track.
     pub(super) fn remove_track_workflow(
         &self,
         sequencer: &mut Sequencer,
         undo_record: &mut Record<SequencerEdit>,
         track_idx: Option<usize>,
     ) {
-        if sequencer.is_recording() {
-            self.send_status_ui_event("Stop recording to delete a track".to_owned());
-            return;
-        }
         let edit = RemoveTrackEdit::new(sequencer, track_idx);
         if edit.is_none() {
             if sequencer.tracks().len() <= 1 {

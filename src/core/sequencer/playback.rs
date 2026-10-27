@@ -12,10 +12,6 @@
 //! seek, loop wrap, transport stop — that stop a clip-driven note from hanging
 //! in external gear or in a plugin; [`reset_wheels`](Sequencer::reset_wheels)
 //! does the same for a wheel a clip left off neutral when the transport stops.
-//!
-//! [`should_end_live_recording`](Sequencer::should_end_live_recording) lives
-//! here too: it is driven by the same pump, one call after every `tick`, and
-//! arms the `auto_end_tick` that `live_recording.rs` consumes.
 
 use std::time::{Duration, Instant};
 
@@ -104,26 +100,6 @@ impl Sequencer {
                     }
                 }
             }
-        }
-    }
-
-    /// Whether the current take has run for a full loop length and should
-    /// auto-stop. Sets [`auto_end_tick`](Self::auto_end_tick) as a side effect
-    /// when it returns `true`.
-    pub(crate) fn should_end_live_recording(&mut self) -> bool {
-        let Some(session) = self.live_rec_session else {
-            return false;
-        };
-
-        let start = session.rec_start_tick;
-        let end = self.region_end();
-        let length = end - start;
-
-        if self.elapsed_tick() - session.elapsed_start_tick >= length.max(0) {
-            self.auto_end_tick = Some(end);
-            true
-        } else {
-            false
         }
     }
 
@@ -388,7 +364,6 @@ mod tests {
     use rtrb::Consumer;
 
     use crate::core::config;
-    use crate::core::midi::input::InputTicks;
     use crate::core::midi::out_queue::MidiOutMessage;
     use crate::core::sequencer::ClipInstrumentEvent;
     use crate::core::sequencer::instrument_event::EventTime;
@@ -449,13 +424,7 @@ mod tests {
 
         // A clip note and a live-improvised note, same track, both C4-ish.
         sequencer.instrument_notes.observe_clip(0, &[0x90, 60, 100]);
-        sequencer.handle_midi_input_dispatch(
-            &[0x90, 64, 100],
-            InputTicks {
-                position: 0,
-                elapsed: 0,
-            },
-        ); // live E4
+        sequencer.handle_midi_input_dispatch(&[0x90, 64, 100], 0); // live E4
 
         // Also a clip note on E4 — must be spared because E4 is held live.
         sequencer.instrument_notes.observe_clip(0, &[0x90, 64, 100]);
@@ -742,10 +711,7 @@ mod tests {
         for _ in 0..200 {
             sequencer.tick(at);
         }
-        let live = InputTicks {
-            position: 200,
-            elapsed: 200,
-        };
+        let live = 200;
         sequencer.handle_midi_input_dispatch(&[0xE0, 0x00, 0x30], live);
         midi_out_bytes(&midi_out_rx);
 

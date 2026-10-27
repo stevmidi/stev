@@ -14,7 +14,7 @@
 //! mirror of some owned field.
 
 use std::sync::{
-    Arc, Mutex,
+    Arc,
     atomic::{AtomicBool, AtomicI32, AtomicU8, AtomicU16, AtomicU32, AtomicU64, Ordering},
 };
 
@@ -216,47 +216,6 @@ impl TrackMixAtomics {
 /// velocity.
 const VELOCITY_MASK: u64 = 0x7F;
 
-/// The live-recording surface the render thread reads to draw the take as it
-/// grows. Written by the `"sequencer"` thread as notes arrive; see
-/// `090-live-recording.md`. The `Mutex` is the one lock in this module — it is
-/// never touched on the audio path, only sequencer-write / render-read of a
-/// small `Vec`, so a `parking_lot`-style spin isn't warranted.
-pub(crate) struct LiveRecState {
-    /// Note number of the most recent NoteOn — drives the "currently playing"
-    /// key highlight while recording.
-    pub(crate) last_note_on: Arc<AtomicU8>,
-    /// Velocity of the most recent NoteOn, paired with
-    /// [`last_note_on`](Self::last_note_on).
-    pub(crate) last_note_velocity: Arc<AtomicU8>,
-    /// [`SharedAtomics::elapsed_ticks`] as it read when the take started. Every
-    /// live-rec tick is `elapsed_ticks - elapsed_start_tick`, so this is only
-    /// ever used as the base of a duration.
-    pub(crate) elapsed_start_tick: Arc<AtomicI32>,
-    /// `(start_tick, end_tick, pitch_frac)` for every note captured so far —
-    /// the thumbnail the arranger draws over the recording clip each frame. A
-    /// held note's `end_tick` is [`Self::HELD_NOTE_SENTINEL`].
-    pub(crate) thumbnail_snapshot: Arc<Mutex<Vec<(i32, i32, f32)>>>,
-}
-
-impl LiveRecState {
-    /// The `end_tick` of a [`thumbnail_snapshot`](Self::thumbnail_snapshot)
-    /// entry whose note is still held: the renderer draws it to the current
-    /// live-rec tick instead, so it grows every frame without a rebuild.
-    pub(crate) const HELD_NOTE_SENTINEL: i32 = i32::MAX;
-
-    /// Clones every `Arc` handle — the shared state itself is not duplicated.
-    /// Named rather than `#[derive(Clone)]` because the fields are `Arc`s and a
-    /// derive would read as a deep copy.
-    pub(crate) fn clone(&self) -> Self {
-        LiveRecState {
-            last_note_on: self.last_note_on.clone(),
-            last_note_velocity: self.last_note_velocity.clone(),
-            elapsed_start_tick: self.elapsed_start_tick.clone(),
-            thumbnail_snapshot: self.thumbnail_snapshot.clone(),
-        }
-    }
-}
-
 /// The running audio export (`130-plugin-host.md` § Audio export), mirrored for the
 /// threads besides the `"sequencer"` one, whose `Sequencer` holds the run
 /// itself. Grouped like [`TrackMixAtomics`]: three values, each independent.
@@ -283,7 +242,7 @@ impl AudioExportAtomics {
 }
 
 /// The whole shared-state bundle. Built in `setup_shared_atomics`, cloned into
-/// each thread. `track_mix` and `live_rec_state` group related sub-bundles;
+/// each thread. `track_mix` and `audio_export` group related sub-bundles;
 /// everything else is a single value. Unless a field says otherwise it is
 /// written from the `"sequencer"` thread (through `Sequencer` or its
 /// thread-local `Transport`) and read by the render thread each frame.
@@ -309,17 +268,6 @@ pub(crate) struct SharedAtomics {
     /// (the counter itself only steps on the ~1 ms firing). See
     /// `MidiInputForwarder` and `interpolate_input_tick`.
     pub(crate) clock_tick_instant_nanos: Arc<AtomicU64>,
-    /// The transport odometer: musical time *played*, in ticks. Credited by the
-    /// `"clock"` thread on the same firings as `clock_tick`, but only while
-    /// `running`, and — unlike `clock_tick` — **never** repositioned by
-    /// [`ClockCommand::AlignToPlayback`](crate::core::clock::ClockCommand).
-    ///
-    /// That is the whole point of it. `clock_tick` is a *position*, so a seek
-    /// must move it; live recording measures a *duration* by subtraction, so a
-    /// seek must not. Sharing one counter for both corrupted a take from the
-    /// seek onward. Read only by live recording. See
-    /// `150-clock-position-sync.md`.
-    pub(crate) elapsed_ticks: Arc<AtomicI32>,
     /// Playback position, in ticks. Advanced by the `"sequencer"` thread's tick
     /// pump and repositioned on a seek / loop wrap.
     pub(crate) playback_tick: Arc<AtomicI32>,
@@ -372,8 +320,6 @@ pub(crate) struct SharedAtomics {
     pub(crate) midi_out_offset_ms: Arc<AtomicI32>,
     /// Per-track volume / stereo balance / mute / solo — see [`TrackMixAtomics`].
     pub(crate) track_mix: Arc<TrackMixAtomics>,
-    /// Live-recording thumbnail + last-note state — see [`LiveRecState`].
-    pub(crate) live_rec_state: LiveRecState,
     /// The running audio export — see [`AudioExportAtomics`].
     pub(crate) audio_export: Arc<AudioExportAtomics>,
 }

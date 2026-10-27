@@ -3,7 +3,7 @@
 //! `main` to spawn the threads. Keeps the wiring in one readable place.
 
 use std::sync::{
-    Arc, Mutex, OnceLock,
+    Arc, OnceLock,
     atomic::{AtomicBool, AtomicI32, AtomicU8, AtomicU16, AtomicU64},
 };
 
@@ -17,7 +17,7 @@ use crate::core::config::{
 };
 use crate::core::{
     keymap::Keymap,
-    shared_atomics::{AudioExportAtomics, LiveRecState, TrackMixAtomics},
+    shared_atomics::{AudioExportAtomics, TrackMixAtomics},
     time::Meter,
     timer::Timer,
 };
@@ -29,9 +29,7 @@ use crate::{
         input_event::InputEvent,
         metronome::Metronome,
         midi::{
-            input::{InputTicks, MidiInputForwarder},
-            message::Midi3,
-            out_queue::MidiOutMessage,
+            input::MidiInputForwarder, message::Midi3, out_queue::MidiOutMessage,
             output::MidiOutputConnection,
         },
         note_logger::NoteLoggerCommand,
@@ -51,7 +49,6 @@ pub(crate) fn setup_shared_atomics() -> SharedAtomics {
         meter: Arc::new(AtomicU16::new(Meter::FOUR_FOUR.to_bits())),
         clock_tick: Arc::new(AtomicI32::new(0)),
         clock_tick_instant_nanos: Arc::new(AtomicU64::new(0)),
-        elapsed_ticks: Arc::new(AtomicI32::new(0)),
         playback_tick: Arc::new(AtomicI32::new(0)),
         cursor_tick: Arc::new(AtomicI32::new(0)),
         region_start: Arc::new(AtomicI32::new(0)),
@@ -65,12 +62,6 @@ pub(crate) fn setup_shared_atomics() -> SharedAtomics {
         live_instrument_target: Arc::new(AtomicI32::new(-1)),
         midi_out_offset_ms: Arc::new(AtomicI32::new(MIDI_OUT_OFFSET_DEFAULT_MS)),
         track_mix: Arc::new(TrackMixAtomics::new()),
-        live_rec_state: LiveRecState {
-            last_note_on: Arc::new(AtomicU8::new(0)),
-            last_note_velocity: Arc::new(AtomicU8::new(0)),
-            elapsed_start_tick: Arc::new(AtomicI32::new(0)),
-            thumbnail_snapshot: Arc::new(Mutex::new(Vec::new())),
-        },
         audio_export: Arc::new(AudioExportAtomics::default()),
     }
 }
@@ -83,7 +74,7 @@ pub(crate) fn setup_shared_channels() -> SharedChannels {
     let (note_logger_command_tx, note_logger_command_rx) = unbounded::<NoteLoggerCommand>();
     let (transport_event_tx, transport_event_rx) = unbounded::<TransportEvent>();
     let (clock_command_tx, clock_command_rx) = unbounded::<ClockCommand>();
-    let (midi_in_tx, midi_in_rx) = unbounded::<(Vec<u8>, InputTicks)>();
+    let (midi_in_tx, midi_in_rx) = unbounded::<(Vec<u8>, i32)>();
     let (midi_out_tx, midi_out_rx) = unbounded::<MidiOutMessage>();
     let (clip_instrument_midi_tx, clip_instrument_midi_rx) =
         RingBuffer::new(INSTRUMENT_MIDI_RING_CAPACITY);
@@ -152,8 +143,6 @@ pub(crate) fn setup_clock(
         shared_atomics.tempo.clone(),
         shared_atomics.clock_tick.clone(),
         shared_atomics.clock_tick_instant_nanos.clone(),
-        shared_atomics.elapsed_ticks.clone(),
-        shared_atomics.running.clone(),
     )
 }
 
@@ -185,7 +174,7 @@ pub(crate) fn setup_metronome(
 
 /// Builds the [`MidiInputForwarder`] wired to its output channels and the shared clock/tempo/arm atomics.
 pub(crate) fn setup_midi_input_forwarder(
-    midi_in_tx: Sender<(Vec<u8>, InputTicks)>,
+    midi_in_tx: Sender<(Vec<u8>, i32)>,
     midi_out_tx: Sender<MidiOutMessage>,
     note_logger_command_tx: Sender<NoteLoggerCommand>,
     instrument_midi_tx: Producer<(usize, Midi3)>,
@@ -198,7 +187,6 @@ pub(crate) fn setup_midi_input_forwarder(
         instrument_midi_tx,
         shared_atomics.clock_tick.clone(),
         shared_atomics.clock_tick_instant_nanos.clone(),
-        shared_atomics.elapsed_ticks.clone(),
         shared_atomics.tempo.clone(),
         shared_atomics.arm_channel.clone(),
         shared_atomics.performance_lane_armed.clone(),
@@ -242,7 +230,6 @@ pub(crate) fn setup_display(
         shared_atomics.tempo.clone(),
         shared_atomics.meter.clone(),
         shared_atomics.running.clone(),
-        shared_atomics.elapsed_ticks.clone(),
         shared_atomics.playback_tick.clone(),
         shared_atomics.cursor_tick.clone(),
         shared_atomics.region_start.clone(),
@@ -252,7 +239,6 @@ pub(crate) fn setup_display(
         shared_atomics.has_event_selection.clone(),
         shared_atomics.track_mix.clone(),
         shared_atomics.audio_export.clone(),
-        shared_atomics.live_rec_state.clone(),
     )
 }
 
@@ -268,7 +254,6 @@ pub(crate) fn setup_sequencer(
         instrument_midi_tx,
         export_mark_tx,
         shared_atomics.playback_tick.clone(),
-        shared_atomics.elapsed_ticks.clone(),
         shared_atomics.cursor_tick.clone(),
         shared_atomics.region_start.clone(),
         shared_atomics.region_end.clone(),
@@ -280,7 +265,6 @@ pub(crate) fn setup_sequencer(
         shared_atomics.performance_lane_armed.clone(),
         shared_atomics.track_mix.clone(),
         shared_atomics.audio_export.clone(),
-        shared_atomics.live_rec_state.clone(),
     )
 }
 

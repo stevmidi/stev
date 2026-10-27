@@ -1,7 +1,7 @@
 //! Fixtures shared by the sequencer's unit tests.
 
 use std::sync::{
-    Arc, Mutex,
+    Arc,
     atomic::{AtomicBool, AtomicI32, AtomicU8, AtomicU16, Ordering},
 };
 use std::time::Instant;
@@ -13,7 +13,7 @@ use crate::core::{
     config,
     input_event::TimeSelectionRect,
     midi::out_queue::MidiOutMessage,
-    shared_atomics::{AudioExportAtomics, LiveRecState, TrackMixAtomics},
+    shared_atomics::{AudioExportAtomics, TrackMixAtomics},
     time::Meter,
 };
 use crate::models::{
@@ -45,7 +45,6 @@ pub(super) fn sequencer_with_outputs(
         Arc::new(AtomicI32::new(0)),
         Arc::new(AtomicI32::new(0)),
         Arc::new(AtomicI32::new(0)),
-        Arc::new(AtomicI32::new(0)),
         Arc::new(AtomicBool::new(loop_enabled)),
         Arc::new(AtomicBool::new(false)), // running
         Arc::new(AtomicI32::new(config::TEMPO_US_DEFAULT)),
@@ -54,12 +53,6 @@ pub(super) fn sequencer_with_outputs(
         Arc::new(AtomicBool::new(false)),
         Arc::new(TrackMixAtomics::new()),
         Arc::new(AudioExportAtomics::default()),
-        LiveRecState {
-            last_note_on: Arc::new(AtomicU8::new(0)),
-            last_note_velocity: Arc::new(AtomicU8::new(0)),
-            elapsed_start_tick: Arc::new(AtomicI32::new(0)),
-            thumbnail_snapshot: Arc::new(Mutex::new(Vec::new())),
-        },
     );
     (sequencer, midi_out_rx, plugin_midi_rx)
 }

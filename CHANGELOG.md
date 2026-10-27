@@ -20,6 +20,12 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ## [Unreleased]
 
+### Removed
+
+- Live recording on `R`. Capture covers it: everything you play is kept, and
+  `/` commits it (while playing, the last pass from the cursor). `R` is now
+  unbound, and a rebinding of it in `settings.json` is dropped.
+
 ## [0.8.0] - 2026-10-26
 
 ### Added

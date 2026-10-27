@@ -19,10 +19,7 @@ use crate::{
         audio::ClickEvent,
         clock::{ClockCommand, ClockTick},
         input_event::InputEvent,
-        midi::{
-            input::InputTicks, message::Midi3, out_queue::MidiOutMessage,
-            output::MidiOutputConnection,
-        },
+        midi::{message::Midi3, out_queue::MidiOutMessage, output::MidiOutputConnection},
         note_logger::NoteLoggerCommand,
         sequencer::{AudioExportJob, ClipInstrumentEvent, ExportMark, SequencerCommand},
         transport::{TransportCommand, TransportEvent},
@@ -67,10 +64,10 @@ pub(crate) struct SharedChannels {
     /// Receiving half of the pair documented above.
     pub(crate) clock_command_rx: Receiver<ClockCommand>,
     /// MIDI-input callback → `"sequencer"` thread: raw bytes plus the
-    /// sub-tick-corrected arrival time ([`InputTicks`]).
-    pub(crate) midi_in_tx: Sender<(Vec<u8>, InputTicks)>,
+    /// sub-tick-corrected `clock_tick`.
+    pub(crate) midi_in_tx: Sender<(Vec<u8>, i32)>,
     /// Receiving half of the pair documented above.
-    pub(crate) midi_in_rx: Receiver<(Vec<u8>, InputTicks)>,
+    pub(crate) midi_in_rx: Receiver<(Vec<u8>, i32)>,
     /// `"sequencer"` thread → `"midiout"` thread: outbound MIDI, clip messages
     /// tagged with their tick [`Instant`](std::time::Instant) for the delay
     /// queue. See `160-midi-out-offset.md`.
