@@ -53,21 +53,6 @@ Level 1, an unsigned universal `Stev.app` in a zip attached to each release by C
 
 A **self-updater** (Sparkle) downloading and installing in place needs level 2's signing plus an EdDSA-signed appcast, and overlaps with level 3's cask: optional after level 2, not before. The manual Check for updates (`330` § 3) stays until then.
 
-### Detecting the meter on Enter
-
-Idea, 2026-10-09. Enter's fit (`fit_first_clip_tempo`, `040` § Fitting the tempo) could guess the first clip's meter together with its tempo. Feasible in part; worth a cheap probe before any design.
-
-- **Why the length alone can't do it:** the fit uses only the played length, and any length fits any meter once the tempo is free. For example, 3 s is 2 bars of 4/4 at 160, or of 3/4 at 120, or of 6/8 at 120. Today Enter assumes the project's meter and lets the octave band pick the tempo. The meter has to come from what's played *inside* the phrase.
-- **The cues:**
-  1. **The beat.** Onset intervals cluster around a pulse. Stev has no beat finder today: the tempo fit divides the length by a whole number of bars and never looks inside. This is the missing piece.
-  2. **Beats per phrase: the strongest cue, and a natural fit for capture.** Players close phrases on 1, 2, 4 or 8 bars, so once the beat is known, 8 or 16 beats → 4/4; 6, 12 or 24 → 3/4 (or 6/8); 7 or 14 → 7/x; 5 or 10 → 5/x. Twelve could be three bars of 4/4, but a "phrases are 1/2/4/8 bars" prior settles most of those.
-  3. **Accents.** Strong beats tend to get louder, longer and lower notes, chord changes and bass notes. A pattern repeating every 2 beats reads duple, every 3 triple.
-  4. **3/4 vs 6/8.** Same bar length at the same quarter tempo; only the grouping differs. Onsets and accents fall at 0 / 960 / 1920 ticks for 3/4, and at 0 / 1440 with eighths in threes for 6/8. A weaker signal, and partly taste.
-- **Not detectable, never offered:** 4/4 vs 2/4 vs 2/2 (the tempo-octave ambiguity again, and musically irrelevant); borderline 3/4 vs 6/8 and heavily syncopated playing, where two musicians would disagree. A realistic expectation: duple vs triple fairly reliable, odd meters when the phrase repeats cleanly, 3/4 vs 6/8 a coin flip.
-- **Shape if built:** a small hypothesis set (4/4, 3/4, 6/8, maybe 5/4 and 7/8), each scored as a (meter, tempo) pair on whether its beat count makes a plausible whole-bar phrase. **Keep the project's meter unless the evidence is strong.** A wrong 6/8 annoys far more than a kept 4/4, and the meter chip fixes it cheaply. Undo restores meter and tempo together, as the fit's undo does today. Only the first clip, as with the fit.
-- **Pinned to real takes**, as phrase detection is (`040` § Phrase start). Fixtures already record `meter`, so the meter the user chose for a take is the answer the detector must reproduce. Every checked-in 4/4 take must come out 4/4 before a 3/4 result counts.
-- **First step:** a test-only probe over `fixtures/captures/` that finds the beat, counts the beats in the phrase and reports duple/triple, changing no app behaviour. If it can't call every 4/4 take duple, the idea dies cheaply. If it can, record a few 3/4 and 6/8 takes, pin them, and see whether triple comes out.
-
 ### Export to audio: what's left
 
 The stem export is built (`⌘/Ctrl+⇧+R`, as built in `130` § Audio export, phase plan in `archive/300-export-to-audio.md`). Two follow-ups were left out of it on purpose:
@@ -95,6 +80,7 @@ The site is live at stevmidi.com (2026-10-22), with the four capture loops in it
 Mirrored in the README's *Not planned* list, so nobody expects these. Some may come later if the capture workflow needs them, but none is on the roadmap.
 
 - tempo or meter changes along the timeline (one tempo and one meter per project; the meter is stored as a list so changes could extend the format later, `060`)
+- detecting the meter from a take: Enter fits the tempo in the project's meter and the meter chip sets it. Probed 2026-10-27 over the pinned takes and dropped. A free noodle doesn't reveal its meter: its phrase ends on a rest of unknown length, so 10–12 played eighths fit two bars of 3/4 as well as two of 4/4, and the accents were at noise level. A cleanly repeating riff does (one 3/4 test take repeated its rhythm exactly every three beats), but its whole-bar length fits 4/4 just as well, and a three-beat riff can be meant over 4/4. Too narrow and too subjective to save one click on the chip; Ableton's Capture doesn't detect the meter either
 - audio tracks and audio recording
 - a built-in sampler or other built-in instrument: sampler and instrument plugins cover it, loaded through the plugin host (`130`)
 - automation lanes and CC lane editing, and with them any view of recorded wheel data: pitch bend and the mod wheel stay invisible in the piano roll and the thumbnails until a lane shows them (decided 2026-10-14, `090`)

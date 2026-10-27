@@ -145,6 +145,7 @@ the [roadmap](docs/280-roadmap.md):
 
 - tempo or meter changes along the timeline (one tempo and one meter per
   project)
+- detecting the meter from what you play: set it with the meter chip
 - audio tracks and audio recording
 - a built-in sampler or instrument: plugins cover it
 - automation lanes and CC lane editing
