@@ -8,7 +8,7 @@
 use egui::Pos2;
 
 use crate::core::audio::mix::{db_from_fader_pos, fader_pos_from_db};
-use crate::models::clip::{ClipEdge, NoteBounds, NoteDrag, min_window_length};
+use crate::models::clip::{ClipEdge, NoteBounds, NoteDrag};
 
 use super::*;
 
@@ -634,22 +634,19 @@ impl Display {
 
     /// Begins a drag of the clip view's window band handle on `edge`
     /// (`window_edge_at`), freezing what its preview is held to: the lead
-    /// clip's reach, its room before the next clip on its track, and how
-    /// close the edges may come. A
+    /// clip's reach and its room before the next clip on its track. A
     /// distinct gesture: the press neither places the cursor nor selects
     /// anything, and hides the cursor line, which would read as the cursor
     /// moving with the handle.
     pub(super) fn begin_window_edge_drag(&mut self, edge: ClipEdge) {
         let reach = self.clip_reach_of(self.region_bounds_for_render());
         let room = self.lead_clip_room();
-        let min_length = min_window_length(self.take_session.is_some());
         self.gesture.hover_cursor = None;
         self.gesture.window_edge_hover = None;
         self.gesture.window_edge_drag = Some(WindowEdgeDrag {
             edge,
             reach,
             room,
-            min_length,
             target: None,
         });
     }

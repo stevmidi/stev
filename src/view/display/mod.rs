@@ -120,7 +120,7 @@ use crate::core::plugin_host::PluginAudioHandle;
 #[cfg(target_os = "macos")]
 use crate::core::plugin_host::catalog::PluginCatalogEntry;
 use crate::core::time::{Meter, pixels_to_ticks, px_per_beat_to_ppt, snap_to_grid};
-use crate::models::clip::window_with_edge_at;
+use crate::models::clip::{min_window_length, window_with_edge_at};
 #[cfg(target_os = "macos")]
 use crate::view::appkit::MainGlContext;
 use crate::{
@@ -993,11 +993,12 @@ impl Display {
 
     /// The window a live window band drag would commit if released now —
     /// the sequencer's own rule (`window_with_edge_at`) over the room frozen
-    /// at the press. `None` with no drag or before the pointer moved.
+    /// at the press, its edges a tick apart in a take session. `None` with no drag or before the pointer moved.
     fn window_drag_preview(&self) -> Option<(i32, i32)> {
         let drag = self.gesture.window_edge_drag?;
         let window = self.region_bounds_for_render();
-        window_with_edge_at(drag.edge, drag.target?, window, drag.room, drag.min_length)
+        let min_length = min_window_length(self.take_session.is_some());
+        window_with_edge_at(drag.edge, drag.target?, window, drag.room, min_length)
     }
 
     /// The lead clip's window as the clip view draws it: a live window band
