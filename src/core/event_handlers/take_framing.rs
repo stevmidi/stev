@@ -4,8 +4,8 @@
 //! stands in front of every [`SequencerCommand`]. The session has no keys of
 //! its own: Enter inserts, Esc cancels, and `[`/`]`, the window band and the
 //! cursor keys act on the take as on any clip; leaving the clip view cancels
-//! it; transport, zoom, the mixer and note previews go through; everything
-//! else that edits is blocked.
+//! it; transport, zoom, the mixer, note previews and a save (of the project
+//! without the take) go through; everything else that edits is blocked.
 
 use undo::Record;
 
@@ -114,11 +114,13 @@ impl EventHandlers {
             | SequencerCommand::SetTrackOutput { .. }
             | SequencerCommand::SetTrackInstrumentState { .. }
             // A running export's end, which the session can't hold up.
-            | SequencerCommand::AudioExportWritten(_) => return false,
+            | SequencerCommand::AudioExportWritten(_)
+            // A save, which writes the target as it was before the session
+            // (`Sequencer::saved_events`).
+            | SequencerCommand::SaveProject { .. } => return false,
 
             // The project commands say why they did nothing.
             SequencerCommand::ProjectAction { .. }
-            | SequencerCommand::SaveProject { .. }
             | SequencerCommand::ExportClip { .. }
             | SequencerCommand::ExportAudio { .. }
             | SequencerCommand::ImportMidiClip { .. } => {
@@ -343,6 +345,27 @@ mod tests {
             },
         );
         assert_eq!(*h.sequencer.tracks()[1].output(), synth);
+        assert!(h.sequencer.is_framing_take());
+    }
+
+    /// A save goes through an open session, which stays open: the project
+    /// is written without the take (`Sequencer::saved_events`).
+    #[test]
+    fn a_save_goes_through_a_session() {
+        let mut h = harness();
+        let mut record = Record::new();
+        played_into_a_lead_clip(&mut h);
+        run_command(&mut h, &mut record, SequencerCommand::Commit);
+        assert!(h.sequencer.is_framing_take());
+
+        let save = SequencerCommand::SaveProject {
+            filename: "Song".to_owned(),
+            folder: None,
+        };
+        assert!(
+            !h.handlers
+                .take_framing_command(&save, &mut h.sequencer, &mut record)
+        );
         assert!(h.sequencer.is_framing_take());
     }
 

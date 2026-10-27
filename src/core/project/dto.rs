@@ -301,8 +301,8 @@ impl ProjectData {
                     .clips()
                     .iter()
                     .map(|clip| {
-                        let events = clip
-                            .events()
+                        let events = sequencer
+                            .saved_events(clip)
                             .iter()
                             .map(|event| EventData {
                                 tick: event.tick(),

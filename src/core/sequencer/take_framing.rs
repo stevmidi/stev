@@ -109,6 +109,16 @@ impl Sequencer {
         self.take_framing.is_some()
     }
 
+    /// The events a save writes for `clip`: the target of an open session as
+    /// it was before the session (the take is no part of the project until
+    /// Enter inserts it), any other clip as it is.
+    pub(crate) fn saved_events<'a>(&'a self, clip: &'a Clip) -> &'a [Event] {
+        match &self.take_framing {
+            Some(framing) if framing.clip_id == clip.id() => &framing.pre_events,
+            _ => clip.events(),
+        }
+    }
+
     /// The take of the open session, which [`selected_clip`](Self::selected_clip)
     /// returns while it is open.
     pub(super) fn framed_take(&self) -> Option<&Clip> {
@@ -270,6 +280,7 @@ mod tests {
 
     use super::*;
     use crate::core::{
+        project::ProjectData,
         sequencer::{
             ClipInstrumentEvent, EditResult, InsertCaptureEdit, SequencerEdit,
             test_support::{
@@ -531,6 +542,19 @@ mod tests {
         );
         // `/` reopens the take.
         assert!(seq.open_take_framing(ViewState::Clip));
+    }
+
+    /// A save during a session writes the target as it was before it: the
+    /// temporary notes the take is heard by are no part of the project.
+    #[test]
+    fn a_save_leaves_the_take_out() {
+        let notes = [(0, 240, 60), (960, 1200, 62)];
+        let (mut seq, _) = session_seq(BAR * 4, BAR, &notes);
+        let before = ProjectData::from_sequencer(&seq).fingerprint();
+
+        assert!(seq.open_take_framing(ViewState::Clip));
+        assert_eq!(lead_notes(&seq).len(), 2, "the take is heard in place");
+        assert_eq!(ProjectData::from_sequencer(&seq).fingerprint(), before);
     }
 
     /// Enter is one undo step whose undo is the clip from before the

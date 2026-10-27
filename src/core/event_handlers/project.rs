@@ -247,8 +247,9 @@ impl EventHandlers {
     }
 
     /// Writes the project to `folder/filename.stev`, which on success becomes
-    /// `saved` and has the browser re-read the tree, and says how it went in
-    /// the footer.
+    /// `saved`, tells the view it is the open project (`UiEvent::ProjectSaved`)
+    /// and has the browser re-read the tree, and says how it went in the
+    /// footer.
     pub(super) fn save_project_workflow(
         &self,
         sequencer: &Sequencer,
@@ -262,6 +263,12 @@ impl EventHandlers {
                 *saved = SavedProject {
                     fingerprint: data.fingerprint(),
                 };
+                self.ui_event_tx
+                    .send(UiEvent::ProjectSaved {
+                        name: filename.to_owned(),
+                        folder: folder.map(str::to_owned),
+                    })
+                    .ok();
                 self.ui_event_tx.send(UiEvent::ProjectFilesChanged).ok();
                 format!("Saved {filename}")
             }

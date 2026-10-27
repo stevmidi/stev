@@ -76,14 +76,15 @@ These temporary notes are never undo steps of their own. **Enter** restores the 
 - **Esc**, **⌘Z** and **⇧⌘Z** cancel. The capture buffer is left as it was, so `/` reopens the take (with anything played since added to it). The edge moves inside a session are not undoable one by one.
 - **Leaving the clip view** cancels: Shift+Tab, a click in the arranger, selecting another clip or track.
 - **Enter** consumes the buffer, as the insert does today (`InsertCaptureEdit`'s first `edit()`).
-- **Everything else that edits is blocked** while the session is open: note edits, quantize, `M`, `⌥=`/`⌥-`, another `/`, save, load, new project, the browser's open/import. The take only chooses a window; it isn't edited.
+- **Everything else that edits is blocked** while the session is open: note edits, quantize, `M`, `⌥=`/`⌥-`, another `/`, load, new project, the browser's open/import. The take only chooses a window; it isn't edited.
+- **Save goes through** (⌘/Ctrl+S, Save As; 2026-10-27), and the session stays open: the project is written with the target clip as it was before the session (`Sequencer::saved_events`, which `ProjectData::from_sequencer` reads), so the temporary notes the take is heard by never reach the file, and the unsaved-changes fingerprint, built from the same snapshot, doesn't count them either. It used to be blocked like the other project commands, but Save As had closed by then and taken the name, so the save looked done when it wasn't.
 - **Transport, zoom and scroll work** (Space, `⌥Space`, the loop toggle, `+`/`-`, `Z`/`X`, the wheel), and so do the mix controls and a track's output (a plugin put on a track, the output menu's channels): `Display` swaps a plugin before it asks, so blocking the output change would leave the sequencer routing to a plugin no longer loaded (`an_output_change_goes_through_a_session`). It is an undo step of its own, recorded under the session; ⌘Z inside the session still only cancels.
 - **Quit or window close** cancels the session first, so the unsaved-changes check (`060`) compares the project without the temporary notes.
 - **Nothing to frame:** no notes in the buffer, or no room at the clip cursor, opens no session (as the insert does nothing today).
 
 The footer names the session (e.g. "Framing take: Enter inserts, Esc cancels") while it is open; it is the one place the mode is visible beyond the take itself.
 
-Pinned by: the window rule (`the_window_selects_whole_notes_by_their_start`: a note across `]` kept whole, a note across `[` left out, the window start on the cursor; `a_note_played_just_before_the_start_comes_along`), an empty window's Enter (`enter_on_an_empty_window_inserts_nothing`), Enter = one undo step whose undo restores the pre-session clip, Esc and ⌘Z restore it and keep the buffer, the selection unchanged, blocked commands are no-ops, and a run across a loop wrap that hears a changed window from the next pass (driving `Sequencer::tick`, like `a_start_moved_while_playing_is_heard_at_once`).
+Pinned by: the window rule (`the_window_selects_whole_notes_by_their_start`: a note across `]` kept whole, a note across `[` left out, the window start on the cursor; `a_note_played_just_before_the_start_comes_along`), an empty window's Enter (`enter_on_an_empty_window_inserts_nothing`), Enter = one undo step whose undo restores the pre-session clip, Esc and ⌘Z restore it and keep the buffer, the selection unchanged, blocked commands are no-ops, a save writes the project without the take (`a_save_leaves_the_take_out`, `a_save_goes_through_a_session`), and a run across a loop wrap that hears a changed window from the next pass (driving `Sequencer::tick`, like `a_start_moved_while_playing_is_heard_at_once`).
 
 ### As built (phase 2)
 
@@ -95,7 +96,7 @@ Where the design left a choice, the build made it so (2026-10-13):
 - **The lead clip's arranger thumbnail** shows the temporary notes while the session is open (`ClipUpdated` on every window change) and loses them when it closes.
 - **The panel** is put back as it was when the session closes (the view remembers it, since the sequencer doesn't know it), and the keyboard goes back to the pane that had it.
 - **An arranger cursor move** (`MoveCursor`, `SetCursorAndSelectClip`) cancels the session too, since it can select another clip: `sync_clip_selection_to_cursor_workflow`, where every such move re-syncs the lead clip, cancels first.
-- **Blocked project commands** (new, open, save, export, import) say so in the footer; other blocked commands are silent no-ops. The piano roll starts no note drag, velocity drag or double-click insert on the take.
+- **Blocked project commands** (new, open, export, import) say so in the footer; other blocked commands are silent no-ops. The piano roll starts no note drag, velocity drag or double-click insert on the take.
 
 ## Decisions
 

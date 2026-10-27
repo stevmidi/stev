@@ -205,6 +205,10 @@ impl Display {
                 }
                 UiEvent::UnsavedChanges { action } => self.open_unsaved_prompt(action),
                 UiEvent::QuitApproved => self.quit_approved = true,
+                UiEvent::ProjectSaved { name, folder } => {
+                    self.project.project_current_name = Some(name);
+                    self.set_current_project_folder(folder);
+                }
                 UiEvent::ProjectFilesChanged => {
                     if self.browser.visible {
                         self.reload_browser();

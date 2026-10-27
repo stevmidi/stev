@@ -611,21 +611,20 @@ impl Display {
         }
     }
 
-    /// Saves the project under `name` in `folder`, which becomes the current
-    /// folder and `name` the open project, then asks for `then`. Each live plugin's
-    /// preset is captured first: those events queue ahead of
-    /// `ConfirmFilename` on the same channel, so the sequencer applies them
-    /// before it serializes the project — and `then` queues after it, so the
-    /// sequencer runs it now that nothing is unsaved, or prompts again if the
-    /// save failed.
+    /// Saves the project under `name` in `folder`, then asks for `then`.
+    /// `name` becomes the open project and `folder` the current one only
+    /// once the file is written (`UiEvent::ProjectSaved`): a failed save
+    /// leaves them as they were. Each live plugin's preset is captured
+    /// first: those events queue ahead of `ConfirmFilename` on the same
+    /// channel, so the sequencer applies them before it serializes the
+    /// project — and `then` queues after it, so the sequencer runs it now
+    /// that nothing is unsaved, or prompts again if the save failed.
     fn save_project_as(
         &mut self,
         name: String,
         folder: Option<String>,
         then: Option<ProjectAction>,
     ) {
-        self.project.project_current_name = Some(name.clone());
-        self.set_current_project_folder(folder.clone());
         #[cfg(target_os = "macos")]
         self.capture_instrument_states();
         self.input_event_tx

@@ -276,6 +276,16 @@ pub(crate) enum UiEvent {
     /// since the marquee's tick range no longer corresponds to any real
     /// content (see `delete_time_workflow`).
     TimeSelectionCleared,
+    /// The project was written to `folder/name.stev`: it becomes the open
+    /// project and `folder` the current one. Sent only once the file is
+    /// written, so a save that failed leaves a project never saved unnamed —
+    /// and a later ⌘/Ctrl+S opens Save As again.
+    ProjectSaved {
+        /// The name it was saved under.
+        name: String,
+        /// Its folder (`None`: the projects root).
+        folder: Option<String>,
+    },
     /// A project or `.mid` was written into the projects tree (a save, a
     /// clip export): a shown browser panel re-reads it from disk.
     ProjectFilesChanged,
