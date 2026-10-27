@@ -10,7 +10,7 @@ use egui::{
 
 use crate::core::config::PROJECT_NAME_MAX_CHARS;
 use crate::core::keymap::Action;
-use crate::core::project::{ProjectAction, file_stem, project_exists, project_name_from_input};
+use crate::core::project::{project_exists, project_name_from_input};
 use crate::view::display::keyboard_tab::chords_label;
 use crate::view::display::project_dialog::{
     ProjectDialog, SaveAs, SaveAsFocus, SaveAsHit, UnsavedButton,
@@ -69,7 +69,7 @@ impl Display {
     const DIALOG_BUTTON_GAP: f32 = 8.0 * Self::M_SCALE;
 
     /// The dialog's layout in the canvas `rect`: the prompt has a button row
-    /// under its note, Save As does not.
+    /// under its question, Save As a folder row and a note instead.
     fn dialog_layout(rect: Rect, with_buttons: bool) -> DialogLayout {
         let [button_w, button_h] = Self::DIALOG_BUTTON;
         let buttons_h = if with_buttons {
@@ -77,15 +77,15 @@ impl Display {
         } else {
             0.0
         };
-        let folder_h = if with_buttons {
-            0.0
+        let (folder_h, note_h) = if with_buttons {
+            (0.0, 0.0)
         } else {
-            Self::DIALOG_FOLDER_H
+            (Self::DIALOG_FOLDER_H, Self::DIALOG_NOTE_H)
         };
         let panel_h = Self::DIALOG_HEADER_H
             + Self::DIALOG_BODY_H
             + folder_h
-            + Self::DIALOG_NOTE_H
+            + note_h
             + buttons_h
             + Self::DIALOG_PAD * 0.75;
         let panel = Rect::from_center_size(rect.center(), vec2(Self::DIALOG_W, panel_h));
@@ -114,10 +114,7 @@ impl Display {
                 new_folder.max.y,
             ),
         );
-        let note = Rect::from_min_size(
-            pos2(body.min.x, folder_row.max.y),
-            vec2(inner_w, Self::DIALOG_NOTE_H),
-        );
+        let note = Rect::from_min_size(pos2(body.min.x, folder_row.max.y), vec2(inner_w, note_h));
         let buttons_top = note.max.y + Self::DIALOG_PAD * 0.25;
         let buttons = [2.0, 1.0, 0.0].map(|from_right: f32| {
             let right =
@@ -235,10 +232,9 @@ impl Display {
                 let new_folder_keys = chords_label(self.keymap.chords(Action::NewProjectFolder));
                 Self::show_save_as(ui, rect, save_as, &self.project, &new_folder_keys)
             }
-            Some(ProjectDialog::Unsaved { action, selected }) => Self::draw_unsaved_prompt(
+            Some(ProjectDialog::Unsaved { selected, .. }) => Self::draw_unsaved_prompt(
                 ui.painter(),
                 rect,
-                action,
                 *selected,
                 self.project.project_current_name.as_deref(),
             ),
@@ -472,13 +468,12 @@ impl Display {
         }
     }
 
-    /// The unsaved-changes prompt: the question, the key hints and the three
-    /// buttons, the `selected` one (Enter's) in the accent colour.
+    /// The unsaved-changes prompt: the question and the three buttons, the
+    /// `selected` one (Enter's) in the accent colour.
     /// `name` is the open project's, `None` for one never saved.
     fn draw_unsaved_prompt(
         painter: &Painter,
         rect: Rect,
-        action: &ProjectAction,
         selected: UnsavedButton,
         name: Option<&str>,
     ) {
@@ -491,15 +486,9 @@ impl Display {
             "UNSAVED CHANGES",
         );
 
-        let before = match action {
-            ProjectAction::New => "before starting a new project".to_owned(),
-            ProjectAction::Open { filename, .. } => format!("before opening {filename}"),
-            ProjectAction::OpenFile { path } => format!("before opening {}", file_stem(path)),
-            ProjectAction::Quit => "before quitting".to_owned(),
-        };
         let question = match name {
-            Some(name) => format!("Save the changes to {name} {before}?"),
-            None => format!("Save this new project {before}?"),
+            Some(name) => format!("Save the changes to {name}?"),
+            None => "Save this new project?".to_owned(),
         };
         let galley = painter.layout(
             question,
@@ -512,14 +501,6 @@ impl Display {
             layout.body.center().y - galley.size().y * 0.5,
         );
         painter.galley(text_pos, galley, theme::fg());
-
-        painter.text(
-            layout.note.left_center(),
-            Align2::LEFT_CENTER,
-            "←→ choose · Enter press · D don't save · Esc cancel",
-            FontId::proportional(Self::FONT_HINT),
-            theme::fg_dim(),
-        );
 
         for (button, button_rect) in UnsavedButton::ALL.into_iter().zip(layout.buttons) {
             let is_selected = button == selected;

@@ -20,6 +20,12 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ## [Unreleased]
 
+### Changed
+
+- The unsaved-changes prompt is shorter: it asks "Save the changes to
+  <name>?" without saying what comes next, and drops its key hints. `D` and
+  ⌘D no longer mean Don't Save; choose it with ←/→ and Enter, or click it.
+
 ### Fixed
 
 - A command for the arranger or the clip view pressed while the browser has

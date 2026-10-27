@@ -509,14 +509,12 @@ impl UnsavedButton {
 }
 
 /// The prompt's keymap with `selected` the selected button: ←/→ select the
-/// one beside it, Enter presses it, `D` — bare, or ⌘/Ctrl+D as in the macOS
-/// sheet — doesn't save, Esc cancels; nothing else does anything.
-fn unsaved_key(key: Key, modifiers: KeyModifiers, selected: UnsavedButton) -> DialogKey {
+/// one beside it, Enter presses it, Esc cancels; nothing else does anything.
+fn unsaved_key(key: Key, selected: UnsavedButton) -> DialogKey {
     match key {
         Key::ArrowLeft => DialogKey::Select(selected.stepped(-1)),
         Key::ArrowRight => DialogKey::Select(selected.stepped(1)),
         Key::Enter => selected.key(),
-        Key::D if !modifiers.shift && !modifiers.alt => DialogKey::Discard,
         Key::Escape => DialogKey::Cancel,
         _ => DialogKey::Swallow,
     }
@@ -701,10 +699,9 @@ impl Display {
                     .resolve_press(key, modifiers, self.focused_pane());
                 save_as_key(key, modifiers, action == Some(Action::NewProjectFolder))
             }
-            (
-                &InputEvent::KeyPressed { key, modifiers },
-                &ProjectDialog::Unsaved { selected, .. },
-            ) => unsaved_key(key, modifiers, selected),
+            (&InputEvent::KeyPressed { key, .. }, &ProjectDialog::Unsaved { selected, .. }) => {
+                unsaved_key(key, selected)
+            }
             (&InputEvent::MouseClicked { x, y, .. }, ProjectDialog::Unsaved { .. }) => self
                 .unsaved_button_at(pos2(x, y))
                 .map_or(DialogKey::Swallow, UnsavedButton::key),
@@ -802,7 +799,7 @@ impl Display {
         }
     }
 
-    /// `D`, or the prompt's Don't Save: runs its action, changes and all.
+    /// The prompt's Don't Save: runs its action, changes and all.
     fn discard_project_changes(&mut self) {
         if let Some(ProjectDialog::Unsaved { action, .. }) = self.project_dialog.take() {
             self.input_event_tx
@@ -1146,8 +1143,7 @@ mod tests {
     }
 
     /// Save As reads the text fields' keymap: Enter saves, Esc cancels, and
-    /// nothing typed reaches the app — not `D`, which the prompt reads as
-    /// Don't Save.
+    /// nothing typed reaches the app.
     #[test]
     fn save_as_saves_on_enter_and_cancels_on_escape() {
         assert_eq!(DialogKey::from(field_key(Key::Enter)), DialogKey::Confirm);
@@ -1157,24 +1153,16 @@ mod tests {
         }
     }
 
-    /// Enter presses whichever button is selected; `D` — bare or ⌘/Ctrl+D —
-    /// and Esc don't care which.
+    /// Enter presses whichever button is selected; Esc doesn't care which.
     #[test]
     fn enter_presses_the_selected_button() {
-        let none = KeyModifiers::default();
-        let command = KeyModifiers {
-            command: true,
-            ..KeyModifiers::default()
-        };
         for (selected, pressed) in [
             (UnsavedButton::Cancel, DialogKey::Cancel),
             (UnsavedButton::DontSave, DialogKey::Discard),
             (UnsavedButton::Save, DialogKey::Confirm),
         ] {
-            assert_eq!(unsaved_key(Key::Enter, none, selected), pressed);
-            assert_eq!(unsaved_key(Key::D, none, selected), DialogKey::Discard);
-            assert_eq!(unsaved_key(Key::D, command, selected), DialogKey::Discard);
-            assert_eq!(unsaved_key(Key::Escape, none, selected), DialogKey::Cancel);
+            assert_eq!(unsaved_key(Key::Enter, selected), pressed);
+            assert_eq!(unsaved_key(Key::Escape, selected), DialogKey::Cancel);
         }
     }
 
@@ -1190,28 +1178,17 @@ mod tests {
             (Key::ArrowRight, DontSave, Save),
             (Key::ArrowRight, Save, Save),
         ] {
-            assert_eq!(
-                unsaved_key(key, KeyModifiers::default(), from),
-                DialogKey::Select(to)
-            );
+            assert_eq!(unsaved_key(key, from), DialogKey::Select(to));
         }
     }
 
-    /// A stray key does nothing — above all no other key discards the
-    /// changes, and ⇧D (duplicate elsewhere) isn't Don't Save.
+    /// A stray key does nothing — above all no key discards the changes,
+    /// not even `D`: only Enter on Don't Save, or a click on it, does.
     #[test]
     fn no_other_prompt_key_acts() {
-        let shift = KeyModifiers {
-            shift: true,
-            ..KeyModifiers::default()
-        };
         let save = UnsavedButton::Save;
-        assert_eq!(unsaved_key(Key::D, shift, save), DialogKey::Swallow);
-        for key in [Key::Space, Key::Delete, Key::N, Key::S] {
-            assert_eq!(
-                unsaved_key(key, KeyModifiers::default(), save),
-                DialogKey::Swallow
-            );
+        for key in [Key::D, Key::Space, Key::Delete, Key::N, Key::S] {
+            assert_eq!(unsaved_key(key, save), DialogKey::Swallow);
         }
     }
 }
