@@ -201,6 +201,9 @@ pub(super) struct WindowEdgeDrag {
     /// the press (`None` with none after it) — what the sequencer clamps the
     /// window to, so the preview lands where the release will.
     pub(super) room: Option<i32>,
+    /// How close the edges may come (`min_window_length`): a tick in a take
+    /// session, a beat otherwise — the sequencer's rule, frozen at the press.
+    pub(super) min_length: i32,
     /// The handle's grid-snapped event tick, `None` until the pointer moves.
     pub(super) target: Option<i32>,
 }

@@ -63,7 +63,7 @@ This replaces `detected_insert_window` for the stopped insert. Pressing `/` then
 
 ### Keys
 
-The session has no keys of its own, and the take's edges move as any clip's do (`020` § Clip Edge Drag-Resize): `←`/`→` step the cursor on the grid, `[`/`]` move the start/end to the cursor by the clip view's marker rule (`window_with_edge_at`, at least a beat apart, inside the take's reach), and the window band drags them on the grid. **Enter** inserts, **Esc** cancels.
+The session has no keys of its own, and the take's edges move as any clip's do (`020` § Clip Edge Drag-Resize): `←`/`→` step the cursor on the grid, `[`/`]` move the start/end to the cursor by the clip view's marker rule (`window_with_edge_at`, inside the take's reach; a tick apart rather than a clip's beat, `min_window_length`, so a phrase shorter than a beat can be framed by hand too — the beat stopped the start short of it, found 2026-10-27), and the window band drags them on the grid. **Enter** inserts, **Esc** cancels.
 
 ### Hearing it in place
 

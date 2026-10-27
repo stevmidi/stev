@@ -46,7 +46,7 @@ mod quantize;
 mod selection;
 
 pub(crate) use cursor_region::{
-    ClipBounds, ClipEdge, EventSpaceRetime, reach_over, window_with_edge_at,
+    ClipBounds, ClipEdge, EventSpaceRetime, min_window_length, reach_over, window_with_edge_at,
 };
 pub(crate) use note_edits::{CopiedNote, NoteBounds, NoteDrag, min_max};
 

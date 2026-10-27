@@ -997,7 +997,7 @@ impl Display {
     fn window_drag_preview(&self) -> Option<(i32, i32)> {
         let drag = self.gesture.window_edge_drag?;
         let window = self.region_bounds_for_render();
-        window_with_edge_at(drag.edge, drag.target?, window, drag.room)
+        window_with_edge_at(drag.edge, drag.target?, window, drag.room, drag.min_length)
     }
 
     /// The lead clip's window as the clip view draws it: a live window band

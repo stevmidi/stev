@@ -433,8 +433,6 @@ mod tests {
         let notes = [(960, 1200, 62), (1440, 1680, 64)];
         let (mut seq, _) = session_seq(BAR * 4, 480, &notes);
         assert!(seq.open_take_framing(ViewState::Clip));
-        // The end out of the way first: a start keeps a beat before it.
-        assert!(seq.set_take_edge_at(ClipEdge::End, BAR));
 
         assert!(seq.set_take_edge_at(ClipEdge::Start, 960 + 40));
         assert_eq!(lead_notes(&seq), vec![(440, 680, 62), (920, 1160, 64)]);
@@ -442,6 +440,33 @@ mod tests {
         assert!(seq.set_take_edge_at(ClipEdge::Start, late));
         let at = 480 + 1440 - late;
         assert_eq!(lead_notes(&seq), vec![(at, at + 240, 64)]);
+    }
+
+    /// The start can be moved up to the first of the last two notes even
+    /// when they span less than a beat: a take's window is only held a tick
+    /// apart, not a clip's beat (`min_window_length`). Before, the start
+    /// stopped a beat before the end and the earlier notes came along
+    /// (found 2026-10-27).
+    #[test]
+    fn the_start_frames_a_phrase_shorter_than_a_beat() {
+        let notes = [
+            (0, 200, 60),
+            (480, 700, 62),
+            (1000, 1200, 64),
+            (1250, 1300, 65),
+            (1400, 1500, 67),
+        ];
+        let (mut seq, _) = session_seq(BAR * 4, 480, &notes);
+        assert!(seq.open_take_framing(ViewState::Clip));
+
+        assert!(seq.set_take_edge_at(ClipEdge::Start, 1250));
+        let take = seq.selected_clip().unwrap();
+        assert_eq!((take.region().start(), take.region().end()), (1250, 1500));
+        assert_eq!(lead_notes(&seq), vec![(480, 530, 65), (630, 730, 67)]);
+
+        take_cursor_to(&mut seq, 1400);
+        assert!(seq.set_take_edge_to_cursor(ClipEdge::Start), "`[` too");
+        assert_eq!(lead_notes(&seq), vec![(480, 580, 67)]);
     }
 
     /// Enter with a window that frames no note has nothing to insert, and

@@ -105,26 +105,40 @@ pub(crate) fn reach_over(
     (meter.bar_line_at_or_before(lo), hi)
 }
 
+/// The shortest window [`window_with_edge_at`] keeps: a clip's minimum
+/// length (`time::min_clip_length_ticks`, a beat), except for the take of an
+/// open take session (`framing_take`, `290-framing-a-take.md`), whose window
+/// only picks the notes to insert and never sets a clip's length — a tick, so
+/// a phrase shorter than a beat can be framed by hand as well as by detection
+/// (found 2026-10-27: the start stopped a beat before the end).
+pub(crate) fn min_window_length(framing_take: bool) -> i32 {
+    if framing_take {
+        1
+    } else {
+        time::min_clip_length_ticks()
+    }
+}
+
 /// The clip view's start/end marker rule, shared by `[`/`]` and the window
 /// band (`Sequencer::selected_clip_marker_at`, and
 /// the band's drag preview, which must land where the release will):
 /// `window` with `edge` moved to the event tick `tick`. `room` is the
 /// arrangement room the clip has before the next clip on its track, `None`
-/// with none after it.
+/// with none after it; `min_length` is [`min_window_length`].
 ///
 /// - **Start**: moves alone, the end stays (the clip keeps its arrangement
-///   start, so its length follows) — at least the minimum clip length before
-///   the end, and no earlier than the room allows, since an earlier start
-///   lengthens the clip; `None` when not even that fits. Never below tick 0.
-/// - **End**: moves alone — at least the minimum clip length after the
-///   start, and no further than the room.
+///   start, so its length follows) — at least `min_length` before the end,
+///   and no earlier than the room allows, since an earlier start lengthens
+///   the clip; `None` when not even that fits. Never below tick 0.
+/// - **End**: moves alone — at least `min_length` after the start, and no
+///   further than the room.
 pub(crate) fn window_with_edge_at(
     edge: ClipEdge,
     tick: i32,
     (start, end): (i32, i32),
     room: Option<i32>,
+    min_length: i32,
 ) -> Option<(i32, i32)> {
-    let min_length = time::min_clip_length_ticks();
     match edge {
         ClipEdge::Start => {
             let latest = end - min_length;
@@ -342,7 +356,8 @@ mod tests {
     use std::sync::atomic::Ordering;
 
     use super::{
-        CLIP_END_HEADROOM_BARS, ClipEdge, EventSpaceRetime, reach_over, window_with_edge_at,
+        CLIP_END_HEADROOM_BARS, ClipEdge, EventSpaceRetime, min_window_length, reach_over,
+        window_with_edge_at,
     };
 
     use crate::core::time::{self, Meter};
@@ -703,9 +718,10 @@ mod tests {
     /// alone, kept a minimum length after the start and inside the room.
     #[test]
     fn window_with_edge_at_moves_one_edge_inside_the_room() {
-        let min = time::min_clip_length_ticks();
+        let min = min_window_length(false);
+        assert_eq!(min, time::min_clip_length_ticks());
         let window = (960, 3840);
-        let at = |edge, tick, room| window_with_edge_at(edge, tick, window, room);
+        let at = |edge, tick, room| window_with_edge_at(edge, tick, window, room, min);
 
         assert_eq!(at(ClipEdge::Start, 480, None), Some((480, 3840)));
         assert_eq!(
@@ -728,5 +744,24 @@ mod tests {
         assert_eq!(at(ClipEdge::End, 2000, None), Some((960, 2000)));
         assert_eq!(at(ClipEdge::End, 0, None), Some((960, 960 + min)));
         assert_eq!(at(ClipEdge::End, 9999, Some(4000)), Some((960, 4960)));
+    }
+
+    /// A take's window is held only a tick apart, not a beat: a phrase
+    /// shorter than a beat (two quick last notes) can be framed by moving
+    /// the start up to its first note (found 2026-10-27).
+    #[test]
+    fn a_take_window_can_be_shorter_than_a_beat() {
+        let min = min_window_length(true);
+        assert_eq!(min, 1);
+        let window = (960, 3840);
+        let at = |edge, tick| window_with_edge_at(edge, tick, window, None, min);
+
+        let under_a_beat = 3840 - time::min_clip_length_ticks() / 2;
+        assert_eq!(
+            at(ClipEdge::Start, under_a_beat),
+            Some((under_a_beat, 3840))
+        );
+        assert_eq!(at(ClipEdge::Start, 9999), Some((3839, 3840)));
+        assert_eq!(at(ClipEdge::End, 1000), Some((960, 1000)));
     }
 }

@@ -21,7 +21,7 @@ use uuid::Uuid;
 
 use crate::{
     core::time,
-    models::clip::{Clip, ClipBounds, ClipEdge, window_with_edge_at},
+    models::clip::{Clip, ClipBounds, ClipEdge, min_window_length, window_with_edge_at},
 };
 
 use super::Sequencer;
@@ -136,7 +136,8 @@ impl Sequencer {
     /// (`290-framing-a-take.md`): `edge` of its window to `event_tick`, held
     /// inside the clip's [`reach`](Clip::reach) (the cursor already is), by
     /// the clip view's marker rule (`window_with_edge_at`) against the room
-    /// before the next clip on the selected track.
+    /// before the next clip on the selected track, and kept
+    /// [`min_window_length`] apart (a tick for a take, a beat otherwise).
     ///
     /// `[` moves only the start; the end stays — a marker, not a trim. The
     /// clip keeps its arrangement start, so the new 1.1.1 lands where the
@@ -156,7 +157,8 @@ impl Sequencer {
         let tick = event_tick.clamp(reach_start, reach_end);
         let room = self.room_before_next_clip(clip.start_tick());
         let window = (clip.region().start(), clip.region().end());
-        let (region_start, region_end) = window_with_edge_at(edge, tick, window, room)?;
+        let min_length = min_window_length(self.is_framing_take());
+        let (region_start, region_end) = window_with_edge_at(edge, tick, window, room, min_length)?;
 
         let mut bounds = clip.bounds();
         bounds.region_start = region_start;
