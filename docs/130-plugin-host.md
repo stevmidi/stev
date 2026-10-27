@@ -352,7 +352,7 @@ Created in `setup_shared_atomics` / `setup.rs`, cross-platform (mirrors
 | Atomic | Written by | Read by |
 |---|---|---|
 | `live_instrument_target: Arc<AtomicI32>` | `Display::set_live_instrument_target` (macOS) | `MidiInputForwarder`'s input callback, to tag live-thru sends |
-| `track_mix: Arc<TrackMixAtomics>` (`[AtomicU32; MAX_TRACKS]` × 2 for volume/pan `f32` bits, `[AtomicBool; MAX_TRACKS]` × 2 for mute/solo, `[AtomicU64; MAX_TRACKS]` for the last note-on's time + velocity, `[[LevelAtomics; 2]; MAX_TRACKS]` for the audio meter's peak / RMS / hold per channel as `f32` bits, `[AtomicU32; MAX_TRACKS]` `meter_resets` counts) | `Sequencer::set_track_volume` / `set_track_pan` / `toggle_track_mute` / `toggle_track_solo` (sequencer thread), reset by `new_project` | volume/pan: `InstrumentMixer::render_into` once per block (gain per voice) + `Display::draw_arranger_view` once per frame. mute/solo: `Sequencer::tick` / `chase_notes` (gate note emission, both output routes) + `Display` (draw the S/M buttons). `note_on`: stamped by `Sequencer::tick` / `handle_midi_input_dispatch`, read by `Display` for a MIDI Out track's meter (`030` § Arranger Track Header). `audio_level`: written once per block by `InstrumentMixer::render_into`'s summing pass, read by `Display` for a plugin track's meter. `meter_resets`: bumped by `reset_meter` (from `reset_slot_mix`, which also clears `note_on`), read once per block by the mixer to empty that slot's meter. All-platform |
+| `track_mix: Arc<TrackMixAtomics>` (`[AtomicU32; MAX_TRACKS]` × 2 for volume/pan `f32` bits, `[AtomicBool; MAX_TRACKS]` × 2 for mute/solo, `[AtomicU64; MAX_TRACKS]` for the last note-on's time + velocity, `[[LevelAtomics; 2]; MAX_TRACKS]` for the audio meter's peak / RMS / hold per channel as `f32` bits, `[AtomicU32; MAX_TRACKS]` `meter_resets` counts) | `Sequencer::set_track_volume` / `set_track_pan` / `toggle_track_mute` / `toggle_track_solo` (sequencer thread), reset by `new_project` | volume/pan: `InstrumentMixer::render_into` once per block (gain per voice) + `Display::draw_arranger_view` once per frame. mute/solo: `Sequencer::tick` / `chase_notes` (gate note emission, both output routes) + `Display` (draw the S/M buttons). `note_on`: stamped by `Sequencer::tick` / `handle_midi_input`, read by `Display` for a MIDI Out track's meter (`030` § Arranger Track Header). `audio_level`: written once per block by `InstrumentMixer::render_into`'s summing pass, read by `Display` for a plugin track's meter. `meter_resets`: bumped by `reset_meter` (from `reset_slot_mix`, which also clears `note_on`), read once per block by the mixer to empty that slot's meter. All-platform |
 
 Created in `main` inside the macOS block, carried by `PluginAudioHandle`:
 
@@ -878,7 +878,7 @@ positions), persisted base64-encoded in the `.stev` and re-applied on load:
   what clear a Repro-style on-screen keyboard, which ignores CC 123 for its
   display; release tails still ring. Held notes are tracked per track in
   `sequencer/instrument_notes.rs` (`InstrumentNotes`, unit-tested), fed from
-  `Sequencer::tick` / `chase_notes` (clip route) and `handle_midi_input_dispatch`
+  `Sequencer::tick` / `chase_notes` (clip route) and `handle_midi_input`
   (live route), since the plugin MIDI path never passes through the `"midiout"`
   thread's `NoteLogger`. This mirrors the `NoteLogger` rule: a note the player is
   **holding live on the armed instrument track is never released** by a stop, so

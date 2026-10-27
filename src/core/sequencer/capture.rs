@@ -111,7 +111,7 @@ impl Sequencer {
     /// `clock_tick` it landed on — its arrangement *position*. Returns
     /// whether a note-on kicked the selected track's meter
     /// ([`kick_live_meter`](Self::kick_live_meter)).
-    pub(crate) fn handle_midi_input_dispatch(&mut self, message: &[u8], tick: i32) -> bool {
+    pub(crate) fn handle_midi_input(&mut self, message: &[u8], tick: i32) -> bool {
         // Track which live keys are down so a transport stop does not release a
         // note the player is holding on an instrument track. See `130-plugin-host.md`.
         let live_target = self.live_instrument_target();
@@ -143,7 +143,7 @@ impl Sequencer {
     /// its clips: the keyboard plays the selected track. Not on a plugin track
     /// during an audio export, where the keyboard reaches no plugin
     /// (`130-plugin-host.md` § Audio export). Returns whether it kicked one,
-    /// so [`handle_midi_input_dispatch`](Self::handle_midi_input_dispatch)'s
+    /// so [`handle_midi_input`](Self::handle_midi_input)'s
     /// caller can wake a stopped UI.
     fn kick_live_meter(&self, message: &[u8]) -> bool {
         if !is_note_on(message) {
@@ -1564,7 +1564,7 @@ mod tests {
         let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut seq = make_sequencer(0, bar * 2);
 
-        seq.handle_midi_input_dispatch(&[0xE0, 0x00, 0x50], 300);
+        seq.handle_midi_input(&[0xE0, 0x00, 0x50], 300);
 
         let ticks = |clip: &Clip| -> Vec<i32> { clip.events().iter().map(Event::tick).collect() };
         assert_eq!(ticks(&seq.capture_clip), vec![300]);
@@ -1867,7 +1867,7 @@ mod tests {
         for (offset, message) in [(600, [0x90, 60, 100]), (900, [0x80, 60, 0])] {
             seq.playback_tick
                 .store(playback + offset, Ordering::Relaxed);
-            seq.handle_midi_input_dispatch(&message, playback + offset + clock_ahead);
+            seq.handle_midi_input(&message, playback + offset + clock_ahead);
         }
     }
 

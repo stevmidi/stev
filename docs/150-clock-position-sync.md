@@ -155,11 +155,11 @@ them and both stay:
 ## Input stamping
 
 The MIDI-input callback stamps every message with the `clock_tick` it landed
-on: `midi_in_tx` carries `(Vec<u8>, i32)`. `precise_input_tick`
+on: `midi_in_tx` carries `RecordedMidi`, `(Vec<u8>, i32)`. `precise_input_tick`
 (`src/core/midi/input_tick.rs`) adds the sub-tick correction for a note
 landing between clock firings; the computer keyboard goes through
 `input_tick_at_arrival` with its frame's stamp.
-`Sequencer::handle_midi_input_dispatch` hands the tick to
+`Sequencer::handle_midi_input` hands the tick to
 `add_midi_event_to_capture`.
 
 Structural results:

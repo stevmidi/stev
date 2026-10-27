@@ -424,7 +424,7 @@ mod tests {
 
         // A clip note and a live-improvised note, same track, both C4-ish.
         sequencer.instrument_notes.observe_clip(0, &[0x90, 60, 100]);
-        sequencer.handle_midi_input_dispatch(&[0x90, 64, 100], 0); // live E4
+        sequencer.handle_midi_input(&[0x90, 64, 100], 0); // live E4
 
         // Also a clip note on E4 — must be spared because E4 is held live.
         sequencer.instrument_notes.observe_clip(0, &[0x90, 64, 100]);
@@ -711,8 +711,7 @@ mod tests {
         for _ in 0..200 {
             sequencer.tick(at);
         }
-        let live = 200;
-        sequencer.handle_midi_input_dispatch(&[0xE0, 0x00, 0x30], live);
+        sequencer.handle_midi_input(&[0xE0, 0x00, 0x30], 200);
         midi_out_bytes(&midi_out_rx);
 
         sequencer.reset_wheels();

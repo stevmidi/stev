@@ -23,8 +23,9 @@ use super::{detach, detached_clone};
 /// it.
 ///
 /// The fresh commit and every redo share one `edit()` body with no "applied"
-/// flag. Only the capture buffer needs a one-shot: a capture commit clears it on the first `edit()`
-/// and never again, so a redo can't wipe a take the user has started since.
+/// flag. Only the capture buffer needs a one-shot: a capture commit clears it
+/// on the first `edit()` and never again, so a redo can't wipe a take the user
+/// has started since.
 ///
 /// `undo()` keeps the clip it lifted — the *live* one, with every
 /// non-undoable change made since the commit (a `Shift+-` tempo rescale, an
@@ -105,8 +106,9 @@ impl CommitClipEdit {
     }
 
     /// Puts the frozen clip on its track (a fresh commit, or a redo) and,
-    /// once, clears the capture buffer the running commit consumed. Returns [`EditResult::ClipCommitted`], or
-    /// `NoOp` if the add was refused (something else occupies the span now).
+    /// once, clears the capture buffer the running commit consumed. Returns
+    /// [`EditResult::ClipCommitted`], or `NoOp` if the add was refused
+    /// (something else occupies the span now).
     pub(in crate::core::sequencer::edit) fn edit(
         &mut self,
         sequencer: &mut Sequencer,
@@ -304,18 +306,18 @@ mod tests {
         (edit.clip.start_tick(), edit.clip.end_tick())
     }
 
-    /// An empty clip over `[start, end)` on track 0, committed: the edit and
-    /// the placed clip's id.
-    fn committed_empty_clip(
+    /// An empty clip over `[start, end)` on track 0, committed, like
+    /// [`commit`] does a take.
+    fn commit_empty_clip(
         sequencer: &mut Sequencer,
         start: i32,
         end: i32,
-    ) -> (CommitClipEdit, Uuid) {
+    ) -> (CommitClipEdit, ClipMetadata) {
         let mut edit = CommitClipEdit::from_empty_clip(sequencer, marquee(start, end)).unwrap();
         let EditResult::ClipCommitted { clip } = edit.edit(sequencer) else {
             panic!("expected ClipCommitted");
         };
-        (edit, clip.clip_id)
+        (edit, clip)
     }
 
     #[test]
@@ -323,10 +325,7 @@ mod tests {
         let mut sequencer = test_sequencer();
         capture_note(&mut sequencer, 600, 900);
 
-        let mut edit = CommitClipEdit::from_empty_clip(&sequencer, marquee(960, 2880)).unwrap();
-        let EditResult::ClipCommitted { clip } = edit.edit(&mut sequencer) else {
-            panic!("expected ClipCommitted");
-        };
+        let (mut edit, clip) = commit_empty_clip(&mut sequencer, 960, 2880);
         assert_eq!((clip.start_tick, clip.end_tick), (960, 2880));
         let placed = sequencer.tracks()[0].get_clip_by_id(clip.clip_id).unwrap();
         assert!(placed.events().is_empty());
@@ -396,7 +395,8 @@ mod tests {
     #[test]
     fn redo_restores_the_clip_as_it_was_when_undone_not_as_committed() {
         let mut sequencer = test_sequencer();
-        let (mut edit, id) = committed_empty_clip(&mut sequencer, 0, 960);
+        let (mut edit, clip) = commit_empty_clip(&mut sequencer, 0, 960);
+        let id = clip.clip_id;
 
         sequencer.tracks_mut()[0]
             .get_clip_by_id_mut(id)
@@ -416,7 +416,8 @@ mod tests {
     #[test]
     fn the_held_clip_is_detached_from_the_live_clips_region() {
         let mut sequencer = test_sequencer();
-        let (mut edit, id) = committed_empty_clip(&mut sequencer, 0, 960);
+        let (mut edit, clip) = commit_empty_clip(&mut sequencer, 0, 960);
+        let id = clip.clip_id;
 
         sequencer.tracks_mut()[0]
             .get_clip_by_id_mut(id)

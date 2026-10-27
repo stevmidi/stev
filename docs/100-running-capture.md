@@ -43,7 +43,7 @@ retains* below. The crop **window** described here is what the two
 past the region end while playback wraps, so it can sit whole loop lengths ahead. For correct
 window placement, the anchor must be in the same coordinate space as the capture event ticks.
 
-**The anchor is the cursor moved into the clock's numbering** (`capture_anchor_tick`). `handle_midi_input_dispatch` records `clock_tick − playback_tick` at every
+**The anchor is the cursor moved into the clock's numbering** (`capture_anchor_tick`). `handle_midi_input` records `clock_tick − playback_tick` at every
 note-on captured while running (`Sequencer::capture_clock_offset`, cleared with the buffer).
 The commit adds that offset, rounded to the nearest whole loop length (dropping the few ticks
 of input latency), to the cursor. A looping take doesn't need it (its pass index absorbs whole

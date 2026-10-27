@@ -20,6 +20,7 @@ use std::thread::{self, JoinHandle};
 use crate::core::clock::ClockTick;
 use crate::core::event_handlers::{EventHandlers, SavedProject};
 use crate::core::metronome::Metronome;
+use crate::core::midi::input::RecordedMidi;
 use crate::core::project::ProjectData;
 use crate::core::sequencer::{Sequencer, SequencerCommand, SequencerEdit};
 use crate::core::time::TapTempo;
@@ -36,7 +37,7 @@ pub(crate) fn start_sequencer_thread(
     mut metronome: Metronome,
     event_handlers: Arc<EventHandlers>,
     tick_rx: Receiver<ClockTick>,
-    midi_in_rx: Receiver<(Vec<u8>, i32)>,
+    midi_in_rx: Receiver<RecordedMidi>,
     transport_event_rx: Receiver<TransportEvent>,
     sequencer_command_rx: Receiver<SequencerCommand>,
     transport_command_rx: Receiver<TransportCommand>,
@@ -106,7 +107,7 @@ pub(crate) fn start_sequencer_thread(
                             if sequencer.is_performance_lane_armed() {
                                 event_handlers.handle_performance_lane_midi_input(&mut sequencer, &mut transport, &message);
                             } else {
-                                let kicked = sequencer.handle_midi_input_dispatch(&message, tick);
+                                let kicked = sequencer.handle_midi_input(&message, tick);
                                 // Running, the UI's ~30 fps frames show the
                                 // track's meter (and an extra wake would jitter
                                 // the playhead, `030`); stopped, nothing else

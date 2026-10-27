@@ -9,9 +9,9 @@ use super::*;
 impl EventHandlers {
     // --- Clip operations ---
 
-    /// A committed clip is on its track (`EditResult::ClipCommitted` — the
-    /// running-capture commit, or a redo of any commit): adds its shape,
-    /// selects it, and re-seeks the sequencer.
+    /// A committed clip is on its track (`EditResult::ClipCommitted` — every
+    /// commit and its redo): adds its shape, selects it, and re-seeks the
+    /// sequencer.
     pub(super) fn commit_clip_workflow(&self, sequencer: &mut Sequencer, clip: &ClipMetadata) {
         self.send_clips_added_ui_event(slice::from_ref(clip));
         self.select_clip_workflow(sequencer, Some(clip.clip_id));

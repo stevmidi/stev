@@ -44,13 +44,19 @@ use crate::core::{
 /// `MidiInputForwarder::instrument_midi_tx` for why it needs `Arc<Mutex<_>>`.
 type SharedInstrumentMidiProducer = Arc<Mutex<Producer<(usize, Midi3)>>>;
 
+/// A message on its way to the capture buffer: its bytes and the `clock_tick`
+/// it landed on, sub-tick corrected ([`precise_input_tick`]). A `clock_tick`,
+/// not a `playback_tick`: the two differ by whole loops
+/// (`150-clock-position-sync.md`).
+pub(crate) type RecordedMidi = (Vec<u8>, i32);
+
 /// Owns the live `midir` input connection and fans each message out to its
 /// several consumers. See the module docs.
 pub(crate) struct MidiInputForwarder {
     // Communication channels
     /// Raw bytes + their `clock_tick` to the `"sequencer"` thread — only what
     /// a take records ([`is_recorded`]).
-    midi_in_tx: Sender<(Vec<u8>, i32)>,
+    midi_in_tx: Sender<RecordedMidi>,
     /// MIDI-thru to the `"midiout"` thread.
     midi_out_tx: Sender<MidiOutMessage>,
     /// Note-on records to the `NoteLogger`.
@@ -94,7 +100,7 @@ impl MidiInputForwarder {
     /// tempo / arm atomics.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
-        midi_in_tx: Sender<(Vec<u8>, i32)>,
+        midi_in_tx: Sender<RecordedMidi>,
         midi_out_tx: Sender<MidiOutMessage>,
         note_logger_command_tx: Sender<NoteLoggerCommand>,
         instrument_midi_tx: Producer<(usize, Midi3)>,
@@ -227,7 +233,7 @@ impl MidiInputForwarder {
 /// the source whose note-offs they route.
 pub(crate) struct LiveInputRouter {
     /// Recorded messages + their `clock_tick` to the `"sequencer"` thread.
-    midi_in_tx: Sender<(Vec<u8>, i32)>,
+    midi_in_tx: Sender<RecordedMidi>,
     /// MIDI-thru to the `"midiout"` thread.
     midi_out_tx: Sender<MidiOutMessage>,
     /// Note-on records to the `NoteLogger`.
@@ -452,13 +458,11 @@ mod tests {
             held_note_channels: [None; 128],
             held_live_targets: [None; 128],
         };
-        let tick = 0;
-
-        router.route(&note_on(0), tick);
+        router.route(&note_on(0), 0);
         audio_export.running.store(true, Ordering::Relaxed);
-        router.route(&[0x90, NOTE + 1, 100], tick);
-        router.route(&[0xE0, 0, 0x50], tick);
-        router.route(&note_off(0), tick);
+        router.route(&[0x90, NOTE + 1, 100], 0);
+        router.route(&[0xE0, 0, 0x50], 0);
+        router.route(&note_off(0), 0);
 
         let sent: Vec<(usize, Midi3)> = iter::from_fn(|| instrument_rx.pop().ok()).collect();
         assert_eq!(sent, [(2, note_on(0)), (2, note_off(0))]);

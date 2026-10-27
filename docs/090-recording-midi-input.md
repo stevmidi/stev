@@ -28,8 +28,8 @@ capture covers it. Key files: `src/core/midi/input.rs`,
 ### Tick handling
 
 - **Every message carries the `clock_tick` it landed on**, its arrangement
-  *position*: `midi_in_tx` carries `(Vec<u8>, i32)` and
-  `Sequencer::handle_midi_input_dispatch` feeds it to the capture buffer. A
+  *position*: `midi_in_tx` carries `RecordedMidi`, `(Vec<u8>, i32)`, and
+  `Sequencer::handle_midi_input` feeds it to the capture buffer. A
   seek repositions `clock_tick` (`150-clock-position-sync.md`), which is what
   running capture's window math needs.
 - **The tick is sub‑tick corrected at the port**: `MidiInputForwarder`'s

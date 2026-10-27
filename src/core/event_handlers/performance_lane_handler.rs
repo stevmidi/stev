@@ -19,7 +19,7 @@ impl EventHandlers {
     /// of normal note capture. This needs `&mut Transport`, which
     /// `Sequencer` doesn't have, so it lives here (called directly from the
     /// sequencer thread's `midi_in_rx` arm) rather than inside
-    /// `Sequencer::handle_midi_input_dispatch`.
+    /// `Sequencer::handle_midi_input`.
     ///
     /// Live input only — nothing here is recorded or persisted.
     pub(crate) fn handle_performance_lane_midi_input(

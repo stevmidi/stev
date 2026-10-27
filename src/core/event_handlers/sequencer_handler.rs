@@ -802,8 +802,7 @@ mod tests {
         h.handlers.set_view_state(ViewState::Arranger);
         h.cursor_tick.store(480, Ordering::Relaxed);
         for (tick, message) in [(100, [0x90, 64, 100]), (400, [0x80, 64, 0])] {
-            let ticks = tick;
-            h.sequencer.handle_midi_input_dispatch(&message, ticks);
+            h.sequencer.handle_midi_input(&message, tick);
         }
         while h.transport_commands.try_recv().is_ok() {}
 

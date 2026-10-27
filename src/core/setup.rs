@@ -29,7 +29,9 @@ use crate::{
         input_event::InputEvent,
         metronome::Metronome,
         midi::{
-            input::MidiInputForwarder, message::Midi3, out_queue::MidiOutMessage,
+            input::{MidiInputForwarder, RecordedMidi},
+            message::Midi3,
+            out_queue::MidiOutMessage,
             output::MidiOutputConnection,
         },
         note_logger::NoteLoggerCommand,
@@ -74,7 +76,7 @@ pub(crate) fn setup_shared_channels() -> SharedChannels {
     let (note_logger_command_tx, note_logger_command_rx) = unbounded::<NoteLoggerCommand>();
     let (transport_event_tx, transport_event_rx) = unbounded::<TransportEvent>();
     let (clock_command_tx, clock_command_rx) = unbounded::<ClockCommand>();
-    let (midi_in_tx, midi_in_rx) = unbounded::<(Vec<u8>, i32)>();
+    let (midi_in_tx, midi_in_rx) = unbounded::<RecordedMidi>();
     let (midi_out_tx, midi_out_rx) = unbounded::<MidiOutMessage>();
     let (clip_instrument_midi_tx, clip_instrument_midi_rx) =
         RingBuffer::new(INSTRUMENT_MIDI_RING_CAPACITY);
@@ -174,7 +176,7 @@ pub(crate) fn setup_metronome(
 
 /// Builds the [`MidiInputForwarder`] wired to its output channels and the shared clock/tempo/arm atomics.
 pub(crate) fn setup_midi_input_forwarder(
-    midi_in_tx: Sender<(Vec<u8>, i32)>,
+    midi_in_tx: Sender<RecordedMidi>,
     midi_out_tx: Sender<MidiOutMessage>,
     note_logger_command_tx: Sender<NoteLoggerCommand>,
     instrument_midi_tx: Producer<(usize, Midi3)>,

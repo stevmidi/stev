@@ -44,7 +44,7 @@ only — no recording/capture, no persistence. Key files:
 
 - `EventHandlers::handle_performance_lane_midi_input` is the chokepoint,
   called directly from the sequencer thread's `midi_in_rx` arm
-  (`threads/sequencer_pump.rs`) instead of `Sequencer::handle_midi_input_dispatch`, because
+  (`threads/sequencer_pump.rs`) instead of `Sequencer::handle_midi_input`, because
   it needs `&mut Transport`, which `Sequencer` doesn't own.
 - **NoteOn**: `begin_live_trigger`, then `transport.suspend_loop_wrap()`,
   starts the transport if not already running, and `jump_and_chase(target_tick)`

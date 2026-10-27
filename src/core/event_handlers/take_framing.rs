@@ -207,8 +207,7 @@ mod tests {
             (1060, [0x90, 67, 100]),
             (1300, [0x80, 67, 0]),
         ] {
-            let ticks = tick;
-            h.sequencer.handle_midi_input_dispatch(&message, ticks);
+            h.sequencer.handle_midi_input(&message, tick);
         }
         lead_events(h)
     }

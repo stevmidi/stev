@@ -229,14 +229,12 @@ impl Display {
                 continue;
             }
 
-            let end_tick = shape.end_tick();
-
             self.draw_clip_at(
                 painter,
                 rect,
                 shape,
                 shape.start_tick(),
-                end_tick,
+                shape.end_tick(),
                 None,
                 track_idx,
                 1.0,
@@ -804,30 +802,24 @@ impl Display {
     ) {
         const PIXELS_PER_SEMITONE: f32 = 0.5;
 
-        // Helper closure: convert normalized (x_start, x_end, pitch) to screen coords and draw.
-        let draw_thumb = |draw_color: Color32, x_start: f32, x_end: f32, pitch_frac: f32| {
+        let note_color = base.gamma_multiply(note_alpha);
+        let note_height = (PIXELS_PER_SEMITONE * 12.0).max(2.0);
+        // Each thumbnail is normalised (x_start, x_end, pitch) over the clip.
+        for &(x_start, x_end, pitch_frac) in shape.note_thumbnails() {
             let nx_start = original_x + x_start * original_width;
             let nx_end = (original_x + x_end * original_width).max(nx_start + 1.0);
             let draw_x = nx_start.max(x);
             let draw_end = nx_end.min(clip_right);
-
             if draw_end <= draw_x {
-                return;
+                continue;
             }
 
-            let note_height = (PIXELS_PER_SEMITONE * 12.0).max(2.0);
             let ny = body_top + (1.0 - pitch_frac) * (body_h - note_height);
             painter.rect_filled(
                 Rect::from_min_size(pos2(draw_x, ny), vec2(draw_end - draw_x, 2.0)),
                 CornerRadius::ZERO,
-                draw_color,
+                note_color,
             );
-        };
-
-        // Draw static note thumbnails
-        let note_color = base.gamma_multiply(note_alpha);
-        for &(x_start, x_end, pitch_frac) in shape.note_thumbnails() {
-            draw_thumb(note_color, x_start, x_end, pitch_frac);
         }
     }
 

@@ -3,12 +3,10 @@
 //! are in `playback.rs`.
 //!
 //! `Sequencer` owns the tracks (up to `MAX_TRACKS`), the capture buffer, the
-//! three selections, the performance
-//! lane and the clip clipboard. It holds `Arc<AtomicX>` handles into
-//! `SharedAtomics` for the values the rest of the app reads, but deliberately
-//! *not* `clock_tick` — every position it needs arrives stamped on the input
-//! message.
-//! The concern-specific methods live in the sibling files; see the parent
+//! three selections, the performance lane and the clip clipboard. It holds
+//! `Arc<AtomicX>` handles into `SharedAtomics` for the values the rest of the
+//! app reads, but deliberately *not* `clock_tick` — every position it needs
+//! arrives stamped on the input message. The concern-specific methods live in the sibling files; see the parent
 //! module docs.
 
 use std::sync::{
