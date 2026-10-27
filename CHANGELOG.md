@@ -22,6 +22,12 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ### Fixed
 
+- A command for the arranger or the clip view pressed while the browser has
+  the keyboard (⌘A, ⌘D, ...) now moves the keyboard to that pane. ⌘A used to
+  select every clip but leave the keyboard in the browser, so the Delete
+  after it offered to delete the selected file instead of the clips. Space
+  and the other global keys still leave the keyboard in the browser; ⌘O
+  brings it back.
 - Framing a take after a stopped `/` into a clip, the start can be moved up to
   the first note of a phrase shorter than a beat. It used to stop a beat
   before the end, so earlier notes came along or the phrase landed late by

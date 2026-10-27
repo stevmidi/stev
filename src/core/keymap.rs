@@ -555,7 +555,7 @@ pub(crate) const ACTIONS: &[ActionInfo] = &[
     row(
         Action::ShowProjects,
         "project.open",
-        "Open (the browser), or hide it",
+        "Open or focus the browser, or hide it",
         PROJECT,
         Scope::Global,
         &[Chord::cmd(Key::O)],
@@ -819,6 +819,14 @@ impl Action {
     /// This action's row in [`ACTIONS`].
     pub(crate) fn info(self) -> &'static ActionInfo {
         &ACTIONS[self.index()]
+    }
+
+    /// Whether this action acts on a pane — scoped to the arranger or the
+    /// clip view rather than global. Pressed while the browser has the
+    /// keyboard, it takes the keyboard to the pane, so the key after it
+    /// acts on what it changed (`Display::handle_browser_key`).
+    pub(crate) fn acts_on_pane(self) -> bool {
+        self.info().scope != Scope::Global
     }
 
     /// This action's index in [`ACTIONS`].
@@ -1225,6 +1233,19 @@ mod tests {
         let q = Chord::plain(Key::Q);
         assert_eq!(keymap.resolve(q, Pane::Arranger), None);
         assert_eq!(keymap.resolve(q, Pane::Clip), Some(Action::Quantize));
+    }
+
+    /// ⌘A in the browser selected every clip but left the keyboard there,
+    /// so the Delete after it armed a file delete: select-all acts on a
+    /// pane and takes the keyboard there; the transport stays global, so
+    /// Space previews a project without leaving the browser.
+    #[test]
+    fn select_all_acts_on_a_pane_and_playback_does_not() {
+        assert!(Action::SelectAllClips.acts_on_pane());
+        assert!(Action::SelectAllNotes.acts_on_pane());
+        assert!(Action::DeleteSelection.acts_on_pane());
+        assert!(!Action::TogglePlayback.acts_on_pane());
+        assert!(!Action::ShowProjects.acts_on_pane());
     }
 
     /// The defaults never put a scoped and a global action on one chord, so

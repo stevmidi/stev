@@ -28,6 +28,7 @@ use egui::{Key, Pos2, Vec2, vec2};
 use crate::core::{
     config::BROWSER_W_DEFAULT,
     input_event::is_pane_focus_key,
+    keymap::Action,
     project::{
         ProjectAction, clip_path, delete_project, delete_project_folder, list_clips,
         list_project_folders, list_projects,
@@ -1122,7 +1123,21 @@ impl Display {
                     self.key_focus = KeyFocus::Pane;
                 }
             }
-            _ => return false,
+            // Any other key goes on to the pane. One that runs a pane's
+            // command (`⌘A`, `⌘D`, ...) takes the keyboard there first, so
+            // a Delete after it acts on what it changed, not on the browser
+            // row; a global one (Space, `⌘O`) leaves it here.
+            _ => {
+                if self
+                    .keymap
+                    .resolve_press(*key, *modifiers, self.focused_pane())
+                    .is_some_and(Action::acts_on_pane)
+                {
+                    self.browser.tree.delete_armed = None;
+                    self.key_focus = KeyFocus::Pane;
+                }
+                return false;
+            }
         }
         self.scroll_browser_to_selection();
         true
