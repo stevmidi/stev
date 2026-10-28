@@ -521,7 +521,7 @@ pub(crate) enum SequencerCommand {
     /// Write the current project as the template `name` in the templates
     /// folder (`ProjectData::into_template`), replacing one of that name,
     /// and say so in the footer. The open project keeps its name, its file
-    /// and its unsaved state. See `340-templates.md`.
+    /// and its unsaved state. See `archive/340-templates.md`.
     SaveTemplate {
         /// Template file name, without extension.
         name: String,

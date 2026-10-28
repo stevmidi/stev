@@ -3,7 +3,7 @@
 # docs/images/vst/, at 1x and 2x, to raw unpremultiplied RGBA beside them
 # (<name>@1x.rgba, <name>@2x.rgba), which the app loads with include_bytes!.
 # egui can't draw SVG without pulling in resvg's tree, so this runs by hand,
-# once, and its output is committed (docs/330-macos-app.md, decision 7).
+# once, and its output is committed (docs/archive/330-macos-app.md, decision 7).
 #
 #   scripts/make-vst-logo.sh
 #

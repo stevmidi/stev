@@ -20,7 +20,7 @@
 //!   only stop. Enter writes the open project into the templates folder
 //!   (`InputEvent::SaveTemplate`), replacing one of that name; the open
 //!   project keeps its name, its file and its unsaved state
-//!   (`340-templates.md`).
+//!   (`archive/340-templates.md`).
 //! - **Unsaved changes**: asked for by the sequencer (`UiEvent::UnsavedChanges`)
 //!   when ⌘/Ctrl+N, opening a project from the browser or quitting would
 //!   throw away changes. ←/→ move the selection between its buttons (Save

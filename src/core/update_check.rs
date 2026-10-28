@@ -3,7 +3,7 @@
 //! `/usr/bin/curl` on a short-lived `"update-check"` thread (macOS, where the
 //! app ships), only when asked; never on the audio or render path. The
 //! comparison and the response parsing are pure. See
-//! `330-macos-app.md` § The About tab.
+//! `archive/330-macos-app.md` § The About tab.
 //!
 //! It builds everywhere, but the About tab offers it only on macOS
 //! (`about_tab.rs`, `UPDATE_CHECK`).

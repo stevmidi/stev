@@ -1,7 +1,7 @@
 #!/bin/zsh
 # Builds assets/macos/Stev.icns from assets/macos/icon.svg. Run by hand when
 # the icon changes and commit the result, so building the bundle needs nothing
-# beyond Xcode's command-line tools (docs/330-macos-app.md).
+# beyond Xcode's command-line tools (docs/archive/330-macos-app.md).
 #
 #   scripts/macos/make-icon.sh
 #

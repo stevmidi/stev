@@ -320,7 +320,7 @@ impl EventHandlers {
     /// (`ProjectData::into_template`), and says how it went in the footer;
     /// on success the browser re-reads the tree. The open project stays as
     /// it was: its name, its file and `saved` are untouched, so a project
-    /// with unsaved changes still has them. See `340-templates.md`.
+    /// with unsaved changes still has them. See `archive/340-templates.md`.
     pub(super) fn save_template_workflow(&self, sequencer: &Sequencer, name: &str) {
         let data = ProjectData::from_sequencer(sequencer).into_template();
         let message = match project::save_template(&data, name) {

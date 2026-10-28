@@ -61,7 +61,7 @@ pub(crate) enum Action {
     ToggleBrowser,
     /// Name and make a new project folder in the browser panel.
     NewProjectFolder,
-    /// Save the open project as a template (`340-templates.md`).
+    /// Save the open project as a template (`archive/340-templates.md`).
     SaveAsTemplate,
     /// Undo.
     Undo,

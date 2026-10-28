@@ -131,7 +131,7 @@ pub(crate) fn list_clips() -> Vec<String> {
 }
 
 /// The project templates (`.stev` stems) in the templates folder,
-/// alphabetical; none before the folder exists (`340-templates.md`).
+/// alphabetical; none before the folder exists (`archive/340-templates.md`).
 pub(crate) fn list_templates() -> Vec<String> {
     list_templates_in(&templates_dir())
 }
@@ -211,7 +211,7 @@ pub(crate) fn library_project(path: &Path) -> Option<(Option<String>, String)> {
 
 /// Whether the `.stev` at `path` is a template: directly in the templates
 /// folder, compared resolved as [`library_project`] does. Finder opens one
-/// as the browser does, untitled (`340-templates.md`).
+/// as the browser does, untitled (`archive/340-templates.md`).
 pub(crate) fn is_template_file(path: &Path) -> bool {
     let canonical = |p: &Path| fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
     is_template_in(&canonical(path), &canonical(&templates_dir()))

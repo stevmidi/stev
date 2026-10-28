@@ -3,7 +3,7 @@
 //! (`Display::sync_update_check`). The app menu's About and Check for
 //! Updates items open this tab (`view/appkit.rs`). Drawing and the hit-test
 //! are `rendering/modals/settings.rs`. See `030-ui-design.md` § Settings
-//! modal and `330-macos-app.md` § The About tab.
+//! modal and `archive/330-macos-app.md` § The About tab.
 
 use std::cell::OnceCell;
 use std::ffi::OsStr;

@@ -210,7 +210,7 @@ thread — which is free — writes the class list as JSON, and exits.
 - **The child stays out of the Dock.** Inside `Stev.app` the child carries the
   bundle's identity, so a plugin that brings up AppKit during `bundleEntry`
   made it a regular app, and a second Stev icon flashed in the Dock during a
-  scan (`330` § 2). The child sets its `NSApplication` to `Prohibited` before
+  scan (`archive/330` § 2). The child sets its `NSApplication` to `Prohibited` before
   scanning, and the parent sets `QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM`
   on it, because Qt (Kontakt 8) makes its process a regular app at startup
   whatever the policy already is. Only `LSUIElement` in the plist or that

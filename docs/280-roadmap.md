@@ -13,7 +13,7 @@ What Stev may do next, and what it won't. It picks up where the release plan (`a
 - **CI compiles and tests all three** (`000` § CI).
 - **The `cfg` boundary stays clean**, so a port stays a port and not an untangling job. Platform code lives behind `cfg(target_os = …)`, with no new macOS-only assumptions in the format-agnostic host core (`InstrumentMixer`, the merged catalog, instrument persistence; `130`) or anywhere else outside the platform modules. CI enforces the compiling half of this; the rest is review.
 
-What a port would need is in `260-porting.md`. Binaries are macOS only (`330-macos-app.md`).
+What a port would need is in `260-porting.md`. Binaries are macOS only (`archive/330-macos-app.md`).
 
 Full Linux and Windows support is now a staged candidate (§ Candidates, Linux and Windows support, staged; added 2026-10-11). Until a stage lands, the above holds: nothing beyond CI is promised.
 
@@ -39,7 +39,7 @@ Stage 1 of § Linux and Windows support, staged, taken first as macOS work. Park
 
 ### A signed macOS app
 
-Level 1, an unsigned universal `Stev.app` in a zip attached to each release by CI, is built (`330-macos-app.md`, 2026-10-25). Its first launch needs Gatekeeper's *Open Anyway* (README § Download), once per version: the approval belongs to one ad-hoc-signed build, so every update asks again (seen 0.6.0 → 0.7.0, 2026-10-26). The README gives `xattr -dr com.apple.quarantine` as the Terminal shortcut. The Apple Silicon slice is untested: the author's one machine is an Intel Mac, so an Apple Silicon bug report is the first signal to act on. The levels left build on it:
+Level 1, an unsigned universal `Stev.app` in a zip attached to each release by CI, is built (`archive/330-macos-app.md`, 2026-10-25). Its first launch needs Gatekeeper's *Open Anyway* (README § Download), once per version: the approval belongs to one ad-hoc-signed build, so every update asks again (seen 0.6.0 → 0.7.0, 2026-10-26). The README gives `xattr -dr com.apple.quarantine` as the Terminal shortcut. The Apple Silicon slice is untested: the author's one machine is an Intel Mac, so an Apple Silicon bug report is the first signal to act on. The levels left build on it:
 
 2. **A signed and notarized `.app` / `.dmg`.** Opens without a warning. Needs the Apple Developer Program ($99/year) and signing + notarization secrets in the release workflow. Notarization requires the hardened runtime, which refuses to load code signed by anyone else. The app therefore needs the `com.apple.security.cs.disable-library-validation` entitlement, or no CLAP/VST3 plugin will load (every DAW ships with it).
 
@@ -51,7 +51,7 @@ Level 1, an unsigned universal `Stev.app` in a zip attached to each release by C
    An individual account signs as the author's own name. Signing as "Stev" needs a legal entity and a D-U-N-S number.
 3. **A Homebrew cask** (`brew install --cask stev`), on top of level 2.
 
-A **self-updater** (Sparkle) downloading and installing in place needs level 2's signing plus an EdDSA-signed appcast, and overlaps with level 3's cask: optional after level 2, not before. The manual Check for updates (`330` § 3) stays until then.
+A **self-updater** (Sparkle) downloading and installing in place needs level 2's signing plus an EdDSA-signed appcast, and overlaps with level 3's cask: optional after level 2, not before. The manual Check for updates (`archive/330` § 3) stays until then.
 
 ### Export to audio: what's left
 
@@ -67,9 +67,9 @@ Added 2026-10-11: everything macOS has today, on Linux and Windows too, built in
 1. **Timing: the probe and the fixes** (§ MIDI Out timing above). The timing probe, the precise `"midiout"` deadline wait, one absolute-deadline clock timer, and best-effort thread priority. All of it helped macOS too, so it was done as macOS work ahead of the rest of this candidate (2026-10-14); what's left is measuring Linux and Windows. It clears the first and largest porting hurdle.
 2. **MIDI Out parity on Windows 11 and Ubuntu 24.04.** Run the smoke test (`260` § Smoke test) and fix what it finds: no virtual MIDI port on Windows (midir can't create one; at least document loopMIDI or Windows MIDI Services), quit with unsaved changes, `.mid` file drag, MIDI hot-plug, and the library and log folders. When this lands, Stev is a supported MIDI Out sequencer on all three, with plugins on macOS only, and the README, § Platforms and § Not planned say so.
 3. **The plugin host, Windows first.** Windows has far more musicians and VST3 plugins, and the author has a Windows 11 machine. The host core is format-agnostic (`130`); what's needed is the platform glue: plugin search paths per OS, VST3 bundle layout (`180`), editor windows parented to Win32 (and X11 later), MMCSS as the workgroup join's counterpart (`170`), and expect another round of the GL-context clash with plugins that bring their own GL (NI, Qt). Linux CLAP/VST3 follows Windows; its plugin ecosystem is thin. Decide on this stage only after living with stage 2.
-4. **Packaging per OS** (installer or archive per platform, as `330-macos-app.md` does for macOS), only once stage 3 is solid.
+4. **Packaging per OS** (installer or archive per platform, as `archive/330-macos-app.md` does for macOS), only once stage 3 is solid.
 
-Stage 1 is § MIDI Out timing, listed with the engine work above. Stages 2–4 come after the downloadable macOS app (built 2026-10-25, `330`).
+Stage 1 is § MIDI Out timing, listed with the engine work above. Stages 2–4 come after the downloadable macOS app (built 2026-10-25, `archive/330`).
 
 ### Website extras
 

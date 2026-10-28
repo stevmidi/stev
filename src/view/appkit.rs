@@ -22,12 +22,12 @@
 //! added to the delegate's class the same way, which stores an
 //! [`AppMenuRequest`] for `Display` to take on the next frame and wakes it —
 //! both on the main thread, so a thread-local cell carries it.
-//! See `330-macos-app.md` § The About tab.
+//! See `archive/330-macos-app.md` § The About tab.
 //!
 //! A `.stev` double-clicked in Finder, or dropped on the Dock icon, arrives
 //! as the open-documents Apple Event, which winit doesn't pass on.
 //! [`install_open_documents_handler`] catches it, at launch too, and keeps
-//! the path for `Display` ([`take_open_document`]). See `330-macos-app.md`
+//! the path for `Display` ([`take_open_document`]). See `archive/330-macos-app.md`
 //! § Opening projects from Finder.
 //!
 //! Also [`MainGlContext`]: eframe's OpenGL context, kept so it can be made

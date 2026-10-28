@@ -662,7 +662,7 @@ impl Display {
                 true
             }
             // ⌘⌥S, beside ⌘S and ⌘⇧S: Save as template
-            // (`340-templates.md`), from any key focus.
+            // (`archive/340-templates.md`), from any key focus.
             InputEvent::Action(Action::SaveAsTemplate) => {
                 self.open_save_template();
                 true

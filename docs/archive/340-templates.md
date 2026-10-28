@@ -1,6 +1,6 @@
 # Project Templates
 
-**Status: design agreed 2026-10-28; phases 1–3 built and merged; phase 4 built (on `feature/manage-templates`).** A template is a saved instrument setup: the tracks, their plugins with the presets loaded, their names, colours and mix, but no clips. Opening one gives a new untitled project to capture into, as ⌘N does, and nothing is written to disk until you save it. Read `060-persistence.md` (the DTOs, the on-disk layout, the unsaved-changes check) and the browser's section in `030-ui-design.md` first.
+**Archived 2026-10-28. Status: all four phases built and merged 2026-10-28.** The as-built behaviour lives in `060` (layout, Save as template, opening one, the −12 dB default), `020` (the browser), `030` and `010`; this file is the plan and its rationale, not maintained. Design agreed the same day. A template is a saved instrument setup: the tracks, their plugins with the presets loaded, their names, colours and mix, but no clips. Opening one gives a new untitled project to capture into, as ⌘N does, and nothing is written to disk until you save it. Read `060-persistence.md` (the DTOs, the on-disk layout, the unsaved-changes check) and the browser's section in `030-ui-design.md` first.
 
 ## Decisions (2026-10-28)
 

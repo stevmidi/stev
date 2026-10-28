@@ -59,7 +59,7 @@ pub(crate) fn exports_dir() -> PathBuf {
 
 /// The project templates' folder (`Stev/Templates/`), beside the projects
 /// root, holding `.stev` files directly. Not created here: the browser lists
-/// none until it exists (`340-templates.md`).
+/// none until it exists (`archive/340-templates.md`).
 pub(crate) fn templates_dir() -> PathBuf {
     library_dir().join(TEMPLATES_DIR_NAME)
 }

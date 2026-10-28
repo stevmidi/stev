@@ -1,6 +1,6 @@
 #!/bin/zsh
 # Builds the downloadable macOS app: a universal (x86_64 + aarch64) Stev.app,
-# ad-hoc signed, zipped for a release (docs/330-macos-app.md, phase 1).
+# ad-hoc signed, zipped for a release (docs/archive/330-macos-app.md, phase 1).
 #
 #   scripts/macos/bundle.sh [--version x.y.z]
 #

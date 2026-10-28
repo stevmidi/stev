@@ -3,7 +3,7 @@
 //! folders under `paths::project_dir()`, each expandable to its `.stev`
 //! files, then the loose projects at the projects root. **Templates** lists
 //! the `.stev` files in `paths::templates_dir()`: Enter opens one as a new,
-//! untitled project (`340-templates.md`); ⌘R renames one and Delete moves it
+//! untitled project (`archive/340-templates.md`); ⌘R renames one and Delete moves it
 //! to the Trash, as for a project. **Clips** lists the
 //! `.mid` files in the `Clips` folder, where a clip export lands: Enter or a
 //! drag imports one. **Plugins** (macOS only, where the plugin host runs)

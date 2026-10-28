@@ -1,6 +1,6 @@
 # Builds the downloadable macOS app for a version tag and attaches it to that
 # tag's GitHub release. Design and the reasons behind it:
-# docs/330-macos-app.md § 6 and docs/000-architecture.md § CI.
+# docs/archive/330-macos-app.md § 6 and docs/000-architecture.md § CI.
 name: Release
 
 on:

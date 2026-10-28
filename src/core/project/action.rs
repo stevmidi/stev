@@ -30,7 +30,7 @@ pub(crate) enum ProjectAction {
     },
     /// Start a new, untitled project from the template at `path`: ⌘N with a
     /// different starting point. The template is only read
-    /// (`340-templates.md`).
+    /// (`archive/340-templates.md`).
     NewFromTemplate {
         /// The template's `.stev`.
         path: PathBuf,

@@ -296,7 +296,7 @@ impl ProjectData {
     /// passing state reset — no clips, no track muted, the default loop
     /// region. Applied when a template opens, so one holding clips (a project
     /// copied into the folder by hand) still opens empty, and when one is
-    /// saved. See `340-templates.md` decisions 5 and 6.
+    /// saved. See `archive/340-templates.md` decisions 5 and 6.
     pub(crate) fn into_template(mut self) -> Self {
         self.region_start = 0;
         self.region_end = config::REGION_LENGTH_DEFAULT;
