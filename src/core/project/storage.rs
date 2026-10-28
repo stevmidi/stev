@@ -234,9 +234,38 @@ pub(crate) fn is_project_file(path: &Path) -> bool {
         .is_some_and(|ext| ext.eq_ignore_ascii_case(PROJECT_EXTENSION))
 }
 
-/// Removes `folder/name.stev` from disk (`None`: the projects root).
+/// Deletes `folder/name.stev` (`None`: the projects root) — to the Trash on
+/// macOS ([`delete_file`]).
 pub(crate) fn delete_project(folder: Option<&str>, name: &str) -> io::Result<()> {
-    fs::remove_file(stev_path(&resolve_dir(folder), name))
+    delete_file(&stev_path(&resolve_dir(folder), name))
+}
+
+/// Deletes the clip `name` (its stem) from the clips folder — to the Trash on
+/// macOS ([`delete_file`]).
+pub(crate) fn delete_clip(name: &str) -> io::Result<()> {
+    delete_file(&clip_path(name))
+}
+
+/// Moves the file at `path` to the Trash.
+#[cfg(target_os = "macos")]
+fn delete_file(path: &Path) -> io::Result<()> {
+    let url = NSURL::from_file_path(path)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "not a file path"))?;
+    trash(&url)
+}
+
+/// Removes the file at `path` for good: off macOS there is no Trash.
+#[cfg(not(target_os = "macos"))]
+fn delete_file(path: &Path) -> io::Result<()> {
+    fs::remove_file(path)
+}
+
+/// Moves the file or folder at `url` to the Trash.
+#[cfg(target_os = "macos")]
+fn trash(url: &NSURL) -> io::Result<()> {
+    NSFileManager::defaultManager()
+        .trashItemAtURL_resultingItemURL_error(url, None)
+        .map_err(|e| io::Error::other(e.localizedDescription().to_string()))
 }
 
 /// Renames project `old` to `new` in `folder` (`None`: the projects root),
@@ -286,9 +315,7 @@ fn rename_folder_in(root: &Path, old: &str, new: &str) -> io::Result<()> {
 pub(crate) fn delete_project_folder(name: &str) -> io::Result<()> {
     let url = NSURL::from_directory_path(resolve_dir(Some(name)))
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "not a folder path"))?;
-    NSFileManager::defaultManager()
-        .trashItemAtURL_resultingItemURL_error(&url, None)
-        .map_err(|e| io::Error::other(e.localizedDescription().to_string()))
+    trash(&url)
 }
 
 /// Removes the project folder `name` when it is empty. Off macOS there is

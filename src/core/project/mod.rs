@@ -22,8 +22,8 @@ pub(crate) use staged::StagedProject;
 pub(crate) use storage::is_project_file;
 pub(crate) use storage::{
     MIX_FILE_NAME, clip_path, copy_project_in, create_audio_export_dir, create_project_folder,
-    delete_project, delete_project_folder, file_stem, is_midi_file, library_project, list_clips,
-    list_project_folders, list_projects, load_midi_clip, load_project, project_exists,
+    delete_clip, delete_project, delete_project_folder, file_stem, is_midi_file, library_project,
+    list_clips, list_project_folders, list_projects, load_midi_clip, load_project, project_exists,
     project_folder_name_from_input, project_name_from_input, rename_clip, rename_project,
     rename_project_folder, save_clip_export, save_project, stem_file_name,
 };

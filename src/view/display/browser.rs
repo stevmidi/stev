@@ -30,7 +30,7 @@ use crate::core::{
     input_event::is_pane_focus_key,
     keymap::Action,
     project::{
-        ProjectAction, clip_path, delete_project, delete_project_folder, list_clips,
+        ProjectAction, clip_path, delete_clip, delete_project, delete_project_folder, list_clips,
         list_project_folders, list_projects,
     },
     settings::update_settings,
@@ -135,9 +135,10 @@ pub(super) fn new_folder_button_rect(row: Rect) -> Rect {
     )
 }
 
-/// The footer's word for the folder `name` deleted: moved to the Trash on
-/// macOS; elsewhere only an empty one is removed (`delete_project_folder`).
-fn folder_deleted_message(name: &str) -> String {
+/// The footer's word for the project, clip or folder `name` deleted: moved to
+/// the Trash on macOS; elsewhere a file is removed for good and a folder only
+/// when empty (`delete_project_folder`).
+fn deleted_message(name: &str) -> String {
     if cfg!(target_os = "macos") {
         format!("Moved {name} to the Trash")
     } else {
@@ -342,6 +343,8 @@ pub(super) enum BrowserAction {
     /// Delete this project folder, with its projects (the confirmed second
     /// Enter).
     DeleteFolder(String),
+    /// Delete this clip, by its file stem (the confirmed second Enter).
+    DeleteClip(String),
 }
 
 /// What [`BrowserTree::reload`] lists from disk.
@@ -388,7 +391,7 @@ pub(super) struct BrowserTree {
     rows: Vec<BrowserRow>,
     /// The selected item, `None` until something is selected.
     selected: Option<BrowserItem>,
-    /// When the selected project or folder was armed to be deleted, while
+    /// When the selected project, clip or folder was armed to be deleted, while
     /// it awaits its confirm (the second Enter): the footer shows the newer
     /// of its question and a passing message. Any selection change disarms
     /// it.
@@ -601,7 +604,7 @@ impl BrowserTree {
     pub(super) fn delete_prompt(&self) -> Option<String> {
         self.delete_armed?;
         let what = match self.selected.as_ref()? {
-            BrowserItem::Project { name, .. } => name.clone(),
+            BrowserItem::Project { name, .. } | BrowserItem::Clip(name) => name.clone(),
             BrowserItem::Folder(name) => {
                 let count = self.disk.folder_projects(name).map_or(0, <[_]>::len);
                 match count {
@@ -696,7 +699,7 @@ impl BrowserTree {
         }
     }
 
-    /// Enter: confirms a pending delete (a project or a folder); else opens the selected project,
+    /// Enter: confirms a pending delete (a project, clip or folder); else opens the selected project,
     /// expands/collapses the selected folder or category, imports the
     /// selected clip or puts the selected plugin on the selected track.
     /// A folder is never made current here: Save As picks where a project
@@ -709,6 +712,7 @@ impl BrowserTree {
                 Some(BrowserAction::DeleteProject { folder, name })
             }
             BrowserItem::Folder(name) if armed => Some(BrowserAction::DeleteFolder(name)),
+            BrowserItem::Clip(name) if armed => Some(BrowserAction::DeleteClip(name)),
             BrowserItem::Category(_) | BrowserItem::Folder(_) => {
                 self.toggle(&item);
                 None
@@ -722,12 +726,12 @@ impl BrowserTree {
         }
     }
 
-    /// Delete/Backspace: arms the delete confirm on a selected project or
-    /// folder.
+    /// Delete/Backspace: arms the delete confirm on a selected project, clip
+    /// or folder.
     pub(super) fn arm_delete(&mut self) {
         self.delete_armed = matches!(
             self.selected,
-            Some(BrowserItem::Project { .. } | BrowserItem::Folder(_))
+            Some(BrowserItem::Project { .. } | BrowserItem::Clip(_) | BrowserItem::Folder(_))
         )
         .then(Instant::now);
     }
@@ -1223,7 +1227,14 @@ impl Display {
             }
             BrowserAction::DeleteProject { folder, name } => {
                 let message = match delete_project(folder.as_deref(), &name) {
-                    Ok(()) => format!("Deleted {name}"),
+                    Ok(()) => deleted_message(&name),
+                    Err(e) => format!("Could not delete {name}: {e}"),
+                };
+                self.finish_browser_delete(message);
+            }
+            BrowserAction::DeleteClip(name) => {
+                let message = match delete_clip(&name) {
+                    Ok(()) => deleted_message(&name),
                     Err(e) => format!("Could not delete {name}: {e}"),
                 };
                 self.finish_browser_delete(message);
@@ -1257,7 +1268,7 @@ impl Display {
                 if current && self.project.project_current_name.is_none() {
                     self.set_current_project_folder(None);
                 }
-                folder_deleted_message(name)
+                deleted_message(name)
             }
             Err(e) => format!("Could not delete {name}: {e}"),
         }
@@ -1589,7 +1600,7 @@ mod tests {
     }
 
     #[test]
-    fn enter_imports_a_clip_which_is_never_deleted() {
+    fn enter_imports_a_clip_and_a_second_enter_deletes_it() {
         let mut tree = tree();
         tree.select(clip("a1_T1_B1"));
         assert_eq!(
@@ -1597,7 +1608,15 @@ mod tests {
             Some(BrowserAction::ImportClip("a1_T1_B1".into()))
         );
         tree.arm_delete();
-        assert!(tree.delete_armed.is_none());
+        assert_eq!(
+            tree.delete_prompt().as_deref(),
+            Some("Delete a1_T1_B1? Enter deletes, Esc cancels")
+        );
+        assert_eq!(
+            tree.activate(),
+            Some(BrowserAction::DeleteClip("a1_T1_B1".into()))
+        );
+        assert!(tree.delete_armed.is_none(), "the delete disarms itself");
     }
 
     #[test]

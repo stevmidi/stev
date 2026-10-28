@@ -462,7 +462,7 @@ const FIXED: &[FixedGroup] = &[
         &[
             ("Enter", "Open the project, import the clip"),
             ("⌘R", "Rename the file or folder"),
-            ("Backspace", "Delete the project or folder"),
+            ("Backspace", "Delete the project, clip or folder"),
         ],
     ),
     (

@@ -20,6 +20,15 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ## [Unreleased]
 
+### Added
+
+- Clips can be deleted in the browser: Backspace on a clip, then Enter.
+
+### Changed
+
+- Deleting a project or clip in the browser moves it to the Trash on macOS,
+  as deleting a folder already did, so it can be restored from Finder.
+
 ## [0.8.2] - 2026-10-28
 
 ### Fixed
