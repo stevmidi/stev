@@ -40,6 +40,7 @@ These guidelines are split into focused topic files. All of them live in [`docs/
 | 250 | [250-first-feature.md](docs/250-first-feature.md) | Walkthrough for a first change: one real key press (`M`, mute notes) traced from `InputEvent` through `SequencerCommand`, the undoable `SequencerEdit` and `EditResult` to the UI, then the tests, docs and gate it needs; how to drive a coding agent through it and review the result; ends in a checklist. Start here before adding a feature |
 | 260 | [260-porting.md](docs/260-porting.md) | Porting to Linux and Windows: what's macOS-only today (sound, timers, virtual port, file drag, quit), priorities (MIDI Out timing first), the `"midiout"` / clock timing analysis, the timing-probe design and fixes, a smoke test, rules for keeping a port behind `cfg` |
 | 280 | [280-roadmap.md](docs/280-roadmap.md) | What may come next: the principle (an opinionated, capture-first app), platforms (macOS first; CI on all three), candidates (remaining MIDI Out timing runs, a signed macOS app, export follow-ups, staged Linux/Windows support, website extras) and what's not planned |
+| 350 | [350-recent-projects.md](docs/350-recent-projects.md) | Recent projects in the browser (design agreed, not started): a RECENT category first, the five most recently saved projects across folders derived from file times, the folder as a dim suffix, its own `BrowserItem::Recent` row, the launch selection, the build and its tests |
 
 ## Archived
 
