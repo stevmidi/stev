@@ -161,6 +161,12 @@ The client starts `stev --mcp` itself, which opens no window and talks only to
 the Stev you have open, over a socket only your user account can reach. With
 Stev closed or the setting off, every answer says so.
 
+What the agent reads (notes, track and project names) goes to your AI client
+and whoever runs its model, as anything else you ask it does. Track and
+project names reach it as quoted text, but a project from someone else can
+still carry instructions in them: take care with tools that act on your
+computer.
+
 ## Not planned
 
 Stev grows toward its capture workflow, not toward a full DAW. These are not on

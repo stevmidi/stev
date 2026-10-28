@@ -32,7 +32,8 @@ Breaking entries are marked **Breaking** and say what to do about them.
   server and turn on Allow AI agents in Settings → MIDI. It reads what you
   point at with the marquee (the tempo, the harmony bar by bar, the notes),
   but can't change anything yet. Off by default; the connection is a socket
-  only your user account can open.
+  only your user account can open. What it reads goes to your AI client's
+  provider.
 
 ### Changed
 
