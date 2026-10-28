@@ -1,6 +1,6 @@
 //! Where the app keeps things on disk: the user's library under Documents
-//! (`Stev/`, holding only user content — `Projects/` and the audio export's
-//! `Exports/` today, sibling root folders for forks), app settings in the platform config directory,
+//! (`Stev/`, holding only user content — `Projects/`, `Templates/` and the
+//! audio export's `Exports/` today, sibling root folders for forks), app settings in the platform config directory,
 //! rebuildable caches in the platform cache directory, and logs in the
 //! platform's logs folder. See `060-persistence.md`.
 
@@ -18,6 +18,9 @@ const PROJECTS_DIR_NAME: &str = "Projects";
 /// Name of the folder inside the library that every audio export's own
 /// folder goes in.
 const EXPORTS_DIR_NAME: &str = "Exports";
+
+/// Name of the project templates' folder inside the library.
+const TEMPLATES_DIR_NAME: &str = "Templates";
 
 /// File name of the app settings.
 pub(crate) const SETTINGS_FILE_NAME: &str = "settings.json";
@@ -52,6 +55,13 @@ pub(crate) fn project_dir() -> PathBuf {
 /// export makes it (`storage::create_audio_export_dir`).
 pub(crate) fn exports_dir() -> PathBuf {
     library_dir().join(EXPORTS_DIR_NAME)
+}
+
+/// The project templates' folder (`Stev/Templates/`), beside the projects
+/// root, holding `.stev` files directly. Not created here: the browser lists
+/// none until it exists (`340-templates.md`).
+pub(crate) fn templates_dir() -> PathBuf {
+    library_dir().join(TEMPLATES_DIR_NAME)
 }
 
 /// The app's folder in the platform directory `base`, created if absent;

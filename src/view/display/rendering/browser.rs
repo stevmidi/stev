@@ -66,7 +66,7 @@ enum BrowserIcon {
         /// Whether the folder is expanded.
         open: bool,
     },
-    /// A `.stev` project: a document.
+    /// A `.stev` project or template: a document.
     Project,
     /// A `.mid` clip: beamed eighth notes.
     Clip,
@@ -82,7 +82,7 @@ impl BrowserIcon {
             BrowserItem::Folder(_) | BrowserItem::NewFolder => Some(BrowserIcon::Folder {
                 open: expanded == Some(true),
             }),
-            BrowserItem::Project { .. } => Some(BrowserIcon::Project),
+            BrowserItem::Project { .. } | BrowserItem::Template(_) => Some(BrowserIcon::Project),
             BrowserItem::Clip(_) => Some(BrowserIcon::Clip),
             BrowserItem::Plugin(_) => Some(BrowserIcon::Plugin),
             BrowserItem::Category(_) | BrowserItem::Scanning => None,
@@ -440,6 +440,7 @@ impl Display {
                     name.clone(),
                     folder.as_deref() == current_folder && Some(name.as_str()) == current_name,
                 ),
+                BrowserItem::Template(name) => (name.clone(), false),
                 BrowserItem::Clip(name) => (format!("{name}.mid"), false),
                 BrowserItem::Plugin(plugin) => {
                     // Right-aligned, so no text measurement is needed.

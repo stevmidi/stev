@@ -1,5 +1,6 @@
 //! Filesystem layout for projects: per-project subfolders of the projects
 //! root (`paths::project_dir`), `.stev` file CRUD, project name rules, the
+//! project templates in `paths::templates_dir`, the
 //! `Clips` folder a MIDI clip export lands in, the folder and file names of
 //! the audio export (`130-plugin-host.md` § Audio export), and reading a `.mid`
 //! for the MIDI clip import (see `060-persistence.md`).
@@ -17,7 +18,7 @@ use std::{
 use crate::{
     core::{
         config::PROJECT_NAME_MAX_CHARS,
-        paths::{exports_dir, project_dir},
+        paths::{exports_dir, project_dir, templates_dir},
         time::{Meter, format_bpm},
     },
     models::clip::Clip,
@@ -134,6 +135,28 @@ pub(crate) fn list_clips() -> Vec<String> {
     clips
 }
 
+/// The project templates (`.stev` stems) in the templates folder,
+/// alphabetical; none before the folder exists (`340-templates.md`).
+pub(crate) fn list_templates() -> Vec<String> {
+    list_templates_in(&templates_dir())
+}
+
+/// [`list_templates`] in the templates folder `dir`.
+fn list_templates_in(dir: &Path) -> Vec<String> {
+    let mut templates: Vec<String> = list_stev_names(dir)
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect();
+    templates.sort();
+    templates
+}
+
+/// The template `name` (its stem) in the templates folder — a browser
+/// row's file.
+pub(crate) fn template_path(name: &str) -> PathBuf {
+    stev_path(&templates_dir(), name)
+}
+
 /// Writes `data` as pretty JSON to `folder/name.stev` (creating `folder`).
 pub(crate) fn save_project(data: &ProjectData, folder: Option<&str>, name: &str) -> io::Result<()> {
     let dir = resolve_dir(folder);
@@ -147,7 +170,13 @@ pub(crate) fn load_project(
     folder: Option<&str>,
     name: &str,
 ) -> Result<ProjectData, Box<dyn Error>> {
-    let (_, data) = read_project(&stev_path(&resolve_dir(folder), name))?;
+    load_project_file(&stev_path(&resolve_dir(folder), name))
+}
+
+/// Reads and deserializes the `.stev` at `path`, wherever it is — a
+/// template ([`template_path`]).
+pub(crate) fn load_project_file(path: &Path) -> Result<ProjectData, Box<dyn Error>> {
+    let (_, data) = read_project(path)?;
     Ok(data)
 }
 
@@ -599,6 +628,21 @@ mod tests {
             .collect();
         names.sort();
         names
+    }
+
+    /// The templates folder lists its `.stev` files alphabetically, dotfiles
+    /// and other files left out — and nothing before it exists.
+    #[test]
+    fn templates_list_alphabetically_and_none_before_the_folder_exists() {
+        let dir = scratch_dir("templates");
+        let templates = dir.join("Templates");
+        assert!(list_templates_in(&templates).is_empty());
+        fs::create_dir(&templates).unwrap();
+        for file in ["Synths.stev", "Band.stev", ".hidden.stev", "Riff.mid"] {
+            fs::write(templates.join(file), "{}").unwrap();
+        }
+        assert_eq!(list_templates_in(&templates), vec!["Band", "Synths"]);
+        let _ = fs::remove_dir_all(&dir);
     }
 
     /// A project in the root or one project folder down is named as the

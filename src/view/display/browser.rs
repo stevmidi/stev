@@ -1,7 +1,9 @@
 //! The browser side panel: a toggleable panel on the left, its width dragged
-//! by its right edge, with three categories. **Projects** holds the project
+//! by its right edge, with four categories. **Projects** holds the project
 //! folders under `paths::project_dir()`, each expandable to its `.stev`
-//! files, then the loose projects at the projects root. **Clips** lists the
+//! files, then the loose projects at the projects root. **Templates** lists
+//! the `.stev` files in `paths::templates_dir()`: Enter opens one as a new,
+//! untitled project (`340-templates.md`). **Clips** lists the
 //! `.mid` files in the `Clips` folder, where a clip export lands: Enter or a
 //! drag imports one. **Plugins** (macOS only, where the plugin host runs)
 //! lists every installed instrument plugin: Enter puts the selected one on
@@ -31,7 +33,7 @@ use crate::core::{
     keymap::Action,
     project::{
         ProjectAction, clip_path, delete_clip, delete_project, delete_project_folder, list_clips,
-        list_project_folders, list_projects,
+        list_project_folders, list_projects, list_templates, template_path,
     },
     settings::update_settings,
 };
@@ -176,6 +178,8 @@ pub(super) fn browser_text_x(row: &BrowserRow) -> f32 {
 pub(super) enum BrowserCategory {
     /// The project folders and their projects.
     Projects,
+    /// The project templates.
+    Templates,
     /// The MIDI clips in the `Clips` folder.
     Clips,
     /// The installed instrument plugins.
@@ -187,6 +191,7 @@ impl BrowserCategory {
     pub(super) fn label(self) -> &'static str {
         match self {
             BrowserCategory::Projects => "PROJECTS",
+            BrowserCategory::Templates => "TEMPLATES",
             BrowserCategory::Clips => "CLIPS",
             BrowserCategory::Plugins => "PLUGINS",
         }
@@ -241,6 +246,9 @@ pub(super) enum BrowserItem {
         /// The project name (file stem).
         name: String,
     },
+    /// A `.stev` in the templates folder, by its file stem. Enter opens it
+    /// as a new, untitled project.
+    Template(String),
     /// A `.mid` in the `Clips` folder, by its file stem. Enter imports it on
     /// the selected track at the cursor; dragged out of the panel, it imports
     /// where it is dropped (`input/midi_drag.rs`).
@@ -260,8 +268,8 @@ pub(super) enum BrowserItem {
 
 impl BrowserItem {
     /// The row Left steps out to: a project's folder (or the Projects
-    /// category at the projects root), a folder's, a clip's or a plugin's
-    /// category. A category has none.
+    /// category at the projects root), a folder's, a template's, a clip's or
+    /// a plugin's category. A category has none.
     fn parent(&self) -> Option<BrowserItem> {
         match self {
             BrowserItem::Category(_) => None,
@@ -272,6 +280,7 @@ impl BrowserItem {
             BrowserItem::Folder(_) | BrowserItem::NewFolder => {
                 Some(BrowserItem::Category(BrowserCategory::Projects))
             }
+            BrowserItem::Template(_) => Some(BrowserItem::Category(BrowserCategory::Templates)),
             BrowserItem::Clip(_) => Some(BrowserItem::Category(BrowserCategory::Clips)),
             BrowserItem::Plugin(_) | BrowserItem::Scanning => {
                 Some(BrowserItem::Category(BrowserCategory::Plugins))
@@ -329,6 +338,8 @@ pub(super) enum BrowserAction {
         /// The project name.
         name: String,
     },
+    /// Start a new project from this template (its file stem).
+    OpenTemplate(String),
     /// Put this plugin on the selected track.
     LoadPlugin(BrowserPlugin),
     /// Import this clip (its file stem) on the selected track at the cursor.
@@ -354,6 +365,8 @@ pub(super) struct DiskListing {
     pub(super) folders: Vec<(String, Vec<String>)>,
     /// The loose projects at the projects root, newest first.
     pub(super) root: Vec<String>,
+    /// The templates in the templates folder, alphabetical.
+    pub(super) templates: Vec<String>,
     /// The clips in the `Clips` folder, alphabetical.
     pub(super) clips: Vec<String>,
 }
@@ -463,7 +476,8 @@ impl BrowserTree {
 
     /// Re-derives [`rows`](Self::rows). Under **Projects** (when expanded):
     /// the new folder's row while it is named, then each folder, followed (when expanded) by its projects newest first;
-    /// then the projects root's loose projects. Under **Clips** (when
+    /// then the projects root's loose projects. Under **Templates** (when
+    /// expanded): the templates. Under **Clips** (when
     /// expanded): the clips. Under **Plugins** (when listed and expanded):
     /// the plugins, then "Scanning…" while the scan runs.
     fn rebuild_rows(&mut self) {
@@ -488,6 +502,16 @@ impl BrowserTree {
                 }
             }
             push_project_rows(&mut rows, None, &self.disk.root, 1);
+        }
+        rows.push(BrowserRow {
+            item: BrowserItem::Category(BrowserCategory::Templates),
+            depth: 0,
+        });
+        if self.is_category_expanded(BrowserCategory::Templates) {
+            rows.extend(self.disk.templates.iter().map(|name| BrowserRow {
+                item: BrowserItem::Template(name.clone()),
+                depth: 1,
+            }));
         }
         rows.push(BrowserRow {
             item: BrowserItem::Category(BrowserCategory::Clips),
@@ -699,8 +723,8 @@ impl BrowserTree {
         }
     }
 
-    /// Enter: confirms a pending delete (a project, clip or folder); else opens the selected project,
-    /// expands/collapses the selected folder or category, imports the
+    /// Enter: confirms a pending delete (a project, clip or folder); else opens the selected project
+    /// or template, expands/collapses the selected folder or category, imports the
     /// selected clip or puts the selected plugin on the selected track.
     /// A folder is never made current here: Save As picks where a project
     /// goes, defaulting to the selection (`save_folder_default`).
@@ -722,6 +746,7 @@ impl BrowserTree {
             BrowserItem::Project { folder, name } => {
                 Some(BrowserAction::OpenProject { folder, name })
             }
+            BrowserItem::Template(name) => Some(BrowserAction::OpenTemplate(name)),
             BrowserItem::Clip(name) => Some(BrowserAction::ImportClip(name)),
         }
     }
@@ -949,7 +974,7 @@ impl Display {
         self.browser.tree.set_plugins(listing);
     }
 
-    /// Re-reads the projects and clips from disk.
+    /// Re-reads the projects, templates and clips from disk.
     pub(super) fn reload_browser(&mut self) {
         let folders = list_project_folders()
             .into_iter()
@@ -961,6 +986,7 @@ impl Display {
         self.browser.tree.reload(DiskListing {
             folders,
             root: list_projects(None),
+            templates: list_templates(),
             clips: list_clips(),
         });
     }
@@ -1219,6 +1245,11 @@ impl Display {
                     folder,
                 });
             }
+            BrowserAction::OpenTemplate(name) => {
+                self.request_project_action(ProjectAction::NewFromTemplate {
+                    path: template_path(&name),
+                });
+            }
             BrowserAction::LoadPlugin(plugin) => {
                 self.put_plugin_on_track(self.selected_track_idx, &plugin);
             }
@@ -1338,20 +1369,32 @@ mod tests {
                 .map(|(name, projects)| (name.to_string(), names(projects)))
                 .collect(),
             root: names(root),
+            templates: Vec::new(),
             clips: names(clips),
         }
     }
 
     /// Two folders — `a` with two projects, empty `b` — a loose project at
-    /// the root and one clip.
+    /// the root, one template and one clip.
     fn tree() -> BrowserTree {
         let mut tree = BrowserTree::default();
-        tree.reload(disk(
-            &[("a", &["a2", "a1"]), ("b", &[])],
-            &["loose"],
-            &["a1_T1_B1"],
-        ));
+        tree.reload(DiskListing {
+            templates: names(&["Band"]),
+            ..disk(
+                &[("a", &["a2", "a1"]), ("b", &[])],
+                &["loose"],
+                &["a1_T1_B1"],
+            )
+        });
         tree
+    }
+
+    fn templates() -> BrowserItem {
+        BrowserItem::Category(BrowserCategory::Templates)
+    }
+
+    fn template(name: &str) -> BrowserItem {
+        BrowserItem::Template(name.into())
     }
 
     fn clips() -> BrowserItem {
@@ -1402,7 +1445,7 @@ mod tests {
     }
 
     #[test]
-    fn collapsed_folders_list_alone_then_the_loose_projects_then_the_clips() {
+    fn collapsed_folders_list_alone_then_the_loose_projects_the_templates_and_the_clips() {
         assert_eq!(
             items(&tree()),
             vec![
@@ -1410,6 +1453,8 @@ mod tests {
                 folder("a"),
                 folder("b"),
                 project(None, "loose"),
+                templates(),
+                template("Band"),
                 clips(),
                 clip("a1_T1_B1"),
             ]
@@ -1420,7 +1465,7 @@ mod tests {
     fn the_clips_category_shows_when_empty_and_left_steps_out_to_it() {
         let mut empty = BrowserTree::default();
         empty.reload(disk(&[], &[], &[]));
-        assert_eq!(items(&empty), vec![projects(), clips()]);
+        assert_eq!(items(&empty), vec![projects(), templates(), clips()]);
 
         let mut tree = tree();
         tree.select(clip("a1_T1_B1"));
@@ -1544,6 +1589,8 @@ mod tests {
                 project(Some("a"), "a1"),
                 folder("b"),
                 project(None, "loose"),
+                templates(),
+                template("Band"),
                 clips(),
                 clip("a1_T1_B1"),
             ]
@@ -1553,6 +1600,28 @@ mod tests {
         assert_eq!(rows[5].depth, 1);
         assert_eq!(rows[6].depth, 0);
         assert_eq!(rows[7].depth, 1);
+        assert_eq!(rows[8].depth, 0);
+        assert_eq!(rows[9].depth, 1);
+    }
+
+    /// Enter on a template opens it — as a new project, which the caller
+    /// asks for — and a template is neither renamed nor deleted here; Left
+    /// steps out to its category.
+    #[test]
+    fn enter_opens_a_template_and_left_steps_out_to_its_category() {
+        let mut tree = tree();
+        tree.select(template("Band"));
+        assert_eq!(
+            tree.activate(),
+            Some(BrowserAction::OpenTemplate("Band".to_owned()))
+        );
+        assert_eq!(template("Band").renamable_name(), None);
+        tree.arm_delete();
+        assert!(tree.delete_armed.is_none());
+        tree.collapse();
+        assert_eq!(tree.selected(), Some(&templates()));
+        tree.collapse();
+        assert!(!items(&tree).contains(&template("Band")));
     }
 
     #[test]
@@ -1689,7 +1758,16 @@ mod tests {
         tree.select(project(None, "loose"));
         tree.collapse();
         tree.collapse();
-        assert_eq!(items(&tree), vec![projects(), clips(), clip("a1_T1_B1")]);
+        assert_eq!(
+            items(&tree),
+            vec![
+                projects(),
+                templates(),
+                template("Band"),
+                clips(),
+                clip("a1_T1_B1")
+            ]
+        );
 
         tree.set_new_folder(true);
         assert_eq!(
@@ -1739,7 +1817,7 @@ mod tests {
         tree.reload(disk(&[("a", &[])], &[], &[]));
         assert!(!tree.is_expanded("b"));
         // The selection goes to the row now at `b`'s old index.
-        assert_eq!(tree.selected(), Some(&clips()));
+        assert_eq!(tree.selected(), Some(&templates()));
     }
 
     #[test]

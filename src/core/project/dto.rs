@@ -290,6 +290,24 @@ impl ProjectData {
         hasher.0.finish()
     }
 
+    /// This project as a template: what describes the instruments kept (each
+    /// track's output and plugin state, name, colour, volume and pan; the
+    /// track count, meter and tempo), what describes a performance or a
+    /// passing state reset — no clips, no track muted, the default loop
+    /// region. Applied when a template opens, so one holding clips (a project
+    /// copied into the folder by hand) still opens empty, and when one is
+    /// saved. See `340-templates.md` decisions 5 and 6.
+    pub(crate) fn into_template(mut self) -> Self {
+        let default = ProjectData::default();
+        self.region_start = default.region_start;
+        self.region_end = default.region_end;
+        for track in &mut self.tracks {
+            track.muted = false;
+            track.clips.clear();
+        }
+        self
+    }
+
     /// Snapshots the sequencer into a serializable `ProjectData` (base64-encodes
     /// each plugin's state blob).
     pub(crate) fn from_sequencer(sequencer: &Sequencer) -> Self {
@@ -468,6 +486,57 @@ mod tests {
         };
         assert_eq!(with_plugin("a", "AAAA"), with_plugin("a", "BBBB"));
         assert_ne!(with_plugin("a", "AAAA"), with_plugin("b", "AAAA"));
+    }
+
+    /// A template keeps the instruments and their mix, and drops the
+    /// performance: clips, mutes and the loop region.
+    #[test]
+    fn a_template_keeps_the_setup_and_drops_the_performance() {
+        let mut data = ProjectData {
+            tempo_us: 666_667,
+            meter: MeterData::list_for(Meter::new(6, 8).unwrap()),
+            region_start: 1920,
+            region_end: 7680,
+            ..ProjectData::default()
+        };
+        let track = &mut data.tracks[1];
+        track.output = TrackOutputData::Instrument {
+            bundle_path: "/Synth.vst3".to_owned(),
+            plugin_id: "synth".to_owned(),
+            display_name: "Synth".to_owned(),
+            state: "AAAA".to_owned(),
+        };
+        track.volume_db = -3.0;
+        track.pan = 0.5;
+        track.muted = true;
+        track.color = Some(7);
+        track.name = Some("Pad".to_owned());
+        track.clips.push(ClipData {
+            start_tick: 0,
+            region_start: 0,
+            region_end: 1920,
+            muted: false,
+            swing_pct: 50,
+            events: Vec::new(),
+        });
+        let expected = |data: &ProjectData| {
+            let mut data = data.clone();
+            data.region_start = 0;
+            data.region_end = config::REGION_LENGTH_DEFAULT;
+            data.tracks[1].muted = false;
+            data.tracks[1].clips.clear();
+            serde_json::to_string(&data).unwrap()
+        };
+        let want = expected(&data);
+
+        let template = data.into_template();
+        assert_eq!(serde_json::to_string(&template).unwrap(), want);
+        assert!(
+            template
+                .tracks
+                .iter()
+                .all(|t| t.clips.is_empty() && !t.muted)
+        );
     }
 
     /// What a load stages is what the applied project then asks for

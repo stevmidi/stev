@@ -15,4 +15,7 @@ pub(crate) struct StagedProject {
     pub(crate) filename: String,
     /// Its folder, or the projects root when `None`.
     pub(crate) folder: Option<String>,
+    /// Whether it opens as a new project that was never saved — a template:
+    /// `filename` then only titles the restore panel, and `folder` is unused.
+    pub(crate) untitled: bool,
 }

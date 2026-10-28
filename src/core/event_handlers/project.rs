@@ -95,6 +95,7 @@ impl EventHandlers {
                     data,
                     filename: filename.to_owned(),
                     folder: folder.map(str::to_owned),
+                    untitled: false,
                 };
                 self.open_read_project_workflow(sequencer, undo_record, saved, staged, project);
             }
@@ -135,6 +136,38 @@ impl EventHandlers {
                 self.ui_event_tx.send(UiEvent::ProjectFilesChanged).ok();
                 self.send_status_ui_event(format!("Copied {filename} into Projects"));
                 self.open_project_workflow(sequencer, undo_record, saved, staged, None, &filename);
+            }
+        }
+    }
+
+    /// Opens the template at `path` as a new project: read, stripped of
+    /// anything a template doesn't keep (`ProjectData::into_template`: clips,
+    /// mutes, the loop region), then staged or applied like any project, but
+    /// untitled — with no name or file, so ⌘S
+    /// asks where to save and the template is never written to. On failure
+    /// the footer says why and the open project stays.
+    fn new_from_template_workflow(
+        &self,
+        sequencer: &mut Sequencer,
+        undo_record: &mut Record<SequencerEdit>,
+        saved: &mut SavedProject,
+        staged: &mut Option<StagedProject>,
+        path: &Path,
+    ) {
+        let name = project::file_stem(path);
+        match project::load_project_file(path) {
+            Err(e) => {
+                self.send_status_ui_event(format!("Could not open {name}: {e}"));
+                self.set_view_state(ViewState::Arranger);
+            }
+            Ok(data) => {
+                let project = StagedProject {
+                    data: data.into_template(),
+                    filename: name,
+                    folder: None,
+                    untitled: true,
+                };
+                self.open_read_project_workflow(sequencer, undo_record, saved, staged, project);
             }
         }
     }
@@ -184,9 +217,15 @@ impl EventHandlers {
             data,
             filename,
             folder,
+            untitled,
         }) = staged.take()
         {
-            self.load_project_workflow(sequencer, undo_record, saved, data, Some(filename), folder);
+            let (filename, folder) = if untitled {
+                (None, None)
+            } else {
+                (Some(filename), folder)
+            };
+            self.load_project_workflow(sequencer, undo_record, saved, data, filename, folder);
         }
     }
 
@@ -238,6 +277,9 @@ impl EventHandlers {
             }
             ProjectAction::OpenFile { path } => {
                 self.open_file_workflow(sequencer, undo_record, saved, staged, path);
+            }
+            ProjectAction::NewFromTemplate { path } => {
+                self.new_from_template_workflow(sequencer, undo_record, saved, staged, path);
             }
             ProjectAction::Quit => {
                 self.ui_event_tx.send(UiEvent::QuitApproved).ok();
@@ -415,6 +457,7 @@ mod tests {
             data,
             filename: "Song".to_owned(),
             folder: None,
+            untitled: false,
         }
     }
 

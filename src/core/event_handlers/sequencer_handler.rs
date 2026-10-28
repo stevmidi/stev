@@ -613,7 +613,7 @@ mod tests {
     use uuid::Uuid;
 
     use crate::core::event_handlers::test_harness::{Harness, add_clip, harness, run_command};
-    use crate::core::project::ProjectAction;
+    use crate::core::project::{ProjectAction, ProjectData};
     use crate::core::sequencer::test_support::stub_instrument;
     use crate::core::sequencer::{SequencerCommand, SequencerEdit};
     use crate::core::time::Meter;
@@ -878,6 +878,104 @@ mod tests {
         // The new project is the saved state now.
         run_command(&mut h, &mut record, quit());
         assert_eq!(last_project_reply(&h), Some(None));
+    }
+
+    /// A template opens like ⌘N, checked first: the open project is
+    /// replaced by the template's setup, untitled — no name, no folder, no
+    /// clips even when the file holds some, an empty undo record — and taken
+    /// as saved, so closing it untouched asks nothing. The template file is
+    /// left as it was.
+    #[test]
+    fn a_template_opens_as_an_untitled_project_without_clips() {
+        let mut h = harness();
+        let mut record: Record<SequencerEdit> = Record::new();
+        let mut source = harness();
+        add_clip(&mut source.sequencer, 0);
+        let mut template = ProjectData::from_sequencer(&source.sequencer);
+        template.tempo_us = 666_667;
+        template.tracks.truncate(2);
+        assert!(!template.tracks[0].clips.is_empty());
+        let json = serde_json::to_string_pretty(&template).unwrap();
+        let path = std::env::temp_dir().join(format!("stev-template-{}.stev", std::process::id()));
+        std::fs::write(&path, &json).unwrap();
+        let open = |discard_changes| {
+            project_action(
+                ProjectAction::NewFromTemplate { path: path.clone() },
+                discard_changes,
+            )
+        };
+        run_command(
+            &mut h,
+            &mut record,
+            SequencerCommand::AddTrack { track_idx: None },
+        );
+
+        run_command(&mut h, &mut record, open(false));
+        assert_eq!(
+            last_project_reply(&h),
+            Some(Some(ProjectAction::NewFromTemplate { path: path.clone() }))
+        );
+        assert_ne!(h.sequencer.tracks().len(), 2);
+
+        run_command(&mut h, &mut record, open(true));
+        let loaded = h.ui_events.try_iter().find_map(|event| match event {
+            UiEvent::ProjectLoaded {
+                clips,
+                filename,
+                folder,
+                ..
+            } => Some((clips.is_empty(), filename, folder)),
+            _ => None,
+        });
+        assert_eq!(loaded, Some((true, None, None)));
+        assert!(h.sequencer.tracks().iter().all(|t| t.clips().is_empty()));
+        assert_eq!(h.sequencer.tracks().len(), 2);
+        assert_eq!(h.sequencer.tempo_us(), 666_667);
+        assert!(!record.can_undo());
+
+        run_command(&mut h, &mut record, quit());
+        assert_eq!(last_project_reply(&h), Some(None));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), json);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// A template that won't load says why in the footer and keeps the open
+    /// project, its changes and its undo history.
+    #[test]
+    fn a_failed_template_load_keeps_the_open_project() {
+        let mut h = harness();
+        let mut record: Record<SequencerEdit> = Record::new();
+        let path =
+            std::env::temp_dir().join(format!("stev-no-template-{}.stev", std::process::id()));
+        run_command(
+            &mut h,
+            &mut record,
+            SequencerCommand::AddTrack { track_idx: None },
+        );
+        let tracks = h.sequencer.tracks().len();
+
+        run_command(
+            &mut h,
+            &mut record,
+            project_action(ProjectAction::NewFromTemplate { path }, true),
+        );
+        let status = h
+            .ui_events
+            .try_iter()
+            .find_map(|event| match event {
+                UiEvent::Status { message } => Some(message),
+                UiEvent::ProjectLoaded { .. } => {
+                    panic!("a failed template load replaced the project")
+                }
+                _ => None,
+            })
+            .expect("a failed template load says why");
+        assert!(
+            status.starts_with("Could not open stev-no-template-"),
+            "{status}"
+        );
+        assert_eq!(h.sequencer.tracks().len(), tracks);
+        assert!(record.can_undo());
     }
 
     /// A project opened from Finder goes through the same check: a changed
