@@ -8,7 +8,7 @@
 //! Every method here takes a track's *position* and reads or writes the
 //! atomics of its *slot* ([`Track::slot`](crate::models::track::Track::slot)),
 //! so callers never see the difference. An out-of-range position reads as
-//! neutral and writes nothing.
+//! unity, centre, unmuted and unsoloed, and writes nothing.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -140,9 +140,8 @@ impl Sequencer {
         }
     }
 
-    /// Restores every slot to a fresh track's mix:
-    /// [`TRACK_VOLUME_DB_DEFAULT`], centre pan, unmuted and unsoloed. Called
-    /// from [`new_project`](Self::new_project).
+    /// [`reset_slot_mix`](Self::reset_slot_mix) on every slot. Called from
+    /// [`new_project`](Self::new_project).
     pub(crate) fn reset_track_mix(&mut self) {
         for slot in 0..MAX_TRACKS {
             self.reset_slot_mix(slot);

@@ -658,7 +658,7 @@ mod tests {
         sequencer.set_track_volume(1, -6.0);
         sequencer.set_track_pan(1, 0.5);
         sequencer.set_track_muted(1, true);
-        sequencer.set_track_volume(2, -12.0);
+        sequencer.set_track_volume(2, -3.0);
         select(&mut sequencer, 1);
         let before = ids(&sequencer);
         let mut record = Record::new();
@@ -680,7 +680,7 @@ mod tests {
         // Nothing moved in the engine: the track now at 1 still reads its
         // own slot's values, and the freed slot is back at a fresh track's mix.
         assert_eq!(slots(&sequencer), vec![0, 2, 3]);
-        assert_eq!(sequencer.track_volume_db(1), -12.0);
+        assert_eq!(sequencer.track_volume_db(1), -3.0);
         assert_eq!(sequencer.track_mix.volume_db(1), TRACK_VOLUME_DB_DEFAULT);
         assert!(!sequencer.track_mix.muted(1));
 
@@ -691,7 +691,7 @@ mod tests {
         assert_eq!(sequencer.track_volume_db(1), -6.0);
         assert_eq!(sequencer.track_pan(1), 0.5);
         assert!(sequencer.track_muted(1));
-        assert_eq!(sequencer.track_volume_db(2), -12.0);
+        assert_eq!(sequencer.track_volume_db(2), -3.0);
     }
 
     #[test]

@@ -130,10 +130,9 @@ pub(crate) struct TrackData {
     /// Output routing.
     pub(crate) output: TrackOutputData,
     /// Mixer volume in dB (`0.0` = unity) and stereo balance (`-1.0`..=`1.0`,
-    /// `0.0` = centre). `#[serde(default)]` — `0.0` — on purpose, not
-    /// [`config::TRACK_VOLUME_DB_DEFAULT`]: a project saved before this field
-    /// existed was at unity/centre and loads as it was. A fresh track's
-    /// volume comes from `ProjectData::default` instead. See
+    /// `0.0` = centre). `#[serde(default)]` (`0.0`, not
+    /// [`config::TRACK_VOLUME_DB_DEFAULT`]): a project saved before this
+    /// field existed was at unity/centre and loads as it was. See
     /// `060-persistence.md`.
     #[serde(default)]
     pub(crate) volume_db: f32,

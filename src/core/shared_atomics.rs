@@ -32,14 +32,10 @@ use crate::core::config::{MAX_TRACKS, TRACK_VOLUME_DB_DEFAULT};
 /// once per frame by the arranger's track header. Follows the
 /// [`crate::models::region::Region`] precedent: the atomics *are* the source of
 /// truth, not a mirror of a model field. `volume_db` is clamped to
-/// `[mix::MIN_DB, mix::MAX_DB]`, `pan` to `[-1.0, 1.0]`. A slot starts at
-/// [`TRACK_VOLUME_DB_DEFAULT`], centre, unmuted and unsoloed — what a fresh
-/// track gets, so a new project and an added track both start there. Pan,
-/// mute and solo are the all-zero / all-false bit pattern; the volume is not,
-/// and an old project with no stored volume loads at `0.0` dB instead
-/// (`TrackData::volume_db`). Every array is indexed by engine slot
-/// (`Track::slot`), not track position — a slot no track holds is kept at
-/// these starting values. See `130-plugin-host.md`.
+/// `[mix::MIN_DB, mix::MAX_DB]`, `pan` to `[-1.0, 1.0]`. A slot starts at a
+/// fresh track's mix ([`new`](Self::new)). Every array is indexed by engine
+/// slot (`Track::slot`), not track position — a slot no track holds is kept
+/// at a fresh track's mix. See `130-plugin-host.md`.
 pub(crate) struct TrackMixAtomics {
     /// Per-track volume in dB, as an `f32` bit pattern. Clamped
     /// `[mix::MIN_DB, mix::MAX_DB]`.
