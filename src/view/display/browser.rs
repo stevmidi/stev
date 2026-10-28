@@ -670,9 +670,10 @@ impl BrowserTree {
         self.delete_armed = None;
     }
 
-    /// The first time the panel shows (nothing selected yet): expands the
-    /// current folder and selects the open project if it is listed, else the
-    /// current folder, else the first row.
+    /// The first time the panel shows (nothing selected yet): selects the
+    /// open project if it is listed — expanding its folder to show it — else
+    /// the current folder, else the first row. A folder with no open project
+    /// in it (an untitled project at launch) stays collapsed.
     pub(super) fn select_initial(
         &mut self,
         current_folder: Option<&str>,
@@ -681,8 +682,11 @@ impl BrowserTree {
         if self.selected.is_some() {
             return;
         }
-        if let Some(folder) = current_folder
-            && self.disk.folder_projects(folder).is_some()
+        if let (Some(folder), Some(name)) = (current_folder, current_name)
+            && self
+                .disk
+                .folder_projects(folder)
+                .is_some_and(|projects| projects.iter().any(|p| p == name))
         {
             self.set_item_expanded(&BrowserItem::Folder(folder.to_owned()), true);
         }
@@ -1867,6 +1871,7 @@ mod tests {
         let mut stale = tree();
         stale.select_initial(Some("b"), Some("gone"));
         assert_eq!(stale.selected(), Some(&folder("b")));
+        assert!(!stale.is_expanded("b"));
 
         let mut fresh = tree();
         fresh.select_initial(None, None);
@@ -1876,6 +1881,16 @@ mod tests {
         fresh.select(folder("b"));
         fresh.select_initial(Some("a"), None);
         assert_eq!(fresh.selected(), Some(&folder("b")));
+    }
+
+    /// An untitled project (as at launch) leaves the current folder
+    /// collapsed, selected but not opened.
+    #[test]
+    fn initial_selection_without_an_open_project_keeps_the_folder_collapsed() {
+        let mut tree = tree();
+        tree.select_initial(Some("a"), None);
+        assert!(!tree.is_expanded("a"));
+        assert_eq!(tree.selected(), Some(&folder("a")));
     }
 
     #[test]
