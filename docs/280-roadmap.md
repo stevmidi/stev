@@ -93,6 +93,12 @@ Added 2026-10-28, from a discussion, no design yet. A Model Context Protocol ser
 - **Keep the tokens down:** notes as compact rows in beats (`C4 4.0 1.0 90`), not JSON in ticks; the wheels left out unless asked; a long capture sent as a window, not the whole buffer. That puts one request at roughly 5–15k tokens.
 - **What to expect from the models:** general LLMs handle harmony, chord progressions and typical genre patterns well, but feel and groove poorly, and they slip on bar counts. Stev should clamp and snap what comes back. Capture-first makes up for it: the player brings the feel and the agent adds structure around it. Audio-generating models (Suno, Lyria and the like) don't apply.
 - **Against § Principle:** "expand on what I captured" serves the capture workflow; "write my clips for me" pulls away from it. Before anything is built, try the free version: Claude writes a `.mid` file and Stev imports it as a clip (`060`), which shows whether the output is worth the bridge.
+- **The free version, tried 2026-10-28:** Claude read six saved projects as plain `.stev` JSON and wrote continuations as `.mid` clips into the Clips folder, which the author dragged in; for one project it wrote a copy of the `.stev` with the clips already placed. The clips that stayed in the loop's own harmony and rhythm slots, with a few small variations, were judged much better and showed the potential. The ones that changed the harmony or added many parts at once sounded messy. Verdict: worth building the bridge. Without hearing anything, Claude's mistakes were all in reading the music, not in writing the notes.
+- **What the test says the tools need:**
+  - **A timeline overview**: per bar and beat, which notes actually sound after carved clip windows, mutes and loops are applied, so the agent doesn't have to rebuild it from raw events (it misread the harmony once). It names muted tracks.
+  - **A validator**: a dry run that reports notes that aren't chord tones of the bar, before anything is placed.
+  - **Snap and clamp**: notes go to the grid (sparse notes between beats read as bad timing) with a few ticks of jitter, and a note is cut at its clip's end.
+  - **Placement without a file round trip**: create a clip on a track at a bar, extend the loop region, undo as one edit.
 
 ## Not planned
 
