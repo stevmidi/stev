@@ -116,8 +116,9 @@ impl EventHandlers {
             // A running export's end, which the session can't hold up.
             | SequencerCommand::AudioExportWritten(_)
             // A save, which writes the target as it was before the session
-            // (`Sequencer::saved_events`).
-            | SequencerCommand::SaveProject { .. } => return false,
+            // (`Sequencer::saved_events`); a template keeps no clips at all.
+            | SequencerCommand::SaveProject { .. }
+            | SequencerCommand::SaveTemplate { .. } => return false,
 
             // The project commands say why they did nothing.
             SequencerCommand::ProjectAction { .. }
@@ -348,8 +349,9 @@ mod tests {
         assert!(h.sequencer.is_framing_take());
     }
 
-    /// A save goes through an open session, which stays open: the project
-    /// is written without the take (`Sequencer::saved_events`).
+    /// A save, or a save as template, goes through an open session, which
+    /// stays open: the project is written without the take
+    /// (`Sequencer::saved_events`).
     #[test]
     fn a_save_goes_through_a_session() {
         let mut h = harness();
@@ -362,11 +364,16 @@ mod tests {
             filename: "Song".to_owned(),
             folder: None,
         };
-        assert!(
-            !h.handlers
-                .take_framing_command(&save, &mut h.sequencer, &mut record)
-        );
-        assert!(h.sequencer.is_framing_take());
+        let save_template = SequencerCommand::SaveTemplate {
+            name: "Band".to_owned(),
+        };
+        for save in [save, save_template] {
+            assert!(
+                !h.handlers
+                    .take_framing_command(&save, &mut h.sequencer, &mut record)
+            );
+            assert!(h.sequencer.is_framing_take());
+        }
     }
 
     /// Leaving the clip view cancels, and so does quitting — before the

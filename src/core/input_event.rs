@@ -611,6 +611,12 @@ pub(crate) enum InputEvent {
         /// Project folder, or the root fallback when `None`.
         folder: Option<String>,
     },
+    /// Save as template's Enter: write the open project as the template
+    /// `name` (`SequencerCommand::SaveTemplate`).
+    SaveTemplate {
+        /// Template file name, without extension.
+        name: String,
+    },
     /// **⌘/Ctrl+⇧+E** — "Export MIDI Clip": write the lead clip to a `.mid`
     /// in the `Clips` folder (`Sequencer::export_lead_clip`). The view adds
     /// what only it knows: the arranger marquee (`None` from the clip view)

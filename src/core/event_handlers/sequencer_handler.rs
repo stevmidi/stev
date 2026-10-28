@@ -506,6 +506,10 @@ impl EventHandlers {
                 self.save_project_workflow(sequencer, saved, folder.as_deref(), filename);
             }
 
+            SequencerCommand::SaveTemplate { name } => {
+                self.save_template_workflow(sequencer, name);
+            }
+
             SequencerCommand::ExportClip { time_bounds, name } => {
                 self.export_clip_workflow(sequencer, *time_bounds, name);
             }

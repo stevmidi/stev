@@ -518,6 +518,14 @@ pub(crate) enum SequencerCommand {
         /// `None` means the root fallback — no project folder selected yet.
         folder: Option<String>,
     },
+    /// Write the current project as the template `name` in the templates
+    /// folder (`ProjectData::into_template`), replacing one of that name,
+    /// and say so in the footer. The open project keeps its name, its file
+    /// and its unsaved state. See `340-templates.md`.
+    SaveTemplate {
+        /// Template file name, without extension.
+        name: String,
+    },
     /// Write the lead clip to a `.mid` in `folder`, named after the project
     /// (`Sequencer::export_lead_clip`, `storage::save_clip_export`). Says how
     /// it went in the footer (`UiEvent::Status`), refusals included.

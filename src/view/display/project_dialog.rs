@@ -14,6 +14,13 @@
 //!   starts at the browser's selected folder (see [`save_folder_default`]),
 //!   else the current folder. Enter saves under the typed name there, makes
 //!   it the open project and its folder the current one; Esc cancels.
+//! - **Save as template** (⌘/Ctrl+⌥+S, the browser's TEMPLATES `+`): Save
+//!   As with `template` set — the same name field, but "Save in" is the
+//!   fixed text `Templates`, with no dropdown or `+`, so the name is the
+//!   only stop. Enter writes the open project into the templates folder
+//!   (`InputEvent::SaveTemplate`), replacing one of that name; the open
+//!   project keeps its name, its file and its unsaved state
+//!   (`340-templates.md`).
 //! - **Unsaved changes**: asked for by the sequencer (`UiEvent::UnsavedChanges`)
 //!   when ⌘/Ctrl+N, opening a project from the browser or quitting would
 //!   throw away changes. ←/→ move the selection between its buttons (Save
@@ -97,6 +104,9 @@ pub(super) struct SaveAs {
     /// prompt's Save was answered for, on a project never saved. Esc drops it
     /// with the dialog.
     then: Option<ProjectAction>,
+    /// Save as template: the name saves into the templates folder, and the
+    /// folder controls aren't there — `folders` is never chosen from.
+    pub(super) template: bool,
 }
 
 /// What has Save As's keyboard — its Tab stops.
@@ -114,21 +124,24 @@ pub(super) enum SaveAsFocus {
     Folder,
 }
 
-/// Save As's Tab stops, in order: the name, the dropdown and the `+` — or,
-/// while the new folder's field is open, the name and that field.
-fn focus_stops(folder_field_open: bool) -> &'static [SaveAsFocus] {
-    if folder_field_open {
-        &[SaveAsFocus::Name, SaveAsFocus::Folder]
-    } else {
-        &[
-            SaveAsFocus::Name,
-            SaveAsFocus::Dropdown,
-            SaveAsFocus::NewFolder,
-        ]
-    }
-}
-
 impl SaveAs {
+    /// The Tab stops, in order: the name, the dropdown and the `+` — or,
+    /// while the new folder's field is open, the name and that field. Save
+    /// as template has the name alone.
+    fn focus_stops(&self) -> &'static [SaveAsFocus] {
+        if self.template {
+            &[SaveAsFocus::Name]
+        } else if self.folder_field.is_some() {
+            &[SaveAsFocus::Name, SaveAsFocus::Folder]
+        } else {
+            &[
+                SaveAsFocus::Name,
+                SaveAsFocus::Dropdown,
+                SaveAsFocus::NewFolder,
+            ]
+        }
+    }
+
     /// The folder the project will be saved into, `None` for the projects
     /// root.
     pub(super) fn folder(&self) -> Option<&str> {
@@ -229,11 +242,11 @@ impl SaveAs {
     }
 
     /// Tab (`step` 1) or ⇧Tab (-1): moves the keyboard to the next or
-    /// previous of the [`focus_stops`], round from the last to the first.
-    /// Closes the list.
+    /// previous of the [`focus_stops`](Self::focus_stops), round from the
+    /// last to the first. Closes the list.
     fn switch_focus(&mut self, step: isize) {
         self.list = None;
-        let stops = focus_stops(self.folder_field.is_some());
+        let stops = self.focus_stops();
         let idx = stops.iter().position(|&f| f == self.focus).unwrap_or(0) as isize;
         self.focus = stops[(idx + step).rem_euclid(stops.len() as isize) as usize];
     }
@@ -309,11 +322,12 @@ impl SaveAs {
         true
     }
 
-    /// Save As's own keys: ↑/↓, the new-folder chord, Tab and Space.
+    /// Save As's own keys: ↑/↓, the new-folder chord (nothing in Save as
+    /// template, which has no folders to choose), Tab and Space.
     fn key(&mut self, key: DialogKey) {
         match key {
             DialogKey::Folder(step) => self.move_highlight(step),
-            DialogKey::NewFolder => self.open_folder_field(),
+            DialogKey::NewFolder if !self.template => self.open_folder_field(),
             DialogKey::SwitchFocus(step) => self.switch_focus(step),
             DialogKey::Press => self.press(),
             _ => {}
@@ -403,7 +417,7 @@ fn save_folder_default(selected: Option<&BrowserItem>, current: Option<&str>) ->
 /// Save As's keymap: ↑/↓ open the folder list and move through it, the
 /// new-folder chord (`new_folder`, the keymap's [`Action::NewProjectFolder`])
 /// opens the new folder's field, Tab (⇧Tab) moves the keyboard to the next
-/// (previous) stop ([`focus_stops`]), Space presses the dropdown or the `+`,
+/// (previous) stop ([`SaveAs::focus_stops`]), Space presses the dropdown or the `+`,
 /// Enter saves (or picks the highlighted folder, presses the `+`, or takes
 /// the typed folder), Esc
 /// cancels (or closes the list or the field), the rest is typing
@@ -592,14 +606,37 @@ impl Display {
         ctx.request_repaint();
     }
 
-    /// Opens Save As with the open project's name — or [`UNTITLED`] for one
-    /// never saved — selected; `then` runs after the save.
-    pub(super) fn open_save_as(&mut self, then: Option<ProjectAction>) {
+    /// The name Save As and Save as template start with, selected: the open
+    /// project's — or [`UNTITLED`] for one never saved.
+    fn save_as_name(&self) -> TextField {
         let text = self
             .project
             .project_current_name
             .clone()
             .unwrap_or_else(|| UNTITLED.to_owned());
+        TextField::new(text)
+    }
+
+    /// Opens Save as template (⌘/Ctrl+⌥+S, the TEMPLATES row's `+`) with
+    /// the open project's name selected.
+    pub(super) fn open_save_template(&mut self) {
+        self.project_dialog = Some(ProjectDialog::SaveAs(SaveAs {
+            field: self.save_as_name(),
+            folders: vec![None],
+            folder_idx: 0,
+            list: None,
+            list_scroll: 0,
+            list_wheel: 0.0,
+            folder_field: None,
+            focus: SaveAsFocus::Name,
+            then: None,
+            template: true,
+        }));
+    }
+
+    /// Opens Save As with the open project's name — or [`UNTITLED`] for one
+    /// never saved — selected; `then` runs after the save.
+    pub(super) fn open_save_as(&mut self, then: Option<ProjectAction>) {
         let selected = self
             .browser
             .visible
@@ -617,7 +654,7 @@ impl Display {
                 folders.len() - 1
             });
         self.project_dialog = Some(ProjectDialog::SaveAs(SaveAs {
-            field: TextField::new(text),
+            field: self.save_as_name(),
             folders,
             folder_idx,
             list: None,
@@ -626,6 +663,7 @@ impl Display {
             folder_field: None,
             focus: SaveAsFocus::Name,
             then,
+            template: false,
         }));
     }
 
@@ -665,6 +703,17 @@ impl Display {
         if let Some(action) = then {
             self.request_project_action(action);
         }
+    }
+
+    /// Writes the open project as the template `name`, its live plugins'
+    /// presets captured first, as [`save_project_as`](Self::save_project_as)
+    /// does. The open project stays as it was.
+    fn save_template(&mut self, name: String) {
+        #[cfg(target_os = "macos")]
+        self.capture_instrument_states();
+        self.input_event_tx
+            .send(InputEvent::SaveTemplate { name })
+            .ok();
     }
 
     /// Saves under the open project's name — or opens Save As for a project
@@ -781,12 +830,14 @@ impl Display {
 
     /// Enter, or the prompt's Save. Save As with a name that isn't one
     /// stays open (its hint says why); with one, it saves and asks for the
-    /// action waiting on it, if any. The prompt saves and asks for its
-    /// action again — through Save As for a project never saved.
+    /// action waiting on it, if any — or, as Save as template, writes the
+    /// template. The prompt saves and asks for its action again — through
+    /// Save As for a project never saved.
     fn confirm_project_dialog(&mut self) {
         match self.project_dialog.take() {
             Some(ProjectDialog::SaveAs(save_as)) => {
                 match project_name_from_input(&save_as.field.text) {
+                    Some(name) if save_as.template => self.save_template(name),
                     Some(name) => {
                         let folder = save_as.folder().map(str::to_owned);
                         self.save_project_as(name, folder, save_as.then);
@@ -837,6 +888,7 @@ mod tests {
             folder_field: None,
             focus: SaveAsFocus::Name,
             then: None,
+            template: false,
         }
     }
 
@@ -982,6 +1034,21 @@ mod tests {
         assert_eq!(save_as.focus, Folder);
         assert!(save_as.escape());
         assert_eq!(save_as.focus, Name);
+    }
+
+    /// Save as template's name is its only stop: Tab stays on it, the
+    /// new-folder chord opens nothing, and Enter saves.
+    #[test]
+    fn save_as_template_has_the_name_alone() {
+        let mut template = save_as(0);
+        template.template = true;
+        template.switch_focus(1);
+        assert_eq!(template.focus, SaveAsFocus::Name);
+        template.switch_focus(-1);
+        assert_eq!(template.focus, SaveAsFocus::Name);
+        template.key(DialogKey::NewFolder);
+        assert!(template.folder_field.is_none());
+        assert!(!template.enter());
     }
 
     /// Enter from the name field takes the typed folder and goes on to save;

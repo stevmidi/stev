@@ -26,5 +26,6 @@ pub(crate) use storage::{
     library_project, list_clips, list_project_folders, list_projects, list_templates,
     load_midi_clip, load_project, load_project_file, project_exists,
     project_folder_name_from_input, project_name_from_input, rename_clip, rename_project,
-    rename_project_folder, save_clip_export, save_project, stem_file_name, template_path,
+    rename_project_folder, save_clip_export, save_project, save_template, stem_file_name,
+    template_exists, template_path,
 };

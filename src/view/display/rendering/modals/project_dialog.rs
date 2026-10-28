@@ -1,5 +1,7 @@
 //! Draws the project dialogs (`project_dialog.rs`): Save As's name field,
-//! folder dropdown and new-folder field, and the unsaved-changes prompt, each a modal frame centred on the canvas. The
+//! folder dropdown and new-folder field (Save as template's fixed
+//! `Templates` in their place), and the unsaved-changes prompt, each a modal
+//! frame centred on the canvas. The
 //! prompt's button layout is shared with its click test
 //! ([`unsaved_button_at`](Display::unsaved_button_at)).
 
@@ -10,7 +12,7 @@ use egui::{
 
 use crate::core::config::PROJECT_NAME_MAX_CHARS;
 use crate::core::keymap::Action;
-use crate::core::project::{project_exists, project_name_from_input};
+use crate::core::project::{project_exists, project_name_from_input, template_exists};
 use crate::view::display::keyboard_tab::chords_label;
 use crate::view::display::project_dialog::{
     ProjectDialog, SaveAs, SaveAsFocus, SaveAsHit, UnsavedButton,
@@ -156,12 +158,16 @@ impl Display {
 
     /// What a press at canvas point `pos` lands on in the open Save As: a row
     /// of the open folder list, the dropdown's box (the new folder's field
-    /// while it is open), the `+`, or the name field.
+    /// while it is open), the `+`, or the name field — only the name field
+    /// in Save as template.
     pub(in crate::view::display) fn save_as_hit_at(&self, pos: Pos2) -> Option<SaveAsHit> {
         let Some(ProjectDialog::SaveAs(save_as)) = &self.project_dialog else {
             return None;
         };
         let layout = Self::dialog_layout(self.render.canvas_rect, false);
+        if save_as.template {
+            return layout.body.contains(pos).then_some(SaveAsHit::Name);
+        }
         if save_as.list_highlight().is_some() {
             let window = save_as.list_window();
             let list = Self::folder_list_rect(layout.folder_box, window.len());
@@ -245,7 +251,9 @@ impl Display {
     /// Save As: the name field, the folder dropdown and its `+` — or, while
     /// it is open, the new folder's field over the box — and a note under
     /// them: why the name (or the new folder's) won't do, that the project
-    /// replaces another. Right of the note, the keys of whatever has the
+    /// replaces another. Save as template has its own title, and the fixed
+    /// text `Templates` in place of the dropdown and the `+`; its note says
+    /// when the name replaces a template. Right of the note, the keys of whatever has the
     /// keyboard — or, with the pointer on the `+`, `new_folder_keys`, its
     /// key (none while unbound). The name field's
     /// first frame selects its text; it and the new folder's field hold the
@@ -264,7 +272,11 @@ impl Display {
             rect,
             layout.panel.width(),
             layout.panel.height(),
-            "SAVE AS",
+            if save_as.template {
+                "SAVE AS TEMPLATE"
+            } else {
+                "SAVE AS"
+            },
         );
 
         let field_rect = Rect::from_min_size(
@@ -307,6 +319,13 @@ impl Display {
         let note = match project_name_from_input(&save_as.field.text) {
             _ if save_as.folder_refused() => "Not a valid folder name".to_owned(),
             None => "Not a valid file name".to_owned(),
+            Some(name) if save_as.template => {
+                if template_exists(&name) {
+                    format!("Replaces the template {name}")
+                } else {
+                    String::new()
+                }
+            }
             Some(name)
                 if !typing_folder && !is_open_project(&name) && project_exists(folder, &name) =>
             {
@@ -330,6 +349,23 @@ impl Display {
             hint_font.clone(),
             theme::fg_dim(),
         );
+        if save_as.template {
+            painter.text(
+                layout.folder_box.left_center(),
+                Align2::LEFT_CENTER,
+                "Templates",
+                FontId::proportional(Self::FONT_LIST),
+                theme::fg_dim(),
+            );
+            painter.text(
+                layout.note.right_center(),
+                Align2::RIGHT_CENTER,
+                "Enter save template · Esc cancel",
+                hint_font,
+                theme::fg_dim(),
+            );
+            return;
+        }
         if !typing_folder {
             Self::draw_folder_dropdown(painter, layout.folder_box, save_as, hover);
         }

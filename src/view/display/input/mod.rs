@@ -661,6 +661,12 @@ impl Display {
                 self.open_new_folder_field();
                 true
             }
+            // ⌘⌥S, beside ⌘S and ⌘⇧S: Save as template
+            // (`340-templates.md`), from any key focus.
+            InputEvent::Action(Action::SaveAsTemplate) => {
+                self.open_save_template();
+                true
+            }
             // ⌘⌥E — the clip panel between maximized and docked below the
             // arranger (`archive/210-docked-clip-panel.md`). View-local layout state.
             // With the panel hidden it only flips the size it will show at.

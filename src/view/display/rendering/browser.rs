@@ -495,20 +495,23 @@ impl Display {
                 font.clone(),
                 color,
             );
-            if row.item == BrowserItem::Category(BrowserCategory::Projects) && hovered == Some(i) {
-                self.draw_new_folder_button(&painter);
+            if let BrowserItem::Category(category) = row.item
+                && category.has_plus()
+                && hovered == Some(i)
+            {
+                self.draw_category_plus(&painter, category);
             }
         }
     }
 
-    /// The `+` at the right end of the hovered Projects row, which makes a
-    /// new folder: `fg_dim`, and `fg` on a faint neutral square under the
-    /// pointer, as the panel toggle.
-    fn draw_new_folder_button(&self, painter: &Painter) {
-        let Some(button) = self.browser_new_folder_button() else {
+    /// The `+` at the right end of the hovered `category` row — Projects'
+    /// makes a new folder, Templates' saves a template: `fg_dim`, and `fg`
+    /// on a faint neutral square under the pointer, as the panel toggle.
+    fn draw_category_plus(&self, painter: &Painter, category: BrowserCategory) {
+        let Some(button) = self.browser_category_plus(category) else {
             return;
         };
-        let hover = self.is_pointer_on_browser_new_folder();
+        let hover = self.browser_category_plus_under_pointer() == Some(category);
         if hover {
             draw_toggle_wash(painter, button.center());
         }

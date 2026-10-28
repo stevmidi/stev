@@ -61,6 +61,8 @@ pub(crate) enum Action {
     ToggleBrowser,
     /// Name and make a new project folder in the browser panel.
     NewProjectFolder,
+    /// Save the open project as a template (`340-templates.md`).
+    SaveAsTemplate,
     /// Undo.
     Undo,
     /// Redo.
@@ -575,6 +577,14 @@ pub(crate) const ACTIONS: &[ActionInfo] = &[
         PROJECT,
         Scope::Global,
         &[Chord::cmd(Key::N).shift()],
+    ),
+    row(
+        Action::SaveAsTemplate,
+        "project.save_as_template",
+        "Save as template",
+        PROJECT,
+        Scope::Global,
+        &[Chord::cmd(Key::S).alt()],
     ),
     row(
         Action::Undo,

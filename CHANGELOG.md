@@ -27,6 +27,9 @@ Breaking entries are marked **Breaking** and say what to do about them.
   files in `~/Documents/Stev/Templates/`, and Enter or a double-click opens
   one as a new, untitled project with no clips, as does double-clicking one in
   Finder. The template file itself is never changed.
+- Save as template (⌘⌥S, or the `+` on the hovered TEMPLATES row) saves the
+  open project's tracks, plugins, presets, names, colours and mix as a
+  template, without its clips. The open project stays as it was.
 
 ### Changed
 

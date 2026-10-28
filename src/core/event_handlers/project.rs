@@ -316,6 +316,23 @@ impl EventHandlers {
         self.send_status_ui_event(message);
     }
 
+    /// Writes the project as the template `name`, stripped
+    /// (`ProjectData::into_template`), and says how it went in the footer;
+    /// on success the browser re-reads the tree. The open project stays as
+    /// it was: its name, its file and `saved` are untouched, so a project
+    /// with unsaved changes still has them. See `340-templates.md`.
+    pub(super) fn save_template_workflow(&self, sequencer: &Sequencer, name: &str) {
+        let data = ProjectData::from_sequencer(sequencer).into_template();
+        let message = match project::save_template(&data, name) {
+            Ok(()) => {
+                self.ui_event_tx.send(UiEvent::ProjectFilesChanged).ok();
+                format!("Saved template {name}")
+            }
+            Err(e) => format!("Could not save template {name}: {e}"),
+        };
+        self.send_status_ui_event(message);
+    }
+
     /// After a load or a new project: re-selects the clip under the cursor as
     /// the lead clip and always announces it. `ProjectLoaded` makes the view
     /// drop its lead clip, and neither the track select (a no-op when track 0

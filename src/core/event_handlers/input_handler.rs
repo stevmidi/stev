@@ -217,6 +217,10 @@ impl EventHandlers {
                 });
             }
 
+            InputEvent::SaveTemplate { name } => {
+                self.send_sequencer(SequencerCommand::SaveTemplate { name: name.clone() });
+            }
+
             InputEvent::ExportClip { time_bounds, name } => {
                 self.send_sequencer(SequencerCommand::ExportClip {
                     time_bounds: *time_bounds,

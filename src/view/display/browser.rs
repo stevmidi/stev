@@ -120,17 +120,17 @@ pub(super) fn browser_toggle_rect(footer: Rect) -> Rect {
 }
 
 /// Side of the rounded square washed behind the panel toggle's icon under
-/// the pointer, and of the `+` on the Projects row (its wash and hit area).
+/// the pointer, and of a category row's `+` (its wash and hit area).
 pub(super) const TOGGLE_WASH_SIZE: f32 = 22.0;
-/// Right inset of the `+` from the panel's edge.
-const NEW_FOLDER_BUTTON_RIGHT_X: f32 = 6.0;
+/// Right inset of a category row's `+` from the panel's edge.
+const CATEGORY_PLUS_RIGHT_X: f32 = 6.0;
 
-/// The `+` on the Projects row `row`: a square at the row's right end,
+/// The `+` on the category row `row`: a square at the row's right end,
 /// centred on it.
-pub(super) fn new_folder_button_rect(row: Rect) -> Rect {
+pub(super) fn category_plus_rect(row: Rect) -> Rect {
     Rect::from_center_size(
         pos2(
-            row.max.x - NEW_FOLDER_BUTTON_RIGHT_X - TOGGLE_WASH_SIZE * 0.5,
+            row.max.x - CATEGORY_PLUS_RIGHT_X - TOGGLE_WASH_SIZE * 0.5,
             row.center().y,
         ),
         Vec2::splat(TOGGLE_WASH_SIZE),
@@ -187,6 +187,12 @@ pub(super) enum BrowserCategory {
 }
 
 impl BrowserCategory {
+    /// Whether the hovered row shows a `+` at its right end: Projects' makes
+    /// a new folder, Templates' saves the open project as a template.
+    pub(super) fn has_plus(self) -> bool {
+        matches!(self, BrowserCategory::Projects | BrowserCategory::Templates)
+    }
+
     /// The category row's label.
     pub(super) fn label(self) -> &'static str {
         match self {
@@ -1087,32 +1093,42 @@ impl Display {
         (row.min.y >= list_top && row.max.y <= self.browser_list_bottom()).then_some((idx, row))
     }
 
-    /// The `+` on the Projects row, in window space: what a press on makes
-    /// a new folder. `None` while the row isn't wholly on screen.
-    pub(super) fn browser_new_folder_button(&self) -> Option<Rect> {
-        self.browser_visible_row(&BrowserItem::Category(BrowserCategory::Projects))
-            .map(|(_, row)| new_folder_button_rect(row))
+    /// The `+` on `category`'s row, in window space. `None` while the row
+    /// isn't wholly on screen.
+    pub(super) fn browser_category_plus(&self, category: BrowserCategory) -> Option<Rect> {
+        self.browser_visible_row(&BrowserItem::Category(category))
+            .map(|(_, row)| category_plus_rect(row))
     }
 
-    /// Whether canvas-space `(x, y)` is on the Projects row's `+`.
-    fn is_on_browser_new_folder(&self, x: f32, y: f32) -> bool {
-        self.browser_new_folder_button().is_some_and(|button| {
-            button
-                .translate(vec2(-self.browser_width(), 0.0))
-                .contains(pos2(x, y))
-        })
+    /// The category whose row's `+` canvas-space `(x, y)` is on, if any.
+    fn browser_category_plus_at(&self, x: f32, y: f32) -> Option<BrowserCategory> {
+        let category = match self
+            .browser
+            .tree
+            .rows()
+            .get(browser_row_at(y, self.browser.scroll)?)?
+            .item
+        {
+            BrowserItem::Category(category) if category.has_plus() => category,
+            _ => return None,
+        };
+        self.browser_category_plus(category)
+            .is_some_and(|button| {
+                button
+                    .translate(vec2(-self.browser_width(), 0.0))
+                    .contains(pos2(x, y))
+            })
+            .then_some(category)
     }
 
-    /// Whether the pointer is on the Projects row's `+`, with the row
-    /// hovered — the button shows then only, its wash and pointing hand.
-    pub(super) fn is_pointer_on_browser_new_folder(&self) -> bool {
-        let projects = BrowserItem::Category(BrowserCategory::Projects);
-        let hovered = self.hovered_browser_row();
-        hovered.is_some()
-            && hovered == self.browser.tree.index_of(&projects)
-            && self
-                .canvas_pointer()
-                .is_some_and(|p| self.is_on_browser_new_folder(p.x, p.y))
+    /// The category whose row's `+` the pointer is on — the button shows
+    /// while its row is hovered only, its wash and pointing hand then.
+    pub(super) fn browser_category_plus_under_pointer(&self) -> Option<BrowserCategory> {
+        let pointer = self.canvas_pointer()?;
+        let category = self.browser_category_plus_at(pointer.x, pointer.y)?;
+        let row = self.browser.tree.index_of(&BrowserItem::Category(category));
+        (self.hovered_browser_row().is_some() && self.hovered_browser_row() == row)
+            .then_some(category)
     }
 
     /// Scrolls the list by a wheel / two-finger delta (points, positive =
@@ -1187,17 +1203,21 @@ impl Display {
     }
 
     /// A press at canvas `(x, y)` inside the panel (`x < 0`): focuses it,
-    /// opens the new folder's field on the Projects row's `+`, else selects
+    /// opens the new folder's field on the Projects row's `+` or Save as
+    /// template on the Templates row's, else selects
     /// the row under the pointer, and toggles a folder or category
     /// pressed on its disclosure triangle. `double` is the double-click that
     /// follows a double-click's second press (already handled as a press): it
     /// toggles a folder or category and acts like Enter on anything else.
     pub(super) fn handle_browser_click(&mut self, x: f32, y: f32, double: bool) {
         self.key_focus = KeyFocus::Browser;
-        // The Projects row's `+` makes a new folder, selecting nothing.
-        if self.is_on_browser_new_folder(x, y) {
+        // A category row's `+` does its work, selecting nothing.
+        if let Some(category) = self.browser_category_plus_at(x, y) {
             if !double {
-                self.open_new_folder_field();
+                match category {
+                    BrowserCategory::Templates => self.open_save_template(),
+                    _ => self.open_new_folder_field(),
+                }
             }
             return;
         }
@@ -1902,11 +1922,11 @@ mod tests {
     }
 
     #[test]
-    fn the_new_folder_button_sits_inside_the_right_end_of_its_row() {
+    fn a_category_plus_sits_inside_the_right_end_of_its_row() {
         let row = browser_row_rect(pos2(0.0, 0.0), 240.0, 0, 0.0);
-        let button = new_folder_button_rect(row);
+        let button = category_plus_rect(row);
         assert!(row.contains_rect(button));
-        assert_eq!(button.max.x, row.max.x - NEW_FOLDER_BUTTON_RIGHT_X);
+        assert_eq!(button.max.x, row.max.x - CATEGORY_PLUS_RIGHT_X);
         assert_eq!(button.center().y, row.center().y);
         // Clear of the label, which starts at the row's left.
         assert!(button.min.x > row.min.x + row.width() * 0.5);

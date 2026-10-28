@@ -160,10 +160,21 @@ pub(crate) fn template_path(name: &str) -> PathBuf {
 
 /// Writes `data` as pretty JSON to `folder/name.stev` (creating `folder`).
 pub(crate) fn save_project(data: &ProjectData, folder: Option<&str>, name: &str) -> io::Result<()> {
-    let dir = resolve_dir(folder);
-    fs::create_dir_all(&dir)?;
+    write_project_in(&resolve_dir(folder), data, name)
+}
+
+/// Writes `data` as the template `name` in the templates folder, made on
+/// the first save, replacing one of that name. `data` is saved as given:
+/// the caller strips it (`ProjectData::into_template`).
+pub(crate) fn save_template(data: &ProjectData, name: &str) -> io::Result<()> {
+    write_project_in(&templates_dir(), data, name)
+}
+
+/// Writes `data` as pretty JSON to `dir/name.stev` (creating `dir`).
+fn write_project_in(dir: &Path, data: &ProjectData, name: &str) -> io::Result<()> {
+    fs::create_dir_all(dir)?;
     let json = serde_json::to_string_pretty(data).map_err(io::Error::other)?;
-    fs::write(stev_path(&dir, name), json)
+    fs::write(stev_path(dir, name), json)
 }
 
 /// Reads and deserializes `folder/name.stev` (`None`: the projects root).
@@ -465,6 +476,12 @@ pub(crate) fn project_exists(folder: Option<&str>, name: &str) -> bool {
     stev_path(&resolve_dir(folder), name).exists()
 }
 
+/// Whether the template `name` exists — Save as template warns before
+/// replacing it.
+pub(crate) fn template_exists(name: &str) -> bool {
+    template_path(name).exists()
+}
+
 /// Writes an exported clip's `.mid` bytes into the clips folder (creating
 /// it) under [`clip_export_name`] starting with `base`, never overwriting a
 /// file; returns the file name written.
@@ -661,6 +678,23 @@ mod tests {
             fs::write(templates.join(file), "{}").unwrap();
         }
         assert_eq!(list_templates_in(&templates), vec!["Band", "Synths"]);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The first template saved makes the folder, and saving under a taken
+    /// name replaces that template.
+    #[test]
+    fn saving_a_template_makes_the_folder_and_replaces_one_of_that_name() {
+        let dir = scratch_dir("save-template");
+        let templates = dir.join("Templates");
+        let mut data = ProjectData::default();
+        write_project_in(&templates, &data, "Band").unwrap();
+        assert_eq!(list_templates_in(&templates), vec!["Band"]);
+        data.tempo_us = bpm_to_tempo_us(90);
+        write_project_in(&templates, &data, "Band").unwrap();
+        assert_eq!(list_templates_in(&templates), vec!["Band"]);
+        let saved = load_project_file(&stev_path(&templates, "Band")).unwrap();
+        assert_eq!(saved.tempo_us, data.tempo_us);
         let _ = fs::remove_dir_all(&dir);
     }
 

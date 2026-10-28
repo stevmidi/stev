@@ -9,6 +9,7 @@
 use crate::core::keymap::{Action, Chord, Keymap};
 
 use super::Display;
+use super::browser::BrowserCategory;
 use super::keyboard_tab::{KEYBOARD_TAB_ROW, chords_label};
 use super::output_menu::OutputMenuHit;
 
@@ -26,8 +27,10 @@ pub(super) enum HoveredControl {
     KeyboardChip,
     /// The footer's panel toggle.
     BrowserToggle,
-    /// The browser's new-folder `+`.
+    /// The browser's new-folder `+`, on the Projects row.
     NewFolder,
+    /// The browser's save-as-template `+`, on the Templates row.
+    SaveTemplate,
 }
 
 impl HoveredControl {
@@ -45,6 +48,7 @@ impl HoveredControl {
             HoveredControl::KeyboardChip => Action::ToggleComputerKeyboard,
             HoveredControl::BrowserToggle => Action::ToggleBrowser,
             HoveredControl::NewFolder => Action::NewProjectFolder,
+            HoveredControl::SaveTemplate => Action::SaveAsTemplate,
         };
         command_hint(action.info().label, keymap.chords(action))
     }
@@ -64,10 +68,12 @@ impl Display {
             Some(HoveredControl::KeyboardChip)
         } else if self.is_pointer_on_browser_toggle() {
             Some(HoveredControl::BrowserToggle)
-        } else if self.is_pointer_on_browser_new_folder() {
-            Some(HoveredControl::NewFolder)
         } else {
-            None
+            self.browser_category_plus_under_pointer()
+                .map(|category| match category {
+                    BrowserCategory::Templates => HoveredControl::SaveTemplate,
+                    _ => HoveredControl::NewFolder,
+                })
         }
     }
 
