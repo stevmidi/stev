@@ -199,7 +199,6 @@ impl fmt::Display for Meter {
 
 /// Fractional beat (quarter-note) position of `ticks`, e.g. for a CLAP
 /// transport's `song_pos_beats`. Keeps the sub-beat part, and unlike [`ticks_to_microseconds`] it does not truncate before dividing.
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub fn ticks_to_beats_f64(ticks: i32) -> f64 {
     f64::from(ticks) / f64::from(PPQN)
 }

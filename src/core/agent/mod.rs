@@ -41,7 +41,7 @@ use crate::core::sequencer::Sequencer;
 
 /// One tool call, as the `--mcp` process forwards it to the app: a JSON
 /// line on the socket.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct AgentRequest {
     /// The tool's name, one of `tools::TOOL_NAMES`.
     pub(crate) tool: String,
@@ -52,7 +52,7 @@ pub(crate) struct AgentRequest {
 
 /// A tool's answer, as the app sends it back: text for the model, which
 /// reads an error's text too.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct AgentReply {
     /// What the model reads.
     pub(crate) text: String,

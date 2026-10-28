@@ -5,6 +5,8 @@
 
 use serde_json::{Value, json};
 
+use super::reads::{NOTES_MAX_BARS, TIMELINE_MAX_BARS};
+
 /// The instructions the `initialize` result carries: clients put them in
 /// the model's context while the server is connected, so they stay short.
 /// The design's text, less what only the writing tools need, until they
@@ -39,7 +41,7 @@ pub(crate) const TOOL_NAMES: [&str; 4] =
     ["get_context", "get_project", "get_timeline", "get_notes"];
 
 /// The `from` / `to` / `tracks` properties the range reads share.
-fn range_properties(max_bars: u32, tracks_default: &str) -> Value {
+fn range_properties(max_bars: i32, tracks_default: &str) -> Value {
     json!({
         "from": {
             "type": ["string", "integer"],
@@ -62,8 +64,10 @@ fn range_properties(max_bars: u32, tracks_default: &str) -> Value {
 
 /// The `tools/list` result's `tools` array.
 pub(crate) fn tool_list() -> Value {
-    let mut notes_properties =
-        range_properties(32, "the marqueed tracks, else every track that isn't muted");
+    let mut notes_properties = range_properties(
+        NOTES_MAX_BARS,
+        "the marqueed tracks, else every track that isn't muted",
+    );
     notes_properties["include_wheels"] = json!({
         "type": "boolean",
         "description": "Also list pitch bend and mod wheel moves as \
@@ -97,7 +101,7 @@ pub(crate) fn tool_list() -> Value {
                 the harmony. Muted tracks are named once, not listed.",
             "inputSchema": {
                 "type": "object",
-                "properties": range_properties(16, "every track that isn't muted"),
+                "properties": range_properties(TIMELINE_MAX_BARS, "every track that isn't muted"),
             },
         },
         {

@@ -52,7 +52,7 @@ pub(crate) fn run_mcp_server() {
     let mut stdout = io::stdout().lock();
     for line in io::stdin().lock().lines() {
         let Ok(line) = line else { break };
-        let Some(reply) = handle_line(&line, &mut |request| call(&request)) else {
+        let Some(reply) = handle_line(&line, &mut call) else {
             continue;
         };
         if writeln!(stdout, "{reply}")
@@ -69,8 +69,8 @@ pub(crate) fn run_mcp_server() {
 /// serves one connection at a time, so holding one between calls would
 /// keep every other client (a second Claude session) waiting for as long
 /// as this one stays open.
-fn call(request: &AgentRequest) -> AgentReply {
-    let Ok(line) = serde_json::to_string(request) else {
+fn call(request: AgentRequest) -> AgentReply {
+    let Ok(line) = serde_json::to_string(&request) else {
         return AgentReply::error("Couldn't encode the call.".to_owned());
     };
     let Some(mut stream) = connect() else {

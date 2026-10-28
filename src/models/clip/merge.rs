@@ -60,33 +60,37 @@ impl Clip {
     /// exporting a clip is asking for its content. Sorted, offs first on a
     /// shared tick.
     pub(crate) fn exported_events(&self) -> Vec<Event> {
-        let (window_start, window_end) = (self.region.start(), self.region.end());
-        let length = window_end - window_start;
-        let kept =
-            self.windowed_events(window_start..window_end, |tick| tick - window_start, length);
-        let mut export = Clip::new();
-        export.events = self.wheel_edges(&kept, 0, length);
-        export
-            .events
-            .extend(kept.into_iter().filter(|event| !event.is_muted()));
-        export.sort_events_by_tick();
-        export.events
+        self.sounding_from(0).events
     }
 
     /// What this clip sounds, in arrangement ticks: the
-    /// [`exported_events`](Self::exported_events) moved to where the window
-    /// plays, each `NoteOn`'s length paired. Muted notes are gone; the
-    /// clip's own mute is the caller's to apply. What the agent bridge's
-    /// reads walk (`core/agent`).
+    /// [`exported_events`](Self::exported_events) where the window plays,
+    /// each `NoteOn`'s length paired. Muted notes are gone; the clip's own
+    /// mute is the caller's to apply. What the agent bridge's reads walk
+    /// (`core/agent`).
     pub(crate) fn played_events(&self) -> Vec<Event> {
-        let mut played = Clip::new();
-        played.events = self.exported_events();
-        for event in &mut played.events {
-            event.set_tick(event.tick() + self.start_tick);
-        }
-        played.sort_events_by_tick();
+        let mut played = self.sounding_from(self.start_tick);
         played.calculate_note_lengths();
         played.events
+    }
+
+    /// The [`exported_events`](Self::exported_events) rules with the window
+    /// start laid at `origin`, as a scratch clip holding them sorted.
+    fn sounding_from(&self, origin: i32) -> Clip {
+        let (window_start, window_end) = (self.region.start(), self.region.end());
+        let end = origin + window_end - window_start;
+        let kept = self.windowed_events(
+            window_start..window_end,
+            |tick| tick - window_start + origin,
+            end,
+        );
+        let mut sounding = Clip::new();
+        sounding.events = self.wheel_edges(&kept, origin, end);
+        sounding
+            .events
+            .extend(kept.into_iter().filter(|event| !event.is_muted()));
+        sounding.sort_events_by_tick();
+        sounding
     }
 
     /// Appends what this clip plays to `out` (see [`merged`](Self::merged)),

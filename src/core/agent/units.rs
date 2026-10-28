@@ -4,7 +4,7 @@
 //! C4 = MIDI 60, and notes as `pitch start length velocity` rows. Ticks never
 //! leave this module. Pure, unit-tested below.
 
-use crate::core::time::{Meter, PPQN};
+use crate::core::time::{Meter, PPQN, ticks_to_beats_f64};
 
 /// The pitch-class names, sharps only (decision 8).
 const PITCH_CLASSES: [&str; 12] = [
@@ -17,7 +17,7 @@ const BEAT_DECIMALS: usize = 3;
 
 /// `ticks` as beats: `1`, `0.5`, `-0.25`, `0.333`. Trailing zeros dropped.
 pub(crate) fn format_beats(ticks: i32) -> String {
-    let text = format!("{:.*}", BEAT_DECIMALS, f64::from(ticks) / f64::from(PPQN));
+    let text = format!("{:.*}", BEAT_DECIMALS, ticks_to_beats_f64(ticks));
     // Always written with decimals, so trimming stops at the point at worst.
     text.trim_end_matches('0').trim_end_matches('.').to_owned()
 }

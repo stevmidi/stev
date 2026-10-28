@@ -13,7 +13,7 @@ use crate::core::input_event::TimeSelectionRect;
 use crate::core::midi::message::{Wheel, parse_wheel};
 use crate::core::sequencer::Sequencer;
 use crate::core::time::{Meter, PPQN, format_bpm};
-use crate::models::clip::Clip;
+use crate::models::clip::{Clip, min_max};
 use crate::models::event::EventType;
 use crate::models::track::{Track, TrackOutput};
 
@@ -22,17 +22,16 @@ use super::units::{
 };
 
 /// The most bars [`get_timeline`] reads in one call.
-const TIMELINE_MAX_BARS: i32 = 16;
+pub(super) const TIMELINE_MAX_BARS: i32 = 16;
 
 /// The most bars [`get_notes`] reads in one call.
-const NOTES_MAX_BARS: i32 = 32;
+pub(super) const NOTES_MAX_BARS: i32 = 32;
 
 /// What the reads say when they have nothing to default to.
 const NO_RANGE: &str =
     "No marquee and no loop region: ask the user which bars they mean, then pass from and to.";
 
 /// One note as it sounds, in arrangement ticks.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct PlayedNote {
     /// MIDI note number.
     pitch: i32,
@@ -103,10 +102,21 @@ fn clip_played(clip: &Clip) -> (Vec<PlayedNote>, Vec<WheelMove>) {
     (notes, wheels)
 }
 
-/// What `track` sounds, every clip together, its own mute aside.
-fn track_played(track: &Track) -> (Vec<PlayedNote>, Vec<WheelMove>) {
+/// `track`'s clips that play anywhere in `[from, to)`, in order.
+fn clips_in(track: &Track, from: i32, to: i32) -> impl Iterator<Item = &Clip> {
+    track
+        .clips()
+        .iter()
+        .take_while(move |clip| clip.start_tick() < to)
+        .filter(move |clip| clip.end_tick() > from)
+}
+
+/// What `track` sounds in `[from, to)`, every clip there together, its
+/// own mute aside. Whole notes: one may start before `from` or run past
+/// `to`.
+fn track_played(track: &Track, from: i32, to: i32) -> (Vec<PlayedNote>, Vec<WheelMove>) {
     let (mut notes, mut wheels) = (Vec::new(), Vec::new());
-    for clip in track.clips() {
+    for clip in clips_in(track, from, to) {
         let (clip_notes, clip_wheels) = clip_played(clip);
         notes.extend(clip_notes);
         wheels.extend(clip_wheels);
@@ -116,9 +126,20 @@ fn track_played(track: &Track) -> (Vec<PlayedNote>, Vec<WheelMove>) {
 
 /// How a track reads in a list: `track 2 bass`, or `track 2` unnamed.
 fn track_title(idx: usize, track: &Track) -> String {
+    let number = format!("track {}", idx + 1);
     match track.name() {
-        Some(name) => format!("track {} {name}", idx + 1),
-        None => format!("track {}", idx + 1),
+        Some(name) => format!("{number} {name}"),
+        None => number,
+    }
+}
+
+/// [`track_title`], then ` (muted)` when the track isn't heard.
+fn track_heading(idx: usize, track: &Track, audible: bool) -> String {
+    let title = track_title(idx, track);
+    if audible {
+        title
+    } else {
+        format!("{title} (muted)")
     }
 }
 
@@ -130,21 +151,27 @@ fn track_label(idx: usize, track: &Track) -> String {
     }
 }
 
-/// A clip as the reads name it: `a3f0c2e1 9 → 17`, then `swing 58` when
-/// swung and `muted` when muted.
+/// A clip as the reads name it: `a3f0c2e1 9 → 17`, then its
+/// [`clip_flags`].
 fn clip_summary(clip: &Clip, meter: Meter) -> String {
     let mut text = format!(
         "{} {}",
         short_id(clip),
         range_text(clip.start_tick(), clip.end_tick(), meter)
     );
-    if clip.swing_pct() != 50 {
-        text.push_str(&format!(" swing {}", clip.swing_pct()));
-    }
-    if clip.is_muted() {
-        text.push_str(" muted");
+    for flag in clip_flags(clip) {
+        text.push(' ');
+        text.push_str(&flag);
     }
     text
+}
+
+/// What sets a clip apart, as the reads say it: `swing 58` when swung,
+/// `muted` when muted.
+fn clip_flags(clip: &Clip) -> impl Iterator<Item = String> {
+    let swing = (clip.swing_pct() != 50).then(|| format!("swing {}", clip.swing_pct()));
+    let muted = clip.is_muted().then(|| "muted".to_owned());
+    swing.into_iter().chain(muted)
 }
 
 /// A clip's id as the agent sees it: the first 8 hex digits of its UUID
@@ -220,29 +247,25 @@ pub(super) fn get_context(sequencer: &Sequencer) -> String {
             ));
             for idx in marquee_tracks(marquee, sequencer) {
                 let track = &tracks[idx];
-                let (notes, _) = track_played(track);
-                let has_notes = notes
+                let touched: Vec<&Clip> = clips_in(track, marquee.start, marquee.end).collect();
+                let has_notes = touched.iter().any(|clip| {
+                    clip_played(clip)
+                        .0
+                        .iter()
+                        .any(|note| note.overlaps(marquee.start, marquee.end))
+                });
+                let touched: Vec<String> = touched
                     .iter()
-                    .any(|note| note.overlaps(marquee.start, marquee.end));
-                let touched: Vec<String> = track
-                    .clips()
-                    .iter()
-                    .filter(|clip| {
-                        clip.start_tick() < marquee.end && clip.end_tick() > marquee.start
-                    })
                     .map(|clip| clip_summary(clip, meter))
                     .collect();
                 let next = track
-                    .clips()
-                    .iter()
-                    .find(|clip| clip.start_tick() >= marquee.end)
-                    .map_or("empty after".to_owned(), |clip| {
-                        format!("next clip at {}", format_position(clip.start_tick(), meter))
+                    .next_clip_start_after(marquee.end - 1)
+                    .map_or("empty after".to_owned(), |start| {
+                        format!("next clip at {}", format_position(start, meter))
                     });
                 lines.push(format!(
-                    "  {}{}: {}; clips {}; {next}",
-                    track_title(idx, track),
-                    if audible[idx] { "" } else { " (muted)" },
+                    "  {}: {}; clips {}; {next}",
+                    track_heading(idx, track, audible[idx]),
                     if has_notes { "has notes" } else { "no notes" },
                     if touched.is_empty() {
                         "none".to_owned()
@@ -300,7 +323,7 @@ pub(super) fn get_project(sequencer: &Sequencer, project_name: Option<&str>) -> 
         for clip in track.clips() {
             any = true;
             let notes: Vec<i32> = clip
-                .played_events()
+                .exported_events()
                 .iter()
                 .filter(|event| event.event_type() == Some(EventType::NoteOn))
                 .filter_map(|event| event.note_number().map(i32::from))
@@ -312,16 +335,14 @@ pub(super) fn get_project(sequencer: &Sequencer, project_name: Option<&str>) -> 
                 range_text(clip.start_tick(), clip.end_tick(), meter),
                 notes.len()
             );
-            if clip.is_muted() {
-                line.push_str(", muted");
+            for flag in clip_flags(clip) {
+                line.push_str(", ");
+                line.push_str(&flag);
             }
-            if clip.swing_pct() != 50 {
-                line.push_str(&format!(", swing {}", clip.swing_pct()));
-            }
-            if let (Some(low), Some(high)) = (notes.iter().min(), notes.iter().max()) {
+            if let Some((low, high)) = min_max(notes) {
                 line.push_str(&match low == high {
-                    true => format!(", {}", note_name(*low)),
-                    false => format!(", {}–{}", note_name(*low), note_name(*high)),
+                    true => format!(", {}", note_name(low)),
+                    false => format!(", {}–{}", note_name(low), note_name(high)),
                 });
             }
             lines.push(line);
@@ -347,7 +368,10 @@ pub(super) fn get_timeline(sequencer: &Sequencer, args: &Value) -> Result<String
     let tracks = sequencer.tracks();
     let parts: Vec<(String, Vec<PlayedNote>)> = heard
         .iter()
-        .map(|&idx| (track_label(idx, &tracks[idx]), track_played(&tracks[idx]).0))
+        .map(|&idx| {
+            let notes = track_played(&tracks[idx], from, to).0;
+            (track_label(idx, &tracks[idx]), notes)
+        })
         .filter(|(_, notes)| notes.iter().any(|note| note.overlaps(from, to)))
         .collect();
     let mut lines = vec![format!("{}, {meter}.", range_text(from, to, meter))];
@@ -389,13 +413,22 @@ fn timeline_lines(
         let mut all: Vec<&PlayedNote> = Vec::new();
 
         for (label, notes) in parts {
+            let bar_notes: Vec<&PlayedNote> = notes
+                .iter()
+                .filter(|n| n.overlaps(first_beat, last))
+                .collect();
+            if bar_notes.is_empty() {
+                continue;
+            }
+            all.extend(&bar_notes);
             let mut beats = Vec::new();
             let mut previous: Option<Vec<i32>> = None;
             let mut beat = first_beat;
             while beat < last {
                 let beat_end = (beat + PPQN).min(bar_end);
-                let sounding: Vec<&PlayedNote> = notes
+                let sounding: Vec<&PlayedNote> = bar_notes
                     .iter()
+                    .copied()
                     .filter(|n| n.overlaps(beat, beat_end))
                     .collect();
                 let mut pitches: Vec<i32> = sounding.iter().map(|n| n.pitch).collect();
@@ -411,13 +444,10 @@ fn timeline_lines(
                     };
                     beats.push(format!("{} {names}", (beat - bar_start) / PPQN + 1));
                 }
-                all.extend(sounding);
                 previous = Some(pitches);
                 beat = beat_end;
             }
-            if notes.iter().any(|n| n.overlaps(first_beat, last)) {
-                bar_lines.push(format!("{label:>width$}: {}", beats.join(" | ")));
-            }
+            bar_lines.push(format!("{label:>width$}: {}", beats.join(" | ")));
         }
 
         let head = format!("bar {bar}");
@@ -478,12 +508,8 @@ pub(super) fn get_notes(sequencer: &Sequencer, args: &Value) -> Result<String, S
     )];
     for idx in requested {
         let track = &sequencer.tracks()[idx];
-        lines.push(format!(
-            "{}{}:",
-            track_title(idx, track),
-            if audible[idx] { "" } else { " (muted)" }
-        ));
-        let (notes, wheels) = track_played(track);
+        lines.push(format!("{}:", track_heading(idx, track, audible[idx])));
+        let (notes, wheels) = track_played(track, from, to);
         let rows = note_rows(&notes, from, to);
         let mut entries: Vec<(i32, String)> =
             rows.iter().map(|row| (row.start, row.format())).collect();
@@ -583,12 +609,12 @@ fn tracks_arg(sequencer: &Sequencer, args: &Value) -> Result<Option<Vec<usize>>,
         return Ok(None);
     };
     let items = match value {
-        Value::Array(items) => items.clone(),
-        other => vec![other.clone()],
+        Value::Array(items) => items.as_slice(),
+        other => std::slice::from_ref(other),
     };
     let tracks = sequencer.tracks();
     let mut found = Vec::new();
-    for item in &items {
+    for item in items {
         let text = match item {
             Value::String(text) => text.trim().to_owned(),
             Value::Number(number) => number.to_string(),

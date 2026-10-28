@@ -38,6 +38,17 @@ impl EventHandlers {
         saved: &mut SavedProject,
         staged: &mut Option<StagedProject>,
     ) {
+        // The agent bridge's marquee mirror and calls go ahead of every
+        // hold: none applies to them, and a write that can't run now says
+        // why itself (`360-mcp-server.md` decision 13).
+        match cmd {
+            SequencerCommand::SetMarquee(marquee) => return sequencer.set_marquee(*marquee),
+            SequencerCommand::Agent { request, reply } => {
+                reply.send(answer(request, sequencer, saved.name())).ok();
+                return;
+            }
+            _ => {}
+        }
         // An open take session handles or blocks most commands itself
         // (`take_framing.rs`).
         if self.take_framing_command(cmd, sequencer, undo_record) {
@@ -561,11 +572,8 @@ impl EventHandlers {
                 self.record_edit(sequencer, undo_record, edit);
             }
 
-            SequencerCommand::SetMarquee(marquee) => sequencer.set_marquee(*marquee),
-
-            SequencerCommand::Agent { request, reply } => {
-                reply.send(answer(request, sequencer, saved.name())).ok();
-            }
+            // Answered above, ahead of the holds.
+            SequencerCommand::SetMarquee(_) | SequencerCommand::Agent { .. } => {}
 
             SequencerCommand::SetTrackOutput { track, output } => {
                 let edit = SetTrackOutputEdit::new(sequencer, *track, output.clone());

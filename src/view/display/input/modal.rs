@@ -74,12 +74,7 @@ impl Display {
     /// Enter, Space and ↑/↓ flip the switch. Returns whether it took the
     /// key.
     fn handle_midi_tab_key(&mut self, key: Key, modifiers: KeyModifiers) -> bool {
-        if self.settings.midi.focus == MidiSettingsFocus::Agents
-            && matches!(key, Key::Enter | Key::Space | Key::ArrowUp | Key::ArrowDown)
-        {
-            self.toggle_agent_bridge();
-            return true;
-        }
+        let focus = self.settings.midi.focus;
         let step = match key {
             Key::Tab if modifiers.shift => {
                 self.settings.midi.focus = self.settings.midi.focus.previous();
@@ -87,6 +82,10 @@ impl Display {
             }
             Key::Tab | Key::ArrowLeft | Key::ArrowRight => {
                 self.settings.midi.focus = self.settings.midi.focus.next();
+                return true;
+            }
+            Key::Enter | Key::Space if focus == MidiSettingsFocus::Agents => {
+                self.toggle_agent_bridge();
                 return true;
             }
             Key::Enter => {
@@ -97,10 +96,12 @@ impl Display {
             Key::ArrowDown => 1,
             _ => return false,
         };
-        match self.settings.midi.focus.port_side() {
-            Some(side) => self.settings.midi.list_mut(side).move_selection(step),
+        match focus {
+            MidiSettingsFocus::InPort => self.settings.midi.input.move_selection(step),
+            MidiSettingsFocus::OutPort => self.settings.midi.output.move_selection(step),
             // Up raises the offset.
-            None => self.nudge_midi_out_offset(-step as i32),
+            MidiSettingsFocus::OutOffset => self.nudge_midi_out_offset(-step as i32),
+            MidiSettingsFocus::Agents => self.toggle_agent_bridge(),
         }
         true
     }

@@ -389,15 +389,16 @@ impl Display {
                             .then_some(SettingsHit::Section(MidiSettingsFocus::OutOffset))
                     })
                     .or_else(|| {
-                        let agents = midi.agents;
-                        if agents.rows.hit(p).is_some() {
-                            Some(SettingsHit::AgentBridge)
-                        } else {
-                            agents
-                                .area
-                                .contains(p)
-                                .then_some(SettingsHit::Section(MidiSettingsFocus::Agents))
-                        }
+                        midi.agents
+                            .rows
+                            .hit(p)
+                            .map(|_| SettingsHit::AgentBridge)
+                            .or_else(|| {
+                                midi.agents
+                                    .area
+                                    .contains(p)
+                                    .then_some(SettingsHit::Section(MidiSettingsFocus::Agents))
+                            })
                     })
             }
             SettingsTab::Appearance => Self::theme_rows(layout.content).hit(p).map(|i| {

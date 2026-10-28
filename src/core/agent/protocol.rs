@@ -7,6 +7,8 @@
 
 use serde_json::{Value, json};
 
+use crate::core::update_check::CURRENT_VERSION;
+
 use super::tools::{INSTRUCTIONS, TOOL_NAMES, tool_list};
 use super::{AgentReply, AgentRequest};
 
@@ -73,7 +75,7 @@ fn initialize_result(params: &Value) -> Value {
     json!({
         "protocolVersion": version,
         "capabilities": { "tools": {} },
-        "serverInfo": { "name": "stev", "version": env!("CARGO_PKG_VERSION") },
+        "serverInfo": { "name": "stev", "version": CURRENT_VERSION },
         "instructions": INSTRUCTIONS,
     })
 }

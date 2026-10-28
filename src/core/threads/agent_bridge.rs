@@ -94,14 +94,11 @@ fn serve(
                     return false;
                 }
             }
-            Err(e) if e.kind() == ErrorKind::WouldBlock => {
-                if let Some(false) | None = control(control_rx, CONTROL_POLL) {
-                    return false;
-                }
-            }
             Err(e) => {
-                warn!("agent bridge: accept failed: {e}");
-                if let Some(false) | None = control(control_rx, CONTROL_POLL) {
+                if e.kind() != ErrorKind::WouldBlock {
+                    warn!("agent bridge: accept failed: {e}");
+                }
+                if control(control_rx, CONTROL_POLL) != Some(true) {
                     return false;
                 }
             }
@@ -160,9 +157,8 @@ fn serve_connection(
                 }
             }
             Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {
-                match control(control_rx, Duration::ZERO) {
-                    Some(true) => {}
-                    Some(false) | None => return false,
+                if control(control_rx, Duration::ZERO) != Some(true) {
+                    return false;
                 }
             }
             Err(_) => return true,
