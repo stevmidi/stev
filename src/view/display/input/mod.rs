@@ -8,7 +8,7 @@
 
 use egui::Key;
 
-use crate::core::config::ZOOM_KEY_STEP;
+use crate::core::config::{TRACK_VOLUME_DB_DEFAULT, ZOOM_KEY_STEP};
 use crate::core::input_event::{KeyModifiers, is_pane_focus_key};
 use crate::core::keymap::{Action, Chord, NEW_PROJECT, SAVE, SAVE_AS};
 use crate::core::project::{ProjectAction, clip_path};
@@ -191,13 +191,14 @@ impl Display {
             return true;
         }
 
-        // A ⌘/Ctrl-click resets the bar to neutral without starting a drag.
+        // A ⌘/Ctrl-click resets the bar to where a fresh track starts — the
+        // default volume, centre — without starting a drag.
         if arranger && let Some((track_idx, param)) = self.track_mix_bar_at(x, y) {
             if modifiers.command {
                 let event = match param {
                     TrackMixParam::Volume => InputEvent::SetTrackVolume {
                         track_idx,
-                        volume_db: 0.0,
+                        volume_db: TRACK_VOLUME_DB_DEFAULT,
                     },
                     TrackMixParam::Pan => InputEvent::SetTrackPan {
                         track_idx,

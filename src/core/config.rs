@@ -104,6 +104,14 @@ pub const MARQUEE_AUDITION_MAX_NOTES: usize = 4;
 pub const MAX_TRACKS: usize = 16;
 /// Tracks a new project starts with (`Sequencer::new`, `ProjectData::default`).
 pub const DEFAULT_TRACK_COUNT: usize = 4;
+/// Fader position every fresh track starts at, in dB: a new project's
+/// (`ProjectData::default`, `Sequencer::new`), an added one's, and an idle
+/// engine slot's. Below unity because plugin presets are often loud, and four
+/// tracks at 0 dB sum past full scale into the output clamp — worse still in a
+/// stem export. At −12 dB four uncorrelated tracks sum to about −6 dB. A
+/// project file without a `volume_db` still loads at `0.0` (`TrackData`), as
+/// it was saved. See `060-persistence.md` § volume and pan.
+pub const TRACK_VOLUME_DB_DEFAULT: f32 = -12.0;
 /// Track accent colours each theme palette holds (`Track::color_slot`
 /// indexes them). Equal to `MAX_TRACKS`, so a full project still gives every
 /// track a colour of its own; a fork raising `MAX_TRACKS` past it gets

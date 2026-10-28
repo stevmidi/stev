@@ -13,7 +13,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::core::audio::mix::{MAX_DB, MIN_DB, track_is_audible};
-use crate::core::config::MAX_TRACKS;
+use crate::core::config::{MAX_TRACKS, TRACK_VOLUME_DB_DEFAULT};
 
 use super::Sequencer;
 
@@ -66,7 +66,7 @@ impl Sequencer {
     }
 
     /// Whether any track is soloed — when true, non-soloed tracks are silent.
-    /// Reads every slot: an idle one is always back at neutral
+    /// Reads every slot: an idle one is always unsoloed
     /// ([`reset_slot_mix`](Self::reset_slot_mix)), so it never counts.
     pub(crate) fn any_track_soloed(&self) -> bool {
         self.track_mix
@@ -140,21 +140,23 @@ impl Sequencer {
         }
     }
 
-    /// Restores every slot to unity gain, centre pan, unmuted and unsoloed.
-    /// Called from [`new_project`](Self::new_project).
+    /// Restores every slot to a fresh track's mix:
+    /// [`TRACK_VOLUME_DB_DEFAULT`], centre pan, unmuted and unsoloed. Called
+    /// from [`new_project`](Self::new_project).
     pub(crate) fn reset_track_mix(&mut self) {
         for slot in 0..MAX_TRACKS {
             self.reset_slot_mix(slot);
         }
     }
 
-    /// Puts engine slot `slot` back at neutral — unity, centre, unmuted,
-    /// unsoloed, its meter empty: for every slot on a new project, and for one whose track
-    /// has left the arrangement, so an idle slot never counts toward
+    /// Puts engine slot `slot` back at a fresh track's mix —
+    /// [`TRACK_VOLUME_DB_DEFAULT`], centre, unmuted, unsoloed, its meter
+    /// empty: for every slot on a new project, and for one whose track has
+    /// left the arrangement, so an idle slot never counts toward
     /// `any_track_soloed` and the next track to take it starts clean.
     pub(super) fn reset_slot_mix(&mut self, slot: usize) {
         let mix = &self.track_mix;
-        mix.volume_db[slot].store(0.0f32.to_bits(), Ordering::Relaxed);
+        mix.volume_db[slot].store(TRACK_VOLUME_DB_DEFAULT.to_bits(), Ordering::Relaxed);
         mix.pan[slot].store(0.0f32.to_bits(), Ordering::Relaxed);
         mix.mute[slot].store(false, Ordering::Relaxed);
         mix.solo[slot].store(false, Ordering::Relaxed);
@@ -172,12 +174,13 @@ fn toggle_flag(flags: &[AtomicBool], idx: usize) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use crate::core::config::TRACK_VOLUME_DB_DEFAULT;
     use crate::core::sequencer::test_support::test_sequencer;
 
     #[test]
-    fn defaults_are_neutral() {
+    fn a_fresh_track_starts_at_the_default_volume_and_centre() {
         let seq = test_sequencer();
-        assert_eq!(seq.track_volume_db(0), 0.0);
+        assert_eq!(seq.track_volume_db(0), TRACK_VOLUME_DB_DEFAULT);
         assert_eq!(seq.track_pan(3), 0.0);
     }
 
@@ -207,15 +210,15 @@ mod tests {
     }
 
     #[test]
-    fn reset_restores_neutral() {
+    fn reset_restores_a_fresh_tracks_mix() {
         let mut seq = test_sequencer();
-        seq.set_track_volume(1, -12.0);
+        seq.set_track_volume(1, -3.0);
         seq.set_track_pan(1, 0.7);
         seq.set_track_muted(1, true);
         seq.toggle_track_solo(2);
         seq.track_mix.mark_note_on(1, 4200, 100);
         seq.reset_track_mix();
-        assert_eq!(seq.track_volume_db(1), 0.0);
+        assert_eq!(seq.track_volume_db(1), TRACK_VOLUME_DB_DEFAULT);
         assert_eq!(seq.track_pan(1), 0.0);
         assert!(!seq.track_muted(1));
         assert!(!seq.track_soloed(2));

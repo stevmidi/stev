@@ -19,7 +19,7 @@
 //! state by track id), and a restore reloads it the way a project load does.
 //! See `050-undo-redo.md` § Track add / remove.
 
-use crate::core::config::{MAX_TRACKS, TRACK_COLOR_COUNT};
+use crate::core::config::{MAX_TRACKS, TRACK_COLOR_COUNT, TRACK_VOLUME_DB_DEFAULT};
 use crate::models::track::{Track, TrackOutput};
 
 use super::{EditResult, Sequencer};
@@ -42,11 +42,12 @@ pub(crate) struct LiftedTrack {
 
 impl LiftedTrack {
     /// A new empty MIDI-Out track on `channel`, in colour `color_slot`, at
-    /// neutral mix. Its slot is picked when it is restored.
+    /// [`TRACK_VOLUME_DB_DEFAULT`], centre, unmuted. Its slot is picked when
+    /// it is restored.
     fn fresh(channel: u8, color_slot: usize) -> Self {
         LiftedTrack {
             track: Track::new(TrackOutput::MidiOut { channel }, 0, color_slot),
-            volume_db: 0.0,
+            volume_db: TRACK_VOLUME_DB_DEFAULT,
             pan: 0.0,
             muted: false,
             soloed: false,
@@ -56,7 +57,7 @@ impl LiftedTrack {
 
 impl Sequencer {
     /// Takes the track at `track_idx` out of the arrangement: silences what it
-    /// has sounding (while running), puts its slot's mix back at neutral and
+    /// has sounding (while running), puts its slot's mix back at a fresh track's and
     /// returns it with its mix values. Leaves the track selection as it is
     /// (possibly naming the lifted track) — the handler selects the track
     /// that took its place. `None` out of range or for the last track (a
@@ -387,7 +388,7 @@ mod tests {
     use undo::Record;
     use uuid::Uuid;
 
-    use crate::core::config::{MAX_TRACKS, TRACK_COLOR_COUNT};
+    use crate::core::config::{MAX_TRACKS, TRACK_COLOR_COUNT, TRACK_VOLUME_DB_DEFAULT};
     use crate::core::midi::out_queue::MidiOutMessage;
     use crate::core::sequencer::test_support::{
         clip_at, note_off, note_on, sequencer_with_outputs, stub_instrument, test_sequencer,
@@ -493,6 +494,21 @@ mod tests {
         record.redo(&mut sequencer);
         assert_eq!(sequencer.tracks()[2].id(), added_id);
         assert_eq!(sequencer.tracks().len(), 5);
+    }
+
+    #[test]
+    fn an_added_track_starts_at_the_default_volume_whatever_its_slot_held() {
+        let mut sequencer = test_sequencer();
+        // The idle slot the new track will take (slot 4), left loud.
+        sequencer.track_mix.volume_db[4].store(3.0f32.to_bits(), Ordering::Relaxed);
+        let mut record = Record::new();
+
+        let edit = AddTrackEdit::new(&sequencer, None).unwrap();
+        record.edit(&mut sequencer, SequencerEdit::from(edit));
+
+        assert_eq!(sequencer.tracks()[4].slot(), 4);
+        assert_eq!(sequencer.track_volume_db(4), TRACK_VOLUME_DB_DEFAULT);
+        assert_eq!(sequencer.track_pan(4), 0.0);
     }
 
     #[test]
@@ -662,10 +678,10 @@ mod tests {
         assert_eq!(track_id, before[1]);
         assert_eq!(ids(&sequencer), vec![before[0], before[2], before[3]]);
         // Nothing moved in the engine: the track now at 1 still reads its
-        // own slot's values, and the freed slot is back at neutral.
+        // own slot's values, and the freed slot is back at a fresh track's mix.
         assert_eq!(slots(&sequencer), vec![0, 2, 3]);
         assert_eq!(sequencer.track_volume_db(1), -12.0);
-        assert_eq!(sequencer.track_mix.volume_db(1), 0.0);
+        assert_eq!(sequencer.track_mix.volume_db(1), TRACK_VOLUME_DB_DEFAULT);
         assert!(!sequencer.track_mix.muted(1));
 
         record.undo(&mut sequencer);
@@ -839,6 +855,23 @@ mod tests {
         assert!(SetTrackOutputEdit::new(&sequencer, 0, current).is_none());
         let synth = stub_instrument(Vec::new());
         assert!(SetTrackOutputEdit::new(&sequencer, 9, synth).is_none());
+    }
+
+    #[test]
+    fn an_output_change_and_its_undo_keep_the_tracks_volume_and_pan() {
+        let mut sequencer = test_sequencer();
+        sequencer.set_track_volume(1, -3.5);
+        sequencer.set_track_pan(1, 0.25);
+        let mut record = Record::new();
+
+        let edit = SetTrackOutputEdit::new(&sequencer, 1, stub_instrument(Vec::new())).unwrap();
+        record.edit(&mut sequencer, SequencerEdit::from(edit));
+        assert_eq!(sequencer.track_volume_db(1), -3.5);
+        assert_eq!(sequencer.track_pan(1), 0.25);
+
+        record.undo(&mut sequencer);
+        assert_eq!(sequencer.track_volume_db(1), -3.5);
+        assert_eq!(sequencer.track_pan(1), 0.25);
     }
 
     /// While running, a note sounding on the old output is released there:

@@ -19,7 +19,7 @@ use std::sync::{
 };
 
 use crate::core::audio::meter::ChannelLevel;
-use crate::core::config::MAX_TRACKS;
+use crate::core::config::{MAX_TRACKS, TRACK_VOLUME_DB_DEFAULT};
 
 /// Per-track mixer state — volume, stereo balance, mute and solo — plus what
 /// each track's meter reads: its last note-on (`note_on`) and its audio level
@@ -32,12 +32,14 @@ use crate::core::config::MAX_TRACKS;
 /// once per frame by the arranger's track header. Follows the
 /// [`crate::models::region::Region`] precedent: the atomics *are* the source of
 /// truth, not a mirror of a model field. `volume_db` is clamped to
-/// `[mix::MIN_DB, mix::MAX_DB]`, `pan` to `[-1.0, 1.0]`; the all-zero / all-false
-/// default (`0.0` dB, centre, unmuted, unsoloed) is the neutral value, so a
-/// fresh atomic, a new project and an old project with no stored value all
-/// agree. Every array is indexed by engine slot (`Track::slot`), not track
-/// position — a slot no track holds is kept at neutral. See
-/// `130-plugin-host.md`.
+/// `[mix::MIN_DB, mix::MAX_DB]`, `pan` to `[-1.0, 1.0]`. A slot starts at
+/// [`TRACK_VOLUME_DB_DEFAULT`], centre, unmuted and unsoloed — what a fresh
+/// track gets, so a new project and an added track both start there. Pan,
+/// mute and solo are the all-zero / all-false bit pattern; the volume is not,
+/// and an old project with no stored volume loads at `0.0` dB instead
+/// (`TrackData::volume_db`). Every array is indexed by engine slot
+/// (`Track::slot`), not track position — a slot no track holds is kept at
+/// these starting values. See `130-plugin-host.md`.
 pub(crate) struct TrackMixAtomics {
     /// Per-track volume in dB, as an `f32` bit pattern. Clamped
     /// `[mix::MIN_DB, mix::MAX_DB]`.
@@ -110,12 +112,11 @@ impl LevelAtomics {
 }
 
 impl TrackMixAtomics {
-    /// All slots at the neutral default — `0.0` dB (unity), centre pan,
-    /// unmuted, unsoloed — which is the all-zero / all-false bit pattern, so a
-    /// fresh instance needs no per-track init.
+    /// All slots at a fresh track's mix — [`TRACK_VOLUME_DB_DEFAULT`], centre
+    /// pan, unmuted, unsoloed — and every meter empty.
     pub(crate) fn new() -> Self {
         TrackMixAtomics {
-            volume_db: std::array::from_fn(|_| AtomicU32::new(0)),
+            volume_db: std::array::from_fn(|_| AtomicU32::new(TRACK_VOLUME_DB_DEFAULT.to_bits())),
             pan: std::array::from_fn(|_| AtomicU32::new(0)),
             mute: std::array::from_fn(|_| AtomicBool::new(false)),
             solo: std::array::from_fn(|_| AtomicBool::new(false)),

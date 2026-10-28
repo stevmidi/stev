@@ -28,6 +28,10 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 - Deleting a project or clip in the browser moves it to the Trash on macOS,
   as deleting a folder already did, so it can be restored from Finder.
+- New tracks start with the volume at −12 dB instead of 0 dB, in a new
+  project and when a track is added, so four loud plugin presets no longer
+  sum past full scale. ⌘-clicking a track's volume bar resets it to −12 dB
+  too. Projects saved earlier open at the volumes they were saved with.
 
 ## [0.8.2] - 2026-10-28
 

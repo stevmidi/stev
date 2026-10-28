@@ -560,13 +560,17 @@ mod tests {
     }
 
     /// An empty mixer, the mix atomics it reads and meters into, and the
-    /// command ring's producer end.
+    /// command ring's producer end. Every fader at unity rather than a fresh
+    /// track's default, so a voice meters at its own level.
     fn mixer_with_commands() -> (
         InstrumentMixer,
         Arc<TrackMixAtomics>,
         Producer<PluginHostCommand>,
     ) {
         let track_mix = Arc::new(TrackMixAtomics::new());
+        for slot in &track_mix.volume_db {
+            slot.store(0.0f32.to_bits(), Ordering::Relaxed);
+        }
         let (commands, cmd_rx) = RingBuffer::new(4);
         let transport = TransportState::for_test(500_000, 0);
         let (_marks, marks_rx) = RingBuffer::new(4);

@@ -130,9 +130,11 @@ pub(crate) struct TrackData {
     /// Output routing.
     pub(crate) output: TrackOutputData,
     /// Mixer volume in dB (`0.0` = unity) and stereo balance (`-1.0`..=`1.0`,
-    /// `0.0` = centre). `#[serde(default)]` alone suffices — `0.0` *is* the
-    /// neutral value, so a project saved before this field existed loads at
-    /// unity/centre. See `060-persistence.md`.
+    /// `0.0` = centre). `#[serde(default)]` — `0.0` — on purpose, not
+    /// [`config::TRACK_VOLUME_DB_DEFAULT`]: a project saved before this field
+    /// existed was at unity/centre and loads as it was. A fresh track's
+    /// volume comes from `ProjectData::default` instead. See
+    /// `060-persistence.md`.
     #[serde(default)]
     pub(crate) volume_db: f32,
     /// See [`volume_db`](Self::volume_db).
@@ -252,7 +254,7 @@ impl Default for ProjectData {
             tracks: (0..config::DEFAULT_TRACK_COUNT)
                 .map(|i| TrackData {
                     output: TrackOutputData::MidiOut { channel: i as u8 },
-                    volume_db: 0.0,
+                    volume_db: config::TRACK_VOLUME_DB_DEFAULT,
                     pan: 0.0,
                     muted: false,
                     color: Some(i),
@@ -752,8 +754,9 @@ mod tests {
     }
 
     #[test]
-    fn track_data_without_volume_pan_fields_defaults_to_neutral() {
-        // A project saved before these fields existed.
+    fn track_data_without_volume_pan_fields_loads_at_unity_and_centre() {
+        // A project saved before these fields existed was at unity — not at
+        // a fresh track's `TRACK_VOLUME_DB_DEFAULT` — and loads as it was.
         let back: TrackData =
             serde_json::from_str(r#"{"output":{"type":"MidiOut","channel":2},"clips":[]}"#)
                 .unwrap();
@@ -765,9 +768,9 @@ mod tests {
     }
 
     #[test]
-    fn default_project_data_resets_every_track_mix_to_neutral() {
+    fn default_project_data_starts_every_track_at_a_fresh_mix() {
         for track in ProjectData::default().tracks {
-            assert_eq!(track.volume_db, 0.0);
+            assert_eq!(track.volume_db, config::TRACK_VOLUME_DB_DEFAULT);
             assert_eq!(track.pan, 0.0);
             assert!(!track.muted);
         }
