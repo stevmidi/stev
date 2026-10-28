@@ -20,6 +20,8 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-10-28
+
 ### Fixed
 
 - Hiding Stev (⌘H) no longer closes the open plugin editors. Every editor
