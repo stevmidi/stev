@@ -39,18 +39,11 @@ pub(crate) fn remove_recent(list: &mut Vec<RecentProject>, project: &RecentProje
     list.retain(|entry| entry != project);
 }
 
-/// Follows a rename of the project `old` (in `folder`) to `new`, keeping its
+/// Follows a rename of the project `old` to `new` (its name), keeping its
 /// place in the list.
-pub(crate) fn rename_recent(
-    list: &mut [RecentProject],
-    folder: Option<&str>,
-    old: &str,
-    new: &str,
-) {
-    for entry in list {
-        if entry.folder.as_deref() == folder && entry.name == old {
-            entry.name = new.to_owned();
-        }
+pub(crate) fn rename_recent(list: &mut [RecentProject], old: &RecentProject, new: &str) {
+    for entry in list.iter_mut().filter(|entry| *entry == old) {
+        entry.name = new.to_owned();
     }
 }
 
@@ -110,7 +103,7 @@ mod tests {
             RecentProject::new(None, "a"),
             RecentProject::new(Some("f"), "b"),
         ];
-        rename_recent(&mut list, Some("f"), "a", "z");
+        rename_recent(&mut list, &RecentProject::new(Some("f"), "a"), "z");
         assert_eq!(names(&list), vec!["f/z", "/a", "f/b"]);
         rename_recent_folder(&mut list, "f", "g");
         assert_eq!(names(&list), vec!["g/z", "/a", "g/b"]);

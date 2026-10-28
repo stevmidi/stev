@@ -151,11 +151,16 @@ fn recent_projects() -> Vec<RecentProject> {
     let listed = recent.len();
     recent.retain(|project| project_exists(project.folder.as_deref(), &project.name));
     if recent.len() != listed {
-        update_settings("recent projects", |settings| {
-            settings.recent_projects.clone_from(&recent);
-        });
+        update_recent(|list| list.clone_from(&recent));
     }
     recent
+}
+
+/// Applies `change` to the Recent list in `settings.json`.
+pub(super) fn update_recent(change: impl FnOnce(&mut Vec<RecentProject>)) {
+    update_settings("recent projects", |settings| {
+        change(&mut settings.recent_projects);
+    });
 }
 
 /// The footer's word for the project, template, clip or folder `name`
@@ -766,8 +771,8 @@ impl BrowserTree {
         }
         .map(|RecentProject { folder, name }| BrowserItem::Recent { folder, name })
         .filter(|item| self.is_listed(item));
-        if recent.is_some() {
-            self.selected = recent;
+        if let Some(item) = recent {
+            self.selected = Some(item);
             return;
         }
         if let (Some(folder), Some(name)) = (current_folder, current_name)
@@ -880,7 +885,7 @@ impl BrowserTree {
 
     /// Arms the delete confirm on a selected project, template, clip or
     /// folder (not a recent project).
-    pub(super) fn arm_delete(&mut self) {
+    fn arm_delete(&mut self) {
         self.delete_armed = self
             .selected
             .as_ref()
@@ -1408,9 +1413,7 @@ impl Display {
             }
             BrowserAction::Delete(item) => self.delete_browser_item(&item),
             BrowserAction::RemoveRecent(project) => {
-                update_settings("recent projects", |settings| {
-                    remove_recent(&mut settings.recent_projects, &project);
-                });
+                update_recent(|list| remove_recent(list, &project));
                 self.render.status = Some(StatusMessage::new(format!(
                     "Removed {} from Recent",
                     project.name
@@ -1420,18 +1423,13 @@ impl Display {
         }
     }
 
-    /// Puts the project `name` in `folder` first in the Recent list — just
-    /// opened or saved — and re-lists a shown panel.
-    pub(super) fn note_recent_project(&mut self, folder: Option<&str>, name: &str) {
-        update_settings("recent projects", |settings| {
-            note_recent(
-                &mut settings.recent_projects,
-                RecentProject::new(folder, name),
-            );
-        });
-        if self.browser.visible {
-            self.reload_browser();
-        }
+    /// Makes `name` in `folder` the open project, just loaded or saved: what
+    /// ⌘S saves to, its folder current, and first in the Recent list. The
+    /// caller re-lists a shown panel (a save's `ProjectFilesChanged` does).
+    pub(super) fn adopt_project(&mut self, folder: Option<String>, name: String) {
+        update_recent(|list| note_recent(list, RecentProject::new(folder.as_deref(), &name)));
+        self.project.project_current_name = Some(name);
+        self.set_current_project_folder(folder);
     }
 
     /// Deletes the project, template, clip or folder `item` — to the Trash

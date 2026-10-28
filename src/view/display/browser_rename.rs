@@ -18,13 +18,12 @@ use egui::{FontId, Id, Rect, Ui, UiBuilder, pos2, vec2};
 use crate::core::config::PROJECT_NAME_MAX_CHARS;
 use crate::core::input_event::InputEvent;
 use crate::core::project::{
-    create_project_folder, project_name_from_input, rename_clip, rename_project,
+    RecentProject, create_project_folder, project_name_from_input, rename_clip, rename_project,
     rename_project_folder, rename_recent, rename_recent_folder, rename_template,
 };
-use crate::core::settings::update_settings;
 
 use super::Display;
-use super::browser::{BROWSER_FONT_SIZE, BrowserItem, browser_text_x};
+use super::browser::{BROWSER_FONT_SIZE, BrowserItem, browser_text_x, update_recent};
 use super::pane::KeyFocus;
 use super::status_message::StatusMessage;
 use super::text_field::{FieldEvent, FieldStyle, ROW_MARGIN, TextField, field_event, field_rect};
@@ -194,8 +193,8 @@ impl Display {
     fn follow_browser_rename(&mut self, item: &BrowserItem, new: &str) {
         match item {
             BrowserItem::Project { folder, name } | BrowserItem::Recent { folder, name } => {
-                update_settings("recent projects", |settings| {
-                    rename_recent(&mut settings.recent_projects, folder.as_deref(), name, new);
+                update_recent(|list| {
+                    rename_recent(list, &RecentProject::new(folder.as_deref(), name), new);
                 });
                 if *folder == self.project.project_current_folder
                     && self.project.project_current_name.as_ref() == Some(name)
@@ -204,9 +203,7 @@ impl Display {
                 }
             }
             BrowserItem::Folder(old) => {
-                update_settings("recent projects", |settings| {
-                    rename_recent_folder(&mut settings.recent_projects, old, new);
-                });
+                update_recent(|list| rename_recent_folder(list, old, new));
                 if self.project.project_current_folder.as_ref() == Some(old) {
                     self.set_current_project_folder(Some(new.to_owned()));
                 }

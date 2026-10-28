@@ -185,14 +185,18 @@ impl Display {
                     // meant for the project (⌘O goes back for the next).
                     self.close_overlay();
                     self.leave_browser();
-                    // A loaded project goes first in Recent and its folder
-                    // becomes current; a new project goes where the current
-                    // folder is.
-                    if let Some(name) = &filename {
-                        self.note_recent_project(folder.as_deref(), name);
-                        self.set_current_project_folder(folder);
+                    // A loaded project is adopted (its folder current, first
+                    // in Recent); a new one is untitled, and goes where the
+                    // current folder is.
+                    match filename {
+                        Some(name) => {
+                            self.adopt_project(folder, name);
+                            if self.browser.visible {
+                                self.reload_browser();
+                            }
+                        }
+                        None => self.project.project_current_name = None,
                     }
-                    self.project.project_current_name = filename;
                     self.render.clip_shapes.clear();
                     self.render.event_shapes.clear();
                     self.render.arranger_scroll_x = 0.;
@@ -210,11 +214,7 @@ impl Display {
                 }
                 UiEvent::UnsavedChanges { action } => self.open_unsaved_prompt(action),
                 UiEvent::QuitApproved => self.quit_approved = true,
-                UiEvent::ProjectSaved { name, folder } => {
-                    self.note_recent_project(folder.as_deref(), &name);
-                    self.project.project_current_name = Some(name);
-                    self.set_current_project_folder(folder);
-                }
+                UiEvent::ProjectSaved { name, folder } => self.adopt_project(folder, name),
                 UiEvent::ProjectFilesChanged => {
                     if self.browser.visible {
                         self.reload_browser();
