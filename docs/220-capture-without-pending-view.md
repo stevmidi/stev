@@ -1,6 +1,6 @@
 # Capture Without the Pending View
 
-**Status: complete (merged 2026-09-26).** The modal `PendingClip` view is gone: the stopped `/` commits a clip as an ordinary undoable edit; into a lead clip it opens a take session that inserts on Enter (`290-framing-a-take.md`, 2026-10-13). `040-phrase-detection.md` holds the detection rules the stopped `/` uses. Adjusting the detected phrase ("Known gap") is solved by `290`. Left open on purpose: the threads this spec scoped out (the metronome, fractional-bar loops, the Enter-while-playing phase glitch). The build history — the changes made to reach this spec, the phased plan, the gap-rule experiment and how the design was found — is in `archive/220-capture-without-pending-view-history.md`.
+**Status: complete (merged 2026-09-26).** The modal `PendingClip` view is gone: the stopped `/` commits a clip as an ordinary undoable edit; into a lead clip it opens a take session that inserts on Enter (`archive/290-framing-a-take.md`, 2026-10-13). `040-phrase-detection.md` holds the detection rules the stopped `/` uses. Adjusting the detected phrase ("Known gap") is solved by `archive/290`. Left open on purpose: the threads this spec scoped out (the metronome, fractional-bar loops, the Enter-while-playing phase glitch). The build history — the changes made to reach this spec, the phased plan, the gap-rule experiment and how the design was found — is in `archive/220-capture-without-pending-view-history.md`.
 
 ## Goal
 
@@ -22,7 +22,7 @@ Keep the valuable part of the retired modal `PendingClip` view, the phrase **det
 | Playing | none | Commit the last pass, cropped (unchanged, `100`). |
 | Playing | yes | Insert the last pass into that clip (`InsertCaptureEdit::from_running_capture`; the window rules of `100` unchanged, undoable since phase 4). |
 | Stopped | none | **Commit a new clip framed by phrase detection** (`CommitClipEdit::from_stopped_capture`). |
-| Stopped | yes | **Open a take session** on the take (`290-framing-a-take.md` § Phase 2): framed like a clip, heard in place; Enter inserts it at the clip cursor (`InsertCaptureEdit::from_insert`), Esc cancels. |
+| Stopped | yes | **Open a take session** on the take (`archive/290-framing-a-take.md` § Phase 2): framed like a clip, heard in place; Enter inserts it at the clip cursor (`InsertCaptureEdit::from_insert`), Esc cancels. |
 
 The stopped commit places the clip at the arranger cursor on the selected track. It keeps the detected window: detected start, and tail at last NoteOff + 2 beats. **The project's first clip keeps that window exactly** and leaves the tempo alone (see "Fitting the tempo"). **Every later clip is rounded to the nearest whole bars**, floored to the room before the next clip. The clip is **not cropped**: the last `CAPTURE_BUFFER_BARS` (8) of the capture stay in it as material outside its window. The event space is rebased so the window starts on a bar line (`Clip::align_window_start_to_bar`), which gives quantize, swing and the clip view the phrase's grid. A commit never changes the event selection and never touches the loop region.
 
@@ -94,7 +94,7 @@ Nothing is done to the transport (principle 2): the playhead, the loop region an
 | Enter | more than one | nothing | nothing |
 | ⌘Z on Enter | one | old length, tempo and note timing back | same; in phase |
 
-The stopped `/` into a lead clip opens a take session (`290`), not an edit; its Enter is one undoable `InsertCaptureEdit` at the clip cursor, playing or stopped; nothing is sent to the transport.
+The stopped `/` into a lead clip opens a take session (`archive/290`), not an edit; its Enter is one undoable `InsertCaptureEdit` at the clip cursor, playing or stopped; nothing is sent to the transport.
 
 Pinned by: `stopped_first_clip_is_exact_and_enter_fits_it`, `stopped_commit_window_is_the_retired_confirms`, `stopped_commit_floors_to_the_bars_before_the_next_clip`, `enter_inserts_the_whole_last_phrase_at_the_clip_cursor`, `enter_is_one_undo_step_back_to_the_clip_before_the_session`, `insert_running_capture_is_undoable`, `stopped_commit_into_the_lead_clip_is_one_undoable_insert` (`/`); `start_marker_moves_only_the_start`, `end_marker_rounds_up_to_whole_bars_and_stops_at_the_next_clip`, `the_end_is_exact_with_one_clip_and_rounds_up_with_more`, the `resize_clip` tests (edges); `enter_fits_the_tempo_to_the_only_clip_and_undoes_with_it`, `nothing_to_fit_on_a_whole_bar_clip_or_with_a_second_clip`, `enter_does_nothing_with_more_than_one_clip` (Enter). The playing column and the loop: `the_only_clip_keeps_the_loop_on_it_and_never_moves_the_playhead` and `with_two_clips_an_edge_edit_sends_nothing_to_the_transport` (handler-level) and `a_start_moved_while_playing_is_heard_at_once` / `a_start_moved_while_playing_releases_and_chases_notes` (drive `Sequencer::tick` across the edit and check the notes emitted).
 
@@ -116,7 +116,7 @@ Settled with the user (2026-09-26):
 
 ## Known gap: adjusting the detected phrase (found 2026-09-26)
 
-**Solved by `290-framing-a-take.md`**: a window band in the clip view (phase 1, built 2026-10-12), and a take session that frames an insert before it lands (phase 2, built 2026-10-13). The gap as found:
+**Solved by `archive/290-framing-a-take.md`**: a window band in the clip view (phase 1, built 2026-10-12), and a take session that frames an insert before it lands (phase 2, built 2026-10-13). The gap as found:
 
 Found by the user after phase 4, on real takes: **a stopped `/` commits detection's best guess, and a take the detection framed too long or too short can't be corrected the way the pending view allowed.** The pending view kept the take open: the user adjusted the phrase's start and end against the whole capture, then confirmed. Now:
 

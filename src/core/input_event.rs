@@ -19,7 +19,7 @@
 //!
 //! A key press that is a command arrives as `Action`, resolved once through
 //! the keymap (`core/keymap.rs`); the keys that are not commands (arrows,
-//! Esc, Enter, Tab) stay `KeyPressed`. See `docs/320-keyboard-shortcuts.md`.
+//! Esc, Enter, Tab) stay `KeyPressed`. See `docs/archive/320-keyboard-shortcuts.md`.
 
 use std::path::PathBuf;
 

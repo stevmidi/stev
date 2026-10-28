@@ -187,7 +187,7 @@ pub(super) struct ClipResizeDrag {
 /// In-progress drag of a handle of the clip view's window band — see
 /// `Display::window_edge_at`, `begin_window_edge_drag` /
 /// `extend_window_edge_drag` / `finish_window_edge_drag`,
-/// `290-framing-a-take.md` § Phase 1. View-local until the release: the band
+/// `archive/290-framing-a-take.md` § Phase 1. View-local until the release: the band
 /// previews the window (`Display::window_drag_preview`) and one edit is sent
 /// when the button comes up.
 #[derive(Debug, Clone, Copy, PartialEq)]

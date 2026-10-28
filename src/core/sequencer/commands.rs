@@ -439,7 +439,7 @@ pub(crate) enum SequencerCommand {
     /// The clip view's window band drag, released: move the lead clip's
     /// window `edge` to `tick`, in event ticks
     /// (`Sequencer::selected_clip_marker_at`), as one `ResizeClipEdit`.
-    /// `290-framing-a-take.md` § Phase 1.
+    /// `archive/290-framing-a-take.md` § Phase 1.
     SetClipWindowEdge {
         /// The edge the band handle moved.
         edge: ClipEdge,

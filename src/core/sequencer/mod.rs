@@ -20,7 +20,7 @@
 //!   phrase detection into a new clip or an insert (`040-phrase-detection.md`,
 //!   `220-capture-without-pending-view.md`).
 //! - `take_framing.rs` — the take session the stopped `/` into a clip opens:
-//!   framing the notes to insert, heard in place (`290-framing-a-take.md`).
+//!   framing the notes to insert, heard in place (`archive/290-framing-a-take.md`).
 //! - `selection.rs` / `view.rs` — clip & event selection, clip-view snapshots.
 //! - `mix.rs` — the not-undoable per-track mixer writers.
 //! - `export.rs` — the MIDI clip export: which clip, and its `.mid` bytes.

@@ -128,7 +128,7 @@ pub(super) struct GestureState {
     pub(super) clip_resize_hover: Option<ClipResizeDrag>,
     /// In-progress drag of a handle of the clip view's window band. `Some`
     /// only while the primary button is held after a press landed on one
-    /// (`window_edge_at`). Clip pane only — `290-framing-a-take.md`.
+    /// (`window_edge_at`). Clip pane only — `archive/290-framing-a-take.md`.
     pub(super) window_edge_drag: Option<WindowEdgeDrag>,
     /// A released window band drag the sequencer hasn't applied yet; the
     /// clip view draws its window meanwhile. Clip pane only.

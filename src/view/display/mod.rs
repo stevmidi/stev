@@ -164,7 +164,7 @@ impl ClipTimeAtomics {
 }
 
 /// An open take session as the view keeps it (`UiEvent::TakeFramingStarted`,
-/// `290-framing-a-take.md`): where the take is heard, and what to put back
+/// `archive/290-framing-a-take.md`): where the take is heard, and what to put back
 /// when it ends.
 struct TakeSessionView {
     /// Where the take's window starts in the arrangement — the insert point,

@@ -199,7 +199,7 @@ impl Display {
     /// edited, so the band would stretch the whole ruler and say nothing.
     /// There the **window band** takes its place: the loop band's shape in
     /// the clip's colour, so it doesn't read as the loop, its edge lines the
-    /// handles `window_edge_at` grabs (`290-framing-a-take.md` § Phase 1),
+    /// handles `window_edge_at` grabs (`archive/290-framing-a-take.md` § Phase 1),
     /// showing a handle drag's preview (`clip_window_for_render`). Modal
     /// states (`Project` etc.) layer over the arranger and keep its band.
     pub(super) fn draw_region(&self, painter: &Painter, rect: Rect) {

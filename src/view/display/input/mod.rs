@@ -143,7 +143,7 @@ impl Display {
         }
 
         // A handle of the clip view's window band: drags that window edge
-        // (`290-framing-a-take.md`).
+        // (`archive/290-framing-a-take.md`).
         if let Some(edge) = self.window_edge_at(x, y) {
             self.begin_window_edge_drag(edge);
             return true;
@@ -264,7 +264,7 @@ impl Display {
         }
 
         // A take session's notes are framed, never edited
-        // (`290-framing-a-take.md`): no velocity or note drag starts, so
+        // (`archive/290-framing-a-take.md`): no velocity or note drag starts, so
         // nothing previews an edit the sequencer would refuse.
         let editable_notes = is_clip_events_view && self.take_session.is_none();
         if modifiers.command

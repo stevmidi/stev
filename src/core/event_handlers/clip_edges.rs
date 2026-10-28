@@ -1,6 +1,6 @@
 //! `EventHandlers` workflows for moving one clip's edges through
 //! `ResizeClipEdit` — the arranger edge drag, the clip view's window band
-//! drag (`290-framing-a-take.md`) and `[`/`]` in both views — and
+//! drag (`archive/290-framing-a-take.md`) and `[`/`]` in both views — and
 //! for fitting the tempo to the project's only clip with Enter
 //! (`220-capture-without-pending-view.md`, `050-undo-redo.md`). An edit never
 //! moves the playhead, and moves the loop region in one case only: while the

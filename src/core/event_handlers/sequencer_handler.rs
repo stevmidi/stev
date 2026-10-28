@@ -794,7 +794,7 @@ mod tests {
     }
 
     /// The stopped `/` with a lead clip under the arranger cursor opens a take
-    /// session rather than editing (`290-framing-a-take.md`), and Enter
+    /// session rather than editing (`archive/290-framing-a-take.md`), and Enter
     /// inserts the played phrase as one undoable edit: the transport is sent
     /// nothing either way, and ⌘Z takes the notes back out.
     #[test]

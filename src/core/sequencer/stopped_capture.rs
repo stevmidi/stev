@@ -4,7 +4,7 @@
 //! take session instead (`take_framing.rs`), which frames the same capture
 //! source. Phrase-token detection — where the last phrase starts — is in
 //! `region/`. See `220-capture-without-pending-view.md`,
-//! `290-framing-a-take.md` and `040-phrase-detection.md`.
+//! `archive/290-framing-a-take.md` and `040-phrase-detection.md`.
 
 use crate::{
     core::{

@@ -133,7 +133,7 @@ impl Sequencer {
 
     /// A start or end marker on the lead clip — `[`/`]` in the clip view at
     /// the clip cursor, and the window band's handles
-    /// (`290-framing-a-take.md`): `edge` of its window to `event_tick`, held
+    /// (`archive/290-framing-a-take.md`): `edge` of its window to `event_tick`, held
     /// inside the clip's [`reach`](Clip::reach) (the cursor already is), by
     /// the clip view's marker rule (`window_with_edge_at`) against the room
     /// before the next clip on the selected track, and kept

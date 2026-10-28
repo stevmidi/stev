@@ -2,7 +2,7 @@
 
 Every note and wheel move played on the armed track goes into the capture
 buffer, whatever the transport is doing; `/` commits from it (`100`, `220`,
-`290`). There is no record mode: live recording on `R` was removed, since
+`archive/290`). There is no record mode: live recording on `R` was removed, since
 capture covers it. Key files: `src/core/midi/input.rs`,
 `src/core/midi/input_tick.rs`, `src/core/sequencer/capture.rs`.
 

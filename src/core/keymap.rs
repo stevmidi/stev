@@ -8,7 +8,7 @@
 //! they stay hand-matched where they are handled. `Display` resolves a
 //! `KeyPressed` through [`Keymap::resolve`] once, after the handlers that take
 //! every key, and the hit travels on as `InputEvent::Action`. See
-//! `docs/320-keyboard-shortcuts.md` and `010-keybindings.md`.
+//! `docs/archive/320-keyboard-shortcuts.md` and `010-keybindings.md`.
 //!
 //! [`ACTIONS`] is the single source: the defaults are built from it, and so
 //! is the settings modal's Keyboard tab. Adding a command is adding a row
@@ -337,7 +337,7 @@ fn is_alt_typed(key: Key) -> bool {
 /// events, so the key never arrives), egui's UI scale, the chords macOS
 /// keeps, the ways into Settings and its Keyboard tab (always reachable),
 /// the fixed project chords, the navigation and dialog keys, which stay
-/// hand-matched (`docs/320-keyboard-shortcuts.md` decision 1), and a
+/// hand-matched (`docs/archive/320-keyboard-shortcuts.md` decision 1), and a
 /// modifier key on its own.
 pub(crate) fn refusal(chord: Chord) -> Option<&'static str> {
     let key = chord.key;

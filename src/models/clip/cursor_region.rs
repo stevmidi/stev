@@ -107,7 +107,7 @@ pub(crate) fn reach_over(
 
 /// The shortest window [`window_with_edge_at`] keeps: a clip's minimum
 /// length (`time::min_clip_length_ticks`, a beat), except for the take of an
-/// open take session (`framing_take`, `290-framing-a-take.md`), whose window
+/// open take session (`framing_take`, `archive/290-framing-a-take.md`), whose window
 /// only picks the notes to insert and never sets a clip's length — a tick, so
 /// a phrase shorter than a beat can be framed by hand as well as by detection
 /// (found 2026-10-27: the start stopped a beat before the end).

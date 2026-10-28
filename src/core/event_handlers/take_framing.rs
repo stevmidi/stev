@@ -1,4 +1,4 @@
-//! `EventHandlers` workflows for the take session (`290-framing-a-take.md`
+//! `EventHandlers` workflows for the take session (`archive/290-framing-a-take.md`
 //! § Phase 2, `sequencer/take_framing.rs`): the stopped `/` into a lead clip
 //! opens it, and while it is open [`take_framing_command`](EventHandlers::take_framing_command)
 //! stands in front of every [`SequencerCommand`]. The session has no keys of
@@ -40,7 +40,7 @@ impl EventHandlers {
         self.send_selected_clip_updated_ui_event(sequencer);
     }
 
-    /// The session's hold on `cmd` (`290` § Session rules). `true` when it
+    /// The session's hold on `cmd` (`archive/290` § Session rules). `true` when it
     /// was handled here — done, or blocked — and the ordinary arm must not
     /// run; `false` with no session open, for the commands that go through,
     /// and for those that end the session first (it is cancelled here).

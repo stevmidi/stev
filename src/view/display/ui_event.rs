@@ -119,7 +119,7 @@ pub(crate) enum UiEvent {
     },
     /// The piano-roll view was closed.
     ClipExited,
-    /// A take session opened (`290-framing-a-take.md`): the clip view shows
+    /// A take session opened (`archive/290-framing-a-take.md`): the clip view shows
     /// the take, `clip_view`, and the panel shows if it was hidden; the
     /// window band snaps to its note starts and the footer names the
     /// session until [`TakeFramingEnded`](Self::TakeFramingEnded).

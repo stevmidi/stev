@@ -18,7 +18,7 @@
 //! in the live [`Keymap`], the fixed keys from [`FIXED`]. Drawing, the
 //! field and the click hit-test share one layout in
 //! `rendering/modals/settings.rs`; the keys are `input/modal.rs`. See
-//! `docs/320-keyboard-shortcuts.md` and `010-keybindings.md` § Keyboard Tab.
+//! `docs/archive/320-keyboard-shortcuts.md` and `010-keybindings.md` § Keyboard Tab.
 
 use egui::Key;
 
@@ -389,7 +389,7 @@ type FixedGroup = (&'static str, &'static [(&'static str, &'static str)]);
 /// project chords and the ways into Settings, the arrow grammar, the
 /// context keys, the clipboard, the mouse, the browser and the piano
 /// layout. Hand-written: these are matched by hand where they are handled
-/// (`docs/320-keyboard-shortcuts.md` decision 1), so a change there updates
+/// (`docs/archive/320-keyboard-shortcuts.md` decision 1), so a change there updates
 /// its row here.
 const FIXED: &[FixedGroup] = &[
     (

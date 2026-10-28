@@ -1,4 +1,4 @@
-//! The take session (`290-framing-a-take.md` § Phase 2): the stopped `/` with
+//! The take session (`archive/290-framing-a-take.md` § Phase 2): the stopped `/` with
 //! a lead clip opens the take as its own clip, off the arrangement, and the
 //! user frames the notes to insert before they land. While it is open
 //! [`selected_clip`](Sequencer::selected_clip) is the take, so the clip view
