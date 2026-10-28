@@ -831,12 +831,29 @@ impl Action {
         &ACTIONS[self.index()]
     }
 
-    /// Whether this action acts on a pane — scoped to the arranger or the
-    /// clip view rather than global. Pressed while the browser has the
-    /// keyboard, it takes the keyboard to the pane, so the key after it
-    /// acts on what it changed (`Display::handle_browser_key`).
+    /// Whether this action acts on a pane. Pressed while the browser has the
+    /// keyboard, it takes the keyboard to the pane, so the key after it acts
+    /// on what it changed (`Display::handle_browser_key`) — the Enter after
+    /// `/` fits the take's tempo rather than reopening the selected row.
+    /// Every action does but a short list that leaves the project's content
+    /// alone: the transport, the tempo tap, the metronome, the computer
+    /// keyboard and the browser's own commands. Not the scope: a global
+    /// action (`/`, ⌘Z, the zoom) still acts on a pane, and a new one takes
+    /// the keyboard unless it is added here.
     pub(crate) fn acts_on_pane(self) -> bool {
-        self.info().scope != Scope::Global
+        !matches!(
+            self,
+            Action::TogglePlayback
+                | Action::PlayFromCursor
+                | Action::Stop
+                | Action::TapTempo
+                | Action::ToggleMetronome
+                | Action::ToggleComputerKeyboard
+                | Action::ShowProjects
+                | Action::ToggleBrowser
+                | Action::NewProjectFolder
+                | Action::SaveAsTemplate
+        )
     }
 
     /// This action's index in [`ACTIONS`].
@@ -1246,16 +1263,34 @@ mod tests {
     }
 
     /// ⌘A in the browser selected every clip but left the keyboard there,
-    /// so the Delete after it armed a file delete: select-all acts on a
-    /// pane and takes the keyboard there; the transport stays global, so
-    /// Space previews a project without leaving the browser.
+    /// so the Delete after it armed a file delete; `/` left it there too
+    /// (Commit is global), so the Enter meant for the tempo fit reopened the
+    /// selected template over the take. Whatever acts on a pane takes the
+    /// keyboard there, global or not; the transport and the browser's own
+    /// commands leave it in the browser.
     #[test]
-    fn select_all_acts_on_a_pane_and_playback_does_not() {
-        assert!(Action::SelectAllClips.acts_on_pane());
-        assert!(Action::SelectAllNotes.acts_on_pane());
-        assert!(Action::DeleteSelection.acts_on_pane());
-        assert!(!Action::TogglePlayback.acts_on_pane());
-        assert!(!Action::ShowProjects.acts_on_pane());
+    fn actions_that_edit_act_on_a_pane_and_the_transport_does_not() {
+        for action in [
+            Action::SelectAllClips,
+            Action::SelectAllNotes,
+            Action::DeleteSelection,
+            Action::Commit,
+            Action::ClipStartToCursor,
+            Action::ClipEndToCursor,
+            Action::Undo,
+            Action::ZoomIn,
+        ] {
+            assert!(action.acts_on_pane(), "{action:?}");
+        }
+        for action in [
+            Action::TogglePlayback,
+            Action::Stop,
+            Action::TapTempo,
+            Action::ShowProjects,
+            Action::SaveAsTemplate,
+        ] {
+            assert!(!action.acts_on_pane(), "{action:?}");
+        }
     }
 
     /// The defaults never put a scoped and a global action on one chord, so

@@ -180,8 +180,11 @@ impl Display {
                     #[cfg(not(target_os = "macos"))]
                     let _ = instruments;
                     // A new or loaded project is a fresh start: it lands in
-                    // the arranger with no modal overlay up.
+                    // the arranger with no modal overlay up, and with the
+                    // keyboard — opened from the browser, the next key is
+                    // meant for the project (⌘O goes back for the next).
                     self.close_overlay();
+                    self.leave_browser();
                     // A loaded project's folder becomes current; a new
                     // project goes where the current folder is.
                     if filename.is_some() {

@@ -1051,10 +1051,16 @@ impl Display {
     /// and disarming a pending delete.
     fn hide_browser(&mut self) {
         self.browser.visible = false;
-        if self.key_focus == KeyFocus::Browser {
-            self.key_focus = KeyFocus::Pane;
-        }
+        self.leave_browser();
+    }
+
+    /// Gives the keyboard to the focused pane, disarming a pending delete:
+    /// one left behind must not fire on a later Enter, once ⌘O brings the
+    /// keyboard back. Every way out of the panel's keyboard goes through
+    /// here.
+    pub(super) fn leave_browser(&mut self) {
         self.browser.tree.delete_armed = None;
+        self.key_focus = KeyFocus::Pane;
     }
 
     /// Keeps the selected row on screen after a keyboard move.
@@ -1158,9 +1164,7 @@ impl Display {
             return true;
         }
         if is_pane_focus_key(*key, *modifiers) {
-            // A delete armed and left behind must not fire on a later Enter.
-            self.browser.tree.delete_armed = None;
-            self.key_focus = KeyFocus::Pane;
+            self.leave_browser();
             return true;
         }
         let tree = &mut self.browser.tree;
@@ -1182,21 +1186,21 @@ impl Display {
                 if midi.is_some() || plugin.is_some() {
                     self.browser.press = None;
                 } else if tree.delete_armed.take().is_none() {
-                    self.key_focus = KeyFocus::Pane;
+                    self.leave_browser();
                 }
             }
-            // Any other key goes on to the pane. One that runs a pane's
-            // command (`⌘A`, `⌘D`, ...) takes the keyboard there first, so
-            // a Delete after it acts on what it changed, not on the browser
-            // row; a global one (Space, `⌘O`) leaves it here.
+            // Any other key goes on to the pane. One that acts on a pane
+            // (`⌘A`, `/`, ⌘Z, ...: `Action::acts_on_pane`) takes the
+            // keyboard there first, so the Delete or Enter after it acts on
+            // what it changed, not on the browser row; the transport and the
+            // browser's own commands (Space, `⌘O`) leave it here.
             _ => {
                 if self
                     .keymap
                     .resolve_press(*key, *modifiers, self.focused_pane())
                     .is_some_and(Action::acts_on_pane)
                 {
-                    self.browser.tree.delete_armed = None;
-                    self.key_focus = KeyFocus::Pane;
+                    self.leave_browser();
                 }
                 return false;
             }

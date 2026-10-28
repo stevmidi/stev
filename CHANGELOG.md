@@ -35,6 +35,10 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ### Changed
 
+- Opening a project or template from the browser gives the keyboard to the
+  arranger (⌘O goes back to the browser), and `/`, `[`, `]`, ⌘Z and the zoom
+  keys pressed in the browser take the keyboard too. An Enter meant for the
+  tempo fit after a capture no longer reopens the selected template.
 - Deleting a project or clip in the browser moves it to the Trash on macOS,
   as deleting a folder already did, so it can be restored from Finder.
 - New tracks start with the volume at −12 dB instead of 0 dB, in a new

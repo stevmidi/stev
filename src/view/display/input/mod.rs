@@ -858,7 +858,7 @@ impl Display {
                     return true;
                 }
                 if self.key_focus == KeyFocus::Browser {
-                    self.key_focus = KeyFocus::Pane;
+                    self.leave_browser();
                 }
                 // The header's `?` chip opens Settings on the Keyboard tab;
                 // a press outside the panel while it is up closes it again.
