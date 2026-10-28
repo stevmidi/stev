@@ -71,6 +71,12 @@ pub(super) enum EditorLevel {
     Behind,
 }
 
+/// Whether Stev is hidden (⌘H): its windows are all off screen then, though
+/// none of them was closed.
+fn app_hidden(mtm: MainThreadMarker) -> bool {
+    NSApplication::sharedApplication(mtm).isHidden()
+}
+
 /// The level for an editor window — `shown` (a hidden CLAP editor never
 /// floats), and `yield_to_main` while the main window shows a dialog.
 /// Floating needs Stev to be the frontmost (active) application; `false`
@@ -267,9 +273,13 @@ impl PluginWindow {
     /// should be torn down: the title-bar close button was clicked — the
     /// window is then still on screen, and the caller tears the plugin's GUI
     /// down before dropping this, which closes it (see [`CloseInterceptor`])
-    /// — or the window left the screen by some other route.
+    /// — or the window left the screen by some other route. Hiding Stev (⌘H)
+    /// takes every window off screen too, so while the app is hidden only the
+    /// close button counts: `logic` keeps running then, and would otherwise
+    /// destroy every open editor behind the user's back.
     pub(super) fn take_closed(&self) -> bool {
-        self.close_interceptor.ivars().replace(false) || !self.is_visible()
+        self.close_interceptor.ivars().replace(false)
+            || (!self.is_visible() && !app_hidden(self.window.mtm()))
     }
 }
 

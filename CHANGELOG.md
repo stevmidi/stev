@@ -20,6 +20,12 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ## [Unreleased]
 
+### Fixed
+
+- Hiding Stev (⌘H) no longer closes the open plugin editors. Every editor
+  was destroyed while the app was hidden, so none came back with it, and a
+  plugin that minds its GUI being torn down off screen could crash Stev.
+
 ## [0.8.1] - 2026-10-27
 
 ### Changed
