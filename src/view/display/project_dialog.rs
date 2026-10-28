@@ -125,6 +125,30 @@ pub(super) enum SaveAsFocus {
 }
 
 impl SaveAs {
+    /// A Save As with `field`, saving into `folders[folder_idx]` and then
+    /// asking for `then` — or, as Save as template (`template`), into the
+    /// templates folder, `folders` unused. The name has the keyboard.
+    fn new(
+        field: TextField,
+        folders: Vec<Option<String>>,
+        folder_idx: usize,
+        then: Option<ProjectAction>,
+        template: bool,
+    ) -> Self {
+        SaveAs {
+            field,
+            folders,
+            folder_idx,
+            list: None,
+            list_scroll: 0,
+            list_wheel: 0.0,
+            folder_field: None,
+            focus: SaveAsFocus::Name,
+            then,
+            template,
+        }
+    }
+
     /// The Tab stops, in order: the name, the dropdown and the `+` — or,
     /// while the new folder's field is open, the name and that field. Save
     /// as template has the name alone.
@@ -620,18 +644,8 @@ impl Display {
     /// Opens Save as template (⌘/Ctrl+⌥+S, the TEMPLATES row's `+`) with
     /// the open project's name selected.
     pub(super) fn open_save_template(&mut self) {
-        self.project_dialog = Some(ProjectDialog::SaveAs(SaveAs {
-            field: self.save_as_name(),
-            folders: vec![None],
-            folder_idx: 0,
-            list: None,
-            list_scroll: 0,
-            list_wheel: 0.0,
-            folder_field: None,
-            focus: SaveAsFocus::Name,
-            then: None,
-            template: true,
-        }));
+        let save_as = SaveAs::new(self.save_as_name(), vec![None], 0, None, true);
+        self.project_dialog = Some(ProjectDialog::SaveAs(save_as));
     }
 
     /// Opens Save As with the open project's name — or [`UNTITLED`] for one
@@ -653,18 +667,8 @@ impl Display {
                 folders.push(default);
                 folders.len() - 1
             });
-        self.project_dialog = Some(ProjectDialog::SaveAs(SaveAs {
-            field: self.save_as_name(),
-            folders,
-            folder_idx,
-            list: None,
-            list_scroll: 0,
-            list_wheel: 0.0,
-            folder_field: None,
-            focus: SaveAsFocus::Name,
-            then,
-            template: false,
-        }));
+        let save_as = SaveAs::new(self.save_as_name(), folders, folder_idx, then, false);
+        self.project_dialog = Some(ProjectDialog::SaveAs(save_as));
     }
 
     /// Opens the unsaved-changes prompt before `action` — unless a dialog is
@@ -878,18 +882,8 @@ mod tests {
 
     /// A Save As over the root and folders `a`, `b`, `c`, starting at `idx`.
     fn save_as(idx: usize) -> SaveAs {
-        SaveAs {
-            field: TextField::new(String::new()),
-            folders: vec![None, Some("a".into()), Some("b".into()), Some("c".into())],
-            folder_idx: idx,
-            list: None,
-            list_scroll: 0,
-            list_wheel: 0.0,
-            folder_field: None,
-            focus: SaveAsFocus::Name,
-            then: None,
-            template: false,
-        }
+        let folders = vec![None, Some("a".into()), Some("b".into()), Some("c".into())];
+        SaveAs::new(TextField::new(String::new()), folders, idx, None, false)
     }
 
     /// A Save As over the root and `len - 1` folders, starting at `idx`.

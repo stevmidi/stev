@@ -27,10 +27,9 @@ pub(super) enum HoveredControl {
     KeyboardChip,
     /// The footer's panel toggle.
     BrowserToggle,
-    /// The browser's new-folder `+`, on the Projects row.
-    NewFolder,
-    /// The browser's save-as-template `+`, on the Templates row.
-    SaveTemplate,
+    /// A browser category row's `+`, which runs this command
+    /// (`BrowserCategory::plus_action`).
+    CategoryPlus(Action),
 }
 
 impl HoveredControl {
@@ -47,8 +46,7 @@ impl HoveredControl {
             }
             HoveredControl::KeyboardChip => Action::ToggleComputerKeyboard,
             HoveredControl::BrowserToggle => Action::ToggleBrowser,
-            HoveredControl::NewFolder => Action::NewProjectFolder,
-            HoveredControl::SaveTemplate => Action::SaveAsTemplate,
+            HoveredControl::CategoryPlus(action) => action,
         };
         command_hint(action.info().label, keymap.chords(action))
     }
@@ -70,10 +68,8 @@ impl Display {
             Some(HoveredControl::BrowserToggle)
         } else {
             self.browser_category_plus_under_pointer()
-                .map(|category| match category {
-                    BrowserCategory::Templates => HoveredControl::SaveTemplate,
-                    _ => HoveredControl::NewFolder,
-                })
+                .and_then(BrowserCategory::plus_action)
+                .map(HoveredControl::CategoryPlus)
         }
     }
 
@@ -100,7 +96,7 @@ mod tests {
 
     use super::{HoveredControl, command_hint, hint_text};
     use crate::core::input_event::KeyModifiers;
-    use crate::core::keymap::{Chord, Keymap};
+    use crate::core::keymap::{Action, Chord, Keymap};
     use crate::view::display::output_menu::OutputMenuHit;
 
     #[test]
@@ -134,7 +130,11 @@ mod tests {
             HoveredControl::HelpChip.hint(&keymap).as_deref(),
             Some("Keyboard shortcuts — ?")
         );
-        assert!(HoveredControl::NewFolder.hint(&keymap).is_some());
+        assert!(
+            HoveredControl::CategoryPlus(Action::NewProjectFolder)
+                .hint(&keymap)
+                .is_some()
+        );
         assert!(
             HoveredControl::OutputMenu(OutputMenuHit::Rename)
                 .hint(&keymap)

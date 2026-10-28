@@ -187,10 +187,16 @@ pub(super) enum BrowserCategory {
 }
 
 impl BrowserCategory {
-    /// Whether the hovered row shows a `+` at its right end: Projects' makes
-    /// a new folder, Templates' saves the open project as a template.
-    pub(super) fn has_plus(self) -> bool {
-        matches!(self, BrowserCategory::Projects | BrowserCategory::Templates)
+    /// The command the `+` at the hovered row's right end runs, for a row
+    /// that has one: Projects' makes a new folder, Templates' saves the open
+    /// project as a template. The one place a `+` is given its work — the
+    /// press and the footer hint both read it.
+    pub(super) fn plus_action(self) -> Option<Action> {
+        match self {
+            BrowserCategory::Projects => Some(Action::NewProjectFolder),
+            BrowserCategory::Templates => Some(Action::SaveAsTemplate),
+            BrowserCategory::Clips | BrowserCategory::Plugins => None,
+        }
     }
 
     /// The category row's label.
@@ -1109,7 +1115,7 @@ impl Display {
             .get(browser_row_at(y, self.browser.scroll)?)?
             .item
         {
-            BrowserItem::Category(category) if category.has_plus() => category,
+            BrowserItem::Category(category) if category.plus_action().is_some() => category,
             _ => return None,
         };
         self.browser_category_plus(category)
@@ -1122,13 +1128,12 @@ impl Display {
     }
 
     /// The category whose row's `+` the pointer is on — the button shows
-    /// while its row is hovered only, its wash and pointing hand then.
+    /// while its row is hovered only (that row is the one under the pointer),
+    /// its wash and pointing hand then.
     pub(super) fn browser_category_plus_under_pointer(&self) -> Option<BrowserCategory> {
+        self.hovered_browser_row()?;
         let pointer = self.canvas_pointer()?;
-        let category = self.browser_category_plus_at(pointer.x, pointer.y)?;
-        let row = self.browser.tree.index_of(&BrowserItem::Category(category));
-        (self.hovered_browser_row().is_some() && self.hovered_browser_row() == row)
-            .then_some(category)
+        self.browser_category_plus_at(pointer.x, pointer.y)
     }
 
     /// Scrolls the list by a wheel / two-finger delta (points, positive =
@@ -1211,13 +1216,13 @@ impl Display {
     /// toggles a folder or category and acts like Enter on anything else.
     pub(super) fn handle_browser_click(&mut self, x: f32, y: f32, double: bool) {
         self.key_focus = KeyFocus::Browser;
-        // A category row's `+` does its work, selecting nothing.
+        // A category row's `+` runs its command, selecting nothing.
         if let Some(category) = self.browser_category_plus_at(x, y) {
-            if !double {
-                match category {
-                    BrowserCategory::Templates => self.open_save_template(),
-                    _ => self.open_new_folder_field(),
-                }
+            match category.plus_action() {
+                _ if double => {}
+                Some(Action::NewProjectFolder) => self.open_new_folder_field(),
+                Some(Action::SaveAsTemplate) => self.open_save_template(),
+                _ => {}
             }
             return;
         }

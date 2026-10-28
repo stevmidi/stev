@@ -12,6 +12,7 @@ use egui::{
 
 use crate::core::config::PROJECT_NAME_MAX_CHARS;
 use crate::core::keymap::Action;
+use crate::core::paths::TEMPLATES_DIR_NAME;
 use crate::core::project::{project_exists, project_name_from_input, template_exists};
 use crate::view::display::keyboard_tab::chords_label;
 use crate::view::display::project_dialog::{
@@ -319,15 +320,14 @@ impl Display {
         let note = match project_name_from_input(&save_as.field.text) {
             _ if save_as.folder_refused() => "Not a valid folder name".to_owned(),
             None => "Not a valid file name".to_owned(),
-            Some(name) if save_as.template => {
-                if template_exists(&name) {
-                    format!("Replaces the template {name}")
-                } else {
-                    String::new()
-                }
+            Some(name) if save_as.template && template_exists(&name) => {
+                format!("Replaces the template {name}")
             }
             Some(name)
-                if !typing_folder && !is_open_project(&name) && project_exists(folder, &name) =>
+                if !save_as.template
+                    && !typing_folder
+                    && !is_open_project(&name)
+                    && project_exists(folder, &name) =>
             {
                 format!("Replaces the existing {name}")
             }
@@ -353,25 +353,21 @@ impl Display {
             painter.text(
                 layout.folder_box.left_center(),
                 Align2::LEFT_CENTER,
-                "Templates",
+                TEMPLATES_DIR_NAME,
                 FontId::proportional(Self::FONT_LIST),
                 theme::fg_dim(),
             );
-            painter.text(
-                layout.note.right_center(),
-                Align2::RIGHT_CENTER,
-                "Enter save template · Esc cancel",
-                hint_font,
-                theme::fg_dim(),
-            );
-            return;
+        } else {
+            if !typing_folder {
+                Self::draw_folder_dropdown(painter, layout.folder_box, save_as, hover);
+            }
+            Self::draw_save_as_plus(painter, layout.new_folder, save_as, hover);
         }
-        if !typing_folder {
-            Self::draw_folder_dropdown(painter, layout.folder_box, save_as, hover);
-        }
-        Self::draw_save_as_plus(painter, layout.new_folder, save_as, hover);
-        let on_plus = !typing_folder && hover.is_some_and(|p| layout.new_folder.contains(p));
+        let on_plus = !save_as.template
+            && !typing_folder
+            && hover.is_some_and(|p| layout.new_folder.contains(p));
         let focus_keys = match save_as.focus {
+            _ if save_as.template => "Enter save template · Esc cancel",
             SaveAsFocus::Folder => "Enter choose · Esc back",
             SaveAsFocus::Dropdown if save_as.list_highlight().is_some() => {
                 "Enter choose · Esc close"

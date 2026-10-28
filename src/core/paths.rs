@@ -20,7 +20,7 @@ const PROJECTS_DIR_NAME: &str = "Projects";
 const EXPORTS_DIR_NAME: &str = "Exports";
 
 /// Name of the project templates' folder inside the library.
-const TEMPLATES_DIR_NAME: &str = "Templates";
+pub(crate) const TEMPLATES_DIR_NAME: &str = "Templates";
 
 /// File name of the app settings.
 pub(crate) const SETTINGS_FILE_NAME: &str = "settings.json";

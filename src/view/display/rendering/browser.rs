@@ -496,7 +496,7 @@ impl Display {
                 color,
             );
             if let BrowserItem::Category(category) = row.item
-                && category.has_plus()
+                && category.plus_action().is_some()
                 && hovered == Some(i)
             {
                 self.draw_category_plus(&painter, category);
