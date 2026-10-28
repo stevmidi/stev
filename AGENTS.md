@@ -27,7 +27,7 @@ These guidelines are split into focused topic files. All of them live in [`docs/
 | 050 | [050-undo-redo.md](docs/050-undo-redo.md) | Undo architecture, EditResult, SequencerEdit, adding operations, invariants |
 | 060 | [060-persistence.md](docs/060-persistence.md) | Project save/load, DTOs, new-project flows, tempo defaults |
 | 070 | [070-quantization.md](docs/070-quantization.md) | Batch grid voting, strength ramp, swing detection, backward compat |
-| 080 | [080-conventions.md](docs/080-conventions.md) | Coding conventions, naming, enums, imports, clippy, documentation, licensing (dependency / asset compatibility), agentic editing (incl. verifying macOS-only code from Linux) |
+| 080 | [080-conventions.md](docs/080-conventions.md) | Coding conventions, naming, enums, imports, clippy, documentation, licensing (dependency / asset compatibility), design docs and their GitHub issues (opening one after a design is agreed, closing it from the finishing commit), agentic editing (incl. verifying macOS-only code from Linux) |
 | 090 | [090-recording-midi-input.md](docs/090-recording-midi-input.md) | What the capture buffer records (notes, pitch bend, mod wheel; not sustain), the `clock_tick` stamp and its sub-tick correction; live recording (`R`) was removed |
 | 100 | [100-running-capture.md](docs/100-running-capture.md) | Running capture window calculation invariants and regression guidance |
 | 110 | [110-performance-lane.md](docs/110-performance-lane.md) | Arranger performance lane: live-only bar-jump triggering, arming, MIDI routing, cross-thread UI wake |

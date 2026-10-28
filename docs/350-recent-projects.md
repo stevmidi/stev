@@ -1,6 +1,6 @@
 # Recent Projects
 
-**Status: design agreed 2026-10-28, not started.** A RECENT category at the top of the browser lists the five projects saved most recently, from every project folder and the projects root, so the project you are working on is one ⌘O ↓ Enter away wherever it lives. The list is worked out from the files on disk every time the tree is read. Nothing is stored. Read the browser's part of `020` § Views, `030` § Browser Panel and `060`'s on-disk layout first.
+**Status: design agreed 2026-10-28, not started. Issue: #1.** A RECENT category at the top of the browser lists the five projects saved most recently, from every project folder and the projects root, so the project you are working on is one ⌘O ↓ Enter away wherever it lives. The list is worked out from the files on disk every time the tree is read. Nothing is stored. Read the browser's part of `020` § Views, `030` § Browser Panel and `060`'s on-disk layout first.
 
 ## Decisions (2026-10-28)
 
