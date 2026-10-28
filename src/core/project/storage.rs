@@ -305,6 +305,12 @@ pub(crate) fn delete_clip(name: &str) -> io::Result<()> {
     delete_file(&clip_path(name))
 }
 
+/// Deletes the template `name` (its stem) from the templates folder — to the
+/// Trash on macOS ([`delete_file`]).
+pub(crate) fn delete_template(name: &str) -> io::Result<()> {
+    delete_file(&template_path(name))
+}
+
 /// Moves the file at `path` to the Trash.
 #[cfg(target_os = "macos")]
 fn delete_file(path: &Path) -> io::Result<()> {
@@ -338,6 +344,12 @@ pub(crate) fn rename_project(folder: Option<&str>, old: &str, new: &str) -> io::
 /// to replace another file ([`rename_no_replace`]).
 pub(crate) fn rename_clip(old: &str, new: &str) -> io::Result<()> {
     rename_no_replace(&clip_path(old), &clip_path(new))
+}
+
+/// Renames the template `old` (its stem) to `new` in the templates folder,
+/// refusing to replace another file ([`rename_no_replace`]).
+pub(crate) fn rename_template(old: &str, new: &str) -> io::Result<()> {
+    rename_no_replace(&template_path(old), &template_path(new))
 }
 
 /// Makes the project folder `name` under the projects root (and the root

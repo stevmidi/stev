@@ -23,6 +23,8 @@ Breaking entries are marked **Breaking** and say what to do about them.
 ### Added
 
 - Clips can be deleted in the browser: Backspace on a clip, then Enter.
+- Templates can be renamed (⌘R) and deleted (Backspace, then Enter) in the
+  browser, as projects are. A deleted template goes to the Trash.
 - Project templates: the browser's new TEMPLATES category lists the `.stev`
   files in `~/Documents/Stev/Templates/`, and Enter or a double-click opens
   one as a new, untitled project with no clips, as does double-clicking one in

@@ -3,7 +3,8 @@
 //! folders under `paths::project_dir()`, each expandable to its `.stev`
 //! files, then the loose projects at the projects root. **Templates** lists
 //! the `.stev` files in `paths::templates_dir()`: Enter opens one as a new,
-//! untitled project (`340-templates.md`). **Clips** lists the
+//! untitled project (`340-templates.md`); ⌘R renames one and Delete moves it
+//! to the Trash, as for a project. **Clips** lists the
 //! `.mid` files in the `Clips` folder, where a clip export lands: Enter or a
 //! drag imports one. **Plugins** (macOS only, where the plugin host runs)
 //! lists every installed instrument plugin: Enter puts the selected one on
@@ -32,8 +33,9 @@ use crate::core::{
     input_event::is_pane_focus_key,
     keymap::Action,
     project::{
-        ProjectAction, clip_path, delete_clip, delete_project, delete_project_folder, list_clips,
-        list_project_folders, list_projects, list_templates, template_path,
+        ProjectAction, clip_path, delete_clip, delete_project, delete_project_folder,
+        delete_template, list_clips, list_project_folders, list_projects, list_templates,
+        template_path,
     },
     settings::update_settings,
 };
@@ -137,9 +139,9 @@ pub(super) fn category_plus_rect(row: Rect) -> Rect {
     )
 }
 
-/// The footer's word for the project, clip or folder `name` deleted: moved to
-/// the Trash on macOS; elsewhere a file is removed for good and a folder only
-/// when empty (`delete_project_folder`).
+/// The footer's word for the project, template, clip or folder `name`
+/// deleted: moved to the Trash on macOS; elsewhere a file is removed for good
+/// and a folder only when empty (`delete_project_folder`).
 fn deleted_message(name: &str) -> String {
     if cfg!(target_os = "macos") {
         format!("Moved {name} to the Trash")
@@ -259,7 +261,8 @@ pub(super) enum BrowserItem {
         name: String,
     },
     /// A `.stev` in the templates folder, by its file stem. Enter opens it
-    /// as a new, untitled project.
+    /// as a new, untitled project; ⌘R renames it and Delete deletes it, as a
+    /// project's.
     Template(String),
     /// A `.mid` in the `Clips` folder, by its file stem. Enter imports it on
     /// the selected track at the cursor; dragged out of the panel, it imports
@@ -300,26 +303,28 @@ impl BrowserItem {
         }
     }
 
-    /// A project's, clip's or folder's name (a file's stem) — the rows ⌘R
-    /// renames; `None` for anything else.
+    /// A project's, template's, clip's or folder's name (a file's stem) —
+    /// the rows ⌘R renames; `None` for anything else.
     pub(super) fn renamable_name(&self) -> Option<&str> {
         match self {
             BrowserItem::Project { name, .. }
+            | BrowserItem::Template(name)
             | BrowserItem::Clip(name)
             | BrowserItem::Folder(name) => Some(name),
             _ => None,
         }
     }
 
-    /// The same project, clip or folder under `new_name` — what a rename
-    /// leaves behind — or the folder the new folder's row made; `None` for a
-    /// row ⌘R doesn't rename.
+    /// The same project, template, clip or folder under `new_name` — what a
+    /// rename leaves behind — or the folder the new folder's row made; `None`
+    /// for a row ⌘R doesn't rename.
     pub(super) fn renamed(&self, new_name: String) -> Option<BrowserItem> {
         if *self == BrowserItem::NewFolder {
             return Some(BrowserItem::Folder(new_name));
         }
         let mut item = self.clone();
         let (BrowserItem::Project { name, .. }
+        | BrowserItem::Template(name)
         | BrowserItem::Clip(name)
         | BrowserItem::Folder(name)) = &mut item
         else {
@@ -366,6 +371,8 @@ pub(super) enum BrowserAction {
     /// Delete this project folder, with its projects (the confirmed second
     /// Enter).
     DeleteFolder(String),
+    /// Delete this template, by its file stem (the confirmed second Enter).
+    DeleteTemplate(String),
     /// Delete this clip, by its file stem (the confirmed second Enter).
     DeleteClip(String),
 }
@@ -416,10 +423,10 @@ pub(super) struct BrowserTree {
     rows: Vec<BrowserRow>,
     /// The selected item, `None` until something is selected.
     selected: Option<BrowserItem>,
-    /// When the selected project, clip or folder was armed to be deleted, while
-    /// it awaits its confirm (the second Enter): the footer shows the newer
-    /// of its question and a passing message. Any selection change disarms
-    /// it.
+    /// When the selected project, template, clip or folder was armed to be
+    /// deleted, while it awaits its confirm (the second Enter): the footer
+    /// shows the newer of its question and a passing message. Any selection
+    /// change disarms it.
     pub(super) delete_armed: Option<Instant>,
     /// Whether the [`NewFolder`](BrowserItem::NewFolder) row is listed: while
     /// its name field is open. Set and cleared with the field only
@@ -653,7 +660,9 @@ impl BrowserTree {
     pub(super) fn delete_prompt(&self) -> Option<String> {
         self.delete_armed?;
         let what = match self.selected.as_ref()? {
-            BrowserItem::Project { name, .. } | BrowserItem::Clip(name) => name.clone(),
+            BrowserItem::Project { name, .. }
+            | BrowserItem::Template(name)
+            | BrowserItem::Clip(name) => name.clone(),
             BrowserItem::Folder(name) => {
                 let count = self.disk.folder_projects(name).map_or(0, <[_]>::len);
                 match count {
@@ -748,9 +757,10 @@ impl BrowserTree {
         }
     }
 
-    /// Enter: confirms a pending delete (a project, clip or folder); else opens the selected project
-    /// or template, expands/collapses the selected folder or category, imports the
-    /// selected clip or puts the selected plugin on the selected track.
+    /// Enter: confirms a pending delete (a project, template, clip or
+    /// folder); else opens the selected project or template, expands/collapses
+    /// the selected folder or category, imports the selected clip or puts the
+    /// selected plugin on the selected track.
     /// A folder is never made current here: Save As picks where a project
     /// goes, defaulting to the selection (`save_folder_default`).
     pub(super) fn activate(&mut self) -> Option<BrowserAction> {
@@ -761,6 +771,7 @@ impl BrowserTree {
                 Some(BrowserAction::DeleteProject { folder, name })
             }
             BrowserItem::Folder(name) if armed => Some(BrowserAction::DeleteFolder(name)),
+            BrowserItem::Template(name) if armed => Some(BrowserAction::DeleteTemplate(name)),
             BrowserItem::Clip(name) if armed => Some(BrowserAction::DeleteClip(name)),
             BrowserItem::Category(_) | BrowserItem::Folder(_) => {
                 self.toggle(&item);
@@ -776,12 +787,17 @@ impl BrowserTree {
         }
     }
 
-    /// Delete/Backspace: arms the delete confirm on a selected project, clip
-    /// or folder.
+    /// Delete/Backspace: arms the delete confirm on a selected project,
+    /// template, clip or folder.
     pub(super) fn arm_delete(&mut self) {
         self.delete_armed = matches!(
             self.selected,
-            Some(BrowserItem::Project { .. } | BrowserItem::Clip(_) | BrowserItem::Folder(_))
+            Some(
+                BrowserItem::Project { .. }
+                    | BrowserItem::Template(_)
+                    | BrowserItem::Clip(_)
+                    | BrowserItem::Folder(_)
+            )
         )
         .then(Instant::now);
     }
@@ -836,8 +852,8 @@ pub(super) struct BrowserPanel {
     /// becomes the import drag (`GestureState::midi_drag`) or the plugin
     /// drag (`GestureState::plugin_drag`).
     pub(super) press: Option<BrowserPress>,
-    /// The open rename field (⌘R on a project or clip row), see
-    /// `browser_rename.rs`.
+    /// The open rename field (⌘R on a project, template, clip or folder
+    /// row), see `browser_rename.rs`.
     pub(super) rename: Option<BrowserRename>,
 }
 
@@ -1153,8 +1169,9 @@ impl Display {
         let InputEvent::KeyPressed { key, modifiers } = event else {
             return false;
         };
-        // ⌘/Ctrl+R — rename the selected project, `.mid` or folder, as it
-        // renames the selected track over the lanes. Exact chord.
+        // ⌘/Ctrl+R — rename the selected project, template, `.mid` or
+        // folder, as it renames the selected track over the lanes. Exact
+        // chord.
         if *key == Key::R && modifiers.command && !modifiers.shift && !modifiers.alt {
             self.open_browser_rename();
             return true;
@@ -1296,6 +1313,13 @@ impl Display {
             }
             BrowserAction::DeleteProject { folder, name } => {
                 let message = match delete_project(folder.as_deref(), &name) {
+                    Ok(()) => deleted_message(&name),
+                    Err(e) => format!("Could not delete {name}: {e}"),
+                };
+                self.finish_browser_delete(message);
+            }
+            BrowserAction::DeleteTemplate(name) => {
+                let message = match delete_template(&name) {
                     Ok(()) => deleted_message(&name),
                     Err(e) => format!("Could not delete {name}: {e}"),
                 };
@@ -1643,19 +1667,26 @@ mod tests {
     }
 
     /// Enter on a template opens it — as a new project, which the caller
-    /// asks for — and a template is neither renamed nor deleted here; Left
-    /// steps out to its category.
+    /// asks for — a second Enter after Delete deletes it, and Left steps out
+    /// to its category.
     #[test]
-    fn enter_opens_a_template_and_left_steps_out_to_its_category() {
+    fn enter_opens_a_template_a_second_enter_deletes_it_and_left_steps_out() {
         let mut tree = tree();
         tree.select(template("Band"));
         assert_eq!(
             tree.activate(),
             Some(BrowserAction::OpenTemplate("Band".to_owned()))
         );
-        assert_eq!(template("Band").renamable_name(), None);
         tree.arm_delete();
-        assert!(tree.delete_armed.is_none());
+        assert_eq!(
+            tree.delete_prompt().as_deref(),
+            Some("Delete Band? Enter deletes, Esc cancels")
+        );
+        assert_eq!(
+            tree.activate(),
+            Some(BrowserAction::DeleteTemplate("Band".into()))
+        );
+        assert!(tree.delete_armed.is_none(), "the delete disarms itself");
         tree.collapse();
         assert_eq!(tree.selected(), Some(&templates()));
         tree.collapse();
@@ -1883,7 +1914,12 @@ mod tests {
     }
 
     #[test]
-    fn only_projects_clips_and_folders_are_renamed() {
+    fn only_projects_templates_clips_and_folders_are_renamed() {
+        assert_eq!(template("Band").renamable_name(), Some("Band"));
+        assert_eq!(
+            template("Band").renamed("Duo".into()),
+            Some(template("Duo"))
+        );
         assert_eq!(clip("riff").renamable_name(), Some("riff"));
         assert_eq!(clip("riff").renamed("lick".into()), Some(clip("lick")));
         assert_eq!(
@@ -1900,6 +1936,7 @@ mod tests {
         );
         for item in [
             projects(),
+            templates(),
             clips(),
             BrowserItem::Plugin(plugin("Diva", "CLAP")),
             BrowserItem::Scanning,

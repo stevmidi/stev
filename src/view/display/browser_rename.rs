@@ -1,5 +1,5 @@
 //! The browser panel's rename field: an inline text field over a project's,
-//! clip's or folder's row, opened by ⌘R while the panel has the keyboard —
+//! template's, clip's or folder's row, opened by ⌘R while the panel has the keyboard —
 //! and, empty, over the new folder's row, opened by ⌘⇧N from anywhere or the
 //! `+` on the Projects row. While it is open it takes the keyboard — every
 //! key, nothing falls through. Enter renames the file or folder on disk (or
@@ -19,7 +19,7 @@ use crate::core::config::PROJECT_NAME_MAX_CHARS;
 use crate::core::input_event::InputEvent;
 use crate::core::project::{
     create_project_folder, project_name_from_input, rename_clip, rename_project,
-    rename_project_folder,
+    rename_project_folder, rename_template,
 };
 
 use super::Display;
@@ -33,7 +33,8 @@ const FIELD_RIGHT_X: f32 = 6.0;
 
 /// The open rename field.
 pub(super) struct BrowserRename {
-    /// The project, `.mid` or folder row being renamed, or the new folder's.
+    /// The project, template, `.mid` or folder row being renamed, or the new
+    /// folder's.
     item: BrowserItem,
     /// The field — the row's name to start with, empty for a new folder.
     field: TextField,
@@ -41,7 +42,7 @@ pub(super) struct BrowserRename {
 
 impl Display {
     /// ⌘R in the panel: opens the field over the selected row, when that is
-    /// a project, a `.mid` file or a folder; nothing on any other row.
+    /// a project, a template, a `.mid` file or a folder; nothing on any other row.
     pub(super) fn open_browser_rename(&mut self) {
         let tree = &mut self.browser.tree;
         let Some(item) = tree.selected().cloned() else {
@@ -165,6 +166,7 @@ impl Display {
             BrowserItem::NewFolder => create_project_folder(&new),
             BrowserItem::Folder(old) => rename_project_folder(old, &new),
             BrowserItem::Project { folder, name } => rename_project(folder.as_deref(), name, &new),
+            BrowserItem::Template(old) => rename_template(old, &new),
             BrowserItem::Clip(old) => rename_clip(old, &new),
             _ => return,
         };
