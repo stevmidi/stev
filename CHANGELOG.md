@@ -20,6 +20,8 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-28
+
 ### Added
 
 - Clips can be deleted in the browser: Backspace on a clip, then Enter.
