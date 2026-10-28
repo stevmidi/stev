@@ -303,6 +303,28 @@ section.wrap > p.aside {
   color: var(--fg-dim);
 }
 
+/* The ways to take part: whole panels are links, with a chevron after the
+   title and the accent on hover, like the nav. */
+.ways {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: 1rem;
+  margin: 1.5rem 0;
+  max-width: 52rem;
+}
+.ways .panel {
+  display: block;
+  height: 100%;
+  text-decoration: none;
+  color: var(--fg);
+}
+.ways .panel h3::after { content: " ›"; color: var(--fg-dim); }
+.ways .panel:hover { border-color: var(--accent); }
+.ways .panel:hover h3,
+.ways .panel:hover h3::after { color: var(--accent); }
+
 .foot {
   margin-top: 6rem;
   padding-top: 2rem;

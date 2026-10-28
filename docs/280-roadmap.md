@@ -75,6 +75,15 @@ Stage 1 is § MIDI Out timing, listed with the engine work above. Stages 2–4 c
 
 The site is live at stevmidi.com (2026-10-22), with the four capture loops in its Capture section since 2026-10-24; both as built in `000` § Website. Two options remain, neither promised: a loop beside or in place of the hero screenshot, and versions of the loops with sound, which need a loopback driver to record the app's output.
 
+**GitHub Discussions.** The site's *Take part* section sends bugs to the issue form and feature ideas to an issue after `CONTRIBUTING.md` § What fits. Discussions, with an Ideas and a Q&A category, would keep ideas and questions out of the issue list, which would then hold only bugs and agreed work, and an idea is easier to decline there. Decided 2026-10-28: not yet. An empty Discussions tab makes a new one-person project look quieter than it is, and a few users split across two places make both look emptier. Turning it on takes a minute, and GitHub converts an issue to a discussion, so nothing filed before then is lost. Turn it on when either of these happens:
+
+- feature ideas or "how do I…" questions start crowding the bug reports in Issues;
+- ideas get closed as not planned often enough that a softer place to decline them would help.
+
+It then also changes the *Suggest a feature* card on the site, the feature line in `.github/ISSUE_TEMPLATE/config.yml`, `CONTRIBUTING.md` § What fits and `000` § Website. Private notes stay in the author's Obsidian vault either way.
+
+**Donations.** A *Support with a donation* card beside the three in *Take part*, as IINA has, backed by GitHub Sponsors and a `.github/FUNDING.yml` so the repo shows a Sponsor button too. Decided 2026-10-28: not yet. With no traction a donation link earns nothing and reads as asking before giving. Revisit when the project has traction: reports or pull requests from people other than the author arriving regularly, or release downloads showing steady users. The first thing donations would pay for is the Apple Developer fee behind a signed app (§ A signed macOS app). Setting it up then means enrolling in Sponsors, which handles payouts and tax forms, adding `FUNDING.yml`, the card and its line in `000` § Website.
+
 ## Not planned
 
 Mirrored in the README's *Not planned* list, so nobody expects these. Some may come later if the capture workflow needs them, but none is on the roadmap.
