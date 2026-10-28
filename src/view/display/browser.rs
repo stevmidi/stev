@@ -503,26 +503,18 @@ impl BrowserTree {
             }
             push_project_rows(&mut rows, None, &self.disk.root, 1);
         }
-        rows.push(BrowserRow {
-            item: BrowserItem::Category(BrowserCategory::Templates),
-            depth: 0,
-        });
-        if self.is_category_expanded(BrowserCategory::Templates) {
-            rows.extend(self.disk.templates.iter().map(|name| BrowserRow {
-                item: BrowserItem::Template(name.clone()),
-                depth: 1,
-            }));
-        }
-        rows.push(BrowserRow {
-            item: BrowserItem::Category(BrowserCategory::Clips),
-            depth: 0,
-        });
-        if self.is_category_expanded(BrowserCategory::Clips) {
-            rows.extend(self.disk.clips.iter().map(|name| BrowserRow {
-                item: BrowserItem::Clip(name.clone()),
-                depth: 1,
-            }));
-        }
+        self.push_flat_category(
+            &mut rows,
+            BrowserCategory::Templates,
+            &self.disk.templates,
+            BrowserItem::Template,
+        );
+        self.push_flat_category(
+            &mut rows,
+            BrowserCategory::Clips,
+            &self.disk.clips,
+            BrowserItem::Clip,
+        );
         if let Some(listing) = &self.plugins {
             rows.push(BrowserRow {
                 item: BrowserItem::Category(BrowserCategory::Plugins),
@@ -539,6 +531,27 @@ impl BrowserTree {
             }
         }
         self.rows = rows;
+    }
+
+    /// Appends `category`'s row and, when it is expanded, one row per name
+    /// under it, made by `item`.
+    fn push_flat_category(
+        &self,
+        rows: &mut Vec<BrowserRow>,
+        category: BrowserCategory,
+        names: &[String],
+        item: fn(String) -> BrowserItem,
+    ) {
+        rows.push(BrowserRow {
+            item: BrowserItem::Category(category),
+            depth: 0,
+        });
+        if self.is_category_expanded(category) {
+            rows.extend(names.iter().map(|name| BrowserRow {
+                item: item(name.clone()),
+                depth: 1,
+            }));
+        }
     }
 
     /// The visible rows, top to bottom.

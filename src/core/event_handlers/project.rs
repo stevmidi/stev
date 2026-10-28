@@ -2,7 +2,7 @@
 //! unsaved-changes check ([`SavedProject`]), and the MIDI clip export and
 //! import. See `060-persistence.md`.
 
-use std::path::Path;
+use std::{fmt::Display, path::Path};
 
 use undo::Record;
 
@@ -86,16 +86,12 @@ impl EventHandlers {
         filename: &str,
     ) {
         match project::load_project(folder, filename) {
-            Err(e) => {
-                self.send_status_ui_event(format!("Could not open {filename}: {e}"));
-                self.set_view_state(ViewState::Arranger);
-            }
+            Err(e) => self.open_failed(filename, e),
             Ok(data) => {
                 let project = StagedProject {
                     data,
-                    filename: filename.to_owned(),
-                    folder: folder.map(str::to_owned),
-                    untitled: false,
+                    title: filename.to_owned(),
+                    file: Some((folder.map(str::to_owned), filename.to_owned())),
                 };
                 self.open_read_project_workflow(sequencer, undo_record, saved, staged, project);
             }
@@ -103,7 +99,8 @@ impl EventHandlers {
     }
 
     /// Opens the `.stev` at `path` (from Finder): one in the library as the
-    /// browser opens it; one outside copied into the projects root first
+    /// browser opens it — a template untitled
+    /// (`new_from_template_workflow`); one outside copied into the projects root first
     /// (`project::copy_project_in`), which the footer says and a shown
     /// browser lists, then opened as that copy. A file that won't load is never copied: the footer says
     /// why, and the open project stays.
@@ -115,6 +112,10 @@ impl EventHandlers {
         staged: &mut Option<StagedProject>,
         path: &Path,
     ) {
+        if project::is_template_file(path) {
+            self.new_from_template_workflow(sequencer, undo_record, saved, staged, path);
+            return;
+        }
         if let Some((folder, filename)) = project::library_project(path) {
             self.open_project_workflow(
                 sequencer,
@@ -127,11 +128,7 @@ impl EventHandlers {
             return;
         }
         match project::copy_project_in(path) {
-            Err(e) => {
-                let name = project::file_stem(path);
-                self.send_status_ui_event(format!("Could not open {name}: {e}"));
-                self.set_view_state(ViewState::Arranger);
-            }
+            Err(e) => self.open_failed(&project::file_stem(path), e),
             Ok(filename) => {
                 self.ui_event_tx.send(UiEvent::ProjectFilesChanged).ok();
                 self.send_status_ui_event(format!("Copied {filename} into Projects"));
@@ -156,20 +153,23 @@ impl EventHandlers {
     ) {
         let name = project::file_stem(path);
         match project::load_project_file(path) {
-            Err(e) => {
-                self.send_status_ui_event(format!("Could not open {name}: {e}"));
-                self.set_view_state(ViewState::Arranger);
-            }
+            Err(e) => self.open_failed(&name, e),
             Ok(data) => {
                 let project = StagedProject {
                     data: data.into_template(),
-                    filename: name,
-                    folder: None,
-                    untitled: true,
+                    title: name,
+                    file: None,
                 };
                 self.open_read_project_workflow(sequencer, undo_record, saved, staged, project);
             }
         }
+    }
+
+    /// A project or template `name` that couldn't be read: the footer says
+    /// why, and the open project stays.
+    fn open_failed(&self, name: &str, e: impl Display) {
+        self.send_status_ui_event(format!("Could not open {name}: {e}"));
+        self.set_view_state(ViewState::Arranger);
     }
 
     /// A project just read from disk: without plugins, applies it at once.
@@ -194,7 +194,7 @@ impl EventHandlers {
         self.send_transport(TransportCommand::Stop);
         self.ui_event_tx
             .send(UiEvent::StageProject {
-                name: project.filename.clone(),
+                name: project.title.clone(),
                 specs,
             })
             .ok();
@@ -213,19 +213,16 @@ impl EventHandlers {
         saved: &mut SavedProject,
         staged: &mut Option<StagedProject>,
     ) {
-        if let Some(StagedProject {
-            data,
-            filename,
-            folder,
-            untitled,
-        }) = staged.take()
-        {
-            let (filename, folder) = if untitled {
-                (None, None)
-            } else {
-                (Some(filename), folder)
-            };
-            self.load_project_workflow(sequencer, undo_record, saved, data, filename, folder);
+        if let Some(StagedProject { data, file, .. }) = staged.take() {
+            let (folder, filename) = file.unzip();
+            self.load_project_workflow(
+                sequencer,
+                undo_record,
+                saved,
+                data,
+                filename,
+                folder.flatten(),
+            );
         }
     }
 
@@ -455,9 +452,8 @@ mod tests {
         }
         StagedProject {
             data,
-            filename: "Song".to_owned(),
-            folder: None,
-            untitled: false,
+            title: "Song".to_owned(),
+            file: Some((None, "Song".to_owned())),
         }
     }
 

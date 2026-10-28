@@ -5,7 +5,7 @@
 ## Decisions (2026-10-28)
 
 1. **A template is a `.stev` file in `~/Documents/Stev/Templates/`**: a root folder in the library beside `Projects/` and `Exports/` (`paths::templates_dir()`), holding `.stev` files directly, with no per-template folders. It is the same `ProjectData` JSON as a project, so there is no new format and no new load path.
-2. **The browser lists them in a TEMPLATES category below PROJECTS.** Enter or a double-click opens one.
+2. **The browser lists them in a TEMPLATES category below PROJECTS.** Enter or a double-click opens one. Double-clicking one in Finder opens it the same way (agreed 2026-10-28), never copying it into Projects as an outside `.stev` is.
 3. **Opening a template is ⌘N with a different starting point.** The unsaved-changes check runs first, as for every action that replaces the open project. Then the template loads as a new project that has never been saved: named `Untitled`, the undo history cleared, ⌘S opening Save As, and the "Save in" default the current project folder (never `Templates/`). The template file is only ever read. The saved-state fingerprint is taken right after the load, so closing an untouched template-based project asks nothing.
 4. **⌘N stays blank.** There is no default template. Revisit only if usage asks for it.
 5. **A template never holds clips.** There's no option to keep them: a project with clips is a project, and opening it and using Save As already covers that.

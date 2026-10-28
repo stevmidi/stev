@@ -25,8 +25,8 @@ Breaking entries are marked **Breaking** and say what to do about them.
 - Clips can be deleted in the browser: Backspace on a clip, then Enter.
 - Project templates: the browser's new TEMPLATES category lists the `.stev`
   files in `~/Documents/Stev/Templates/`, and Enter or a double-click opens
-  one as a new, untitled project with no clips. The template file itself is
-  never changed.
+  one as a new, untitled project with no clips, as does double-clicking one in
+  Finder. The template file itself is never changed.
 
 ### Changed
 

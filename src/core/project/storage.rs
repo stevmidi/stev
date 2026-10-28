@@ -127,12 +127,7 @@ pub(crate) fn list_projects(folder: Option<&str>) -> Vec<String> {
 /// The MIDI clips (`.mid` stems) in the clips folder, alphabetical; none
 /// before the first export makes the folder.
 pub(crate) fn list_clips() -> Vec<String> {
-    let mut clips: Vec<String> = list_files_with_extension(&clips_dir(), MIDI_EXTENSION)
-        .into_iter()
-        .map(|(name, _)| name)
-        .collect();
-    clips.sort();
-    clips
+    sorted_stems(&clips_dir(), MIDI_EXTENSION)
 }
 
 /// The project templates (`.stev` stems) in the templates folder,
@@ -143,12 +138,18 @@ pub(crate) fn list_templates() -> Vec<String> {
 
 /// [`list_templates`] in the templates folder `dir`.
 fn list_templates_in(dir: &Path) -> Vec<String> {
-    let mut templates: Vec<String> = list_stev_names(dir)
+    sorted_stems(dir, PROJECT_EXTENSION)
+}
+
+/// The stems of the `.<extension>` files directly in `dir`, alphabetical,
+/// dotfiles excluded.
+fn sorted_stems(dir: &Path, extension: &str) -> Vec<String> {
+    let mut stems: Vec<String> = list_files_with_extension(dir, extension)
         .into_iter()
         .map(|(name, _)| name)
         .collect();
-    templates.sort();
-    templates
+    stems.sort();
+    stems
 }
 
 /// The template `name` (its stem) in the templates folder — a browser
@@ -195,6 +196,24 @@ fn read_project(path: &Path) -> Result<(String, ProjectData), Box<dyn Error>> {
 pub(crate) fn library_project(path: &Path) -> Option<(Option<String>, String)> {
     let canonical = |p: &Path| fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
     project_in(&canonical(path), &canonical(&project_dir()))
+}
+
+/// Whether the `.stev` at `path` is a template: directly in the templates
+/// folder, compared resolved as [`library_project`] does. Finder opens one
+/// as the browser does, untitled (`340-templates.md`).
+pub(crate) fn is_template_file(path: &Path) -> bool {
+    let canonical = |p: &Path| fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    is_template_in(&canonical(path), &canonical(&templates_dir()))
+}
+
+/// [`is_template_file`] with the templates folder `dir`, both paths as given.
+fn is_template_in(path: &Path, dir: &Path) -> bool {
+    is_project_file(path)
+        && path.parent() == Some(dir)
+        && path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .is_some_and(|stem| !stem.starts_with('.'))
 }
 
 /// [`library_project`] with the projects root `root`, both paths as given.
@@ -643,6 +662,24 @@ mod tests {
         }
         assert_eq!(list_templates_in(&templates), vec!["Band", "Synths"]);
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A `.stev` directly in the templates folder is a template; one deeper,
+    /// beside it, hidden or of another kind is not.
+    #[test]
+    fn a_template_file_is_one_directly_in_the_templates_folder() {
+        let dir = Path::new("/docs/Stev/Templates");
+        let is_template = |path: &str| is_template_in(Path::new(path), dir);
+        assert!(is_template("/docs/Stev/Templates/Band.stev"));
+        assert!(is_template("/docs/Stev/Templates/Band.STEV"));
+        for not in [
+            "/docs/Stev/Templates/Old/Band.stev",
+            "/docs/Stev/Projects/Band.stev",
+            "/docs/Stev/Templates/.Band.stev",
+            "/docs/Stev/Templates/Band.mid",
+        ] {
+            assert!(!is_template(not), "{not}");
+        }
     }
 
     /// A project in the root or one project folder down is named as the

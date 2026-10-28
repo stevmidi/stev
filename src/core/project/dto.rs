@@ -298,9 +298,8 @@ impl ProjectData {
     /// copied into the folder by hand) still opens empty, and when one is
     /// saved. See `340-templates.md` decisions 5 and 6.
     pub(crate) fn into_template(mut self) -> Self {
-        let default = ProjectData::default();
-        self.region_start = default.region_start;
-        self.region_end = default.region_end;
+        self.region_start = 0;
+        self.region_end = config::REGION_LENGTH_DEFAULT;
         for track in &mut self.tracks {
             track.muted = false;
             track.clips.clear();
@@ -519,23 +518,15 @@ mod tests {
             swing_pct: 50,
             events: Vec::new(),
         });
-        let expected = |data: &ProjectData| {
-            let mut data = data.clone();
-            data.region_start = 0;
-            data.region_end = config::REGION_LENGTH_DEFAULT;
-            data.tracks[1].muted = false;
-            data.tracks[1].clips.clear();
-            serde_json::to_string(&data).unwrap()
-        };
-        let want = expected(&data);
+        let mut expected = data.clone();
+        expected.region_start = 0;
+        expected.region_end = config::REGION_LENGTH_DEFAULT;
+        expected.tracks[1].muted = false;
+        expected.tracks[1].clips.clear();
 
-        let template = data.into_template();
-        assert_eq!(serde_json::to_string(&template).unwrap(), want);
-        assert!(
-            template
-                .tracks
-                .iter()
-                .all(|t| t.clips.is_empty() && !t.muted)
+        assert_eq!(
+            serde_json::to_string(&data.into_template()).unwrap(),
+            serde_json::to_string(&expected).unwrap()
         );
     }
 

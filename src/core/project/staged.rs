@@ -11,11 +11,10 @@ use super::ProjectData;
 pub(crate) struct StagedProject {
     /// The project, as read.
     pub(crate) data: ProjectData,
-    /// Its file name, without extension.
-    pub(crate) filename: String,
-    /// Its folder, or the projects root when `None`.
-    pub(crate) folder: Option<String>,
-    /// Whether it opens as a new project that was never saved — a template:
-    /// `filename` then only titles the restore panel, and `folder` is unused.
-    pub(crate) untitled: bool,
+    /// Its file name, without extension — the restore panel's title.
+    pub(crate) title: String,
+    /// The file it opens as, `(folder, file name)` with the folder `None` at
+    /// the projects root; `None` opens it as a new project that was never
+    /// saved (a template).
+    pub(crate) file: Option<(Option<String>, String)>,
 }
