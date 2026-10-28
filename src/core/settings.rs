@@ -1,6 +1,7 @@
 //! App-wide settings (not project data): the remembered MIDI ports, the
-//! MIDI-out offset, the last project folder, the theme index, the browser
-//! panel's width and the keyboard shortcuts the user rebound. Serialized to
+//! MIDI-out offset, the last project folder, the recent projects, the theme
+//! index, the browser panel's width and the keyboard shortcuts the user
+//! rebound. Serialized to
 //! `settings.json` in the platform config directory (`paths::config_dir`).
 //! Like the project DTOs, a new field must be `#[serde(default)]` — but here
 //! the default is often *not* the zero value, so an upgrading user gets
@@ -14,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use super::config::{BROWSER_W_DEFAULT, MIDI_OUT_OFFSET_DEFAULT_MS, MIDI_OUT_OFFSET_MAX_MS};
 use super::keymap::ChordDto;
 use super::paths::{SETTINGS_FILE_NAME, config_dir};
+use super::project::RecentProject;
 
 /// The on-disk `settings.json` shape.
 #[derive(Debug, Serialize, Deserialize)]
@@ -51,6 +53,11 @@ pub(crate) struct SettingsData {
     /// existed: the defaults.
     #[serde(default)]
     pub(crate) keymap: BTreeMap<String, Vec<ChordDto>>,
+    /// The projects opened or saved most recently, newest first, at most
+    /// `config::RECENT_PROJECTS_MAX`: the browser's Recent category
+    /// (`core/project/recent.rs`). Absent before the list existed: empty.
+    #[serde(default)]
+    pub(crate) recent_projects: Vec<RecentProject>,
 }
 
 /// Serde default for [`SettingsData::browser_width`].
@@ -77,6 +84,7 @@ impl Default for SettingsData {
             theme_index: 0,
             browser_width: default_browser_width(),
             keymap: BTreeMap::new(),
+            recent_projects: Vec::new(),
         }
     }
 }
@@ -115,5 +123,30 @@ pub(crate) fn update_settings(what: &str, change: impl FnOnce(&mut SettingsData)
     change(&mut settings);
     if let Err(e) = save_settings(&settings) {
         error!("Failed to save {what}: {e}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Settings saved before the Recent list existed load with it empty;
+    /// one saved with it reads it back.
+    #[test]
+    fn the_recent_list_defaults_to_empty_and_round_trips() {
+        let old: SettingsData =
+            serde_json::from_str(r#"{"midi_in_port":null,"midi_out_port":null}"#).unwrap();
+        assert!(old.recent_projects.is_empty());
+
+        let settings = SettingsData {
+            recent_projects: vec![
+                RecentProject::new(Some("Jams"), "riff"),
+                RecentProject::new(None, "loose"),
+            ],
+            ..SettingsData::default()
+        };
+        let json = serde_json::to_string(&settings).unwrap();
+        let back: SettingsData = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.recent_projects, settings.recent_projects);
     }
 }

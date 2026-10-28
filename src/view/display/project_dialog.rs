@@ -426,14 +426,16 @@ const ROOT_LABEL: &str = "Projects";
 pub(super) const LIST_MAX_ROWS: usize = 8;
 
 /// Where Save As starts saving: the folder the browser has selected — the
-/// folder itself, or the one holding the selected project — while the panel
+/// folder itself, or the one holding the selected project, recent or not — while the panel
 /// is shown (`selected` is `None` otherwise); anything else selected, or
 /// nothing, leaves `current`, the open project's folder. `None` is the
 /// projects root.
 fn save_folder_default(selected: Option<&BrowserItem>, current: Option<&str>) -> Option<String> {
     match selected {
         Some(BrowserItem::Folder(name)) => Some(name.clone()),
-        Some(BrowserItem::Project { folder, .. }) => folder.clone(),
+        Some(BrowserItem::Project { folder, .. } | BrowserItem::Recent { folder, .. }) => {
+            folder.clone()
+        }
         _ => current.map(str::to_owned),
     }
 }
@@ -1136,8 +1138,8 @@ mod tests {
         assert_eq!(dialog.list_window(), 0..LIST_MAX_ROWS);
     }
 
-    /// The selected folder, or the folder of the selected project, is where
-    /// Save As starts; anything else selected leaves the current folder.
+    /// The selected folder, or the folder of the selected project (under
+    /// its folder or Recent), is where Save As starts; anything else selected leaves the current folder.
     #[test]
     fn save_as_starts_in_the_selected_folder() {
         let folder = BrowserItem::Folder("b".into());
@@ -1160,6 +1162,14 @@ mod tests {
             Some("a".into())
         );
         assert_eq!(save_folder_default(Some(&loose), Some("c")), None);
+        let recent_in_a = BrowserItem::Recent {
+            folder: Some("a".into()),
+            name: "song".into(),
+        };
+        assert_eq!(
+            save_folder_default(Some(&recent_in_a), Some("c")),
+            Some("a".into())
+        );
         assert_eq!(
             save_folder_default(Some(&category), Some("c")),
             Some("c".into())

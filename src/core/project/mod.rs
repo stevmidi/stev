@@ -1,11 +1,12 @@
 //! Project persistence: serializable DTOs (`dto`), `.stev` filesystem layout
 //! (`storage`), the `.mid` reader / writer of the MIDI clip import and
-//! export (`smf`), the [`ProjectAction`]s the unsaved-changes prompt
+//! export (`smf`), the recent projects list (`recent`), the [`ProjectAction`]s the unsaved-changes prompt
 //! guards (`action`), and the [`StagedProject`] an open with plugins hands
 //! the view first (`staged`). See `060-persistence.md`.
 
 mod action;
 mod dto;
+mod recent;
 mod smf;
 mod staged;
 mod storage;
@@ -16,6 +17,9 @@ pub(crate) use dto::ProjectData;
 pub(crate) use dto::TrackOutputData;
 #[cfg(all(test, debug_assertions))]
 pub(crate) use dto::{ClipData, EventData};
+pub(crate) use recent::{
+    RecentProject, note_recent, remove_recent, rename_recent, rename_recent_folder,
+};
 pub(crate) use smf::write_smf;
 pub(crate) use staged::StagedProject;
 #[cfg(target_os = "macos")]

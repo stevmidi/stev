@@ -1,5 +1,9 @@
 //! The browser side panel: a toggleable panel on the left, its width dragged
-//! by its right edge, with four categories. **Projects** holds the project
+//! by its right edge, with five categories. **Recent** lists the
+//! projects opened or saved most recently, from every folder
+//! (`archive/350-recent-projects.md`); a row opens and renames as the
+//! project's own row, and Delete takes it off the list, leaving the file.
+//! **Projects** holds the project
 //! folders under `paths::project_dir()`, each expandable to its `.stev`
 //! files, then the loose projects at the projects root. **Templates** lists
 //! the `.stev` files in `paths::templates_dir()`: Enter opens one as a new,
@@ -33,11 +37,11 @@ use crate::core::{
     input_event::is_pane_focus_key,
     keymap::Action,
     project::{
-        ProjectAction, clip_path, delete_clip, delete_project, delete_project_folder,
-        delete_template, list_clips, list_project_folders, list_projects, list_templates,
-        template_path,
+        ProjectAction, RecentProject, clip_path, delete_clip, delete_project,
+        delete_project_folder, delete_template, list_clips, list_project_folders, list_projects,
+        list_templates, note_recent, project_exists, remove_recent, template_path,
     },
-    settings::update_settings,
+    settings::{load_settings, update_settings},
 };
 
 use super::browser_rename::BrowserRename;
@@ -139,6 +143,21 @@ pub(super) fn category_plus_rect(row: Rect) -> Rect {
     )
 }
 
+/// The Recent list from `settings.json`, less the projects whose file is
+/// gone (deleted or moved, in the browser or in Finder), which are pruned
+/// from it for good.
+fn recent_projects() -> Vec<RecentProject> {
+    let mut recent = load_settings().recent_projects;
+    let listed = recent.len();
+    recent.retain(|project| project_exists(project.folder.as_deref(), &project.name));
+    if recent.len() != listed {
+        update_settings("recent projects", |settings| {
+            settings.recent_projects.clone_from(&recent);
+        });
+    }
+    recent
+}
+
 /// The footer's word for the project, template, clip or folder `name`
 /// deleted: moved to the Trash on macOS; elsewhere a file is removed for good
 /// and a folder only when empty (`delete_project_folder`).
@@ -178,6 +197,8 @@ pub(super) fn browser_text_x(row: &BrowserRow) -> f32 {
 /// A top-level category of the tree.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(super) enum BrowserCategory {
+    /// The projects saved most recently, from every folder.
+    Recent,
     /// The project folders and their projects.
     Projects,
     /// The project templates.
@@ -197,13 +218,14 @@ impl BrowserCategory {
         match self {
             BrowserCategory::Projects => Some(Action::NewProjectFolder),
             BrowserCategory::Templates => Some(Action::SaveAsTemplate),
-            BrowserCategory::Clips | BrowserCategory::Plugins => None,
+            BrowserCategory::Recent | BrowserCategory::Clips | BrowserCategory::Plugins => None,
         }
     }
 
     /// The category row's label.
     pub(super) fn label(self) -> &'static str {
         match self {
+            BrowserCategory::Recent => "RECENT",
             BrowserCategory::Projects => "PROJECTS",
             BrowserCategory::Templates => "TEMPLATES",
             BrowserCategory::Clips => "CLIPS",
@@ -260,6 +282,17 @@ pub(super) enum BrowserItem {
         /// The project name (file stem).
         name: String,
     },
+    /// A project under Recent, in `folder` (`None`: the projects root). The
+    /// same project as its [`Project`](Self::Project) row under its folder,
+    /// and opens and renames as it does; Delete takes it off the list
+    /// instead of deleting it. A row of its own, so the selection and the
+    /// rename field tell the two apart.
+    Recent {
+        /// Its folder, `None` at the projects root.
+        folder: Option<String>,
+        /// The project name (file stem).
+        name: String,
+    },
     /// A `.stev` in the templates folder, by its file stem. Enter opens it
     /// as a new, untitled project; ⌘R renames it and Delete deletes it, as a
     /// project's.
@@ -283,8 +316,8 @@ pub(super) enum BrowserItem {
 
 impl BrowserItem {
     /// The row Left steps out to: a project's folder (or the Projects
-    /// category at the projects root), a folder's, a template's, a clip's or
-    /// a plugin's category. A category has none.
+    /// category at the projects root), a recent project's, a folder's, a
+    /// template's, a clip's or a plugin's category. A category has none.
     fn parent(&self) -> Option<BrowserItem> {
         match self {
             BrowserItem::Category(_) => None,
@@ -292,6 +325,7 @@ impl BrowserItem {
                 BrowserItem::Category(BrowserCategory::Projects),
                 BrowserItem::Folder,
             )),
+            BrowserItem::Recent { .. } => Some(BrowserItem::Category(BrowserCategory::Recent)),
             BrowserItem::Folder(_) | BrowserItem::NewFolder => {
                 Some(BrowserItem::Category(BrowserCategory::Projects))
             }
@@ -308,11 +342,19 @@ impl BrowserItem {
     pub(super) fn renamable_name(&self) -> Option<&str> {
         match self {
             BrowserItem::Project { name, .. }
+            | BrowserItem::Recent { name, .. }
             | BrowserItem::Template(name)
             | BrowserItem::Clip(name)
             | BrowserItem::Folder(name) => Some(name),
             _ => None,
         }
+    }
+
+    /// Whether Delete arms a delete on this row: a project, template, clip
+    /// or folder, but not a recent project, which Delete takes off the list
+    /// instead ([`BrowserTree::delete_key`]).
+    fn is_deletable(&self) -> bool {
+        self.renamable_name().is_some() && !matches!(self, BrowserItem::Recent { .. })
     }
 
     /// The same project, template, clip or folder under `new_name` — what a
@@ -324,6 +366,7 @@ impl BrowserItem {
         }
         let mut item = self.clone();
         let (BrowserItem::Project { name, .. }
+        | BrowserItem::Recent { name, .. }
         | BrowserItem::Template(name)
         | BrowserItem::Clip(name)
         | BrowserItem::Folder(name)) = &mut item
@@ -364,6 +407,8 @@ pub(super) enum BrowserAction {
     /// Delete this project, template, clip or folder — a folder with its
     /// projects (the confirmed second Enter).
     Delete(BrowserItem),
+    /// Take this project off the Recent list, leaving its file.
+    RemoveRecent(RecentProject),
 }
 
 /// What [`BrowserTree::reload`] lists from disk.
@@ -377,6 +422,8 @@ pub(super) struct DiskListing {
     pub(super) templates: Vec<String>,
     /// The clips in the `Clips` folder, alphabetical.
     pub(super) clips: Vec<String>,
+    /// The projects opened or saved most recently, newest first.
+    pub(super) recent: Vec<RecentProject>,
 }
 
 impl DiskListing {
@@ -497,7 +544,8 @@ impl BrowserTree {
         }
     }
 
-    /// Re-derives [`rows`](Self::rows). Under **Projects** (when expanded):
+    /// Re-derives [`rows`](Self::rows). Under **Recent** (when expanded):
+    /// the recent projects, newest first. Under **Projects** (when expanded):
     /// the new folder's row while it is named, then each folder, followed (when expanded) by its projects newest first;
     /// then the projects root's loose projects. Under **Templates** (when
     /// expanded): the templates. Under **Clips** (when
@@ -505,9 +553,22 @@ impl BrowserTree {
     /// the plugins, then "Scanning…" while the scan runs.
     fn rebuild_rows(&mut self) {
         let mut rows = vec![BrowserRow {
-            item: BrowserItem::Category(BrowserCategory::Projects),
+            item: BrowserItem::Category(BrowserCategory::Recent),
             depth: 0,
         }];
+        if self.is_category_expanded(BrowserCategory::Recent) {
+            rows.extend(self.disk.recent.iter().map(|project| BrowserRow {
+                item: BrowserItem::Recent {
+                    folder: project.folder.clone(),
+                    name: project.name.clone(),
+                },
+                depth: 1,
+            }));
+        }
+        rows.push(BrowserRow {
+            item: BrowserItem::Category(BrowserCategory::Projects),
+            depth: 0,
+        });
         if self.is_category_expanded(BrowserCategory::Projects) {
             if self.new_folder {
                 rows.push(BrowserRow {
@@ -685,16 +746,28 @@ impl BrowserTree {
         self.delete_armed = None;
     }
 
-    /// The first time the panel shows (nothing selected yet): selects the
-    /// open project if it is listed — expanding its folder to show it — else
-    /// the current folder, else the first row. A folder with no open project
-    /// in it (an untitled project at launch) stays collapsed.
+    /// The first time the panel shows (nothing selected yet): with no saved
+    /// project open (an untitled one, as at launch), selects the first
+    /// recent project; with one open, its row under Recent when listed
+    /// there. Else the open project if it is listed — expanding its folder
+    /// to show it — else the current folder, else the first row. A folder
+    /// with no open project in it stays collapsed.
     pub(super) fn select_initial(
         &mut self,
         current_folder: Option<&str>,
         current_name: Option<&str>,
     ) {
         if self.selected.is_some() {
+            return;
+        }
+        let recent = match current_name {
+            None => self.disk.recent.first().cloned(),
+            Some(name) => Some(RecentProject::new(current_folder, name)),
+        }
+        .map(|RecentProject { folder, name }| BrowserItem::Recent { folder, name })
+        .filter(|item| self.is_listed(item));
+        if recent.is_some() {
+            self.selected = recent;
             return;
         }
         if let (Some(folder), Some(name)) = (current_folder, current_name)
@@ -773,7 +846,7 @@ impl BrowserTree {
     pub(super) fn activate(&mut self) -> Option<BrowserAction> {
         let armed = self.delete_armed.take().is_some();
         let item = self.selected.clone()?;
-        if armed && item.renamable_name().is_some() {
+        if armed && item.is_deletable() {
             return Some(BrowserAction::Delete(item));
         }
         match item {
@@ -783,7 +856,7 @@ impl BrowserTree {
             }
             BrowserItem::Plugin(plugin) => Some(BrowserAction::LoadPlugin(plugin)),
             BrowserItem::Scanning | BrowserItem::NewFolder => None,
-            BrowserItem::Project { folder, name } => {
+            BrowserItem::Project { folder, name } | BrowserItem::Recent { folder, name } => {
                 Some(BrowserAction::OpenProject { folder, name })
             }
             BrowserItem::Template(name) => Some(BrowserAction::OpenTemplate(name)),
@@ -791,14 +864,27 @@ impl BrowserTree {
         }
     }
 
-    /// Delete/Backspace: arms the delete confirm on a selected project,
-    /// template, clip or folder.
+    /// Delete/Backspace: takes a selected recent project off the list at
+    /// once — nothing on disk changes, and opening it again brings it back —
+    /// else arms the delete confirm ([`arm_delete`](Self::arm_delete)).
+    pub(super) fn delete_key(&mut self) -> Option<BrowserAction> {
+        if let Some(BrowserItem::Recent { folder, name }) = &self.selected {
+            return Some(BrowserAction::RemoveRecent(RecentProject::new(
+                folder.as_deref(),
+                name,
+            )));
+        }
+        self.arm_delete();
+        None
+    }
+
+    /// Arms the delete confirm on a selected project, template, clip or
+    /// folder (not a recent project).
     pub(super) fn arm_delete(&mut self) {
         self.delete_armed = self
             .selected
             .as_ref()
-            .and_then(BrowserItem::renamable_name)
-            .is_some()
+            .is_some_and(BrowserItem::is_deletable)
             .then(Instant::now);
     }
 }
@@ -1015,7 +1101,7 @@ impl Display {
         self.browser.tree.set_plugins(listing);
     }
 
-    /// Re-reads the projects, templates and clips from disk.
+    /// Re-reads the recent projects, projects, templates and clips from disk.
     pub(super) fn reload_browser(&mut self) {
         let folders = list_project_folders()
             .into_iter()
@@ -1029,6 +1115,7 @@ impl Display {
             root: list_projects(None),
             templates: list_templates(),
             clips: list_clips(),
+            recent: recent_projects(),
         });
     }
 
@@ -1192,7 +1279,11 @@ impl Display {
             Key::ArrowDown => tree.move_selection(1),
             Key::ArrowRight => tree.expand(),
             Key::ArrowLeft => tree.collapse(),
-            Key::Delete | Key::Backspace => tree.arm_delete(),
+            Key::Delete | Key::Backspace => {
+                if let Some(action) = tree.delete_key() {
+                    self.run_browser_action(action);
+                }
+            }
             Key::Enter => {
                 if let Some(action) = tree.activate() {
                     self.run_browser_action(action);
@@ -1316,6 +1407,30 @@ impl Display {
                 self.import_midi_file(&clip_path(&name));
             }
             BrowserAction::Delete(item) => self.delete_browser_item(&item),
+            BrowserAction::RemoveRecent(project) => {
+                update_settings("recent projects", |settings| {
+                    remove_recent(&mut settings.recent_projects, &project);
+                });
+                self.render.status = Some(StatusMessage::new(format!(
+                    "Removed {} from Recent",
+                    project.name
+                )));
+                self.reload_browser();
+            }
+        }
+    }
+
+    /// Puts the project `name` in `folder` first in the Recent list — just
+    /// opened or saved — and re-lists a shown panel.
+    pub(super) fn note_recent_project(&mut self, folder: Option<&str>, name: &str) {
+        update_settings("recent projects", |settings| {
+            note_recent(
+                &mut settings.recent_projects,
+                RecentProject::new(folder, name),
+            );
+        });
+        if self.browser.visible {
+            self.reload_browser();
         }
     }
 
@@ -1423,6 +1538,7 @@ mod tests {
             root: names(root),
             templates: Vec::new(),
             clips: names(clips),
+            recent: Vec::new(),
         }
     }
 
@@ -1476,6 +1592,30 @@ mod tests {
         BrowserItem::Category(BrowserCategory::Projects)
     }
 
+    fn recents() -> BrowserItem {
+        BrowserItem::Category(BrowserCategory::Recent)
+    }
+
+    fn recent(folder: Option<&str>, name: &str) -> BrowserItem {
+        BrowserItem::Recent {
+            folder: folder.map(str::to_owned),
+            name: name.into(),
+        }
+    }
+
+    /// [`tree`] with `a1` (in `a`) and `loose` (at the root) recent.
+    fn tree_with_recent() -> BrowserTree {
+        let mut tree = BrowserTree::default();
+        tree.reload(DiskListing {
+            recent: vec![
+                RecentProject::new(Some("a"), "a1"),
+                RecentProject::new(None, "loose"),
+            ],
+            ..disk(&[("a", &["a2", "a1"]), ("b", &[])], &["loose"], &[])
+        });
+        tree
+    }
+
     fn plugins() -> BrowserItem {
         BrowserItem::Category(BrowserCategory::Plugins)
     }
@@ -1503,6 +1643,7 @@ mod tests {
         assert_eq!(
             items(&tree()),
             vec![
+                recents(),
                 projects(),
                 folder("a"),
                 folder("b"),
@@ -1519,7 +1660,10 @@ mod tests {
     fn the_clips_category_shows_when_empty_and_left_steps_out_to_it() {
         let mut empty = BrowserTree::default();
         empty.reload(disk(&[], &[], &[]));
-        assert_eq!(items(&empty), vec![projects(), templates(), clips()]);
+        assert_eq!(
+            items(&empty),
+            vec![recents(), projects(), templates(), clips()]
+        );
 
         let mut tree = tree();
         tree.select(clip("a1_T1_B1"));
@@ -1647,6 +1791,7 @@ mod tests {
         assert_eq!(
             rows.iter().map(|r| r.item.clone()).collect::<Vec<_>>(),
             vec![
+                recents(),
                 projects(),
                 folder("a"),
                 project(Some("a"), "a2"),
@@ -1659,13 +1804,14 @@ mod tests {
                 clip("a1_T1_B1"),
             ]
         );
-        assert_eq!(rows[1].depth, 1);
-        assert_eq!(rows[2].depth, 2);
-        assert_eq!(rows[5].depth, 1);
-        assert_eq!(rows[6].depth, 0);
-        assert_eq!(rows[7].depth, 1);
-        assert_eq!(rows[8].depth, 0);
-        assert_eq!(rows[9].depth, 1);
+        assert_eq!(rows[0].depth, 0);
+        assert_eq!(rows[2].depth, 1);
+        assert_eq!(rows[3].depth, 2);
+        assert_eq!(rows[6].depth, 1);
+        assert_eq!(rows[7].depth, 0);
+        assert_eq!(rows[8].depth, 1);
+        assert_eq!(rows[9].depth, 0);
+        assert_eq!(rows[10].depth, 1);
     }
 
     /// Enter on a template opens it — as a new project, which the caller
@@ -1714,11 +1860,11 @@ mod tests {
     fn selection_moves_clamped_and_starts_at_the_top() {
         let mut tree = tree();
         tree.move_selection(1);
-        assert_eq!(tree.selected(), Some(&projects()));
+        assert_eq!(tree.selected(), Some(&recents()));
         tree.move_selection(10);
         assert_eq!(tree.selected(), Some(&clip("a1_T1_B1")));
         tree.move_selection(-10);
-        assert_eq!(tree.selected(), Some(&projects()));
+        assert_eq!(tree.selected(), Some(&recents()));
     }
 
     #[test]
@@ -1826,6 +1972,7 @@ mod tests {
         assert_eq!(
             items(&tree),
             vec![
+                recents(),
                 projects(),
                 templates(),
                 template("Band"),
@@ -1836,10 +1983,10 @@ mod tests {
 
         tree.set_new_folder(true);
         assert_eq!(
-            items(&tree)[..3],
+            items(&tree)[1..4],
             [projects(), BrowserItem::NewFolder, folder("a")]
         );
-        assert_eq!(tree.rows()[1].depth, 1);
+        assert_eq!(tree.rows()[2].depth, 1);
         assert_eq!(tree.selected(), Some(&projects()));
         assert_eq!(BrowserItem::NewFolder.parent(), Some(projects()));
         assert_eq!(BrowserItem::NewFolder.renamable_name(), None);
@@ -1902,7 +2049,7 @@ mod tests {
 
         let mut fresh = tree();
         fresh.select_initial(None, None);
-        assert_eq!(fresh.selected(), Some(&projects()));
+        assert_eq!(fresh.selected(), Some(&recents()));
 
         // Only the first show picks; later shows keep the user's selection.
         fresh.select(folder("b"));
@@ -1918,6 +2065,143 @@ mod tests {
         tree.select_initial(Some("a"), None);
         assert!(!tree.is_expanded("a"));
         assert_eq!(tree.selected(), Some(&folder("a")));
+    }
+
+    /// Recent comes first and starts expanded, its rows at depth 1.
+    #[test]
+    fn recent_is_first_and_expanded() {
+        let tree = tree_with_recent();
+        assert!(tree.is_category_expanded(BrowserCategory::Recent));
+        assert_eq!(
+            items(&tree)[..4],
+            [
+                recents(),
+                recent(Some("a"), "a1"),
+                recent(None, "loose"),
+                projects()
+            ]
+        );
+        assert_eq!(tree.rows()[1].depth, 1);
+    }
+
+    /// A project listed under Recent and under its folder is two rows:
+    /// selecting one never selects the other; a recent row opens and
+    /// renames the project.
+    #[test]
+    fn a_recent_row_is_its_own_row() {
+        let mut tree = tree_with_recent();
+        tree.select(folder("a"));
+        tree.expand();
+        let both = [recent(Some("a"), "a1"), project(Some("a"), "a1")];
+        for (row, other) in [(&both[0], &both[1]), (&both[1], &both[0])] {
+            tree.select(row.clone());
+            assert_eq!(tree.selected_index(), tree.index_of(row));
+            assert_ne!(tree.index_of(row), tree.index_of(other));
+        }
+
+        tree.select(recent(Some("a"), "a1"));
+        assert_eq!(
+            tree.activate(),
+            Some(BrowserAction::OpenProject {
+                folder: Some("a".into()),
+                name: "a1".into()
+            })
+        );
+        assert_eq!(
+            recent(Some("a"), "a1").renamable_name(),
+            Some("a1"),
+            "renamed as the project row"
+        );
+        assert_eq!(
+            recent(Some("a"), "a1").renamed("b1".into()),
+            Some(recent(Some("a"), "b1"))
+        );
+    }
+
+    /// Delete on a recent row takes it off the list at once, arming
+    /// nothing, so the Enter after it opens the project; elsewhere it arms
+    /// the delete.
+    #[test]
+    fn delete_on_a_recent_row_removes_it_from_the_list() {
+        let mut tree = tree_with_recent();
+        tree.select(recent(Some("a"), "a1"));
+        assert_eq!(
+            tree.delete_key(),
+            Some(BrowserAction::RemoveRecent(RecentProject::new(
+                Some("a"),
+                "a1"
+            )))
+        );
+        assert!(tree.delete_armed.is_none());
+        tree.arm_delete();
+        assert!(tree.delete_armed.is_none(), "never armed by the delete key");
+        assert_eq!(tree.delete_prompt(), None);
+        assert_eq!(
+            tree.activate(),
+            Some(BrowserAction::OpenProject {
+                folder: Some("a".into()),
+                name: "a1".into()
+            })
+        );
+
+        tree.select(project(None, "loose"));
+        assert_eq!(tree.delete_key(), None);
+        assert!(tree.delete_armed.is_some());
+
+        // Removed, the selection hands over to the next recent row.
+        tree.select(recent(Some("a"), "a1"));
+        tree.reload(DiskListing {
+            recent: vec![RecentProject::new(None, "loose")],
+            ..disk(&[("a", &["a2", "a1"]), ("b", &[])], &["loose"], &[])
+        });
+        assert_eq!(tree.selected(), Some(&recent(None, "loose")));
+    }
+
+    /// Left on a recent row goes to the Recent category, not its folder.
+    #[test]
+    fn left_on_a_recent_row_steps_out_to_recent() {
+        let mut tree = tree_with_recent();
+        tree.select(recent(Some("a"), "a1"));
+        tree.collapse();
+        assert_eq!(tree.selected(), Some(&recents()));
+        tree.collapse();
+        assert!(!items(&tree).contains(&recent(Some("a"), "a1")));
+    }
+
+    /// An untitled project selects the newest recent row; an open one its
+    /// recent row, leaving its folder collapsed.
+    #[test]
+    fn initial_selection_prefers_the_recent_rows() {
+        let mut untitled = tree_with_recent();
+        untitled.select_initial(Some("b"), None);
+        assert_eq!(untitled.selected(), Some(&recent(Some("a"), "a1")));
+        assert!(!untitled.is_expanded("b"));
+
+        let mut open = tree_with_recent();
+        open.select_initial(None, Some("loose"));
+        assert_eq!(open.selected(), Some(&recent(None, "loose")));
+
+        let mut in_folder = tree_with_recent();
+        in_folder.select_initial(Some("a"), Some("a1"));
+        assert_eq!(in_folder.selected(), Some(&recent(Some("a"), "a1")));
+        assert!(!in_folder.is_expanded("a"));
+
+        // Open but not recent: its row under its folder, expanded.
+        let mut older = tree_with_recent();
+        older.select_initial(Some("a"), Some("a2"));
+        assert_eq!(older.selected(), Some(&project(Some("a"), "a2")));
+        assert!(older.is_expanded("a"));
+    }
+
+    /// With nothing recent, the first show falls back as before.
+    #[test]
+    fn initial_selection_with_no_recent_projects_falls_back() {
+        let mut untitled = tree();
+        untitled.select_initial(Some("a"), None);
+        assert_eq!(untitled.selected(), Some(&folder("a")));
+        let mut open = tree();
+        open.select_initial(Some("a"), Some("a1"));
+        assert_eq!(open.selected(), Some(&project(Some("a"), "a1")));
     }
 
     #[test]
@@ -1942,6 +2226,7 @@ mod tests {
             Some(folder("z"))
         );
         for item in [
+            recents(),
             projects(),
             templates(),
             clips(),

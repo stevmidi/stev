@@ -20,6 +20,14 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ## [Unreleased]
 
+### Added
+
+- The browser's new RECENT category, first in the list, shows the ten
+  projects opened or saved most recently from every folder. At launch it is
+  selected, so ⌘O then Enter reopens the latest work. Its rows open and
+  rename as project rows do, and Backspace takes a project off the list
+  without touching the file.
+
 ### Changed
 
 - The browser no longer opens the current folder the first time it is shown

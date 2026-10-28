@@ -19,8 +19,9 @@ use crate::core::config::PROJECT_NAME_MAX_CHARS;
 use crate::core::input_event::InputEvent;
 use crate::core::project::{
     create_project_folder, project_name_from_input, rename_clip, rename_project,
-    rename_project_folder, rename_template,
+    rename_project_folder, rename_recent, rename_recent_folder, rename_template,
 };
+use crate::core::settings::update_settings;
 
 use super::Display;
 use super::browser::{BROWSER_FONT_SIZE, BrowserItem, browser_text_x};
@@ -165,7 +166,9 @@ impl Display {
         let result = match &rename.item {
             BrowserItem::NewFolder => create_project_folder(&new),
             BrowserItem::Folder(old) => rename_project_folder(old, &new),
-            BrowserItem::Project { folder, name } => rename_project(folder.as_deref(), name, &new),
+            BrowserItem::Project { folder, name } | BrowserItem::Recent { folder, name } => {
+                rename_project(folder.as_deref(), name, &new)
+            }
             BrowserItem::Template(old) => rename_template(old, &new),
             BrowserItem::Clip(old) => rename_clip(old, &new),
             _ => return,
@@ -184,18 +187,26 @@ impl Display {
     }
 
     /// After `item` was renamed to `new` on disk (or the new folder made):
-    /// the open project, renamed, is what ⌘S saves to; the current folder,
+    /// the Recent list follows a renamed project or folder; the open
+    /// project, renamed, is what ⌘S saves to; the current folder,
     /// renamed, stays current; a renamed folder stays expanded. Then
     /// re-lists the tree and selects the row under its new name.
     fn follow_browser_rename(&mut self, item: &BrowserItem, new: &str) {
         match item {
-            BrowserItem::Project { folder, name }
+            BrowserItem::Project { folder, name } | BrowserItem::Recent { folder, name } => {
+                update_settings("recent projects", |settings| {
+                    rename_recent(&mut settings.recent_projects, folder.as_deref(), name, new);
+                });
                 if *folder == self.project.project_current_folder
-                    && self.project.project_current_name.as_ref() == Some(name) =>
-            {
-                self.project.project_current_name = Some(new.to_owned());
+                    && self.project.project_current_name.as_ref() == Some(name)
+                {
+                    self.project.project_current_name = Some(new.to_owned());
+                }
             }
             BrowserItem::Folder(old) => {
+                update_settings("recent projects", |settings| {
+                    rename_recent_folder(&mut settings.recent_projects, old, new);
+                });
                 if self.project.project_current_folder.as_ref() == Some(old) {
                     self.set_current_project_folder(Some(new.to_owned()));
                 }

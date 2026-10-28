@@ -185,9 +185,11 @@ impl Display {
                     // meant for the project (⌘O goes back for the next).
                     self.close_overlay();
                     self.leave_browser();
-                    // A loaded project's folder becomes current; a new
-                    // project goes where the current folder is.
-                    if filename.is_some() {
+                    // A loaded project goes first in Recent and its folder
+                    // becomes current; a new project goes where the current
+                    // folder is.
+                    if let Some(name) = &filename {
+                        self.note_recent_project(folder.as_deref(), name);
                         self.set_current_project_folder(folder);
                     }
                     self.project.project_current_name = filename;
@@ -209,6 +211,7 @@ impl Display {
                 UiEvent::UnsavedChanges { action } => self.open_unsaved_prompt(action),
                 UiEvent::QuitApproved => self.quit_approved = true,
                 UiEvent::ProjectSaved { name, folder } => {
+                    self.note_recent_project(folder.as_deref(), &name);
                     self.project.project_current_name = Some(name);
                     self.set_current_project_folder(folder);
                 }

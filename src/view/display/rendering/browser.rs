@@ -82,7 +82,9 @@ impl BrowserIcon {
             BrowserItem::Folder(_) | BrowserItem::NewFolder => Some(BrowserIcon::Folder {
                 open: expanded == Some(true),
             }),
-            BrowserItem::Project { .. } | BrowserItem::Template(_) => Some(BrowserIcon::Project),
+            BrowserItem::Project { .. } | BrowserItem::Recent { .. } | BrowserItem::Template(_) => {
+                Some(BrowserIcon::Project)
+            }
             BrowserItem::Clip(_) => Some(BrowserIcon::Clip),
             BrowserItem::Plugin(_) => Some(BrowserIcon::Plugin),
             BrowserItem::Category(_) | BrowserItem::Scanning => None,
@@ -436,7 +438,7 @@ impl Display {
             let (label, is_open) = match &row.item {
                 BrowserItem::Category(category) => (category.label().to_owned(), false),
                 BrowserItem::Folder(name) => (name.clone(), current_folder == Some(name.as_str())),
-                BrowserItem::Project { folder, name } => (
+                BrowserItem::Project { folder, name } | BrowserItem::Recent { folder, name } => (
                     name.clone(),
                     folder.as_deref() == current_folder && Some(name.as_str()) == current_name,
                 ),
@@ -646,6 +648,11 @@ mod tests {
             name: "Sketch".to_owned(),
         };
         assert_eq!(BrowserIcon::of(&project, None), Some(BrowserIcon::Project));
+        let recent = BrowserItem::Recent {
+            folder: Some("Songs".to_owned()),
+            name: "Sketch".to_owned(),
+        };
+        assert_eq!(BrowserIcon::of(&recent, None), Some(BrowserIcon::Project));
         let clip = BrowserItem::Clip("Riff".to_owned());
         assert_eq!(BrowserIcon::of(&clip, None), Some(BrowserIcon::Clip));
         assert_eq!(BrowserIcon::of(&BrowserItem::Scanning, None), None);
