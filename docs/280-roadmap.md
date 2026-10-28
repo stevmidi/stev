@@ -84,6 +84,16 @@ It then also changes the *Suggest a feature* card on the site, the feature line 
 
 **Donations.** A *Support with a donation* card beside the three in *Take part*, as IINA has, backed by GitHub Sponsors and a `.github/FUNDING.yml` so the repo shows a Sponsor button too. Decided 2026-10-28: not yet. With no traction a donation link earns nothing and reads as asking before giving. Revisit when the project has traction: reports or pull requests from people other than the author arriving regularly, or release downloads showing steady users. The first thing donations would pay for is the Apple Developer fee behind a signed app (§ A signed macOS app). Setting it up then means enrolling in Sponsors, which handles payouts and tax forms, adding `FUNDING.yml`, the card and its line in `000` § Website.
 
+### An MCP server for AI agents
+
+Added 2026-10-28, from a discussion, no design yet. A Model Context Protocol server would let an AI client the user already has (Claude, ChatGPT, Cursor and the like) read and edit the open project: "a chord progression that fits the second clip on track 1", "a bass line under this", "a variation of this clip", "tidy up what I just played". **Bring your own client:** Stev gets no chat panel, no API keys and no model choice; the user's own subscription pays for the tokens.
+
+- **The shape:** a live bridge. Stev opens a local socket, and a small stdio MCP server forwards each tool call into the sequencer as a `SequencerCommand` and an undoable `SequencerEdit` (the same path as a key press, `250`). An edit then shows up at once and ⌘Z takes it back. Commands cross threads over a channel, with no locks on the render path. Editing the `.stev` file offline would be simpler but isn't live, bypasses undo and ties the server to the file format.
+- **Tools to start from:** a project overview (tracks, tempo, meter, a clip list with ids, but no notes), one clip's notes, insert a clip, replace a clip's notes, set the tempo, and maybe the capture buffer's last pass.
+- **Keep the tokens down:** notes as compact rows in beats (`C4 4.0 1.0 90`), not JSON in ticks; the wheels left out unless asked; a long capture sent as a window, not the whole buffer. That puts one request at roughly 5–15k tokens.
+- **What to expect from the models:** general LLMs handle harmony, chord progressions and typical genre patterns well, but feel and groove poorly, and they slip on bar counts. Stev should clamp and snap what comes back. Capture-first makes up for it: the player brings the feel and the agent adds structure around it. Audio-generating models (Suno, Lyria and the like) don't apply.
+- **Against § Principle:** "expand on what I captured" serves the capture workflow; "write my clips for me" pulls away from it. Before anything is built, try the free version: Claude writes a `.mid` file and Stev imports it as a clip (`060`), which shows whether the output is worth the bridge.
+
 ## Not planned
 
 Mirrored in the README's *Not planned* list, so nobody expects these. Some may come later if the capture workflow needs them, but none is on the roadmap.
