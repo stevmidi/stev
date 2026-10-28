@@ -25,6 +25,8 @@ Breaking entries are marked **Breaking** and say what to do about them.
 - The browser no longer opens the current folder the first time it is shown
   with an untitled project, as at launch: every folder starts collapsed. A
   folder holding the open project still opens to show it.
+- The browser's PLUGINS category starts collapsed; Right, Enter or a click
+  opens it.
 
 ## [0.9.0] - 2026-10-28
 

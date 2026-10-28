@@ -394,8 +394,8 @@ impl DiskListing {
 /// after a delete), the plugins (refreshed as the catalog scan reports),
 /// which categories and folders are expanded and which row is selected.
 /// Expansion and selection survive a refresh and hiding the panel; neither is
-/// persisted. Every category starts expanded, every folder collapsed.
-#[derive(Default)]
+/// persisted. Every category but Plugins (the long one) starts expanded,
+/// every folder collapsed.
 pub(super) struct BrowserTree {
     /// The projects and clips.
     disk: DiskListing,
@@ -422,6 +422,21 @@ pub(super) struct BrowserTree {
     /// (`open_new_folder_field`, `close_browser_rename`), so the two never
     /// disagree.
     new_folder: bool,
+}
+
+impl Default for BrowserTree {
+    fn default() -> Self {
+        Self {
+            disk: DiskListing::default(),
+            plugins: None,
+            collapsed: HashSet::from([BrowserCategory::Plugins]),
+            expanded: HashSet::new(),
+            rows: Vec::new(),
+            selected: None,
+            delete_armed: None,
+            new_folder: false,
+        }
+    }
 }
 
 /// Appends `projects`, in `folder` (`None`: the projects root), as rows at
@@ -1475,9 +1490,11 @@ mod tests {
     }
 
     /// [`tree`] with a Plugins category listing `plugins`.
+    /// `tree()` with the Plugins category listed and expanded.
     fn tree_with_plugins(plugins: Vec<BrowserPlugin>, scanning: bool) -> BrowserTree {
         let mut tree = tree();
         tree.set_plugins(Some(PluginListing::new(plugins, scanning)));
+        tree.set_item_expanded(&BrowserItem::Category(BrowserCategory::Plugins), true);
         tree
     }
 
@@ -1510,6 +1527,16 @@ mod tests {
         assert_eq!(tree.selected(), Some(&clips()));
         tree.collapse();
         assert!(!items(&tree).contains(&clip("a1_T1_B1")));
+    }
+
+    /// Plugins, the long list, starts collapsed; the rest start expanded.
+    #[test]
+    fn the_plugins_category_starts_collapsed() {
+        let mut tree = tree();
+        tree.set_plugins(Some(PluginListing::new(vec![plugin("Diva", "CLAP")], true)));
+        assert_eq!(items(&tree).last(), Some(&plugins()));
+        assert!(!tree.is_category_expanded(BrowserCategory::Plugins));
+        assert!(tree.is_category_expanded(BrowserCategory::Projects));
     }
 
     #[test]
