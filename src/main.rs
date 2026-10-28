@@ -2,6 +2,8 @@
 //! `000-architecture.md`), hand `eframe` the [`Display`](crate::view::display)
 //! app. `native_options()` owns the window config.
 
+#[cfg(unix)]
+use std::env;
 use std::sync::{Arc, OnceLock, atomic::Ordering};
 
 use eframe::NativeOptions;
@@ -9,6 +11,10 @@ use egui::{Context, IconData, ViewportBuilder};
 #[cfg(target_os = "macos")]
 use log::error;
 
+#[cfg(unix)]
+use crate::core::agent::{MCP_FLAG, run_mcp_server};
+#[cfg(unix)]
+use crate::core::threads::start_agent_bridge_thread;
 use crate::core::{
     keymap::Keymap,
     logging,
@@ -55,6 +61,7 @@ mod metadata {
 /// The engine: threading, sequencer, transport, clock, audio, MIDI,
 /// persistence, event routing.
 mod core {
+    pub mod agent;
     pub mod audio;
     pub mod clock;
     pub mod config;
@@ -126,6 +133,15 @@ fn main() {
     // window of its own.
     #[cfg(target_os = "macos")]
     run_if_scan_child();
+
+    // `stev --mcp`, launched by an AI client: the MCP server, which only
+    // talks to the running app over its socket, so it starts nothing — no
+    // log, no window (`360-mcp-server.md`).
+    #[cfg(unix)]
+    if env::args().nth(1).as_deref() == Some(MCP_FLAG) {
+        run_mcp_server();
+        return;
+    }
 
     // Before anything else can log or panic (`080-conventions.md` § Logging).
     logging::init();
@@ -215,6 +231,7 @@ fn main() {
     if let Some(engine) = audio_engine.as_ref() {
         display.attach_audio_load(engine.load.clone());
     }
+    display.attach_agent_bridge(shared_channels.agent_bridge_tx, settings.agent_bridge);
 
     // macOS instrument plugin host: hand the mixer to the running engine. Plugins
     // are loaded per-track later, from the browser panel (see
@@ -279,6 +296,17 @@ fn main() {
         shared_channels.sequencer_command_rx,
         shared_channels.transport_command_rx,
     );
+
+    // The app's end of the MCP server; it holds the socket only while
+    // *Allow AI agents* is on (`360-mcp-server.md`).
+    #[cfg(unix)]
+    start_agent_bridge_thread(
+        settings.agent_bridge,
+        shared_channels.agent_bridge_rx,
+        shared_channels.sequencer_command_tx.clone(),
+    );
+    #[cfg(not(unix))]
+    drop(shared_channels.agent_bridge_rx);
 
     start_computer_keys_thread(
         midi_input_forwarder.clone(),

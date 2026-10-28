@@ -26,7 +26,7 @@ use super::pointer_state::{
 /// Each drag payload is `Some` only while its gesture is live, so it doubles as
 /// the drag-active flag; the hover fields track what is under the pointer with
 /// no button held. All of it is scoped to a single view visit and never seen by
-/// the sequencer.
+/// the sequencer, but for the marquee's mirror (`published_marquee`).
 #[derive(Default)]
 pub(super) struct GestureState {
     /// Where the in-lane cursor line (`draw_cursor_line`) is drawn: the
@@ -57,6 +57,10 @@ pub(super) struct GestureState {
     /// the performance-lane row). `Some` while the primary mouse button is
     /// held, so it doubles as the drag-active flag.
     pub(super) time_selection_anchor: Option<(i32, usize)>,
+    /// The marquee as last sent to the sequencer for the agent bridge
+    /// ([`publish_marquee`](super::Display::publish_marquee)), so it is sent
+    /// once per change.
+    pub(super) published_marquee: Option<TimeSelectionRect>,
     /// Cursor tick observed last frame, used only to detect that the cursor moved
     /// so the time selection can collapse. `None` until the first observation.
     pub(super) last_cursor_tick: Option<i32>,

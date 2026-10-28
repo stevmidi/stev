@@ -42,7 +42,7 @@ impl EventHandlers {
 
         let saved_tracks = data.tracks.len();
         let clips = data.apply_to_sequencer(sequencer);
-        *saved = SavedProject::of(sequencer);
+        *saved = SavedProject::of(sequencer, filename.clone());
         let instruments = sequencer
             .tracks()
             .iter()
@@ -301,6 +301,7 @@ impl EventHandlers {
             Ok(()) => {
                 *saved = SavedProject {
                     fingerprint: data.fingerprint(),
+                    name: Some(filename.to_owned()),
                 };
                 self.ui_event_tx
                     .send(UiEvent::ProjectSaved {
@@ -413,15 +414,25 @@ impl EventHandlers {
 pub(crate) struct SavedProject {
     /// The saved project's fingerprint.
     fingerprint: u64,
+    /// The project's file name, without extension; `None` for a project
+    /// never saved (a new one, a template opened). The agent bridge's
+    /// `get_project` names it.
+    name: Option<String>,
 }
 
 impl SavedProject {
-    /// `sequencer`'s project as it stands, taken as saved — after a load, a
-    /// new project, and at startup.
-    pub(crate) fn of(sequencer: &Sequencer) -> Self {
+    /// `sequencer`'s project as it stands, named `name`, taken as saved —
+    /// after a load, a new project, and at startup.
+    pub(crate) fn of(sequencer: &Sequencer, name: Option<String>) -> Self {
         SavedProject {
             fingerprint: ProjectData::from_sequencer(sequencer).fingerprint(),
+            name,
         }
+    }
+
+    /// The project's file name, `None` before it is first saved.
+    pub(crate) fn name(&self) -> Option<&str> {
+        self.name.as_deref()
     }
 
     /// Whether `sequencer`'s project would save differently from this one.

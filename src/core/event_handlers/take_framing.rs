@@ -118,7 +118,10 @@ impl EventHandlers {
             // A save, which writes the target as it was before the session
             // (`Sequencer::saved_events`); a template keeps no clips at all.
             | SequencerCommand::SaveProject { .. }
-            | SequencerCommand::SaveTemplate { .. } => return false,
+            | SequencerCommand::SaveTemplate { .. }
+            // The agent bridge's marquee mirror and its reads.
+            | SequencerCommand::SetMarquee(_)
+            | SequencerCommand::Agent { .. } => return false,
 
             // The project commands say why they did nothing.
             SequencerCommand::ProjectAction { .. }

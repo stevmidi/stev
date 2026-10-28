@@ -55,7 +55,7 @@ pub(crate) fn start_sequencer_thread(
             let mut tap_tempo = TapTempo::default();
             // The empty startup project counts as saved: quitting before
             // touching anything asks nothing.
-            let mut saved = SavedProject::of(&sequencer);
+            let mut saved = SavedProject::of(&sequencer, None);
             // A project read from disk, waiting on the view to load its
             // plugins (`130-plugin-host.md` § Project persistence).
             let mut staged = None;

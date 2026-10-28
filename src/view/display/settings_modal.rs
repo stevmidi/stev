@@ -75,6 +75,8 @@ pub(super) enum SettingsHit {
     /// A MIDI section — its header, the offset row, or the empty and ghost
     /// slots of a port list: focuses that row.
     Section(MidiSettingsFocus),
+    /// The *Allow AI agents* switch's row: flips it.
+    AgentBridge,
     /// A port in the `side` list, by index into it.
     Port(PortSide, usize),
     /// A theme, by index.
@@ -245,6 +247,20 @@ impl Display {
             .ok();
     }
 
+    /// Flips *Allow AI agents*: the `"agent-bridge"` thread opens or closes
+    /// its socket at once, and the handler saves the setting. See
+    /// `360-mcp-server.md`.
+    pub(super) fn toggle_agent_bridge(&mut self) {
+        let on = !self.settings.midi.agent_bridge;
+        self.settings.midi.agent_bridge = on;
+        if let Some(tx) = &self.settings.midi.agent_bridge_tx {
+            tx.send(on).ok();
+        }
+        self.input_event_tx
+            .send(InputEvent::SaveAgentBridge { enabled: on })
+            .ok();
+    }
+
     /// Connects the port under the focused list's cursor and has the
     /// sequencer save both connected ports (Enter, or a double-click on a
     /// port). Nothing on the offset row, whose nudges already apply.
@@ -290,6 +306,10 @@ impl Display {
         match hit {
             SettingsHit::Tab(tab) => self.settings.tab = tab,
             SettingsHit::Section(focus) => self.settings.midi.focus = focus,
+            SettingsHit::AgentBridge => {
+                self.settings.midi.focus = MidiSettingsFocus::Agents;
+                self.toggle_agent_bridge();
+            }
             SettingsHit::Port(side, idx) => {
                 self.settings.midi.focus = side.focus();
                 self.settings.midi.list_mut(side).select(idx);

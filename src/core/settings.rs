@@ -58,6 +58,11 @@ pub(crate) struct SettingsData {
     /// (`core/project/recent.rs`). Absent before the list existed: empty.
     #[serde(default)]
     pub(crate) recent_projects: Vec<RecentProject>,
+    /// *Allow AI agents*: whether the agent bridge's socket is open
+    /// (`360-mcp-server.md` decision 4). Off until the user turns it on, and
+    /// absent before the bridge existed: off.
+    #[serde(default)]
+    pub(crate) agent_bridge: bool,
 }
 
 /// Serde default for [`SettingsData::browser_width`].
@@ -85,6 +90,7 @@ impl Default for SettingsData {
             browser_width: default_browser_width(),
             keymap: BTreeMap::new(),
             recent_projects: Vec::new(),
+            agent_bridge: false,
         }
     }
 }
@@ -148,5 +154,26 @@ mod tests {
         let json = serde_json::to_string(&settings).unwrap();
         let back: SettingsData = serde_json::from_str(&json).unwrap();
         assert_eq!(back.recent_projects, settings.recent_projects);
+    }
+
+    /// The agent bridge is off in settings saved before it existed, and
+    /// on once turned on.
+    #[test]
+    fn the_agent_bridge_defaults_to_off_and_round_trips() {
+        let old: SettingsData =
+            serde_json::from_str(r#"{"midi_in_port":null,"midi_out_port":null}"#).unwrap();
+        assert!(!old.agent_bridge);
+        assert!(!SettingsData::default().agent_bridge);
+
+        let settings = SettingsData {
+            agent_bridge: true,
+            ..SettingsData::default()
+        };
+        let json = serde_json::to_string(&settings).unwrap();
+        assert!(
+            serde_json::from_str::<SettingsData>(&json)
+                .unwrap()
+                .agent_bridge
+        );
     }
 }

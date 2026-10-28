@@ -73,6 +73,22 @@ impl Clip {
         export.events
     }
 
+    /// What this clip sounds, in arrangement ticks: the
+    /// [`exported_events`](Self::exported_events) moved to where the window
+    /// plays, each `NoteOn`'s length paired. Muted notes are gone; the
+    /// clip's own mute is the caller's to apply. What the agent bridge's
+    /// reads walk (`core/agent`).
+    pub(crate) fn played_events(&self) -> Vec<Event> {
+        let mut played = Clip::new();
+        played.events = self.exported_events();
+        for event in &mut played.events {
+            event.set_tick(event.tick() + self.start_tick);
+        }
+        played.sort_events_by_tick();
+        played.calculate_note_lengths();
+        played.events
+    }
+
     /// Appends what this clip plays to `out` (see [`merged`](Self::merged)),
     /// retimed so the window start lands on `start_tick`, with fresh ids.
     /// Returns whether every event came over unaltered: same events, same
@@ -433,5 +449,24 @@ mod tests {
                 (960, 0x80, 60)
             ]
         );
+    }
+
+    #[test]
+    fn played_events_sit_where_the_window_plays_with_paired_lengths() {
+        // Window 240..720 at bar 2: the note at event tick 300 sounds at
+        // 3840 + 60, the one past the window end is hidden, and a note
+        // held over the end stops there.
+        let clip = piece(
+            3840,
+            (240, 720),
+            &[(300, 400, 61), (600, 900, 63), (800, 900, 65)],
+        );
+        let notes: Vec<_> = clip
+            .played_events()
+            .iter()
+            .filter(|e| e.event_type() == Some(EventType::NoteOn))
+            .map(|e| (e.tick(), e.end_tick() - e.tick(), e.note_number().unwrap()))
+            .collect();
+        assert_eq!(notes, vec![(3900, 100, 61), (4200, 120, 63)]);
     }
 }

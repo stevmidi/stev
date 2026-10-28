@@ -104,7 +104,7 @@ pub(crate) fn harness() -> Harness {
     let track_id = sequencer.track_id_by_index(0).unwrap();
     sequencer.select_track(Some(track_id));
 
-    let saved = SavedProject::of(&sequencer);
+    let saved = SavedProject::of(&sequencer, None);
     Harness {
         handlers,
         ui_events,

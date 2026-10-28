@@ -84,6 +84,8 @@ struct MidiTabLayout {
     ports: [Section; 2],
     /// The output-offset section: one value row.
     offset: Section,
+    /// The *Allow AI agents* section: one switch row.
+    agents: Section,
 }
 
 /// Where the Keyboard tab's parts sit.
@@ -149,13 +151,13 @@ impl Display {
     /// logo.
     const ABOUT_NOTE_LINE_H: f32 = 1.3 * Self::FONT_HINT;
 
-    /// The content height: the taller of the fullest MIDI tab (three
+    /// The content height: the taller of the fullest MIDI tab (four
     /// headers; two port lists of `PORT_ROWS` plus a ghost row each; the
-    /// offset row) and the theme window — so switching tabs never makes the
-    /// panel jump.
+    /// offset row; the agents row) and the theme window — so switching tabs
+    /// never makes the panel jump.
     fn settings_content_h() -> f32 {
-        let midi = 3.0 * Self::SETTINGS_SECTION_H
-            + (2 * (PORT_ROWS + 1) + 1) as f32 * Self::SETTINGS_ROW_H;
+        let midi = 4.0 * Self::SETTINGS_SECTION_H
+            + (2 * (PORT_ROWS + 1) + 2) as f32 * Self::SETTINGS_ROW_H;
         let themes = THEME_ROWS as f32 * Self::SETTINGS_ROW_H;
         midi.max(themes)
     }
@@ -230,7 +232,8 @@ impl Display {
     }
 
     /// The MIDI tab in `content` for `midi`'s port lists: the input section,
-    /// the output section under it, then the offset. Pure geometry.
+    /// the output section under it, then the offset, then the agents
+    /// switch. Pure geometry.
     fn midi_tab_layout(content: Rect, midi: &MidiTab) -> MidiTabLayout {
         let mut top = content.min.y;
         let ports = PortSide::ALL.map(|side| {
@@ -240,9 +243,11 @@ impl Display {
             top = section.area.max.y;
             section
         });
+        let offset = Self::settings_section(content, top, 1, 1);
         MidiTabLayout {
             ports,
-            offset: Self::settings_section(content, top, 1, 1),
+            offset,
+            agents: Self::settings_section(content, offset.area.max.y, 1, 1),
         }
     }
 
@@ -382,6 +387,17 @@ impl Display {
                             .area
                             .contains(p)
                             .then_some(SettingsHit::Section(MidiSettingsFocus::OutOffset))
+                    })
+                    .or_else(|| {
+                        let agents = midi.agents;
+                        if agents.rows.hit(p).is_some() {
+                            Some(SettingsHit::AgentBridge)
+                        } else {
+                            agents
+                                .area
+                                .contains(p)
+                                .then_some(SettingsHit::Section(MidiSettingsFocus::Agents))
+                        }
                     })
             }
             SettingsTab::Appearance => Self::theme_rows(layout.content).hit(p).map(|i| {
@@ -677,6 +693,32 @@ impl Display {
             pos2(row.max.x - Self::SETTINGS_TEXT_INSET, row.center().y),
             Align2::RIGHT_CENTER,
             "delays MIDI OUT to match instrument tracks",
+            FontId::proportional(Self::FONT_HINT),
+            theme::fg_dim(),
+        );
+
+        // A switch: Enter, Space, ↑/↓ or a click flip it, applied at once.
+        // See `360-mcp-server.md`.
+        let agents_focused = focus == MidiSettingsFocus::Agents;
+        let on = self.settings.midi.agent_bridge;
+        let row = layout.agents.rows.row(0);
+        Self::draw_settings_header(painter, layout.agents, "AGENTS", agents_focused);
+        Self::draw_settings_row(
+            painter,
+            row,
+            if on {
+                "Allow AI agents: on"
+            } else {
+                "Allow AI agents: off"
+            },
+            agents_focused,
+            true,
+            on,
+        );
+        painter.text(
+            pos2(row.max.x - Self::SETTINGS_TEXT_INSET, row.center().y),
+            Align2::RIGHT_CENTER,
+            "lets an MCP client read the project",
             FontId::proportional(Self::FONT_HINT),
             theme::fg_dim(),
         );

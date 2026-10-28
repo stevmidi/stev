@@ -153,6 +153,8 @@ impl EventHandlers {
                     | SequencerCommand::ExitClip
                     | SequencerCommand::FocusPane(_)
                     | SequencerCommand::SetTrackInstrumentState { .. }
+                    | SequencerCommand::SetMarquee(_)
+                    | SequencerCommand::Agent { .. }
             ),
         )
     }

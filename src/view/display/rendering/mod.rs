@@ -26,6 +26,8 @@ use egui::{
 
 use super::state::scrolled_offset;
 use super::*;
+#[cfg(target_os = "macos")]
+use crate::core::agent::remove_socket;
 use crate::core::audio::meter::{ChannelLevel, amplitude_db};
 use crate::core::config::MAX_TRACKS;
 #[cfg(target_os = "macos")]
@@ -1295,6 +1297,7 @@ impl eframe::App for Display {
         self.in_pane(Pane::Clip, Self::sync_clip_frame);
         self.in_pane(Pane::Arranger, Self::sync_arranger_scroll);
         self.sync_time_selection_to_cursor();
+        self.publish_marquee();
 
         if self.gesture.clip_resize_drag.is_some()
             || self.gesture.clip_resize_hover.is_some()
@@ -1539,6 +1542,9 @@ impl eframe::App for Display {
         if let Some(staging) = self.instruments.staging.take() {
             staging.leak();
         }
+        // Nothing listens once the process is gone (`360-mcp-server.md`
+        // decision 5).
+        remove_socket();
         // `_exit` flushes nothing, so anything still buffered goes now.
         let _ = std::io::stdout().flush();
         let _ = std::io::stderr().flush();

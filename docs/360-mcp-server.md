@@ -1,6 +1,6 @@
 # MCP Server
 
-**Status: design agreed 2026-10-28, not built.** Lets an AI client the user already has (Claude Desktop, Claude Code, ChatGPT, Cursor and the like) read and edit the open project through the Model Context Protocol: marquee a section and say "continue this with a new 4-bar section", "a bass line under this", "a variation of this clip", "tidy up what I just played". It grows out of `280` § An MCP server for AI agents, whose free-version test (2026-10-28) decided the bridge was worth building and named what its tools need. This file holds the decisions, the tool list and the server instructions. Read `250` (the path a command takes), `050` (edits and undo), `020` § Views (the marquee) and `220` (capture) first.
+**Status: design agreed 2026-10-28; phase 1 (the bridge and the reads) built 2026-10-28, phases 2–3 not started.** Lets an AI client the user already has (Claude Desktop, Claude Code, ChatGPT, Cursor and the like) read and edit the open project through the Model Context Protocol: marquee a section and say "continue this with a new 4-bar section", "a bass line under this", "a variation of this clip", "tidy up what I just played". It grows out of `280` § An MCP server for AI agents, whose free-version test (2026-10-28) decided the bridge was worth building and named what its tools need. This file holds the decisions, the tool list and the server instructions. Read `250` (the path a command takes), `050` (edits and undo), `020` § Views (the marquee) and `220` (capture) first.
 
 ## Decisions (2026-10-28)
 
@@ -28,7 +28,7 @@
 14. **Against § Principle (`280`):** the tools are shaped around building on what was played (the marqueed section, the capture, variations of a clip), not around writing a song from nothing. There is no tool to make tracks, choose plugins or arrange sections.
 15. **A write leaves the selection alone.** The lead clip, the marquee, the event selection and the cursor stay as the user left them, the agent's own new clips included (the rule a capture commit follows, `220`). The model uses the ids the write returns. So a following "a variation of this" means what the user has selected, not what the agent wrote; the instructions say to ask when that's ambiguous.
 16. **The cleanup follows the swing already there.** Stev has no project swing: each clip carries its own `swing_pct`, detected when it was captured (`070`). `replace_clip_notes` snaps to its clip's swung grid. Each clip in `create_clips` takes `swing` (50–75), defaulting to the swing of the clip sounding over the same bars on its own track or, failing that, on the other tracks (the longest-overlapping one; 50, straight, when none). It is stored as the new clip's `swing_pct`, so a later quantize (`Q` in the clip view) uses the same grid. Swing only bends the 1/16 grid, as quantize does; a coarser `grid` is unaffected and a triplet `grid` (`1/12`, `1/24`) ignores it. A continuation therefore keeps the marqueed section's swing without the model doing anything. `get_context` and `get_project` report each clip's swing, so the model can write off-beats where they'll land.
-17. **One person on one machine.** One connection at a time (decision 7); a second `--mcp` waits for the first to close. No client ids, no sessions.
+17. **One person on one machine.** One connection at a time (decision 7), and each `--mcp` opens one per tool call and closes it with the answer, so several clients (two Claude sessions open at once) take turns call by call. A connection held between calls kept every other client waiting for as long as the first session stayed open (found in the first hand test, 2026-10-28). No client ids, no sessions.
 18. **Writes land while playing**, as a paste does: a clip created under the playhead starts sounding mid-bar, its notes chased (`050` § Invariants). No tool asks for a stopped transport.
 19. **The marquee is what the agent reads.** It is how the user already says "here" (Delete, ⌘D, ⌘J, ⌘X and `Z` all act on it). `get_context` reports it, and the reads default to its range: `get_timeline` over every audible track, since harmony comes from all of them, and `get_notes` over the marqueed tracks. With no marquee spanning time, the reads fall back to the loop region, what is playing; with neither, the agent asks. Nothing is stored: the context is derived from the selection at the moment of the call.
 20. **The request says where to write; the write says it explicitly.** "Continue this with 4 bars" reads the marquee and writes four bars starting at its end; "a bass line under this" writes over the marquee's own range. The agent works the target out and passes it to the write as track, position and length, copied from what `get_context` returned. Writes never default to the live selection, so a user who moves the marquee while the agent thinks still gets the write where they pointed when they asked.
@@ -134,7 +134,9 @@ Units. Lengths are in beats (quarter notes, whatever the meter), as decimals.
 Positions are bar+beats: "17+2" is bar 17, two beats in; bars count from 1.
 Notes are rows "pitch start length velocity", one per line, start in beats
 from the start of the clip or range, pitch as a name with C4 = MIDI 60 (sharps
-only), e.g. "A2 0 1.5 96".
+only), e.g. "A2 0 1.5 96". Sharps are only how Stev writes pitches, not
+a spelling: in a flat key read A# as Bb and D# as Eb, and name notes and
+chords as the key spells them.
 
 How to work:
 1. Call get_context first on every request. "This" means the marquee it
@@ -172,6 +174,17 @@ The walkthrough above is `get_context` (≈150), `get_timeline` over 8 bars (≈
 ## Build (phases)
 
 Each phase is one branch and one merge, with its tests, docs and changelog line.
+
+**Phase 1 as built** (`src/core/agent/`, `src/core/threads/agent_bridge.rs`, Unix only): where it settled what the design left open.
+
+- The switch is a fourth row on the settings modal's MIDI tab, AGENTS (`Allow AI agents: on/off`), flipped by Enter, Space, ↑/↓ or a click, applied at once. It opens or closes the socket live, without a restart.
+- The marquee lives in the view, so `Display::publish_marquee` mirrors it to the sequencer once per change (`SequencerCommand::SetMarquee`); the reads take it from there, so they still answer from the sequencer's own state (decision 7).
+- The project name comes from `SavedProject`, which now keeps the open project's file name.
+- The `--mcp` process connects per call (decision 17), so an app restarted between calls needs nothing special. With no socket it reads `settings.json`: setting off, the answer names it; on, `Stev isn't running`. A call waits 10 s for an answer (the app's own wait on the sequencer is 5 s).
+- The output stays sharps only, and the instructions tell the model to respell for the key: in the first hand test, in B♭ major, it read `D#` as `D♭` once before catching itself. Spelling by key in Rust is the fallback if the line isn't enough.
+- Tracks are named by number from 1 or by name in `tracks`, and listed as `track 2 keys`. Only `get_notes` defaults differently without a marquee: every track that isn't muted.
+- `get_timeline` lists a beat when a note starts in it or what sounds changes (`-` for silence) and leaves out a part silent all bar. The pitch classes go in order of first sounding.
+- Until phase 2 the server instructions leave out the writing steps and say the server can only read; phase 2 puts the designed text back. The row parser is built and tested now but read only by the writes.
 
 1. **The bridge and the reads.** The `--mcp` stdio mode (`main.rs` decides before eframe starts), the setting, the socket and the `"agent-bridge"` thread, `SequencerCommand::Agent`, and `get_context`, `get_project`, `get_timeline`, `get_notes`. Useful alone: "what key is this in", "what does the bass play here". Pure parts tested: the row format both ways, positions and beats ↔ ticks in every meter, the defaults (marquee, loop-region fallback), the sounding-notes walk over carved windows, mutes and solo (a held note's negative start included), the JSON-RPC framing.
 2. **The writes.** `create_clips`, `replace_clip_notes`, `set_tempo`, the cleanup and its report, the `Agent:` footer, the refusal rules (decisions 13 and 22). Tests: the cleanup (snap straight and swung, the default swing taken from the track's own clip first, a triplet grid ignoring swing, clamp, cut at the end, minimum length, jitter bounded and turned off), the refusal over an existing clip and the carve with `replace_existing`, several clips undone as one step, the selection unchanged by every write, each edit's edit/undo round trip, `extend_loop` restoring the region on undo.

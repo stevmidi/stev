@@ -17,13 +17,19 @@
 //!   plus every command dispatch (`150-clock-position-sync.md`).
 //! - `controller.rs` — the parked MIDI-CC controller route, `#[allow(dead_code)]`
 //!   and never called; kept on purpose (`000-architecture.md`).
+//! - `agent_bridge.rs` (Unix) — the `"agent-bridge"` thread, the app's end of
+//!   the MCP server (`360-mcp-server.md`).
 
+#[cfg(unix)]
+mod agent_bridge;
 mod computer_keys;
 mod controller;
 mod midi_output;
 mod midi_watcher;
 mod sequencer_pump;
 
+#[cfg(unix)]
+pub(crate) use agent_bridge::start_agent_bridge_thread;
 pub(crate) use computer_keys::start_computer_keys_thread;
 pub(crate) use midi_output::start_midi_output_thread;
 #[cfg(test)]

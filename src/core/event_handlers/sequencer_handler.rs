@@ -8,6 +8,7 @@ use std::time::Instant;
 
 use undo::Record;
 
+use crate::core::agent::answer;
 use crate::core::project::StagedProject;
 use crate::core::sequencer::{
     CommitClipEdit, DeleteSelectedEventsEdit, DeleteTimeEdit, DragEventsVelocityEdit,
@@ -558,6 +559,12 @@ impl EventHandlers {
             SequencerCommand::SetMeter { meter } => {
                 let edit = SetMeterEdit::new(sequencer, *meter);
                 self.record_edit(sequencer, undo_record, edit);
+            }
+
+            SequencerCommand::SetMarquee(marquee) => sequencer.set_marquee(*marquee),
+
+            SequencerCommand::Agent { request, reply } => {
+                reply.send(answer(request, sequencer, saved.name())).ok();
             }
 
             SequencerCommand::SetTrackOutput { track, output } => {

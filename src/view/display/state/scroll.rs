@@ -245,6 +245,19 @@ impl Display {
         };
     }
 
+    /// Sends the marquee to the sequencer when it changed since last sent:
+    /// what the agent bridge's reads default to (`360-mcp-server.md`
+    /// decision 19). Compared once a frame, after every path that moves it,
+    /// rather than sent from each of them.
+    pub(in crate::view::display) fn publish_marquee(&mut self) {
+        let marquee = self.gesture.time_selection;
+        if marquee != self.gesture.published_marquee {
+            self.gesture.published_marquee = marquee;
+            self.event_handlers
+                .handle_input_event(&InputEvent::MarqueeChanged(marquee));
+        }
+    }
+
     /// Collapses the time selection whenever the cursor moves or the selected
     /// track changes.
     ///

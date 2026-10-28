@@ -652,6 +652,10 @@ pub(crate) enum InputEvent {
         /// the cursor.
         target: Option<(usize, i32)>,
     },
+    /// The arranger marquee changed (or went): the sequencer mirrors it for
+    /// the agent bridge (`SequencerCommand::SetMarquee`). Sent by the view
+    /// once per change, never by a key.
+    MarqueeChanged(Option<TimeSelectionRect>),
     /// Replace or end the open project — ⌘/Ctrl+N, a project opened from the
     /// browser panel, quitting. Unless `discard_changes`, the sequencer first
     /// checks for unsaved changes and asks the view to prompt
@@ -680,6 +684,12 @@ pub(crate) enum InputEvent {
     SetMidiOutOffset {
         /// The new MIDI-output offset, in milliseconds.
         out_offset_ms: i32,
+    },
+    /// *Allow AI agents* flipped (the settings modal's MIDI tab): save it.
+    /// The view has already told the `"agent-bridge"` thread.
+    SaveAgentBridge {
+        /// Whether agents may connect.
+        enabled: bool,
     },
     /// The theme changed (the settings modal's Appearance tab):
     /// save it as the theme the app starts with. The view has already

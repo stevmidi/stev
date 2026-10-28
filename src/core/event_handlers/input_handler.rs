@@ -221,6 +221,10 @@ impl EventHandlers {
                 self.send_sequencer(SequencerCommand::SaveTemplate { name: name.clone() });
             }
 
+            InputEvent::MarqueeChanged(marquee) => {
+                self.send_sequencer(SequencerCommand::SetMarquee(*marquee));
+            }
+
             InputEvent::ExportClip { time_bounds, name } => {
                 self.send_sequencer(SequencerCommand::ExportClip {
                     time_bounds: *time_bounds,
@@ -305,6 +309,12 @@ impl EventHandlers {
                 self.midi_out_offset_ms.store(offset, Ordering::Relaxed);
                 update_settings("MIDI output offset", |settings| {
                     settings.midi_out_offset_ms = offset;
+                });
+            }
+
+            InputEvent::SaveAgentBridge { enabled } => {
+                update_settings("AI agents setting", |settings| {
+                    settings.agent_bridge = *enabled;
                 });
             }
 

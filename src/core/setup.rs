@@ -91,6 +91,7 @@ pub(crate) fn setup_shared_channels() -> SharedChannels {
     let (midi_out_reconnect_tx, midi_out_reconnect_rx) = bounded::<String>(1);
     let (computer_keys_tx, computer_keys_rx) = unbounded::<(Midi3, u64)>();
     let (midi_out_connection_tx, midi_out_connection_rx) = unbounded::<MidiOutputConnection>();
+    let (agent_bridge_tx, agent_bridge_rx) = unbounded::<bool>();
 
     SharedChannels {
         tick_tx,
@@ -131,6 +132,8 @@ pub(crate) fn setup_shared_channels() -> SharedChannels {
         computer_keys_rx,
         midi_out_connection_tx,
         midi_out_connection_rx,
+        agent_bridge_tx,
+        agent_bridge_rx,
     }
 }
 

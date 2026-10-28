@@ -67,12 +67,19 @@ impl Display {
         false
     }
 
-    /// The MIDI tab's keys: Tab and ←/→ cycle the three rows, ⇧Tab
+    /// The MIDI tab's keys: Tab and ←/→ cycle the four rows, ⇧Tab
     /// backwards; ↑/↓ move the
     /// focused port list's cursor or nudge the offset (applied and saved at
-    /// once); Enter connects the port under the cursor. Returns whether it
-    /// took the key.
+    /// once); Enter connects the port under the cursor. On the agents row,
+    /// Enter, Space and ↑/↓ flip the switch. Returns whether it took the
+    /// key.
     fn handle_midi_tab_key(&mut self, key: Key, modifiers: KeyModifiers) -> bool {
+        if self.settings.midi.focus == MidiSettingsFocus::Agents
+            && matches!(key, Key::Enter | Key::Space | Key::ArrowUp | Key::ArrowDown)
+        {
+            self.toggle_agent_bridge();
+            return true;
+        }
         let step = match key {
             Key::Tab if modifiers.shift => {
                 self.settings.midi.focus = self.settings.midi.focus.previous();

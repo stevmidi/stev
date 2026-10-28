@@ -1,6 +1,6 @@
 //! Where the app keeps things on disk: the user's library under Documents
 //! (`Stev/`, holding only user content — `Projects/`, `Templates/` and the
-//! audio export's `Exports/` today, sibling root folders for forks), app settings in the platform config directory,
+//! audio export's `Exports/` today, sibling root folders for forks), app settings (and, on Unix, the agent bridge's socket) in the platform config directory,
 //! rebuildable caches in the platform cache directory, and logs in the
 //! platform's logs folder. See `060-persistence.md`.
 
@@ -24,6 +24,11 @@ pub(crate) const TEMPLATES_DIR_NAME: &str = "Templates";
 
 /// File name of the app settings.
 pub(crate) const SETTINGS_FILE_NAME: &str = "settings.json";
+
+/// File name of the agent bridge's socket, in the config directory
+/// (`360-mcp-server.md` decision 5).
+#[cfg(unix)]
+pub(crate) const AGENT_SOCKET_FILE_NAME: &str = "agent.sock";
 
 /// File name of the VST3 catalog cache.
 #[cfg(target_os = "macos")]

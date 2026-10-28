@@ -498,6 +498,14 @@ impl Display {
         self.audio_load = Some(load);
     }
 
+    /// Hands over the `"agent-bridge"` thread's control channel and the
+    /// saved *Allow AI agents* setting, which the settings modal's AGENTS
+    /// row shows and flips. Called once from `main`.
+    pub(crate) fn attach_agent_bridge(&mut self, tx: Sender<bool>, enabled: bool) {
+        self.settings.midi.agent_bridge_tx = Some(tx);
+        self.settings.midi.agent_bridge = enabled;
+    }
+
     /// Hands over the receiving end of the background plugin-catalog scan.
     /// Called once from `main`, alongside `attach_instrument_audio`.
     #[cfg(target_os = "macos")]

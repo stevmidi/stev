@@ -34,8 +34,9 @@ third in pink: `site/images/logo.svg`), and the app icon once there is one.
 
 Change the name wherever users or other programs see it: the window title, the
 app bundle and its bundle identifier, the name the app gives plugins and MIDI
-ports, and the folders it keeps settings and logs in. That last one also keeps
-a fork from sharing settings with an installed Stev. The `.stev` project format
+ports, the name its MCP server gives AI clients, and the folders it keeps
+settings and logs in. That last one also keeps a fork from sharing settings,
+or the AI agents' socket, with an installed Stev. The `.stev` project format
 and its extension can stay, since files that open in both apps help everyone.
 
 ## Questions

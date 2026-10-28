@@ -138,6 +138,29 @@ its notes to one of two places:
   <img src="docs/images/vst/VST_Compatible_Logo_Steinberg.svg" alt="VST Compatible" width="116">
 </picture>
 
+## AI agents
+
+An AI client you already use can read the open project through
+[MCP](https://modelcontextprotocol.io): marquee a section and ask "what key is
+this in" or "what does the bass play here". Stev sends nothing anywhere and
+needs no API key; your client does the thinking. For now it can only read.
+
+1. In Stev, turn on **Allow AI agents** under **Settings** (`⌘,`) → **MIDI**.
+2. Add Stev as an MCP server to your client:
+
+   ```
+   # Claude Code
+   claude mcp add stev -- /Applications/Stev.app/Contents/MacOS/stev --mcp
+
+   # Claude Desktop, claude_desktop_config.json
+   { "mcpServers": { "stev": {
+       "command": "/Applications/Stev.app/Contents/MacOS/stev", "args": ["--mcp"] } } }
+   ```
+
+The client starts `stev --mcp` itself, which opens no window and talks only to
+the Stev you have open, over a socket only your user account can reach. With
+Stev closed or the setting off, every answer says so.
+
 ## Not planned
 
 Stev grows toward its capture workflow, not toward a full DAW. These are not on

@@ -152,4 +152,10 @@ pub(crate) struct SharedChannels {
     pub(crate) midi_out_connection_tx: Sender<MidiOutputConnection>,
     /// Receiving half of the pair documented above.
     pub(crate) midi_out_connection_rx: Receiver<MidiOutputConnection>,
+    /// Settings modal (render thread) → `"agent-bridge"` thread: *Allow AI
+    /// agents* turned on or off, opening or closing the socket. Off Unix
+    /// there is no such thread and the receiver is dropped.
+    pub(crate) agent_bridge_tx: Sender<bool>,
+    /// Receiving half of the pair documented above.
+    pub(crate) agent_bridge_rx: Receiver<bool>,
 }

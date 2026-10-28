@@ -26,6 +26,7 @@ use crate::core::midi::out_queue::MidiOutMessage;
 use crate::{
     core::{
         config,
+        input_event::TimeSelectionRect,
         shared_atomics::{AudioExportAtomics, TrackMixAtomics},
         time::Meter,
     },
@@ -145,6 +146,13 @@ pub(crate) struct Sequencer {
     /// selection. Shared with `MidiInputForwarder` (a different thread)
     /// so it can suppress the MIDI-OUT thru-forward while armed.
     pub(super) performance_lane_armed: Arc<AtomicBool>,
+
+    // --- Agent bridge ---
+    /// The view's arranger marquee, mirrored here on every change
+    /// (`SequencerCommand::SetMarquee`): what the agent bridge's reads
+    /// default to (`360-mcp-server.md` decision 19). Never acted on by
+    /// anything else — every edit still takes its range from its command.
+    pub(super) marquee: Option<TimeSelectionRect>,
 }
 
 impl Sequencer {
@@ -202,6 +210,7 @@ impl Sequencer {
             audio_export_atomics,
             performance_lane: PerformanceLane::new(),
             performance_lane_armed,
+            marquee: None,
         }
     }
 
@@ -209,6 +218,16 @@ impl Sequencer {
     /// Whether the transport is playing.
     pub(crate) fn is_running(&self) -> bool {
         self.running.load(Ordering::Relaxed)
+    }
+
+    /// The view's marquee as last mirrored (see the field).
+    pub(crate) fn marquee(&self) -> Option<TimeSelectionRect> {
+        self.marquee
+    }
+
+    /// Mirrors the view's marquee.
+    pub(crate) fn set_marquee(&mut self, marquee: Option<TimeSelectionRect>) {
+        self.marquee = marquee;
     }
 
     /// Current cursor position, in ticks.

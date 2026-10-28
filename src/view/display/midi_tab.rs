@@ -1,6 +1,7 @@
 //! The settings modal's MIDI tab state — the input and output [`PortList`]s
 //! (scanned ports, cursor, scroll window, connected port, reconnect channel
-//! end), which row has the focus, and the editable output-offset mirror.
+//! end), which row has the focus, the editable output-offset mirror and the
+//! *Allow AI agents* switch.
 //!
 //! Held by the settings modal as `SettingsModal::midi`, beside the Keyboard
 //! tab's state; every method that drives it stays on
@@ -116,6 +117,11 @@ pub(super) struct MidiTab {
     /// Editable mirror of the persisted MIDI-output offset, in milliseconds.
     /// Applied and saved on every nudge.
     pub(super) out_offset_ms: i32,
+    /// *Allow AI agents*, as saved (`SettingsData::agent_bridge`).
+    pub(super) agent_bridge: bool,
+    /// To the `"agent-bridge"` thread: the switch flipped. `None` until
+    /// `main` attaches it ([`Display::attach_agent_bridge`](super::Display::attach_agent_bridge)).
+    pub(super) agent_bridge_tx: Option<Sender<bool>>,
 }
 
 impl MidiTab {
@@ -134,6 +140,8 @@ impl MidiTab {
             output: PortList::new(midi_out_reconnect_tx, midi_out_current_port),
             focus: MidiSettingsFocus::InPort,
             out_offset_ms,
+            agent_bridge: false,
+            agent_bridge_tx: None,
         }
     }
 

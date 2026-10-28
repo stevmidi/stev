@@ -2,8 +2,10 @@
 //! vocabulary. Handled in `event_handlers/sequencer_handler.rs`; see that file
 //! and `050-undo-redo.md`.
 
+use crossbeam_channel::Sender;
 use uuid::Uuid;
 
+use crate::core::agent::{AgentReply, AgentRequest};
 use crate::core::input_event::TimeSelectionRect;
 use crate::core::project::ProjectAction;
 use crate::core::sequencer::{AudioExportOutcome, TempoGesture};
@@ -592,5 +594,20 @@ pub(crate) enum SequencerCommand {
     SetMeter {
         /// The new meter.
         meter: Meter,
+    },
+
+    // --- Agent bridge ---
+    /// The view's marquee changed: mirror it for the agent bridge's reads
+    /// (`Sequencer::marquee`). Not an edit; nothing else reads it.
+    SetMarquee(Option<TimeSelectionRect>),
+    /// A tool call from the `"agent-bridge"` thread (`core::agent`),
+    /// answered on `reply`. The reads change nothing and run whatever else
+    /// holds the edit (a take session, an audio export).
+    #[cfg_attr(not(unix), allow(dead_code))]
+    Agent {
+        /// The call.
+        request: AgentRequest,
+        /// Where the answer goes; the bridge waits on it.
+        reply: Sender<AgentReply>,
     },
 }
