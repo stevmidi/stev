@@ -24,7 +24,7 @@
 //! what Enter means), unit-tested; the `impl Display` below drives it from
 //! input and reads the filesystem.
 
-use std::{collections::HashSet, path::PathBuf, time::Instant};
+use std::{collections::HashSet, io, path::PathBuf, time::Instant};
 
 use egui::{Key, Pos2, Vec2, vec2};
 
@@ -304,7 +304,7 @@ impl BrowserItem {
     }
 
     /// A project's, template's, clip's or folder's name (a file's stem) —
-    /// the rows ⌘R renames; `None` for anything else.
+    /// the rows ⌘R renames and Delete deletes; `None` for anything else.
     pub(super) fn renamable_name(&self) -> Option<&str> {
         match self {
             BrowserItem::Project { name, .. }
@@ -361,20 +361,9 @@ pub(super) enum BrowserAction {
     LoadPlugin(BrowserPlugin),
     /// Import this clip (its file stem) on the selected track at the cursor.
     ImportClip(String),
-    /// Delete this project (the confirmed second Enter).
-    DeleteProject {
-        /// Its folder, `None` at the projects root.
-        folder: Option<String>,
-        /// The project name.
-        name: String,
-    },
-    /// Delete this project folder, with its projects (the confirmed second
-    /// Enter).
-    DeleteFolder(String),
-    /// Delete this template, by its file stem (the confirmed second Enter).
-    DeleteTemplate(String),
-    /// Delete this clip, by its file stem (the confirmed second Enter).
-    DeleteClip(String),
+    /// Delete this project, template, clip or folder — a folder with its
+    /// projects (the confirmed second Enter).
+    Delete(BrowserItem),
 }
 
 /// What [`BrowserTree::reload`] lists from disk.
@@ -659,19 +648,18 @@ impl BrowserTree {
     /// projects go with it. `None` with no delete armed.
     pub(super) fn delete_prompt(&self) -> Option<String> {
         self.delete_armed?;
-        let what = match self.selected.as_ref()? {
-            BrowserItem::Project { name, .. }
-            | BrowserItem::Template(name)
-            | BrowserItem::Clip(name) => name.clone(),
-            BrowserItem::Folder(name) => {
+        let item = self.selected.as_ref()?;
+        let name = item.renamable_name()?;
+        let what = match item {
+            BrowserItem::Folder(_) => {
                 let count = self.disk.folder_projects(name).map_or(0, <[_]>::len);
                 match count {
-                    0 => name.clone(),
+                    0 => name.to_owned(),
                     1 => format!("{name} and its project"),
                     n => format!("{name} and its {n} projects"),
                 }
             }
-            _ => return None,
+            _ => name.to_owned(),
         };
         Some(format!("Delete {what}? Enter deletes, Esc cancels"))
     }
@@ -766,13 +754,10 @@ impl BrowserTree {
     pub(super) fn activate(&mut self) -> Option<BrowserAction> {
         let armed = self.delete_armed.take().is_some();
         let item = self.selected.clone()?;
+        if armed && item.renamable_name().is_some() {
+            return Some(BrowserAction::Delete(item));
+        }
         match item {
-            BrowserItem::Project { folder, name } if armed => {
-                Some(BrowserAction::DeleteProject { folder, name })
-            }
-            BrowserItem::Folder(name) if armed => Some(BrowserAction::DeleteFolder(name)),
-            BrowserItem::Template(name) if armed => Some(BrowserAction::DeleteTemplate(name)),
-            BrowserItem::Clip(name) if armed => Some(BrowserAction::DeleteClip(name)),
             BrowserItem::Category(_) | BrowserItem::Folder(_) => {
                 self.toggle(&item);
                 None
@@ -790,16 +775,12 @@ impl BrowserTree {
     /// Delete/Backspace: arms the delete confirm on a selected project,
     /// template, clip or folder.
     pub(super) fn arm_delete(&mut self) {
-        self.delete_armed = matches!(
-            self.selected,
-            Some(
-                BrowserItem::Project { .. }
-                    | BrowserItem::Template(_)
-                    | BrowserItem::Clip(_)
-                    | BrowserItem::Folder(_)
-            )
-        )
-        .then(Instant::now);
+        self.delete_armed = self
+            .selected
+            .as_ref()
+            .and_then(BrowserItem::renamable_name)
+            .is_some()
+            .then(Instant::now);
     }
 }
 
@@ -1311,60 +1292,46 @@ impl Display {
             BrowserAction::ImportClip(name) => {
                 self.import_midi_file(&clip_path(&name));
             }
-            BrowserAction::DeleteProject { folder, name } => {
-                let message = match delete_project(folder.as_deref(), &name) {
-                    Ok(()) => deleted_message(&name),
-                    Err(e) => format!("Could not delete {name}: {e}"),
-                };
-                self.finish_browser_delete(message);
-            }
-            BrowserAction::DeleteTemplate(name) => {
-                let message = match delete_template(&name) {
-                    Ok(()) => deleted_message(&name),
-                    Err(e) => format!("Could not delete {name}: {e}"),
-                };
-                self.finish_browser_delete(message);
-            }
-            BrowserAction::DeleteClip(name) => {
-                let message = match delete_clip(&name) {
-                    Ok(()) => deleted_message(&name),
-                    Err(e) => format!("Could not delete {name}: {e}"),
-                };
-                self.finish_browser_delete(message);
-            }
-            BrowserAction::DeleteFolder(name) => {
-                let message = self.delete_browser_folder(&name);
-                self.finish_browser_delete(message);
-            }
+            BrowserAction::Delete(item) => self.delete_browser_item(&item),
         }
     }
 
-    /// After a delete: says how it went in the footer and re-reads the tree.
-    fn finish_browser_delete(&mut self, message: String) {
+    /// Deletes the project, template, clip or folder `item` — to the Trash
+    /// (macOS) — then says how it went in the footer and re-reads the tree.
+    fn delete_browser_item(&mut self, item: &BrowserItem) {
+        let Some(name) = item.renamable_name() else {
+            return;
+        };
+        let result = match item {
+            BrowserItem::Project { folder, .. } => delete_project(folder.as_deref(), name),
+            BrowserItem::Template(_) => delete_template(name),
+            BrowserItem::Clip(_) => delete_clip(name),
+            BrowserItem::Folder(_) => self.delete_browser_folder(name),
+            _ => return,
+        };
+        let message = match result {
+            Ok(()) => deleted_message(name),
+            Err(e) => format!("Could not delete {name}: {e}"),
+        };
         self.render.status = Some(StatusMessage::new(message));
         self.reload_browser();
     }
 
-    /// Deletes the project folder `name` with its projects — to the Trash
-    /// (macOS) — and returns the footer's message. A project open from it
-    /// stays open, as the open project does when it is deleted, and ⌘S saves
-    /// it back into the folder, made again; with none open from it, a current
-    /// folder deleted hands over to the projects root.
-    fn delete_browser_folder(&mut self, name: &str) -> String {
+    /// Deletes the project folder `name` with its projects. A project open
+    /// from it stays open, as the open project does when it is deleted, and
+    /// ⌘S saves it back into the folder, made again; with none open from it,
+    /// a current folder deleted hands over to the projects root.
+    fn delete_browser_folder(&mut self, name: &str) -> io::Result<()> {
         let current = self.project.project_current_folder.as_deref() == Some(name);
-        match delete_project_folder(name) {
-            Ok(()) => {
-                // The open project stays open, and its folder current, as
-                // after deleting the open project: ⌘S writes both back.
-                // With none open from it, a new project's ⌘S must not make
-                // the deleted folder again.
-                if current && self.project.project_current_name.is_none() {
-                    self.set_current_project_folder(None);
-                }
-                deleted_message(name)
-            }
-            Err(e) => format!("Could not delete {name}: {e}"),
+        delete_project_folder(name)?;
+        // The open project stays open, and its folder current, as after
+        // deleting the open project: ⌘S writes both back. With none open
+        // from it, a new project's ⌘S must not make the deleted folder
+        // again.
+        if current && self.project.project_current_name.is_none() {
+            self.set_current_project_folder(None);
         }
+        Ok(())
     }
 
     /// Makes `folder` the current project folder (`None`: the projects root)
@@ -1684,7 +1651,7 @@ mod tests {
         );
         assert_eq!(
             tree.activate(),
-            Some(BrowserAction::DeleteTemplate("Band".into()))
+            Some(BrowserAction::Delete(template("Band")))
         );
         assert!(tree.delete_armed.is_none(), "the delete disarms itself");
         tree.collapse();
@@ -1752,7 +1719,7 @@ mod tests {
         );
         assert_eq!(
             tree.activate(),
-            Some(BrowserAction::DeleteClip("a1_T1_B1".into()))
+            Some(BrowserAction::Delete(clip("a1_T1_B1")))
         );
         assert!(tree.delete_armed.is_none(), "the delete disarms itself");
     }
@@ -1764,10 +1731,7 @@ mod tests {
         tree.arm_delete();
         assert_eq!(
             tree.activate(),
-            Some(BrowserAction::DeleteProject {
-                folder: None,
-                name: "loose".into()
-            })
+            Some(BrowserAction::Delete(project(None, "loose")))
         );
 
         tree.arm_delete();
@@ -1776,10 +1740,7 @@ mod tests {
 
         tree.select(folder("a"));
         tree.arm_delete();
-        assert_eq!(
-            tree.activate(),
-            Some(BrowserAction::DeleteFolder("a".into()))
-        );
+        assert_eq!(tree.activate(), Some(BrowserAction::Delete(folder("a"))));
 
         tree.select(projects());
         tree.arm_delete();
