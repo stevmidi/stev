@@ -284,9 +284,11 @@ impl Sequencer {
     ///   cursor accidentally a bar in therefore costs nothing: the whole wrap
     ///   is in the clip and the left edge brings the first bar back.
     ///   Notes within [`LATE_NOTE_TOLERANCE_TICKS`](config::LATE_NOTE_TOLERANCE_TICKS)
-    ///   of the loop end anticipate the wrap's downbeat and are relocated to
-    ///   phase 0 — inside the region when the anchor is at phase 0, retained
-    ///   pre-roll otherwise (never teleported to a mid-loop cursor);
+    ///   of a wrap anticipate the downbeat after it: they belong to the next
+    ///   pass (the pass grid is read a tolerance early) and are relocated to
+    ///   its phase 0 before the fold — inside the region when the anchor is
+    ///   at phase 0, retained pre-roll otherwise (never teleported to a
+    ///   mid-loop cursor);
     /// - linear: everything from the earliest note-on's bar (relative to the
     ///   anchor) through the content end, the region starting at the anchor.
     ///
@@ -319,18 +321,21 @@ impl Sequencer {
                 // wrap" as the loop shows it, whatever the cursor — kept whole:
                 // the slice from the cursor is the region, the rest is pre-roll
                 // for the left edge, so a misplaced cursor is a drag away.
+                // A note-on within the tolerance of a wrap anticipates the
+                // next pass's downbeat, so the pass grid is read that much
+                // early: the anticipating note selects the pass it starts
+                // and is relocated onto its downbeat (held length intact)
+                // before the fold, never dragging the previous pass along.
+                let tolerance = config::LATE_NOTE_TOLERANCE_TICKS;
                 let (pass_start, pass_end) = Self::calculate_running_region(
                     &capture,
-                    self.region_start(),
+                    self.region_start() - tolerance,
                     loop_len,
                     Some(loop_len),
                 );
+                let (pass_start, pass_end) = (pass_start + tolerance, pass_end + tolerance);
+                capture.relocate_late_notes_to_region_start(pass_start, pass_end, tolerance);
                 capture.fold_into_loop(pass_start, pass_end, self.region_start(), loop_len);
-                capture.relocate_late_notes_to_region_start(
-                    0,
-                    loop_len,
-                    config::LATE_NOTE_TOLERANCE_TICKS,
-                );
 
                 let phase = (anchor_tick - self.region_start()).rem_euclid(loop_len);
                 capture
@@ -1141,7 +1146,8 @@ mod tests {
     /// A note played a hair ahead of the loop wrap anticipates the loop's
     /// downbeat. With the cursor a bar in, that downbeat is not the clip's
     /// start, so the note lands at phase 0 *before* the region — retained,
-    /// not played, never teleported to the cursor.
+    /// not played, never teleported to the cursor. It starts the next pass,
+    /// so the previous pass's bar-1 note is not carried along.
     #[test]
     fn commit_clip_to_track_late_note_is_not_relocated_to_a_mid_loop_cursor() {
         let bar = Meter::FOUR_FOUR.bar_ticks();
@@ -1157,8 +1163,8 @@ mod tests {
 
         let clip = last_clip(&seq);
         assert_eq!(clip.region().start(), bar);
-        assert_eq!(region_note_on_ticks(clip), vec![bar + 600]);
-        assert_eq!(last_clip_note_on_ticks(&seq), vec![0, bar + 600]);
+        assert!(region_note_on_ticks(clip).is_empty());
+        assert_eq!(last_clip_note_on_ticks(&seq), vec![0]);
     }
 
     /// Cursor at the loop start but the window clamped to one bar by a next
@@ -1185,7 +1191,107 @@ mod tests {
             .get_clip_by_id(meta.clip_id)
             .unwrap();
         let ons = note_on_ticks(clip);
-        assert_eq!(ons, vec![0, 600]);
+        assert_eq!(ons, vec![0]);
+    }
+
+    /// The note from the private edge-case note: a chord played a hair ahead
+    /// of the wrap, meant for bar 1. It starts the next pass — the commit is
+    /// the chord on the downbeat alone, not the previous pass's noodle with
+    /// the chord on top.
+    #[test]
+    fn commit_clip_to_track_early_chord_starts_the_next_pass() {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        let mut seq = make_sequencer(0, bar * 2);
+
+        // The previous pass's noodle, bars 0 and 1.
+        seq.capture_clip.add_event(note_on(600));
+        seq.capture_clip.add_event(note_off(900));
+        seq.capture_clip.add_event(note_on(bar + 600));
+        seq.capture_clip.add_event(note_off(bar + 900));
+        // The chord, a little early, held into the next pass.
+        for (note, on) in [(60, bar * 2 - 40), (64, bar * 2 - 30), (67, bar * 2 - 20)] {
+            seq.capture_clip
+                .add_event(Event::new(on, 0, vec![0x90, note, 100]));
+        }
+        for note in [60, 64, 67] {
+            seq.capture_clip
+                .add_event(Event::new(bar * 2 + 400, 0, vec![0x80, note, 0]));
+        }
+
+        seq.commit_clip_to_track().unwrap();
+
+        let clip = last_clip(&seq);
+        assert_eq!(region_note_on_ticks(clip), vec![0, 10, 20]);
+        assert_eq!(last_clip_note_on_ticks(&seq), vec![0, 10, 20]);
+    }
+
+    /// A chord rolled across the wrap — some notes just before it, the rest
+    /// just after — stays whole on the downbeat: the pre-wrap notes belong to
+    /// the pass the post-wrap ones select, not to the one before.
+    #[test]
+    fn commit_clip_to_track_chord_rolled_across_the_wrap_stays_whole() {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        let mut seq = make_sequencer(0, bar * 2);
+
+        seq.capture_clip.add_event(note_on(bar + 600));
+        seq.capture_clip.add_event(note_off(bar + 900));
+        for (note, on) in [(60, bar * 2 - 30), (64, bar * 2 - 10), (67, bar * 2 + 10)] {
+            seq.capture_clip
+                .add_event(Event::new(on, 0, vec![0x90, note, 100]));
+            seq.capture_clip
+                .add_event(Event::new(bar * 2 + 400, 0, vec![0x80, note, 0]));
+        }
+
+        seq.commit_clip_to_track().unwrap();
+
+        let clip = last_clip(&seq);
+        let notes: Vec<(i32, u8)> = clip
+            .events()
+            .iter()
+            .filter(|e| e.event_type() == Some(EventType::NoteOn))
+            .map(|e| (e.tick(), e.note_number().unwrap()))
+            .collect();
+        assert_eq!(notes, vec![(0, 60), (10, 67), (20, 64)]);
+    }
+
+    /// An early first note held into bar 1 keeps its held length — it is
+    /// moved onto the downbeat before the fold, not closed at the loop end
+    /// and then moved.
+    #[test]
+    fn commit_clip_to_track_early_held_note_keeps_its_length() {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        let mut seq = make_sequencer(0, bar * 2);
+
+        seq.capture_clip.add_event(note_on(bar * 2 - 50));
+        seq.capture_clip.add_event(note_off(bar * 2 + 400));
+
+        seq.commit_clip_to_track().unwrap();
+
+        let clip = last_clip(&seq);
+        let edges: Vec<(i32, bool)> = clip
+            .events()
+            .iter()
+            .map(|e| (e.tick(), e.event_type() == Some(EventType::NoteOn)))
+            .collect();
+        assert_eq!(edges, vec![(0, true), (450, false)]);
+    }
+
+    /// A note just outside the tolerance is a pickup at the end of the pass
+    /// it was played in: it stays where it was played, with that pass.
+    #[test]
+    fn commit_clip_to_track_note_outside_the_tolerance_stays_in_its_pass() {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        let mut seq = make_sequencer(0, bar * 2);
+        let pickup = bar * 2 - config::LATE_NOTE_TOLERANCE_TICKS - 1;
+
+        seq.capture_clip.add_event(note_on(600));
+        seq.capture_clip.add_event(note_off(900));
+        seq.capture_clip.add_event(note_on(pickup));
+        seq.capture_clip.add_event(note_off(pickup + 10));
+
+        seq.commit_clip_to_track().unwrap();
+
+        assert_eq!(last_clip_note_on_ticks(&seq), vec![600, pickup]);
     }
 
     /// A linear take has no wrap to anticipate: a note near the content end

@@ -143,7 +143,8 @@ non-destructive shape as a clip split or an edge trim (`020-views-and-state.md`,
 Edge Drag-Resize*): the event list stays whole, only `start_tick`/`region` say what plays.
 
 - **Looping take** (`playback_is_looping()`): the **last pass only** — the **region-grid**
-  pass holding the last note-on, `[region_start + j·L, region_start + (j+1)·L)`
+  pass holding the last note-on, `[region_start + j·L, region_start + (j+1)·L)`, read
+  `LATE_NOTE_TOLERANCE_TICKS` early (see *Late-note relocation* below)
   (`calculate_running_region` anchored on `region_start`), i.e. "the last wrap" exactly as
   the loop shows it, **whatever the cursor** — kept whole by `Clip::fold_into_loop`
   (`tick' = (tick − region_start).rem_euclid(L)`; a note held across the wrap is closed at
@@ -164,10 +165,15 @@ Edge Drag-Resize*): the event list stays whole, only `start_tick`/`region` say w
   cursor. Pre-roll here only arises when the cursor was moved later mid-take.
 - **A silent region still commits.** A take whose every note is at a phase before the
   cursor produces a clip whose region is empty and whose pre-roll holds the notes — drag the left edge to hear them.
-- **Late-note relocation** runs on the folded clip: a note within
-  `LATE_NOTE_TOLERANCE_TICKS` of the loop end anticipates the wrap's downbeat and moves to
+- **Late-note relocation**: a note within `LATE_NOTE_TOLERANCE_TICKS` of a wrap
+  anticipates the downbeat after it, so it belongs to the *next* pass. The pass grid is
+  read a tolerance early — the anticipating note selects the pass it starts, and the
+  previous pass is not dragged along with it — and the note is moved onto that pass's
+  downbeat *before* the fold, so a note held into bar 1 keeps its length. It lands at
   phase 0 — inside the region when the cursor is at phase 0, retained pre-roll otherwise.
-  Never teleported to a mid-loop cursor.
+  Never teleported to a mid-loop cursor. An early chord, or one rolled across the wrap,
+  commits whole on the downbeat; a note just outside the tolerance stays a pickup at the
+  end of its own pass.
 
 _Why the last pass and not "the most recent note at every phase"._ Folding the last `L`
 ticks ending at the last note-on would give a mid-pass commit the previous pass's bars for
@@ -345,10 +351,15 @@ Tests for `commit_clip_to_track` (the test shim over `build_committed_capture_cl
   at their region phase, the bar-0 note dropped**,
 - **cursor on beat 2 → every note at `clip_local + clip.start == played tick`**,
 - **loop off, three bars played, one bar free before the next clip → the *first* bar**,
-- **a note a hair ahead of the wrap with the cursor a bar in → dropped, not moved to the
-  cursor**,
+- **a note a hair ahead of the wrap with the cursor a bar in → retained at phase 0 as
+  pre-roll, not moved to the cursor; it starts the next pass, so the previous pass's
+  bar-1 note is not carried along**,
 - **same note with the cursor at the loop start and the window clamped by a next clip →
   relocated to the clip start**,
+- **a chord a hair ahead of the wrap → the chord alone on the downbeat, not the previous
+  pass with the chord on top**; **a chord rolled across the wrap → whole on the
+  downbeat**; **an early note held into bar 1 → its held length kept**; **a note just
+  outside the tolerance → stays at the end of its own pass**,
 - **loop off, a note near the content end → not relocated to tick 0**,
 - **loop flag on but cursor and playback after the region end → linear, content-sized
   past `L`**,

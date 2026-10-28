@@ -25,6 +25,10 @@ Breaking entries are marked **Breaking** and say what to do about them.
 - Hiding Stev (⌘H) no longer closes the open plugin editors. Every editor
   was destroyed while the app was hidden, so none came back with it, and a
   plugin that minds its GUI being torn down off screen could crash Stev.
+- A take whose first note or chord comes a hair before the loop wraps now
+  commits as the new pass, with that note on bar 1. It used to bring the
+  whole previous pass along with the early note placed on top, cut a chord
+  rolled across the wrap in two, and shorten an early note held into bar 1.
 
 ## [0.8.1] - 2026-10-27
 
