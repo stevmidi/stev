@@ -1311,8 +1311,7 @@ impl Display {
             // browser's own commands (Space, `⌘O`) leave it here.
             _ => {
                 if self
-                    .keymap
-                    .resolve_press(*key, *modifiers, self.focused_pane())
+                    .pressed_action(*key, *modifiers)
                     .is_some_and(Action::acts_on_pane)
                 {
                     self.leave_browser();

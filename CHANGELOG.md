@@ -20,6 +20,13 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ## [Unreleased]
 
+### Fixed
+
+- With the track headers focused, `⌘A` then Delete deleted the selected track
+  instead of the clips `⌘A` had selected. A command that acts on the lanes
+  (`⌘A`, ⌘Z, `/`, Split, …) now takes the keyboard back to them, as it already
+  did from the browser.
+
 ## [0.10.0] - 2026-10-29
 
 ### Added

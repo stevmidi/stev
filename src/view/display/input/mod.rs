@@ -482,8 +482,10 @@ impl Display {
     /// The track-header column's keys while it has the keyboard: plain
     /// Delete/Backspace removes the selected track (`RemoveTrack`), Esc gives
     /// the keyboard back to the lanes. Shift+Tab gives it back too and still
-    /// does its usual work. Returns whether it consumed `event`; everything
-    /// else — ↑/↓ moving the track selection, Space, every chord — falls
+    /// does its usual work, and so does a pane command (`⌘A`, ⌘Z, `/`, ...:
+    /// `Action::leaves_track_headers`), so the Delete after it acts on what
+    /// it changed. Returns whether it consumed `event`; everything else —
+    /// ↑/↓ moving the track selection, Space, the track commands — falls
     /// through to the arranger as usual.
     fn handle_track_header_key(&mut self, event: &InputEvent) -> bool {
         let InputEvent::KeyPressed { key, modifiers } = event else {
@@ -500,8 +502,24 @@ impl Display {
                 self.key_focus = KeyFocus::Pane;
                 consumed
             }
-            None => false,
+            None => {
+                if self
+                    .pressed_action(*key, *modifiers)
+                    .is_some_and(Action::leaves_track_headers)
+                {
+                    self.key_focus = KeyFocus::Pane;
+                }
+                false
+            }
         }
+    }
+
+    /// The action a key press resolves to for the focused pane, if the
+    /// keymap binds it — what the browser and the track headers ask to know
+    /// whether a key they pass on takes the keyboard with it.
+    pub(super) fn pressed_action(&self, key: Key, modifiers: KeyModifiers) -> Option<Action> {
+        self.keymap
+            .resolve_press(key, modifiers, self.focused_pane())
     }
 
     /// `event` with a key press the keymap binds turned into
@@ -511,8 +529,7 @@ impl Display {
         let InputEvent::KeyPressed { key, modifiers } = event else {
             return event;
         };
-        self.keymap
-            .resolve_press(key, modifiers, self.focused_pane())
+        self.pressed_action(key, modifiers)
             .map_or(event, InputEvent::Action)
     }
 

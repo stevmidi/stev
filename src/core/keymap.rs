@@ -856,6 +856,20 @@ impl Action {
         )
     }
 
+    /// Whether this action, pressed while the track-header column has the
+    /// keyboard, takes it to the lanes first, so the Delete after it acts on
+    /// what it changed — the Delete after `⌘A` removes the selected clips,
+    /// not the track (`Display::handle_track_header_key`). The browser's
+    /// rule ([`acts_on_pane`](Self::acts_on_pane)), less the track commands:
+    /// they act on the selected track, the one the headers' Delete removes.
+    pub(crate) fn leaves_track_headers(self) -> bool {
+        self.acts_on_pane()
+            && !matches!(
+                self,
+                Action::AddTrack | Action::RenameTrack | Action::TogglePluginEditor
+            )
+    }
+
     /// This action's index in [`ACTIONS`].
     fn index(self) -> usize {
         ACTIONS
@@ -1290,6 +1304,30 @@ mod tests {
             Action::SaveAsTemplate,
         ] {
             assert!(!action.acts_on_pane(), "{action:?}");
+        }
+    }
+
+    /// A pane command pressed with the track headers focused takes the
+    /// keyboard to the lanes (`⌘A`, then Delete, deletes the clips), a track
+    /// command and the transport leave it with the headers.
+    #[test]
+    fn pane_commands_leave_the_track_headers_and_track_commands_do_not() {
+        for action in [
+            Action::SelectAllClips,
+            Action::DeleteSelection,
+            Action::Undo,
+            Action::Split,
+        ] {
+            assert!(action.leaves_track_headers(), "{action:?}");
+        }
+        for action in [
+            Action::AddTrack,
+            Action::RenameTrack,
+            Action::TogglePluginEditor,
+            Action::TogglePlayback,
+            Action::ShowProjects,
+        ] {
+            assert!(!action.leaves_track_headers(), "{action:?}");
         }
     }
 
