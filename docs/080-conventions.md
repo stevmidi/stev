@@ -88,7 +88,7 @@
 
 ## Design Docs and Issues
 
-A feature's design lives in its `docs/NNN-*.md` file, reviewed and merged with the code. A GitHub issue is only a public pointer to it: somewhere visitors can see what is planned and comment on it, closed by the change that builds it. The design never goes into the issue, so the link is the only thing that has to stay in sync. Bugs are issues of their own and have no design doc.
+A feature's design lives in its `docs/NNN-*.md` file, reviewed and merged with the code. A GitHub issue is only a public pointer to it: somewhere visitors can see what is planned and comment on it, closed by the change that builds it. The design never goes into the issue, so the link is the only thing that has to stay in sync. A bug has no design doc. It gets an issue of its own when someone else reports it, when it is known but parked rather than fixed straight away (labelled `deferred` if it waits on a trigger), or when reports are wanted on it. A bug found and fixed in the same change needs no issue: its `CHANGELOG.md` line and the commit are the record. Issues track open work, not what shipped, so they are never opened after the fact to mirror the changelog.
 
 - **Opening the issue**: once a design doc for a user-facing feature has been agreed, the agent asks whether to open an issue for it. Internal work (a refactor, a doc reorganisation, test tooling) gets no issue unless the user asks. If the answer is yes:
   1. Land the doc on `main` first (it is docs-only, so no build gate and no hand test). A link to a branch breaks once the branch is deleted.
