@@ -446,7 +446,7 @@ impl DiskListing {
 /// after a delete), the plugins (refreshed as the catalog scan reports),
 /// which categories and folders are expanded and which row is selected.
 /// Expansion and selection survive a refresh and hiding the panel; neither is
-/// persisted. Every category but Plugins (the long one) starts expanded,
+/// persisted. Every category but Clips and Plugins (the long ones) starts expanded,
 /// every folder collapsed.
 pub(super) struct BrowserTree {
     /// The projects and clips.
@@ -481,7 +481,7 @@ impl Default for BrowserTree {
         Self {
             disk: DiskListing::default(),
             plugins: None,
-            collapsed: HashSet::from([BrowserCategory::Plugins]),
+            collapsed: HashSet::from([BrowserCategory::Clips, BrowserCategory::Plugins]),
             expanded: HashSet::new(),
             rows: Vec::new(),
             selected: None,
@@ -1543,6 +1543,7 @@ mod tests {
     /// the root, one template and one clip.
     fn tree() -> BrowserTree {
         let mut tree = BrowserTree::default();
+        tree.collapsed.remove(&BrowserCategory::Clips);
         tree.reload(DiskListing {
             templates: names(&["Band"]),
             ..disk(
@@ -1670,13 +1671,14 @@ mod tests {
         assert!(!items(&tree).contains(&clip("a1_T1_B1")));
     }
 
-    /// Plugins, the long list, starts collapsed; the rest start expanded.
+    /// Clips and Plugins, the long lists, start collapsed; the rest start expanded.
     #[test]
-    fn the_plugins_category_starts_collapsed() {
-        let mut tree = tree();
+    fn the_clips_and_plugins_categories_start_collapsed() {
+        let mut tree = BrowserTree::default();
         tree.set_plugins(Some(PluginListing::new(vec![plugin("Diva", "CLAP")], true)));
         assert_eq!(items(&tree).last(), Some(&plugins()));
         assert!(!tree.is_category_expanded(BrowserCategory::Plugins));
+        assert!(!tree.is_category_expanded(BrowserCategory::Clips));
         assert!(tree.is_category_expanded(BrowserCategory::Projects));
     }
 

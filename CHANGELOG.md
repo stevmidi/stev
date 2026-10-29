@@ -24,6 +24,10 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 - The piano roll's keys light up while you hold a note on a MIDI keyboard or the computer keys.
 
+### Changed
+
+- The browser's Clips category starts collapsed at launch.
+
 ### Fixed
 
 - With the track headers focused, `⌘A` then Delete deleted the selected track
