@@ -40,6 +40,7 @@ use crate::core::midi::out_queue::MidiOutMessage;
 use crate::core::note_logger::NoteLogger;
 use crate::core::threads::{MidiSink, run_midi_output_loop};
 use crate::core::timer::Timer;
+use crate::core::xorshift::XorShift;
 
 /// Run length variable, in seconds.
 const SECS_VAR: &str = "STEV_PROBE_SECS";
@@ -157,27 +158,13 @@ fn summarize(samples: &mut [i64], over: i64) -> Option<Summary> {
     })
 }
 
-/// A tiny xorshift generator, so the pattern needs no dependency and the same
-/// seed gives the same run.
-struct XorShift(u64);
-
-impl XorShift {
-    /// The next value in `0..bound`.
-    fn below(&mut self, bound: u64) -> u64 {
-        self.0 ^= self.0 << 13;
-        self.0 ^= self.0 >> 7;
-        self.0 ^= self.0 << 17;
-        self.0 % bound
-    }
-}
-
 /// When each message is intended to sound, as offsets from the run's start,
 /// ascending. Recorder mode: a three-note chord every 16th at 120 BPM, plus a
 /// single note at a random sub-millisecond phase inside each 16th, so
 /// deadlines don't all fall on whole milliseconds. Loopback mode: single notes
 /// [`LOOPBACK_GAP`] apart, each nudged by up to 1 ms.
 fn pattern(length: Duration, loopback: bool) -> Vec<Duration> {
-    let mut rng = XorShift(0x5EED_1234_ABCD_0001);
+    let mut rng = XorShift::new(0x5EED_1234_ABCD_0001);
     let mut at = Vec::new();
     let mut step = Duration::ZERO;
     while step < length {

@@ -345,12 +345,8 @@ impl ReplaceClipNotesEdit {
                 .events()
                 .iter()
                 .filter(|event| {
-                    let is_note = matches!(
-                        event.event_type(),
-                        Some(EventType::NoteOn | EventType::NoteOff)
-                    );
                     let is_wheel = parse_wheel(event.midi_message()).is_some();
-                    !is_note && !(clear_wheels && is_wheel)
+                    !event.is_note_edge() && !(clear_wheels && is_wheel)
                 })
                 .cloned()
                 .collect();

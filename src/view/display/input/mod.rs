@@ -475,7 +475,7 @@ impl Display {
     /// Whether a modal — an overlay or a project dialog — is up. It takes
     /// the pointer as well as the keyboard, so nothing under it shows a
     /// hover.
-    pub(super) fn modal_up(&self) -> bool {
+    pub(in crate::view::display) fn modal_up(&self) -> bool {
         self.overlay.is_some() || self.project_dialog.is_some()
     }
 

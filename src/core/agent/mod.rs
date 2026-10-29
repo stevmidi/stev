@@ -42,8 +42,6 @@ use serde_json::Value;
 
 use crate::core::sequencer::{Sequencer, SequencerEdit};
 
-use self::writes::Jitter;
-
 /// One tool call, as the `--mcp` process forwards it to the app: a JSON
 /// line on the socket.
 #[derive(Debug, Serialize, Deserialize)]
@@ -104,6 +102,12 @@ pub(crate) enum AgentAnswer {
     Write(Box<AgentWrite>),
 }
 
+impl From<AgentWrite> for AgentAnswer {
+    fn from(write: AgentWrite) -> Self {
+        AgentAnswer::Write(Box::new(write))
+    }
+}
+
 /// Answers `request` from `sequencer`, on the `"sequencer"` thread.
 /// `project_name` is the open project's, `None` before it is first saved.
 /// Changes nothing itself: a write comes back as its edit.
@@ -113,29 +117,16 @@ pub(crate) fn answer(
     project_name: Option<&str>,
 ) -> AgentAnswer {
     let args = &request.arguments;
-    let reply = |result: Result<String, String>| {
-        AgentAnswer::Reply(match result {
-            Ok(text) => AgentReply::ok(text),
-            Err(text) => AgentReply::error(text),
-        })
-    };
-    let write = |result: Result<AgentWrite, String>| match result {
-        Ok(write) => AgentAnswer::Write(Box::new(write)),
-        Err(text) => AgentAnswer::Reply(AgentReply::error(text)),
-    };
+    let read = |text: String| AgentAnswer::Reply(AgentReply::ok(text));
     match request.tool.as_str() {
-        "get_context" => reply(Ok(reads::get_context(sequencer))),
-        "get_project" => reply(Ok(reads::get_project(sequencer, project_name))),
-        "get_timeline" => reply(reads::get_timeline(sequencer, args)),
-        "get_notes" => reply(reads::get_notes(sequencer, args)),
-        "create_clips" => write(writes::create_clips(sequencer, args, &mut Jitter::seeded())),
-        "replace_clip_notes" => write(writes::replace_clip_notes(
-            sequencer,
-            args,
-            &mut Jitter::seeded(),
-        )),
-        "set_tempo" => writes::set_tempo(sequencer, args)
-            .unwrap_or_else(|text| AgentAnswer::Reply(AgentReply::error(text))),
-        tool => reply(Err(format!("Stev has no tool {tool}."))),
+        "get_context" => Ok(read(reads::get_context(sequencer))),
+        "get_project" => Ok(read(reads::get_project(sequencer, project_name))),
+        "get_timeline" => reads::get_timeline(sequencer, args).map(read),
+        "get_notes" => reads::get_notes(sequencer, args).map(read),
+        tool @ ("create_clips" | "replace_clip_notes" | "set_tempo") => {
+            writes::write(tool, sequencer, args)
+        }
+        tool => Err(format!("Stev has no tool {tool}.")),
     }
+    .unwrap_or_else(|text| AgentAnswer::Reply(AgentReply::error(text)))
 }

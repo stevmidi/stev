@@ -1555,6 +1555,40 @@ mod tests {
         );
     }
 
+    /// Undoing a note edit after the lead moved to another clip redraws the
+    /// edited clip's thumbnail and leaves the new lead's clip view alone.
+    #[test]
+    fn undoing_a_note_edit_off_the_lead_redraws_that_clips_thumbnail() {
+        let (mut h, clip_id, _) = harness_with_clip();
+        let mut record: Record<SequencerEdit> = Record::new();
+        run_command(
+            &mut h,
+            &mut record,
+            SequencerCommand::InsertNote {
+                tick: 480,
+                length: 480,
+                pitch: 64,
+                velocity: 100,
+            },
+        );
+        let (other_id, _) = add_clip(&mut h.sequencer, 3840 * 4);
+        h.sequencer.select_clip(Some(other_id));
+        h.ui_events.try_iter().for_each(drop);
+
+        run_command(&mut h, &mut record, SequencerCommand::Undo);
+        assert_eq!(note_ons(&h, clip_id), vec![(0, 60)]);
+        assert_eq!(h.sequencer.selected_clip_id(), Some(other_id));
+        let events: Vec<UiEvent> = h.ui_events.try_iter().collect();
+        assert!(events.iter().any(
+            |event| matches!(event, UiEvent::ClipUpdated { clip } if clip.clip_id == clip_id)
+        ));
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, UiEvent::EventsUpdated { .. }))
+        );
+    }
+
     /// Decision 13: a write while a modal is up says why and changes
     /// nothing, while a read still answers.
     #[test]

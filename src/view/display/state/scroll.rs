@@ -263,7 +263,7 @@ impl Display {
     /// (`360-mcp-server.md` decision 13). Compared once a frame, like
     /// [`publish_marquee`](Self::publish_marquee).
     pub(in crate::view::display) fn publish_modal(&mut self) {
-        let open = self.overlay.is_some() || self.project_dialog.is_some();
+        let open = self.modal_up();
         if open != self.published_modal {
             self.published_modal = open;
             self.event_handlers

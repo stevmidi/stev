@@ -4,8 +4,11 @@
 //! builds its edit without changing anything; the `"sequencer"` thread's
 //! handler records it as one undo step and shows the footer
 //! ([`AgentWrite`]). A write refuses, changing nothing, while a take
-//! session, an audio export or a modal holds the edit (decision 13), over
-//! existing clips unless told (decision 22), and past its caps (§ Security).
+//! session, an audio export or a modal holds the edit (decision 13, checked
+//! once in [`write()`]), over existing clips unless told (decision 22), and
+//! past its caps (§ Security).
+
+use std::borrow::Cow;
 
 use serde_json::Value;
 use uuid::Uuid;
@@ -17,8 +20,9 @@ use crate::core::time::{
     Meter, PPQN, TEMPO_BPM_MAX, TEMPO_BPM_MIN, bpm_tenths_to_tempo_us, clamp_bpm_tenths,
     format_bpm, sixteenth_straight_ticks,
 };
+use crate::core::xorshift::XorShift;
 use crate::models::clip::{Clip, nearest_grid_tick, nearest_swung_grid_tick};
-use crate::models::event::{Event, EventType};
+use crate::models::event::Event;
 
 use super::reads::{
     NOTES_MAX_BARS, clips_in, loop_region, position_arg, range_text, short_id, track_index,
@@ -45,6 +49,26 @@ pub(super) const JITTER_TICKS: i32 = 6;
 /// The grid sizes a write snaps to, as `1/N` of a whole note: straight
 /// and triplet.
 const GRID_DIVISIONS: [i32; 11] = [1, 2, 4, 8, 16, 32, 3, 6, 12, 24, 48];
+
+/// Answers the write tool `tool` (`create_clips`, `replace_clip_notes` or
+/// `set_tempo`), or says why it can't run now.
+pub(super) fn write(
+    tool: &str,
+    sequencer: &Sequencer,
+    args: &Value,
+) -> Result<AgentAnswer, String> {
+    if let Some(why) = write_hold(sequencer) {
+        return Err(why);
+    }
+    let mut jitter = Jitter::seeded();
+    match tool {
+        "create_clips" => create_clips(sequencer, args, &mut jitter).map(AgentAnswer::from),
+        "replace_clip_notes" => {
+            replace_clip_notes(sequencer, args, &mut jitter).map(AgentAnswer::from)
+        }
+        _ => set_tempo(sequencer, args),
+    }
+}
 
 /// Why a write can't run now, if something else holds the edit
 /// (decision 13).
@@ -104,29 +128,24 @@ impl Grid {
     }
 }
 
-/// The humanising: a start moved by up to [`JITTER_TICKS`] either way. A
-/// small xorshift, seeded per write, so no dependency is needed for it.
-pub(super) struct Jitter(u64);
+/// The humanising: a start moved by up to [`JITTER_TICKS`] either way,
+/// seeded per write.
+struct Jitter(XorShift);
 
 impl Jitter {
     /// A jitter seeded from a fresh random UUID.
-    pub(super) fn seeded() -> Jitter {
+    fn seeded() -> Jitter {
         Jitter::from_seed(Uuid::new_v4().as_u64_pair().0)
     }
 
     /// A jitter from `seed`; the same seed gives the same moves.
-    pub(super) fn from_seed(seed: u64) -> Jitter {
-        // Xorshift never leaves zero.
-        Jitter(seed | 1)
+    fn from_seed(seed: u64) -> Jitter {
+        Jitter(XorShift::new(seed))
     }
 
     /// The next move, `-JITTER_TICKS..=JITTER_TICKS`.
     fn next(&mut self) -> i32 {
-        self.0 ^= self.0 << 13;
-        self.0 ^= self.0 >> 7;
-        self.0 ^= self.0 << 17;
-        let span = (2 * JITTER_TICKS + 1) as u64;
-        (self.0 % span) as i32 - JITTER_TICKS
+        self.0.below((2 * JITTER_TICKS + 1) as u64) as i32 - JITTER_TICKS
     }
 }
 
@@ -160,16 +179,6 @@ struct CleanupReport {
 }
 
 impl CleanupReport {
-    /// Adds `other`'s counts to these.
-    fn absorb(&mut self, other: CleanupReport) {
-        self.snapped += other.snapped;
-        self.cut += other.cut;
-        self.lengthened += other.lengthened;
-        self.pitch_clamped += other.pitch_clamped;
-        self.velocity_clamped += other.velocity_clamped;
-        self.left_out += other.left_out;
-    }
-
     /// The report as one line: `Cleanup: 2 notes moved to the 1/16 grid,
     /// 1 note cut at the clip end. Starts humanised by up to 6 ticks.`
     fn text(&self, grid: Grid, humanize: bool) -> String {
@@ -193,7 +202,7 @@ impl CleanupReport {
         ]
         .into_iter()
         .filter(|(count, _)| *count > 0)
-        .map(|(count, what)| format!("{} {what}", notes(count)))
+        .map(|(count, what)| format!("{} {what}", counted(count, "note")))
         .collect();
         let mut text = if parts.is_empty() {
             "Cleanup: nothing to change.".to_owned()
@@ -207,26 +216,38 @@ impl CleanupReport {
     }
 }
 
-/// `1 note`, `3 notes`.
-fn notes(count: usize) -> String {
+/// `1 note`, `3 clips`.
+fn counted(count: usize, noun: &str) -> String {
     if count == 1 {
-        "1 note".to_owned()
+        format!("1 {noun}")
     } else {
-        format!("{count} notes")
+        format!("{count} {noun}s")
     }
+}
+
+/// Refuses a write of more than [`MAX_NOTES`] notes.
+fn check_note_count(count: usize) -> Result<(), String> {
+    if count > MAX_NOTES {
+        return Err(format!(
+            "More than {MAX_NOTES} notes in one call; write fewer at a time."
+        ));
+    }
+    Ok(())
 }
 
 impl Cleanup {
     /// `rows` (starts in ticks from the clip's start) cleaned up: starts on
     /// the grid, humanised with `jitter`, pitches and velocities clamped,
-    /// lengths at least a 1/32 and cut at the clip end. The rows come back
-    /// in the clip's event ticks; rows starting outside the clip are left out.
+    /// lengths at least a 1/32 and cut at the clip end, what changed added
+    /// to `report`. The rows come back in the clip's event ticks; rows
+    /// starting outside the clip are left out, and a write with none left
+    /// is refused.
     fn clean(
         &self,
         rows: &[NoteRow],
         mut jitter: Option<&mut Jitter>,
-    ) -> (Vec<NoteRow>, CleanupReport) {
-        let mut report = CleanupReport::default();
+        report: &mut CleanupReport,
+    ) -> Result<Vec<NoteRow>, String> {
         let end = self.origin + self.length;
         let mut cleaned = Vec::with_capacity(rows.len());
         for row in rows {
@@ -238,13 +259,12 @@ impl Cleanup {
             let mut start = match self.grid {
                 Grid::Off => written,
                 Grid::Step(step) => {
-                    if nearest_grid_tick(written, step) != written {
-                        report.snapped += 1;
-                    }
-                    if step == sixteenth_straight_ticks() && self.swing > 50 {
+                    let straight = nearest_grid_tick(written, step);
+                    report.snapped += usize::from(straight != written);
+                    if step == sixteenth_straight_ticks() {
                         nearest_swung_grid_tick(written, self.swing)
                     } else {
-                        nearest_grid_tick(written, step)
+                        straight
                     }
                 }
             };
@@ -277,7 +297,13 @@ impl Cleanup {
                 velocity,
             });
         }
-        (cleaned, report)
+        if cleaned.is_empty() {
+            return Err(format!(
+                "every note starts outside the clip (0 to {} beats); nothing was changed.",
+                format_beats(self.length)
+            ));
+        }
+        Ok(cleaned)
     }
 }
 
@@ -292,13 +318,15 @@ fn note_pairs(clip: &Clip, rows: &[NoteRow]) -> Vec<(Event, Event)> {
 /// The `notes` argument of `args` as rows: one string of lines (or a list
 /// of row strings).
 fn notes_arg(args: &Value, what: &str) -> Result<Vec<NoteRow>, String> {
-    let text = match args.get("notes") {
-        Some(Value::String(text)) => text.clone(),
-        Some(Value::Array(lines)) => lines
-            .iter()
-            .map(|line| line.as_str().unwrap_or_default())
-            .collect::<Vec<_>>()
-            .join("\n"),
+    let text: Cow<str> = match args.get("notes") {
+        Some(Value::String(text)) => Cow::Borrowed(text),
+        Some(Value::Array(lines)) => Cow::Owned(
+            lines
+                .iter()
+                .map(|line| line.as_str().unwrap_or_default())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        ),
         _ => {
             return Err(format!(
                 "{what} needs notes: rows \"pitch start length velocity\", one per line."
@@ -336,37 +364,34 @@ fn beats_value(value: Option<&Value>) -> Option<i32> {
 /// clip ending at or before `start`), else the longest-overlapping clip on
 /// another track; straight (50) when there is none.
 fn default_swing(sequencer: &Sequencer, track_idx: usize, start: i32, end: i32) -> u8 {
+    // The longest-overlapping clip on a track, with how much it overlaps.
     let longest_over = |idx: usize| {
         clips_in(&sequencer.tracks()[idx], start, end)
-            .max_by_key(|clip| clip.end_tick().min(end) - clip.start_tick().max(start))
-            .map(Clip::swing_pct)
+            .map(|clip| {
+                (
+                    clip.end_tick().min(end) - clip.start_tick().max(start),
+                    clip,
+                )
+            })
+            .max_by_key(|(overlap, _)| *overlap)
     };
-    let own = &sequencer.tracks()[track_idx];
     longest_over(track_idx)
+        .map(|(_, clip)| clip)
         .or_else(|| {
-            own.clips()
+            sequencer.tracks()[track_idx]
+                .clips()
                 .iter()
                 .filter(|clip| clip.end_tick() <= start)
                 .max_by_key(|clip| clip.end_tick())
-                .map(Clip::swing_pct)
         })
         .or_else(|| {
             (0..sequencer.tracks().len())
                 .filter(|&idx| idx != track_idx)
-                .filter_map(|idx| {
-                    let clip =
-                        clips_in(&sequencer.tracks()[idx], start, end).max_by_key(|clip| {
-                            clip.end_tick().min(end) - clip.start_tick().max(start)
-                        })?;
-                    Some((
-                        clip.end_tick().min(end) - clip.start_tick().max(start),
-                        clip,
-                    ))
-                })
+                .filter_map(longest_over)
                 .max_by_key(|(overlap, _)| *overlap)
-                .map(|(_, clip)| clip.swing_pct())
+                .map(|(_, clip)| clip)
         })
-        .unwrap_or(50)
+        .map_or(50, Clip::swing_pct)
 }
 
 /// The bars `[start, end)` covers, for the footer: `bar 17`, `bars 17–20`.
@@ -386,17 +411,16 @@ struct NewClip {
     track_idx: usize,
     /// The clip, notes cleaned up, ready to paste.
     clip: Clip,
+    /// How many notes it holds.
+    notes: usize,
 }
 
 /// `create_clips`: new clips with notes, one undo step for all of them.
-pub(super) fn create_clips(
+fn create_clips(
     sequencer: &Sequencer,
     args: &Value,
     jitter: &mut Jitter,
 ) -> Result<AgentWrite, String> {
-    if let Some(why) = write_hold(sequencer) {
-        return Err(why);
-    }
     let meter = sequencer.meter();
     let grid = Grid::from_args(args)?;
     let humanize = bool_arg(args, "humanize", true)?;
@@ -440,11 +464,7 @@ pub(super) fn create_clips(
         }
         let rows = notes_arg(spec, &what)?;
         note_count += rows.len();
-        if note_count > MAX_NOTES {
-            return Err(format!(
-                "More than {MAX_NOTES} notes in one call; write fewer at a time."
-            ));
-        }
+        check_note_count(note_count)?;
         let swing = match spec.get("swing") {
             None | Some(Value::Null) => default_swing(sequencer, track_idx, start, start + length),
             Some(value) => value
@@ -464,33 +484,31 @@ pub(super) fn create_clips(
             grid,
             swing,
         };
-        let (rows, clip_report) = cleanup.clean(&rows, humanize.then_some(&mut *jitter));
-        report.absorb(clip_report);
-        if rows.is_empty() {
-            return Err(format!(
-                "{what}: every note starts outside the clip (0 to {} beats); nothing was changed.",
-                format_beats(length)
-            ));
-        }
+        let rows = cleanup
+            .clean(&rows, humanize.then_some(&mut *jitter), &mut report)
+            .map_err(|e| format!("{what}: {e}"))?;
         let pairs = note_pairs(&clip, &rows);
+        let notes = pairs.len();
         clip.insert_notes(pairs);
 
-        let (end, track_label) = (
-            start + length,
-            track_title(track_idx, &sequencer.tracks()[track_idx]),
-        );
+        let end = start + length;
         if let Some(other) = new_clips.iter().position(|other| {
             other.track_idx == track_idx
                 && other.clip.start_tick() < end
                 && other.clip.end_tick() > start
         }) {
             return Err(format!(
-                "Clips {} and {} overlap on {track_label}; nothing was changed.",
+                "Clips {} and {} overlap on {}; nothing was changed.",
                 other + 1,
-                i + 1
+                i + 1,
+                track_title(track_idx, &sequencer.tracks()[track_idx])
             ));
         }
-        new_clips.push(NewClip { track_idx, clip });
+        new_clips.push(NewClip {
+            track_idx,
+            clip,
+            notes,
+        });
     }
 
     // Decision 22: what the clips would land on.
@@ -517,11 +535,7 @@ pub(super) fn create_clips(
 
     let mut lines = vec![format!(
         "Wrote {} as one undo step:",
-        if new_clips.len() == 1 {
-            "1 clip".to_owned()
-        } else {
-            format!("{} clips", new_clips.len())
-        }
+        counted(new_clips.len(), "clip")
     )];
     for new in &new_clips {
         let clip = &new.clip;
@@ -530,17 +544,12 @@ pub(super) fn create_clips(
         } else {
             String::new()
         };
-        let count = clip
-            .events()
-            .iter()
-            .filter(|event| event.event_type() == Some(EventType::NoteOn))
-            .count();
         lines.push(format!(
             "{}: clip {} {}{swing}, {}",
             track_title(new.track_idx, &sequencer.tracks()[new.track_idx]),
             short_id(clip),
             range_text(clip.start_tick(), clip.end_tick(), meter),
-            notes(count)
+            counted(new.notes, "note")
         ));
     }
     if !in_the_way.is_empty() {
@@ -574,9 +583,8 @@ pub(super) fn create_clips(
         edit: edit.into(),
         reply: lines.join("\n"),
         footer: format!(
-            "Agent: {} new clip{}, {}",
-            count,
-            if count == 1 { "" } else { "s" },
+            "Agent: {}, {}",
+            counted(count, "new clip"),
             bars_text(first, last, meter)
         ),
     })
@@ -647,7 +655,12 @@ fn find_clip(sequencer: &Sequencer, args: &Value) -> Result<(usize, Uuid), Strin
             track
                 .clips()
                 .iter()
-                .filter(|clip| clip.id().simple().to_string().starts_with(&wanted))
+                .filter(|clip| {
+                    clip.id()
+                        .simple()
+                        .encode_lower(&mut Uuid::encode_buffer())
+                        .starts_with(&wanted)
+                })
                 .map(move |clip| (idx, clip.id()))
         });
     match (found.next(), found.next()) {
@@ -662,53 +675,42 @@ fn find_clip(sequencer: &Sequencer, args: &Value) -> Result<(usize, Uuid), Strin
 
 /// `replace_clip_notes`: every note of one clip replaced, its position,
 /// window and length kept.
-pub(super) fn replace_clip_notes(
+fn replace_clip_notes(
     sequencer: &Sequencer,
     args: &Value,
     jitter: &mut Jitter,
 ) -> Result<AgentWrite, String> {
-    if let Some(why) = write_hold(sequencer) {
-        return Err(why);
-    }
     let meter = sequencer.meter();
     let (track_idx, clip_id) = find_clip(sequencer, args)?;
     let grid = Grid::from_args(args)?;
     let humanize = bool_arg(args, "humanize", true)?;
     let clear_wheels = bool_arg(args, "clear_wheels", false)?;
     let rows = notes_arg(args, "replace_clip_notes")?;
-    if rows.len() > MAX_NOTES {
-        return Err(format!(
-            "More than {MAX_NOTES} notes in one call; write fewer at a time."
-        ));
-    }
+    check_note_count(rows.len())?;
+    let gone = || "That clip is gone; call get_context again.".to_owned();
     let track = &sequencer.tracks()[track_idx];
-    let clip = sequencer
-        .clip_on(track_idx, clip_id)
-        .ok_or_else(|| "That clip is gone; call get_context again.".to_owned())?;
+    let clip = sequencer.clip_on(track_idx, clip_id).ok_or_else(gone)?;
     let cleanup = Cleanup {
         origin: clip.region().start(),
         length: clip.region_length(),
         grid,
         swing: clip.swing_pct(),
     };
-    let (rows, report) = cleanup.clean(&rows, humanize.then_some(jitter));
-    if rows.is_empty() {
-        return Err(format!(
-            "Every note starts outside the clip (0 to {} beats); nothing was changed.",
-            format_beats(clip.region_length())
-        ));
-    }
+    let mut report = CleanupReport::default();
+    let rows = cleanup
+        .clean(&rows, humanize.then_some(jitter), &mut report)
+        .map_err(|e| format!("replace_clip_notes: {e}"))?;
     let pairs = note_pairs(clip, &rows);
     let count = pairs.len();
     let range = range_text(clip.start_tick(), clip.end_tick(), meter);
     let bars = bars_text(clip.start_tick(), clip.end_tick(), meter);
     let edit = ReplaceClipNotesEdit::new(sequencer, track_idx, clip_id, pairs, clear_wheels)
-        .ok_or_else(|| "That clip is gone; call get_context again.".to_owned())?;
+        .ok_or_else(gone)?;
     let reply = format!(
         "Replaced the notes of clip {} ({}, {range}) with {}, wheels {}, as one undo step.\n{}",
         short_id(clip),
         track_title(track_idx, track),
-        notes(count),
+        counted(count, "note"),
         if clear_wheels { "cleared" } else { "kept" },
         report.text(grid, humanize)
     );
@@ -721,10 +723,7 @@ pub(super) fn replace_clip_notes(
 
 /// `set_tempo`: the project tempo, clamped to the app's range. Just an
 /// answer, nothing to record, when it is that tempo already.
-pub(super) fn set_tempo(sequencer: &Sequencer, args: &Value) -> Result<AgentAnswer, String> {
-    if let Some(why) = write_hold(sequencer) {
-        return Err(why);
-    }
+fn set_tempo(sequencer: &Sequencer, args: &Value) -> Result<AgentAnswer, String> {
     let bpm = match args.get("bpm") {
         Some(Value::Number(number)) => number.as_f64(),
         Some(Value::String(text)) => text.trim().parse::<f64>().ok(),
@@ -747,11 +746,12 @@ pub(super) fn set_tempo(sequencer: &Sequencer, args: &Value) -> Result<AgentAnsw
             " Stev's tempos run {TEMPO_BPM_MIN}–{TEMPO_BPM_MAX} BPM, so {bpm} was clamped."
         ));
     }
-    Ok(AgentAnswer::Write(Box::new(AgentWrite {
+    Ok(AgentWrite {
         edit: SequencerEdit::from(edit),
         reply,
         footer: format!("Agent: tempo {shown} BPM"),
-    })))
+    }
+    .into())
 }
 
 #[cfg(test)]
@@ -760,6 +760,7 @@ mod tests {
     use undo::Record;
 
     use crate::core::sequencer::test_support::{clip_at, test_sequencer};
+    use crate::models::event::EventType;
 
     use super::*;
 
@@ -786,10 +787,32 @@ mod tests {
         }
     }
 
+    /// `rows` cleaned up by `cleanup`, with what changed.
+    fn clean(
+        cleanup: &Cleanup,
+        rows: &[NoteRow],
+        jitter: Option<&mut Jitter>,
+    ) -> (Vec<NoteRow>, CleanupReport) {
+        let mut report = CleanupReport::default();
+        let rows = cleanup.clean(rows, jitter, &mut report).unwrap();
+        (rows, report)
+    }
+
     /// The starts `rows` come out at, unhumanised.
     fn starts(cleanup: &Cleanup, rows: &[NoteRow]) -> Vec<i32> {
-        let (rows, _) = cleanup.clean(rows, None);
+        let (rows, _) = clean(cleanup, rows, None);
         rows.iter().map(|row| row.start).collect()
+    }
+
+    /// Fails unless `text` says `needle`, showing `text`.
+    #[track_caller]
+    fn assert_says(text: &str, needle: &str) {
+        assert!(text.contains(needle), "{needle:?} not in {text:?}");
+    }
+
+    /// `create_clips` with a fixed jitter.
+    fn create(sequencer: &Sequencer, args: &Value) -> Result<AgentWrite, String> {
+        create_clips(sequencer, args, &mut Jitter::from_seed(1))
     }
 
     /// The test sequencer with no loop region, track 0 named `bass`.
@@ -805,11 +828,6 @@ mod tests {
         let mut clip = clip_at(start, length);
         clip.set_swing_pct(swing);
         clip
-    }
-
-    /// The write's edit applied on `record`.
-    fn apply(sequencer: &mut Sequencer, record: &mut Record<SequencerEdit>, write: AgentWrite) {
-        record.edit(sequencer, write.edit);
     }
 
     /// `(pitch, start, length)` of every note `clip` holds, in event ticks.
@@ -843,7 +861,7 @@ mod tests {
         let straight = cleanup(Grid::Step(240), 50);
         let rows = [row(60, 250, 240, 90), row(62, 480, 240, 90)];
         assert_eq!(starts(&straight, &rows), vec![240, 480]);
-        let (_, report) = straight.clean(&rows, None);
+        let (_, report) = clean(&straight, &rows, None);
         assert_eq!(report.snapped, 1);
         assert_eq!(starts(&cleanup(Grid::Off, 50), &rows), vec![250, 480]);
     }
@@ -858,7 +876,7 @@ mod tests {
             row(60, 720, 120, 90),
         ];
         assert_eq!(starts(&swung, &rows), vec![288, 480, 768]);
-        assert_eq!(swung.clean(&rows, None).1.snapped, 0);
+        assert_eq!(clean(&swung, &rows, None).1.snapped, 0);
     }
 
     #[test]
@@ -879,7 +897,7 @@ mod tests {
             row(60, -240, 480, 90),
             row(60, BAR, 480, 90),
         ];
-        let (cleaned, report) = rule.clean(&rows, None);
+        let (cleaned, report) = clean(&rule, &rows, None);
         assert_eq!(
             cleaned,
             vec![
@@ -900,15 +918,15 @@ mod tests {
             }
         );
         let text = report.text(Grid::Step(240), false);
-        assert!(text.contains("1 note cut at the clip end"), "{text}");
-        assert!(text.contains("2 notes left out"), "{text}");
+        assert_says(&text, "1 note cut at the clip end");
+        assert_says(&text, "2 notes left out");
         assert!(!text.contains("humanised"), "{text}");
     }
 
     #[test]
     fn a_note_snapping_onto_the_end_stays_where_it_was_written() {
         let rule = cleanup(Grid::Step(240), 50);
-        let (cleaned, _) = rule.clean(&[row(60, BAR - 10, 480, 90)], None);
+        let (cleaned, _) = clean(&rule, &[row(60, BAR - 10, 480, 90)], None);
         assert_eq!(cleaned, vec![row(60, BAR - 10, 10, 90)]);
     }
 
@@ -917,14 +935,14 @@ mod tests {
         let rule = cleanup(Grid::Step(240), 50);
         let rows: Vec<NoteRow> = (0..200).map(|_| row(60, 960, 240, 90)).collect();
         let mut jitter = Jitter::from_seed(7);
-        let (cleaned, _) = rule.clean(&rows, Some(&mut jitter));
+        let (cleaned, _) = clean(&rule, &rows, Some(&mut jitter));
         let moves: Vec<i32> = cleaned.iter().map(|row| row.start - 960).collect();
         assert!(moves.iter().all(|m| m.abs() <= JITTER_TICKS), "{moves:?}");
         assert!(moves.iter().any(|&m| m != 0));
         assert!(moves.iter().any(|&m| m < 0) && moves.iter().any(|&m| m > 0));
 
         // A note on the clip's first tick never moves before it.
-        let (cleaned, _) = rule.clean(&[row(60, 0, 240, 90); 50], Some(&mut jitter));
+        let (cleaned, _) = clean(&rule, &[row(60, 0, 240, 90); 50], Some(&mut jitter));
         assert!(cleaned.iter().all(|row| row.start >= 0));
     }
 
@@ -965,26 +983,14 @@ mod tests {
             ],
             "humanize": false,
         });
-        let write = create_clips(&sequencer, &args, &mut Jitter::from_seed(1)).unwrap();
+        let write = create(&sequencer, &args).unwrap();
         assert_eq!(write.footer, "Agent: 2 new clips, bars 2–3");
-        assert!(
-            write.reply.contains("track 1 \"bass\": clip "),
-            "{}",
-            write.reply
-        );
-        assert!(write.reply.contains("2 → 3, 2 notes"), "{}", write.reply);
-        assert!(write.reply.contains("swing 62"), "{}", write.reply);
-        assert!(
-            write.reply.contains("1 note moved to the 1/16 grid"),
-            "{}",
-            write.reply
-        );
-        assert!(
-            write.reply.contains("There is no loop region"),
-            "{}",
-            write.reply
-        );
-        apply(&mut sequencer, &mut record, write);
+        assert_says(&write.reply, "track 1 \"bass\": clip ");
+        assert_says(&write.reply, "2 → 3, 2 notes");
+        assert_says(&write.reply, "swing 62");
+        assert_says(&write.reply, "1 note moved to the 1/16 grid");
+        assert_says(&write.reply, "There is no loop region");
+        record.edit(&mut sequencer, write.edit);
 
         let bass = &sequencer.tracks()[0].clips()[0];
         assert_eq!((bass.start_tick(), bass.end_tick()), (BAR, BAR * 2));
@@ -1001,21 +1007,16 @@ mod tests {
         let mut sequencer = sequencer();
         sequencer.tracks_mut()[0].add_clip(&clip_at(0, BAR * 4));
         let args = one_clip("2", "C3 0 1 90");
-        let error = create_clips(&sequencer, &args, &mut Jitter::from_seed(1))
-            .err()
-            .unwrap();
-        assert!(
-            error.contains("track 1 \"bass\" has a clip at 1 → 5"),
-            "{error}"
-        );
-        assert!(error.contains("Nothing was changed"), "{error}");
+        let error = create(&sequencer, &args).err().unwrap();
+        assert_says(&error, "track 1 \"bass\" has a clip at 1 → 5");
+        assert_says(&error, "Nothing was changed");
 
         let mut args = args;
         args["replace_existing"] = json!(true);
-        let write = create_clips(&sequencer, &args, &mut Jitter::from_seed(1)).unwrap();
-        assert!(write.reply.contains("Carved out"), "{}", write.reply);
+        let write = create(&sequencer, &args).unwrap();
+        assert_says(&write.reply, "Carved out");
         let mut record = Record::new();
-        apply(&mut sequencer, &mut record, write);
+        record.edit(&mut sequencer, write.edit);
         let spans: Vec<(i32, i32)> = sequencer.tracks()[0]
             .clips()
             .iter()
@@ -1029,11 +1030,7 @@ mod tests {
     #[test]
     fn create_clips_refuses_bad_or_oversized_calls() {
         let sequencer = sequencer();
-        let refuse = |args: Value| {
-            create_clips(&sequencer, &args, &mut Jitter::from_seed(1))
-                .err()
-                .unwrap()
-        };
+        let refuse = |args: Value| create(&sequencer, &args).err().unwrap();
         assert!(refuse(json!({})).contains("needs clips"));
         assert!(refuse(one_clip("2", "")).contains("has no notes"));
         assert!(refuse(one_clip("2", "C3 0 1")).contains("line 1"));
@@ -1058,62 +1055,20 @@ mod tests {
     fn create_clips_reports_the_loop_and_extends_it_when_asked() {
         let mut sequencer = sequencer();
         sequencer.set_global_region(0, BAR * 2);
-        let write = create_clips(
-            &sequencer,
-            &one_clip("1", "C3 0 1 90"),
-            &mut Jitter::from_seed(1),
-        )
-        .unwrap();
-        assert!(
-            write.reply.contains("inside the loop region 1 → 3"),
-            "{}",
-            write.reply
-        );
-        let write = create_clips(
-            &sequencer,
-            &one_clip("3", "C3 0 1 90"),
-            &mut Jitter::from_seed(1),
-        )
-        .unwrap();
-        assert!(
-            write.reply.contains("outside the loop region"),
-            "{}",
-            write.reply
-        );
+        let write = create(&sequencer, &one_clip("1", "C3 0 1 90")).unwrap();
+        assert_says(&write.reply, "inside the loop region 1 → 3");
+        let write = create(&sequencer, &one_clip("3", "C3 0 1 90")).unwrap();
+        assert_says(&write.reply, "outside the loop region");
 
         let mut args = one_clip("3", "C3 0 1 90");
         args["extend_loop"] = json!(true);
-        let write = create_clips(&sequencer, &args, &mut Jitter::from_seed(1)).unwrap();
-        assert!(write.reply.contains("now runs 1 → 4"), "{}", write.reply);
+        let write = create(&sequencer, &args).unwrap();
+        assert_says(&write.reply, "now runs 1 → 4");
         let mut record = Record::new();
-        apply(&mut sequencer, &mut record, write);
+        record.edit(&mut sequencer, write.edit);
         assert_eq!(sequencer.region_end(), BAR * 3);
         record.undo(&mut sequencer);
         assert_eq!(sequencer.region_end(), BAR * 2);
-    }
-
-    #[test]
-    fn every_write_waits_while_a_modal_is_up() {
-        let mut sequencer = sequencer();
-        sequencer.tracks_mut()[0].add_clip(&clip_at(0, BAR));
-        let id = short_id(&sequencer.tracks()[0].clips()[0]);
-        sequencer.set_modal_open(true);
-        let mut jitter = Jitter::from_seed(1);
-        let errors = [
-            create_clips(&sequencer, &one_clip("2", "C3 0 1 90"), &mut jitter).err(),
-            replace_clip_notes(
-                &sequencer,
-                &json!({ "clip": id, "notes": "C3 0 1 90" }),
-                &mut jitter,
-            )
-            .err(),
-            set_tempo(&sequencer, &json!({ "bpm": 100 })).err(),
-        ];
-        for error in errors {
-            let error = error.unwrap();
-            assert!(error.contains("A dialog is open"), "{error}");
-            assert!(error.contains("Nothing was changed"), "{error}");
-        }
     }
 
     #[test]
@@ -1138,19 +1093,11 @@ mod tests {
 
         let args = json!({ "clip": id, "notes": "E4 0 1 80\nG4 3.5 2 80", "humanize": false });
         let write = replace_clip_notes(&sequencer, &args, &mut Jitter::from_seed(1)).unwrap();
-        assert!(
-            write.reply.contains("with 2 notes, wheels kept"),
-            "{}",
-            write.reply
-        );
-        assert!(
-            write.reply.contains("1 note cut at the clip end"),
-            "{}",
-            write.reply
-        );
+        assert_says(&write.reply, "with 2 notes, wheels kept");
+        assert_says(&write.reply, "1 note cut at the clip end");
         assert_eq!(write.footer, "Agent: new notes on track 1, bar 2");
         let mut record = Record::new();
-        apply(&mut sequencer, &mut record, write);
+        record.edit(&mut sequencer, write.edit);
         let replaced = &sequencer.tracks()[0].clips()[0];
         assert_eq!(
             notes_of(replaced),
@@ -1176,7 +1123,7 @@ mod tests {
         let mut args = args;
         args["clear_wheels"] = json!(true);
         let write = replace_clip_notes(&sequencer, &args, &mut Jitter::from_seed(1)).unwrap();
-        apply(&mut sequencer, &mut record, write);
+        record.edit(&mut sequencer, write.edit);
         let cleared = &sequencer.tracks()[0].clips()[0];
         assert!(
             cleared.events().iter().all(|e| e.tick() != 1200),
@@ -1205,19 +1152,19 @@ mod tests {
         };
         assert_eq!(write.footer, "Agent: tempo 92.5 BPM");
         let mut record = Record::new();
-        apply(&mut sequencer, &mut record, *write);
+        record.edit(&mut sequencer, write.edit);
         assert_eq!(format_bpm(sequencer.tempo_us()), "92.5");
 
         let Ok(AgentAnswer::Reply(reply)) = set_tempo(&sequencer, &json!({ "bpm": "92.5" })) else {
             panic!("expected a reply");
         };
-        assert!(reply.text.contains("already 92.5"), "{}", reply.text);
+        assert_says(&reply.text, "already 92.5");
 
         let Ok(AgentAnswer::Write(write)) = set_tempo(&sequencer, &json!({ "bpm": 900 })) else {
             panic!("expected a write");
         };
-        assert!(write.reply.contains("300.0 BPM"), "{}", write.reply);
-        assert!(write.reply.contains("clamped"), "{}", write.reply);
+        assert_says(&write.reply, "300.0 BPM");
+        assert_says(&write.reply, "clamped");
         assert!(set_tempo(&sequencer, &json!({ "bpm": -3 })).is_err());
     }
 }

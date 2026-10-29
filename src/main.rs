@@ -90,6 +90,7 @@ mod core {
     pub mod transport;
     pub mod update_check;
     pub mod view_state;
+    pub mod xorshift;
 }
 /// The UI: the `Display` eframe app, input polling, the computer keyboard,
 /// the colour theme, and (macOS) the AppKit glue for the main window.
