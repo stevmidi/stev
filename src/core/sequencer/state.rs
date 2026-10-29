@@ -13,6 +13,7 @@ use std::sync::{
     Arc,
     atomic::{AtomicBool, AtomicI32, AtomicU8, AtomicU16, Ordering},
 };
+use std::time::Instant;
 
 use crossbeam_channel::Sender;
 use rtrb::Producer;
@@ -125,6 +126,9 @@ pub(crate) struct Sequencer {
     /// shifts its anchor by it (`capture_clock_shift`). `None` until a note
     /// arrives while running, and cleared with the buffer.
     pub(super) capture_clock_offset: Option<i32>,
+    /// When the latest note-on reached the capture buffer, for the agent's
+    /// `get_capture`; cleared with the buffer.
+    pub(super) capture_last_note_at: Option<Instant>,
     /// The open take session, if any (`take_framing.rs`): while it is open
     /// the lead clip the clip view shows is the take.
     pub(super) take_framing: Option<TakeFraming>,
@@ -208,6 +212,7 @@ impl Sequencer {
             playback_retimed: false,
             capture_clip: Clip::new(),
             capture_clock_offset: None,
+            capture_last_note_at: None,
             take_framing: None,
             audio_export: None,
             audio_exports_begun: 0,
@@ -299,6 +304,7 @@ impl Sequencer {
     pub(crate) fn reset_capture(&mut self) {
         self.capture_clip = Clip::new();
         self.capture_clock_offset = None;
+        self.capture_last_note_at = None;
     }
 
     /// The engine slot of the instrument track the live keyboard is currently

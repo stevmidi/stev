@@ -14,6 +14,7 @@
 //! - `units.rs` — beats, positions, note names and note rows; no ticks
 //!   leave it.
 //! - `reads.rs` — the reading tools.
+//! - `checks.rs` — `check_notes`, a dry run of a write.
 //! - `writes.rs` — the writing tools and the cleanup of what they write.
 //! - `tools.rs` (Unix) — the tool list and the server instructions.
 //! - `protocol.rs` (Unix) — the JSON-RPC methods.
@@ -22,6 +23,7 @@
 //! The app answers on every platform; the `--mcp` side and the thread are
 //! Unix-only, so off Unix nothing ever asks.
 
+mod checks;
 // The MCP side runs only as `stev --mcp`, which talks to the app over a
 // Unix socket; elsewhere there is none (`360-mcp-server.md` decision 5).
 #[cfg(unix)]
@@ -123,6 +125,8 @@ pub(crate) fn answer(
         "get_project" => Ok(read(reads::get_project(sequencer, project_name))),
         "get_timeline" => reads::get_timeline(sequencer, args).map(read),
         "get_notes" => reads::get_notes(sequencer, args).map(read),
+        "get_capture" => reads::get_capture(sequencer, args).map(read),
+        "check_notes" => checks::check_notes(sequencer, args).map(read),
         tool @ ("create_clips" | "replace_clip_notes" | "set_tempo") => {
             writes::write(tool, sequencer, args)
         }

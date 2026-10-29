@@ -8,6 +8,8 @@
 //! window that gets frozen is derived from the loop region — see
 //! `100-running-capture.md` for the invariants.
 
+use std::time::Instant;
+
 use uuid::Uuid;
 
 use crate::{
@@ -31,6 +33,32 @@ pub(crate) struct CaptureInsert {
     pub(crate) clip_id: Uuid,
     /// The notes, already in the clip's event ticks.
     pub(crate) events: Vec<Event>,
+}
+
+/// The capture buffer framed as `/` would frame it now
+/// ([`Sequencer::capture_take`]), for the agent's `get_capture`.
+pub(crate) struct CaptureTake {
+    /// The take: its window is what `/` would keep, laid at tick 0, so
+    /// [`Clip::played_events`] gives its notes in ticks from the take's start.
+    pub(crate) clip: Clip,
+    /// Where the take's start sits in the project.
+    pub(crate) place: TakePlace,
+    /// When the last note-on was captured, if it came in live.
+    pub(crate) last_note_at: Option<Instant>,
+}
+
+/// Where a [`CaptureTake`] starts in the project.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TakePlace {
+    /// Played looping: the take is the loop's last pass, starting at the
+    /// loop region's start.
+    LoopPass,
+    /// Played running but not looping: the take starts on the bar line at
+    /// this project tick.
+    Linear(i32),
+    /// Played stopped: no place in the project yet. The take starts where
+    /// phrase detection puts the phrase.
+    Stopped,
 }
 
 /// Whether a running-capture commit produces a fresh clip or is inserted into
@@ -133,6 +161,9 @@ impl Sequencer {
         // counting in, so the difference would not be whole loops.
         if self.is_running() && is_note_on(message) {
             self.capture_clock_offset = Some(tick - self.playback_tick());
+        }
+        if is_note_on(message) {
+            self.capture_last_note_at = Some(Instant::now());
         }
 
         self.add_midi_event_to_capture(message, tick);
@@ -317,25 +348,10 @@ impl Sequencer {
 
         match (target, transport_loop) {
             (RunningCaptureTarget::NewClip, Some(loop_len)) => {
-                // The *region-grid* pass holding the last note-on — "the last
-                // wrap" as the loop shows it, whatever the cursor — kept whole:
-                // the slice from the cursor is the region, the rest is pre-roll
-                // for the left edge, so a misplaced cursor is a drag away.
-                // A note-on within the tolerance of a wrap anticipates the
-                // next pass's downbeat, so the pass grid is read that much
-                // early: the anticipating note selects the pass it starts
-                // and is relocated onto its downbeat (held length intact)
-                // before the fold, never dragging the previous pass along.
-                let tolerance = config::LATE_NOTE_TOLERANCE_TICKS;
-                let (pass_start, pass_end) = Self::calculate_running_region(
-                    &capture,
-                    self.region_start() - tolerance,
-                    loop_len,
-                    Some(loop_len),
-                );
-                let (pass_start, pass_end) = (pass_start + tolerance, pass_end + tolerance);
-                capture.relocate_late_notes_to_region_start(pass_start, pass_end, tolerance);
-                capture.fold_into_loop(pass_start, pass_end, self.region_start(), loop_len);
+                // The last pass kept whole: the slice from the cursor is the
+                // region, the rest is pre-roll for the left edge, so a
+                // misplaced cursor is a drag away.
+                self.fold_last_pass(&mut capture, loop_len);
 
                 let phase = (anchor_tick - self.region_start()).rem_euclid(loop_len);
                 capture
@@ -397,6 +413,66 @@ impl Sequencer {
             return None;
         }
         Some(capture)
+    }
+
+    /// Keeps the *region-grid* pass of `capture` holding the last note-on —
+    /// "the last wrap" as the loop shows it, whatever the cursor — folded
+    /// onto the loop's phases ([`Clip::fold_into_loop`]: phase 0 is the loop
+    /// region's start, the window `[0, loop_len)`). A note-on within the
+    /// tolerance of a wrap anticipates the next pass's downbeat, so the pass
+    /// grid is read that much early: the anticipating note selects the pass
+    /// it starts and is relocated onto its downbeat (held length intact)
+    /// before the fold, never dragging the previous pass along.
+    fn fold_last_pass(&self, capture: &mut Clip, loop_len: i32) {
+        let tolerance = config::LATE_NOTE_TOLERANCE_TICKS;
+        let (pass_start, pass_end) = Self::calculate_running_region(
+            capture,
+            self.region_start() - tolerance,
+            loop_len,
+            Some(loop_len),
+        );
+        let (pass_start, pass_end) = (pass_start + tolerance, pass_end + tolerance);
+        capture.relocate_late_notes_to_region_start(pass_start, pass_end, tolerance);
+        capture.fold_into_loop(pass_start, pass_end, self.region_start(), loop_len);
+    }
+
+    /// The capture buffer as `/` would frame it now, for the agent's
+    /// `get_capture` (`360-mcp-server.md`): `None` without a note. Running
+    /// and looping, the last pass ([`fold_last_pass`](Self::fold_last_pass));
+    /// running but not looping, everything from the bar of the earliest
+    /// note-on; stopped, the phrase detection frames ([`build_stopped_capture_clip`](Self::build_stopped_capture_clip)'s
+    /// window, before its rounding). Pure.
+    pub(crate) fn capture_take(&self) -> Option<CaptureTake> {
+        if !self.capture_clip.has_notes() {
+            return None;
+        }
+        let (mut clip, place) = if !self.is_running() {
+            (self.build_detected_phrase_clip(), TakePlace::Stopped)
+        } else if self.playback_is_looping() {
+            let mut capture = self.capture_clip.clone();
+            self.fold_last_pass(&mut capture, self.capture_loop_length());
+            (capture, TakePlace::LoopPass)
+        } else {
+            let mut capture = self.capture_clip.clone();
+            capture.sort_events_by_tick();
+            capture.calculate_note_lengths();
+            // Clock ticks back into the cursor's numbering, as a linear
+            // commit's anchor is (`capture_anchor_tick`).
+            let shift = self.capture_clock_shift();
+            let first_on = Self::first_inserted_event_tick(capture.events(), EventType::NoteOn);
+            let start = self.meter().bar_line_at_or_before(first_on - shift);
+            let end = capture.events().last().map_or(0, Event::tick) + 1;
+            capture
+                .region_mut()
+                .set_region(Some(start + shift), Some(end.max(start + shift + 1)));
+            (capture, TakePlace::Linear(start))
+        };
+        clip.set_start_tick(0);
+        Some(CaptureTake {
+            clip,
+            place,
+            last_note_at: self.capture_last_note_at,
+        })
     }
 
     /// The cursor in the capture clock's numbering — the anchor a commit
@@ -574,6 +650,76 @@ mod tests {
         let id = clip.id();
         seq.select_clip(Some(id));
         id
+    }
+
+    // --- capture_take ---
+
+    /// The note-on ticks the take sounds, from its start.
+    fn take_note_ons(seq: &Sequencer) -> Vec<i32> {
+        seq.capture_take()
+            .unwrap()
+            .clip
+            .played_events()
+            .iter()
+            .filter(|e| e.event_type() == Some(EventType::NoteOn))
+            .map(Event::tick)
+            .collect()
+    }
+
+    #[test]
+    fn capture_take_is_none_on_an_empty_buffer() {
+        assert!(make_sequencer(0, 3840).capture_take().is_none());
+    }
+
+    #[test]
+    fn capture_take_while_looping_is_the_last_pass_from_the_loop_start() {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        let loop_len = bar * 2;
+        let mut seq = make_sequencer(bar * 4, loop_len);
+        seq.running.store(true, Ordering::Relaxed);
+        for cycle in 0..3 {
+            let on = bar * 4 + cycle * loop_len + 600 + cycle * 10;
+            seq.capture_clip.add_event(note_on(on));
+            seq.capture_clip.add_event(note_off(on + 300));
+        }
+        let take = seq.capture_take().unwrap();
+        assert_eq!(take.place, TakePlace::LoopPass);
+        assert_eq!(take_note_ons(&seq), vec![620]);
+    }
+
+    #[test]
+    fn capture_take_without_looping_starts_on_the_bar_of_the_first_note() {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        let mut seq = make_sequencer(0, bar * 2);
+        seq.running.store(true, Ordering::Relaxed);
+        seq.loop_enabled.store(false, Ordering::Relaxed);
+        seq.playback_tick.store(bar * 5, Ordering::Relaxed);
+        seq.capture_clip.add_event(note_on(bar * 5 + 100));
+        seq.capture_clip.add_event(note_off(bar * 5 + 400));
+        seq.capture_clip.add_event(note_on(bar * 6 + 960));
+        seq.capture_clip.add_event(note_off(bar * 6 + 1200));
+        let take = seq.capture_take().unwrap();
+        assert_eq!(take.place, TakePlace::Linear(bar * 5));
+        assert_eq!(take_note_ons(&seq), vec![100, bar + 960]);
+    }
+
+    #[test]
+    fn capture_take_while_stopped_is_the_detected_phrase_and_knows_when() {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        let mut seq = make_sequencer(0, bar * 2);
+        assert!(!seq.is_running());
+        seq.handle_midi_input(&[0x90, 60, 100], bar + 960);
+        seq.handle_midi_input(&[0x80, 60, 0], bar + 1400);
+        let take = seq.capture_take().unwrap();
+        assert_eq!(take.place, TakePlace::Stopped);
+        assert!(take.last_note_at.is_some());
+        let ons = take_note_ons(&seq);
+        assert_eq!(ons.len(), 1);
+        assert!(ons[0] >= 0 && ons[0] < bar, "{ons:?}");
+
+        seq.reset_capture();
+        assert!(seq.capture_take().is_none());
+        assert!(seq.capture_last_note_at.is_none());
     }
 
     // --- normalize_running_capture ---

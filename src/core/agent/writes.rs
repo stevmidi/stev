@@ -88,7 +88,7 @@ fn write_hold(sequencer: &Sequencer) -> Option<String> {
 
 /// The grid a write snaps starts to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Grid {
+pub(super) enum Grid {
     /// No snapping: starts stay where they were written.
     Off,
     /// Every this many ticks from event tick 0, as `Q` quantizes; the 1/16
@@ -130,7 +130,7 @@ impl Grid {
 
 /// The humanising: a start moved by up to [`JITTER_TICKS`] either way,
 /// seeded per write.
-struct Jitter(XorShift);
+pub(super) struct Jitter(XorShift);
 
 impl Jitter {
     /// A jitter seeded from a fresh random UUID.
@@ -163,7 +163,7 @@ struct Cleanup {
 
 /// What the cleanup changed, counted for the reply so the model learns.
 #[derive(Debug, Default, PartialEq, Eq)]
-struct CleanupReport {
+pub(super) struct CleanupReport {
     /// Notes whose start was off the grid.
     snapped: usize,
     /// Notes cut at the clip's end.
@@ -181,7 +181,7 @@ struct CleanupReport {
 impl CleanupReport {
     /// The report as one line: `Cleanup: 2 notes moved to the 1/16 grid,
     /// 1 note cut at the clip end. Starts humanised by up to 6 ticks.`
-    fn text(&self, grid: Grid, humanize: bool) -> String {
+    pub(super) fn text(&self, grid: Grid, humanize: bool) -> String {
         let grid_label = grid.label();
         let parts: Vec<String> = [
             (self.snapped, format!("moved to the {grid_label} grid")),
@@ -217,7 +217,7 @@ impl CleanupReport {
 }
 
 /// `1 note`, `3 clips`.
-fn counted(count: usize, noun: &str) -> String {
+pub(super) fn counted(count: usize, noun: &str) -> String {
     if count == 1 {
         format!("1 {noun}")
     } else {
@@ -406,26 +406,43 @@ fn bars_text(start: i32, end: i32, meter: Meter) -> String {
 }
 
 /// One clip of a `create_clips` call, read and checked.
-struct NewClip {
+pub(super) struct NewClip {
     /// The track it goes on.
-    track_idx: usize,
+    pub(super) track_idx: usize,
     /// The clip, notes cleaned up, ready to paste.
-    clip: Clip,
-    /// How many notes it holds.
-    notes: usize,
+    pub(super) clip: Clip,
+    /// The cleaned rows, in the clip's event ticks, before same-pitch
+    /// overlaps are trimmed.
+    pub(super) rows: Vec<NoteRow>,
 }
 
-/// `create_clips`: new clips with notes, one undo step for all of them.
-fn create_clips(
+/// A `create_clips` call read, cleaned up and checked, nothing built yet:
+/// what the write records and `check_notes` reports.
+pub(super) struct PreparedClips {
+    /// The clips, in the call's order.
+    pub(super) clips: Vec<NewClip>,
+    /// What the cleanup changed.
+    pub(super) report: CleanupReport,
+    /// What starts snapped to.
+    pub(super) grid: Grid,
+    /// Whether starts are humanised.
+    pub(super) humanize: bool,
+    /// The existing clips the new ones land on, as the replies name them:
+    /// `track 2 has a clip at 17 → 25` (decision 22).
+    pub(super) in_the_way: Vec<String>,
+}
+
+/// Reads, cleans up and checks a `create_clips` call, humanising with
+/// `jitter` when the call asks for it. Refuses a bad or oversized call,
+/// not one that lands on existing clips: that is [`PreparedClips::in_the_way`].
+pub(super) fn prepare_clips(
     sequencer: &Sequencer,
     args: &Value,
-    jitter: &mut Jitter,
-) -> Result<AgentWrite, String> {
+    mut jitter: Option<&mut Jitter>,
+) -> Result<PreparedClips, String> {
     let meter = sequencer.meter();
     let grid = Grid::from_args(args)?;
     let humanize = bool_arg(args, "humanize", true)?;
-    let replace_existing = bool_arg(args, "replace_existing", false)?;
-    let extend_loop = bool_arg(args, "extend_loop", false)?;
     let specs = match args.get("clips") {
         Some(Value::Array(specs)) if !specs.is_empty() => specs,
         _ => {
@@ -485,11 +502,13 @@ fn create_clips(
             swing,
         };
         let rows = cleanup
-            .clean(&rows, humanize.then_some(&mut *jitter), &mut report)
+            .clean(
+                &rows,
+                jitter.as_deref_mut().filter(|_| humanize),
+                &mut report,
+            )
             .map_err(|e| format!("{what}: {e}"))?;
-        let pairs = note_pairs(&clip, &rows);
-        let notes = pairs.len();
-        clip.insert_notes(pairs);
+        clip.insert_notes(note_pairs(&clip, &rows));
 
         let end = start + length;
         if let Some(other) = new_clips.iter().position(|other| {
@@ -507,12 +526,12 @@ fn create_clips(
         new_clips.push(NewClip {
             track_idx,
             clip,
-            notes,
+            rows,
         });
     }
 
     // Decision 22: what the clips would land on.
-    let in_the_way: Vec<String> = new_clips
+    let in_the_way = new_clips
         .iter()
         .flat_map(|new| {
             let track = &sequencer.tracks()[new.track_idx];
@@ -525,6 +544,31 @@ fn create_clips(
             })
         })
         .collect();
+    Ok(PreparedClips {
+        clips: new_clips,
+        report,
+        grid,
+        humanize,
+        in_the_way,
+    })
+}
+
+/// `create_clips`: new clips with notes, one undo step for all of them.
+fn create_clips(
+    sequencer: &Sequencer,
+    args: &Value,
+    jitter: &mut Jitter,
+) -> Result<AgentWrite, String> {
+    let meter = sequencer.meter();
+    let replace_existing = bool_arg(args, "replace_existing", false)?;
+    let extend_loop = bool_arg(args, "extend_loop", false)?;
+    let PreparedClips {
+        clips: new_clips,
+        report,
+        grid,
+        humanize,
+        in_the_way,
+    } = prepare_clips(sequencer, args, Some(jitter))?;
     if !in_the_way.is_empty() && !replace_existing {
         return Err(format!(
             "{}. Nothing was changed: ask the user before writing over it \
@@ -538,18 +582,11 @@ fn create_clips(
         counted(new_clips.len(), "clip")
     )];
     for new in &new_clips {
-        let clip = &new.clip;
-        let swing = if clip.swing_pct() > 50 {
-            format!(", swing {}", clip.swing_pct())
-        } else {
-            String::new()
-        };
         lines.push(format!(
-            "{}: clip {} {}{swing}, {}",
+            "{}: clip {}, {}",
             track_title(new.track_idx, &sequencer.tracks()[new.track_idx]),
-            short_id(clip),
-            range_text(clip.start_tick(), clip.end_tick(), meter),
-            counted(new.notes, "note")
+            new_clip_summary(&new.clip, meter),
+            counted(new.rows.len(), "note")
         ));
     }
     if !in_the_way.is_empty() {
@@ -588,6 +625,20 @@ fn create_clips(
             bars_text(first, last, meter)
         ),
     })
+}
+
+/// A new clip as the replies name it: `a3f0c2e1 17 → 21, swing 58`.
+pub(super) fn new_clip_summary(clip: &Clip, meter: Meter) -> String {
+    let swing = if clip.swing_pct() > 50 {
+        format!(", swing {}", clip.swing_pct())
+    } else {
+        String::new()
+    };
+    format!(
+        "{} {}{swing}",
+        short_id(clip),
+        range_text(clip.start_tick(), clip.end_tick(), meter)
+    )
 }
 
 /// Where the new clips `[first, last)` sit against the loop region, so the
@@ -673,23 +724,43 @@ fn find_clip(sequencer: &Sequencer, args: &Value) -> Result<(usize, Uuid), Strin
     }
 }
 
-/// `replace_clip_notes`: every note of one clip replaced, its position,
-/// window and length kept.
-fn replace_clip_notes(
+/// A `replace_clip_notes` call read and cleaned up, nothing built yet:
+/// what the write records and `check_notes` reports.
+pub(super) struct PreparedReplace {
+    /// The clip's track.
+    pub(super) track_idx: usize,
+    /// The clip.
+    pub(super) clip_id: Uuid,
+    /// The cleaned rows, in the clip's event ticks.
+    pub(super) rows: Vec<NoteRow>,
+    /// What the cleanup changed.
+    pub(super) report: CleanupReport,
+    /// What starts snapped to.
+    pub(super) grid: Grid,
+    /// Whether starts are humanised.
+    pub(super) humanize: bool,
+}
+
+/// What a `replace_clip_notes` call names when its clip is gone.
+fn clip_gone() -> String {
+    "That clip is gone; call get_context again.".to_owned()
+}
+
+/// Reads and cleans up a `replace_clip_notes` call, humanising with
+/// `jitter` when the call asks for it.
+pub(super) fn prepare_replace(
     sequencer: &Sequencer,
     args: &Value,
-    jitter: &mut Jitter,
-) -> Result<AgentWrite, String> {
-    let meter = sequencer.meter();
+    jitter: Option<&mut Jitter>,
+) -> Result<PreparedReplace, String> {
     let (track_idx, clip_id) = find_clip(sequencer, args)?;
     let grid = Grid::from_args(args)?;
     let humanize = bool_arg(args, "humanize", true)?;
-    let clear_wheels = bool_arg(args, "clear_wheels", false)?;
     let rows = notes_arg(args, "replace_clip_notes")?;
     check_note_count(rows.len())?;
-    let gone = || "That clip is gone; call get_context again.".to_owned();
-    let track = &sequencer.tracks()[track_idx];
-    let clip = sequencer.clip_on(track_idx, clip_id).ok_or_else(gone)?;
+    let clip = sequencer
+        .clip_on(track_idx, clip_id)
+        .ok_or_else(clip_gone)?;
     let cleanup = Cleanup {
         origin: clip.region().start(),
         length: clip.region_length(),
@@ -698,14 +769,45 @@ fn replace_clip_notes(
     };
     let mut report = CleanupReport::default();
     let rows = cleanup
-        .clean(&rows, humanize.then_some(jitter), &mut report)
+        .clean(&rows, jitter.filter(|_| humanize), &mut report)
         .map_err(|e| format!("replace_clip_notes: {e}"))?;
+    Ok(PreparedReplace {
+        track_idx,
+        clip_id,
+        rows,
+        report,
+        grid,
+        humanize,
+    })
+}
+
+/// `replace_clip_notes`: every note of one clip replaced, its position,
+/// window and length kept.
+fn replace_clip_notes(
+    sequencer: &Sequencer,
+    args: &Value,
+    jitter: &mut Jitter,
+) -> Result<AgentWrite, String> {
+    let meter = sequencer.meter();
+    let clear_wheels = bool_arg(args, "clear_wheels", false)?;
+    let PreparedReplace {
+        track_idx,
+        clip_id,
+        rows,
+        report,
+        grid,
+        humanize,
+    } = prepare_replace(sequencer, args, Some(jitter))?;
+    let track = &sequencer.tracks()[track_idx];
+    let clip = sequencer
+        .clip_on(track_idx, clip_id)
+        .ok_or_else(clip_gone)?;
     let pairs = note_pairs(clip, &rows);
     let count = pairs.len();
     let range = range_text(clip.start_tick(), clip.end_tick(), meter);
     let bars = bars_text(clip.start_tick(), clip.end_tick(), meter);
     let edit = ReplaceClipNotesEdit::new(sequencer, track_idx, clip_id, pairs, clear_wheels)
-        .ok_or_else(gone)?;
+        .ok_or_else(clip_gone)?;
     let reply = format!(
         "Replaced the notes of clip {} ({}, {range}) with {}, wheels {}, as one undo step.\n{}",
         short_id(clip),

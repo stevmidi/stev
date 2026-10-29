@@ -1,6 +1,6 @@
 # MCP Server
 
-**Status: design agreed 2026-10-28; phase 1 (the bridge and the reads) built 2026-10-28, phase 2 (the writes) built 2026-10-29, phase 3 not started. Experimental (2026-10-29): after hand-testing phase 2 the author found the writes work but the music they come up with unexciting, which is fine, since the user makes the music. Its use is writer's block (a few bars, a new chord progression) and tedious, repetitive edits; the tools may change or go once longer use shows which of them earn their place.** Lets an AI client the user already has (Claude Desktop, Claude Code, ChatGPT, Cursor and the like) read and edit the open project through the Model Context Protocol: marquee a section and say "continue this with a new 4-bar section", "a bass line under this", "a variation of this clip", "tidy up what I just played". It grows out of `280` § An MCP server for AI agents, whose free-version test (2026-10-28) decided the bridge was worth building and named what its tools need. This file holds the decisions, the tool list and the server instructions. Read `250` (the path a command takes), `050` (edits and undo), `020` § Views (the marquee) and `220` (capture) first.
+**Status: design agreed 2026-10-28; phase 1 (the bridge and the reads) built 2026-10-28, phase 2 (the writes) built 2026-10-29, phase 3 (checking and the capture) built 2026-10-29. Experimental (2026-10-29): after hand-testing phase 2 the author found the writes work but the music they come up with unexciting, which is fine, since the user makes the music. Its use is writer's block (a few bars, a new chord progression) and tedious, repetitive edits; the tools may change or go once longer use shows which of them earn their place.** Lets an AI client the user already has (Claude Desktop, Claude Code, ChatGPT, Cursor and the like) read and edit the open project through the Model Context Protocol: marquee a section and say "continue this with a new 4-bar section", "a bass line under this", "a variation of this clip", "tidy up what I just played". It grows out of `280` § An MCP server for AI agents, whose free-version test (2026-10-28) decided the bridge was worth building and named what its tools need. This file holds the decisions, the tool list and the server instructions. Read `250` (the path a command takes), `050` (edits and undo), `020` § Views (the marquee) and `220` (capture) first.
 
 ## Decisions (2026-10-28)
 
@@ -37,7 +37,7 @@
 
 ## Tools
 
-Eight tools in three groups. Each description below is close to the text the server sends in `tools/list`: models read it to decide when to call a tool, so it is written for them.
+Nine tools in three groups. Each description below is close to the text the server sends in `tools/list`: models read it to decide when to call a tool, so it is written for them.
 
 ### Reading
 
@@ -180,7 +180,7 @@ Reviewed 2026-10-28, after phase 1. The socket is the small part (decision 5: Un
 
 ## Token budget
 
-The walkthrough above is `get_context` (≈150), `get_timeline` over 8 bars (≈800), `get_notes` for two 8-bar parts (≈800), one `check_notes` and one `create_clips` with about 60 notes each way (≈1k), plus the instructions and eight tool descriptions (≈1.7k, sent once per conversation). About 4.5k in Stev's own tokens, inside `280`'s 5–15k estimate once the client's own context is counted.
+The walkthrough above is `get_context` (≈150), `get_timeline` over 8 bars (≈800), `get_notes` for two 8-bar parts (≈800), one `check_notes` and one `create_clips` with about 60 notes each way (≈1k), plus the instructions and nine tool descriptions (≈1.7k, sent once per conversation). About 4.5k in Stev's own tokens, inside `280`'s 5–15k estimate once the client's own context is counted.
 
 ## Build (phases)
 
@@ -210,6 +210,15 @@ Each phase is one branch and one merge, with its tests, docs and changelog line.
 - The reply says where the clips sit against the loop region (inside, partly, outside, or the region `extend_loop` left). `extend_loop` with no loop region changes nothing and says so.
 - The footer: `Agent: 2 new clips, bars 17–20`, `Agent: new notes on track 1, bars 9–16`, `Agent: tempo 96.0 BPM`.
 - The server instructions are the designed text less step 7 (`check_notes`), which phase 3 puts back.
+
+**Phase 3 as built** (`src/core/agent/checks.rs`, `get_capture` in `reads.rs`, `Sequencer::capture_take` in `sequencer/capture.rs`):
+
+- `check_notes` reads the call through the writes' own prepare step (`prepare_clips`, `prepare_replace`), unhumanised, so its rows are the ones the write would put down; a `clip` argument makes it a `replace_clip_notes` check, else a `create_clips` one. It runs whatever holds the edit: decision 13 is for writes.
+- A clash is a written note whose pitch class none of the other audible tracks sounds in its beat (the beat as the timeline counts it, cut at the bar line), while they sound something; with nothing else sounding there is nothing to clash with. The other tracks are read as they will be after the write: the other new clips of the same call count, and notes inside a written span on its own track are left out (the carve, or the clip being replaced).
+- The cleanup is one finding, the write's report line; overlaps are one per same-pitch pair the write would trim (`Clip::insert_notes`); a clip in the way is a finding, not a refusal. At most 40 findings, the rest counted.
+- `get_capture` frames the buffer as `/` would now: running and looping, the last pass from the loop region's start (`fold_last_pass`, shared with the running commit); running but not looping, from the bar of the first note-on; stopped, the window phrase detection gives the stopped `/`, before its bar rounding, with no place in the project. `bars` keeps the newest bars of that, counted from the take's start; earlier ones are named as left out. Pitch bend and mod wheel aren't listed.
+- "How long ago" is `Sequencer::capture_last_note_at`, stamped on each live note-on and cleared with the buffer.
+- The server instructions are the designed text with step 7 (`check_notes`) back.
 
 1. **The bridge and the reads.** The `--mcp` stdio mode (`main.rs` decides before eframe starts), the setting, the socket and the `"agent-bridge"` thread, `SequencerCommand::Agent`, and `get_context`, `get_project`, `get_timeline`, `get_notes`. Useful alone: "what key is this in", "what does the bass play here". Pure parts tested: the row format both ways, positions and beats ↔ ticks in every meter, the defaults (marquee, loop-region fallback), the sounding-notes walk over carved windows, mutes and solo (a held note's negative start included), the JSON-RPC framing.
 2. **The writes.** `create_clips`, `replace_clip_notes`, `set_tempo`, the cleanup and its report, the `Agent:` footer, the refusal rules (decisions 13 and 22), and the request caps (§ Security: the line the bridge reads, the notes and clips one call carries). Tests: the cleanup (snap straight and swung, the default swing taken from the track's own clip first, a triplet grid ignoring swing, clamp, cut at the end, minimum length, jitter bounded and turned off), the refusal over an existing clip and the carve with `replace_existing`, several clips undone as one step, the selection unchanged by every write, each edit's edit/undo round trip, `extend_loop` restoring the region on undo.

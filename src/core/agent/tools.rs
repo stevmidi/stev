@@ -5,13 +5,11 @@
 
 use serde_json::{Value, json};
 
-use super::reads::{NOTES_MAX_BARS, TIMELINE_MAX_BARS};
+use super::reads::{CAPTURE_MAX_BARS, NOTES_MAX_BARS, TIMELINE_MAX_BARS};
 use super::writes::{JITTER_TICKS, MAX_CLIP_BARS, MAX_CLIPS, MAX_NOTES};
 
 /// The instructions the `initialize` result carries: clients put them in
 /// the model's context while the server is connected, so they stay short.
-/// The design's text, less the `check_notes` step until it exists (`360`
-/// § Build).
 pub(crate) const INSTRUCTIONS: &str = "\
 Stev is a MIDI sequencer built around capture: the user plays freely and keeps
 what they played. You help them build on it. You can't hear anything, so read
@@ -43,9 +41,11 @@ How to work:
 5. Put notes on the beat grid and write off-beats straight: Stev swings them
    to match and adds its own small humanisation.
 6. Count bars carefully: a clip's notes must end inside its length.
-7. Don't write over existing clips unless the user said so: get_context shows
+7. Call check_notes before writing when the notes should fit the harmony, and
+   fix clashes on strong beats.
+8. Don't write over existing clips unless the user said so: get_context shows
    what follows the marquee. Don't move the loop unless asked.
-8. Each write is one undo step the user can take back with Cmd+Z. Write a
+9. Each write is one undo step the user can take back with Cmd+Z. Write a
    whole section in one create_clips call, and tell the user what you wrote
    and where (tracks, bars), and whether the loop plays it.
 
@@ -53,11 +53,13 @@ Stev doesn't make tracks, pick instruments or mix. If asked, say so: the user
 does that in the app.";
 
 /// The names of every tool the server offers.
-pub(crate) const TOOL_NAMES: [&str; 7] = [
+pub(crate) const TOOL_NAMES: [&str; 9] = [
     "get_context",
     "get_project",
     "get_timeline",
     "get_notes",
+    "get_capture",
+    "check_notes",
     "create_clips",
     "replace_clip_notes",
     "set_tempo",
@@ -162,6 +164,9 @@ pub(crate) fn tool_list() -> Value {
         "description": "When the clips end past the loop region, move its end to theirs, \
                         in the same undo step. Default false; only when asked.",
     });
+    let mut check_properties = create_properties.clone();
+    check_properties["clips"]["description"] =
+        json!("The clips, as create_clips takes them. Pass these, or clip and notes.");
     let mut replace_properties = cleanup_properties();
     replace_properties["clip"] = json!({
         "type": "string",
@@ -172,6 +177,11 @@ pub(crate) fn tool_list() -> Value {
         "description": "Rows \"pitch start length velocity\", one per line, starts in beats \
                         from the clip's start.",
     });
+    check_properties["clip"] = json!({
+        "type": "string",
+        "description": "To check a replace_clip_notes call: the clip's id.",
+    });
+    check_properties["notes"] = replace_properties["notes"].clone();
     replace_properties["clear_wheels"] = json!({
         "type": "boolean",
         "description": "Also remove the clip's pitch bend and mod wheel moves. Default false.",
@@ -215,6 +225,38 @@ pub(crate) fn tool_list() -> Value {
                 are what is heard; a note already sounding at from has a negative start. \
                 Use it to read a part's rhythm, lengths and velocities.",
             "inputSchema": { "type": "object", "properties": notes_properties },
+        },
+        {
+            "name": "get_capture",
+            "description": "What the user just played into Stev's capture buffer, before or \
+                without committing it: it isn't on the timeline. For \"tidy up what I just \
+                played\" or \"what key was that\". Gives the take as Stev's / would frame \
+                it now (the last pass over the loop while looping; the phrase Stev detects \
+                when played stopped) as rows, where it sits in the project, and how long ago \
+                the last note came in. Says \"Nothing captured.\" when the buffer is empty.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "bars": {
+                        "type": "integer",
+                        "description": format!(
+                            "How many of the newest bars to read, 1 to {CAPTURE_MAX_BARS}. \
+                             Default 8."
+                        ),
+                    },
+                },
+            },
+        },
+        {
+            "name": "check_notes",
+            "description": "A dry run of create_clips (pass clips) or replace_clip_notes \
+                (pass clip and notes): nothing is written. Gives the rows as the write would \
+                put them, then findings: notes outside the pitch classes the other tracks \
+                sound at their beat (\"F#4 at 18+2.5 on track 1: sounding A C E\"), what \
+                the cleanup would move or cut, same-pitch overlaps, and existing clips in \
+                the way. Passing tones are fine; a clash on a strong beat usually isn't. \
+                Call it before writing notes meant to fit the harmony.",
+            "inputSchema": { "type": "object", "properties": check_properties },
         },
         {
             "name": "create_clips",

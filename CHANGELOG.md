@@ -32,7 +32,9 @@ Breaking entries are marked **Breaking** and say what to do about them.
   `Stev.app/Contents/MacOS/stev --mcp` as its server and turn on Allow AI
   agents in Settings → MIDI. It reads what
   you point at with the marquee (the tempo, the harmony bar by bar, the
-  notes) and can write new clips, replace a clip's notes and set the tempo.
+  notes) and what you just played before you commit it, checks notes it
+  means to write against the harmony, and can write new clips, replace a
+  clip's notes and set the tempo.
   Stev snaps what it writes to the grid with the clip's swing and a little
   humanisation, never writes over a clip unless asked, and leaves the
   selection alone; each change is one undo step, named in the footer. Off by

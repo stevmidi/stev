@@ -64,6 +64,7 @@ pub(crate) use audio_export::{
 pub(crate) use audio_export::SlotMask;
 #[cfg(test)]
 pub(crate) use audio_export::{AudioExportPlan, StemPlan};
+pub(crate) use capture::TakePlace;
 pub(crate) use commands::SequencerCommand;
 pub(crate) use edit::{
     AddTrackEdit, CommitClipEdit, CreateClipsEdit, DeleteInRangeEdit, DeleteSelectedEventsEdit,

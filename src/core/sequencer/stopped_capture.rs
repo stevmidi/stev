@@ -109,7 +109,7 @@ impl Sequencer {
     /// The detected phrase as a clip: every event of the capture source in
     /// absolute tick space, the window from the detected phrase start to the
     /// last `NoteOff` plus two beats (at least a bar), placed at the cursor.
-    fn build_detected_phrase_clip(&self) -> Clip {
+    pub(super) fn build_detected_phrase_clip(&self) -> Clip {
         let capture = self.detection_capture_source();
         let meter = self.meter();
         let (region_start_tick, end) =

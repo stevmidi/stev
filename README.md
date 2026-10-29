@@ -142,7 +142,8 @@ its notes to one of two places:
 
 An AI client you already use can read and edit the open project through
 [MCP](https://modelcontextprotocol.io): marquee a section and ask "what key is
-this in", "continue this with four bars" or "a bass line under this". Stev
+this in", "continue this with four bars" or "a bass line under this", or ask
+"tidy up what I just played" before you commit it. Stev
 sends nothing anywhere and needs no API key; your client does the thinking.
 Each change it makes is one step `⌘Z` takes back, it never writes over a clip
 unless you ask, and it leaves your selection alone. It's experimental: the

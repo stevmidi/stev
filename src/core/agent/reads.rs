@@ -1,17 +1,18 @@
 //! The reading tools (`360-mcp-server.md` § Tools: `get_context`,
-//! `get_project`, `get_timeline`, `get_notes`), answered on the
+//! `get_project`, `get_timeline`, `get_notes`, `get_capture`), answered on the
 //! `"sequencer"` thread from the [`Sequencer`]'s own state. Each builds
 //! plain text in the units of `units.rs`. What sounds is what the reads
 //! report: clip windows, muted notes and muted clips applied
 //! ([`Clip::played_events`]); track mute and solo are named where they apply.
 
 use std::ops::RangeInclusive;
+use std::time::Duration;
 
 use serde_json::Value;
 
 use crate::core::input_event::TimeSelectionRect;
 use crate::core::midi::message::{Wheel, parse_wheel};
-use crate::core::sequencer::Sequencer;
+use crate::core::sequencer::{Sequencer, TakePlace};
 use crate::core::time::{Meter, PPQN, format_bpm};
 use crate::models::clip::{Clip, min_max};
 use crate::models::event::EventType;
@@ -20,6 +21,7 @@ use crate::models::track::{Track, TrackOutput};
 use super::units::{
     NoteRow, format_beats, format_position, note_name, parse_position, pitch_class_name,
 };
+use super::writes::counted;
 
 /// The most bars [`get_timeline`] reads in one call.
 pub(super) const TIMELINE_MAX_BARS: i32 = 16;
@@ -27,32 +29,48 @@ pub(super) const TIMELINE_MAX_BARS: i32 = 16;
 /// The most bars [`get_notes`] reads in one call.
 pub(super) const NOTES_MAX_BARS: i32 = 32;
 
+/// The most bars [`get_capture`] reads in one call.
+pub(super) const CAPTURE_MAX_BARS: i32 = 32;
+
+/// The bars [`get_capture`] reads when the call names none.
+const CAPTURE_DEFAULT_BARS: i32 = 8;
+
 /// What the reads say when they have nothing to default to.
 const NO_RANGE: &str =
     "No marquee and no loop region: ask the user which bars they mean, then pass from and to.";
 
 /// One note as it sounds, in arrangement ticks.
-struct PlayedNote {
+pub(super) struct PlayedNote {
     /// MIDI note number.
-    pitch: i32,
+    pub(super) pitch: i32,
     /// Where it starts.
-    start: i32,
+    pub(super) start: i32,
     /// Where it ends; `start` for a zero-length note.
-    end: i32,
+    pub(super) end: i32,
     /// Note-on velocity.
     velocity: i32,
 }
 
 impl PlayedNote {
+    /// A written row as it would sound, its start counted from `origin`.
+    pub(super) fn from_row(row: &NoteRow, origin: i32) -> PlayedNote {
+        PlayedNote {
+            pitch: row.pitch,
+            start: origin + row.start,
+            end: origin + row.start + row.length,
+            velocity: row.velocity,
+        }
+    }
+
     /// Whether the note sounds anywhere in `[start, end)`. A zero-length
     /// note sounds at its start.
-    fn overlaps(&self, start: i32, end: i32) -> bool {
+    pub(super) fn overlaps(&self, start: i32, end: i32) -> bool {
         self.start < end && (self.end > start || self.start >= start)
     }
 }
 
 /// One wheel move as it plays, in arrangement ticks.
-struct WheelMove {
+pub(super) struct WheelMove {
     /// Where.
     tick: i32,
     /// Which wheel.
@@ -114,7 +132,7 @@ pub(super) fn clips_in(track: &Track, from: i32, to: i32) -> impl Iterator<Item 
 /// What `track` sounds in `[from, to)`, every clip there together, its
 /// own mute aside. Whole notes: one may start before `from` or run past
 /// `to`.
-fn track_played(track: &Track, from: i32, to: i32) -> (Vec<PlayedNote>, Vec<WheelMove>) {
+pub(super) fn track_played(track: &Track, from: i32, to: i32) -> (Vec<PlayedNote>, Vec<WheelMove>) {
     let (mut notes, mut wheels) = (Vec::new(), Vec::new());
     for clip in clips_in(track, from, to) {
         let (clip_notes, clip_wheels) = clip_played(clip);
@@ -573,6 +591,88 @@ pub(super) fn get_notes(sequencer: &Sequencer, args: &Value) -> Result<String, S
     Ok(lines.join("\n"))
 }
 
+/// `get_capture`: the newest `bars` bars of what `/` would frame now, as
+/// rows, with where they sit in the project and how long ago the last note
+/// came in.
+pub(super) fn get_capture(sequencer: &Sequencer, args: &Value) -> Result<String, String> {
+    let bars = match args.get("bars") {
+        None | Some(Value::Null) => CAPTURE_DEFAULT_BARS,
+        Some(value) => value
+            .as_i64()
+            .filter(|bars| (1..=i64::from(CAPTURE_MAX_BARS)).contains(bars))
+            .map(|bars| bars as i32)
+            .ok_or_else(|| format!("bars is a whole number from 1 to {CAPTURE_MAX_BARS}."))?,
+    };
+    let nothing = || Ok("Nothing captured.".to_owned());
+    let Some(take) = sequencer.capture_take() else {
+        return nothing();
+    };
+    let notes = clip_played(&take.clip).0;
+    let Some(last_on) = notes.iter().map(|note| note.start).max() else {
+        return nothing();
+    };
+    let meter = sequencer.meter();
+    let bar = meter.bar_ticks();
+    let first_bar = (last_on.div_euclid(bar) - (bars - 1)).max(0);
+    let from = first_bar * bar;
+
+    let mut lines = vec![match take.place {
+        TakePlace::LoopPass => format!(
+            "The last pass over the loop region {}: rows in beats from {}.",
+            range_text(sequencer.region_start(), sequencer.region_end(), meter),
+            format_position(sequencer.region_start() + from, meter)
+        ),
+        TakePlace::Linear(start) => format!(
+            "Played without looping: rows in beats from {}.",
+            format_position(start + from, meter)
+        ),
+        TakePlace::Stopped => {
+            let start = if first_bar == 0 {
+                "where Stev hears the phrase start (where / starts the clip)".to_owned()
+            } else {
+                format!(
+                    "{} after where Stev hears the phrase start",
+                    counted(first_bar as usize, "bar")
+                )
+            };
+            format!(
+                "Played while stopped, so not at a place in the project: rows in beats from {start}."
+            )
+        }
+    }];
+    lines.push(
+        "It isn't on the timeline: / in Stev commits it; create_clips can write a tidied copy."
+            .to_owned(),
+    );
+    if first_bar > 0 {
+        let before = if first_bar == 1 {
+            "The bar before is".to_owned()
+        } else {
+            format!("The {first_bar} bars before are")
+        };
+        lines.push(format!("{before} left out; pass bars to read more."));
+    }
+    if let Some(at) = take.last_note_at {
+        lines.push(format!("The last note came in {}.", ago(at.elapsed())));
+    }
+    lines.extend(
+        note_rows(&notes, from, i32::MAX)
+            .iter()
+            .map(NoteRow::format),
+    );
+    Ok(lines.join("\n"))
+}
+
+/// How long ago `elapsed` was, roughly: `just now`, `12 s ago`, `3 min ago`.
+fn ago(elapsed: Duration) -> String {
+    match elapsed.as_secs() {
+        0..2 => "just now".to_owned(),
+        secs @ 2..60 => format!("{secs} s ago"),
+        secs @ 60..3600 => format!("{} min ago", secs / 60),
+        secs => format!("{} h ago", secs / 3600),
+    }
+}
+
 /// The notes sounding in `[from, to)` as rows from `from`, by start then
 /// pitch: one already held at `from` starts negative.
 fn note_rows(notes: &[PlayedNote], from: i32, to: i32) -> Vec<NoteRow> {
@@ -964,6 +1064,48 @@ mod tests {
             text.contains("No marquee; reads default to the loop region 9 → 17."),
             "{text}"
         );
+    }
+
+    #[test]
+    fn the_capture_reads_nothing_on_an_empty_buffer_and_checks_bars() {
+        let sequencer = sequencer(Vec::new());
+        assert_eq!(
+            get_capture(&sequencer, &json!({})),
+            Ok("Nothing captured.".to_owned())
+        );
+        assert!(get_capture(&sequencer, &json!({ "bars": 0 })).is_err());
+        assert!(get_capture(&sequencer, &json!({ "bars": 33 })).is_err());
+    }
+
+    #[test]
+    fn a_take_played_stopped_reads_from_its_phrase_with_the_newest_bars() {
+        let mut sequencer = sequencer(Vec::new());
+        // One note a bar over four bars, stopped.
+        for bar in 0..4 {
+            let at = 10 * BAR + bar * BAR;
+            sequencer.handle_midi_input(&[0x90, 60 + bar as u8, 90], at);
+            sequencer.handle_midi_input(&[0x80, 60 + bar as u8, 0], at + 480);
+        }
+        let text = get_capture(&sequencer, &json!({})).unwrap();
+        assert!(text.starts_with("Played while stopped"), "{text}");
+        assert!(text.contains("The last note came in just now."), "{text}");
+        // Phrase detection frames the last two bars, as `/` would.
+        let rows: Vec<&str> = text.lines().filter(|l| l.contains(" 0.5 ")).collect();
+        assert_eq!(rows, vec!["D4 0 0.5 90", "D#4 4 0.5 90"], "{text}");
+
+        let text = get_capture(&sequencer, &json!({ "bars": 1 })).unwrap();
+        let rows: Vec<&str> = text.lines().filter(|l| l.contains(" 0.5 ")).collect();
+        assert_eq!(rows, vec!["D#4 0 0.5 90"], "{text}");
+        assert!(text.contains("1 bar after where Stev hears"), "{text}");
+        assert!(text.contains("The bar before is left out"), "{text}");
+    }
+
+    #[test]
+    fn ago_reads_as_seconds_minutes_and_hours() {
+        assert_eq!(ago(Duration::from_millis(400)), "just now");
+        assert_eq!(ago(Duration::from_secs(12)), "12 s ago");
+        assert_eq!(ago(Duration::from_secs(150)), "2 min ago");
+        assert_eq!(ago(Duration::from_secs(7300)), "2 h ago");
     }
 
     #[test]
