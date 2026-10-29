@@ -10,11 +10,13 @@
 //! is the one that adds notes from outside the clip: a take inserted by `/`.
 //! `QuantizeEventsEdit` is the one that also acts with nothing selected.
 //! `InsertNotesEdit` (a double-click or `⌘/Ctrl+V`) and `DragNotesEdit` are
-//! the piano roll's note edits (`clip/note_edits.rs`). See `050-undo-redo.md`.
+//! the piano roll's note edits (`clip/note_edits.rs`). `ReplaceClipNotesEdit`
+//! is the agent bridge's, on a clip named by id. See `050-undo-redo.md`.
 
 use undo::Record;
 use uuid::Uuid;
 
+use crate::core::midi::message::parse_wheel;
 use crate::models::{
     clip::{Clip, NoteDrag, min_max},
     event::{Event, EventType},
@@ -286,6 +288,84 @@ impl InsertNotesEdit {
     }
 
     /// Restores the clip's events from before the insert.
+    pub(super) fn undo(&mut self, sequencer: &mut Sequencer) -> EditResult {
+        self.state.undo(sequencer)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ReplaceClipNotesEdit — hand-rolled: the agent bridge names its clip by id,
+// lead or not, and the new notes replace every note rather than the selected.
+// ---------------------------------------------------------------------------
+
+/// The agent bridge's `replace_clip_notes` (`360-mcp-server.md` § Writing):
+/// every note in the clip, hidden ones outside its window included, swapped
+/// for `notes` (cleaned up and built by the bridge), the clip's position,
+/// window and length kept. The wheel moves stay unless `clear_wheels`. The
+/// clip needn't be the lead. The selection keeps what survives (a selected
+/// wheel move); the new notes aren't selected, as a commit's aren't.
+pub(crate) struct ReplaceClipNotesEdit {
+    /// The target clip, its pre-edit selection, and the snapshot.
+    state: ClipEventsEditState,
+    /// The new notes as `(note_on, note_off)`; redo adds the same ids.
+    notes: Vec<(Event, Event)>,
+    /// Whether the pitch bend and mod wheel moves go too.
+    clear_wheels: bool,
+}
+
+impl ReplaceClipNotesEdit {
+    /// `notes` in place of every note of `clip_id` on `track_idx`. `None`
+    /// when that clip isn't there.
+    pub(crate) fn new(
+        sequencer: &Sequencer,
+        track_idx: usize,
+        clip_id: Uuid,
+        notes: Vec<(Event, Event)>,
+        clear_wheels: bool,
+    ) -> Option<Self> {
+        let selected_event_ids = sequencer.clip_on(track_idx, clip_id)?.selected_event_ids();
+        Some(Self {
+            state: ClipEventsEditState {
+                track_idx,
+                clip_id,
+                selected_event_ids,
+                pre_events: None,
+            },
+            notes,
+            clear_wheels,
+        })
+    }
+
+    /// Snapshots the clip's events, drops its notes (and wheel moves, with
+    /// `clear_wheels`) and inserts the new notes.
+    pub(super) fn edit(&mut self, sequencer: &mut Sequencer) -> EditResult {
+        let (notes, clear_wheels) = (&self.notes, self.clear_wheels);
+        self.state.edit_with(sequencer, |clip| {
+            let kept: Vec<Event> = clip
+                .events()
+                .iter()
+                .filter(|event| {
+                    let is_note = matches!(
+                        event.event_type(),
+                        Some(EventType::NoteOn | EventType::NoteOff)
+                    );
+                    let is_wheel = parse_wheel(event.midi_message()).is_some();
+                    !is_note && !(clear_wheels && is_wheel)
+                })
+                .cloned()
+                .collect();
+            let surviving: Vec<Uuid> = clip
+                .selected_event_ids()
+                .into_iter()
+                .filter(|id| kept.iter().any(|event| event.id() == *id))
+                .collect();
+            clip.restore_events(kept);
+            clip.insert_notes(notes.iter().cloned());
+            surviving
+        })
+    }
+
+    /// Restores the clip's events from before.
     pub(super) fn undo(&mut self, sequencer: &mut Sequencer) -> EditResult {
         self.state.undo(sequencer)
     }

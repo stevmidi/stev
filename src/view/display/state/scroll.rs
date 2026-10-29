@@ -258,6 +258,19 @@ impl Display {
         }
     }
 
+    /// Sends whether a modal (an overlay or a project dialog) is up when that
+    /// changed since last sent: the agent bridge refuses a write while one is
+    /// (`360-mcp-server.md` decision 13). Compared once a frame, like
+    /// [`publish_marquee`](Self::publish_marquee).
+    pub(in crate::view::display) fn publish_modal(&mut self) {
+        let open = self.overlay.is_some() || self.project_dialog.is_some();
+        if open != self.published_modal {
+            self.published_modal = open;
+            self.event_handlers
+                .handle_input_event(&InputEvent::ModalChanged(open));
+        }
+    }
+
     /// Collapses the time selection whenever the cursor moves or the selected
     /// track changes.
     ///

@@ -600,9 +600,14 @@ pub(crate) enum SequencerCommand {
     /// The view's marquee changed: mirror it for the agent bridge's reads
     /// (`Sequencer::marquee`). Not an edit; nothing else reads it.
     SetMarquee(Option<TimeSelectionRect>),
+    /// A modal overlay or project dialog opened or closed in the view:
+    /// mirror it, so the agent bridge refuses writes meanwhile
+    /// (`Sequencer::is_modal_open`). Not an edit.
+    SetModalOpen(bool),
     /// A tool call from the `"agent-bridge"` thread (`core::agent`),
     /// answered on `reply`. The reads change nothing and run whatever else
-    /// holds the edit (a take session, an audio export).
+    /// holds the edit (a take session, an audio export, a modal); a write
+    /// then says why it can't run, and otherwise is one undo step.
     #[cfg_attr(not(unix), allow(dead_code))]
     Agent {
         /// The call.

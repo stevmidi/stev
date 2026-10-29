@@ -225,6 +225,10 @@ impl EventHandlers {
                 self.send_sequencer(SequencerCommand::SetMarquee(*marquee));
             }
 
+            InputEvent::ModalChanged(open) => {
+                self.send_sequencer(SequencerCommand::SetModalOpen(*open));
+            }
+
             InputEvent::ExportClip { time_bounds, name } => {
                 self.send_sequencer(SequencerCommand::ExportClip {
                     time_bounds: *time_bounds,

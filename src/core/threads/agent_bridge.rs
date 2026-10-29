@@ -6,7 +6,7 @@
 //! holds no socket and sleeps on its control channel.
 
 use std::fs::{self, Permissions};
-use std::io::{BufRead, BufReader, ErrorKind, Write};
+use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::thread::{self, JoinHandle};
@@ -24,6 +24,11 @@ const CONTROL_POLL: Duration = Duration::from_millis(250);
 
 /// How long one call waits on the `"sequencer"` thread (decision 7).
 const ANSWER_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// The longest request line the thread reads, in bytes: far past the most
+/// notes a write takes, short of what could stall the sequencer thread or
+/// grow its memory (`360-mcp-server.md` § Security).
+const MAX_REQUEST_BYTES: usize = 256 * 1024;
 
 /// Starts the `"agent-bridge"` thread, listening from the start when
 /// `enabled`. Each `bool` on `control_rx` turns it on or off (the settings
@@ -122,7 +127,9 @@ fn control(control_rx: &Receiver<bool>, wait: Duration) -> Option<bool> {
 }
 
 /// Answers one connection's calls, a JSON line each way, until it closes
-/// (returns `true`) or the setting goes off (`false`).
+/// (returns `true`) or the setting goes off (`false`). A line longer than
+/// [`MAX_REQUEST_BYTES`] is refused and the connection closed, its rest
+/// unread.
 fn serve_connection(
     stream: UnixStream,
     control_rx: &Receiver<bool>,
@@ -144,15 +151,24 @@ fn serve_connection(
     // Kept across read timeouts: a line that arrives in pieces is read on.
     let mut line = String::new();
     loop {
-        match reader.read_line(&mut line) {
+        let room = (MAX_REQUEST_BYTES - line.len()) as u64;
+        match (&mut reader).take(room).read_line(&mut line) {
             Ok(0) => return true,
             Ok(_) => {
-                let reply = forward(&line, sequencer_command_tx);
+                let too_long = line.len() >= MAX_REQUEST_BYTES && !line.ends_with('\n');
+                let reply = if too_long {
+                    AgentReply::error(format!(
+                        "The call is longer than Stev reads ({} KiB); write fewer notes at a time.",
+                        MAX_REQUEST_BYTES / 1024
+                    ))
+                } else {
+                    forward(&line, sequencer_command_tx)
+                };
                 line.clear();
                 let Ok(text) = serde_json::to_string(&reply) else {
                     continue;
                 };
-                if writer.write_all(format!("{text}\n").as_bytes()).is_err() {
+                if writer.write_all(format!("{text}\n").as_bytes()).is_err() || too_long {
                     return true;
                 }
             }
@@ -227,5 +243,23 @@ mod tests {
 
         control_tx.send(false).unwrap();
         assert!(!served.join().unwrap());
+    }
+
+    #[test]
+    fn a_line_past_the_cap_is_refused_and_the_connection_closed() {
+        let (client, server) = UnixStream::pair().unwrap();
+        let (command_tx, _command_rx) = unbounded();
+        let (_control_tx, control_rx) = unbounded();
+        let served = thread::spawn(move || serve_connection(server, &control_rx, &command_tx));
+
+        let mut writer = client.try_clone().unwrap();
+        // Written from its own thread: the server stops reading at the cap.
+        thread::spawn(move || writer.write_all(&vec![b'x'; MAX_REQUEST_BYTES + 10]).ok());
+        let mut reader = BufReader::new(client);
+        let mut line = String::new();
+        reader.read_line(&mut line).unwrap();
+        let reply: AgentReply = serde_json::from_str(&line).unwrap();
+        assert!(reply.is_error && reply.text.contains("KiB"), "{line}");
+        assert!(served.join().unwrap(), "closed, the setting still on");
     }
 }

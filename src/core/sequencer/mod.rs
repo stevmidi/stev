@@ -66,13 +66,14 @@ pub(crate) use audio_export::SlotMask;
 pub(crate) use audio_export::{AudioExportPlan, StemPlan};
 pub(crate) use commands::SequencerCommand;
 pub(crate) use edit::{
-    AddTrackEdit, CommitClipEdit, DeleteInRangeEdit, DeleteSelectedEventsEdit, DeleteTimeEdit,
-    DragEventsVelocityEdit, DragNotesEdit, DuplicateClipsEdit, DuplicateTimeEdit, EditResult,
-    InsertCaptureEdit, InsertNotesEdit, InsertSilenceEdit, MoveClipEdit, MoveRangeEdit,
+    AddTrackEdit, CommitClipEdit, CreateClipsEdit, DeleteInRangeEdit, DeleteSelectedEventsEdit,
+    DeleteTimeEdit, DragEventsVelocityEdit, DragNotesEdit, DuplicateClipsEdit, DuplicateTimeEdit,
+    EditResult, InsertCaptureEdit, InsertNotesEdit, InsertSilenceEdit, MoveClipEdit, MoveRangeEdit,
     MuteInRangeEdit, MuteSelectedEventsEdit, NudgeSelectedEventsEdit,
     NudgeSelectedEventsLengthEdit, PasteClipsEdit, PasteLead, QuantizeEventsEdit, RemoveTrackEdit,
-    RenameTrackEdit, ResizeClipEdit, RetimeClipEdit, SequencerEdit, SetMeterEdit, SetTempoEdit,
-    SetTrackOutputEdit, SplitClipsEdit, TempoGesture, TransposeSelectedEventsEdit,
+    RenameTrackEdit, ReplaceClipNotesEdit, ResizeClipEdit, RetimeClipEdit, SequencerEdit,
+    SetMeterEdit, SetTempoEdit, SetTrackOutputEdit, SplitClipsEdit, TempoGesture,
+    TransposeSelectedEventsEdit,
 };
 pub(crate) use export::ExportRefusal;
 pub(crate) use instrument_event::ClipInstrumentEvent;

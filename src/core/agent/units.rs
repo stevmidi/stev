@@ -73,11 +73,7 @@ pub(crate) fn pitch_class_name(pitch: i32) -> &'static str {
 
 /// A pitch as a note name (`C4`, `F#2`, `Bb3`, `C-1`, either case) or a
 /// MIDI number (`60`). Flats are read though never written. Not clamped:
-/// `C10` reads as 132, and the cleanup on a write clamps it.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "read by the writing tools, `360` § Build phase 2")
-)]
+/// `C10` reads as 132, and the cleanup on a write clamps it.]
 pub(crate) fn parse_pitch(text: &str) -> Option<i32> {
     let text = text.trim();
     if let Ok(number) = text.parse::<i32>() {
@@ -127,11 +123,7 @@ impl NoteRow {
     }
 
     /// One row, `pitch start length velocity` separated by whitespace or
-    /// commas, or why it isn't one.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "read by the writing tools, `360` § Build phase 2")
-    )]
+    /// commas, or why it isn't one.]
     pub(crate) fn parse(line: &str) -> Result<NoteRow, String> {
         let fields: Vec<&str> = line
             .split(|c: char| c.is_whitespace() || c == ',')
@@ -153,11 +145,7 @@ impl NoteRow {
 }
 
 /// Every row in `text`, one per line (blank lines skipped), or the first
-/// line that isn't one, by its 1-based number.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "read by the writing tools, `360` § Build phase 2")
-)]
+/// line that isn't one, by its 1-based number.]
 pub(crate) fn parse_rows(text: &str) -> Result<Vec<NoteRow>, String> {
     text.lines()
         .enumerate()

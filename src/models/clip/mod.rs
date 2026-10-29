@@ -49,6 +49,7 @@ pub(crate) use cursor_region::{
     ClipBounds, ClipEdge, EventSpaceRetime, min_window_length, reach_over, window_with_edge_at,
 };
 pub(crate) use note_edits::{CopiedNote, NoteBounds, NoteDrag, min_max};
+pub(crate) use quantize::{nearest_grid_tick, nearest_swung_grid_tick};
 
 // --- Module imports ---
 use std::sync::{Arc, atomic::AtomicI32};

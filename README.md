@@ -140,10 +140,12 @@ its notes to one of two places:
 
 ## AI agents
 
-An AI client you already use can read the open project through
+An AI client you already use can read and edit the open project through
 [MCP](https://modelcontextprotocol.io): marquee a section and ask "what key is
-this in" or "what does the bass play here". Stev sends nothing anywhere and
-needs no API key; your client does the thinking. For now it can only read.
+this in", "continue this with four bars" or "a bass line under this". Stev
+sends nothing anywhere and needs no API key; your client does the thinking.
+Each change it makes is one step `⌘Z` takes back, it never writes over a clip
+unless you ask, and it leaves your selection alone.
 
 1. In Stev, turn on **Allow AI agents** under **Settings** (`⌘,`) → **MIDI**.
 2. Add Stev as an MCP server to your client:

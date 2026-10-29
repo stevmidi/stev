@@ -290,6 +290,10 @@ pub(crate) struct Display {
     /// The modal overlay that is up, if any — the one switch every "does an
     /// overlay own the input?" check reads.
     overlay: Option<Overlay>,
+    /// Whether a modal (an overlay or a project dialog) was up as last sent
+    /// to the sequencer for the agent bridge
+    /// ([`publish_modal`](Self::publish_modal)), so it is sent once per change.
+    published_modal: bool,
     /// The settings modal: its tab, the MIDI tab's port lists, the theme
     /// list's scroll, the Keyboard tab's search. See [`SettingsModal`].
     settings: SettingsModal,
@@ -453,6 +457,7 @@ impl Display {
             input_was_clip_view: false,
             performance_lane_selected: false,
             overlay: None,
+            published_modal: false,
             settings: SettingsModal::new(MidiTab::new(
                 midi_in_reconnect_tx,
                 midi_out_reconnect_tx,

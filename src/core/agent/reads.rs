@@ -103,7 +103,7 @@ fn clip_played(clip: &Clip) -> (Vec<PlayedNote>, Vec<WheelMove>) {
 }
 
 /// `track`'s clips that play anywhere in `[from, to)`, in order.
-fn clips_in(track: &Track, from: i32, to: i32) -> impl Iterator<Item = &Clip> {
+pub(super) fn clips_in(track: &Track, from: i32, to: i32) -> impl Iterator<Item = &Clip> {
     track
         .clips()
         .iter()
@@ -167,7 +167,7 @@ fn quoted(name: &str) -> String {
 }
 
 /// How a track reads in a list: `track 2 "bass"`, or `track 2` unnamed.
-fn track_title(idx: usize, track: &Track) -> String {
+pub(super) fn track_title(idx: usize, track: &Track) -> String {
     let number = format!("track {}", idx + 1);
     match track.name() {
         Some(name) => format!("{number} {}", quoted(name)),
@@ -218,12 +218,12 @@ fn clip_flags(clip: &Clip) -> impl Iterator<Item = String> {
 
 /// A clip's id as the agent sees it: the first 8 hex digits of its UUID
 /// (decision 12).
-fn short_id(clip: &Clip) -> String {
+pub(super) fn short_id(clip: &Clip) -> String {
     clip.id().simple().to_string()[..8].to_owned()
 }
 
 /// `start → end`, end exclusive, as positions.
-fn range_text(start: i32, end: i32, meter: Meter) -> String {
+pub(super) fn range_text(start: i32, end: i32, meter: Meter) -> String {
     format!(
         "{} → {}",
         format_position(start, meter),
@@ -232,7 +232,7 @@ fn range_text(start: i32, end: i32, meter: Meter) -> String {
 }
 
 /// The loop region, when it spans time.
-fn loop_region(sequencer: &Sequencer) -> Option<(i32, i32)> {
+pub(super) fn loop_region(sequencer: &Sequencer) -> Option<(i32, i32)> {
     let (start, end) = (sequencer.region_start(), sequencer.region_end());
     (end > start).then_some((start, end))
 }
@@ -630,7 +630,7 @@ fn read_range(
 
 /// The position argument `name` (a string like `9+3`, or a whole bar
 /// number), `None` when absent.
-fn position_arg(args: &Value, name: &str, meter: Meter) -> Result<Option<i32>, String> {
+pub(super) fn position_arg(args: &Value, name: &str, meter: Meter) -> Result<Option<i32>, String> {
     let parsed = match args.get(name) {
         None | Some(Value::Null) => return Ok(None),
         Some(Value::String(text)) => parse_position(text, meter),
@@ -654,34 +654,40 @@ fn tracks_arg(sequencer: &Sequencer, args: &Value) -> Result<Option<Vec<usize>>,
         Value::Array(items) => items.as_slice(),
         other => std::slice::from_ref(other),
     };
-    let tracks = sequencer.tracks();
     let mut found = Vec::new();
     for item in items {
-        let text = match item {
-            Value::String(text) => text.trim().trim_matches('"').trim().to_owned(),
-            Value::Number(number) => number.to_string(),
-            _ => return Err("tracks lists track numbers or names.".to_owned()),
-        };
-        let number = text
-            .strip_prefix("track ")
-            .unwrap_or(&text)
-            .trim()
-            .parse::<usize>()
-            .ok();
-        let idx = match number {
-            Some(number) => (1..=tracks.len()).contains(&number).then(|| number - 1),
-            None => tracks.iter().position(|track| {
-                track
-                    .name()
-                    .is_some_and(|name| clean_name(name).eq_ignore_ascii_case(&text))
-            }),
-        };
-        let idx = idx.ok_or_else(|| format!("No track {text}; get_project lists them."))?;
+        let idx = track_index(sequencer, item)?;
         if !found.contains(&idx) {
             found.push(idx);
         }
     }
     Ok(Some(found))
+}
+
+/// One track named as the reads name it: a 1-based number, its name as
+/// the reads wrote it, or `track 2`.
+pub(super) fn track_index(sequencer: &Sequencer, item: &Value) -> Result<usize, String> {
+    let text = match item {
+        Value::String(text) => text.trim().trim_matches('"').trim().to_owned(),
+        Value::Number(number) => number.to_string(),
+        _ => return Err("A track is a track number (from 1) or a name.".to_owned()),
+    };
+    let tracks = sequencer.tracks();
+    let number = text
+        .strip_prefix("track ")
+        .unwrap_or(&text)
+        .trim()
+        .parse::<usize>()
+        .ok();
+    let idx = match number {
+        Some(number) => (1..=tracks.len()).contains(&number).then(|| number - 1),
+        None => tracks.iter().position(|track| {
+            track
+                .name()
+                .is_some_and(|name| clean_name(name).eq_ignore_ascii_case(&text))
+        }),
+    };
+    idx.ok_or_else(|| format!("No track {text}; get_project lists them."))
 }
 
 #[cfg(test)]

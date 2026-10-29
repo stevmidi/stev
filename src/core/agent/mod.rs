@@ -1,5 +1,5 @@
 //! The agent bridge: the MCP server that lets an AI client the user already
-//! has read the open project (`360-mcp-server.md`).
+//! has read and edit the open project (`360-mcp-server.md`).
 //!
 //! Two processes take part. The client launches `stev --mcp`, which opens no
 //! window: it speaks MCP on stdin/stdout (`protocol.rs`, `stdio.rs`) and
@@ -7,12 +7,14 @@
 //! a user-only Unix socket. In the app, the `"agent-bridge"` thread
 //! (`threads/agent_bridge.rs`) takes each call off the socket and hands it
 //! to the `"sequencer"` thread as `SequencerCommand::Agent`, whose handler
-//! answers it with [`answer`] from the sequencer's own state. Nothing is
-//! locked and nothing on the render path changes.
+//! answers it with [`answer`] from the sequencer's own state, recording a
+//! write's edit as one undo step. Nothing is locked and nothing on the
+//! render path changes.
 //!
 //! - `units.rs` — beats, positions, note names and note rows; no ticks
 //!   leave it.
 //! - `reads.rs` — the reading tools.
+//! - `writes.rs` — the writing tools and the cleanup of what they write.
 //! - `tools.rs` (Unix) — the tool list and the server instructions.
 //! - `protocol.rs` (Unix) — the JSON-RPC methods.
 //! - `stdio.rs` (Unix) — the `--mcp` process and the socket's path.
@@ -30,6 +32,7 @@ mod stdio;
 #[cfg(unix)]
 mod tools;
 mod units;
+mod writes;
 
 #[cfg(unix)]
 pub(crate) use stdio::{MCP_FLAG, remove_socket, run_mcp_server, socket_path};
@@ -37,7 +40,9 @@ pub(crate) use stdio::{MCP_FLAG, remove_socket, run_mcp_server, socket_path};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::core::sequencer::Sequencer;
+use crate::core::sequencer::{Sequencer, SequencerEdit};
+
+use self::writes::Jitter;
 
 /// One tool call, as the `--mcp` process forwards it to the app: a JSON
 /// line on the socket.
@@ -79,23 +84,58 @@ impl AgentReply {
     }
 }
 
+/// A write's edit, built but not yet applied: the `"sequencer"` thread's
+/// handler records it as one undo step, shows `footer` and answers with
+/// `reply` (`360-mcp-server.md` decision 11).
+pub(crate) struct AgentWrite {
+    /// The edit.
+    pub(crate) edit: SequencerEdit,
+    /// What the model reads once it is recorded.
+    pub(crate) reply: String,
+    /// The footer's line, `Agent: 2 new clips, bars 17–20`.
+    pub(crate) footer: String,
+}
+
+/// What a call comes to: an answer, or a write to record first.
+pub(crate) enum AgentAnswer {
+    /// An answer; nothing changes.
+    Reply(AgentReply),
+    /// An edit to record, then its reply. Boxed: an edit is large.
+    Write(Box<AgentWrite>),
+}
+
 /// Answers `request` from `sequencer`, on the `"sequencer"` thread.
 /// `project_name` is the open project's, `None` before it is first saved.
+/// Changes nothing itself: a write comes back as its edit.
 pub(crate) fn answer(
     request: &AgentRequest,
     sequencer: &Sequencer,
     project_name: Option<&str>,
-) -> AgentReply {
+) -> AgentAnswer {
     let args = &request.arguments;
-    let result = match request.tool.as_str() {
-        "get_context" => Ok(reads::get_context(sequencer)),
-        "get_project" => Ok(reads::get_project(sequencer, project_name)),
-        "get_timeline" => reads::get_timeline(sequencer, args),
-        "get_notes" => reads::get_notes(sequencer, args),
-        tool => Err(format!("Stev has no tool {tool}.")),
+    let reply = |result: Result<String, String>| {
+        AgentAnswer::Reply(match result {
+            Ok(text) => AgentReply::ok(text),
+            Err(text) => AgentReply::error(text),
+        })
     };
-    match result {
-        Ok(text) => AgentReply::ok(text),
-        Err(text) => AgentReply::error(text),
+    let write = |result: Result<AgentWrite, String>| match result {
+        Ok(write) => AgentAnswer::Write(Box::new(write)),
+        Err(text) => AgentAnswer::Reply(AgentReply::error(text)),
+    };
+    match request.tool.as_str() {
+        "get_context" => reply(Ok(reads::get_context(sequencer))),
+        "get_project" => reply(Ok(reads::get_project(sequencer, project_name))),
+        "get_timeline" => reply(reads::get_timeline(sequencer, args)),
+        "get_notes" => reply(reads::get_notes(sequencer, args)),
+        "create_clips" => write(writes::create_clips(sequencer, args, &mut Jitter::seeded())),
+        "replace_clip_notes" => write(writes::replace_clip_notes(
+            sequencer,
+            args,
+            &mut Jitter::seeded(),
+        )),
+        "set_tempo" => writes::set_tempo(sequencer, args)
+            .unwrap_or_else(|text| AgentAnswer::Reply(AgentReply::error(text))),
+        tool => reply(Err(format!("Stev has no tool {tool}."))),
     }
 }

@@ -338,6 +338,17 @@ impl EventHandlers {
                     clip.restore_event_selection(&selected_event_ids);
                 }
 
+                // A clip that isn't the lead (the agent bridge's
+                // `replace_clip_notes`): the clip panel shows another clip,
+                // so only the arranger's thumbnail of this one changes.
+                if sequencer.selected_clip_id() != Some(clip_id) {
+                    if let Some(clip) = sequencer.clip_on(track_idx, clip_id) {
+                        let clip = ClipMetadata::from_clip(track_idx, clip);
+                        self.ui_event_tx.send(UiEvent::ClipUpdated { clip }).ok();
+                    }
+                    return;
+                }
+
                 self.sync_clip_post_edit_workflow(sequencer);
                 self.send_events_selected_ui_event(selected_event_ids);
 

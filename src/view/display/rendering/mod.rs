@@ -1298,6 +1298,7 @@ impl eframe::App for Display {
         self.in_pane(Pane::Arranger, Self::sync_arranger_scroll);
         self.sync_time_selection_to_cursor();
         self.publish_marquee();
+        self.publish_modal();
 
         if self.gesture.clip_resize_drag.is_some()
             || self.gesture.clip_resize_hover.is_some()

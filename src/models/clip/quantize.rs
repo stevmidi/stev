@@ -156,7 +156,8 @@ impl Clip {
 }
 
 /// Round `ticks` to the nearest multiple of `grid_resolution`, anchored at 0.
-fn nearest_grid_tick(tick: i32, grid_resolution: i32) -> i32 {
+/// Also the agent bridge's snap (`360-mcp-server.md` decision 10).
+pub(crate) fn nearest_grid_tick(tick: i32, grid_resolution: i32) -> i32 {
     time::snap_to_grid(tick.abs(), grid_resolution) * tick.signum()
 }
 
@@ -170,8 +171,9 @@ fn nearest_grid_distance(tick: i32, grid_resolution: i32) -> i32 {
 /// multiples of `beat` (4 × straight). The two off-beat 16th positions within each
 /// beat are at `straight + swing_shift` and `3 × straight + swing_shift`, where
 /// `swing_shift = (swing_pct/50 − 1) × straight`. At `swing_pct == 50` the result
-/// is identical to the straight 16th grid.
-fn nearest_swung_grid_tick(tick: i32, swing_pct: u8) -> i32 {
+/// is identical to the straight 16th grid. Also the agent bridge's snap on a
+/// swung clip (`360-mcp-server.md` decision 16).
+pub(crate) fn nearest_swung_grid_tick(tick: i32, swing_pct: u8) -> i32 {
     if swing_pct <= 50 {
         return nearest_grid_tick(tick, time::sixteenth_straight_ticks());
     }

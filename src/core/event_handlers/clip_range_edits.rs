@@ -303,8 +303,9 @@ impl EventHandlers {
     /// the pasted clip under the cursor on the selected track (same
     /// cursor-clip reselection rule as `split_clips_workflow`; if none, the
     /// selection clears), a clip the edit names (Merge Clips, wherever the
-    /// cursor sits), or a named clip selected as its span (the MIDI clip
-    /// import, landing like a dropped band drag — `select_clip_span_workflow`).
+    /// cursor sits), a named clip selected as its span (the MIDI clip
+    /// import, landing like a dropped band drag — `select_clip_span_workflow`),
+    /// or the lead left as it was (the agent bridge's writes).
     pub(super) fn paste_clips_workflow(
         &self,
         sequencer: &mut Sequencer,
@@ -325,6 +326,13 @@ impl EventHandlers {
             PasteLead::Clip(clip_id) => self.select_clip_workflow(sequencer, Some(clip_id)),
             PasteLead::ClipSpan { track_idx, clip_id } => {
                 self.select_clip_span_workflow(sequencer, track_idx, clip_id);
+            }
+            PasteLead::KeepSelection => {
+                let (track_idx, clip_id) = (
+                    sequencer.selected_track_index(),
+                    sequencer.selected_clip_id(),
+                );
+                self.reselect_surviving_clip(sequencer, track_idx, clip_id);
             }
         }
     }

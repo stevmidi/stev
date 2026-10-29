@@ -37,14 +37,15 @@ mod tempo_edit;
 mod track_edits;
 
 pub(crate) use clip_edits::{
-    CommitClipEdit, DeleteInRangeEdit, DeleteTimeEdit, DuplicateClipsEdit, DuplicateTimeEdit,
-    InsertSilenceEdit, MoveClipEdit, MoveRangeEdit, MuteInRangeEdit, PasteClipsEdit,
-    ResizeClipEdit, RetimeClipEdit, SplitClipsEdit,
+    CommitClipEdit, CreateClipsEdit, DeleteInRangeEdit, DeleteTimeEdit, DuplicateClipsEdit,
+    DuplicateTimeEdit, InsertSilenceEdit, MoveClipEdit, MoveRangeEdit, MuteInRangeEdit,
+    PasteClipsEdit, ResizeClipEdit, RetimeClipEdit, SplitClipsEdit,
 };
 pub(crate) use event_edits::{
     DeleteSelectedEventsEdit, DragEventsVelocityEdit, DragNotesEdit, InsertCaptureEdit,
     InsertNotesEdit, MuteSelectedEventsEdit, NudgeSelectedEventsEdit,
-    NudgeSelectedEventsLengthEdit, QuantizeEventsEdit, TransposeSelectedEventsEdit,
+    NudgeSelectedEventsLengthEdit, QuantizeEventsEdit, ReplaceClipNotesEdit,
+    TransposeSelectedEventsEdit,
 };
 pub(crate) use meter_edit::SetMeterEdit;
 pub(crate) use tempo_edit::{SetTempoEdit, TempoGesture};
@@ -68,6 +69,9 @@ pub(crate) enum PasteLead {
         /// The clip.
         clip_id: Uuid,
     },
+    /// Leave the lead clip as it was (the agent bridge's writes,
+    /// `360-mcp-server.md` decision 15), unless the paste carved it away.
+    KeepSelection,
 }
 
 /// What changed — returned by edit() and undo() so the handler can fire UI
@@ -708,6 +712,7 @@ macro_rules! sequencer_edit_dispatch {
 
 sequencer_edit_dispatch!(
     CommitClip(CommitClipEdit),
+    CreateClips(CreateClipsEdit),
     DuplicateClips(DuplicateClipsEdit),
     DuplicateTime(DuplicateTimeEdit),
     DeleteInRange(DeleteInRangeEdit),
@@ -729,6 +734,7 @@ sequencer_edit_dispatch!(
     QuantizeEvents(QuantizeEventsEdit),
     InsertCapture(InsertCaptureEdit),
     InsertNotes(InsertNotesEdit),
+    ReplaceClipNotes(ReplaceClipNotesEdit),
     DragNotes(DragNotesEdit),
     AddTrack(AddTrackEdit),
     RemoveTrack(RemoveTrackEdit),

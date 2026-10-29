@@ -11,7 +11,8 @@
 //! and nothing else, and `RetimeClipEdit` retimes one clip with the tempo
 //! (Enter's fit, `⌥=`/`⌥-`); `CommitClipEdit` is the one that puts a
 //! brand-new clip (a capture commit, an empty clip) on
-//! a track. See `050-undo-redo.md` and `020-views-and-state.md`.
+//! a track; `CreateClipsEdit` is the agent bridge's new clips, a paste that
+//! keeps the selection. See `050-undo-redo.md` and `020-views-and-state.md`.
 
 use std::collections::HashSet;
 
@@ -25,6 +26,7 @@ use super::super::Sequencer;
 use super::EditResult;
 
 mod commit_clip;
+mod create_clips;
 mod delete_in_range;
 mod delete_time;
 mod duplicate_clips;
@@ -41,6 +43,7 @@ mod retime_clip;
 mod split;
 
 pub(crate) use commit_clip::CommitClipEdit;
+pub(crate) use create_clips::CreateClipsEdit;
 pub(crate) use delete_in_range::DeleteInRangeEdit;
 pub(crate) use delete_time::DeleteTimeEdit;
 pub(crate) use duplicate_clips::DuplicateClipsEdit;

@@ -153,6 +153,10 @@ pub(crate) struct Sequencer {
     /// default to (`360-mcp-server.md` decision 19). Never acted on by
     /// anything else — every edit still takes its range from its command.
     pub(super) marquee: Option<TimeSelectionRect>,
+    /// Whether a modal overlay or project dialog is up in the view, mirrored
+    /// on every change (`SequencerCommand::SetModalOpen`): the agent bridge
+    /// refuses a write while one is (`360-mcp-server.md` decision 13).
+    pub(super) modal_open: bool,
 }
 
 impl Sequencer {
@@ -211,6 +215,7 @@ impl Sequencer {
             performance_lane: PerformanceLane::new(),
             performance_lane_armed,
             marquee: None,
+            modal_open: false,
         }
     }
 
@@ -228,6 +233,16 @@ impl Sequencer {
     /// Mirrors the view's marquee.
     pub(crate) fn set_marquee(&mut self, marquee: Option<TimeSelectionRect>) {
         self.marquee = marquee;
+    }
+
+    /// Whether the view has a modal up, as last mirrored (see the field).
+    pub(crate) fn is_modal_open(&self) -> bool {
+        self.modal_open
+    }
+
+    /// Mirrors whether the view has a modal up.
+    pub(crate) fn set_modal_open(&mut self, open: bool) {
+        self.modal_open = open;
     }
 
     /// Current cursor position, in ticks.

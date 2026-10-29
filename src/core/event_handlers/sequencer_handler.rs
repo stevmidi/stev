@@ -8,7 +8,7 @@ use std::time::Instant;
 
 use undo::Record;
 
-use crate::core::agent::answer;
+use crate::core::agent::{AgentAnswer, AgentReply, answer};
 use crate::core::project::StagedProject;
 use crate::core::sequencer::{
     CommitClipEdit, DeleteSelectedEventsEdit, DeleteTimeEdit, DragEventsVelocityEdit,
@@ -43,8 +43,17 @@ impl EventHandlers {
         // why itself (`360-mcp-server.md` decision 13).
         match cmd {
             SequencerCommand::SetMarquee(marquee) => return sequencer.set_marquee(*marquee),
+            SequencerCommand::SetModalOpen(open) => return sequencer.set_modal_open(*open),
             SequencerCommand::Agent { request, reply } => {
-                reply.send(answer(request, sequencer, saved.name())).ok();
+                let answer = match answer(request, sequencer, saved.name()) {
+                    AgentAnswer::Reply(answer) => answer,
+                    AgentAnswer::Write(write) => {
+                        self.record_edit(sequencer, undo_record, Some(write.edit));
+                        self.send_status_ui_event(write.footer);
+                        AgentReply::ok(write.reply)
+                    }
+                };
+                reply.send(answer).ok();
                 return;
             }
             _ => {}
@@ -573,7 +582,9 @@ impl EventHandlers {
             }
 
             // Answered above, ahead of the holds.
-            SequencerCommand::SetMarquee(_) | SequencerCommand::Agent { .. } => {}
+            SequencerCommand::SetMarquee(_)
+            | SequencerCommand::SetModalOpen(_)
+            | SequencerCommand::Agent { .. } => {}
 
             SequencerCommand::SetTrackOutput { track, output } => {
                 let edit = SetTrackOutputEdit::new(sequencer, *track, output.clone());
@@ -628,12 +639,15 @@ mod tests {
     use std::collections::HashSet;
     use std::sync::atomic::Ordering;
 
+    use crossbeam_channel::bounded;
+    use serde_json::{Value, json};
     use undo::Record;
     use uuid::Uuid;
 
+    use crate::core::agent::{AgentReply, AgentRequest};
     use crate::core::event_handlers::test_harness::{Harness, add_clip, harness, run_command};
     use crate::core::project::{ProjectAction, ProjectData};
-    use crate::core::sequencer::test_support::stub_instrument;
+    use crate::core::sequencer::test_support::{rect, stub_instrument};
     use crate::core::sequencer::{SequencerCommand, SequencerEdit};
     use crate::core::time::Meter;
     use crate::core::view_state::ViewState;
@@ -1445,5 +1459,117 @@ mod tests {
             assert_eq!(play(&mut h, play_ticks), heard, "end at +{delta_ticks}");
         }
         assert_eq!(record.len(), 1);
+    }
+
+    /// One agent-bridge call through the handlers, answered.
+    fn agent_call(
+        h: &mut Harness,
+        record: &mut Record<SequencerEdit>,
+        tool: &str,
+        arguments: Value,
+    ) -> AgentReply {
+        let (reply, answer) = bounded(1);
+        let request = AgentRequest {
+            tool: tool.to_owned(),
+            arguments,
+        };
+        run_command(h, record, SequencerCommand::Agent { request, reply });
+        answer.try_recv().unwrap()
+    }
+
+    /// Decision 15 (`360-mcp-server.md`): a write leaves the lead clip, its
+    /// event selection, the selected track, the cursor and the marquee as
+    /// the user left them, its own new clips included, and says what it did
+    /// in the footer. A clip that isn't the lead gets its thumbnail redrawn.
+    #[test]
+    fn agent_writes_leave_the_selection_alone_and_show_the_footer() {
+        let mut h = harness();
+        let (lead_id, note_id) = add_clip(&mut h.sequencer, 0);
+        h.sequencer.select_clip(Some(lead_id));
+        h.sequencer
+            .clip_on_mut(0, lead_id)
+            .unwrap()
+            .restore_event_selection(&[note_id]);
+        h.cursor_tick.store(480, Ordering::Relaxed);
+        let marquee = rect(0, 1920, 0, 0);
+        h.sequencer.set_marquee(Some(marquee));
+        let mut record = Record::new();
+
+        let created = agent_call(
+            &mut h,
+            &mut record,
+            "create_clips",
+            json!({ "clips": [{ "track": 2, "start": "3", "length": 4, "notes": "C3 0 1 90" }] }),
+        );
+        assert!(!created.is_error, "{}", created.text);
+        let other = h.sequencer.tracks()[1].clips()[0].id();
+        let other_id = &other.simple().to_string()[..8];
+        let replaced = agent_call(
+            &mut h,
+            &mut record,
+            "replace_clip_notes",
+            json!({ "clip": other_id, "notes": "E3 0 2 90" }),
+        );
+        assert!(!replaced.is_error, "{}", replaced.text);
+        let tempo = agent_call(&mut h, &mut record, "set_tempo", json!({ "bpm": 100 }));
+        assert!(!tempo.is_error, "{}", tempo.text);
+        assert_eq!(record.len(), 3, "one undo step a call");
+
+        assert_eq!(h.sequencer.selected_clip_id(), Some(lead_id));
+        assert_eq!(h.sequencer.selected_track_index(), Some(0));
+        assert_eq!(
+            h.sequencer
+                .clip_on(0, lead_id)
+                .unwrap()
+                .selected_event_ids(),
+            vec![note_id]
+        );
+        assert_eq!(h.cursor_tick.load(Ordering::Relaxed), 480);
+        assert_eq!(h.sequencer.marquee(), Some(marquee));
+
+        let events: Vec<UiEvent> = h.ui_events.try_iter().collect();
+        let footers: Vec<&str> = events
+            .iter()
+            .filter_map(|event| match event {
+                UiEvent::Status { message } => Some(message.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            footers,
+            vec![
+                "Agent: 1 new clip, bar 3",
+                "Agent: new notes on track 2, bar 3",
+                "Agent: tempo 100.0 BPM",
+            ]
+        );
+        assert!(
+            events.iter().any(
+                |event| matches!(event, UiEvent::ClipUpdated { clip } if clip.clip_id == other)
+            )
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, UiEvent::LeadClipChanged { .. }))
+        );
+    }
+
+    /// Decision 13: a write while a modal is up says why and changes
+    /// nothing, while a read still answers.
+    #[test]
+    fn agent_writes_wait_for_an_open_modal_but_reads_answer() {
+        let mut h = harness();
+        h.sequencer.set_modal_open(true);
+        let mut record = Record::new();
+        let refused = agent_call(&mut h, &mut record, "set_tempo", json!({ "bpm": 100 }));
+        assert!(
+            refused.is_error && refused.text.contains("dialog"),
+            "{}",
+            refused.text
+        );
+        assert_eq!(record.len(), 0);
+        let read = agent_call(&mut h, &mut record, "get_context", json!({}));
+        assert!(!read.is_error, "{}", read.text);
     }
 }

@@ -656,6 +656,10 @@ pub(crate) enum InputEvent {
     /// the agent bridge (`SequencerCommand::SetMarquee`). Sent by the view
     /// once per change, never by a key.
     MarqueeChanged(Option<TimeSelectionRect>),
+    /// A modal overlay or project dialog opened or closed: the sequencer
+    /// mirrors it for the agent bridge (`SequencerCommand::SetModalOpen`).
+    /// Sent by the view once per change, never by a key.
+    ModalChanged(bool),
     /// Replace or end the open project — ⌘/Ctrl+N, a project opened from the
     /// browser panel, quitting. Unless `discard_changes`, the sequencer first
     /// checks for unsaved changes and asks the view to prompt
