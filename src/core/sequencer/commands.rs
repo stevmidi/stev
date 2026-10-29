@@ -235,9 +235,7 @@ pub(crate) enum SequencerCommand {
     /// Delete every selected event (`DeleteSelectedEventsEdit`, undoable).
     DeleteSelectedEvents,
     /// Duplicate the selected notes as a paste (`InsertNotesEdit::duplicating_selection`,
-    /// undoable): one `span` length later, the clip cursor then moving to the
-    /// span's end — where the copy's span starts, as the arranger's
-    /// Duplicate Clips moves its cursor — or flush after the selection with
+    /// undoable): one `span` length later, or flush after the selection with
     /// none.
     DuplicateSelectedEvents {
         /// The piano roll's duplicate span `(start, end)` in event ticks;

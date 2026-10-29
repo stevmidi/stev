@@ -331,6 +331,7 @@ impl EventHandlers {
                 clip_id,
                 selected_event_ids,
                 inserted_take,
+                duplicate_span,
             } => {
                 sequencer.reset();
 
@@ -358,6 +359,16 @@ impl EventHandlers {
                 // the one place in this function the selection mirror needs
                 // republishing.
                 self.publish_event_selection(sequencer);
+
+                // ⌘/Ctrl+D over the piano roll's duplicate span, or its undo
+                // or redo: the cursor and span follow the copy, as Duplicate
+                // Clips' marquee does.
+                if let Some((start, end)) = duplicate_span {
+                    self.set_clip_cursor_workflow(sequencer, start);
+                    self.ui_event_tx
+                        .send(UiEvent::DuplicateSpanSet { start, end })
+                        .ok();
+                }
 
                 // After the sync's `EventsUpdated`, so the view re-frames over
                 // the notes as they now are.

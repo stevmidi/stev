@@ -21,8 +21,7 @@ impl Display {
     /// Alpha of the background-tone shade laid over the note grid outside the
     /// clip's window, so kept material reads as not playing.
     const OUTSIDE_WINDOW_SHADE_ALPHA: f32 = 0.55;
-    /// Tint of the duplicate span a released marquee leaves over the note
-    /// area — faint, under the notes, so it marks time without reading as
+    /// Tint of a marquee's duplicate span over the note area — faint, under the notes, so it marks time without reading as
     /// a selection box.
     const DUPLICATE_SPAN_TINT: f32 = 0.08;
 
@@ -239,8 +238,7 @@ impl Display {
             }
         }
 
-        // The duplicate span a released marquee left: its end is where
-        // `⌘/Ctrl+D` lands the copy (the strip's arrows mark both ends).
+        // A marquee's duplicate span (the strip's arrows mark both ends).
         if let Some((span_start, span_end)) = self.gesture.duplicate_span {
             let (left, right) = (
                 self.tick_to_screen_x(span_start),

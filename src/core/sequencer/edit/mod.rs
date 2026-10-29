@@ -466,6 +466,13 @@ pub(crate) enum EditResult {
         /// `UiEvent::CaptureInserted` so the piano roll re-frames if the take
         /// landed out of view.
         inserted_take: Option<(u8, u8)>,
+        /// The piano roll's duplicate span `(start, end)` after a `⌘/Ctrl+D`
+        /// over one (`InsertNotesEdit::duplicating_selection`): moved on to
+        /// cover the copy on edit and redo, the original on undo; `None` for
+        /// every other edit. The handler puts the clip cursor on its start
+        /// and sends `UiEvent::DuplicateSpanSet`, the twin of Duplicate
+        /// Clips' `TimeSelectionSet`.
+        duplicate_span: Option<(i32, i32)>,
     },
     /// A track is in the arrangement at `track_idx` (`AddTrackEdit`'s edit
     /// and redo, `RemoveTrackEdit`'s undo) — a fresh one, or one coming back

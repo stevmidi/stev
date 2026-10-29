@@ -254,6 +254,16 @@ pub(crate) enum UiEvent {
     /// The arranger performance lane was armed (selected) — mutually
     /// exclusive with `TrackSelected`, which implicitly deselects it.
     PerformanceLaneSelected,
+    /// Set the piano roll's duplicate span (`gesture.duplicate_span`) — sent
+    /// after a `⌘/Ctrl+D` over one, its undo and redo
+    /// (`EditResult::EventsModified::duplicate_span`), so presses chain and
+    /// an undo puts the span back.
+    DuplicateSpanSet {
+        /// Event tick of the span's start.
+        start: i32,
+        /// Event tick of the span's end.
+        end: i32,
+    },
     /// Set the Arranger time selection to `[start, end)`. Pushed by both
     /// Duplicate workflows so the selection advances onto the fresh copy and
     /// repeated `⌘/Ctrl+D`/`Shift+⌘/Ctrl+D` chains down the timeline, and by

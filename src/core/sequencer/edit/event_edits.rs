@@ -229,6 +229,9 @@ pub(crate) struct InsertNotesEdit {
     state: ClipEventsEditState,
     /// The new notes as `(note_on, note_off)`.
     notes: Vec<(Event, Event)>,
+    /// The piano roll's duplicate span `⌘/Ctrl+D` moved the copies by, if
+    /// any — reported moved on after the edit, as it was after the undo.
+    span: Option<(i32, i32)>,
 }
 
 impl InsertNotesEdit {
@@ -258,13 +261,20 @@ impl InsertNotesEdit {
         Self::with_notes(sequencer, notes)
     }
 
-    /// `⌘/Ctrl+D`: copies of the selected notes, `shift` ticks later (the
-    /// length of the piano roll's duplicate span) or flush after the
-    /// selection ([`Clip::duplicated_notes`]). `None` with nothing selected
-    /// or no copy landing inside the window.
-    pub(crate) fn duplicating_selection(sequencer: &Sequencer, shift: Option<i32>) -> Option<Self> {
+    /// `⌘/Ctrl+D`: copies of the selected notes one duplicate `span` length
+    /// later, or flush after the selection with none
+    /// ([`Clip::duplicated_notes`]). `None` with nothing selected or no copy
+    /// landing inside the window.
+    pub(crate) fn duplicating_selection(
+        sequencer: &Sequencer,
+        span: Option<(i32, i32)>,
+    ) -> Option<Self> {
+        let shift = span.map(|(start, end)| end - start);
         let notes = sequencer.selected_clip()?.duplicated_notes(shift);
-        Self::with_notes(sequencer, notes)
+        Some(Self {
+            span,
+            ..Self::with_notes(sequencer, notes)?
+        })
     }
 
     /// `notes` into the selected clip, `None` if there are none.
@@ -275,23 +285,36 @@ impl InsertNotesEdit {
         Some(Self {
             state: ClipEventsEditState::from_selected_clip(sequencer)?,
             notes,
+            span: None,
         })
     }
 
     /// Snapshots the clip's events and inserts the notes, which become the
-    /// selection.
+    /// selection. A duplicate span is reported moved on to cover the copy.
     pub(super) fn edit(&mut self, sequencer: &mut Sequencer) -> EditResult {
         let notes = &self.notes;
-        self.state.edit_with(sequencer, |clip| {
+        let result = self.state.edit_with(sequencer, |clip| {
             clip.insert_notes(notes.iter().cloned());
             notes.iter().map(|(note_on, _)| note_on.id()).collect()
-        })
+        });
+        let moved_on = self.span.map(|(start, end)| (end, 2 * end - start));
+        with_duplicate_span(result, moved_on)
     }
 
-    /// Restores the clip's events from before the insert.
+    /// Restores the clip's events from before the insert, and the duplicate
+    /// span as it was.
     pub(super) fn undo(&mut self, sequencer: &mut Sequencer) -> EditResult {
-        self.state.undo(sequencer)
+        with_duplicate_span(self.state.undo(sequencer), self.span)
     }
+}
+
+/// `result` reporting the piano roll's duplicate span `span`
+/// (`EditResult::EventsModified::duplicate_span`).
+fn with_duplicate_span(mut result: EditResult, span: Option<(i32, i32)>) -> EditResult {
+    if let EditResult::EventsModified { duplicate_span, .. } = &mut result {
+        *duplicate_span = span;
+    }
+    result
 }
 
 // ---------------------------------------------------------------------------
@@ -514,6 +537,7 @@ impl ClipEventsEditState {
             clip_id: self.clip_id,
             selected_event_ids,
             inserted_take: None,
+            duplicate_span: None,
         }
     }
 
@@ -732,6 +756,32 @@ mod tests {
                 .unwrap()
         };
         assert_eq!(velocity_of(note_64_id), 40); // restored
+    }
+
+    /// The duplicate span an edit result reports.
+    fn duplicate_span_of(result: EditResult) -> Option<(i32, i32)> {
+        match result {
+            EditResult::EventsModified { duplicate_span, .. } => duplicate_span,
+            _ => panic!("expected EventsModified"),
+        }
+    }
+
+    #[test]
+    fn duplicating_over_a_span_moves_it_on_and_undo_puts_it_back() {
+        let (mut sequencer, ..) = sequencer_with_two_notes();
+        let mut edit = InsertNotesEdit::duplicating_selection(&sequencer, Some((0, 240))).unwrap();
+        assert_eq!(
+            duplicate_span_of(edit.edit(&mut sequencer)),
+            Some((240, 480))
+        );
+        assert_eq!(duplicate_span_of(edit.undo(&mut sequencer)), Some((0, 240)));
+    }
+
+    #[test]
+    fn duplicating_without_a_span_reports_none() {
+        let (mut sequencer, ..) = sequencer_with_two_notes();
+        let mut edit = InsertNotesEdit::duplicating_selection(&sequencer, None).unwrap();
+        assert_eq!(duplicate_span_of(edit.edit(&mut sequencer)), None);
     }
 
     /// Tick of the NoteOn `id` in the selected clip.

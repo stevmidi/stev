@@ -160,23 +160,12 @@ impl EventHandlers {
             }
 
             // ⌘/Ctrl+D in the clip view duplicates the selected notes, the
-            // note twin of the Arranger's Duplicate Clips: flush after the
-            // selection, or moved on by the length of the time span a
-            // piano-roll marquee left (`DuplicateNotesInSpan`, resolved by
-            // `Display::forward_input_event`, which owns the span). The Arranger's ⌘/Ctrl+D and
-            // Shift+⌘/Ctrl+D are handled there too, since they need the
-            // view-local time selection. Bare `D` is spare.
-            InputEvent::Action(Action::DuplicateNotes)
+            // note twin of the Arranger's Duplicate Clips; the view resolves
+            // its duplicate span into the event. Bare `D` is spare.
+            InputEvent::DuplicateNotes { span }
                 if matches!(self.clip_context(), ClipContext::ClipWithSelection) =>
             {
-                self.send_sequencer(SequencerCommand::DuplicateSelectedEvents { span: None });
-            }
-            InputEvent::DuplicateNotesInSpan { start, end }
-                if matches!(self.clip_context(), ClipContext::ClipWithSelection) =>
-            {
-                self.send_sequencer(SequencerCommand::DuplicateSelectedEvents {
-                    span: Some((*start, *end)),
-                });
+                self.send_sequencer(SequencerCommand::DuplicateSelectedEvents { span: *span });
             }
 
             // Shift+Tab, and plain Tab with the clip panel hidden or

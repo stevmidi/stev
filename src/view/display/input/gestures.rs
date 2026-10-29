@@ -203,26 +203,6 @@ impl Display {
             .ok();
     }
 
-    /// `⌘/Ctrl+D` in the piano roll: with a duplicate span, the selected
-    /// notes are duplicated one span length later — Ableton's duplicate of a
-    /// clip-view time selection, so the notes keep their place in the span —
-    /// and the span moves on to cover the copy, so presses chain the way the
-    /// arranger's Duplicate Clips advances its marquee (the sequencer moves
-    /// the clip cursor to the new span's start, as that does). Without one,
-    /// `⌘/Ctrl+D` goes on as the plain flush-after duplicate.
-    pub(super) fn duplicate_notes(&mut self) -> bool {
-        let Some((start, end)) = self.gesture.duplicate_span else {
-            return self
-                .input_event_tx
-                .send(InputEvent::Action(Action::DuplicateNotes))
-                .is_ok();
-        };
-        self.gesture.duplicate_span = Some((end, end + (end - start)));
-        self.input_event_tx
-            .send(InputEvent::DuplicateNotesInSpan { start, end })
-            .is_ok()
-    }
-
     /// Anchors a new ⌘/Ctrl+drag velocity gesture at the screen-space press
     /// point. Called only once `MouseClicked` has already confirmed the
     /// modifier was held and `hit_id` is a real hit — this method just
@@ -1387,7 +1367,7 @@ pub(super) fn past_drag_threshold(from: (f32, f32), to: (f32, f32), threshold: f
     (to.0 - from.0).abs() >= threshold || (to.1 - from.1).abs() >= threshold
 }
 
-/// A released marquee's `[tick_min, tick_max]` snapped to a `grid`-tick
+/// A marquee's `[tick_min, tick_max]` snapped to a `grid`-tick
 /// grid, as the duplicate span — `None` when it snaps to nothing.
 fn snapped_span(tick_min: i32, tick_max: i32, grid: i32) -> Option<(i32, i32)> {
     let (start, end) = (snap_to_grid(tick_min, grid), snap_to_grid(tick_max, grid));

@@ -1178,7 +1178,11 @@ impl Display {
             InputEvent::KeyPressed {
                 key: Key::Escape,
                 modifiers: _,
-            } if self.active_pane() == Pane::Clip && self.gesture.duplicate_span.is_some() => {
+            } if self.active_pane() == Pane::Clip
+                && self.gesture.duplicate_span.is_some()
+                && self.take_session.is_none()
+                && !self.is_exporting_audio() =>
+            {
                 self.gesture.duplicate_span = None;
                 true
             }
@@ -1236,10 +1240,14 @@ impl Display {
             InputEvent::Action(Action::DuplicateClips) => {
                 self.send_for_time_selection(|rect| InputEvent::DuplicateClipsInSelection { rect })
             }
-            // ⌘/Ctrl+D in the piano roll — "Duplicate notes": at the end
-            // marker a marquee left, the view's own, or flush after the
-            // selection.
-            InputEvent::Action(Action::DuplicateNotes) => self.duplicate_notes(),
+            // ⌘/Ctrl+D in the piano roll — "Duplicate notes" over the
+            // view's duplicate span, if any (see `gesture.duplicate_span`).
+            InputEvent::Action(Action::DuplicateNotes) => self
+                .input_event_tx
+                .send(InputEvent::DuplicateNotes {
+                    span: self.gesture.duplicate_span,
+                })
+                .is_ok(),
             // ⌘/Ctrl+T — add an empty MIDI track after the selected one
             // (Ableton's chord).
             InputEvent::Action(Action::AddTrack) => self

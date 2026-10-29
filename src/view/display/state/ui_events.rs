@@ -62,6 +62,9 @@ impl Display {
                     self.gesture.last_cursor_tick = Some(self.cursor_tick.load(Ordering::Relaxed));
                     self.gesture.last_selected_track_idx = Some(self.selected_track_idx);
                 }
+                UiEvent::DuplicateSpanSet { start, end } => {
+                    self.gesture.duplicate_span = Some((start, end));
+                }
                 UiEvent::TimeSelectionCleared => {
                     self.clear_time_selection();
                 }
