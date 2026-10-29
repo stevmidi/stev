@@ -26,6 +26,10 @@ Breaking entries are marked **Breaking** and say what to do about them.
   instead of the clips `⌘A` had selected. A command that acts on the lanes
   (`⌘A`, ⌘Z, `/`, Split, …) now takes the keyboard back to them, as it already
   did from the browser.
+- `/` while playing into a clip started with `⌥Space` could insert nothing:
+  it kept the take from the arranger cursor, which `⌥Space` leaves behind, so
+  notes played before it were dropped. It now keeps the take from the clip
+  cursor, where `⌥Space` starts.
 
 ## [0.10.0] - 2026-10-29
 

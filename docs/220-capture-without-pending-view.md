@@ -20,7 +20,7 @@ Keep the valuable part of the retired modal `PendingClip` view, the phrase **det
 | Transport | Lead clip under cursor | Result |
 |---|---|---|
 | Playing | none | Commit the last pass, cropped (unchanged, `100`). |
-| Playing | yes | Insert the last pass into that clip (`InsertCaptureEdit::from_running_capture`; the window rules of `100` unchanged, undoable since phase 4). |
+| Playing | yes | Insert the last pass into that clip from the clip cursor (`InsertCaptureEdit::from_running_capture`; the window rules of `100`, undoable since phase 4). |
 | Stopped | none | **Commit a new clip framed by phrase detection** (`CommitClipEdit::from_stopped_capture`). |
 | Stopped | yes | **Open a take session** on the take (`archive/290-framing-a-take.md` § Phase 2): framed like a clip, heard in place; Enter inserts it at the clip cursor (`InsertCaptureEdit::from_insert`), Esc cancels. |
 

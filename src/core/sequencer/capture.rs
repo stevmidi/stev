@@ -110,7 +110,7 @@ impl Sequencer {
         //   wraps): the content played, last note-on rounded up to the next
         //   bar, likewise clamped and floored.
         // See `100-running-capture.md`.
-        let anchor_tick = self.capture_anchor_tick();
+        let anchor_tick = self.capture_anchor_tick(cursor_tick);
         let region_length = if self.playback_is_looping() {
             let loop_len = self.capture_loop_length();
             let phase = (cursor_tick - self.region_start()).rem_euclid(loop_len);
@@ -212,22 +212,25 @@ impl Sequencer {
     /// the clip view doesn't loop the transport on its clip
     /// (`archive/210-docked-clip-panel.md`). The pure half of the insert;
     /// [`InsertCaptureEdit`] adds the notes and clears the buffer. `None` on an
-    /// empty buffer, a cursor off the selected clip, or nothing that lands in
-    /// the clip, so a no-op insert never enters the undo record.
+    /// empty buffer or nothing that lands in the clip, so a no-op insert never
+    /// enters the undo record.
     ///
-    /// Uses `cursor_tick` as the window anchor — the same coordinate space as
-    /// `clock_tick` (which tracks `playback_tick` relative to `region_start`).
-    /// The window is pinned at the cursor's phase in the arranger loop, so a
-    /// note lands at the region phase it was played at whatever the cursor's
-    /// offset into the clip.
+    /// Anchored on the **clip cursor** — the arrangement tick `⌥Space` plays
+    /// from ([`Clip::play_from_arrangement_tick`]), always on the clip — not
+    /// the arranger cursor, which `⌥Space` leaves where it was. An arranger
+    /// cursor move resets the clip cursor to it, so a take started with
+    /// `Space` from the clip anchors where it always did. The window is pinned
+    /// at the anchor's phase in the arranger loop, so a note lands at the
+    /// region phase it was played at whatever the anchor's offset into the
+    /// clip.
     ///
     /// After the crop window is computed and rebased to 0, a `clip_offset` of
-    /// `cursor_tick - clip.start_tick()` converts from cursor-relative ticks into
-    /// clip-local ticks (0-based from `clip.start_tick()`). When the cursor is at
-    /// the clip start this is 0. Notes the shift would push past
-    /// `clip.region_length()` — phases before the cursor, played after the loop
-    /// wrapped, or past the clip's span inside a longer loop — are discarded,
-    /// never shifted into the clip.
+    /// `anchor - clip.start_tick()` converts from anchor-relative ticks into
+    /// clip-local ticks (0-based from `clip.start_tick()`). When the clip
+    /// cursor is at the clip start this is 0. Notes the shift would push past
+    /// `clip.region_length()` — phases before the clip cursor, played after
+    /// the loop wrapped, or past the clip's span inside a longer loop — are
+    /// discarded, never shifted into the clip.
     ///
     /// [`InsertCaptureEdit`]: crate::core::sequencer::edit::InsertCaptureEdit
     pub(crate) fn build_running_capture_insert(&self) -> Option<CaptureInsert> {
@@ -235,41 +238,31 @@ impl Sequencer {
             return None;
         }
 
-        let cursor_tick = self.cursor_tick();
         let track_idx = self.selected_track_index()?;
+        let clip = self.selected_clip()?;
+        let anchor = clip.play_from_arrangement_tick(clip.cursor_tick());
+        let clip_id = clip.id();
+        let clip_start_tick = clip.start_tick();
+        let clip_region_start = clip.region().start();
+        let region_length = clip.region_length().max(time::min_clip_length_ticks());
 
-        let (clip_id, clip_start_tick, clip_region_start, region_length) = {
-            let clip = self.selected_clip()?;
-            // Guard: cursor must be on the selected clip.
-            if cursor_tick < clip.start_tick() || cursor_tick >= clip.end_tick() {
-                return None;
-            }
-            (
-                clip.id(),
-                clip.start_tick(),
-                clip.region().start(),
-                clip.region_length().max(time::min_clip_length_ticks()),
-            )
-        };
-
-        // Anchor on cursor_tick; the crop window is the target clip's length,
-        // pinned at the cursor's phase in the arranger loop (independent of
-        // the clip) — both share clock_tick space.
+        // The crop window is the target clip's length, pinned at the anchor's
+        // phase in the arranger loop (independent of the clip).
         let capture = self.normalize_running_capture(
-            self.capture_anchor_tick(),
+            self.capture_anchor_tick(anchor),
             region_length,
             RunningCaptureTarget::InsertFromArranger,
         )?;
 
-        // Shift from cursor-relative space into the clip's event ticks: the
+        // Shift from anchor-relative space into the clip's event ticks: the
         // clip's first arrangement tick is event tick `region.start` (non-zero
-        // once its left edge was dragged in), then the cursor's offset into
+        // once its left edge was dragged in), then the anchor's offset into
         // the clip. Onsets the shift would push past the clip end — phases
-        // before the cursor, played after the wrap — are dropped, not parked
+        // before the anchor, played after the wrap — are dropped, not parked
         // out of region. The crop above rebased the window to 0 and closed
         // every note inside it, so the whole room keeps every note; it also
         // keeps a wheel moved after the last note-off (a bend easing back).
-        let clip_offset = cursor_tick - clip_start_tick;
+        let clip_offset = anchor - clip_start_tick;
         let room = region_length - clip_offset;
 
         let events =
@@ -443,7 +436,7 @@ impl Sequencer {
             return None;
         }
         let (mut clip, place) = if self.is_running() {
-            let anchor = self.capture_anchor_tick();
+            let anchor = self.capture_anchor_tick(self.cursor_tick());
             // The length only sizes a linear take's window: a looping one is
             // widened to the whole pass below.
             let mut clip = self.normalize_running_capture(
@@ -472,15 +465,15 @@ impl Sequencer {
         })
     }
 
-    /// The cursor in the capture clock's numbering — the anchor a commit
-    /// windows the capture buffer from. The events are stamped in
+    /// `tick` (a cursor) in the capture clock's numbering — the anchor a
+    /// commit windows the capture buffer from. The events are stamped in
     /// `clock_tick` space, which agrees with the cursor's only in *phase*:
     /// enough for a looping take (its pass index absorbs whole loops), not
     /// for a linear one, whose window starts at the anchor itself — a take
     /// played outside the loop used to commit nothing. See
     /// `100-running-capture.md` § Anchor contract.
-    fn capture_anchor_tick(&self) -> i32 {
-        self.cursor_tick() + self.capture_clock_shift()
+    fn capture_anchor_tick(&self, tick: i32) -> i32 {
+        tick + self.capture_clock_shift()
     }
 
     /// The whole-loop shift from cursor space into the capture clock's: the
@@ -1751,6 +1744,13 @@ mod tests {
 
     // --- insert_running_capture ---
 
+    /// An arranger cursor move to `tick`: the lead clip's cursor follows it,
+    /// as `sync_clip_selection_to_cursor_workflow` does in the app.
+    fn move_cursor(seq: &mut Sequencer, tick: i32) {
+        seq.cursor_tick.store(tick, Ordering::Relaxed);
+        seq.sync_selected_clip_cursor_with_arranger();
+    }
+
     /// The NoteOn ticks of `seq`'s selected clip, sorted.
     fn selected_clip_note_on_ticks(seq: &Sequencer) -> Vec<i32> {
         note_on_ticks(seq.selected_clip().unwrap())
@@ -1882,7 +1882,7 @@ mod tests {
         add_and_select_clip(&mut seq, clip_start, bar * 2);
 
         // Cursor at clip start — clip_offset will be 0.
-        seq.cursor_tick.store(clip_start, Ordering::Relaxed);
+        move_cursor(&mut seq, clip_start);
 
         // Note played at clock_tick == clip_start + 600 (bar 1 of the clip).
         seq.capture_clip.add_event(note_on(clip_start + 600));
@@ -1920,7 +1920,7 @@ mod tests {
         assert!(seq.resize_selected_clip_region_start_to_tick(clip_start));
         assert_eq!(seq.selected_clip_region_start(), Some(bar));
 
-        seq.cursor_tick.store(clip_start, Ordering::Relaxed);
+        move_cursor(&mut seq, clip_start);
         seq.capture_clip.add_event(note_on(clip_start + 600));
         seq.capture_clip.add_event(note_off(clip_start + 900));
 
@@ -1937,7 +1937,7 @@ mod tests {
         let mut seq = make_sequencer(clip_start, bar * 2);
         add_and_select_clip(&mut seq, clip_start, bar * 2);
 
-        seq.cursor_tick.store(clip_start, Ordering::Relaxed);
+        move_cursor(&mut seq, clip_start);
 
         let note_tick = clip_start + bar + 600; // bar 2 of the clip
         seq.capture_clip.add_event(note_on(note_tick));
@@ -1968,7 +1968,7 @@ mod tests {
         let clip_start = bar * 3;
         let mut seq = make_sequencer(clip_start, bar * 2);
         add_and_select_clip(&mut seq, clip_start, bar * 2);
-        seq.cursor_tick.store(clip_start + bar, Ordering::Relaxed);
+        move_cursor(&mut seq, clip_start + bar);
 
         seq.capture_clip.add_event(note_on(clip_start + bar + 600));
         seq.capture_clip.add_event(note_off(clip_start + bar + 900));
@@ -1995,7 +1995,7 @@ mod tests {
         let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut seq = make_sequencer(0, bar * 4);
         add_and_select_clip(&mut seq, 0, bar * 2);
-        seq.cursor_tick.store(0, Ordering::Relaxed);
+        move_cursor(&mut seq, 0);
 
         seq.capture_clip.add_event(note_on(600));
         seq.capture_clip.add_event(note_off(900));
@@ -2007,44 +2007,29 @@ mod tests {
         assert_eq!(selected_clip_note_on_ticks(&seq), vec![600]);
     }
 
-    /// Returns `None` when cursor is before the clip start.
+    /// Regression: the insert anchored on the arranger cursor, which `⌥Space`
+    /// leaves where it was. A 4-bar clip under a 4-bar loop, the arranger
+    /// cursor at bar 3, the take played from the clip cursor at bar 2 with
+    /// `⌥Space`: its notes in bars 2–3 sat at phases before the arranger
+    /// cursor and were all dropped. They land from the clip cursor.
     #[test]
-    fn insert_running_capture_returns_none_when_cursor_before_clip() {
+    fn insert_running_capture_anchors_on_the_clip_cursor() {
         let bar = Meter::FOUR_FOUR.bar_ticks();
-        let clip_start = bar * 2;
-        let mut seq = make_sequencer(0, bar * 2);
-        add_and_select_clip(&mut seq, clip_start, bar * 2);
-
-        // Cursor is before the clip.
-        seq.cursor_tick.store(clip_start - 1, Ordering::Relaxed);
-
-        seq.capture_clip.add_event(note_on(600));
-        seq.capture_clip.add_event(note_off(900));
-
-        assert!(
-            seq.insert_running_capture().is_none(),
-            "must return None when cursor is before the clip"
-        );
-    }
-
-    /// Returns `None` when cursor is at or after the clip end.
-    #[test]
-    fn insert_running_capture_returns_none_when_cursor_after_clip() {
-        let bar = Meter::FOUR_FOUR.bar_ticks();
-        let clip_start = bar * 2;
         let mut seq = make_sequencer(0, bar * 4);
-        add_and_select_clip(&mut seq, clip_start, bar * 2);
+        add_and_select_clip(&mut seq, 0, bar * 4);
+        move_cursor(&mut seq, bar * 2);
+        seq.set_selected_clip_cursor_tick(bar);
 
-        // Cursor is at the clip end (half-open — not on the clip).
-        seq.cursor_tick
-            .store(clip_start + bar * 2, Ordering::Relaxed);
+        seq.capture_clip.add_event(note_on(bar + 600));
+        seq.capture_clip.add_event(note_off(bar + 900));
+        seq.capture_clip.add_event(note_on(bar * 2 + 600));
+        seq.capture_clip.add_event(note_off(bar * 2 + 900));
 
-        seq.capture_clip.add_event(note_on(600));
-        seq.capture_clip.add_event(note_off(900));
+        seq.insert_running_capture().unwrap();
 
-        assert!(
-            seq.insert_running_capture().is_none(),
-            "must return None when cursor is at or after clip end"
+        assert_eq!(
+            selected_clip_note_on_ticks(&seq),
+            vec![bar + 600, bar * 2 + 600]
         );
     }
 
@@ -2056,7 +2041,7 @@ mod tests {
         let mut seq = make_sequencer(clip_start, bar * 2);
         add_and_select_clip(&mut seq, clip_start, bar * 2);
 
-        seq.cursor_tick.store(clip_start, Ordering::Relaxed);
+        move_cursor(&mut seq, clip_start);
 
         assert!(seq.insert_running_capture().is_none());
     }
@@ -2069,7 +2054,7 @@ mod tests {
         let mut seq = make_sequencer(clip_start, bar * 2);
         add_and_select_clip(&mut seq, clip_start, bar * 2);
 
-        seq.cursor_tick.store(clip_start, Ordering::Relaxed);
+        move_cursor(&mut seq, clip_start);
 
         seq.capture_clip.add_event(note_on(clip_start + 600));
         seq.capture_clip.add_event(note_off(clip_start + 900));
@@ -2090,7 +2075,7 @@ mod tests {
         let clip_start = bar * 3;
         let mut seq = make_sequencer(clip_start, bar * 2);
         add_and_select_clip(&mut seq, clip_start, bar * 2);
-        seq.cursor_tick.store(clip_start, Ordering::Relaxed);
+        move_cursor(&mut seq, clip_start);
         seq.capture_clip.add_event(note_on(clip_start + 600));
         seq.capture_clip.add_event(note_off(clip_start + 900));
 
@@ -2133,7 +2118,7 @@ mod tests {
         let mut seq = make_sequencer(0, bar * 2); // loop [0, 2b)
         let clip_start = bar * 2; // the clip at bar 3..5, past the loop
         add_and_select_clip(&mut seq, clip_start, bar * 2);
-        seq.cursor_tick.store(clip_start, Ordering::Relaxed);
+        move_cursor(&mut seq, clip_start);
 
         // Seven loop passes ahead, plus three ticks of input latency.
         play_note_with_clock_ahead(&mut seq, clip_start, bar * 2 * 7 + 3);

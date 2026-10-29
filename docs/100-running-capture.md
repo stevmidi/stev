@@ -81,15 +81,22 @@ before the region playback runs in and then loops, so at commit the take is loop
 the clip at the cursor holds the last pass at its region phase; after the region playback
 never wraps and the take is linear (see *Looping vs linear*).
 
-- **`NewClip`** and **`InsertFromArranger`**: use `cursor_tick` as anchor.
-  `cursor_tick` shares coordinate space with `clock_tick`. This is the stable anchor for
-  all arranger-context commits. (For `NewClip` the anchor sets the region slice and the
-  clip's placement; the *pass* it keeps is chosen on the region grid — see *What a new
-  clip retains*.)
-- The insert into an existing clip uses the same arranger-cursor anchor from **both**
-  views: the clip view never touches the loop region, so the loop is always the arranger's.
-  Anchoring on the cursor rather than the clip start is what skips notes from before the
-  playback start position (see *Notes before the playback start* below).
+- **`NewClip`**: uses `cursor_tick` as anchor.
+  `cursor_tick` shares coordinate space with `clock_tick`. (The anchor sets the region
+  slice and the clip's placement; the *pass* it keeps is chosen on the region grid — see
+  *What a new clip retains*.)
+- **`InsertFromArranger`** (the insert into an existing clip, from **both** views):
+  anchors on the **clip cursor** — its arrangement tick, the point `⌥Space` plays from
+  (`Clip::play_from_arrangement_tick`), always on the clip. `⌥Space` leaves the arranger
+  cursor where it was, so anchoring there dropped a take played from the clip cursor
+  whenever the arranger cursor sat later in the clip (`insert_running_capture_anchors_on_the_clip_cursor`).
+  An arranger cursor move resets the clip cursor to it (`020` § Views), so a take started
+  with `Space` from the clip anchors where it always did. Any tick works as an anchor
+  because it is also the placement: the window and the shift into the clip share it, so
+  every note keeps its region phase. The clip view never touches the loop region, so the
+  loop is always the arranger's. Anchoring on the clip cursor rather than the clip start
+  is what skips notes from before the playback start position (see *Notes before the
+  playback start* below).
 
 **Do not use `clip.start_tick()` as anchor from the arranger.** When the transport region
 is not aligned with the clip (the normal arranger case), `clock_tick` is anchored to
@@ -198,30 +205,32 @@ pass alone — same "last pass only" rule, no exception for the cursor.
   the notes to add in the clip's event ticks; the edit adds them, clears the buffer on
   its first `edit()` only, and undo restores the clip's events. `None` (nothing
   recorded, buffer kept) when nothing would land in the clip
-- Anchor: `cursor_tick` (same coordinate space as `clock_tick`)
-- Window size: `clip.region_length()`, pinned at the cursor's phase in the arranger loop
+- Anchor: the clip cursor's arrangement tick (`Clip::play_from_arrangement_tick`; see
+  *Anchor contract*), moved into `clock_tick` space by `capture_anchor_tick`
+- Window size: `clip.region_length()`, pinned at the anchor's phase in the arranger loop
   (which is independent of the clip)
 - Target: `RunningCaptureTarget::InsertFromArranger`
-- `event_offset_ticks = cursor_tick - clip.start_tick()` shifts crop-relative ticks into
+- `clip_offset = anchor - clip.start_tick()` shifts crop-relative ticks into
   clip-local space
-- Guard: returns `None` if `cursor_tick` is outside `[clip.start_tick(), clip.end_tick())`
+- No cursor guard: the clip cursor is always on its clip (one on material outside the
+  window anchors at the clip start, as `⌥Space` starts there)
 - What lands: every note whose onset fits the room left in the clip, and every wheel move
   (pitch bend, mod wheel — `090`) in it, the one after the last note-off included — a
   bend easing back to centre must come along or the clip is left bent
   (`Clip::cloned_events_in_range`)
-- **User must have the cursor positioned on the selected clip** before committing
-- A mid-clip cursor inserts at the correct phase; notes at a phase before the cursor
+- A mid-clip cursor inserts at the correct phase; notes at a phase before the clip cursor
   (played after the wrap) and notes past the clip's span inside a longer loop are
   dropped, never shifted into the clip
 
 The `Commit` arm of `sequencer_handler.rs` uses it from the arranger and the clip view
-alike: the loop is always the arranger's, and the anchor is the transport cursor.
+alike: the loop is always the arranger's, and the anchor is the clip cursor.
 
 #### Notes before the playback start
 
-The existing-clip path anchors the window on the cursor — where playback started, unless
-it was moved since — so a mid-clip start commits only what was played *from* that
-position. A cursor a bar into a 2-bar clip makes the window
+The existing-clip path anchors the window on the clip cursor — where `⌥Space` started
+playback, or the arranger cursor `Space` started from (an arranger cursor move resets the
+clip cursor), unless it was moved since — so a mid-clip start commits only what was played
+*from* that position. A clip cursor a bar into a 2-bar clip makes the window
 `[cursor + k·L, cursor + (k+1)·L)` for the cursor-loop `k` holding the last note-on. Two
 kinds of note fall out of that:
 
@@ -251,7 +260,7 @@ kinds of note fall out of that:
     linear take (no wrap to anticipate) gets no relocation. Used by
     `build_running_capture_insert`.
 
-The insert paths still drop phases before the cursor (see *Notes before the playback
+The insert paths still drop phases before the clip cursor (see *Notes before the playback
 start*): inserting them would overwrite the target clip's own bar 0, a different decision
 from retaining them in a fresh clip.
 
