@@ -25,6 +25,10 @@ capture covers it. Key files: `src/core/midi/input.rs`,
   data is ever shown, it is in an automation lane, a feature of its own (decided 2026-10-14); note edits, quantize and transpose leave it where it was recorded
   (`020` § Event Selection, `070`).
 
+- **Starting the transport empties the buffer, except what is held into the take**: the
+  notes still down and the mod wheel when off its rest land on the start tick, the notes
+  spread as they were pressed (`100` § Notes held into a take).
+
 ### Tick handling
 
 - **Every message carries the `clock_tick` it landed on**, its arrangement

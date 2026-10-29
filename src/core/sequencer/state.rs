@@ -34,6 +34,7 @@ use crate::{
     models::selection::Selection,
     models::{
         clip::{Clip, CopiedNote},
+        event::Event,
         performance_lane::PerformanceLane,
         track::{Track, TrackOutput},
     },
@@ -119,11 +120,26 @@ pub(crate) struct Sequencer {
     /// The rolling buffer every incoming note is fed into, ready to be
     /// committed (`capture.rs`).
     pub(super) capture_clip: Clip,
-    /// `clock_tick − playback_tick` when the latest note-on was captured
+    /// What was held into the running take when the transport started
+    /// (`begin_running_take`): the notes still down, spread from the start
+    /// tick as they were pressed, and the mod wheel when off its rest. In
+    /// *cursor* ticks, since the clock's numbering is not known until input
+    /// arrives: the take's first input while running moves them into
+    /// `capture_clip` (`place_held_notes`). Cleared with the buffer.
+    pub(super) capture_held: Vec<Event>,
+    /// Playback ticks since the running take began (`begin_running_take`),
+    /// counted by [`Sequencer::tick`]: how far before its first input the
+    /// clock stood at the start, which places `capture_held`.
+    pub(super) ticks_into_take: i32,
+    /// The player's last mod-wheel move while it is off its rest (`None` at
+    /// 0), for a take to start from (`begin_running_take`). Where the wheel
+    /// physically is, so the buffer's resets leave it alone.
+    pub(super) live_mod_wheel: Option<Event>,
+    /// `clock_tick − playback_tick` when the latest message was captured
     /// while running — how far the capture clock's numbering sits from the
     /// cursor's. The clock only ever matches playback's *phase*, so this is
     /// whole loop lengths (plus a few ticks of input latency); a commit
-    /// shifts its anchor by it (`capture_clock_shift`). `None` until a note
+    /// shifts its anchor by it (`capture_clock_shift`). `None` until input
     /// arrives while running, and cleared with the buffer.
     pub(super) capture_clock_offset: Option<i32>,
     /// When the latest note-on reached the capture buffer, for the agent's
@@ -211,6 +227,9 @@ impl Sequencer {
             running,
             playback_retimed: false,
             capture_clip: Clip::new(),
+            capture_held: Vec::new(),
+            ticks_into_take: 0,
+            live_mod_wheel: None,
             capture_clock_offset: None,
             capture_last_note_at: None,
             take_framing: None,
@@ -303,6 +322,7 @@ impl Sequencer {
     /// Empties the running capture buffer.
     pub(crate) fn reset_capture(&mut self) {
         self.capture_clip = Clip::new();
+        self.capture_held.clear();
         self.capture_clock_offset = None;
         self.capture_last_note_at = None;
     }

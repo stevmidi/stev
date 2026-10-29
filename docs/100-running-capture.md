@@ -44,7 +44,7 @@ past the region end while playback wraps, so it can sit whole loop lengths ahead
 window placement, the anchor must be in the same coordinate space as the capture event ticks.
 
 **The anchor is the cursor moved into the clock's numbering** (`capture_anchor_tick`). `handle_midi_input` records `clock_tick − playback_tick` at every
-note-on captured while running (`Sequencer::capture_clock_offset`, cleared with the buffer).
+message captured while running (`Sequencer::capture_clock_offset`, cleared with the buffer).
 The commit adds that offset, rounded to the nearest whole loop length (dropping the few ticks
 of input latency), to the cursor. A looping take doesn't need it (its pass index absorbs whole
 loops); a **linear** take does: its window starts at the anchor itself, so a raw cursor tick
@@ -235,11 +235,48 @@ clip cursor), unless it was moved since — so a mid-clip start commits only wha
 kinds of note fall out of that:
 
 - **counted in before the start** (played while stopped, or in the earlier part of the
-  same pass): they sit in cursor-loop `k-1`, outside the window — dropped by the crop;
+  same pass): they sit in cursor-loop `k-1`, outside the window — dropped by the crop.
+  A note still *held* at the start is the exception: it is moved onto the start (*Notes
+  held into a take* below);
 - **played after the loop wrapped** (bar 1 of the next pass): they are in cursor-loop
   `k`, but land past `region_length` after the `clip_offset` shift. The insert range is
   clamped to `region_length - clip_offset` so these are **discarded**, never
   inserted out of region where they would resurface on a later region extend.
+
+#### Notes held into a take
+
+A take can open on a chord pressed before the transport started. Starting playback
+(`Space`, `⌥Space`) calls `Sequencer::begin_running_take(start_tick)` in place of a
+plain `reset_capture`: it empties the buffer but keeps, in `capture_held`, what the
+player holds into the take:
+
+- **the notes still down** — `Clip::open_note_ons` of the buffer, so a note released
+  before the start stays out. The first-pressed lands on the start tick, each other one
+  after it by the gap it was pressed with, capped at `HELD_NOTE_SPREAD_TICKS` (a
+  quarter) so a note added seconds later doesn't land deep in the bar. A rolled chord
+  stays rolled, a block chord a block. Each keeps its real release, which arrives while
+  playing, so its length is how long it was really held into the take;
+- **the mod wheel when off its rest** — `Sequencer::live_mod_wheel`, the player's last
+  mod-wheel move (whatever the buffer's resets did since), on the start tick ahead of the
+  notes. At 0 nothing is carried. Pitch bend is not: it springs back to centre.
+
+They are in **cursor** ticks, since the clock's numbering isn't known until input
+arrives. The take's first input while running (`place_held_notes`) moves them into the
+buffer ahead of itself, shifted into the clock's numbering by the offset *at the start*:
+the clock stood `ticks_into_take` (counted by `Sequencer::tick`) before that input, so
+`clock_at_start − start_tick`, rounded to whole loops, is exact however often the loop has
+wrapped since. The latest `capture_clock_offset` can't be used: the clock gains a loop on
+playback at every wrap, so a chord released after the wrap would land in the second pass.
+Until that first input `capture_buffer` puts them ahead of the (empty) buffer unshifted,
+so a commit while the chord is still held, with nothing else played, keeps it too. Input
+while stopped first drops them: with no input while playing they were never placed, and
+have been released by then.
+
+From there they are ordinary first-pass notes on the start tick: a commit before the
+first wrap keeps them (new clip, linear take, insert into a clip alike), a pass after the
+wrap leaves them out by *last pass only*, and the stopped `/` after a `Space` stop finds
+them in its source too. `capture_clock_offset` is recorded on every message while
+running, not only note-ons, so the chord's own release brings it.
 
 
 ### `normalize_running_capture` parameters
@@ -421,3 +458,22 @@ test-module helper:
   `core::time::snap_to_grid`, tested in `time.rs`),
 - a commit selects nothing when nothing was selected, and keeps an existing selection as it
   was (the commit-never-changes-the-selection pair).
+
+Tests for the notes held into a take (*Notes held into a take*), in
+`src/core/sequencer/capture.rs`, driven through `handle_midi_input` and
+`begin_running_take`:
+
+- **a chord held before the start, released while playing, with the clock loops ahead →
+  on the cursor with its pressed spread and its real lengths** (the regression),
+- **a note added three beats after the first → a quarter after it; a chord still held at
+  the commit with no input since → committed**,
+- **a note released before the start → left out**,
+- **a later pass holds the last note → the held chord left out (last pass only)**,
+- **the release is the first input and comes after the wrap → still on the cursor in the
+  first pass** (guards against placing by the latest clock offset),
+- **a linear take → the chord on the cursor, the clip placed there**,
+- **a mod wheel off its rest, even from before an earlier reset → carried onto the cursor;
+  one back at rest → nothing**,
+- **a running `/` into a selected clip keeps the chord too**.
+
+`Clip::open_note_ons` is tested in `src/models/clip/pairing.rs`.

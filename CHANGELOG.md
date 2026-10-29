@@ -23,6 +23,10 @@ Breaking entries are marked **Breaking** and say what to do about them.
 ### Added
 
 - The piano roll's keys light up while you hold a note on a MIDI keyboard or the computer keys.
+- A take can start on a chord you were already holding when you pressed play:
+  `/` keeps the held notes on the start position, rolled as you pressed them
+  (at most a quarter apart), held as long as you held them. A mod wheel off its
+  rest carries in the same way.
 
 ### Changed
 

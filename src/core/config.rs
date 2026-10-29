@@ -6,7 +6,7 @@
 //! constants that are a position vs. an amount follow `080-conventions.md`'s
 //! `tick`/`ticks` rule.
 
-use crate::core::time::{Meter, bpm_to_tempo_us, sixteenth_straight_ticks};
+use crate::core::time::{Meter, PPQN, bpm_to_tempo_us, sixteenth_straight_ticks};
 
 /// Tempo a brand-new project starts at, in BPM. `TEMPO_*` are the same value
 /// expressed as microseconds per quarter note, which is what the clock and the
@@ -42,6 +42,11 @@ pub const QUANTIZE_LERP_FACTOR: f32 = 0.8;
 /// to the region start rather than lost to the crop. One straight 16th. An
 /// amount. See `relocate_late_notes_to_region_start` and `100-running-capture.md`.
 pub const LATE_NOTE_TOLERANCE_TICKS: i32 = sixteenth_straight_ticks();
+/// The widest spread kept between the notes held into a running take: each
+/// lands after the first-pressed by the gap it was pressed with, capped here
+/// so a note added seconds later doesn't land deep in the bar. A quarter
+/// note. An amount. See `begin_running_take` and `100-running-capture.md`.
+pub const HELD_NOTE_SPREAD_TICKS: i32 = PPQN;
 /// The arranger's *default* zoom, in bars across the content width: the scale
 /// latched on the first arranger frame, before the user zooms. After that the
 /// scale is a fixed pixels-per-beat (a wider window shows more bars rather

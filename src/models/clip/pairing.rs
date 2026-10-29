@@ -80,6 +80,16 @@ impl Clip {
         }
     }
 
+    /// Clones of the `NoteOn`s no `NoteOff` has closed — the notes still held
+    /// at the end of a capture buffer — in list order.
+    pub(crate) fn open_note_ons(&self) -> Vec<Event> {
+        let mut open = self.pair_note_events().open_note_ons;
+        open.sort_unstable();
+        open.into_iter()
+            .map(|idx| self.events[idx].clone())
+            .collect()
+    }
+
     /// Index of the `NoteOn` carrying each id in `ids`, in `ids` order; an id
     /// with no `NoteOn` is skipped. One pass over the events, not one per id.
     pub(super) fn note_on_indices(&self, ids: &[Uuid]) -> Vec<usize> {
@@ -530,6 +540,29 @@ mod tests {
         // Only the original note-off at 100, no synthetic one at 480
         assert_eq!(note_offs.len(), 1);
         assert_eq!(note_offs[0].tick(), 100);
+    }
+
+    // --- open_note_ons ---
+
+    /// Only the notes no off has closed come back, in list order — a
+    /// re-pressed pitch whose first press was released counts once.
+    #[test]
+    fn open_note_ons_are_the_unreleased_notes_in_list_order() {
+        let clip = clip_with(vec![
+            on(0, 64),
+            on(10, 60),
+            off(20, 60),
+            on(30, 67),
+            on(40, 60),
+        ]);
+
+        let open: Vec<_> = clip
+            .open_note_ons()
+            .iter()
+            .map(|e| (e.tick(), e.note_number().unwrap()))
+            .collect();
+
+        assert_eq!(open, vec![(0, 64), (30, 67), (40, 60)]);
     }
 
     // --- fold_into_loop ---

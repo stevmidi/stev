@@ -30,7 +30,7 @@ impl Sequencer {
     /// on a bar line in event space. Pure. `None` on a buffer without a note,
     /// no selected track, or no room at the cursor.
     pub(crate) fn build_stopped_capture_clip(&self) -> Option<(usize, Clip)> {
-        if !self.capture_clip.has_notes() {
+        if !self.capture_has_notes() {
             return None;
         }
         let track_idx = self.selected_track_index()?;
@@ -100,7 +100,7 @@ impl Sequencer {
     /// so the builders can frame it in place.
     pub(super) fn detection_capture_source(&self) -> Clip {
         let mut capture = Clip::new();
-        capture.restore_events(self.capture_clip.events().to_vec());
+        capture.restore_events(self.capture_buffer().events().to_vec());
         // Pairs the note lengths, over the trimmed buffer only.
         Self::trim_capture_source(&mut capture, self.meter());
         capture

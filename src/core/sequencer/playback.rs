@@ -110,6 +110,7 @@ impl Sequencer {
     /// (`audio_export.rs`).
     pub(crate) fn tick(&mut self, at: Instant) {
         self.mark_audio_export(at);
+        self.ticks_into_take = self.ticks_into_take.saturating_add(1);
         // Read audibility once, before the `&mut` loop below.
         let audible = self.track_audibility();
         for (track_idx, track) in self.tracks.iter_mut().enumerate() {

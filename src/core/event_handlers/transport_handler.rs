@@ -130,7 +130,7 @@ impl EventHandlers {
                 self.sync_clip_selection_to_cursor_workflow(sequencer);
             }
             TransportCommand::PlayFromTick { tick } => {
-                sequencer.reset_capture();
+                sequencer.begin_running_take(*tick);
                 transport.stop();
                 transport.jump_and_chase(*tick);
                 transport.start();
@@ -139,7 +139,8 @@ impl EventHandlers {
                 if transport.is_running() {
                     transport.stop();
                 } else {
-                    sequencer.reset_capture();
+                    // `restart_from_cursor` starts playback from the cursor.
+                    sequencer.begin_running_take(sequencer.cursor_tick());
                     transport.restart_from_cursor();
                     transport.start();
                 }
