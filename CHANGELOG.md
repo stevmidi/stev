@@ -23,6 +23,7 @@ Breaking entries are marked **Breaking** and say what to do about them.
 ### Added
 
 - The piano roll's keys light up while you hold a note on a MIDI keyboard or the computer keys.
+- A marquee in the piano roll leaves its time span marked, and `⌘D` then duplicates the selected notes one span length later, as Ableton does with a time selection: what sat at the span's start lands on its end, and pressing again lays the next copy after that. The clip cursor moves to each copy's span, so `⌥Space` plays from there. A click in the piano roll or `Esc` drops the span, and `⌘D` then copies right after the selection as before.
 - A take can start on a chord you were already holding when you pressed play:
   `/` keeps the held notes on the start position, rolled as you pressed them
   (at most a quarter apart), held as long as you held them. A mod wheel off its

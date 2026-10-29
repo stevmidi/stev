@@ -83,6 +83,14 @@ pub(super) struct GestureState {
     /// `MouseMoved` jitter clobbering its own `SelectClipEvent` selection
     /// with a spurious rectangle update.
     pub(super) event_marquee_rect: Option<(i32, i32, f32, f32)>,
+    /// The time span of a piano-roll marquee, `(start, end)` in event ticks
+    /// snapped to the visible grid: `⌘/Ctrl+D` moves the copies on by its
+    /// length, so its end is the end marker, and each press moves the span
+    /// on to cover the copy so presses chain. `Some` from the marquee drag's
+    /// start, following the box, through its release to the next press in
+    /// the piano roll, `Esc`, or leaving the clip; with none, `⌘/Ctrl+D`
+    /// copies flush after the selection. Never empty.
+    pub(super) duplicate_span: Option<(i32, i32)>,
     /// In-progress ⌘/Ctrl+drag velocity gesture. `Some` only while the
     /// primary button is held after a ⌘/Ctrl-modified press landed on a
     /// note — like the other drag anchors above, doubles as the drag-active

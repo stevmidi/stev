@@ -258,11 +258,12 @@ impl InsertNotesEdit {
         Self::with_notes(sequencer, notes)
     }
 
-    /// `⌘/Ctrl+D`: copies of the selected notes flush after the selection
-    /// ([`Clip::duplicated_notes`]). `None` with nothing selected or no copy
-    /// landing inside the window.
-    pub(crate) fn duplicating_selection(sequencer: &Sequencer) -> Option<Self> {
-        let notes = sequencer.selected_clip()?.duplicated_notes();
+    /// `⌘/Ctrl+D`: copies of the selected notes, `shift` ticks later (the
+    /// length of the piano roll's duplicate span) or flush after the
+    /// selection ([`Clip::duplicated_notes`]). `None` with nothing selected
+    /// or no copy landing inside the window.
+    pub(crate) fn duplicating_selection(sequencer: &Sequencer, shift: Option<i32>) -> Option<Self> {
+        let notes = sequencer.selected_clip()?.duplicated_notes(shift);
         Self::with_notes(sequencer, notes)
     }
 

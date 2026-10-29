@@ -309,9 +309,11 @@ impl Display {
     /// derived from the cursor rather than stored, so it follows every cursor
     /// move (arrow keys, paging, clicks) without any syncing. The cursor is
     /// where playback starts, so this collapsed marker is drawn in the clip
-    /// pane as well, matching the arranger. A range (arranger-only — the clip
-    /// pane ignores `time_selection`, which stays alive under a docked panel
-    /// while the arranger has the focus) reads as two arrows
+    /// pane as well, matching the arranger. A range — the arranger's
+    /// `time_selection`, or in the clip pane the duplicate span a piano-roll
+    /// marquee leaves (`gesture.duplicate_span`; the clip pane ignores
+    /// `time_selection`, which stays alive under a docked panel while the
+    /// arranger has the focus) — reads as two arrows
     /// pointing inward from its bounds, with each arrow's flat vertical edge
     /// sitting exactly on its snapped boundary tick. Both states
     /// are bottom-anchored flush on the strip-bottom groove seam, capping the
@@ -351,15 +353,15 @@ impl Display {
         // selection (a purely vertical marquee drag's point-in-time track
         // selection) has no range to draw a rail/arrows for, so it takes this
         // same collapsed branch — see `TimeSelectionRect::has_tick_range`.
-        let Some(TimeSelectionRect {
-            start: selection_start,
-            end: selection_end,
-            ..
-        }) = self
-            .gesture
-            .time_selection
-            .filter(|sel| self.active_pane() == Pane::Arranger && sel.has_tick_range())
-        else {
+        let range = match self.active_pane() {
+            Pane::Arranger => self
+                .gesture
+                .time_selection
+                .filter(TimeSelectionRect::has_tick_range)
+                .map(|sel| (sel.start, sel.end)),
+            Pane::Clip => self.gesture.duplicate_span,
+        };
+        let Some((selection_start, selection_end)) = range else {
             let cursor_x = self.tick_to_screen_x(self.render_cursor_tick());
             if self.content_x_on_screen(cursor_x) {
                 marker(cursor_x, cursor_x + MARKER_W);

@@ -248,10 +248,11 @@ impl Clip {
     }
 
     /// `⌘/Ctrl+D` in the clip view: copies of the selected notes, pasted
-    /// ([`pasted_notes`](Self::pasted_notes)) flush after the selection —
-    /// the earliest copy at the latest selected end. Empty with nothing
-    /// selected.
-    pub(crate) fn duplicated_notes(&self) -> Vec<(Event, Event)> {
+    /// ([`pasted_notes`](Self::pasted_notes)) `shift` ticks later — the
+    /// length of the time span a piano-roll marquee leaves, so the notes keep
+    /// their place in it — or, with none, flush after the selection, the
+    /// earliest copy at the latest selected end. Empty with nothing selected.
+    pub(crate) fn duplicated_notes(&self, shift: Option<i32>) -> Vec<(Event, Event)> {
         let copied = self.copy_selected_notes();
         let first_start = self
             .note_on_indices(self.event_selection.ids())
@@ -262,7 +263,7 @@ impl Clip {
         let (Some(first_start), Some(span)) = (first_start, span) else {
             return Vec::new();
         };
-        self.pasted_notes(first_start + span, &copied)
+        self.pasted_notes(first_start + shift.unwrap_or(span), &copied)
     }
 
     /// New note pairs for [`insert_notes`](Self::insert_notes): `notes` with
@@ -588,7 +589,7 @@ mod tests {
     fn duplicate_lays_copies_flush_after_the_latest_selected_end() {
         let (mut clip, ids) = clip_with(&[(0, 240, 60), (480, 960, 61), (1500, 1600, 62)]);
         clip.restore_event_selection(&ids[..2]);
-        let duplicated = clip.duplicated_notes();
+        let duplicated = clip.duplicated_notes(None);
         assert!(duplicated.iter().all(|(on, _)| !ids.contains(&on.id())));
         clip.insert_notes(duplicated);
         assert_eq!(
@@ -604,9 +605,28 @@ mod tests {
     }
 
     #[test]
+    fn duplicate_by_a_span_length_moves_the_copies_that_far() {
+        let (mut clip, ids) = clip_with(&[(240, 480, 60), (480, 960, 61), (1500, 1600, 62)]);
+        clip.restore_event_selection(&ids[..2]);
+        let duplicated = clip.duplicated_notes(Some(960));
+        clip.insert_notes(duplicated);
+        assert_eq!(
+            notes(&clip),
+            vec![
+                (240, 480, 60),
+                (480, 960, 61),
+                (1200, 1440, 60),
+                (1440, 1920, 61),
+                (1500, 1600, 62),
+            ]
+        );
+    }
+
+    #[test]
     fn duplicate_with_nothing_selected_is_empty() {
         let (clip, _) = clip_with(&[(0, 240, 60)]);
-        assert!(clip.duplicated_notes().is_empty());
+        assert!(clip.duplicated_notes(None).is_empty());
+        assert!(clip.duplicated_notes(Some(960)).is_empty());
     }
 
     #[test]

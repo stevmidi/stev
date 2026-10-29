@@ -856,6 +856,7 @@ impl Display {
         self.gesture.hover_cursor = None;
         self.clear_time_selection();
         self.clear_event_marquee();
+        self.gesture.duplicate_span = None;
         self.clear_note_drag();
         self.clear_clip_resize();
         self.clear_window_edge_drag();

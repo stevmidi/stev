@@ -234,9 +234,16 @@ pub(crate) enum SequencerCommand {
     TransposeSelectedEvents(i32),
     /// Delete every selected event (`DeleteSelectedEventsEdit`, undoable).
     DeleteSelectedEvents,
-    /// Duplicate the selected notes flush after the selection, as a paste
-    /// there (`InsertNotesEdit::duplicating_selection`, undoable).
-    DuplicateSelectedEvents,
+    /// Duplicate the selected notes as a paste (`InsertNotesEdit::duplicating_selection`,
+    /// undoable): one `span` length later, the clip cursor then moving to the
+    /// span's end — where the copy's span starts, as the arranger's
+    /// Duplicate Clips moves its cursor — or flush after the selection with
+    /// none.
+    DuplicateSelectedEvents {
+        /// The piano roll's duplicate span `(start, end)` in event ticks;
+        /// `None` lays the copies flush after the selection.
+        span: Option<(i32, i32)>,
+    },
     /// `⌘/Ctrl+C` in the clip view: copies the selected notes into the note
     /// clipboard (see `sequencer/clipboard.rs`). A no-op with nothing
     /// selected. Not undoable — copying is not a data mutation.

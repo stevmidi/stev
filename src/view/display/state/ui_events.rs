@@ -134,6 +134,7 @@ impl Display {
                 UiEvent::LeadClipChanged { clip_view } => {
                     self.show_lead_clip(clip_view);
                     self.clear_event_marquee();
+                    self.gesture.duplicate_span = None;
                 }
                 UiEvent::EventsUpdated { clip_view } => {
                     self.lead_clip_time = Some(ClipTimeAtomics::of(&clip_view));

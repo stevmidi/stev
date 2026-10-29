@@ -21,6 +21,10 @@ impl Display {
     /// Alpha of the background-tone shade laid over the note grid outside the
     /// clip's window, so kept material reads as not playing.
     const OUTSIDE_WINDOW_SHADE_ALPHA: f32 = 0.55;
+    /// Tint of the duplicate span a released marquee leaves over the note
+    /// area — faint, under the notes, so it marks time without reading as
+    /// a selection box.
+    const DUPLICATE_SPAN_TINT: f32 = 0.08;
 
     /// Breathing room above/below each event bar within its row, per side.
     /// Small and fixed (not proportional) so events read as nearly filling
@@ -233,6 +237,20 @@ impl Display {
                     shade,
                 );
             }
+        }
+
+        // The duplicate span a released marquee left: its end is where
+        // `⌘/Ctrl+D` lands the copy (the strip's arrows mark both ends).
+        if let Some((span_start, span_end)) = self.gesture.duplicate_span {
+            let (left, right) = (
+                self.tick_to_screen_x(span_start),
+                self.tick_to_screen_x(span_end),
+            );
+            event_painter.rect_filled(
+                Rect::from_min_max(pos2(left, geom.top), pos2(right, geom.top + geom.h)),
+                CornerRadius::ZERO,
+                theme::fg_dim().gamma_multiply(Self::DUPLICATE_SPAN_TINT),
+            );
         }
 
         // A live note drag: each dragged note is drawn only where it will

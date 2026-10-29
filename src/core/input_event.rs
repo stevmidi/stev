@@ -401,6 +401,16 @@ pub(crate) enum InputEvent {
         /// The marquee selection.
         rect: TimeSelectionRect,
     },
+    /// `⌘/Ctrl+D` in `Clip` with the time span a piano-roll marquee left:
+    /// the view owns the span and resolves it, the selected notes are
+    /// duplicated one span length later and the clip cursor moves to `end`,
+    /// the copy's span start.
+    DuplicateNotesInSpan {
+        /// Event tick of the span's start.
+        start: i32,
+        /// Event tick of the span's end, the end marker.
+        end: i32,
+    },
     /// Event marquee-select in `Clip`: the view resolves the drag
     /// rectangle (view-local, like the time selection above) and forwards it
     /// unconditionally so the sequencer can recompute event selection. The

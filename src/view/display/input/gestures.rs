@@ -182,6 +182,9 @@ impl Display {
 
         self.gesture.event_marquee_rect =
             Some((tick_min, tick_max, anchor.row.min(row), anchor.row.max(row)));
+        // The duplicate span follows the box from the drag's start, as the
+        // arranger's time selection does, and stays after the release.
+        self.gesture.duplicate_span = snapped_span(tick_min, tick_max, self.cursor_grid_ticks());
 
         let hit_test = (tick_min, tick_max, note_min, note_max);
         if anchor.last_sent == Some(hit_test) {
@@ -198,6 +201,26 @@ impl Display {
                 note_max,
             })
             .ok();
+    }
+
+    /// `⌘/Ctrl+D` in the piano roll: with a duplicate span, the selected
+    /// notes are duplicated one span length later — Ableton's duplicate of a
+    /// clip-view time selection, so the notes keep their place in the span —
+    /// and the span moves on to cover the copy, so presses chain the way the
+    /// arranger's Duplicate Clips advances its marquee (the sequencer moves
+    /// the clip cursor to the new span's start, as that does). Without one,
+    /// `⌘/Ctrl+D` goes on as the plain flush-after duplicate.
+    pub(super) fn duplicate_notes(&mut self) -> bool {
+        let Some((start, end)) = self.gesture.duplicate_span else {
+            return self
+                .input_event_tx
+                .send(InputEvent::Action(Action::DuplicateNotes))
+                .is_ok();
+        };
+        self.gesture.duplicate_span = Some((end, end + (end - start)));
+        self.input_event_tx
+            .send(InputEvent::DuplicateNotesInSpan { start, end })
+            .is_ok()
     }
 
     /// Anchors a new ⌘/Ctrl+drag velocity gesture at the screen-space press
@@ -1255,11 +1278,14 @@ impl Display {
     /// and pin the line at the left edge, so there is no line there at all
     /// (the Logic / Ableton / Bitwig convention). Does not touch the
     /// committed transport/clip cursor — that only moves on click (see
-    /// `MouseClickedTicks` handling). A no-op while a time-selection drag is
-    /// in progress — the cursor line stays pinned at the drag anchor rather
-    /// than sliding along with the pointer.
+    /// `MouseClickedTicks` handling). A no-op while a time-selection drag or
+    /// a piano-roll marquee is in progress — the cursor line stays pinned at
+    /// the drag anchor rather than sliding along with the pointer.
     pub(super) fn update_hover_cursor_tick(&mut self, x: f32, y: f32) {
-        if self.gesture.time_selection_anchor.is_some() || self.gesture.window_edge_drag.is_some() {
+        if self.gesture.time_selection_anchor.is_some()
+            || self.gesture.event_marquee_anchor.is_some()
+            || self.gesture.window_edge_drag.is_some()
+        {
             return;
         }
         self.gesture.hover_cursor = (self.is_mouse_inside_pane(x, y)
@@ -1359,6 +1385,13 @@ fn edge_scroll_speed(overshoot: f32) -> f32 {
 /// from a click's jitter.
 pub(super) fn past_drag_threshold(from: (f32, f32), to: (f32, f32), threshold: f32) -> bool {
     (to.0 - from.0).abs() >= threshold || (to.1 - from.1).abs() >= threshold
+}
+
+/// A released marquee's `[tick_min, tick_max]` snapped to a `grid`-tick
+/// grid, as the duplicate span — `None` when it snaps to nothing.
+fn snapped_span(tick_min: i32, tick_max: i32, grid: i32) -> Option<(i32, i32)> {
+    let (start, end) = (snap_to_grid(tick_min, grid), snap_to_grid(tick_max, grid));
+    (end > start).then_some((start, end))
 }
 
 /// Pure core of [`Display::extend_time_selection_to_click`]: the selection a
@@ -1504,7 +1537,7 @@ mod tests {
         EDGE_SCROLL_MAX_SPEED, EDGE_SCROLL_MIN_SPEED, TimeSelectionRect, clamped_track_delta,
         clip_hull_selection, edge_scroll_speed, extended_edges, marquee_under_press,
         next_clip_edge, nudged_ghost_start, nudged_tick_selection, nudged_track_selection,
-        past_drag_threshold, shift_click_selection, snapped_move_start,
+        past_drag_threshold, shift_click_selection, snapped_move_start, snapped_span,
     };
 
     fn sel(
@@ -1826,5 +1859,15 @@ mod tests {
     #[test]
     fn clip_hull_is_none_with_no_clips() {
         assert!(clip_hull_selection([]).is_none());
+    }
+
+    #[test]
+    fn duplicate_span_snaps_to_the_grid() {
+        assert_eq!(snapped_span(470, 1930, 480), Some((480, 1920)));
+    }
+
+    #[test]
+    fn duplicate_span_inside_one_grid_step_is_none() {
+        assert_eq!(snapped_span(500, 700, 480), None);
     }
 }

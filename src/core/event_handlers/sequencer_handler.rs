@@ -390,12 +390,16 @@ impl EventHandlers {
                 sequencer.preview_pitch(*note, *velocity);
             }
 
-            SequencerCommand::DuplicateSelectedEvents => {
-                self.record_edit(
+            SequencerCommand::DuplicateSelectedEvents { span } => {
+                let shift = span.map(|(start, end)| end - start);
+                let duplicated = self.record_edit(
                     sequencer,
                     undo_record,
-                    InsertNotesEdit::duplicating_selection(sequencer),
+                    InsertNotesEdit::duplicating_selection(sequencer, shift),
                 );
+                if duplicated && let Some((_, end)) = span {
+                    self.set_clip_cursor_workflow(sequencer, *end);
+                }
             }
 
             SequencerCommand::DeleteSelectedEvents => {

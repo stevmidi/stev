@@ -267,6 +267,11 @@ impl Display {
         // (`archive/290-framing-a-take.md`): no velocity or note drag starts, so
         // nothing previews an edit the sequencer would refuse.
         let editable_notes = is_clip_events_view && self.take_session.is_none();
+        // Any press in the piano roll drops the duplicate span: a marquee
+        // starting here leaves a fresh one on release.
+        if is_clip_events_view && self.is_mouse_inside_grid(x, y) {
+            self.gesture.duplicate_span = None;
+        }
         if modifiers.command
             && editable_notes
             && self.is_mouse_inside_grid(x, y)
@@ -1169,6 +1174,14 @@ impl Display {
                 self.cancel_tempo_drag();
                 true
             }
+            // Esc drops the piano roll's duplicate span; the selection stays.
+            InputEvent::KeyPressed {
+                key: Key::Escape,
+                modifiers: _,
+            } if self.active_pane() == Pane::Clip && self.gesture.duplicate_span.is_some() => {
+                self.gesture.duplicate_span = None;
+                true
+            }
             // Esc cancels the marquee, mid-drag or already committed — the
             // standard "cancel this gesture" chord (Excel, Photoshop, VS Code).
             // `clear_time_selection` is all that's needed: the committed cursor
@@ -1223,6 +1236,10 @@ impl Display {
             InputEvent::Action(Action::DuplicateClips) => {
                 self.send_for_time_selection(|rect| InputEvent::DuplicateClipsInSelection { rect })
             }
+            // ⌘/Ctrl+D in the piano roll — "Duplicate notes": at the end
+            // marker a marquee left, the view's own, or flush after the
+            // selection.
+            InputEvent::Action(Action::DuplicateNotes) => self.duplicate_notes(),
             // ⌘/Ctrl+T — add an empty MIDI track after the selected one
             // (Ableton's chord).
             InputEvent::Action(Action::AddTrack) => self
