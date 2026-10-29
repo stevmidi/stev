@@ -361,7 +361,7 @@ impl Display {
     /// Widening this is the single knob for the header: every content x
     /// (cursor, playhead, ruler, region, clips) routes through
     /// `content_origin_x()`. Uniform on every platform, empty off macOS.
-    const TRACK_HEADER_W: f32 = 129.0;
+    const TRACK_HEADER_W: f32 = 160.0;
     /// Padding between the track column's left edge and the header controls
     /// (S/M row, volume/pan bars) inside it (`track_header_band`); the right
     /// side's is `rendering`'s `TRACK_HEADER_METER_PAD_X`. `TRACK_HEADER_W` was widened to

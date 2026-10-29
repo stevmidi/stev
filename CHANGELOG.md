@@ -32,6 +32,8 @@ Breaking entries are marked **Breaking** and say what to do about them.
 ### Changed
 
 - The browser's Clips category starts collapsed at launch.
+- The arranger's track headers are wider (129 → 160px), so plugin names in the
+  output chip and longer track names fit before they are cut off.
 
 ### Fixed
 
