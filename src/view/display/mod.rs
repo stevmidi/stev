@@ -45,6 +45,7 @@
 //! the layout.
 
 mod about_tab;
+mod ai_tab;
 mod browser;
 mod browser_rename;
 mod computer_keys;
@@ -504,11 +505,10 @@ impl Display {
     }
 
     /// Hands over the `"agent-bridge"` thread's control channel and the
-    /// saved *Allow AI agents* setting, which the settings modal's AGENTS
-    /// row shows and flips. Called once from `main`.
+    /// saved *Allow AI agents* setting, which the settings modal's AI tab
+    /// shows and flips. Called once from `main`.
     pub(crate) fn attach_agent_bridge(&mut self, tx: Sender<bool>, enabled: bool) {
-        self.settings.midi.agent_bridge_tx = Some(tx);
-        self.settings.midi.agent_bridge = enabled;
+        self.settings.ai.attach(tx, enabled);
     }
 
     /// Hands over the receiving end of the background plugin-catalog scan.

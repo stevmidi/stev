@@ -1294,6 +1294,7 @@ impl eframe::App for Display {
         self.sync_open_document();
         self.sync_project_dialog_window(ctx);
         self.sync_update_check(ctx);
+        self.sync_ai_copy(ctx);
         self.in_pane(Pane::Clip, Self::sync_clip_frame);
         self.in_pane(Pane::Arranger, Self::sync_arranger_scroll);
         self.sync_time_selection_to_cursor();

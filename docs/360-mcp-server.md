@@ -188,7 +188,7 @@ Each phase is one branch and one merge, with its tests, docs and changelog line.
 
 **Phase 1 as built** (`src/core/agent/`, `src/core/threads/agent_bridge.rs`, Unix only): where it settled what the design left open.
 
-- The switch is a fourth row on the settings modal's MIDI tab, AGENTS (`Allow AI agents: on/off`), flipped by Enter, Space, ↑/↓ or a click, applied at once. It opens or closes the socket live, without a restart.
+- The switch (`Allow AI agents: on/off`) is the settings modal's AI tab, with a short explanation, the Claude Code command for this binary (`--scope user`, since the default scope covers only the folder it ran in; a click copies it), and a link to the README for other clients (it began as a fourth row on the MIDI tab). Enter, Space, ↑/↓ or a click flip it, applied at once. It opens or closes the socket live, without a restart.
 - The marquee lives in the view, so `Display::publish_marquee` mirrors it to the sequencer once per change (`SequencerCommand::SetMarquee`); the reads take it from there, so they still answer from the sequencer's own state (decision 7).
 - The project name comes from `SavedProject`, which now keeps the open project's file name.
 - The `--mcp` process connects per call (decision 17), so an app restarted between calls needs nothing special. With no socket it reads `settings.json`: setting off, the answer names it; on, `Stev isn't running`. A call waits 10 s for an answer (the app's own wait on the sequencer is 5 s).

@@ -30,7 +30,9 @@ Breaking entries are marked **Breaking** and say what to do about them.
 - Experimental: an AI client such as Claude Desktop or Claude Code can now
   read and edit the open project through MCP: run
   `Stev.app/Contents/MacOS/stev --mcp` as its server and turn on Allow AI
-  agents in Settings → MIDI. It reads what
+  agents in Settings → AI, a tab of its own that says what the feature is
+  and shows the command that adds Stev to Claude Code, copied with a click.
+  It reads what
   you point at with the marquee (the tempo, the harmony bar by bar, the
   notes) and what you just played before you commit it, checks notes it
   means to write against the harmony, and can write new clips, replace a

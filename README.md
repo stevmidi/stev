@@ -150,17 +150,24 @@ unless you ask, and it leaves your selection alone. It's experimental: the
 tools may change or go as real use shows what they're good for. Think of it
 as help with writer's block or chores, not as the one making the music.
 
-1. In Stev, turn on **Allow AI agents** under **Settings** (`⌘,`) → **MIDI**.
-2. Add Stev as an MCP server to your client:
+1. In Stev, turn on **Allow AI agents** under **Settings** (`⌘,`) → **AI**.
+2. Add Stev as an MCP server to your client. The AI tab shows the Claude Code
+   command for the copy of Stev you're running, and a click copies it.
+   `--scope user` makes it work in every folder; without it, Claude Code
+   finds Stev only in the folder you ran the command in.
 
    ```
-   # Claude Code
-   claude mcp add stev -- /Applications/Stev.app/Contents/MacOS/stev --mcp
+   # Claude Code, once, in Terminal
+   claude mcp add --scope user stev -- /Applications/Stev.app/Contents/MacOS/stev --mcp
 
    # Claude Desktop, claude_desktop_config.json
    { "mcpServers": { "stev": {
        "command": "/Applications/Stev.app/Contents/MacOS/stev", "args": ["--mcp"] } } }
    ```
+
+   Any other MCP client: add a local (stdio) server with the command
+   `/Applications/Stev.app/Contents/MacOS/stev` and the argument `--mcp`.
+   Only Claude clients have been tested so far.
 
 The client starts `stev --mcp` itself, which opens no window and talks only to
 the Stev you have open, over a socket only your user account can reach. With

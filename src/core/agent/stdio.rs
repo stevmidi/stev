@@ -16,15 +16,12 @@ use crate::core::settings::load_settings;
 use super::protocol::handle_line;
 use super::{AgentReply, AgentRequest};
 
-/// The command-line flag that makes the binary the MCP server.
-pub(crate) const MCP_FLAG: &str = "--mcp";
-
 /// Every tool's answer while nothing listens on the socket.
 const NOT_RUNNING: &str = "Stev isn't running. Open it and try again.";
 
 /// The same, when the settings say the bridge is off (decision 4).
 const BRIDGE_OFF: &str = "Stev isn't running, or Allow AI agents is off in its settings \
-                          (Settings → MIDI → AGENTS). Open Stev, turn it on and try again.";
+                          (Settings → AI). Open Stev, turn it on and try again.";
 
 /// What a call that got no answer in time says: the sequencer thread was
 /// slow, or another client's call was being served (decision 17).

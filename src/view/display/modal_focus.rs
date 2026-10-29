@@ -31,20 +31,16 @@ pub(crate) enum MidiSettingsFocus {
     /// The MIDI-output offset row — a number, not a list, so the arrow keys
     /// nudge the value instead of moving a cursor. See `160-midi-out-offset.md`.
     OutOffset,
-    /// The *Allow AI agents* row — a switch: Enter, Space and the arrow keys
-    /// flip it. See `360-mcp-server.md`.
-    Agents,
 }
 
 impl MidiSettingsFocus {
     /// The next row, as Tab / ←/→ cycle them: IN PORT → OUT PORT → OUT
-    /// OFFSET → AGENTS → IN PORT.
+    /// OFFSET → IN PORT.
     pub(crate) fn next(self) -> MidiSettingsFocus {
         match self {
             MidiSettingsFocus::InPort => MidiSettingsFocus::OutPort,
             MidiSettingsFocus::OutPort => MidiSettingsFocus::OutOffset,
-            MidiSettingsFocus::OutOffset => MidiSettingsFocus::Agents,
-            MidiSettingsFocus::Agents => MidiSettingsFocus::InPort,
+            MidiSettingsFocus::OutOffset => MidiSettingsFocus::InPort,
         }
     }
 
@@ -52,19 +48,18 @@ impl MidiSettingsFocus {
     /// [`next`](Self::next).
     pub(crate) fn previous(self) -> MidiSettingsFocus {
         match self {
-            MidiSettingsFocus::InPort => MidiSettingsFocus::Agents,
+            MidiSettingsFocus::InPort => MidiSettingsFocus::OutOffset,
             MidiSettingsFocus::OutPort => MidiSettingsFocus::InPort,
             MidiSettingsFocus::OutOffset => MidiSettingsFocus::OutPort,
-            MidiSettingsFocus::Agents => MidiSettingsFocus::OutOffset,
         }
     }
 
-    /// The port list this row is — `None` for the offset and agents rows.
+    /// The port list this row is — `None` for the offset row.
     pub(crate) fn port_side(self) -> Option<PortSide> {
         match self {
             MidiSettingsFocus::InPort => Some(PortSide::In),
             MidiSettingsFocus::OutPort => Some(PortSide::Out),
-            MidiSettingsFocus::OutOffset | MidiSettingsFocus::Agents => None,
+            MidiSettingsFocus::OutOffset => None,
         }
     }
 }
@@ -112,6 +107,9 @@ pub(crate) enum SettingsTab {
     /// Every command and its keys, with the fixed keys after them
     /// (`keyboard_tab.rs`).
     Keyboard,
+    /// *Allow AI agents*, what it does and how to connect a client
+    /// (`ai_tab.rs`, `360-mcp-server.md`).
+    Ai,
     /// The version, the links, the VST logo and (macOS) Check for updates
     /// (`about_tab.rs`).
     About,
@@ -119,10 +117,11 @@ pub(crate) enum SettingsTab {
 
 impl SettingsTab {
     /// Every tab, in tab-strip order.
-    pub(crate) const ALL: [SettingsTab; 4] = [
+    pub(crate) const ALL: [SettingsTab; 5] = [
         SettingsTab::Midi,
         SettingsTab::Appearance,
         SettingsTab::Keyboard,
+        SettingsTab::Ai,
         SettingsTab::About,
     ];
 
@@ -132,6 +131,7 @@ impl SettingsTab {
             SettingsTab::Midi => "MIDI",
             SettingsTab::Appearance => "APPEARANCE",
             SettingsTab::Keyboard => "KEYBOARD",
+            SettingsTab::Ai => "AI",
             SettingsTab::About => "ABOUT",
         }
     }
@@ -151,7 +151,7 @@ mod tests {
     #[test]
     fn the_rows_cycle_back_to_the_input_list() {
         let mut focus = MidiSettingsFocus::InPort;
-        for _ in 0..4 {
+        for _ in 0..3 {
             focus = focus.next();
         }
         assert_eq!(focus, MidiSettingsFocus::InPort);
@@ -163,13 +163,12 @@ mod tests {
             MidiSettingsFocus::InPort,
             MidiSettingsFocus::OutPort,
             MidiSettingsFocus::OutOffset,
-            MidiSettingsFocus::Agents,
         ] {
             assert_eq!(focus.next().previous(), focus);
         }
         assert_eq!(
             MidiSettingsFocus::InPort.previous(),
-            MidiSettingsFocus::Agents
+            MidiSettingsFocus::OutOffset
         );
     }
 
@@ -179,14 +178,14 @@ mod tests {
             assert_eq!(side.focus().port_side(), Some(side));
         }
         assert_eq!(MidiSettingsFocus::OutOffset.port_side(), None);
-        assert_eq!(MidiSettingsFocus::Agents.port_side(), None);
     }
 
     #[test]
     fn stepping_a_tab_wraps_at_both_ends() {
         assert_eq!(SettingsTab::Midi.stepped(1), SettingsTab::Appearance);
         assert_eq!(SettingsTab::Appearance.stepped(1), SettingsTab::Keyboard);
-        assert_eq!(SettingsTab::Keyboard.stepped(1), SettingsTab::About);
+        assert_eq!(SettingsTab::Keyboard.stepped(1), SettingsTab::Ai);
+        assert_eq!(SettingsTab::Ai.stepped(1), SettingsTab::About);
         assert_eq!(SettingsTab::About.stepped(1), SettingsTab::Midi);
         assert_eq!(SettingsTab::Midi.stepped(-1), SettingsTab::About);
         assert_eq!(SettingsTab::Keyboard.stepped(-1), SettingsTab::Appearance);

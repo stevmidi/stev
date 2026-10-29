@@ -2,7 +2,8 @@
 //! or `⌘/Ctrl+,` closes it, the tab chords switch tabs, `?` shows the
 //! Keyboard tab, and inside a tab the arrows move a cursor (the MIDI rows,
 //! the theme list, the Keyboard tab's rows), Enter connects a port, records
-//! a shortcut or (About, macOS) checks for updates, and a click or wheel is resolved by
+//! a shortcut, flips *Allow AI agents* or (About, macOS) checks for
+//! updates, and a click or wheel is resolved by
 //! `settings_modal.rs`. The showing tab sees a key before the modal's Esc
 //! and `?` do, so the Keyboard tab's Esc clears a search first and its `?`
 //! is typing; every other key there is the search field's. A Keyboard tab
@@ -53,6 +54,7 @@ impl Display {
             SettingsTab::Midi => self.handle_midi_tab_key(key, modifiers),
             SettingsTab::Appearance => self.handle_appearance_tab_key(key),
             SettingsTab::Keyboard => self.handle_keyboard_tab_key(key, modifiers),
+            SettingsTab::Ai => self.handle_ai_tab_key(key),
             SettingsTab::About => self.handle_about_tab_key(key),
         }
     }
@@ -67,12 +69,20 @@ impl Display {
         false
     }
 
-    /// The MIDI tab's keys: Tab and ←/→ cycle the four rows, ⇧Tab
-    /// backwards; ↑/↓ move the
-    /// focused port list's cursor or nudge the offset (applied and saved at
-    /// once); Enter connects the port under the cursor. On the agents row,
-    /// Enter, Space and ↑/↓ flip the switch. Returns whether it took the
-    /// key.
+    /// The AI tab's keys: Enter, Space and ↑/↓ flip *Allow AI agents*, its
+    /// one switch. Returns whether it took the key.
+    fn handle_ai_tab_key(&mut self, key: Key) -> bool {
+        if !matches!(key, Key::Enter | Key::Space | Key::ArrowUp | Key::ArrowDown) {
+            return false;
+        }
+        self.toggle_agent_bridge();
+        true
+    }
+
+    /// The MIDI tab's keys: Tab and ←/→ cycle the three rows, ⇧Tab
+    /// backwards; ↑/↓ move the focused port list's cursor or nudge the
+    /// offset (applied and saved at once); Enter connects the port under the
+    /// cursor. Returns whether it took the key.
     fn handle_midi_tab_key(&mut self, key: Key, modifiers: KeyModifiers) -> bool {
         let focus = self.settings.midi.focus;
         let step = match key {
@@ -82,10 +92,6 @@ impl Display {
             }
             Key::Tab | Key::ArrowLeft | Key::ArrowRight => {
                 self.settings.midi.focus = self.settings.midi.focus.next();
-                return true;
-            }
-            Key::Enter | Key::Space if focus == MidiSettingsFocus::Agents => {
-                self.toggle_agent_bridge();
                 return true;
             }
             Key::Enter => {
@@ -101,7 +107,6 @@ impl Display {
             MidiSettingsFocus::OutPort => self.settings.midi.output.move_selection(step),
             // Up raises the offset.
             MidiSettingsFocus::OutOffset => self.nudge_midi_out_offset(-step as i32),
-            MidiSettingsFocus::Agents => self.toggle_agent_bridge(),
         }
         true
     }

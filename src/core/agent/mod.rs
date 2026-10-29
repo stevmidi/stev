@@ -37,12 +37,16 @@ mod units;
 mod writes;
 
 #[cfg(unix)]
-pub(crate) use stdio::{MCP_FLAG, remove_socket, run_mcp_server, socket_path};
+pub(crate) use stdio::{remove_socket, run_mcp_server, socket_path};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::core::sequencer::{Sequencer, SequencerEdit};
+
+/// The command-line flag that makes the binary the MCP server. Defined on
+/// every platform: the settings modal's AI tab shows the command with it.
+pub(crate) const MCP_FLAG: &str = "--mcp";
 
 /// One tool call, as the `--mcp` process forwards it to the app: a JSON
 /// line on the socket.

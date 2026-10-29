@@ -50,6 +50,10 @@ const WEBSITE_URL: &str = "https://stevmidi.com";
 /// Stev's repository.
 const REPOSITORY_URL: &str = "https://github.com/stevmidi/stev";
 
+/// The README's AI agents section: setting up Claude Desktop and other
+/// clients.
+const AGENT_SETUP_URL: &str = "https://github.com/stevmidi/stev#ai-agents-experimental";
+
 /// A link the About tab shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AboutLink {
@@ -61,6 +65,9 @@ pub(crate) enum AboutLink {
     Release,
     /// This run's log file, shown in the file manager.
     Log,
+    /// The README's client setup, from the AI tab: for every client but
+    /// Claude Code, whose command the tab shows.
+    AgentSetup,
 }
 
 impl AboutLink {
@@ -76,6 +83,7 @@ impl AboutLink {
             AboutLink::Release => "View the release",
             AboutLink::Log if cfg!(target_os = "macos") => "Show log in Finder",
             AboutLink::Log => "Show log folder",
+            AboutLink::AgentSetup => "Claude Desktop and other clients: see the README",
         }
     }
 }
@@ -187,6 +195,7 @@ impl Display {
         let url = match link {
             AboutLink::Website => WEBSITE_URL,
             AboutLink::Repository => REPOSITORY_URL,
+            AboutLink::AgentSetup => AGENT_SETUP_URL,
             AboutLink::Release => match self.settings.about.release_url() {
                 Some(url) => url,
                 None => return,

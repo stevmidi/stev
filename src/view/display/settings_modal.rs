@@ -1,7 +1,8 @@
 //! The settings modal (`⌘/Ctrl+,`), an overlay over the view: opening and
 //! closing it, its tab chords, the theme list's scroll window, its mouse,
 //! and applying a theme. The MIDI tab's own state is `midi_tab.rs`, the
-//! Keyboard tab's `keyboard_tab.rs`, the About tab's `about_tab.rs`; the
+//! Keyboard tab's `keyboard_tab.rs`, the AI tab's `ai_tab.rs`, the About
+//! tab's `about_tab.rs`; the
 //! keys inside a tab are
 //! `input/modal.rs`; drawing and the click hit-test
 //! share one layout in `rendering/modals/settings.rs`. See
@@ -19,6 +20,7 @@ use crate::view::appkit::{AppMenuRequest, take_app_menu_request};
 use crate::view::theme;
 
 use super::about_tab::{AboutLink, AboutTab};
+use super::ai_tab::AiTab;
 use super::browser::scroll_to_show;
 use super::keyboard_tab::{KeyboardTab, TabClick};
 use super::midi_tab::MidiTab;
@@ -43,6 +45,8 @@ pub(super) struct SettingsModal {
     pub(super) wheel: f32,
     /// The Keyboard tab's search, selection and scroll.
     pub(super) keys: KeyboardTab,
+    /// The AI tab's switch and server command.
+    pub(super) ai: AiTab,
     /// The About tab's update check and logo.
     pub(super) about: AboutTab,
     /// Each tab label's width, in [`SettingsTab::ALL`] order, measured at
@@ -61,6 +65,7 @@ impl SettingsModal {
             theme_scroll: 0,
             wheel: 0.0,
             keys: KeyboardTab::default(),
+            ai: AiTab::default(),
             about: AboutTab::default(),
             tab_label_w: [0.0; SettingsTab::ALL.len()],
         }
@@ -75,8 +80,10 @@ pub(super) enum SettingsHit {
     /// A MIDI section — its header, the offset row, or the empty and ghost
     /// slots of a port list: focuses that row.
     Section(MidiSettingsFocus),
-    /// The *Allow AI agents* switch's row: flips it.
+    /// The AI tab's *Allow AI agents* switch: flips it.
     AgentBridge,
+    /// The AI tab's Claude Code command: copies it.
+    CopyCommand,
     /// A port in the `side` list, by index into it.
     Port(PortSide, usize),
     /// A theme, by index.
@@ -93,7 +100,7 @@ pub(super) enum SettingsHit {
     Search,
     /// The Keyboard tab's Reset all.
     ResetAll,
-    /// A link on the About tab.
+    /// A link on the About tab, or the AI tab's setup link.
     Link(AboutLink),
     /// The About tab's Check for updates (macOS, `UPDATE_CHECK`).
     CheckForUpdates,
@@ -147,11 +154,13 @@ impl Display {
     /// Opens the settings modal over the view on the tab last used:
     /// the MIDI focus back on IN PORT, each port list's cursor on its
     /// connected port, the theme list scrolled to the active theme, the
-    /// Keyboard tab's search empty. The port lists are already current — the
+    /// Keyboard tab's search empty, the AI tab's command no longer marked
+    /// copied. The port lists are already current — the
     /// `"midiwatcher"` keeps them so.
     pub(super) fn open_settings(&mut self) {
         self.overlay = Some(Overlay::Settings);
         self.settings.keys = KeyboardTab::default();
+        self.settings.ai.copied = false;
         self.settings.midi.focus = MidiSettingsFocus::InPort;
         self.settings.midi.input.select_current();
         self.settings.midi.output.select_current();
@@ -251,11 +260,7 @@ impl Display {
     /// its socket at once, and the handler saves the setting. See
     /// `360-mcp-server.md`.
     pub(super) fn toggle_agent_bridge(&mut self) {
-        let on = !self.settings.midi.agent_bridge;
-        self.settings.midi.agent_bridge = on;
-        if let Some(tx) = &self.settings.midi.agent_bridge_tx {
-            tx.send(on).ok();
-        }
+        let on = self.settings.ai.toggle();
         self.input_event_tx
             .send(InputEvent::SaveAgentBridge { enabled: on })
             .ok();
@@ -306,10 +311,8 @@ impl Display {
         match hit {
             SettingsHit::Tab(tab) => self.settings.tab = tab,
             SettingsHit::Section(focus) => self.settings.midi.focus = focus,
-            SettingsHit::AgentBridge => {
-                self.settings.midi.focus = MidiSettingsFocus::Agents;
-                self.toggle_agent_bridge();
-            }
+            SettingsHit::AgentBridge => self.toggle_agent_bridge(),
+            SettingsHit::CopyCommand => self.settings.ai.request_copy(),
             SettingsHit::Port(side, idx) => {
                 self.settings.midi.focus = side.focus();
                 self.settings.midi.list_mut(side).select(idx);
@@ -330,10 +333,13 @@ impl Display {
 
     /// A wheel or trackpad scroll in the settings modal: scrolls the theme
     /// list or the Keyboard tab's list a row per row height of travel. The
-    /// MIDI tab's lists follow their cursors only; the About tab doesn't
-    /// scroll.
+    /// MIDI tab's lists follow their cursors only; the AI and About tabs
+    /// don't scroll.
     pub(super) fn scroll_settings(&mut self, delta_y: f32) {
-        if matches!(self.settings.tab, SettingsTab::Midi | SettingsTab::About) {
+        if matches!(
+            self.settings.tab,
+            SettingsTab::Midi | SettingsTab::Ai | SettingsTab::About
+        ) {
             return;
         }
         let rows = wheel_rows(&mut self.settings.wheel, delta_y, Self::SETTINGS_ROW_H);
@@ -341,7 +347,7 @@ impl Display {
             return;
         }
         match self.settings.tab {
-            SettingsTab::Midi | SettingsTab::About => {}
+            SettingsTab::Midi | SettingsTab::Ai | SettingsTab::About => {}
             SettingsTab::Appearance => {
                 self.settings.theme_scroll = scroll_by(
                     self.settings.theme_scroll,

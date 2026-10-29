@@ -2,9 +2,11 @@
 //! strip along its top and the showing tab below — MIDI (the input / output
 //! port lists and the output-offset row), Appearance (the theme list),
 //! Keyboard (the search field over every command and fixed key,
-//! `keyboard_tab.rs`) or About (the version, the links, the VST logo and,
-//! on macOS, Check for updates, `about_tab.rs`). The layout is shared with the click hit-test
-//! ([`settings_hit_at`](Display::settings_hit_at)), so the two can't drift.
+//! `keyboard_tab.rs`), AI (*Allow AI agents*, what it is and how to connect
+//! a client, `ai_tab.rs`) or About (the version, the links, the VST logo
+//! and, on macOS, Check for updates, `about_tab.rs`). The layout is shared
+//! with the click hit-test ([`settings_hit_at`](Display::settings_hit_at)),
+//! so the two can't drift.
 
 use std::borrow::Cow;
 use std::env::consts::ARCH;
@@ -14,6 +16,7 @@ use egui::{Context, Id, Pos2, Theme, Ui};
 
 use crate::core::update_check::{CURRENT_VERSION, UpdateCheck};
 use crate::view::display::about_tab::{AboutLink, UPDATE_CHECK, UpdateState, VST_LOGO_SIZE};
+use crate::view::display::ai_tab::AiTab;
 
 use crate::view::display::keyboard_tab::{
     KeyboardFocus, Recording, ShortcutLine, ShortcutRow, row_lines, shortcut_lines,
@@ -84,8 +87,29 @@ struct MidiTabLayout {
     ports: [Section; 2],
     /// The output-offset section: one value row.
     offset: Section,
+}
+
+/// The AI tab's opening paragraph: what the feature is.
+const ABOUT_AGENTS: &str = "Lets an AI client such as Claude Code read and edit the open project \
+                            through MCP: marquee a section and ask what key it's in, for a chord \
+                            progression to go with it, or for help continuing it when you're \
+                            stuck. Each change is one undo step. Experimental.";
+
+/// The AI tab's note under it: where what the agent reads goes.
+const AGENTS_PRIVACY: &str = "What it reads goes to your AI client and whoever runs its model.";
+
+/// Where the AI tab's parts sit.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct AiTabLayout {
     /// The *Allow AI agents* section: one switch row.
-    agents: Section,
+    switch: Section,
+    /// Where the explanation and the setup steps flow, under the switch and
+    /// down to the command.
+    body: Rect,
+    /// The Claude Code command, framed: a click copies it.
+    command: Rect,
+    /// The README link for other clients, at the foot.
+    link: Rect,
 }
 
 /// Where the Keyboard tab's parts sit.
@@ -145,19 +169,21 @@ impl Display {
     const RESET_ALL_W: f32 = 240.0 * Self::M_SCALE;
     /// Radius of the dot by a rebound command's chords.
     const CHANGED_DOT_R: f32 = 2.5 * Self::M_SCALE;
+    /// Height of the AI tab's command frame: two lines of the command.
+    const AI_COMMAND_H: f32 = 2.0 * Self::SETTINGS_ROW_H;
     /// Width of the About tab's Check for updates.
     const CHECK_W: f32 = 130.0 * Self::M_SCALE;
     /// Line height of the trademark sentence: its two lines fit beside the
     /// logo.
     const ABOUT_NOTE_LINE_H: f32 = 1.3 * Self::FONT_HINT;
 
-    /// The content height: the taller of the fullest MIDI tab (four
+    /// The content height: the taller of the fullest MIDI tab (three
     /// headers; two port lists of `PORT_ROWS` plus a ghost row each; the
-    /// offset row; the agents row) and the theme window — so switching tabs
-    /// never makes the panel jump.
+    /// offset row) and the theme window — so switching tabs never makes the
+    /// panel jump.
     fn settings_content_h() -> f32 {
-        let midi = 4.0 * Self::SETTINGS_SECTION_H
-            + (2 * (PORT_ROWS + 1) + 2) as f32 * Self::SETTINGS_ROW_H;
+        let midi = 3.0 * Self::SETTINGS_SECTION_H
+            + (2 * (PORT_ROWS + 1) + 1) as f32 * Self::SETTINGS_ROW_H;
         let themes = THEME_ROWS as f32 * Self::SETTINGS_ROW_H;
         midi.max(themes)
     }
@@ -232,8 +258,7 @@ impl Display {
     }
 
     /// The MIDI tab in `content` for `midi`'s port lists: the input section,
-    /// the output section under it, then the offset, then the agents
-    /// switch. Pure geometry.
+    /// the output section under it, then the offset. Pure geometry.
     fn midi_tab_layout(content: Rect, midi: &MidiTab) -> MidiTabLayout {
         let mut top = content.min.y;
         let ports = PortSide::ALL.map(|side| {
@@ -243,11 +268,37 @@ impl Display {
             top = section.area.max.y;
             section
         });
-        let offset = Self::settings_section(content, top, 1, 1);
         MidiTabLayout {
             ports,
-            offset,
-            agents: Self::settings_section(content, offset.area.max.y, 1, 1),
+            offset: Self::settings_section(content, top, 1, 1),
+        }
+    }
+
+    /// The AI tab in `content`: the switch's section at the top, the README
+    /// link along the foot, the command's frame a gap above it, and the
+    /// text between. Pure geometry.
+    fn ai_tab_layout(content: Rect) -> AiTabLayout {
+        let gap = Self::SETTINGS_STRIP_GAP;
+        let switch = Self::settings_section(content, content.min.y, 1, 1);
+        let link = Rect::from_min_max(
+            pos2(content.min.x, content.max.y - Self::SETTINGS_ROW_H),
+            content.max,
+        );
+        let command = Rect::from_min_max(
+            pos2(
+                content.min.x + Self::SETTINGS_TEXT_INSET,
+                link.min.y - gap - Self::AI_COMMAND_H,
+            ),
+            pos2(content.max.x - Self::SETTINGS_TEXT_INSET, link.min.y - gap),
+        );
+        AiTabLayout {
+            switch,
+            body: Rect::from_min_max(
+                pos2(content.min.x, switch.area.max.y + gap),
+                pos2(content.max.x, command.min.y - gap),
+            ),
+            command,
+            link,
         }
     }
 
@@ -388,18 +439,6 @@ impl Display {
                             .contains(p)
                             .then_some(SettingsHit::Section(MidiSettingsFocus::OutOffset))
                     })
-                    .or_else(|| {
-                        midi.agents
-                            .rows
-                            .hit(p)
-                            .map(|_| SettingsHit::AgentBridge)
-                            .or_else(|| {
-                                midi.agents
-                                    .area
-                                    .contains(p)
-                                    .then_some(SettingsHit::Section(MidiSettingsFocus::Agents))
-                            })
-                    })
             }
             SettingsTab::Appearance => Self::theme_rows(layout.content).hit(p).map(|i| {
                 SettingsHit::Theme(
@@ -425,6 +464,21 @@ impl Display {
                         row,
                         keys: p.x >= window.first.center().x,
                     })
+            }
+            SettingsTab::Ai => {
+                let ai = Self::ai_tab_layout(layout.content);
+                if ai.switch.rows.hit(p).is_some() {
+                    Some(SettingsHit::AgentBridge)
+                } else if cfg!(unix)
+                    && self.settings.ai.claude_code_command.is_some()
+                    && ai.command.contains(p)
+                {
+                    Some(SettingsHit::CopyCommand)
+                } else {
+                    ai.link
+                        .contains(p)
+                        .then_some(SettingsHit::Link(AboutLink::AgentSetup))
+                }
             }
             SettingsTab::About => self.about_hit_at(Self::about_tab_layout(layout.content), p),
         };
@@ -492,6 +546,7 @@ impl Display {
             SettingsTab::Midi => self.draw_midi_tab(painter, layout.content),
             SettingsTab::Appearance => self.draw_appearance_tab(painter, layout.content),
             SettingsTab::Keyboard => self.draw_keyboard_tab(painter, layout.content),
+            SettingsTab::Ai => Self::draw_ai_tab(painter, layout.content, &self.settings.ai),
             SettingsTab::About => self.draw_about_tab(painter, layout.content),
         }
     }
@@ -697,32 +752,134 @@ impl Display {
             FontId::proportional(Self::FONT_HINT),
             theme::fg_dim(),
         );
+    }
 
-        // A switch: Enter, Space, ↑/↓ or a click flip it, applied at once.
-        // See `360-mcp-server.md`.
-        let agents_focused = focus == MidiSettingsFocus::Agents;
-        let on = self.settings.midi.agent_bridge;
-        let row = layout.agents.rows.row(0);
-        Self::draw_settings_header(painter, layout.agents, "AGENTS", agents_focused);
+    /// The AI tab: the *Allow AI agents* switch — the tab's one row, so
+    /// always the cursor; Enter, Space, ↑/↓ or a click flip it, applied at
+    /// once — what the feature is, the two steps that connect Claude Code
+    /// with the command to run (framed, accented once a click copied it),
+    /// and a link to the README for every other client. Off Unix there is
+    /// no server, so one line says so instead of the steps and the command;
+    /// while macOS runs a translocated copy, step 2 asks for a move to
+    /// Applications instead of showing a command that would stop working.
+    /// See `360-mcp-server.md`.
+    fn draw_ai_tab(painter: &Painter, content: Rect, ai: &AiTab) {
+        let layout = Self::ai_tab_layout(content);
+        let on = ai.agent_bridge;
+        Self::draw_settings_header(painter, layout.switch, "AGENTS", true);
         Self::draw_settings_row(
             painter,
-            row,
+            layout.switch.rows.row(0),
             if on {
                 "Allow AI agents: on"
             } else {
                 "Allow AI agents: off"
             },
-            agents_focused,
+            true,
             true,
             on,
         );
-        painter.text(
-            pos2(row.max.x - Self::SETTINGS_TEXT_INSET, row.center().y),
-            Align2::RIGHT_CENTER,
-            "lets an MCP client read the project",
-            FontId::proportional(Self::FONT_HINT),
-            theme::fg_dim(),
+
+        let body = layout.body;
+        let list = FontId::proportional(Self::FONT_LIST);
+        let mut top = body.min.y;
+        let about = [
+            (ABOUT_AGENTS, list.clone(), theme::fg()),
+            (
+                AGENTS_PRIVACY,
+                FontId::proportional(Self::FONT_HINT),
+                theme::fg_dim(),
+            ),
+        ];
+        for (text, font, color) in about {
+            top = Self::draw_settings_paragraph(painter, body, top, 0.0, text, &font, color);
+            top += Self::SETTINGS_STRIP_GAP;
+        }
+        let header = Rect::from_min_size(
+            pos2(body.min.x, top),
+            vec2(body.width(), Self::SETTINGS_SECTION_H),
         );
+        let color = theme::fg_dim();
+        Self::draw_settings_text(painter, header, "CONNECT A CLIENT", Self::FONT_HINT, color);
+        top = header.max.y;
+        let command = ai.claude_code_command.as_deref().filter(|_| cfg!(unix));
+        let steps: &[&str] = if !cfg!(unix) {
+            &["Not available on this platform yet."]
+        } else if command.is_none() {
+            &[
+                "1. Turn on Allow AI agents above.",
+                "2. Move Stev to Applications and open it again. macOS is running a \
+                 temporary copy of it, whose path changes at every launch.",
+            ]
+        } else if ai.copied {
+            &[
+                "1. Turn on Allow AI agents above.",
+                "2. For Claude Code, run this once in Terminal. Copied.",
+            ]
+        } else {
+            &[
+                "1. Turn on Allow AI agents above.",
+                "2. For Claude Code, run this once in Terminal (click to copy):",
+            ]
+        };
+        for text in steps {
+            top = Self::draw_settings_paragraph(painter, body, top, 0.0, text, &list, theme::fg());
+        }
+        if let Some(command) = command {
+            Self::draw_ai_command(painter, layout.command, command, ai.copied);
+        }
+        Self::draw_settings_text(
+            painter,
+            layout.link,
+            AboutLink::AgentSetup.label(),
+            Self::FONT_LIST,
+            theme::accent(),
+        );
+    }
+
+    /// Paints the Claude Code `command` in its frame, wrapped in the
+    /// monospace hint font; the frame is accented once a click `copied` it.
+    fn draw_ai_command(painter: &Painter, rect: Rect, command: &str, copied: bool) {
+        painter.rect_filled(
+            rect,
+            CornerRadius::same(3),
+            theme::fg_dim().gamma_multiply(0.08),
+        );
+        painter.rect_stroke(
+            rect,
+            CornerRadius::same(3),
+            Stroke::new(1.0_f32, accent_if(copied, theme::separator())),
+            StrokeKind::Inside,
+        );
+        let inset = Self::SETTINGS_TEXT_INSET;
+        let font = FontId::monospace(Self::FONT_HINT);
+        let galley = painter.layout(
+            command.to_owned(),
+            font,
+            theme::fg(),
+            rect.width() - 2.0 * inset,
+        );
+        let top = rect.center().y - 0.5 * galley.size().y;
+        painter.galley(pos2(rect.min.x + inset, top), galley, theme::fg());
+    }
+
+    /// Paints `text` wrapped to `rect`'s width, less the text inset and
+    /// `indent`, from `top`; returns the y under it, for the next paragraph.
+    fn draw_settings_paragraph(
+        painter: &Painter,
+        rect: Rect,
+        top: f32,
+        indent: f32,
+        text: &str,
+        font: &FontId,
+        color: Color32,
+    ) -> f32 {
+        let left = rect.min.x + Self::SETTINGS_TEXT_INSET + indent;
+        let width = rect.max.x - Self::SETTINGS_TEXT_INSET - left;
+        let galley = painter.layout(text.to_owned(), font.clone(), color, width);
+        let bottom = top + galley.size().y;
+        painter.galley(pos2(left, top), galley, color);
+        bottom
     }
 
     /// The Appearance tab: a window over the theme list, the active theme
@@ -954,7 +1111,7 @@ mod tests {
     use crate::view::display::settings_modal::THEME_ROWS;
 
     /// Tab label widths as short and long as the real ones.
-    const LABEL_W: [f32; 4] = [40.0, 140.0, 110.0, 70.0];
+    const LABEL_W: [f32; 5] = [40.0, 140.0, 110.0, 25.0, 70.0];
 
     /// A canvas the size of a laptop window.
     fn canvas() -> Rect {
@@ -1071,6 +1228,27 @@ mod tests {
         assert!(layout.check.max.y < layout.logo.min.y);
         assert_eq!(layout.status.min.x, layout.check.max.x);
         assert_eq!(layout.status.max.x, content.max.x);
+    }
+
+    #[test]
+    fn the_ai_tab_flows_its_text_between_the_switch_and_the_command() {
+        let content = Display::settings_layout(canvas(), LABEL_W).content;
+        let layout = Display::ai_tab_layout(content);
+        assert_eq!(layout.switch.area.min.y, content.min.y);
+        assert!(layout.body.min.y > layout.switch.area.max.y);
+        assert!(layout.body.max.y < layout.command.min.y);
+        assert!(layout.command.max.y < layout.link.min.y);
+        assert!(content.contains_rect(layout.command));
+        assert_eq!(layout.link.max, content.max);
+        // Room for the explanation, the note, the header and the steps.
+        assert!(layout.body.height() >= 7.5 * Display::SETTINGS_ROW_H);
+    }
+
+    #[test]
+    fn the_tab_strip_fits_the_panel() {
+        let layout = Display::settings_layout(canvas(), LABEL_W);
+        let last = layout.tabs[layout.tabs.len() - 1];
+        assert!(last.max.x <= layout.panel.max.x - Display::SETTINGS_TAB_INSET);
     }
 
     #[test]
