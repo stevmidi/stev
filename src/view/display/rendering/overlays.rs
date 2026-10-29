@@ -1,4 +1,4 @@
-//! Painting the always-on overlays: the header info panel (tempo, meter, position,
+//! Painting the always-on overlays: the header info panel (tempo, meter, position, clock time,
 //! DSP/OVR chips, the computer keyboard's chip, the `?` chip into Settings' Keyboard tab), the footer's passing message, the dim in-lane cursor line,
 //! and the playhead. See
 //! `030-ui-design.md`.
@@ -10,7 +10,7 @@ use egui::{
     vec2,
 };
 
-use crate::core::time::{Meter, format_bpm, sixteenth_straight_ticks};
+use crate::core::time::{Meter, format_bpm, sixteenth_straight_ticks, ticks_to_millis_f64};
 use crate::view::display::browser::browser_toggle_rect;
 use crate::view::display::header_chip::HeaderChipRects;
 use crate::view::display::status_message::export_progress_text;
@@ -43,7 +43,7 @@ impl Display {
         FontId::proportional(theme::FONT_SIZE_HEADER_VALUE)
     }
 
-    /// Paints the header info panel (tempo, meter, position, DSP / OVR
+    /// Paints the header info panel (tempo, meter, position, clock time, DSP / OVR
     /// chips), and notes where the BPM and meter chips went
     /// (`tempo_field.rs`, `meter_field.rs`).
     pub(super) fn draw_header(&mut self, painter: &Painter, rect: Rect) {
@@ -92,6 +92,12 @@ impl Display {
                 format!("{bar:03}:{beat:02}:{sixteenth:02}"),
                 theme::accent(),
                 "000:00:00",
+            ),
+            (
+                "TIME",
+                clock_time(self.playback_tick(), self.tempo_us()),
+                theme::fg(),
+                "00:00:000",
             ),
         ];
 
@@ -603,12 +609,39 @@ fn song_position(tick: i32, meter: Meter) -> (i32, i32, i32) {
     (bar, beat, sixteenth)
 }
 
+/// The header's `TIME` readout for `tick` at `tempo_us` (µs per quarter):
+/// the wall-clock time from tick 0 as `mm:ss:SSS`. The minutes keep counting
+/// past an hour rather than rolling into an hours field. A tick before 0 reads
+/// as `00:00:000`.
+fn clock_time(tick: i32, tempo_us: i32) -> String {
+    let millis = ticks_to_millis_f64(tempo_us, tick.max(0)) as u64;
+    let (minutes, seconds, millis) = (millis / 60_000, millis / 1000 % 60, millis % 1000);
+    format!("{minutes:02}:{seconds:02}:{millis:03}")
+}
+
 #[cfg(test)]
 mod tests {
     use egui::Color32;
 
-    use super::{song_position, track_row_y_range, unfocused_tone};
-    use crate::core::time::{Meter, PPQN};
+    use super::{clock_time, song_position, track_row_y_range, unfocused_tone};
+    use crate::core::time::{Meter, PPQN, bpm_to_tempo_us};
+
+    #[test]
+    fn clock_time_formats_minutes_seconds_and_millis() {
+        // 120 BPM: a quarter is 500 ms.
+        let tempo = bpm_to_tempo_us(120);
+        assert_eq!(clock_time(0, tempo), "00:00:000");
+        assert_eq!(clock_time(PPQN / 4, tempo), "00:00:125");
+        assert_eq!(clock_time(3 * PPQN, tempo), "00:01:500");
+        assert_eq!(clock_time(150 * PPQN, tempo), "01:15:000");
+        // Minutes keep counting past an hour.
+        assert_eq!(clock_time(250 * PPQN, bpm_to_tempo_us(2)), "125:00:000");
+    }
+
+    #[test]
+    fn clock_time_reads_zero_before_tick_zero() {
+        assert_eq!(clock_time(-PPQN, bpm_to_tempo_us(120)), "00:00:000");
+    }
 
     #[test]
     fn song_position_counts_bars_beats_and_sixteenths() {

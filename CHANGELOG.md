@@ -20,6 +20,10 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ## [Unreleased]
 
+### Added
+
+- A `TIME` chip in the header, right of `POS`, shows the song position as clock time (`mm:ss:SSS`) at the project tempo.
+
 ## [0.11.0] - 2026-10-29
 
 ### Added
