@@ -23,7 +23,7 @@ use super::clipboard::ClipClipboard;
 use super::instrument_event::ClipInstrumentEvent;
 use super::instrument_notes::InstrumentNotes;
 use super::take_framing::TakeFraming;
-use crate::core::midi::out_queue::MidiOutMessage;
+use crate::core::midi::{message::Midi3, out_queue::MidiOutMessage};
 use crate::{
     core::{
         config,
@@ -34,7 +34,6 @@ use crate::{
     models::selection::Selection,
     models::{
         clip::{Clip, CopiedNote},
-        event::Event,
         performance_lane::PerformanceLane,
         track::{Track, TrackOutput},
     },
@@ -120,21 +119,20 @@ pub(crate) struct Sequencer {
     /// The rolling buffer every incoming note is fed into, ready to be
     /// committed (`capture.rs`).
     pub(super) capture_clip: Clip,
-    /// What was held into the running take when the transport started
-    /// (`begin_running_take`): the notes still down, spread from the start
-    /// tick as they were pressed, and the mod wheel when off its rest. In
-    /// *cursor* ticks, since the clock's numbering is not known until input
-    /// arrives: the take's first input while running moves them into
-    /// `capture_clip` (`place_held_notes`). Cleared with the buffer.
-    pub(super) capture_held: Vec<Event>,
+    /// The start tick of a running take whose carried events — what was
+    /// held into it (`begin_running_take`) — are still in cursor ticks,
+    /// waiting for the take's first input while running to move them into
+    /// the clock's numbering (`place_held_notes`). `None` once placed, with
+    /// nothing carried, and cleared with the buffer.
+    pub(super) capture_held_start: Option<i32>,
     /// Playback ticks since the running take began (`begin_running_take`),
     /// counted by [`Sequencer::tick`]: how far before its first input the
-    /// clock stood at the start, which places `capture_held`.
+    /// clock stood at the start, which places what was held into it.
     pub(super) ticks_into_take: i32,
     /// The player's last mod-wheel move while it is off its rest (`None` at
     /// 0), for a take to start from (`begin_running_take`). Where the wheel
     /// physically is, so the buffer's resets leave it alone.
-    pub(super) live_mod_wheel: Option<Event>,
+    pub(super) live_mod_wheel: Option<Midi3>,
     /// `clock_tick − playback_tick` when the latest message was captured
     /// while running — how far the capture clock's numbering sits from the
     /// cursor's. The clock only ever matches playback's *phase*, so this is
@@ -227,7 +225,7 @@ impl Sequencer {
             running,
             playback_retimed: false,
             capture_clip: Clip::new(),
-            capture_held: Vec::new(),
+            capture_held_start: None,
             ticks_into_take: 0,
             live_mod_wheel: None,
             capture_clock_offset: None,
@@ -322,7 +320,7 @@ impl Sequencer {
     /// Empties the running capture buffer.
     pub(crate) fn reset_capture(&mut self) {
         self.capture_clip = Clip::new();
-        self.capture_held.clear();
+        self.capture_held_start = None;
         self.capture_clock_offset = None;
         self.capture_last_note_at = None;
     }

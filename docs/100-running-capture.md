@@ -247,8 +247,8 @@ kinds of note fall out of that:
 
 A take can open on a chord pressed before the transport started. Starting playback
 (`Space`, `⌥Space`) calls `Sequencer::begin_running_take(start_tick)` in place of a
-plain `reset_capture`: it empties the buffer but keeps, in `capture_held`, what the
-player holds into the take:
+plain `reset_capture`: it empties the buffer, then puts back what the player holds into
+the take:
 
 - **the notes still down** — `Clip::open_note_ons` of the buffer, so a note released
   before the start stays out. The first-pressed lands on the start tick, each other one
@@ -260,17 +260,18 @@ player holds into the take:
   mod-wheel move (whatever the buffer's resets did since), on the start tick ahead of the
   notes. At 0 nothing is carried. Pitch bend is not: it springs back to centre.
 
-They are in **cursor** ticks, since the clock's numbering isn't known until input
-arrives. The take's first input while running (`place_held_notes`) moves them into the
-buffer ahead of itself, shifted into the clock's numbering by the offset *at the start*:
+They go in at **cursor** ticks, since the clock's numbering isn't known until input
+arrives; `capture_held_start` marks them as not yet placed. The take's first input while
+running (`place_held_notes`) shifts them, the buffer's only events at that point, into the
+clock's numbering by the offset *at the start*:
 the clock stood `ticks_into_take` (counted by `Sequencer::tick`) before that input, so
 `clock_at_start − start_tick`, rounded to whole loops, is exact however often the loop has
 wrapped since. The latest `capture_clock_offset` can't be used: the clock gains a loop on
 playback at every wrap, so a chord released after the wrap would land in the second pass.
-Until that first input `capture_buffer` puts them ahead of the (empty) buffer unshifted,
-so a commit while the chord is still held, with nothing else played, keeps it too. Input
-while stopped first drops them: with no input while playing they were never placed, and
-have been released by then.
+Until that first input there is no clock offset either, so a commit reads the buffer in
+cursor ticks, and a commit while the chord is still held, with nothing else played, keeps
+it too. Input while stopped with them still unplaced empties the buffer first: with no
+input while playing they never got a clock tick, and have been released by then.
 
 From there they are ordinary first-pass notes on the start tick: a commit before the
 first wrap keeps them (new clip, linear take, insert into a clip alike), a pass after the

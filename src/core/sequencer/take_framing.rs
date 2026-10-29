@@ -163,7 +163,7 @@ impl Sequencer {
         let target = self.selected_clip()?;
         let insert_at = target.cursor_tick();
         let target_window = (target.region().start(), target.region().end());
-        if insert_at >= target_window.1 || !self.capture_has_notes() {
+        if insert_at >= target_window.1 || !self.capture_clip.has_notes() {
             return None;
         }
 

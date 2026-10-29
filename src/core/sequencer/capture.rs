@@ -15,7 +15,7 @@ use uuid::Uuid;
 use crate::{
     core::{
         config,
-        midi::message::{Wheel, parse_wheel},
+        midi::message::{Wheel, midi3, parse_wheel},
         time,
     },
     models::{
@@ -87,7 +87,7 @@ impl Sequencer {
     ///
     /// [`CommitClipEdit`]: crate::core::sequencer::edit::CommitClipEdit
     pub(crate) fn build_committed_capture_clip(&self) -> Option<(usize, Clip)> {
-        if !self.capture_has_notes() {
+        if !self.capture_clip.has_notes() {
             return None;
         }
 
@@ -115,19 +115,17 @@ impl Sequencer {
         //   bar, likewise clamped and floored.
         // See `100-running-capture.md`.
         let anchor_tick = self.capture_anchor_tick(cursor_tick);
-        let capture = self.capture_buffer();
         let region_length = if self.playback_is_looping() {
             let loop_len = self.capture_loop_length();
             let phase = (cursor_tick - self.region_start()).rem_euclid(loop_len);
             (loop_len - phase).min(available).max(min_len)
         } else {
-            self.linear_content_length(&capture, anchor_tick)
+            self.linear_content_length(anchor_tick)
                 .min(available)
                 .max(min_len)
         };
 
         let mut clip = self.normalize_running_capture(
-            capture,
             anchor_tick,
             region_length,
             RunningCaptureTarget::NewClip,
@@ -167,17 +165,20 @@ impl Sequencer {
         // keeps counting in, so the difference would not be whole loops.
         if self.is_running() {
             self.capture_clock_offset = Some(tick - self.playback_tick());
-            self.place_held_notes(tick);
-        } else {
-            // Input while stopped after a take that never got any: its held
-            // notes have no clock tick to land on, and were released anyway.
-            self.capture_held.clear();
+            if let Some(start_tick) = self.capture_held_start.take() {
+                self.place_held_notes(tick, start_tick);
+            }
+        } else if self.capture_held_start.take().is_some() {
+            // Input while stopped after a take that never got any: the held
+            // notes, the buffer's only events, have no clock tick to land on
+            // and were released anyway.
+            self.capture_clip = Clip::new();
         }
         if is_note_on(message) {
             self.capture_last_note_at = Some(Instant::now());
         }
         if let Some((Wheel::Modulation, value)) = parse_wheel(message) {
-            self.live_mod_wheel = (value > 0).then(|| Event::from_midi_with_tick(message, tick));
+            self.live_mod_wheel = (value != Wheel::Modulation.neutral()).then(|| midi3(message));
         }
 
         self.add_midi_event_to_capture(message, tick);
@@ -186,75 +187,51 @@ impl Sequencer {
 
     /// Starts the capture of a running take from `start_tick`, where playback
     /// starts: empties the buffer, keeping what the player holds into the
-    /// take (`capture_held`) — a chord pressed before the transport started
-    /// would otherwise lose its note-ons and commit nothing. The
-    /// first-pressed note lands on `start_tick`, each other one after it by
-    /// the gap it was pressed with, at most
-    /// [`HELD_NOTE_SPREAD_TICKS`](config::HELD_NOTE_SPREAD_TICKS); a mod
-    /// wheel off its rest lands on `start_tick` ahead of them. Each note
-    /// keeps its real release, which arrives once playing. See
+    /// take — a chord pressed before the transport started would otherwise
+    /// lose its note-ons and commit nothing. A mod wheel off its rest lands
+    /// on `start_tick`, then the notes still down: the first-pressed on
+    /// `start_tick`, each other one after it by the gap it was pressed with,
+    /// at most [`HELD_NOTE_SPREAD_TICKS`](config::HELD_NOTE_SPREAD_TICKS).
+    /// Each note keeps its real release, which arrives once playing. They are
+    /// in cursor ticks until the take's first input while running
+    /// ([`place_held_notes`](Self::place_held_notes)). See
     /// `100-running-capture.md` § Notes held into a take.
     pub(crate) fn begin_running_take(&mut self, start_tick: i32) {
-        let held = self.capture_buffer().open_note_ons();
+        let held = self.capture_clip.open_note_ons();
         let first_on = held.iter().map(Event::tick).min().unwrap_or(0);
-        let mut carried: Vec<Event> = self.live_mod_wheel.iter().cloned().collect();
-        carried.extend(held);
-        for event in &mut carried {
-            let spread = if event.is_note_edge() {
-                (event.tick() - first_on).clamp(0, config::HELD_NOTE_SPREAD_TICKS)
-            } else {
-                0
-            };
-            event.set_tick(start_tick + spread);
-            event.set_length(0);
-        }
 
         self.reset_capture();
-        self.capture_held = carried;
+        if let Some(wheel) = self.live_mod_wheel {
+            self.capture_clip
+                .add_event(Event::from_midi_with_tick(&wheel, start_tick));
+        }
+        for mut note in held {
+            let spread = (note.tick() - first_on).clamp(0, config::HELD_NOTE_SPREAD_TICKS);
+            note.set_tick(start_tick + spread);
+            note.set_length(0);
+            self.capture_clip.add_event(note);
+        }
+        self.capture_held_start = (!self.capture_clip.events().is_empty()).then_some(start_tick);
         self.ticks_into_take = 0;
     }
 
-    /// On the take's first input while running, stamped `tick`: moves the
-    /// events held into it into the buffer, ahead of that input, in the
-    /// clock's numbering. The clock stood
-    /// [`ticks_into_take`](Self::ticks_into_take) earlier at the start, so
-    /// the shift from the start tick is exact however often the loop has
-    /// wrapped since — the latest `capture_clock_offset` grows a loop with
-    /// every wrap. Rounded to whole loops, dropping input latency, as
+    /// On the take's first input while running, stamped `tick`: moves what
+    /// [`begin_running_take`](Self::begin_running_take) carried from
+    /// `start_tick` — the buffer's only events — into the clock's numbering.
+    /// The clock stood [`ticks_into_take`](Self::ticks_into_take) earlier at
+    /// the start, so the shift is exact however often the loop has wrapped
+    /// since — the latest `capture_clock_offset` grows a loop with every
+    /// wrap. Rounded to whole loops, dropping input latency, as
     /// [`capture_clock_shift`](Self::capture_clock_shift) does.
-    fn place_held_notes(&mut self, tick: i32) {
-        let held = std::mem::take(&mut self.capture_held);
-        let Some(start_tick) = held.iter().map(Event::tick).min() else {
-            return;
-        };
+    fn place_held_notes(&mut self, tick: i32, start_tick: i32) {
         let clock_at_start = tick - self.ticks_into_take;
         let shift = time::snap_to_grid(clock_at_start - start_tick, self.capture_loop_length());
-        for mut event in held {
+        let held = std::mem::replace(&mut self.capture_clip, Clip::new());
+        for event in held.events() {
+            let mut event = event.clone();
             event.set_tick(event.tick() + shift);
             self.capture_clip.add_event(event);
         }
-    }
-
-    /// The capture buffer as the commits read it, events in insertion order
-    /// (which the windows anchor on). Ahead of it, the events held into a
-    /// take that has had no input since the start, at their cursor ticks —
-    /// with no input there is no clock offset either, so the cursor's
-    /// numbering is the commit's.
-    pub(super) fn capture_buffer(&self) -> Clip {
-        if self.capture_held.is_empty() {
-            return self.capture_clip.clone();
-        }
-        let mut buffer = Clip::new();
-        for event in self.capture_held.iter().chain(self.capture_clip.events()) {
-            buffer.add_event(event.clone());
-        }
-        buffer
-    }
-
-    /// Whether the capture holds a note to commit, held into the take or
-    /// played.
-    pub(super) fn capture_has_notes(&self) -> bool {
-        self.capture_clip.has_notes() || self.capture_held.iter().any(Event::is_note_edge)
     }
 
     /// Kicks the selected track's meter for a live note-on, as `tick` does for
@@ -321,7 +298,7 @@ impl Sequencer {
     ///
     /// [`InsertCaptureEdit`]: crate::core::sequencer::edit::InsertCaptureEdit
     pub(crate) fn build_running_capture_insert(&self) -> Option<CaptureInsert> {
-        if !self.capture_has_notes() {
+        if !self.capture_clip.has_notes() {
             return None;
         }
 
@@ -336,7 +313,6 @@ impl Sequencer {
         // The crop window is the target clip's length, pinned at the anchor's
         // phase in the arranger loop (independent of the clip).
         let capture = self.normalize_running_capture(
-            self.capture_buffer(),
             self.capture_anchor_tick(anchor),
             region_length,
             RunningCaptureTarget::InsertFromArranger,
@@ -362,11 +338,10 @@ impl Sequencer {
         })
     }
 
-    /// The played span of a linear take in `capture` (a
-    /// [`capture_buffer`](Self::capture_buffer)) from `cursor_tick`: the last note-on
+    /// The played span of a linear take from `cursor_tick`: the last note-on
     /// rounded up to the next bar, at least one bar.
-    fn linear_content_length(&self, capture: &Clip, cursor_tick: i32) -> i32 {
-        let last_on = Self::last_inserted_event_tick(capture.events(), EventType::NoteOn);
+    fn linear_content_length(&self, cursor_tick: i32) -> i32 {
+        let last_on = Self::last_inserted_event_tick(self.capture_clip.events(), EventType::NoteOn);
         let meter = self.meter();
         meter
             .next_bar_boundary_after(last_on - cursor_tick)
@@ -376,8 +351,8 @@ impl Sequencer {
     /// Converts a live MIDI capture into a finalized, clip-local form ready for
     /// commit.
     ///
-    /// `capture`, the [`capture_buffer`](Self::capture_buffer), holds events
-    /// in absolute capture-clock ticks. Whether the take is *looping* or *linear* follows
+    /// The raw capture buffer (`self.capture_clip`) holds events in absolute
+    /// transport ticks. Whether the take is *looping* or *linear* follows
     /// [`Self::playback_is_looping`] — the transport's own wrap condition, so a
     /// start after the region end is linear even with the loop flag on. In clip
     /// view the transport loop is the clip's own bounds.
@@ -417,11 +392,11 @@ impl Sequencer {
     /// survives.
     fn normalize_running_capture(
         &self,
-        mut capture: Clip,
         anchor_tick: i32,
         region_length: i32,
         target: RunningCaptureTarget,
     ) -> Option<Clip> {
+        let mut capture = self.capture_clip.clone();
         let bar = self.meter().bar_ticks();
 
         let transport_loop = self
@@ -462,7 +437,7 @@ impl Sequencer {
                 let before_anchor = (anchor_tick - first_on).max(0);
                 let pre_roll = (before_anchor + bar - 1) / bar * bar;
                 let retained_start = anchor_tick - pre_roll;
-                let retained_end = anchor_tick + self.linear_content_length(&capture, anchor_tick);
+                let retained_end = anchor_tick + self.linear_content_length(anchor_tick);
 
                 capture
                     .region_mut()
@@ -521,19 +496,16 @@ impl Sequencer {
     /// its window widened over everything it keeps: the whole last pass
     /// when looping, the pre-roll before the cursor when not. Pure.
     pub(crate) fn capture_take(&self) -> Option<CaptureTake> {
-        if !self.capture_has_notes() {
+        if !self.capture_clip.has_notes() {
             return None;
         }
         let (mut clip, place) = if self.is_running() {
             let anchor = self.capture_anchor_tick(self.cursor_tick());
-            let capture = self.capture_buffer();
             // The length only sizes a linear take's window: a looping one is
             // widened to the whole pass below.
-            let length = self.linear_content_length(&capture, anchor);
             let mut clip = self.normalize_running_capture(
-                capture,
                 anchor,
-                length,
+                self.linear_content_length(anchor),
                 RunningCaptureTarget::NewClip,
             )?;
             let (window_start, window_end) = (clip.region().start(), clip.region().end());
@@ -818,12 +790,7 @@ mod tests {
         seq.capture_clip.add_event(note_off(900));
 
         let result = seq
-            .normalize_running_capture(
-                seq.capture_buffer(),
-                0,
-                bar * 2,
-                RunningCaptureTarget::InsertFromArranger,
-            )
+            .normalize_running_capture(0, bar * 2, RunningCaptureTarget::InsertFromArranger)
             .unwrap();
 
         let on_tick = result
@@ -850,12 +817,7 @@ mod tests {
         seq.capture_clip.add_event(note_off(note_tick + 300));
 
         let result = seq
-            .normalize_running_capture(
-                seq.capture_buffer(),
-                0,
-                bar * 2,
-                RunningCaptureTarget::InsertFromArranger,
-            )
+            .normalize_running_capture(0, bar * 2, RunningCaptureTarget::InsertFromArranger)
             .unwrap();
 
         let on_tick = result
@@ -877,13 +839,8 @@ mod tests {
         let bar = Meter::FOUR_FOUR.bar_ticks();
         let seq = make_sequencer(0, bar * 2);
         assert!(
-            seq.normalize_running_capture(
-                seq.capture_buffer(),
-                0,
-                bar * 2,
-                RunningCaptureTarget::InsertFromArranger
-            )
-            .is_none()
+            seq.normalize_running_capture(0, bar * 2, RunningCaptureTarget::InsertFromArranger)
+                .is_none()
         );
     }
 
@@ -898,12 +855,7 @@ mod tests {
         seq.capture_clip.add_event(note_off(bar + 900));
 
         let result = seq
-            .normalize_running_capture(
-                seq.capture_buffer(),
-                0,
-                region_len,
-                RunningCaptureTarget::InsertFromArranger,
-            )
+            .normalize_running_capture(0, region_len, RunningCaptureTarget::InsertFromArranger)
             .unwrap();
 
         for event in result.events() {
@@ -1869,10 +1821,8 @@ mod tests {
     }
 
     /// The wheel events of `seq`'s selected clip as `(tick, message)`.
-    fn selected_clip_wheel_moves(seq: &Sequencer) -> Vec<(i32, Vec<u8>)> {
-        seq.selected_clip()
-            .unwrap()
-            .events()
+    fn wheel_moves(clip: &Clip) -> Vec<(i32, Vec<u8>)> {
+        clip.events()
             .iter()
             .filter(|e| e.event_type().is_none())
             .map(|e| (e.tick(), e.midi_message().to_vec()))
@@ -1898,7 +1848,7 @@ mod tests {
 
         assert_eq!(selected_clip_note_on_ticks(&seq), vec![600]);
         assert_eq!(
-            selected_clip_wheel_moves(&seq),
+            wheel_moves(seq.selected_clip().unwrap()),
             vec![(700, vec![0xE0, 0x00, 0x60]), (950, vec![0xB0, 0x01, 70])]
         );
     }
@@ -2213,9 +2163,12 @@ mod tests {
     fn play_note_with_clock_ahead(seq: &mut Sequencer, playback: i32, clock_ahead: i32) {
         seq.running.store(true, Ordering::Relaxed);
         for (offset, message) in [(600, [0x90, 60, 100]), (900, [0x80, 60, 0])] {
-            seq.playback_tick
-                .store(playback + offset, Ordering::Relaxed);
-            seq.handle_midi_input(&message, playback + offset + clock_ahead);
+            input_at(
+                seq,
+                message,
+                playback + offset,
+                playback + offset + clock_ahead,
+            );
         }
     }
 
@@ -2303,14 +2256,11 @@ mod tests {
         notes
     }
 
-    /// `(tick, value)` of each mod-wheel move in `clip`.
-    fn mod_wheel_of(clip: &Clip) -> Vec<(i32, u16)> {
-        clip.events()
-            .iter()
-            .filter_map(|e| match parse_wheel(e.midi_message()) {
-                Some((Wheel::Modulation, value)) => Some((e.tick(), value)),
-                _ => None,
-            })
+    /// `(tick, note)` of each note-on in `clip`, sorted.
+    fn ons_of(clip: &Clip) -> Vec<(i32, u8)> {
+        notes_of(clip)
+            .into_iter()
+            .map(|(tick, note, _)| (tick, note))
             .collect()
     }
 
@@ -2354,11 +2304,10 @@ mod tests {
 
         seq.commit_clip_to_track().unwrap();
 
-        let ons: Vec<_> = notes_of(last_clip(&seq))
-            .iter()
-            .map(|&(tick, note, _)| (tick, note))
-            .collect();
-        assert_eq!(ons, vec![(0, 60), (config::HELD_NOTE_SPREAD_TICKS, 64)]);
+        assert_eq!(
+            ons_of(last_clip(&seq)),
+            vec![(0, 60), (config::HELD_NOTE_SPREAD_TICKS, 64)]
+        );
     }
 
     /// Only what is still held at the start is carried: a note released
@@ -2373,11 +2322,7 @@ mod tests {
 
         seq.commit_clip_to_track().unwrap();
 
-        let ons: Vec<_> = notes_of(last_clip(&seq))
-            .iter()
-            .map(|&(tick, note, _)| (tick, note))
-            .collect();
-        assert_eq!(ons, vec![(0, 64)]);
+        assert_eq!(ons_of(last_clip(&seq)), vec![(0, 64)]);
     }
 
     /// The held chord belongs to the first pass: once the loop has wrapped
@@ -2451,33 +2396,33 @@ mod tests {
         assert_eq!(notes_of(last_clip(&seq)), vec![(0, 60, 900), (20, 64, 880)]);
     }
 
-    /// The mod wheel the player left off its rest — even before an earlier
-    /// stop emptied the buffer — starts the take on the cursor; one back at
-    /// rest adds nothing.
-    #[test]
-    fn a_mod_wheel_off_its_rest_is_carried_into_the_take() {
+    /// The wheel moves of a take started after the mod wheel `moves`, made
+    /// while stopped before an earlier reset emptied the buffer.
+    fn take_after_mod_wheel(moves: &[u8]) -> Vec<(i32, Vec<u8>)> {
         let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut seq = make_sequencer(0, bar * 2);
-        input_at(&mut seq, [0xB0, 1, 64], 0, 40_000);
+        for &value in moves {
+            input_at(&mut seq, [0xB0, 1, value], 0, 40_000);
+        }
         seq.reset_capture();
         hold_then_start(&mut seq, &[]);
         seq.ticks_into_take = 300;
         input_at(&mut seq, [0x90, 60, 100], 300, 300);
         input_at(&mut seq, [0x80, 60, 0], 500, 500);
-
         seq.commit_clip_to_track().unwrap();
-        assert_eq!(mod_wheel_of(last_clip(&seq)), vec![(0, 64)]);
+        wheel_moves(last_clip(&seq))
+    }
 
-        let mut seq = make_sequencer(0, bar * 2);
-        input_at(&mut seq, [0xB0, 1, 64], 0, 40_000);
-        input_at(&mut seq, [0xB0, 1, 0], 0, 40_100);
-        hold_then_start(&mut seq, &[]);
-        seq.ticks_into_take = 300;
-        input_at(&mut seq, [0x90, 60, 100], 300, 300);
-        input_at(&mut seq, [0x80, 60, 0], 500, 500);
-
-        seq.commit_clip_to_track().unwrap();
-        assert!(mod_wheel_of(last_clip(&seq)).is_empty());
+    /// The mod wheel the player left off its rest — even before a reset
+    /// emptied the buffer — starts the take on the cursor; one back at rest
+    /// adds nothing.
+    #[test]
+    fn a_mod_wheel_off_its_rest_is_carried_into_the_take() {
+        assert_eq!(
+            take_after_mod_wheel(&[64]),
+            vec![(0, Wheel::Modulation.message(64))]
+        );
+        assert!(take_after_mod_wheel(&[64, 0]).is_empty());
     }
 
     /// The held notes commit with a running `/` into a selected clip too.
@@ -2494,11 +2439,10 @@ mod tests {
 
         seq.insert_running_capture().unwrap();
 
-        let ons: Vec<_> = notes_of(seq.selected_clip().unwrap())
-            .iter()
-            .map(|&(tick, note, _)| (tick, note))
-            .collect();
-        assert_eq!(ons, vec![(0, 60), (40, 64)]);
+        assert_eq!(
+            ons_of(seq.selected_clip().unwrap()),
+            vec![(0, 60), (40, 64)]
+        );
     }
 
     #[test]
