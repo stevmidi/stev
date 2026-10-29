@@ -6,7 +6,12 @@
       "Bash(cargo fmt *)",
       "Bash(cargo test *)",
       "Bash(cargo doc *)",
-      "Bash(cargo build *)"
+      "Bash(cargo build *)",
+      "mcp__stev__get_context",
+      "mcp__stev__get_project",
+      "mcp__stev__get_notes",
+      "mcp__stev__get_timeline",
+      "mcp__stev__check_notes"
     ]
   },
   "hooks": {
