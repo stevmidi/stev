@@ -19,9 +19,8 @@ use crate::models::event::EventType;
 use crate::models::track::{Track, TrackOutput};
 
 use super::units::{
-    NoteRow, format_beats, format_position, note_name, parse_position, pitch_class_name,
+    NoteRow, counted, format_beats, format_position, note_name, parse_position, pitch_class_name,
 };
-use super::writes::counted;
 
 /// The most bars [`get_timeline`] reads in one call.
 pub(super) const TIMELINE_MAX_BARS: i32 = 16;
@@ -213,12 +212,13 @@ fn track_label(idx: usize, track: &Track) -> String {
 
 /// A clip as the reads name it: `a3f0c2e1 9 → 17`, then its
 /// [`clip_flags`].
-fn clip_summary(clip: &Clip, meter: Meter) -> String {
-    let mut text = format!(
-        "{} {}",
-        short_id(clip),
-        range_text(clip.start_tick(), clip.end_tick(), meter)
-    );
+pub(super) fn clip_summary(clip: &Clip, meter: Meter) -> String {
+    format!("{} {}", short_id(clip), clip_span(clip, meter))
+}
+
+/// Where a clip sits, then its [`clip_flags`]: `9 → 17 swing 58`.
+pub(super) fn clip_span(clip: &Clip, meter: Meter) -> String {
+    let mut text = range_text(clip.start_tick(), clip.end_tick(), meter);
     for flag in clip_flags(clip) {
         text.push(' ');
         text.push_str(&flag);
@@ -467,7 +467,7 @@ fn timeline_lines(
     while bar_start < to {
         let bar_end = bar_start + bar_ticks;
         let bar = bar_start / bar_ticks + 1;
-        let first_beat = bar_start + (from.max(bar_start) - bar_start) / PPQN * PPQN;
+        let first_beat = beat_span(from.max(bar_start), meter).0;
         let last = to.min(bar_end);
         let mut bar_lines = Vec::new();
         let mut all: Vec<&PlayedNote> = Vec::new();
@@ -485,7 +485,7 @@ fn timeline_lines(
             let mut previous: Option<Vec<i32>> = None;
             let mut beat = first_beat;
             while beat < last {
-                let beat_end = (beat + PPQN).min(bar_end);
+                let beat_end = beat_span(beat, meter).1;
                 let sounding: Vec<&PlayedNote> = bar_notes
                     .iter()
                     .copied()
@@ -515,13 +515,7 @@ fn timeline_lines(
             lines.push(format!("{head}  silence"));
         } else {
             all.sort_by_key(|n| (n.start, n.pitch));
-            let mut classes: Vec<&str> = Vec::new();
-            for note in &all {
-                let class = pitch_class_name(note.pitch);
-                if !classes.contains(&class) {
-                    classes.push(class);
-                }
-            }
+            let classes = pitch_classes(all.iter().map(|n| n.pitch));
             let lowest = all.iter().map(|n| n.pitch).min().unwrap_or(0);
             bar_lines.push(format!(
                 "{:>width$}: {}, lowest {}",
@@ -538,6 +532,27 @@ fn timeline_lines(
         bar_start = bar_end;
     }
     lines
+}
+
+/// The beat holding `tick` as the timeline counts beats: quarter notes from
+/// its bar line, the last one cut at the next bar line.
+pub(super) fn beat_span(tick: i32, meter: Meter) -> (i32, i32) {
+    let bar_start = meter.bar_line_at_or_before(tick);
+    let beat = bar_start + (tick - bar_start) / PPQN * PPQN;
+    (beat, (beat + PPQN).min(bar_start + meter.bar_ticks()))
+}
+
+/// The pitch classes of `pitches` in the order they first come, each once:
+/// `A C E`.
+pub(super) fn pitch_classes(pitches: impl IntoIterator<Item = i32>) -> Vec<&'static str> {
+    let mut classes = Vec::new();
+    for pitch in pitches {
+        let class = pitch_class_name(pitch);
+        if !classes.contains(&class) {
+            classes.push(class);
+        }
+    }
+    classes
 }
 
 /// `get_notes`: per track, the notes it plays over the range as rows,

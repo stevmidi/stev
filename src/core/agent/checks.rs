@@ -7,17 +7,19 @@
 //! overlaps the write would trim, and existing clips in the way. Nothing is
 //! written, and it runs whatever holds the edit (decision 13 is for writes).
 
+use std::collections::HashMap;
+
 use serde_json::Value;
 
 use crate::core::sequencer::Sequencer;
-use crate::core::time::{Meter, PPQN};
+use crate::core::time::Meter;
+use crate::models::clip::Clip;
 
-use super::reads::{PlayedNote, range_text, track_played, track_title};
-use super::units::{NoteRow, format_position, note_name, pitch_class_name};
-use super::writes::{
-    CleanupReport, Grid, PreparedClips, PreparedReplace, counted, new_clip_summary, prepare_clips,
-    prepare_replace,
+use super::reads::{
+    PlayedNote, beat_span, clip_span, pitch_classes, short_id, track_played, track_title,
 };
+use super::units::{NoteRow, counted, format_position, note_name, pitch_class_name};
+use super::writes::{Cleaned, PreparedClips, PreparedReplace, prepare_clips, prepare_replace};
 
 /// The most findings one check lists; the rest are counted.
 const MAX_FINDINGS: usize = 40;
@@ -26,83 +28,83 @@ const MAX_FINDINGS: usize = 40;
 struct Part {
     /// The track it goes on.
     track_idx: usize,
+    /// How the findings name the track: `track 1 "bass"`.
+    track: String,
     /// Where it starts: the tick its rows' starts count from.
     start: i32,
     /// Where it ends.
     end: i32,
     /// The rows as the write would put them, starts from `start`.
     rows: Vec<NoteRow>,
-    /// How the reply heads its rows.
+    /// How the reply heads its rows: `Clip 1, track 1 "bass", 17 → 21`.
     heading: String,
+}
+
+impl Part {
+    /// The part `clip` on `track_idx` holds as `rows` (from its start),
+    /// named `Clip <label>`.
+    fn new(
+        sequencer: &Sequencer,
+        label: String,
+        track_idx: usize,
+        clip: &Clip,
+        rows: Vec<NoteRow>,
+    ) -> Part {
+        let track = track_title(track_idx, &sequencer.tracks()[track_idx]);
+        Part {
+            heading: format!(
+                "Clip {label}, {track}, {}",
+                clip_span(clip, sequencer.meter())
+            ),
+            track_idx,
+            track,
+            start: clip.start_tick(),
+            end: clip.end_tick(),
+            rows,
+        }
+    }
 }
 
 /// `check_notes`: the call checked as `replace_clip_notes` when it names a
 /// `clip`, else as `create_clips`.
 pub(super) fn check_notes(sequencer: &Sequencer, args: &Value) -> Result<String, String> {
     let meter = sequencer.meter();
-    let (parts, report, grid, humanize, in_the_way) = if args.get("clip").is_some() {
-        let PreparedReplace {
-            track_idx,
-            clip_id,
-            rows,
-            report,
-            grid,
-            humanize,
-        } = prepare_replace(sequencer, args, None)?;
-        let Some(clip) = sequencer.clip_on(track_idx, clip_id) else {
-            return Err("That clip is gone; call get_context again.".to_owned());
+    let (parts, cleaned, in_the_way): (Vec<Part>, Cleaned, Vec<String>) =
+        if args.get("clip").is_some() {
+            let PreparedReplace {
+                track_idx,
+                clip,
+                rows,
+                cleaned,
+            } = prepare_replace(sequencer, args, None)?;
+            let rows = rebased(rows, clip.region().start());
+            let part = Part::new(sequencer, short_id(clip), track_idx, clip, rows);
+            (vec![part], cleaned, Vec::new())
+        } else {
+            let PreparedClips {
+                clips,
+                cleaned,
+                in_the_way,
+            } = prepare_clips(sequencer, args, None)?;
+            let parts = clips
+                .into_iter()
+                .enumerate()
+                .map(|(i, new)| {
+                    Part::new(
+                        sequencer,
+                        (i + 1).to_string(),
+                        new.track_idx,
+                        &new.clip,
+                        new.rows,
+                    )
+                })
+                .collect();
+            (parts, cleaned, in_the_way)
         };
-        let origin = clip.region().start();
-        let part = Part {
-            track_idx,
-            start: clip.start_tick(),
-            end: clip.end_tick(),
-            rows: rebased(&rows, origin),
-            heading: format!(
-                "Clip {}, {}",
-                new_clip_summary(clip, meter),
-                track_title(track_idx, &sequencer.tracks()[track_idx])
-            ),
-        };
-        (vec![part], report, grid, humanize, Vec::new())
-    } else {
-        let PreparedClips {
-            clips,
-            report,
-            grid,
-            humanize,
-            in_the_way,
-        } = prepare_clips(sequencer, args, None)?;
-        let parts = clips
-            .iter()
-            .enumerate()
-            .map(|(i, new)| {
-                let clip = &new.clip;
-                let swing = if clip.swing_pct() > 50 {
-                    format!(", swing {}", clip.swing_pct())
-                } else {
-                    String::new()
-                };
-                Part {
-                    track_idx: new.track_idx,
-                    start: clip.start_tick(),
-                    end: clip.end_tick(),
-                    rows: new.rows.clone(),
-                    heading: format!(
-                        "Clip {}, {}, {}{swing}",
-                        i + 1,
-                        track_title(new.track_idx, &sequencer.tracks()[new.track_idx]),
-                        range_text(clip.start_tick(), clip.end_tick(), meter)
-                    ),
-                }
-            })
-            .collect();
-        (parts, report, grid, humanize, in_the_way)
-    };
 
     let mut lines = vec![format!(
         "Dry run, nothing written. The rows as the write would put them{}:",
-        if humanize {
+        if cleaned.humanize() {
             ", before its humanising"
         } else {
             ""
@@ -114,8 +116,8 @@ pub(super) fn check_notes(sequencer: &Sequencer, args: &Value) -> Result<String,
     }
 
     let mut findings = clashes(sequencer, &parts, meter);
-    findings.extend(overlaps(sequencer, &parts, meter));
-    findings.extend(cleanup_finding(&report, grid));
+    findings.extend(overlaps(&parts, meter));
+    findings.extend(cleaned.changes());
     findings.extend(in_the_way.into_iter().map(|clip| {
         format!("{clip}: create_clips refuses to write over it unless replace_existing.")
     }));
@@ -134,18 +136,18 @@ pub(super) fn check_notes(sequencer: &Sequencer, args: &Value) -> Result<String,
 }
 
 /// `rows` in a clip's event ticks as rows from its window start `origin`.
-fn rebased(rows: &[NoteRow], origin: i32) -> Vec<NoteRow> {
-    rows.iter()
+fn rebased(rows: Vec<NoteRow>, origin: i32) -> Vec<NoteRow> {
+    rows.into_iter()
         .map(|row| NoteRow {
             start: row.start - origin,
-            ..*row
+            ..row
         })
         .collect()
 }
 
-/// What sounds on each track over the parts' span once the write is done:
-/// a track's own notes there, those inside a part on it replaced by the
-/// part's. Tracks that aren't heard sound nothing.
+/// What sounds on each track inside the parts once the write is done: a
+/// track's own notes there, those starting inside a part on it replaced by
+/// the part's. Tracks that aren't heard sound nothing.
 fn sounding_after(sequencer: &Sequencer, parts: &[Part]) -> Vec<Vec<PlayedNote>> {
     let from = parts.iter().map(|part| part.start).min().unwrap_or(0);
     let to = parts.iter().map(|part| part.end).max().unwrap_or(0);
@@ -163,9 +165,10 @@ fn sounding_after(sequencer: &Sequencer, parts: &[Part]) -> Vec<Vec<PlayedNote>>
                 .0
                 .into_iter()
                 .filter(|note| {
-                    !on_track
-                        .iter()
-                        .any(|part| (part.start..part.end).contains(&note.start))
+                    parts.iter().any(|part| note.overlaps(part.start, part.end))
+                        && !on_track
+                            .iter()
+                            .any(|part| (part.start..part.end).contains(&note.start))
                 })
                 .collect();
             for part in on_track {
@@ -185,29 +188,26 @@ fn sounding_after(sequencer: &Sequencer, parts: &[Part]) -> Vec<Vec<PlayedNote>>
 /// track 1 "bass": sounding A C E`.
 fn clashes(sequencer: &Sequencer, parts: &[Part], meter: Meter) -> Vec<String> {
     let sounding = sounding_after(sequencer, parts);
+    // What the other tracks sound in a beat, worked out once per beat and
+    // written track: rows sharing a beat share the answer.
+    let mut by_beat: HashMap<(i32, usize), Vec<&'static str>> = HashMap::new();
     let mut findings = Vec::new();
     for part in parts {
         for row in &part.rows {
             let tick = part.start + row.start;
-            let bar_start = meter.bar_line_at_or_before(tick);
-            let beat = bar_start + (tick - bar_start) / PPQN * PPQN;
-            let beat_end = (beat + PPQN).min(bar_start + meter.bar_ticks());
-            let mut others: Vec<i32> = sounding
-                .iter()
-                .enumerate()
-                .filter(|(idx, _)| *idx != part.track_idx)
-                .flat_map(|(_, notes)| notes)
-                .filter(|note| note.overlaps(beat, beat_end))
-                .map(|note| note.pitch)
-                .collect();
-            others.sort_unstable();
-            let mut classes: Vec<&str> = Vec::new();
-            for pitch in &others {
-                let class = pitch_class_name(*pitch);
-                if !classes.contains(&class) {
-                    classes.push(class);
-                }
-            }
+            let (beat, beat_end) = beat_span(tick, meter);
+            let classes = by_beat.entry((beat, part.track_idx)).or_insert_with(|| {
+                let mut others: Vec<i32> = sounding
+                    .iter()
+                    .enumerate()
+                    .filter(|(idx, _)| *idx != part.track_idx)
+                    .flat_map(|(_, notes)| notes)
+                    .filter(|note| note.overlaps(beat, beat_end))
+                    .map(|note| note.pitch)
+                    .collect();
+                others.sort_unstable();
+                pitch_classes(others)
+            });
             if classes.is_empty() || classes.contains(&pitch_class_name(row.pitch)) {
                 continue;
             }
@@ -215,7 +215,7 @@ fn clashes(sequencer: &Sequencer, parts: &[Part], meter: Meter) -> Vec<String> {
                 "{} at {} on {}: sounding {}",
                 note_name(row.pitch),
                 format_position(tick, meter),
-                track_title(part.track_idx, &sequencer.tracks()[part.track_idx]),
+                part.track,
                 classes.join(" ")
             ));
         }
@@ -226,12 +226,12 @@ fn clashes(sequencer: &Sequencer, parts: &[Part], meter: Meter) -> Vec<String> {
 /// One line per pair of written notes of one pitch that overlap: the write
 /// cuts the earlier where the later starts, and of two starting together
 /// keeps one.
-fn overlaps(sequencer: &Sequencer, parts: &[Part], meter: Meter) -> Vec<String> {
+fn overlaps(parts: &[Part], meter: Meter) -> Vec<String> {
     let mut findings = Vec::new();
     for part in parts {
         let mut rows = part.rows.clone();
         rows.sort_by_key(|row| (row.pitch, row.start));
-        let track = track_title(part.track_idx, &sequencer.tracks()[part.track_idx]);
+        let track = &part.track;
         for pair in rows.windows(2) {
             let (earlier, later) = (pair[0], pair[1]);
             if earlier.pitch != later.pitch || later.start >= earlier.start + earlier.length {
@@ -251,11 +251,6 @@ fn overlaps(sequencer: &Sequencer, parts: &[Part], meter: Meter) -> Vec<String> 
         }
     }
     findings
-}
-
-/// What the cleanup would change, as one finding, when it changes anything.
-fn cleanup_finding(report: &CleanupReport, grid: Grid) -> Option<String> {
-    (*report != CleanupReport::default()).then(|| report.text(grid, false))
 }
 
 #[cfg(test)]
@@ -408,7 +403,7 @@ mod tests {
         let args = json!({ "clip": id, "notes": "C4 0 1 80\nA#3 1 1 80", "humanize": false });
         let text = check_notes(&sequencer, &args).unwrap();
         assert!(
-            text.contains(&format!("Clip {id} 1 → 3, track 2 \"keys\":")),
+            text.contains(&format!("Clip {id}, track 2 \"keys\", 1 → 3:")),
             "{text}"
         );
         assert_eq!(

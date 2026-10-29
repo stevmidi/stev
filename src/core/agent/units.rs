@@ -61,6 +61,15 @@ pub(crate) fn parse_position(text: &str, meter: Meter) -> Option<i32> {
     meter.bar_ticks().checked_mul(bar - 1)?.checked_add(offset)
 }
 
+/// `1 note`, `3 clips`.
+pub(crate) fn counted(count: usize, noun: &str) -> String {
+    if count == 1 {
+        format!("1 {noun}")
+    } else {
+        format!("{count} {noun}s")
+    }
+}
+
 /// `pitch` as a note name, C4 = MIDI 60: `C4`, `F#2`, `C-1` for 0.
 pub(crate) fn note_name(pitch: i32) -> String {
     format!("{}{}", pitch_class_name(pitch), pitch.div_euclid(12) - 1)
