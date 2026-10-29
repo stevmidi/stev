@@ -1,6 +1,20 @@
 # MCP Server
 
-**Status: design agreed 2026-10-28; phase 1 (the bridge and the reads) built 2026-10-28, phase 2 (the writes) built 2026-10-29, phase 3 (checking and the capture) built 2026-10-29. Experimental (2026-10-29): after hand-testing phase 2 the author found the writes work but the music they come up with unexciting, which is fine, since the user makes the music. Its use is writer's block (a few bars, a new chord progression) and tedious, repetitive edits; the tools may change or go once longer use shows which of them earn their place.** Lets an AI client the user already has (Claude Desktop, Claude Code, ChatGPT, Cursor and the like) read and edit the open project through the Model Context Protocol: marquee a section and say "continue this with a new 4-bar section", "a bass line under this", "a variation of this clip", "tidy up what I just played". It grows out of `280` § An MCP server for AI agents, whose free-version test (2026-10-28) decided the bridge was worth building and named what its tools need. This file holds the decisions, the tool list and the server instructions. Read `250` (the path a command takes), `050` (edits and undo), `020` § Views (the marquee) and `220` (capture) first.
+**Status: design agreed 2026-10-28; phase 1 (the bridge and the reads) built 2026-10-28, phase 2 (the writes) built 2026-10-29, phase 3 (checking and the capture) built 2026-10-29. Experimental (2026-10-29): after hand-testing phase 2 the author found the writes work but the music they come up with unexciting, which is fine, since the user makes the music. Its use is writer's block (a few bars, a new chord progression) and tedious, repetitive edits; the tools may change or go once longer use shows which of them earn their place.** Lets an AI client the user already has (Claude Desktop, Claude Code, ChatGPT, Cursor and the like) read and edit the open project through the Model Context Protocol: marquee a section and say "continue this with a new 4-bar section", "a bass line under this", "a variation of this clip", "tidy up what I just played". It began as a `280` candidate (2026-10-28); § Background keeps what that entry weighed and the free-version test that decided the bridge was worth building. This file holds the decisions, the tool list and the server instructions. Read `250` (the path a command takes), `050` (edits and undo), `020` § Views (the marquee) and `220` (capture) first.
+
+## Background
+
+Added to the roadmap (`280`) on 2026-10-28 from a discussion; the entry left the roadmap once phase 3 was built.
+
+- **Against § Principle (`280`):** "expand on what I captured" serves the capture workflow; "write my clips for me" pulls away from it.
+- **What to expect from the models:** general LLMs handle harmony, chord progressions and typical genre patterns well, but feel and groove poorly, and they slip on bar counts. Stev clamps and snaps what comes back. Capture-first makes up for it: the player brings the feel and the agent adds structure around it. Audio-generating models (Suno, Lyria and the like) don't apply.
+- **Keep the tokens down:** notes as compact rows in beats, not JSON in ticks; the wheels left out; a long capture sent as a window, not the whole buffer. The estimate was 5–15k tokens a request (§ Token budget has the measured share).
+- **Why a live bridge:** editing the `.stev` file offline would be simpler but isn't live, bypasses undo and ties the server to the file format (decision 2).
+- **The free version, tried 2026-10-28:** before anything was built, Claude read six saved projects as plain `.stev` JSON and wrote continuations as `.mid` clips into the Clips folder, which the author dragged in; for one project it wrote a copy of the `.stev` with the clips already placed. The clips that stayed in the loop's own harmony and rhythm slots, with a few small variations, were judged much better and showed the potential. The ones that changed the harmony or added many parts at once sounded messy. Verdict: worth building the bridge. Without hearing anything, Claude's mistakes were all in reading the music, not in writing the notes. What the test said the tools need, and where each landed:
+  - **A timeline overview** of what actually sounds per bar and beat, after carved clip windows, mutes and loops, naming muted tracks: `get_timeline`.
+  - **A validator**, a dry run that reports notes that aren't chord tones: `check_notes`.
+  - **Snap and clamp**: notes to the grid with a little jitter, cut at the clip's end: the cleanup in `writes.rs`.
+  - **Placement without a file round trip**, as one undo step: `create_clips`.
 
 ## Decisions (2026-10-28)
 
@@ -180,7 +194,7 @@ Reviewed 2026-10-28, after phase 1. The socket is the small part (decision 5: Un
 
 ## Token budget
 
-The walkthrough above is `get_context` (≈150), `get_timeline` over 8 bars (≈800), `get_notes` for two 8-bar parts (≈800), one `check_notes` and one `create_clips` with about 60 notes each way (≈1k), plus the instructions and nine tool descriptions (≈1.7k, sent once per conversation). About 4.5k in Stev's own tokens, inside `280`'s 5–15k estimate once the client's own context is counted.
+The walkthrough above is `get_context` (≈150), `get_timeline` over 8 bars (≈800), `get_notes` for two 8-bar parts (≈800), one `check_notes` and one `create_clips` with about 60 notes each way (≈1k), plus the instructions and nine tool descriptions (≈1.7k, sent once per conversation). About 4.5k in Stev's own tokens, inside § Background's 5–15k estimate once the client's own context is counted.
 
 ## Build (phases)
 
