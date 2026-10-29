@@ -60,15 +60,9 @@ impl Display {
         (px, py)
     }
 
-    /// Paints a modal's button: a faint fill and an outline, `accent` while
-    /// `is_selected`, with `label` centred in the hint font in `color`.
-    fn draw_modal_button(
-        painter: &Painter,
-        rect: Rect,
-        label: &str,
-        is_selected: bool,
-        color: Color32,
-    ) {
+    /// Paints a modal button's frame at `rect` — fill and outline, accented
+    /// while `is_selected` — for a label or other content to sit in.
+    fn draw_modal_button_frame(painter: &Painter, rect: Rect, is_selected: bool) {
         painter.rect_filled(
             rect,
             CornerRadius::same(3),
@@ -80,6 +74,18 @@ impl Display {
             Stroke::new(1.0_f32, accent_if(is_selected, theme::separator())),
             StrokeKind::Inside,
         );
+    }
+
+    /// Paints a modal's button: a faint fill and an outline, `accent` while
+    /// `is_selected`, with `label` centred in the hint font in `color`.
+    fn draw_modal_button(
+        painter: &Painter,
+        rect: Rect,
+        label: &str,
+        is_selected: bool,
+        color: Color32,
+    ) {
+        Self::draw_modal_button_frame(painter, rect, is_selected);
         painter.text(
             rect.center(),
             Align2::CENTER_CENTER,

@@ -14,10 +14,6 @@ use crate::core::agent::MCP_FLAG;
 
 use super::Display;
 
-/// The binary's path when the running one can't be found: where the app
-/// installs.
-const INSTALLED_EXE: &str = "/Applications/Stev.app/Contents/MacOS/stev";
-
 /// In the path of an app macOS runs from a temporary, read-only copy (App
 /// Translocation): a downloaded app opened where it was unzipped instead of
 /// moved first. The copy's path changes on every launch.
@@ -30,30 +26,44 @@ pub(super) struct AiTab {
     /// To the `"agent-bridge"` thread: the switch flipped. `None` until
     /// `main` attaches it ([`Display::attach_agent_bridge`]).
     agent_bridge_tx: Option<Sender<bool>>,
+    /// What the tab can offer for connecting Claude Code, decided once.
+    pub(super) setup: ClaudeCodeSetup,
+    /// A click asked for the command on the clipboard; this frame's
+    /// [`Display::sync_ai_copy`] puts it there.
+    copy_pending: bool,
+    /// The command was copied since the modal opened.
+    pub(super) copied: bool,
+}
+
+/// Whether the AI tab can show the command that adds Stev to Claude Code,
+/// and if not, why.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) enum ClaudeCodeSetup {
+    /// No MCP server on this platform (it is Unix-only), or the running
+    /// binary's path couldn't be read.
+    Unsupported,
+    /// macOS runs a translocated copy, whose path would stop working at the
+    /// next launch: Stev has to move to Applications first.
+    Translocated,
     /// The Terminal command that adds Stev to Claude Code for every folder
     /// (`--scope user`; the default scope covers only the folder it is run
     /// in), naming this binary, so a build run from elsewhere shows its own
-    /// path. `None` while macOS runs a translocated copy, whose path would
-    /// stop working at the next launch.
-    pub(super) claude_code_command: Option<String>,
-    /// A click asked for the command on the clipboard; the next frame puts
-    /// it there ([`Display::sync_ai_copy`]).
-    copy_requested: bool,
-    /// The command went to the clipboard since the modal opened.
-    pub(super) copied: bool,
+    /// path.
+    Command(String),
 }
 
 impl Default for AiTab {
     /// The switch off and no channel, until `main` attaches both.
     fn default() -> Self {
-        let exe = env::current_exe()
-            .map(|path| path.display().to_string())
-            .unwrap_or_else(|_| INSTALLED_EXE.to_owned());
+        let setup = match env::current_exe() {
+            Ok(exe) if cfg!(unix) => claude_code_setup(&exe.display().to_string()),
+            _ => ClaudeCodeSetup::Unsupported,
+        };
         AiTab {
             agent_bridge: false,
             agent_bridge_tx: None,
-            claude_code_command: claude_code_command(&exe),
-            copy_requested: false,
+            setup,
+            copy_pending: false,
             copied: false,
         }
     }
@@ -77,31 +87,40 @@ impl AiTab {
         self.agent_bridge
     }
 
-    /// Asks the next frame to put the Claude Code command on the clipboard.
-    pub(super) fn request_copy(&mut self) {
-        self.copy_requested = true;
+    /// The command, when the tab shows one.
+    pub(super) fn command(&self) -> Option<&str> {
+        match &self.setup {
+            ClaudeCodeSetup::Command(command) => Some(command),
+            ClaudeCodeSetup::Unsupported | ClaudeCodeSetup::Translocated => None,
+        }
     }
 
-    /// The command, once, if a copy was asked for — marked copied.
-    fn take_copy(&mut self) -> Option<String> {
-        if !std::mem::take(&mut self.copy_requested) {
-            return None;
-        }
-        let command = self.claude_code_command.clone()?;
+    /// A click on the command: marks it copied and has this frame put it on
+    /// the clipboard.
+    pub(super) fn request_copy(&mut self) {
+        self.copy_pending = true;
         self.copied = true;
-        Some(command)
+    }
+
+    /// The command, once, if a copy is pending.
+    fn take_copy(&mut self) -> Option<String> {
+        std::mem::take(&mut self.copy_pending)
+            .then(|| self.command().map(str::to_owned))
+            .flatten()
     }
 }
 
-/// `claude mcp add` for the binary at `exe`, quoted for the shell when its
-/// path needs it — `None` when `exe` is a translocated copy.
-fn claude_code_command(exe: &str) -> Option<String> {
-    (!exe.contains(TRANSLOCATED)).then(|| {
-        format!(
-            "claude mcp add --scope user stev -- {} {MCP_FLAG}",
-            shell_quote(exe)
-        )
-    })
+/// The setup for the binary at `exe`: the `claude mcp add` command, its path
+/// quoted for the shell when it needs it, unless `exe` is a translocated
+/// copy.
+fn claude_code_setup(exe: &str) -> ClaudeCodeSetup {
+    if exe.contains(TRANSLOCATED) {
+        return ClaudeCodeSetup::Translocated;
+    }
+    ClaudeCodeSetup::Command(format!(
+        "claude mcp add --scope user stev -- {} {MCP_FLAG}",
+        shell_quote(exe)
+    ))
 }
 
 /// `text` as one shell word: as it is when every character is safe, else
@@ -129,7 +148,15 @@ impl Display {
 mod tests {
     use crossbeam_channel::unbounded;
 
-    use super::{AiTab, claude_code_command, shell_quote};
+    use super::{AiTab, ClaudeCodeSetup, claude_code_setup, shell_quote};
+
+    /// A tab whose setup offers `command`.
+    fn tab_with(command: &str) -> AiTab {
+        AiTab {
+            setup: ClaudeCodeSetup::Command(command.to_owned()),
+            ..AiTab::default()
+        }
+    }
 
     #[test]
     fn a_flip_tells_the_bridge_each_new_state() {
@@ -151,9 +178,10 @@ mod tests {
     #[test]
     fn the_command_adds_the_server_for_every_folder() {
         assert_eq!(
-            claude_code_command("/Applications/Stev.app/Contents/MacOS/stev").as_deref(),
-            Some(
+            claude_code_setup("/Applications/Stev.app/Contents/MacOS/stev"),
+            ClaudeCodeSetup::Command(
                 "claude mcp add --scope user stev -- /Applications/Stev.app/Contents/MacOS/stev --mcp"
+                    .to_owned()
             )
         );
     }
@@ -161,7 +189,7 @@ mod tests {
     #[test]
     fn a_translocated_copy_gets_no_command() {
         let exe = "/private/var/folders/xy/abc/T/AppTranslocation/0A1B2C3D/d/Stev.app/Contents/MacOS/stev";
-        assert_eq!(claude_code_command(exe), None);
+        assert_eq!(claude_code_setup(exe), ClaudeCodeSetup::Translocated);
     }
 
     #[test]
@@ -175,22 +203,21 @@ mod tests {
 
     #[test]
     fn a_copy_is_taken_once_and_marks_the_command_copied() {
-        let mut tab = AiTab::default();
+        let mut tab = tab_with("claude mcp add");
         assert_eq!(tab.take_copy(), None);
         tab.request_copy();
-        assert_eq!(tab.take_copy(), tab.claude_code_command.clone());
         assert!(tab.copied);
+        assert_eq!(tab.take_copy().as_deref(), Some("claude mcp add"));
         assert_eq!(tab.take_copy(), None);
     }
 
     #[test]
-    fn without_a_command_a_copy_does_nothing() {
+    fn without_a_command_a_copy_puts_nothing_on_the_clipboard() {
         let mut tab = AiTab {
-            claude_code_command: None,
+            setup: ClaudeCodeSetup::Translocated,
             ..AiTab::default()
         };
         tab.request_copy();
         assert_eq!(tab.take_copy(), None);
-        assert!(!tab.copied);
     }
 }

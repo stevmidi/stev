@@ -16,7 +16,7 @@ use egui::{Context, Id, Pos2, Theme, Ui};
 
 use crate::core::update_check::{CURRENT_VERSION, UpdateCheck};
 use crate::view::display::about_tab::{AboutLink, UPDATE_CHECK, UpdateState, VST_LOGO_SIZE};
-use crate::view::display::ai_tab::AiTab;
+use crate::view::display::ai_tab::{AiTab, ClaudeCodeSetup};
 
 use crate::view::display::keyboard_tab::{
     KeyboardFocus, Recording, ShortcutLine, ShortcutRow, row_lines, shortcut_lines,
@@ -93,7 +93,7 @@ struct MidiTabLayout {
 const ABOUT_AGENTS: &str = "Lets an AI client such as Claude Code read and edit the open project \
                             through MCP: marquee a section and ask what key it's in, for a chord \
                             progression to go with it, or for help continuing it when you're \
-                            stuck. Each change is one undo step. Experimental.";
+                            stuck. Each change is one undo step.";
 
 /// The AI tab's note under it: where what the agent reads goes.
 const AGENTS_PRIVACY: &str = "What it reads goes to your AI client and whoever runs its model.";
@@ -469,10 +469,7 @@ impl Display {
                 let ai = Self::ai_tab_layout(layout.content);
                 if ai.switch.rows.hit(p).is_some() {
                     Some(SettingsHit::AgentBridge)
-                } else if cfg!(unix)
-                    && self.settings.ai.claude_code_command.is_some()
-                    && ai.command.contains(p)
-                {
+                } else if self.settings.ai.command().is_some() && ai.command.contains(p) {
                     Some(SettingsHit::CopyCommand)
                 } else {
                     ai.link
@@ -766,7 +763,7 @@ impl Display {
     fn draw_ai_tab(painter: &Painter, content: Rect, ai: &AiTab) {
         let layout = Self::ai_tab_layout(content);
         let on = ai.agent_bridge;
-        Self::draw_settings_header(painter, layout.switch, "AGENTS", true);
+        Self::draw_settings_header(painter, layout.switch, "AGENTS (EXPERIMENTAL)", true);
         Self::draw_settings_row(
             painter,
             layout.switch.rows.row(0),
@@ -781,56 +778,54 @@ impl Display {
         );
 
         let body = layout.body;
+        let gap = Self::SETTINGS_STRIP_GAP;
         let list = FontId::proportional(Self::FONT_LIST);
+        let hint = FontId::proportional(Self::FONT_HINT);
         let mut top = body.min.y;
-        let about = [
-            (ABOUT_AGENTS, list.clone(), theme::fg()),
-            (
-                AGENTS_PRIVACY,
-                FontId::proportional(Self::FONT_HINT),
-                theme::fg_dim(),
-            ),
-        ];
-        for (text, font, color) in about {
-            top = Self::draw_settings_paragraph(painter, body, top, 0.0, text, &font, color);
-            top += Self::SETTINGS_STRIP_GAP;
-        }
-        let header = Rect::from_min_size(
-            pos2(body.min.x, top),
-            vec2(body.width(), Self::SETTINGS_SECTION_H),
+        top = Self::draw_settings_paragraph(painter, body, top, ABOUT_AGENTS, &list, theme::fg());
+        top += gap;
+        top = Self::draw_settings_paragraph(
+            painter,
+            body,
+            top,
+            AGENTS_PRIVACY,
+            &hint,
+            theme::fg_dim(),
         );
-        let color = theme::fg_dim();
-        Self::draw_settings_text(painter, header, "CONNECT A CLIENT", Self::FONT_HINT, color);
-        top = header.max.y;
-        let command = ai.claude_code_command.as_deref().filter(|_| cfg!(unix));
-        let steps: &[&str] = if !cfg!(unix) {
-            &["Not available on this platform yet."]
-        } else if command.is_none() {
-            &[
-                "1. Turn on Allow AI agents above.",
+        top += gap;
+        let header = Self::settings_section(body, top, 0, 0);
+        Self::draw_settings_header(painter, header, "CONNECT A CLIENT", false);
+        top = header.header.max.y;
+        let step_2 = match &ai.setup {
+            ClaudeCodeSetup::Unsupported => {
+                let text = "Not available on this platform yet.";
+                Self::draw_settings_paragraph(painter, body, top, text, &list, theme::fg());
+                return Self::draw_agent_setup_link(painter, layout.link);
+            }
+            ClaudeCodeSetup::Translocated => {
                 "2. Move Stev to Applications and open it again. macOS is running a \
-                 temporary copy of it, whose path changes at every launch.",
-            ]
-        } else if ai.copied {
-            &[
-                "1. Turn on Allow AI agents above.",
-                "2. For Claude Code, run this once in Terminal. Copied.",
-            ]
-        } else {
-            &[
-                "1. Turn on Allow AI agents above.",
-                "2. For Claude Code, run this once in Terminal (click to copy):",
-            ]
+                 temporary copy of it, whose path changes at every launch."
+            }
+            ClaudeCodeSetup::Command(command) => {
+                Self::draw_ai_command(painter, layout.command, command, ai.copied);
+                if ai.copied {
+                    "2. For Claude Code, run this once in Terminal. Copied."
+                } else {
+                    "2. For Claude Code, run this once in Terminal (click to copy):"
+                }
+            }
         };
-        for text in steps {
-            top = Self::draw_settings_paragraph(painter, body, top, 0.0, text, &list, theme::fg());
+        for text in ["1. Turn on Allow AI agents above.", step_2] {
+            top = Self::draw_settings_paragraph(painter, body, top, text, &list, theme::fg());
         }
-        if let Some(command) = command {
-            Self::draw_ai_command(painter, layout.command, command, ai.copied);
-        }
+        Self::draw_agent_setup_link(painter, layout.link);
+    }
+
+    /// Paints the AI tab's README link along `link`.
+    fn draw_agent_setup_link(painter: &Painter, link: Rect) {
         Self::draw_settings_text(
             painter,
-            layout.link,
+            link,
             AboutLink::AgentSetup.label(),
             Self::FONT_LIST,
             theme::accent(),
@@ -840,17 +835,7 @@ impl Display {
     /// Paints the Claude Code `command` in its frame, wrapped in the
     /// monospace hint font; the frame is accented once a click `copied` it.
     fn draw_ai_command(painter: &Painter, rect: Rect, command: &str, copied: bool) {
-        painter.rect_filled(
-            rect,
-            CornerRadius::same(3),
-            theme::fg_dim().gamma_multiply(0.08),
-        );
-        painter.rect_stroke(
-            rect,
-            CornerRadius::same(3),
-            Stroke::new(1.0_f32, accent_if(copied, theme::separator())),
-            StrokeKind::Inside,
-        );
+        Self::draw_modal_button_frame(painter, rect, copied);
         let inset = Self::SETTINGS_TEXT_INSET;
         let font = FontId::monospace(Self::FONT_HINT);
         let galley = painter.layout(
@@ -863,19 +848,18 @@ impl Display {
         painter.galley(pos2(rect.min.x + inset, top), galley, theme::fg());
     }
 
-    /// Paints `text` wrapped to `rect`'s width, less the text inset and
-    /// `indent`, from `top`; returns the y under it, for the next paragraph.
+    /// Paints `text` wrapped to `rect`'s width less the text inset, from
+    /// `top`; returns the y under it, for the next paragraph.
     fn draw_settings_paragraph(
         painter: &Painter,
         rect: Rect,
         top: f32,
-        indent: f32,
         text: &str,
         font: &FontId,
         color: Color32,
     ) -> f32 {
-        let left = rect.min.x + Self::SETTINGS_TEXT_INSET + indent;
-        let width = rect.max.x - Self::SETTINGS_TEXT_INSET - left;
+        let left = rect.min.x + Self::SETTINGS_TEXT_INSET;
+        let width = rect.width() - 2.0 * Self::SETTINGS_TEXT_INSET;
         let galley = painter.layout(text.to_owned(), font.clone(), color, width);
         let bottom = top + galley.size().y;
         painter.galley(pos2(left, top), galley, color);
