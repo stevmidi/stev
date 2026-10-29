@@ -138,14 +138,16 @@ its notes to one of two places:
   <img src="docs/images/vst/VST_Compatible_Logo_Steinberg.svg" alt="VST Compatible" width="116">
 </picture>
 
-## AI agents
+## AI agents (experimental)
 
 An AI client you already use can read and edit the open project through
 [MCP](https://modelcontextprotocol.io): marquee a section and ask "what key is
 this in", "continue this with four bars" or "a bass line under this". Stev
 sends nothing anywhere and needs no API key; your client does the thinking.
 Each change it makes is one step `⌘Z` takes back, it never writes over a clip
-unless you ask, and it leaves your selection alone.
+unless you ask, and it leaves your selection alone. It's experimental: the
+tools may change or go as real use shows what they're good for. Think of it
+as help with writer's block or chores, not as the one making the music.
 
 1. In Stev, turn on **Allow AI agents** under **Settings** (`⌘,`) → **MIDI**.
 2. Add Stev as an MCP server to your client:

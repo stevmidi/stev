@@ -27,9 +27,10 @@ Breaking entries are marked **Breaking** and say what to do about them.
   selected, so ⌘O then Enter reopens the latest work. Its rows open and
   rename as project rows do, and Backspace takes a project off the list
   without touching the file.
-- An AI client such as Claude Desktop or Claude Code can now read and edit
-  the open project through MCP: run `Stev.app/Contents/MacOS/stev --mcp` as
-  its server and turn on Allow AI agents in Settings → MIDI. It reads what
+- Experimental: an AI client such as Claude Desktop or Claude Code can now
+  read and edit the open project through MCP: run
+  `Stev.app/Contents/MacOS/stev --mcp` as its server and turn on Allow AI
+  agents in Settings → MIDI. It reads what
   you point at with the marquee (the tempo, the harmony bar by bar, the
   notes) and can write new clips, replace a clip's notes and set the tempo.
   Stev snaps what it writes to the grid with the clip's swing and a little
