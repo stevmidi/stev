@@ -128,7 +128,7 @@ use crate::{
     core::{
         event_handlers::EventHandlers,
         input_event::{InputEvent, TimeSelectionRect},
-        shared_atomics::{AudioExportAtomics, TrackMixAtomics},
+        shared_atomics::{AudioExportAtomics, LiveNotes, TrackMixAtomics},
         view_state::ViewState,
     },
     metadata::{
@@ -219,6 +219,9 @@ pub(crate) struct Display {
     /// The running audio export: the footer's progress, and Esc cancelling
     /// it rather than the marquee. See `SharedAtomics::audio_export`.
     audio_export: Arc<AudioExportAtomics>,
+    /// The notes the live keyboard holds, lit on the piano roll's keys. See
+    /// `SharedAtomics::live_notes`.
+    live_notes: Arc<LiveNotes>,
     /// Audio-callback deadline utilisation, shared with the audio engine and
     /// read once per frame for the header's DSP readout. `None` when no output
     /// device was available and the app is running silent. See
@@ -423,6 +426,7 @@ impl Display {
         has_event_selection: Arc<AtomicBool>,
         track_mix: Arc<TrackMixAtomics>,
         audio_export: Arc<AudioExportAtomics>,
+        live_notes: Arc<LiveNotes>,
     ) -> Self {
         Display {
             tempo,
@@ -439,6 +443,7 @@ impl Display {
             has_event_selection,
             track_mix,
             audio_export,
+            live_notes,
             audio_load: None,
             project: ProjectViewState::new(last_project_folder),
             browser: BrowserPanel {

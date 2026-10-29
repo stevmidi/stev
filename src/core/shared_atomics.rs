@@ -14,9 +14,11 @@
 //! mirror of some owned field.
 
 use std::sync::{
-    Arc,
+    Arc, OnceLock,
     atomic::{AtomicBool, AtomicI32, AtomicU8, AtomicU16, AtomicU32, AtomicU64, Ordering},
 };
+
+use egui::Context;
 
 use crate::core::audio::meter::ChannelLevel;
 use crate::core::config::{MAX_TRACKS, TRACK_VOLUME_DB_DEFAULT};
@@ -238,6 +240,56 @@ impl AudioExportAtomics {
     }
 }
 
+/// The notes the live keyboard (a MIDI port or the computer keys) is holding
+/// right now, as a 128-bit set — what the piano roll's keys light up for.
+/// Written by whichever input thread routes the message
+/// ([`LiveInputRouter`](crate::core::midi::input::LiveInputRouter)), read by
+/// the render thread.
+pub(crate) struct LiveNotes {
+    /// Notes 0–63 in the first word, 64–127 in the second; bit `n % 64`.
+    bits: [AtomicU64; 2],
+    /// Wakes the reactive UI when a note edge changes the set, since a live
+    /// note is not a window input event (`EventHandlers::request_repaint`).
+    repaint_ctx: Arc<OnceLock<Context>>,
+}
+
+impl LiveNotes {
+    /// An empty set that wakes the UI through `repaint_ctx`.
+    pub(crate) fn new(repaint_ctx: Arc<OnceLock<Context>>) -> Self {
+        LiveNotes {
+            bits: [AtomicU64::new(0), AtomicU64::new(0)],
+            repaint_ctx,
+        }
+    }
+
+    /// Marks `note` held (`on`) or released, waking the UI if that changed
+    /// the set. Out-of-range notes are ignored.
+    pub(crate) fn set(&self, note: usize, on: bool) {
+        let Some(word) = self.bits.get(note / 64) else {
+            return;
+        };
+        let bit = 1u64 << (note % 64);
+        let before = if on {
+            word.fetch_or(bit, Ordering::Relaxed)
+        } else {
+            word.fetch_and(!bit, Ordering::Relaxed)
+        };
+        if (before & bit != 0) != on
+            && let Some(ctx) = self.repaint_ctx.get()
+        {
+            ctx.request_repaint();
+        }
+    }
+
+    /// Whether `note` is held.
+    pub(crate) fn is_held(&self, note: u8) -> bool {
+        let note = usize::from(note);
+        self.bits
+            .get(note / 64)
+            .is_some_and(|word| word.load(Ordering::Relaxed) & (1u64 << (note % 64)) != 0)
+    }
+}
+
 /// The whole shared-state bundle. Built in `setup_shared_atomics`, cloned into
 /// each thread. `track_mix` and `audio_export` group related sub-bundles;
 /// everything else is a single value. Unless a field says otherwise it is
@@ -319,12 +371,29 @@ pub(crate) struct SharedAtomics {
     pub(crate) track_mix: Arc<TrackMixAtomics>,
     /// The running audio export — see [`AudioExportAtomics`].
     pub(crate) audio_export: Arc<AudioExportAtomics>,
+    /// The notes the live keyboard is holding — see [`LiveNotes`]. Written by
+    /// the input threads, read by the render thread.
+    pub(crate) live_notes: Arc<LiveNotes>,
 }
 
 #[cfg(test)]
 mod tests {
-    use super::TrackMixAtomics;
+    use super::{LiveNotes, TrackMixAtomics};
     use crate::core::audio::meter::ChannelLevel;
+
+    #[test]
+    fn live_notes_track_each_held_note_across_both_words() {
+        let live = LiveNotes::new(Default::default());
+        assert!(!live.is_held(60));
+        live.set(60, true);
+        live.set(100, true);
+        assert!(live.is_held(60) && live.is_held(100) && !live.is_held(61));
+        live.set(60, false);
+        assert!(!live.is_held(60) && live.is_held(100));
+        live.set(100, false);
+        live.set(200, true);
+        assert!(!live.is_held(100) && !live.is_held(127));
+    }
 
     #[test]
     fn an_audio_level_round_trips_and_starts_silent() {

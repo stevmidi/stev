@@ -37,7 +37,7 @@ use crate::core::{
         port::pickable_port_names,
     },
     note_logger::NoteLoggerCommand,
-    shared_atomics::AudioExportAtomics,
+    shared_atomics::{AudioExportAtomics, LiveNotes},
 };
 
 /// Shared handle to the live-instrument `rtrb` producer — see the field doc on
@@ -93,6 +93,8 @@ pub(crate) struct MidiInputForwarder {
     live_instrument_target: Arc<AtomicI32>,
     /// The running audio export, which keeps the keyboard off the plugins.
     audio_export: Arc<AudioExportAtomics>,
+    /// The held-note set the piano roll lights its keys from.
+    live_notes: Arc<LiveNotes>,
 }
 
 impl MidiInputForwarder {
@@ -111,6 +113,7 @@ impl MidiInputForwarder {
         performance_lane_armed: Arc<AtomicBool>,
         live_instrument_target: Arc<AtomicI32>,
         audio_export: Arc<AudioExportAtomics>,
+        live_notes: Arc<LiveNotes>,
     ) -> Self {
         MidiInputForwarder {
             midi_in_tx,
@@ -124,6 +127,7 @@ impl MidiInputForwarder {
             performance_lane_armed,
             live_instrument_target,
             audio_export,
+            live_notes,
         }
     }
 
@@ -154,6 +158,7 @@ impl MidiInputForwarder {
             performance_lane_armed: self.performance_lane_armed.clone(),
             live_instrument_target: self.live_instrument_target.clone(),
             audio_export: self.audio_export.clone(),
+            live_notes: self.live_notes.clone(),
             held_note_channels: [None; 128],
             held_live_targets: [None; 128],
         }
@@ -250,6 +255,8 @@ pub(crate) struct LiveInputRouter {
     live_instrument_target: Arc<AtomicI32>,
     /// The running audio export, which keeps the keyboard off the plugins.
     audio_export: Arc<AudioExportAtomics>,
+    /// The held-note set the piano roll lights its keys from.
+    live_notes: Arc<LiveNotes>,
     /// Channel each currently-held live note was routed out on, indexed by
     /// note number. A note-off must be sent on the same channel its note-on
     /// used, otherwise switching the armed track mid-hold rewrites the
@@ -302,6 +309,10 @@ impl LiveInputRouter {
 
         if !armed {
             self.midi_out_tx.send(MidiOutMessage::now(msg.clone())).ok();
+        }
+
+        if let Some((note, on)) = parse_note(&msg) {
+            self.live_notes.set(note, on);
         }
 
         // Note edges and the two wheels go on to the sequencer (capture /
@@ -455,6 +466,7 @@ mod tests {
             performance_lane_armed: Arc::new(AtomicBool::new(false)),
             live_instrument_target: Arc::new(AtomicI32::new(2)),
             audio_export: audio_export.clone(),
+            live_notes: Arc::new(LiveNotes::new(Default::default())),
             held_note_channels: [None; 128],
             held_live_targets: [None; 128],
         };

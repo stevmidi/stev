@@ -394,7 +394,10 @@ impl Display {
         for nn in geom.note_lo..=geom.note_hi {
             let pc = pitch_class(nn);
             let y_top = geom.row_top(nn);
-            let color = if is_black_key(pc) {
+            let color = if self.live_notes.is_held(nn) {
+                // A key the live keyboard is holding.
+                theme::accent()
+            } else if is_black_key(pc) {
                 theme::piano_key_black()
             } else {
                 theme::piano_key_white()

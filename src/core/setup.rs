@@ -17,7 +17,7 @@ use crate::core::config::{
 };
 use crate::core::{
     keymap::Keymap,
-    shared_atomics::{AudioExportAtomics, TrackMixAtomics},
+    shared_atomics::{AudioExportAtomics, LiveNotes, TrackMixAtomics},
     time::Meter,
     timer::Timer,
 };
@@ -44,7 +44,7 @@ use crate::{
 };
 
 /// Builds the [`SharedAtomics`] bundle with every value at its startup default.
-pub(crate) fn setup_shared_atomics() -> SharedAtomics {
+pub(crate) fn setup_shared_atomics(repaint_ctx: Arc<OnceLock<Context>>) -> SharedAtomics {
     SharedAtomics {
         running: Arc::new(AtomicBool::new(false)),
         tempo: Arc::new(AtomicI32::new(TEMPO_US_DEFAULT)),
@@ -65,6 +65,7 @@ pub(crate) fn setup_shared_atomics() -> SharedAtomics {
         midi_out_offset_ms: Arc::new(AtomicI32::new(MIDI_OUT_OFFSET_DEFAULT_MS)),
         track_mix: Arc::new(TrackMixAtomics::new()),
         audio_export: Arc::new(AudioExportAtomics::default()),
+        live_notes: Arc::new(LiveNotes::new(repaint_ctx)),
     }
 }
 
@@ -197,6 +198,7 @@ pub(crate) fn setup_midi_input_forwarder(
         shared_atomics.performance_lane_armed.clone(),
         shared_atomics.live_instrument_target.clone(),
         shared_atomics.audio_export.clone(),
+        shared_atomics.live_notes.clone(),
     )
 }
 
@@ -244,6 +246,7 @@ pub(crate) fn setup_display(
         shared_atomics.has_event_selection.clone(),
         shared_atomics.track_mix.clone(),
         shared_atomics.audio_export.clone(),
+        shared_atomics.live_notes.clone(),
     )
 }
 

@@ -157,7 +157,10 @@ fn main() {
     #[cfg(target_os = "macos")]
     install_open_documents_handler();
 
-    let shared_atomics = setup_shared_atomics();
+    // Filled in once `eframe::run_native` hands over the real context below —
+    // lets background threads wake the reactive UI (see `EventHandlers::request_repaint`).
+    let repaint_ctx: Arc<OnceLock<Context>> = Arc::new(OnceLock::new());
+    let shared_atomics = setup_shared_atomics(repaint_ctx.clone());
     let shared_channels = setup_shared_channels();
     let settings = load_settings();
     theme::set_active_theme(settings.theme_index);
@@ -192,10 +195,6 @@ fn main() {
         shared_channels.export_mark_tx,
         &shared_atomics,
     );
-
-    // Filled in once `eframe::run_native` hands over the real context below —
-    // lets background threads wake the reactive UI (see `EventHandlers::request_repaint`).
-    let repaint_ctx: Arc<OnceLock<Context>> = Arc::new(OnceLock::new());
 
     let event_handlers = Arc::new(setup_event_handlers(
         shared_channels.ui_event_tx.clone(),

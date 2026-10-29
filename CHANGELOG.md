@@ -20,6 +20,10 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ## [Unreleased]
 
+### Added
+
+- The piano roll's keys light up while you hold a note on a MIDI keyboard or the computer keys.
+
 ### Fixed
 
 - With the track headers focused, `⌘A` then Delete deleted the selected track
