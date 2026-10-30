@@ -15,8 +15,8 @@ use crate::core::sequencer::{
     DragNotesEdit, DuplicateClipsEdit, DuplicateTimeEdit, InsertCaptureEdit, InsertNotesEdit,
     InsertSilenceEdit, MoveClipEdit, MoveRangeEdit, MuteInRangeEdit, MuteSelectedEventsEdit,
     NudgeSelectedEventsEdit, NudgeSelectedEventsLengthEdit, PasteClipsEdit, QuantizeEventsEdit,
-    RenameTrackEdit, SequencerEdit, SetMeterEdit, SetTempoEdit, SetTrackOutputEdit, SplitClipsEdit,
-    TempoGesture, TransposeSelectedEventsEdit,
+    RenameTrackEdit, RestWheelEdit, SequencerEdit, SetMeterEdit, SetTempoEdit, SetTrackOutputEdit,
+    SplitClipsEdit, TempoGesture, TransposeSelectedEventsEdit,
 };
 use crate::core::time::TapTempo;
 use crate::models::clip::ClipEdge;
@@ -341,6 +341,14 @@ impl EventHandlers {
                 );
             }
 
+            SequencerCommand::RestWheel { wheel, start, end } => {
+                self.record_edit(
+                    sequencer,
+                    undo_record,
+                    RestWheelEdit::from_sequencer(sequencer, *wheel, *start, *end),
+                );
+            }
+
             SequencerCommand::DragEventsVelocity {
                 event_ids,
                 nudge,
@@ -646,6 +654,7 @@ mod tests {
 
     use crate::core::agent::{AgentReply, AgentRequest};
     use crate::core::event_handlers::test_harness::{Harness, add_clip, harness, run_command};
+    use crate::core::midi::message::Wheel;
     use crate::core::project::{ProjectAction, ProjectData};
     use crate::core::sequencer::test_support::{rect, stub_instrument};
     use crate::core::sequencer::{SequencerCommand, SequencerEdit};
@@ -653,7 +662,7 @@ mod tests {
     use crate::core::view_state::ViewState;
     use crate::models::{
         clip::NoteDrag::{self, Move, ResizeEnd, ResizeStart},
-        event::EventType,
+        event::{Event, EventType},
         track::{InstrumentRef, TrackOutput},
     };
     use crate::view::display::{TrackLane, TrackRoute, UiEvent};
@@ -1303,6 +1312,51 @@ mod tests {
         h.handlers
             .sync_clip_selection_to_cursor_workflow(&mut h.sequencer);
         (h, clip_id, note_id)
+    }
+
+    /// The wheel lane's `Delete`: one undo step that returns the span to
+    /// rest, undone and redone whole; a span already at rest records none.
+    #[test]
+    fn resting_a_wheel_span_is_one_undo_step() {
+        let (mut h, clip_id, _) = harness_with_clip();
+        let mut record: Record<SequencerEdit> = Record::new();
+        let curve = vec![
+            Event::new(0, 0, vec![0xB0, 0x01, 40]),
+            Event::new(480, 0, vec![0xB0, 0x01, 80]),
+        ];
+        h.sequencer.tracks_mut()[0].edit_clip_events(clip_id, |clip| {
+            for event in curve {
+                clip.add_event(event);
+            }
+            clip.sort_events_by_tick();
+        });
+        let mod_moves = |h: &Harness| -> Vec<(i32, u8)> {
+            h.sequencer.tracks()[0]
+                .get_clip_by_id(clip_id)
+                .unwrap()
+                .events()
+                .iter()
+                .filter(|e| e.midi_message()[0] == 0xB0)
+                .map(|e| (e.tick(), e.midi_message()[2]))
+                .collect()
+        };
+        let rest = |start, end| SequencerCommand::RestWheel {
+            wheel: Wheel::Modulation,
+            start,
+            end,
+        };
+
+        run_command(&mut h, &mut record, rest(240, 720));
+        assert_eq!(record.len(), 1);
+        assert_eq!(mod_moves(&h), vec![(0, 40), (240, 0), (720, 80)]);
+
+        run_command(&mut h, &mut record, SequencerCommand::Undo);
+        assert_eq!(mod_moves(&h), vec![(0, 40), (480, 80)]);
+        run_command(&mut h, &mut record, SequencerCommand::Redo);
+        assert_eq!(mod_moves(&h), vec![(0, 40), (240, 0), (720, 80)]);
+
+        run_command(&mut h, &mut record, rest(300, 600));
+        assert_eq!(record.len(), 1, "a span at rest records nothing");
     }
 
     /// `(tick, pitch)` of each `NoteOn` in `clip_id` on track 0.

@@ -8,6 +8,9 @@
 //! written back, if it differs from the take's last. A wheel the take didn't
 //! move is left alone. A wheel off its rest where a take starts counts as a
 //! move there ([`carry_wheels_onto`](Clip::carry_wheels_onto)).
+//!
+//! The wheel lane's `Delete` is built on the same rule: a span returned to
+//! rest ([`rest_wheel`](Clip::rest_wheel), `380-wheel-lane.md` decision 18).
 
 use crate::{
     core::midi::message::{Wheel, parse_wheel, rewrite_channel},
@@ -120,6 +123,80 @@ impl Clip {
         }
         self.sort_events_by_tick();
         self.calculate_note_lengths();
+    }
+
+    /// Returns `wheel` to rest over event ticks `start..end` — the wheel
+    /// lane's `Delete` (`380-wheel-lane.md` decision 18), the same result as
+    /// riding the wheel at rest across the span under the landing rule. Every
+    /// move of `wheel` inside the span goes, muted ones too; a rest move goes
+    /// in at `start` unless the wheel is at rest there already; and the value
+    /// in force at `end` is written back there, so the curve after the span
+    /// is unchanged — unless it is rest, the clip moves the wheel exactly at
+    /// `end` anyway, or nothing follows (`end` at or past
+    /// [`event_extent`](Self::event_extent)'s end). The other wheel and the
+    /// notes are left alone. Returns whether anything changed.
+    pub(crate) fn rest_wheel(&mut self, wheel: Wheel, start: i32, end: i32) -> bool {
+        if start >= end {
+            return false;
+        }
+        let neutral = wheel.neutral();
+        let at_start = self.last_wheel_move_before(wheel, start);
+        let at_end = self.last_wheel_move_before(wheel, end);
+        let write_back = at_end
+            .filter(|&(value, _)| value != neutral)
+            .filter(|_| end < self.event_extent().1 && !self.has_wheel_move_at(wheel, end));
+
+        let len = self.events.len();
+        self.events
+            .retain(|event| !(is_move_of(event, wheel) && (start..end).contains(&event.tick())));
+        let mut changed = self.events.len() != len;
+
+        let moves = [
+            at_start
+                .filter(|&(value, _)| value != neutral)
+                .map(|(_, channel)| (start, neutral, channel)),
+            write_back.map(|(value, channel)| (end, value, channel)),
+        ];
+        for (tick, value, channel) in moves.into_iter().flatten() {
+            let mut message = wheel.message(value);
+            rewrite_channel(&mut message, channel);
+            self.add_event(Event::from_midi_with_tick(&message, tick));
+            changed = true;
+        }
+        if changed {
+            self.sort_events_by_tick();
+        }
+        changed
+    }
+
+    /// The clip's whole extent in event ticks, `(start, end)`: from tick 0,
+    /// or an earlier event, to the window's end or one past the last event,
+    /// whichever is later — material outside the window included. The span
+    /// `⌘A` marks in a wheel lane (`380-wheel-lane.md` decision 17).
+    pub(crate) fn event_extent(&self) -> (i32, i32) {
+        let ticks = self.events.iter().map(Event::tick);
+        let start = ticks.clone().min().unwrap_or(0).min(0);
+        let end = ticks
+            .max()
+            .map_or(i32::MIN, |tick| tick + 1)
+            .max(self.region().end());
+        (start, end)
+    }
+
+    /// The last unmuted move of `wheel` before event tick `tick`, as
+    /// `(value, channel)` — the value in force there.
+    fn last_wheel_move_before(&self, wheel: Wheel, tick: i32) -> Option<(u16, u8)> {
+        self.events
+            .iter()
+            .take_while(|event| event.tick() < tick)
+            .filter(|event| !event.is_muted())
+            .filter_map(|event| match parse_wheel(event.midi_message()) {
+                Some((moved, value)) if moved == wheel => {
+                    Some((value, event.midi_channel().unwrap_or(0)))
+                }
+                _ => None,
+            })
+            .last()
     }
 
     /// Whether the clip holds a wheel move.
@@ -382,5 +459,108 @@ mod tests {
             wheel_moves(&moving),
             vec![(100, vec![0xB0, 0x01, 40]), (BAR, vec![0xB0, 0x01, 60])]
         );
+    }
+
+    /// The moves inside the span go, muted ones too; the wheel is set to
+    /// rest at the start and the value in force at the end is written back.
+    #[test]
+    fn rest_wheel_clears_the_span_and_hands_back() {
+        let mut clip = swept();
+        let mut muted = modw(BAR + 960, 99);
+        muted.set_muted(true);
+        clip.add_event(muted);
+        clip.sort_events_by_tick();
+
+        assert!(clip.rest_wheel(Wheel::Modulation, BAR + 480, BAR * 2 + 480));
+
+        assert_eq!(
+            wheel_moves(&clip),
+            vec![
+                (0, vec![0xB0, 0x01, 20]),
+                (BAR, vec![0xB0, 0x01, 40]),
+                (BAR + 480, vec![0xB0, 0x01, 0]),
+                (BAR * 2 + 480, vec![0xB0, 0x01, 60]),
+                (BAR * 3, vec![0xB0, 0x01, 80]),
+            ]
+        );
+    }
+
+    /// A wheel already at rest at the span's start gets no rest move there,
+    /// and a rest value at its end needs no write-back.
+    #[test]
+    fn rest_wheel_adds_nothing_where_the_wheel_rests() {
+        let mut clip = clip_with(vec![bend(BAR, 0x60), bend(BAR + 500, 0x40)]);
+
+        assert!(clip.rest_wheel(Wheel::PitchBend, 0, BAR * 2));
+
+        assert_eq!(wheel_moves(&clip), vec![]);
+    }
+
+    /// A move exactly at the span's end already hands back; nothing outside
+    /// the span changes.
+    #[test]
+    fn rest_wheel_keeps_a_move_at_the_end() {
+        let mut clip = swept();
+
+        assert!(clip.rest_wheel(Wheel::Modulation, BAR, BAR * 2));
+
+        assert_eq!(
+            wheel_moves(&clip),
+            vec![
+                (0, vec![0xB0, 0x01, 20]),
+                (BAR, vec![0xB0, 0x01, 0]),
+                (BAR * 2, vec![0xB0, 0x01, 60]),
+                (BAR * 3, vec![0xB0, 0x01, 80]),
+            ]
+        );
+    }
+
+    /// The whole extent (`⌘A`) leaves no moves of the wheel, material past
+    /// the window included, and the other wheel and the notes untouched.
+    #[test]
+    fn rest_wheel_over_the_whole_clip_clears_the_wheel() {
+        let mut clip = clip_with(vec![
+            modw(0, 30),
+            bend(100, 0x60),
+            Event::new(200, 0, vec![0x90, 60, 100]),
+            Event::new(400, 0, vec![0x80, 60, 0]),
+            modw(BAR * 5, 90),
+        ]);
+        let (start, end) = clip.event_extent();
+        assert_eq!((start, end), (0, BAR * 5 + 1));
+
+        assert!(clip.rest_wheel(Wheel::Modulation, start, end));
+
+        assert_eq!(wheel_moves(&clip), vec![(100, vec![0xE0, 0x00, 0x60])]);
+        assert_eq!(clip.events().iter().filter(|e| e.is_note_edge()).count(), 2);
+    }
+
+    /// The rest move and the write-back keep the wheel's channel.
+    #[test]
+    fn rest_wheel_keeps_the_channel() {
+        let mut clip = clip_with(vec![Event::new(100, 0, vec![0xE3, 0x00, 0x60])]);
+
+        assert!(clip.rest_wheel(Wheel::PitchBend, 200, 300));
+
+        assert_eq!(
+            wheel_moves(&clip),
+            vec![
+                (100, vec![0xE3, 0x00, 0x60]),
+                (200, vec![0xE3, 0x00, 0x40]),
+                (300, vec![0xE3, 0x00, 0x60]),
+            ]
+        );
+    }
+
+    /// A span over a wheel at rest throughout changes nothing.
+    #[test]
+    fn rest_wheel_at_rest_is_a_no_op() {
+        let mut clip = clip_with(vec![modw(BAR * 2, 50), bend(BAR, 0x60)]);
+        let before = wheel_moves(&clip);
+
+        assert!(!clip.rest_wheel(Wheel::Modulation, 0, BAR));
+        assert!(!clip.rest_wheel(Wheel::Modulation, BAR, BAR));
+
+        assert_eq!(wheel_moves(&clip), before);
     }
 }

@@ -12,8 +12,9 @@ pub(crate) use crate::core::view_state::Pane;
 
 /// Which view-local surface has the keyboard, on top of the pane focus
 /// (`ViewState`): the focused pane itself, the arranger's track-header
-/// column, or the browser panel. One owner, so focusing one takes the
-/// keyboard from the other. See `020-views-and-state.md` § Views.
+/// column, the clip view's wheel lane, or the browser panel. One owner, so
+/// focusing one takes the keyboard from the other. See
+/// `020-views-and-state.md` § Views.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub(super) enum KeyFocus {
     /// The focused pane — the arranger lanes or the clip view.
@@ -24,6 +25,11 @@ pub(super) enum KeyFocus {
     TrackHeaders,
     /// The browser panel. Only while it is visible.
     Browser,
+    /// The piano roll's pitch-bend or mod-wheel lane (a press in it), so
+    /// `Delete` returns its span to rest rather than deleting notes. Only
+    /// effective in the clip view with a wheel lane shown
+    /// (`380-wheel-lane.md` decision 14).
+    WheelLane,
 }
 
 /// The clip panel's height: the whole lane area, or a band docked below the

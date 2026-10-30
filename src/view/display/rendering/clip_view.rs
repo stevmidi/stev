@@ -347,12 +347,14 @@ impl Display {
         // Divider — `grid_seam_color()` groove at 2px, the same lane-boundary
         // treatment as the note grid's B/C octave seam and the arranger's
         // track seams; with the lane sharing the note-grid background it is
-        // the only thing separating the two.
-        painter.hline(
-            lane.x_range(),
-            lane.top(),
-            Stroke::new(2.0_f32, grid_seam_color()),
-        );
+        // the only thing separating the two. A wheel lane with the keyboard
+        // draws the focus edge there instead, as the track headers do.
+        let divider = if self.wheel_lane_has_keyboard() {
+            focus_edge_stroke()
+        } else {
+            Stroke::new(2.0_f32, grid_seam_color())
+        };
+        painter.hline(lane.x_range(), lane.top(), divider);
         match self.render.clip_lane.wheel() {
             None => self.draw_velocity_panel(painter, lane),
             Some(wheel) => self.draw_wheel_lane(painter, lane, wheel),

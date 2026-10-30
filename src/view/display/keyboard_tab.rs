@@ -458,6 +458,15 @@ const FIXED: &[FixedGroup] = &[
         ],
     ),
     (
+        "Wheel lane",
+        &[
+            ("Drag", "Mark a span of pitch bend or the mod wheel"),
+            ("⌘A", "Mark the whole curve"),
+            ("Delete", "Return the span to rest"),
+            ("Esc", "Drop the span, then give back the keyboard"),
+        ],
+    ),
+    (
         "Browser",
         &[
             ("Enter", "Open the project or template, import the clip"),

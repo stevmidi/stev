@@ -18,6 +18,7 @@ mod gestures;
 mod midi_drag;
 mod modal;
 mod plugin_drag;
+mod wheel_lane;
 
 pub(super) use midi_drag::DragPointer;
 
@@ -138,7 +139,10 @@ impl Display {
         // clip pane.
         let in_header_column =
             arranger && self.is_mouse_inside_clip_content(x, y) && x < self.content_origin_x();
-        if !in_header_column {
+        // The gutter's lane switch keeps a wheel lane's focus from PB to MW
+        // (`set_clip_lane` decides).
+        let on_lane_switch = is_clip_events_view && self.clip_lane_label_at(x, y).is_some();
+        if !in_header_column && !on_lane_switch {
             self.key_focus = KeyFocus::Pane;
         }
 
@@ -293,14 +297,19 @@ impl Display {
         // The gutter left of the lower lane: `VEL` / `PB` / `MW` pick the
         // lane it shows (`380-wheel-lane.md`).
         if is_clip_events_view && let Some(lane) = self.clip_lane_label_at(x, y) {
-            self.render.clip_lane = lane;
+            self.set_clip_lane(lane);
             return true;
         }
-        // A wheel lane is read-only: a press in it starts nothing.
+        // A press in a wheel lane gives it the keyboard and starts a span
+        // drag (`380-wheel-lane.md` decisions 14–16); nothing else. Not in
+        // a take session, whose clip is framed, never edited.
         if is_clip_events_view
             && self.render.clip_lane.wheel().is_some()
             && self.is_in_lower_lane(x, y)
         {
+            if self.take_session.is_none() {
+                self.begin_wheel_span(x);
+            }
             return true;
         }
 
@@ -440,6 +449,12 @@ impl Display {
         if left_arranger && self.key_focus == KeyFocus::TrackHeaders {
             self.key_focus = KeyFocus::Pane;
         }
+        // Leaving the clip view takes the keyboard from the wheel lane, and
+        // its span with it.
+        if !in_clip_view && self.input_was_clip_view && self.key_focus == KeyFocus::WheelLane {
+            self.key_focus = KeyFocus::Pane;
+        }
+        self.drop_stale_wheel_span();
         self.input_was_clip_view = in_clip_view;
         let mut events = self.input_poller.take_input_events();
         // Nothing acts while a project being opened loads its plugins — not
@@ -463,6 +478,9 @@ impl Display {
                     KeyFocus::Browser => self.handle_browser_key(&event),
                     KeyFocus::TrackHeaders if self.track_headers_have_keyboard() => {
                         self.handle_track_header_key(&event)
+                    }
+                    KeyFocus::WheelLane if self.wheel_lane_has_keyboard() => {
+                        self.handle_wheel_lane_key(&event)
                     }
                     _ => false,
                 }
@@ -713,7 +731,7 @@ impl Display {
             // `W` — the next lane under the piano roll (`380-wheel-lane.md`).
             // View-local, like the gutter labels a click picks one from.
             InputEvent::Action(Action::CycleClipLane) => {
-                self.render.clip_lane = self.render.clip_lane.next();
+                self.set_clip_lane(self.render.clip_lane.next());
                 true
             }
             // Plain Tab with both panes on screen moves the keyboard to the
@@ -822,6 +840,7 @@ impl Display {
                     display.extend_note_drag(x, y);
                     display.extend_clip_resize_drag(x);
                     display.extend_window_edge_drag(x);
+                    display.extend_wheel_span(x);
                     display.extend_clip_move_drag(x, y);
                     display.extend_track_mix_drag(y, modifiers.shift);
                 });
@@ -966,6 +985,7 @@ impl Display {
                     self.in_pane(Pane::Clip, Self::finish_note_drag);
                 }
                 self.gesture.clip_resize_drag = None;
+                self.gesture.wheel_span_anchor = None;
                 if self.gesture.window_edge_drag.is_some() {
                     self.in_pane(Pane::Clip, Self::finish_window_edge_drag);
                 }

@@ -7,6 +7,7 @@ use uuid::Uuid;
 
 use crate::core::agent::{AgentReply, AgentRequest};
 use crate::core::input_event::TimeSelectionRect;
+use crate::core::midi::message::Wheel;
 use crate::core::project::ProjectAction;
 use crate::core::sequencer::{AudioExportOutcome, TempoGesture};
 use crate::core::time::Meter;
@@ -265,6 +266,18 @@ pub(crate) enum SequencerCommand {
     /// `070-quantization.md`). Bound to `Q` in `Clip`; the Arranger has no
     /// quantize.
     QuantizeEvents,
+    /// `Delete` in a wheel lane: returns `wheel` to rest over the event-tick
+    /// span `start..end` of the lead clip (`RestWheelEdit`, undoable — see
+    /// `380-wheel-lane.md` decision 18). Nothing is recorded when the wheel
+    /// is at rest across the span already.
+    RestWheel {
+        /// The wheel the lane shows.
+        wheel: Wheel,
+        /// The span's start, event ticks.
+        start: i32,
+        /// The span's end (exclusive), event ticks.
+        end: i32,
+    },
     /// Click-to-select in `Clip`: `Some(id)` replaces the whole
     /// selection with that one event; `None` (empty-grid click) deselects
     /// everything.

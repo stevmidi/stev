@@ -27,7 +27,9 @@ use egui::{Key, Modifiers};
 use uuid::Uuid;
 
 use crate::{
-    core::{keymap::Action, project::ProjectAction, time::Meter, view_state::Pane},
+    core::{
+        keymap::Action, midi::message::Wheel, project::ProjectAction, time::Meter, view_state::Pane,
+    },
     models::{
         clip::{Clip, ClipEdge, NoteDrag},
         track::TrackOutput,
@@ -436,6 +438,16 @@ pub(crate) enum InputEvent {
         nudge: i32,
         /// Identifies the drag so the undo stack coalesces its nudges into one step.
         drag_id: u64,
+    },
+    /// `Delete` in a wheel lane with a span marked: return the wheel to rest
+    /// across it. Maps 1:1 to `SequencerCommand::RestWheel`.
+    RestWheel {
+        /// The wheel the lane shows.
+        wheel: Wheel,
+        /// The span's start, event ticks.
+        start: i32,
+        /// The span's end (exclusive), event ticks.
+        end: i32,
     },
     /// Double-click on empty piano-roll grid in `Clip`: insert a note. Maps
     /// 1:1 to `SequencerCommand::InsertNote`.

@@ -54,6 +54,9 @@ pub(crate) struct ClipView {
     pub(crate) events: Vec<EventMetadata>,
     /// The clip's wheel moves, for the wheel lanes.
     pub(crate) wheel_moves: WheelMoves,
+    /// The clip's whole extent in event ticks (`Clip::event_extent`): the
+    /// span `⌘A` marks in a wheel lane.
+    pub(crate) extent: (i32, i32),
     /// The clip's id.
     pub(crate) clip_id: Uuid,
     /// The event selection.
@@ -90,6 +93,7 @@ impl ClipView {
             region_end: clip.region().end_atomic(),
             events,
             wheel_moves,
+            extent: clip.event_extent(),
             clip_id: clip.id(),
             selected_event_ids: clip.selected_event_ids(),
         }

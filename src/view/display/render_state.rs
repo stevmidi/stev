@@ -30,6 +30,9 @@ pub(super) struct RenderState {
     /// The lead clip's wheel moves, for the wheel lanes — replaced with the
     /// event shapes, from the same snapshot.
     pub(super) wheel_moves: WheelMoves,
+    /// The lead clip's whole extent in event ticks, from the same snapshot:
+    /// what `⌘A` marks in a wheel lane (`380-wheel-lane.md` decision 17).
+    pub(super) lead_clip_extent: (i32, i32),
     /// The lane the piano roll shows under its notes. View state: not saved,
     /// kept when the lead clip changes, switched only by the gutter labels
     /// and `Action::CycleClipLane` (`380-wheel-lane.md`).
@@ -143,6 +146,7 @@ impl RenderState {
             clip_shapes: Vec::new(),
             event_shapes: Vec::new(),
             wheel_moves: WheelMoves::default(),
+            lead_clip_extent: (0, 0),
             clip_lane: ClipLane::default(),
             arranger_scroll_x: 0.,
             arranger_scroll_y: 0.,

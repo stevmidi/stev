@@ -11,12 +11,14 @@
 //! `QuantizeEventsEdit` is the one that also acts with nothing selected.
 //! `InsertNotesEdit` (a double-click or `⌘/Ctrl+V`) and `DragNotesEdit` are
 //! the piano roll's note edits (`clip/note_edits.rs`). `ReplaceClipNotesEdit`
-//! is the agent bridge's, on a clip named by id. See `050-undo-redo.md`.
+//! is the agent bridge's, on a clip named by id. `RestWheelEdit` is the
+//! wheel lane's `Delete`: a span of a wheel back to rest. See
+//! `050-undo-redo.md`.
 
 use undo::Record;
 use uuid::Uuid;
 
-use crate::core::midi::message::parse_wheel;
+use crate::core::midi::message::{Wheel, parse_wheel};
 use crate::models::{
     clip::{Clip, NoteDrag, min_max},
     event::{Event, EventType},
@@ -491,6 +493,64 @@ impl DragNotesEdit {
     }
 
     /// Restores the clip's events from before the drag.
+    pub(super) fn undo(&mut self, sequencer: &mut Sequencer) -> EditResult {
+        self.state.undo(sequencer)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// RestWheelEdit — hand-rolled around `ClipEventsEditState`: it acts on a span
+// of one wheel, not the note selection (which it keeps), and refuses a span
+// that would change nothing, so no empty step enters the record.
+// ---------------------------------------------------------------------------
+
+/// The wheel lane's `Delete` (`380-wheel-lane.md` decision 18): `wheel`
+/// returned to rest over the event-tick span `start..end` of the lead clip
+/// ([`Clip::rest_wheel`]). `undo()` restores the clip's events from before,
+/// as the wheel takes' undo does. The note selection is kept.
+pub(crate) struct RestWheelEdit {
+    /// The target clip, its selection, and the pre-edit snapshot.
+    state: ClipEventsEditState,
+    /// The wheel returned to rest.
+    wheel: Wheel,
+    /// The span's start, event ticks.
+    start: i32,
+    /// The span's end (exclusive), event ticks.
+    end: i32,
+}
+
+impl RestWheelEdit {
+    /// The span on the selected clip. `None` with no clip, or when the
+    /// wheel is at rest across the span already, so nothing would change.
+    pub(crate) fn from_sequencer(
+        sequencer: &Sequencer,
+        wheel: Wheel,
+        start: i32,
+        end: i32,
+    ) -> Option<Self> {
+        let mut probe = sequencer.selected_clip()?.clone();
+        if !probe.rest_wheel(wheel, start, end) {
+            return None;
+        }
+        Some(Self {
+            state: ClipEventsEditState::from_selected_clip(sequencer)?,
+            wheel,
+            start,
+            end,
+        })
+    }
+
+    /// Returns the span to rest.
+    pub(super) fn edit(&mut self, sequencer: &mut Sequencer) -> EditResult {
+        let (wheel, start, end) = (self.wheel, self.start, self.end);
+        let selection = self.state.selected_event_ids.clone();
+        self.state.edit_with(sequencer, |clip| {
+            clip.rest_wheel(wheel, start, end);
+            selection
+        })
+    }
+
+    /// Restores the clip's events from before.
     pub(super) fn undo(&mut self, sequencer: &mut Sequencer) -> EditResult {
         self.state.undo(sequencer)
     }

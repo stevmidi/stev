@@ -628,11 +628,17 @@ impl Display {
     }
 
     /// The surface the keys act on — `key_focus`, with a header focus left
-    /// over from before the clip view took the keyboard read as the pane. The
-    /// one owner the focus edge marks (`focus_edge_stroke`).
+    /// over from before the clip view took the keyboard, or a wheel-lane
+    /// focus from before the arranger did or the lane showed velocity, read
+    /// as the pane. The one owner the focus edge marks (`focus_edge_stroke`).
     fn key_owner(&self) -> KeyFocus {
         match self.key_focus {
             KeyFocus::TrackHeaders if self.view_state() != ViewState::Arranger => KeyFocus::Pane,
+            KeyFocus::WheelLane
+                if !self.view_state().is_clip_view() || self.render.clip_lane.wheel().is_none() =>
+            {
+                KeyFocus::Pane
+            }
             focus => focus,
         }
     }
@@ -861,6 +867,7 @@ impl Display {
         self.clear_time_selection();
         self.clear_event_marquee();
         self.gesture.duplicate_span = None;
+        self.clear_wheel_span();
         self.clear_note_drag();
         self.clear_clip_resize();
         self.clear_window_edge_drag();

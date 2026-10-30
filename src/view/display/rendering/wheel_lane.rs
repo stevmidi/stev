@@ -1,12 +1,12 @@
 //! The piano roll's lower lane when it shows a wheel, and the gutter switch
 //! that picks the lane (`ClipLane`): the `VEL` / `PB` / `MW` labels left of
 //! the lane, and the lead clip's pitch bend or mod wheel drawn as a line,
-//! read-only: a ride smooth, a held value flat until the next move steps off
-//! it ([`wheel_path`]). The moves are folded per pixel column
-//! ([`fold_wheel_columns`]) so what is drawn follows the lane's width, not
-//! the event count. See `380-wheel-lane.md`.
+//! a ride smooth, a held value flat until the next move steps off it
+//! ([`wheel_path`]), under the span `Delete` would return to rest. The moves
+//! are folded per pixel column ([`fold_wheel_columns`]) so what is drawn
+//! follows the lane's width, not the event count. See `380-wheel-lane.md`.
 
-use egui::{Align2, FontId, Painter, Pos2, Rect, Shape, Stroke, pos2, vec2};
+use egui::{Align2, CornerRadius, FontId, Painter, Pos2, Rect, Shape, Stroke, pos2, vec2};
 
 use super::piano_keys::NoteAreaGeom;
 use super::*;
@@ -18,6 +18,8 @@ impl Display {
     /// Space above and below a wheel's curve inside the lane, so its
     /// extremes clear the divider and the lane's bottom edge.
     const WHEEL_LANE_PAD: f32 = 4.0;
+    /// Opacity of the span's `accent` tint: the note marquee's fill.
+    const WHEEL_SPAN_ALPHA: f32 = 0.18;
     /// Thickness of a wheel's line.
     const WHEEL_LINE_W: f32 = 1.5;
     /// How far a point of a wheel's line may lie off the straight line
@@ -108,8 +110,21 @@ impl Display {
     /// ([`wheel_path`]): a ride joined smoothly, a held value flat until the
     /// next move steps off it, from rest before the first move, dimmed
     /// outside the clip's window. Pitch bend gets a faint centre line at
-    /// rest. Nothing else with no moves.
+    /// rest; the span, if one is marked, a tint across the lane's height
+    /// under the line. Nothing else with no moves.
     pub(super) fn draw_wheel_lane(&self, painter: &Painter, lane: Rect, wheel: Wheel) {
+        if let Some((start, end)) = self.gesture.wheel_span {
+            let x_range = self.tick_to_screen_x(start).max(lane.left())
+                ..=self.tick_to_screen_x(end).min(lane.right());
+            if x_range.start() < x_range.end() {
+                painter.rect_filled(
+                    Rect::from_x_y_ranges(x_range, lane.y_range()),
+                    CornerRadius::ZERO,
+                    theme::accent().gamma_multiply(Self::WHEEL_SPAN_ALPHA),
+                );
+            }
+        }
+
         let inner_top = lane.top() + Self::WHEEL_LANE_PAD;
         let inner_h = lane.height() - 2.0 * Self::WHEEL_LANE_PAD;
         let y_of = |value| inner_top + (1.0 - wheel_fraction(wheel, value)) * inner_h;

@@ -471,6 +471,13 @@ impl EventHandlers {
                 });
             }
 
+            InputEvent::RestWheel { wheel, start, end } => {
+                self.send_sequencer(SequencerCommand::RestWheel {
+                    wheel: *wheel,
+                    start: *start,
+                    end: *end,
+                });
+            }
             InputEvent::InsertNote {
                 tick,
                 length,

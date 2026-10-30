@@ -138,6 +138,7 @@ impl Display {
                     self.show_lead_clip(clip_view);
                     self.clear_event_marquee();
                     self.gesture.duplicate_span = None;
+                    self.clear_wheel_span();
                 }
                 UiEvent::EventsUpdated { clip_view } => {
                     self.lead_clip_time = Some(ClipTimeAtomics::of(&clip_view));
@@ -154,7 +155,11 @@ impl Display {
                     {
                         shape.update_note_thumbnails(thumbnails);
                     }
-                    self.set_lead_clip_shapes(clip_view.events, clip_view.wheel_moves);
+                    self.set_lead_clip_shapes(
+                        clip_view.events,
+                        clip_view.wheel_moves,
+                        clip_view.extent,
+                    );
                     // No re-fit or scroll here: every note edit and every
                     // `[`/`]` lands here, and the view stays exactly where it
                     // is — only the shading changes.

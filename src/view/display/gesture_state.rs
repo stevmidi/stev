@@ -94,6 +94,17 @@ pub(super) struct GestureState {
     /// or leaving the clip; with none, `⌘/Ctrl+D` copies flush after the
     /// selection. Never empty.
     pub(super) duplicate_span: Option<(i32, i32)>,
+    /// The wheel lane's span, `(start, end)` in event ticks snapped like the
+    /// cursor — what `Delete` returns to rest (`380-wheel-lane.md` decision
+    /// 16). Marked by a drag in the PB / MW lane or `⌘A` there; dropped with
+    /// the lane's keyboard focus, on a lead-clip change or a switch of
+    /// wheel, by `Esc`, and by the `Delete` that uses it. Never empty. View
+    /// state, like the time selection: never saved, and separate from the
+    /// note selection.
+    pub(super) wheel_span: Option<(i32, i32)>,
+    /// The tick a press in a wheel lane landed on, `Some` while the button
+    /// is held — the span drag's anchor and drag-active flag.
+    pub(super) wheel_span_anchor: Option<i32>,
     /// In-progress ⌘/Ctrl+drag velocity gesture. `Some` only while the
     /// primary button is held after a ⌘/Ctrl-modified press landed on a
     /// note — like the other drag anchors above, doubles as the drag-active

@@ -881,6 +881,19 @@ impl Action {
             )
     }
 
+    /// Whether this action acts on the clip view's notes. Pressed while a
+    /// wheel lane has the keyboard, it takes the keyboard back to the notes
+    /// and acts there, as a track command does from the track headers
+    /// (`Display::handle_wheel_lane_key`, `380-wheel-lane.md` decision 19).
+    /// `SelectAllNotes` is not here: the lane gives its chord a meaning of
+    /// its own, the whole curve.
+    pub(crate) fn acts_on_notes(self) -> bool {
+        matches!(
+            self,
+            Action::DeleteNotes | Action::MuteNotes | Action::Quantize | Action::DuplicateNotes
+        )
+    }
+
     /// This action's index in [`ACTIONS`].
     fn index(self) -> usize {
         ACTIONS
@@ -1339,6 +1352,29 @@ mod tests {
             Action::ShowProjects,
         ] {
             assert!(!action.leaves_track_headers(), "{action:?}");
+        }
+    }
+
+    /// The note commands hand the keyboard back from a wheel lane; the
+    /// transport, the lane switch, undo and `⌘A` stay with it.
+    #[test]
+    fn only_note_commands_act_on_notes() {
+        for action in [
+            Action::DeleteNotes,
+            Action::MuteNotes,
+            Action::Quantize,
+            Action::DuplicateNotes,
+        ] {
+            assert!(action.acts_on_notes(), "{action:?}");
+        }
+        for action in [
+            Action::SelectAllNotes,
+            Action::TogglePlayback,
+            Action::CycleClipLane,
+            Action::Undo,
+            Action::ZoomIn,
+        ] {
+            assert!(!action.acts_on_notes(), "{action:?}");
         }
     }
 
