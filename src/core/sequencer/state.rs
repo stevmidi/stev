@@ -23,7 +23,10 @@ use super::clipboard::ClipClipboard;
 use super::instrument_event::ClipInstrumentEvent;
 use super::instrument_notes::InstrumentNotes;
 use super::take_framing::TakeFraming;
-use crate::core::midi::{message::Midi3, out_queue::MidiOutMessage};
+use crate::core::midi::{
+    message::{Midi3, Wheel},
+    out_queue::MidiOutMessage,
+};
 use crate::{
     core::{
         config,
@@ -129,11 +132,11 @@ pub(crate) struct Sequencer {
     /// counted by [`Sequencer::tick`]: how far before its first input the
     /// clock stood at the start, which places what was held into it.
     pub(super) ticks_into_take: i32,
-    /// Per wheel (by `Wheel::index`), the player's last move while it is
+    /// Per wheel (by [`Wheel::index`]), the player's last move while it is
     /// off its rest (`None` at rest), for a take to start from
     /// (`begin_running_take`). Where the wheels physically are, so the
     /// buffer's resets leave them alone.
-    pub(super) live_wheels: [Option<Midi3>; 2],
+    pub(super) live_wheels: [Option<Midi3>; Wheel::ALL.len()],
     /// `clock_tick − playback_tick` when the latest message was captured
     /// while running — how far the capture clock's numbering sits from the
     /// cursor's. The clock only ever matches playback's *phase*, so this is
@@ -228,7 +231,7 @@ impl Sequencer {
             capture_clip: Clip::new(),
             capture_held_start: None,
             ticks_into_take: 0,
-            live_wheels: [None; 2],
+            live_wheels: [None; Wheel::ALL.len()],
             capture_clock_offset: None,
             capture_last_note_at: None,
             take_framing: None,

@@ -39,7 +39,7 @@ pub(crate) struct CaptureInsert {
     pub(crate) events: Vec<Event>,
     /// Where the take's wheel span ends, in the clip's event ticks: the
     /// wheels it moves latch to here, and the clip's old curve resumes
-    /// ([`Clip::land_take`]).
+    /// ([`Clip::land_take`], which keeps it inside the clip's window).
     pub(crate) wheel_end: i32,
 }
 
@@ -338,20 +338,21 @@ impl Sequencer {
         // keeps a wheel moved after the last note-off (a bend easing back).
         let clip_offset = anchor - clip_start_tick;
         let room = region_length - clip_offset;
-        let pass_room = if self.playback_is_looping() {
+        let insert_at = clip_region_start + clip_offset;
+        // `land_take` keeps the wheel span inside the clip.
+        let wheel_room = if self.playback_is_looping() {
             let loop_len = self.capture_loop_length();
             loop_len - (anchor - self.region_start()).rem_euclid(loop_len)
         } else {
-            region_length
+            room
         };
 
-        let events =
-            Self::capture_events_to_insert(&capture, clip_region_start + clip_offset, room);
+        let events = Self::capture_events_to_insert(&capture, insert_at, room);
         (!events.is_empty()).then_some(CaptureInsert {
             track_idx,
             clip_id,
             events,
-            wheel_end: clip_region_start + clip_offset + pass_room.min(room),
+            wheel_end: insert_at + wheel_room,
         })
     }
 
@@ -610,8 +611,8 @@ mod tests {
                 CommitClipEdit, EditResult, InsertCaptureEdit, ResizeClipEdit, SequencerEdit,
             },
             sequencer::test_support::{
-                clip_at, instrument_track_0, note_off, note_on, rect, sequencer_with_outputs,
-                test_sequencer,
+                bend_at, clip_at, instrument_track_0, mod_at, note_off, note_on, rect,
+                sequencer_with_outputs, test_sequencer, wheel_moves,
             },
             time::{self, Meter},
             view_state::ViewState,
@@ -1845,15 +1846,6 @@ mod tests {
         note_on_ticks(seq.selected_clip().unwrap())
     }
 
-    /// The wheel events of `seq`'s selected clip as `(tick, message)`.
-    fn wheel_moves(clip: &Clip) -> Vec<(i32, Vec<u8>)> {
-        clip.events()
-            .iter()
-            .filter(|e| e.event_type().is_none())
-            .map(|e| (e.tick(), e.midi_message().to_vec()))
-            .collect()
-    }
-
     /// A running `/` into the lead clip brings the take's wheel moves along
     /// with its notes, as a new clip keeps them.
     #[test]
@@ -1873,26 +1865,9 @@ mod tests {
 
         assert_eq!(selected_clip_note_on_ticks(&seq), vec![600]);
         assert_eq!(
-            wheel_moves(seq.selected_clip().unwrap()),
+            wheel_moves(seq.selected_clip().unwrap().events()),
             vec![(700, vec![0xE0, 0x00, 0x60]), (950, vec![0xB0, 0x01, 70])]
         );
-    }
-
-    /// A mod-wheel move at `tick`.
-    fn mod_at(tick: i32, value: u8) -> Event {
-        Event::new(tick, 0, vec![0xB0, 0x01, value])
-    }
-
-    /// A pitch-bend move at `tick`, `msb` its upper seven bits.
-    fn bend_at(tick: i32, msb: u8) -> Event {
-        Event::new(tick, 0, vec![0xE0, 0x00, msb])
-    }
-
-    /// A clip holding `events`, for comparing curves.
-    fn clip_with_events(events: Vec<Event>) -> Clip {
-        let mut clip = Clip::new();
-        clip.restore_events(events);
-        clip
     }
 
     /// A 2-bar loop at 0 and a 2-bar lead clip there holding `curve`, with
@@ -1924,7 +1899,7 @@ mod tests {
         record.edit(&mut seq, SequencerEdit::InsertCapture(edit));
 
         assert_eq!(
-            wheel_moves(seq.selected_clip().unwrap()),
+            wheel_moves(seq.selected_clip().unwrap().events()),
             vec![
                 (0, vec![0xB0, 0x01, 20]),
                 (400, vec![0xB0, 0x01, 90]),
@@ -1933,8 +1908,8 @@ mod tests {
         );
         record.undo(&mut seq);
         assert_eq!(
-            wheel_moves(seq.selected_clip().unwrap()),
-            wheel_moves(&clip_with_events(curve))
+            wheel_moves(seq.selected_clip().unwrap().events()),
+            wheel_moves(&curve)
         );
     }
 
@@ -1948,8 +1923,8 @@ mod tests {
 
         assert_eq!(selected_clip_note_on_ticks(&seq), vec![100]);
         assert_eq!(
-            wheel_moves(seq.selected_clip().unwrap()),
-            wheel_moves(&clip_with_events(curve))
+            wheel_moves(seq.selected_clip().unwrap().events()),
+            wheel_moves(&curve)
         );
     }
 
@@ -1962,7 +1937,7 @@ mod tests {
         seq.insert_running_capture().unwrap();
 
         assert_eq!(
-            wheel_moves(seq.selected_clip().unwrap()),
+            wheel_moves(seq.selected_clip().unwrap().events()),
             vec![
                 (0, vec![0xE0, 0x00, 0x60]),
                 (150, vec![0xB0, 0x01, 90]),
@@ -1995,7 +1970,7 @@ mod tests {
         seq.insert_running_capture().unwrap();
 
         assert_eq!(
-            wheel_moves(seq.selected_clip().unwrap()),
+            wheel_moves(seq.selected_clip().unwrap().events()),
             vec![
                 (0, vec![0xB0, 0x01, 20]),
                 (bar, vec![0xB0, 0x01, 40]),
@@ -2024,7 +1999,7 @@ mod tests {
 
         assert_eq!(selected_clip_note_on_ticks(&seq), vec![100]);
         assert_eq!(
-            wheel_moves(seq.selected_clip().unwrap()),
+            wheel_moves(seq.selected_clip().unwrap().events()),
             vec![(0, vec![0xB0, 0x01, 70])]
         );
     }
@@ -2586,7 +2561,7 @@ mod tests {
         input_at(&mut seq, [0x90, 60, 100], 300, 300);
         input_at(&mut seq, [0x80, 60, 0], 500, 500);
         seq.commit_clip_to_track().unwrap();
-        wheel_moves(last_clip(&seq))
+        wheel_moves(last_clip(&seq).events())
     }
 
     /// The mod wheel the player left off its rest — even before a reset

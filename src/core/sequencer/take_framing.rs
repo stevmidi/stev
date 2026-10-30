@@ -56,15 +56,6 @@ pub(crate) struct TakeFraming {
     return_to: ViewState,
 }
 
-/// A take's framed events as they land in the target, in its event ticks,
-/// and where their wheel span ends ([`Clip::land_take`]).
-struct Framed {
-    /// The framed notes and wheel moves.
-    events: Vec<Event>,
-    /// The end of the wheel span.
-    wheel_end: i32,
-}
-
 impl TakeFraming {
     /// The framed take as it lands in the target, in its event ticks: the
     /// notes starting in the take's window (or up to [`TAKE_EARLY_TICKS`]
@@ -73,8 +64,8 @@ impl TakeFraming {
     /// counted as a move there — shifted so the window start is at the
     /// insert point. A note starting outside the target's window is dropped,
     /// one running past its end is closed there; the wheel span never runs
-    /// past it.
-    fn framed_events(&self) -> Framed {
+    /// past it ([`Clip::land_take`]).
+    fn framed_events(&self) -> CaptureInsert {
         let (start, end) = (self.take.region().start(), self.take.region().end());
         let notes: Vec<Event> = self
             .take
@@ -84,14 +75,15 @@ impl TakeFraming {
             .collect();
         let last_off = notes.iter().map(Event::tick).fold(end, i32::max);
         let wheel_end = self.wheel_end(last_off);
-        let mut carried = self.take.clone();
-        carried.carry_wheels_onto(start);
-        let wheels: Vec<Event> = carried
+        let carried = self.take.carried_wheel_moves(start);
+        let wheels: Vec<Event> = self
+            .take
             .events()
             .iter()
             .filter(|event| !event.is_note_edge())
             .filter(|event| (start..wheel_end).contains(&event.tick()))
             .cloned()
+            .chain(carried)
             .collect();
 
         let shift = self.insert_at - start;
@@ -113,9 +105,11 @@ impl TakeFraming {
             .set_region(Some(target_start), Some(target_end));
         phrase.calculate_note_lengths();
         phrase.crop(length);
-        Framed {
+        CaptureInsert {
+            track_idx: self.track_idx,
+            clip_id: self.clip_id,
             events: Sequencer::capture_events_to_insert(&phrase, target_start, length),
-            wheel_end: (wheel_end + shift).min(target_end),
+            wheel_end: wheel_end + shift,
         }
     }
 
@@ -272,13 +266,8 @@ impl Sequencer {
     /// with no session open.
     pub(crate) fn finish_take_framing(&mut self) -> Option<(ViewState, Option<CaptureInsert>)> {
         let framing = self.close_take_framing()?;
-        let Framed { events, wheel_end } = framing.framed_events();
-        let insert = (!events.is_empty()).then_some(CaptureInsert {
-            track_idx: framing.track_idx,
-            clip_id: framing.clip_id,
-            events,
-            wheel_end,
-        });
+        let insert = framing.framed_events();
+        let insert = (!insert.events.is_empty()).then_some(insert);
         Some((framing.return_to, insert))
     }
 
@@ -299,7 +288,7 @@ impl Sequencer {
     /// Enter will land it, through `edit_clip_events`, so nothing hangs
     /// under a running playhead. The current pass plays out; the next loop
     /// wrap plays the change.
-    fn hear_take_in_place(&mut self, framed: Framed) {
+    fn hear_take_in_place(&mut self, framed: CaptureInsert) {
         let Some(framing) = &self.take_framing else {
             return;
         };
@@ -325,7 +314,8 @@ mod tests {
         sequencer::{
             ClipInstrumentEvent, EditResult, InsertCaptureEdit, SequencerEdit,
             test_support::{
-                clip_at, instrument_track_0, note_off, note_on, sequencer_with, tick_and_collect,
+                bend_at, clip_at, instrument_track_0, note_off, note_on, sequencer_with,
+                tick_and_collect,
             },
         },
         time::Meter,
@@ -684,7 +674,7 @@ mod tests {
         curve: &[(i32, u8)],
         wheels: &[(i32, u8)],
     ) -> Vec<(i32, u8)> {
-        let bend = |&(tick, msb): &(i32, u8)| Event::new(tick, 0, vec![0xE0, 0x00, msb]);
+        let bend = |&(tick, msb): &(i32, u8)| bend_at(tick, msb);
         let notes: Vec<_> = (0..6).map(|i| (500 + i * 960, 980 + i * 960, 60)).collect();
         let (mut seq, _) = session_seq(BAR * 4, clip_cursor, &notes);
         seq.selected_clip_mut()

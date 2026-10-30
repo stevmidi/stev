@@ -148,6 +148,25 @@ pub(crate) fn note_off(tick: i32) -> Event {
     Event::new(tick, 0, vec![0x80, 60, 0])
 }
 
+/// A pitch-bend move at `tick`, `msb` its upper seven bits.
+pub(crate) fn bend_at(tick: i32, msb: u8) -> Event {
+    Event::new(tick, 0, vec![0xE0, 0x00, msb])
+}
+
+/// A mod-wheel move to `value` at `tick`.
+pub(crate) fn mod_at(tick: i32, value: u8) -> Event {
+    Event::new(tick, 0, vec![0xB0, 0x01, value])
+}
+
+/// The wheel moves among `events` as `(tick, message)`.
+pub(crate) fn wheel_moves(events: &[Event]) -> Vec<(i32, Vec<u8>)> {
+    events
+        .iter()
+        .filter(|event| !event.is_note_edge())
+        .map(|event| (event.tick(), event.midi_message().to_vec()))
+        .collect()
+}
+
 /// `ticks` sequencer ticks from wherever playback is, collecting the
 /// note numbers of the NoteOns that reached the instrument.
 pub(super) fn tick_and_collect(
