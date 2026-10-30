@@ -10,7 +10,6 @@ use crate::core::keymap::{Action, Chord, Keymap};
 
 use super::Display;
 use super::browser::BrowserCategory;
-use super::clip_lane::ClipLane;
 use super::keyboard_tab::{KEYBOARD_TAB_ROW, chords_label};
 use super::output_menu::OutputMenuHit;
 
@@ -31,9 +30,9 @@ pub(super) enum HoveredControl {
     /// A browser category row's `+`, which runs this command
     /// (`BrowserCategory::plus_action`).
     CategoryPlus(Action),
-    /// A piano-roll gutter label that would show this lane. No hint: a
+    /// A piano-roll gutter label that would show another lane. No hint: a
     /// click picks the lane, the key cycles them.
-    ClipLane(ClipLane),
+    ClipLane,
 }
 
 impl HoveredControl {
@@ -51,7 +50,7 @@ impl HoveredControl {
             HoveredControl::KeyboardChip => Action::ToggleComputerKeyboard,
             HoveredControl::BrowserToggle => Action::ToggleBrowser,
             HoveredControl::CategoryPlus(action) => action,
-            HoveredControl::ClipLane(_) => return None,
+            HoveredControl::ClipLane => return None,
         };
         command_hint(action.info().label, keymap.chords(action))
     }
@@ -71,8 +70,8 @@ impl Display {
             Some(HoveredControl::KeyboardChip)
         } else if self.is_pointer_on_browser_toggle() {
             Some(HoveredControl::BrowserToggle)
-        } else if let Some(lane) = self.hovered_clip_lane_label() {
-            Some(HoveredControl::ClipLane(lane))
+        } else if self.is_pointer_on_clip_lane_switch() {
+            Some(HoveredControl::ClipLane)
         } else {
             self.browser_category_plus_under_pointer()
                 .and_then(BrowserCategory::plus_action)

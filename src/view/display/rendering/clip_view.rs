@@ -39,7 +39,7 @@ impl Display {
     /// velocity panel or a wheel's curve (`ClipLane`), one fixed height for
     /// all three, so switching never moves the note grid
     /// (`380-wheel-lane.md`).
-    pub(super) const VELOCITY_PANEL_H: f32 = 80.0;
+    const LOWER_LANE_H: f32 = 80.0;
 
     /// Note-row viewport geometry shared by rendering (`draw_clip_view`) and
     /// mouse hit-testing (`Display::event_id_at`) — kept in one place so the
@@ -51,7 +51,7 @@ impl Display {
         let clip_area_h = self.track_area_h() - Self::TIMELINE_H;
 
         let note_area_top = clip_area_top + Self::NOTE_AREA_TOP_GAP;
-        let note_area_h = clip_area_h - Self::NOTE_AREA_TOP_GAP - Self::VELOCITY_PANEL_H;
+        let note_area_h = clip_area_h - Self::NOTE_AREA_TOP_GAP - Self::LOWER_LANE_H;
 
         // Rows fitted to the home note range saved when the clip opened (or
         // the user's key-column zoom), centred on the user's vertical scroll
@@ -64,6 +64,18 @@ impl Display {
             self.clip_home_notes(),
             self.render.clip_centre_row,
             self.render.clip_row_h,
+        )
+    }
+
+    /// The lower lane under the note grid: the velocity bars or a wheel's
+    /// curve, across the content width. The one source of its place, for
+    /// its background, its drawing, the gutter switch beside it and the
+    /// hit-tests.
+    pub(super) fn lower_lane_rect(&self, geom: &NoteAreaGeom) -> Rect {
+        let content_x = self.content_origin_x();
+        Rect::from_min_size(
+            pos2(content_x, geom.top + geom.h),
+            vec2(self.content_right_x() - content_x, Self::LOWER_LANE_H),
         )
     }
 
@@ -156,17 +168,15 @@ impl Display {
             );
         }
 
-        // The lower lane (velocity or a wheel) — the DAW-standard treatment: the same background tone
-        // as the white-key note lanes, so it reads as part of the piano-roll
-        // editing surface rather than a separate readout. Filled on the raw
-        // `painter` (outside the note-area clip) here, *before* `draw_timeline`,
-        // so the vertical bar / beat / 16th grid lines — which already run down
-        // to `track_area_bottom()` — composite through it.
+        // The lower lane (velocity or a wheel) — the DAW-standard treatment:
+        // the same background tone as the white-key note lanes, so it reads
+        // as part of the piano-roll editing surface rather than a separate
+        // readout. Filled on the raw `painter` (outside the note-area clip)
+        // here, *before* `draw_timeline`, so the vertical bar / beat / 16th
+        // grid lines — which already run down to `track_area_bottom()` —
+        // composite through it.
         painter.rect_filled(
-            Rect::from_min_size(
-                pos2(content_x, geom.top + geom.h),
-                vec2(content_right - content_x, Self::VELOCITY_PANEL_H),
-            ),
+            self.lower_lane_rect(geom),
             CornerRadius::ZERO,
             white_lane_color,
         );
@@ -421,10 +431,6 @@ impl Display {
     /// proportional to velocity, in the lower lane `lane`. Display only: a
     /// velocity changes by ⌘-dragging its note (`020` § Velocity Drag).
     fn draw_velocity_panel(&self, painter: &Painter, lane: Rect) {
-        let content_x = lane.left();
-        let content_right = lane.right();
-        let (panel_top, panel_h) = (lane.top(), lane.height());
-
         // Background and the vertical bar/beat/16th grid lines running through
         // this lane are painted upstream (`draw_note_lane_backgrounds` fills it
         // with the white-key lane tone before `draw_timeline` extends the grid
@@ -440,15 +446,15 @@ impl Display {
         let note_color = self.lead_clip_color();
         for shape in &self.render.event_shapes {
             let bar_center_x = self.tick_to_screen_x(shape.start_tick());
-            if bar_center_x + BAR_W * 0.5 < content_x || bar_center_x - BAR_W * 0.5 > content_right
+            if bar_center_x + BAR_W * 0.5 < lane.left() || bar_center_x - BAR_W * 0.5 > lane.right()
             {
                 continue;
             }
 
             let velocity = shape.velocity() as f32;
-            let bar_h = ((velocity / 127.0) * panel_h).max(2.0).round();
-            let bar_x = (bar_center_x - BAR_W * 0.5).max(content_x).round();
-            let bar_y = (panel_top + panel_h - bar_h).round();
+            let bar_h = ((velocity / 127.0) * lane.height()).max(2.0).round();
+            let bar_x = (bar_center_x - BAR_W * 0.5).max(lane.left()).round();
+            let bar_y = (lane.bottom() - bar_h).round();
 
             let bar_color = if shape.is_selected() {
                 theme::accent()

@@ -3,8 +3,8 @@
 //! the lane, and the lead clip's pitch bend or mod wheel drawn as a line,
 //! read-only: a ride smooth, a held value flat until the next move steps off
 //! it ([`wheel_path`]). The moves are folded per pixel column
-//! ([`fold_wheel_columns`]) so the cost follows the lane's width, not the
-//! event count. See `380-wheel-lane.md`.
+//! ([`fold_wheel_columns`]) so what is drawn follows the lane's width, not
+//! the event count. See `380-wheel-lane.md`.
 
 use egui::{Align2, FontId, Painter, Pos2, Rect, Shape, Stroke, pos2, vec2};
 
@@ -31,23 +31,13 @@ impl Display {
     /// Gap between a gutter label and its data marker's centre.
     const LANE_MARKER_GAP: f32 = 6.0;
 
-    /// The lower lane under the note grid: the velocity bars or a wheel's
-    /// curve, across the content width.
-    pub(super) fn lower_lane_rect(&self, geom: &NoteAreaGeom) -> Rect {
-        let content_x = self.content_origin_x();
-        Rect::from_min_size(
-            pos2(content_x, geom.top + geom.h),
-            vec2(self.content_right_x() - content_x, Self::VELOCITY_PANEL_H),
-        )
-    }
-
     /// The gutter left of the lower lane, under the octave legend and the
     /// keys, holding the lane switch.
     fn lane_gutter_rect(&self, geom: &NoteAreaGeom) -> Rect {
-        let content_x = self.content_origin_x();
-        Rect::from_min_max(
-            pos2(content_x - 2.0 * Self::PIANO_MARGIN_W, geom.top + geom.h),
-            pos2(content_x, geom.top + geom.h + Self::VELOCITY_PANEL_H),
+        let lane = self.lower_lane_rect(geom);
+        Rect::from_x_y_ranges(
+            lane.left() - 2.0 * Self::PIANO_MARGIN_W..=lane.left(),
+            lane.y_range(),
         )
     }
 
@@ -57,15 +47,13 @@ impl Display {
         if !self.is_pane_visible(Pane::Clip) || self.lead_clip_time.is_none() {
             return None;
         }
-        let gutter = self.lane_gutter_rect(&self.note_area_geom());
-        if !gutter.contains(pos2(x, y)) {
-            return None;
-        }
-        ClipLane::ALL
-            .into_iter()
-            .enumerate()
-            .find(|&(i, _)| lane_label_row(gutter, i).contains(pos2(x, y)))
-            .map(|(_, lane)| lane)
+        lane_label_in(self.lane_gutter_rect(&self.note_area_geom()), pos2(x, y))
+    }
+
+    /// The gutter label under the pointer. Clip pane only.
+    fn clip_lane_label_under_pointer(&self) -> Option<ClipLane> {
+        self.canvas_pointer()
+            .and_then(|p| self.clip_lane_label_at(p.x, p.y))
     }
 
     /// Whether `(x, y)` is in the lower lane. Clip pane only.
@@ -74,16 +62,14 @@ impl Display {
             .contains(pos2(x, y))
     }
 
-    /// A gutter label under the pointer that a click would switch to — not
-    /// the lane already shown. Clip pane only.
-    pub(in crate::view::display) fn hovered_clip_lane_label(&mut self) -> Option<ClipLane> {
+    /// Whether the pointer is on a gutter label a click would switch to —
+    /// not the lane already shown.
+    pub(in crate::view::display) fn is_pointer_on_clip_lane_switch(&mut self) -> bool {
         let shown = self.render.clip_lane;
         self.in_pane(Pane::Clip, |display| {
-            display
-                .canvas_pointer()
-                .and_then(|p| display.clip_lane_label_at(p.x, p.y))
+            display.clip_lane_label_under_pointer()
         })
-        .filter(|&lane| lane != shown)
+        .is_some_and(|lane| lane != shown)
     }
 
     /// Draws the lane switch: `VEL`, `PB`, `MW` stacked in the gutter,
@@ -93,9 +79,7 @@ impl Display {
     /// colour, beside a wheel's label when the lead clip has moves for it.
     pub(super) fn draw_lane_gutter(&self, painter: &Painter, geom: &NoteAreaGeom) {
         let gutter = self.lane_gutter_rect(geom);
-        let hovered = self
-            .canvas_pointer()
-            .and_then(|p| self.clip_lane_label_at(p.x, p.y));
+        let hovered = self.canvas_pointer().and_then(|p| lane_label_in(gutter, p));
         let font = FontId::proportional(theme::FONT_SIZE_TL);
         for (i, lane) in ClipLane::ALL.into_iter().enumerate() {
             let row = lane_label_row(gutter, i);
@@ -197,6 +181,17 @@ fn lane_label_row(gutter: Rect, i: usize) -> Rect {
     )
 }
 
+/// The lane whose label row of `gutter` holds `pos`.
+fn lane_label_in(gutter: Rect, pos: Pos2) -> Option<ClipLane> {
+    if !gutter.contains(pos) {
+        return None;
+    }
+    let row_h = gutter.height() / ClipLane::ALL.len() as f32;
+    ClipLane::ALL
+        .get(((pos.y - gutter.top()) / row_h) as usize)
+        .copied()
+}
+
 /// Where `value` sits in the lane, `0.0` at the bottom to `1.0` at the top:
 /// pitch bend centred, its rest (`0x2000`) exactly halfway; the mod wheel
 /// from 0 to 127.
@@ -221,35 +216,35 @@ const RIDE_GAP_TICKS: i32 = PPQN / 8;
 /// (`0.0` its left edge) and wheel value.
 type PathPoint = (f32, u16);
 
-/// The value a wheel's line holds and where it got it: the x of the move that
-/// set it and that move's tick, `None` for rest before any move.
-#[derive(Copy, Clone, Debug, PartialEq)]
-struct PathStart {
-    /// Where the value was set, column units (negative left of the lane).
-    x: f32,
-    /// The value.
-    value: u16,
-    /// The move's tick, `None` at rest.
-    tick: Option<i32>,
-}
-
 /// The moves inside one pixel column (or, past the lane's right edge, the
-/// first move after it), folded: where they sit, when they start and end,
-/// and the values they reach.
+/// first move after it), folded: where they sit, the values they reach, and
+/// whether the line rides into them.
 #[derive(Copy, Clone, Debug, PartialEq)]
 struct Knot {
     /// The column's centre, or the move's own x past the right edge.
     x: f32,
-    /// The first move's tick.
-    first_tick: i32,
-    /// The last move's tick.
-    last_tick: i32,
     /// The lowest value moved to.
     lo: u16,
     /// The highest value moved to.
     hi: u16,
     /// The last value moved to — held after the column.
     last: u16,
+    /// Whether the first move came within [`RIDE_GAP_TICKS`] of the move
+    /// before it: the line joins it with a diagonal rather than a step.
+    ride: bool,
+}
+
+impl Knot {
+    /// A knot of one move to `value`.
+    fn at(x: f32, value: u16, ride: bool) -> Self {
+        Knot {
+            x,
+            lo: value,
+            hi: value,
+            last: value,
+            ride,
+        }
+    }
 }
 
 /// A vertical stroke over the values one column reaches beyond the line
@@ -276,60 +271,40 @@ struct WheelPath {
 /// starts — the last move before the lane, at its own x left of it, as
 /// playback chases it, or `neutral` at the lane's edge with none — and one
 /// [`Knot`] per column holding moves, plus the first move past the right
-/// edge, so a ride crossing either edge still joins up. The cost follows the
-/// columns, not the moves.
+/// edge, so a ride crossing either edge still joins up. Visits each visible
+/// move once; its output follows the columns.
 fn fold_wheel_columns(
     moves: &[WheelMove],
     neutral: u16,
     first_tick: f32,
     ticks_per_col: f32,
     cols: usize,
-) -> (PathStart, Vec<Knot>) {
+) -> (PathPoint, Vec<Knot>) {
     let x_of = |tick: i32| (tick as f32 - first_tick) / ticks_per_col;
     let first = moves.partition_point(|&(tick, _)| (tick as f32) < first_tick);
+    let mut prev_tick = first.checked_sub(1).map(|i| moves[i].0);
     let start = match first.checked_sub(1).map(|i| moves[i]) {
-        Some((tick, value)) => PathStart {
-            x: x_of(tick),
-            value,
-            tick: Some(tick),
-        },
-        None => PathStart {
-            x: 0.0,
-            value: neutral,
-            tick: None,
-        },
+        Some((tick, value)) => (x_of(tick), value),
+        None => (0.0, neutral),
     };
 
     let mut knots: Vec<Knot> = Vec::new();
     let mut last_col = None;
     for &(tick, value) in &moves[first..] {
+        let ride = prev_tick.is_some_and(|prev| tick - prev <= RIDE_GAP_TICKS);
+        prev_tick = Some(tick);
         let col = x_of(tick).floor() as usize;
         if col >= cols {
-            knots.push(Knot {
-                x: x_of(tick),
-                first_tick: tick,
-                last_tick: tick,
-                lo: value,
-                hi: value,
-                last: value,
-            });
+            knots.push(Knot::at(x_of(tick), value, ride));
             break;
         }
         match knots.last_mut() {
             Some(knot) if last_col == Some(col) => {
-                knot.last_tick = tick;
                 knot.lo = knot.lo.min(value);
                 knot.hi = knot.hi.max(value);
                 knot.last = value;
             }
-            _ => knots.push(Knot {
-                x: col as f32 + 0.5,
-                first_tick: tick,
-                last_tick: tick,
-                lo: value,
-                hi: value,
-                last: value,
-            }),
+            _ => knots.push(Knot::at(col as f32 + 0.5, value, ride)),
         }
         last_col = Some(col);
     }
@@ -337,11 +312,10 @@ fn fold_wheel_columns(
 }
 
 /// The wheel's line from `start` through `knots` to the lane's right edge
-/// at `cols`: into a knot within [`RIDE_GAP_TICKS`] of the move before it, a
-/// diagonal (a ride); otherwise flat at the held value, then a vertical step
-/// at the knot. A column whose moves reach past the values the line passes
-/// through there gets a span over them.
-fn wheel_path(start: PathStart, knots: &[Knot], cols: f32) -> WheelPath {
+/// at `cols`: into a riding knot, a diagonal; otherwise flat at the held
+/// value, then a vertical step at the knot. A column whose moves reach past
+/// the values the line passes through there gets a span over them.
+fn wheel_path(start: PathPoint, knots: &[Knot], cols: f32) -> WheelPath {
     let mut line = Vec::with_capacity(knots.len() * 2 + 2);
     let mut push = |point: PathPoint| {
         if line.last() != Some(&point) {
@@ -349,11 +323,10 @@ fn wheel_path(start: PathStart, knots: &[Knot], cols: f32) -> WheelPath {
         }
     };
     let mut spans = Vec::new();
-    let (mut x, mut value, mut tick) = (start.x, start.value, start.tick);
-    push((x, value));
+    let mut value = start.1;
+    push(start);
     for knot in knots {
-        let ride = tick.is_some_and(|tick| knot.first_tick - tick <= RIDE_GAP_TICKS);
-        if !ride {
+        if !knot.ride {
             push((knot.x, value));
         }
         push((knot.x, knot.last));
@@ -363,10 +336,10 @@ fn wheel_path(start: PathStart, knots: &[Knot], cols: f32) -> WheelPath {
                 to: (knot.x, knot.hi),
             });
         }
-        (x, value, tick) = (knot.x, knot.last, Some(knot.last_tick));
+        value = knot.last;
     }
-    if x < cols {
-        push((cols, value));
+    if line.last().is_some_and(|&(x, _)| x < cols) {
+        line.push((cols, value));
     }
     WheelPath { line, spans }
 }
@@ -374,16 +347,25 @@ fn wheel_path(start: PathStart, knots: &[Knot], cols: f32) -> WheelPath {
 /// Drops the points of `points` that lie within `tolerance` of the line
 /// through the points kept either side (Ramer–Douglas–Peucker), so a ride
 /// of the mod wheel's coarse steps — about half a pixel each — draws as the
-/// slope it is rather than a wobble. A hold's corners and a step are far
-/// off any such line and stay.
+/// slope it is rather than a wobble. Both ends of every vertical step (a
+/// hold's corner and the move it steps to) are kept outright and split the
+/// line into the rides between them, each simplified alone: a staircase of
+/// holds costs one pass, never the algorithm's quadratic worst case.
 fn simplify(points: &[Pos2], tolerance: f32) -> Vec<Pos2> {
-    if points.len() < 3 {
-        return points.to_vec();
+    let n = points.len();
+    let mut keep = vec![false; n];
+    if let (Some(first), Some(last)) = (keep.first_mut(), n.checked_sub(1)) {
+        *first = true;
+        keep[last] = true;
     }
-    let mut keep = vec![false; points.len()];
-    keep[0] = true;
-    keep[points.len() - 1] = true;
-    let mut stack = vec![(0, points.len() - 1)];
+    for (i, pair) in points.windows(2).enumerate() {
+        if pair[0].x == pair[1].x {
+            keep[i] = true;
+            keep[i + 1] = true;
+        }
+    }
+    let anchors: Vec<usize> = (0..n).filter(|&i| keep[i]).collect();
+    let mut stack: Vec<(usize, usize)> = anchors.windows(2).map(|w| (w[0], w[1])).collect();
     while let Some((first, last)) = stack.pop() {
         let (a, b) = (points[first], points[last]);
         let farthest = (first + 1..last)
@@ -417,7 +399,8 @@ fn distance_to_segment(point: Pos2, a: Pos2, b: Pos2) -> f32 {
 }
 
 /// Cuts the line `points` (left to right) where it crosses either x in
-/// `cuts`, into runs of two or more points that each lie on one side.
+/// `cuts` (in order, left first), into runs of two or more points that each
+/// lie on one side.
 fn split_at_x(points: &[Pos2], cuts: [f32; 2]) -> Vec<Vec<Pos2>> {
     let mut runs = Vec::new();
     let Some(&first) = points.first() else {
@@ -426,9 +409,7 @@ fn split_at_x(points: &[Pos2], cuts: [f32; 2]) -> Vec<Vec<Pos2>> {
     let mut run = vec![first];
     for pair in points.windows(2) {
         let (a, b) = (pair[0], pair[1]);
-        let mut crossings: Vec<f32> = cuts.into_iter().filter(|&x| a.x < x && x < b.x).collect();
-        crossings.sort_by(f32::total_cmp);
-        for x in crossings {
+        for x in cuts.into_iter().filter(|&x| a.x < x && x < b.x) {
             let cut = a + (b - a) * ((x - a.x) / (b.x - a.x));
             run.push(cut);
             runs.push(std::mem::replace(&mut run, vec![cut]));
@@ -443,29 +424,29 @@ fn split_at_x(points: &[Pos2], cuts: [f32; 2]) -> Vec<Vec<Pos2>> {
 
 #[cfg(test)]
 mod tests {
-    use egui::pos2;
+    use egui::{Rect, pos2, vec2};
 
     use super::{
-        Knot, PathStart, RIDE_GAP_TICKS, Segment, fold_wheel_columns, simplify, split_at_x,
+        Knot, RIDE_GAP_TICKS, Segment, fold_wheel_columns, lane_label_in, simplify, split_at_x,
         wheel_fraction, wheel_path,
     };
     use crate::core::midi::message::Wheel;
+    use crate::view::display::clip_lane::ClipLane;
 
     #[test]
     fn a_column_with_many_moves_folds_to_one_knot() {
         // Ten ticks a column; column 1 holds four moves.
         let moves = [(10, 50), (12, 90), (15, 20), (19, 60)];
         let (start, knots) = fold_wheel_columns(&moves, 0, 0.0, 10.0, 3);
-        assert_eq!(start.value, 0, "at rest before the first move");
+        assert_eq!(start, (0.0, 0), "at rest before the first move");
         assert_eq!(
             knots,
             vec![Knot {
                 x: 1.5,
-                first_tick: 10,
-                last_tick: 19,
                 lo: 20,
                 hi: 90,
                 last: 60,
+                ride: false,
             }]
         );
     }
@@ -477,19 +458,11 @@ mod tests {
     fn the_line_starts_with_the_value_in_force() {
         let moves = [(100, 30), (400, 80), (960, 120)];
         let (start, knots) = fold_wheel_columns(&moves, 0x2000, 960.0, 10.0, 2);
-        assert_eq!(
-            start,
-            PathStart {
-                x: -56.0,
-                value: 80,
-                tick: Some(400),
-            }
-        );
-        assert_eq!(knots.len(), 1);
-        assert_eq!((knots[0].x, knots[0].last), (0.5, 120));
+        assert_eq!(start, (-56.0, 80));
+        assert_eq!(knots, vec![Knot::at(0.5, 120, false)]);
 
         let (start, knots) = fold_wheel_columns(&moves, 0x2000, 0.0, 10.0, 1);
-        assert_eq!((start.x, start.value, start.tick), (0.0, 0x2000, None));
+        assert_eq!(start, (0.0, 0x2000));
         assert_eq!(
             knots[0].x, 10.0,
             "the first move past the edge, at its own x"
@@ -604,6 +577,25 @@ mod tests {
             ]
         );
         assert_eq!(split_at_x(&points, [-1.0, 99.0]), vec![points.to_vec()]);
+    }
+
+    #[test]
+    fn a_gutter_row_picks_its_lane() {
+        let gutter = Rect::from_min_size(pos2(0.0, 100.0), vec2(88.0, 81.0));
+        assert_eq!(
+            lane_label_in(gutter, pos2(10.0, 101.0)),
+            Some(ClipLane::Velocity)
+        );
+        assert_eq!(
+            lane_label_in(gutter, pos2(10.0, 140.0)),
+            Some(ClipLane::PitchBend)
+        );
+        assert_eq!(
+            lane_label_in(gutter, pos2(87.0, 180.0)),
+            Some(ClipLane::Modulation)
+        );
+        assert_eq!(lane_label_in(gutter, pos2(10.0, 99.0)), None);
+        assert_eq!(lane_label_in(gutter, pos2(89.0, 140.0)), None);
     }
 
     #[test]

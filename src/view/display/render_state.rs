@@ -143,7 +143,7 @@ impl RenderState {
             clip_shapes: Vec::new(),
             event_shapes: Vec::new(),
             wheel_moves: WheelMoves::default(),
-            clip_lane: ClipLane::Velocity,
+            clip_lane: ClipLane::default(),
             arranger_scroll_x: 0.,
             arranger_scroll_y: 0.,
             clip_scroll_x: 0.,

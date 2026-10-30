@@ -18,8 +18,8 @@ pub(super) enum ClipLane {
 }
 
 impl ClipLane {
-    /// Every lane, top to bottom as the gutter stacks their labels, and in
-    /// the order [`next`](Self::next) cycles.
+    /// Every lane, top to bottom as the gutter stacks their labels — the
+    /// order [`next`](Self::next) cycles too.
     pub(super) const ALL: [ClipLane; 3] = [
         ClipLane::Velocity,
         ClipLane::PitchBend,
@@ -29,8 +29,11 @@ impl ClipLane {
     /// The lane after this one, back to velocity after the last
     /// (`Action::CycleClipLane`).
     pub(super) fn next(self) -> ClipLane {
-        let i = Self::ALL.iter().position(|&lane| lane == self).unwrap_or(0);
-        Self::ALL[(i + 1) % Self::ALL.len()]
+        match self {
+            ClipLane::Velocity => ClipLane::PitchBend,
+            ClipLane::PitchBend => ClipLane::Modulation,
+            ClipLane::Modulation => ClipLane::Velocity,
+        }
     }
 
     /// The lane's gutter label.
