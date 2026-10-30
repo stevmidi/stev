@@ -1,6 +1,6 @@
 # Wheel Capture
 
-**Status: design agreed 2026-10-30; phase 1 built 2026-10-30 (`feature/wheel-capture-landing`). Issue: #13. A proof of concept: if riding a wheel into a clip earns its place, mapping a plugin parameter to a CC is the follow-up (§ Out of scope).** Capture-first automation for the two wheels the capture buffer already records, pitch bend and the mod wheel (CC1): play along with the loop moving only a wheel, press `/`, and the movement replaces that wheel's data in the lead clip over the stretch you touched, leaving the rest of the clip's curve as it was. One framing rule and one landing rule cover every take, running or stopped, with notes or without. Read `090` (what the buffer records), `100` (running capture), `040` (the stopped `/` and the take session) and `050` (edits and undo) first.
+**Status: design agreed 2026-10-30; phase 1 built 2026-10-30 (`feature/wheel-capture-landing`); phase 2 built 2026-10-30 (`feature/wheel-only-running-takes`). Issue: #13. A proof of concept: if riding a wheel into a clip earns its place, mapping a plugin parameter to a CC is the follow-up (§ Out of scope).** Capture-first automation for the two wheels the capture buffer already records, pitch bend and the mod wheel (CC1): play along with the loop moving only a wheel, press `/`, and the movement replaces that wheel's data in the lead clip over the stretch you touched, leaving the rest of the clip's curve as it was. One framing rule and one landing rule cover every take, running or stopped, with notes or without. Read `090` (what the buffer records), `100` (running capture), `040` (the stopped `/` and the take session) and `050` (edits and undo) first.
 
 ## Background
 
@@ -8,7 +8,7 @@ From a discussion on 2026-10-29/30 that began with the MCP server writing automa
 
 What the code does today:
 
-- **Recorded, never committed alone.** Every bend and mod-wheel move on the armed track lands in the capture buffer (`090`), but "a take is its notes" (`100` § Invariants): every gate and window reads notes, and a buffer of wheel moves alone commits nothing (`a_capture_of_wheel_moves_alone_commits_nothing`).
+- **Recorded, never committed alone.** Every bend and mod-wheel move on the armed track lands in the capture buffer (`090`), but "a take is its notes" (`100` § Invariants): every gate and window reads notes, and a buffer of wheel moves alone commits nothing (then `a_capture_of_wheel_moves_alone_commits_nothing`; phase 2 split it in two).
 - **Wheels ride inside the notes' window and are added.** A running insert brings the wheel moves in its window, the one after the last note-off included (`Clip::cloned_events_in_range`); the take session's Enter brings those from the window start to the last note-off (`TakeFraming::framed_events`). Both *add* them to the clip's own, so a second pass over a clip that already has a curve interleaves the two.
 - **Other controllers aren't recorded.** Sustain, other CCs and aftertouch play live only (`090`).
 - **Playback is already right.** `WheelTracker` (`src/models/wheels.rs`) chases the value in force on every seek, from `Clip::wheels_at`, which folds every wheel move before the playback point, the clip's material outside its window included.

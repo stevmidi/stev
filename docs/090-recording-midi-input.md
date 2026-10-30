@@ -34,7 +34,12 @@ capture covers it. Key files: `src/core/midi/input.rs`,
   take's window, the take's come in, and the old curve's value at the window end is
   written back. A wheel the take didn't move is left alone; a wheel off its rest where
   the take's window starts counts as a move there (`Clip::carry_wheels_onto`), for new
-  clips too. Phase 1: a take still needs notes to commit (`100` § Invariants).
+  clips too.
+- **Ride a wheel alone over a playing loop and `/` keeps it in the lead clip**: running,
+  a take of wheel moves with no notes lands in the lead clip by the same rule, framed by
+  the loop pass holding its last move. It needs a lead clip (a clip of automation alone
+  isn't a thing Stev makes) and the transport running: stopped, or without a lead clip, a
+  take still needs notes to commit (`100` § Invariants).
 
 ### Tick handling
 

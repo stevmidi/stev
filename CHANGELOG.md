@@ -24,6 +24,7 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 - A `TIME` chip in the header, right of `POS`, shows the song position as clock time (`mm:ss:SSS`) at the project tempo.
 - A pitch bend held when the transport starts is kept in the take, as a held mod wheel already was.
+- Ride the mod wheel or pitch bend over a playing loop and `/` keeps it in the lead clip, with no notes played: the movement replaces that wheel's data over the span you touched.
 
 ### Changed
 

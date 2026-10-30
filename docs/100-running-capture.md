@@ -318,13 +318,20 @@ sequencer (`playback_is_looping().then(|| region_end() - region_start())`).
 
 ### Invariants
 
-**A take is its notes.** The capture buffer also holds wheel moves (`090`), but every
-gate and size reads notes: `Clip::has_notes` gates both running builders and the
-stopped commit (a wheel wiggled alone commits nothing, `a_capture_of_wheel_moves_alone_commits_nothing`),
-windows come from note-ons and note-offs (`calculate_running_region`,
-`linear_content_length`), and the stopped capture source is trimmed
-back from its last note edge (`040`). Wheel moves ride along inside whatever window the
-notes chose, and into a clip they replace its own over the span played (`370`).
+**A take is its notes, or its wheels when inserting.** The capture buffer also holds
+wheel moves (`090`), and every gate and size reads notes first: `Clip::has_notes` gates
+the running new-clip commit and the stopped commit (a wheel wiggled alone commits no clip,
+`a_capture_of_wheel_moves_alone_commits_no_clip`), windows come from note-ons and
+note-offs (`calculate_running_region`, `linear_content_length`), and the stopped capture
+source is trimmed back from its last note edge (`040`). Wheel moves ride along inside
+whatever window the notes chose, and into a clip they replace its own over the span
+played (`370`). The one exception is the **running insert**: a buffer of wheel moves
+alone lands in the lead clip (`Clip::has_wheel_moves`,
+`a_running_take_of_wheel_moves_alone_lands_in_the_lead_clip`), its pass found from its
+last wheel move instead of its last note-on (`take_framing_tick`, invariant 4). With
+notes in the buffer the wheels never frame: a bend easing back after a wrap would
+otherwise move the window off the notes. Without a lead clip, or stopped, wheel moves
+alone still commit nothing (`370` § Decisions 2–3).
 
 `calculate_running_region` must preserve:
 
@@ -341,7 +348,8 @@ notes chose, and into a clip they replace its own over the span played (`370`).
    independent of the cursor (*What a new clip retains*). For an **insert** it is the
    *cursor-grid* pass (the crop is pinned at the cursor): a note at a phase before the
    anchor (played after the wrap) selects the pass it *followed* rather than pulling the
-   window forward onto itself.
+   window forward onto itself. A wheel-only insert reads its latest wheel move instead
+   (`a_wheel_only_take_lands_the_pass_holding_its_last_move`).
 5. **A window longer than the loop** (an existing clip longer than the arranger loop) starts
    at the pass holding the last note and simply extends past that pass's end — nothing later
    than the last *inserted* note-on exists there to sweep in. So a 4-bar clip over a 2-bar

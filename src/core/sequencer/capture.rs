@@ -279,9 +279,11 @@ impl Sequencer {
     /// capture lands in the selected clip, from the arranger or the clip view alike, since
     /// the clip view doesn't loop the transport on its clip
     /// (`archive/210-docked-clip-panel.md`). The pure half of the insert;
-    /// [`InsertCaptureEdit`] adds the notes and clears the buffer. `None` on an
-    /// empty buffer or nothing that lands in the clip, so a no-op insert never
-    /// enters the undo record.
+    /// [`InsertCaptureEdit`] adds the notes and clears the buffer. `None` on a
+    /// buffer with neither notes nor wheel moves, or nothing that lands in
+    /// the clip, so a no-op insert never enters the undo record. A take of
+    /// wheel moves alone lands too, framed by the pass holding its last move
+    /// (`370-wheel-capture.md` § Decisions 3–4).
     ///
     /// Anchored on the **clip cursor** — the arrangement tick `⌥Space` plays
     /// from ([`Clip::play_from_arrangement_tick`]), always on the clip — not
@@ -308,7 +310,7 @@ impl Sequencer {
     ///
     /// [`InsertCaptureEdit`]: crate::core::sequencer::edit::InsertCaptureEdit
     pub(crate) fn build_running_capture_insert(&self) -> Option<CaptureInsert> {
-        if !self.capture_clip.has_notes() {
+        if !self.capture_clip.has_notes() && !self.capture_clip.has_wheel_moves() {
             return None;
         }
 
@@ -412,7 +414,9 @@ impl Sequencer {
     /// *loop* start first (kept by the crop only when that is the anchor).
     ///
     /// Either way the result's tick origin is `0`. Returns `None` when nothing
-    /// survives.
+    /// survives: no note for a new clip, neither a note nor a wheel move for
+    /// an insert, whose pass a take of wheel moves alone is framed by
+    /// ([`Self::calculate_running_region`]).
     fn normalize_running_capture(
         &self,
         anchor_tick: i32,
@@ -507,10 +511,14 @@ impl Sequencer {
             }
         }
 
-        if !capture.has_notes() {
-            return None;
-        }
-        Some(capture)
+        // A new clip needs a note; an insert also takes wheel moves alone.
+        let lands = match target {
+            RunningCaptureTarget::NewClip => capture.has_notes(),
+            RunningCaptureTarget::InsertFromArranger => {
+                capture.has_notes() || capture.has_wheel_moves()
+            }
+        };
+        lands.then_some(capture)
     }
 
     /// The capture buffer as `/` would frame it now, for the agent's
@@ -2004,22 +2012,79 @@ mod tests {
         );
     }
 
-    /// A take is its notes: a wheel wiggled with nothing played commits no
-    /// clip and inserts nothing, running or stopped.
+    /// Without a lead clip a take is its notes: a wheel wiggled with nothing
+    /// played commits no clip, running or stopped, and stopped it opens no
+    /// take session into a lead clip either (`370-wheel-capture.md`
+    /// § Decisions 2–3).
     #[test]
-    fn a_capture_of_wheel_moves_alone_commits_nothing() {
+    fn a_capture_of_wheel_moves_alone_commits_no_clip() {
         let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut seq = make_sequencer(0, bar * 2);
         for tick in [100, 400, 700] {
-            seq.capture_clip
-                .add_event(Event::new(tick, 0, vec![0xB0, 0x01, 90]));
+            seq.capture_clip.add_event(mod_at(tick, 90));
         }
 
         assert!(seq.build_committed_capture_clip().is_none());
         assert!(seq.build_stopped_capture_clip().is_none());
         add_and_select_clip(&mut seq, 0, bar * 2);
-        assert!(seq.build_running_capture_insert().is_none());
         assert!(!seq.open_take_framing(ViewState::Clip));
+    }
+
+    /// Running with a lead clip, a take of wheel moves alone lands in it by
+    /// the latch rule, and ⌘Z brings the old curve back.
+    #[test]
+    fn a_running_take_of_wheel_moves_alone_lands_in_the_lead_clip() {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        let mut seq = make_sequencer(0, bar * 2);
+        add_and_select_clip(&mut seq, 0, bar * 2);
+        let curve = vec![mod_at(0, 20), mod_at(bar, 40)];
+        seq.selected_clip_mut()
+            .unwrap()
+            .restore_events(curve.clone());
+        for event in [mod_at(400, 90), mod_at(700, 100)] {
+            seq.capture_clip.add_event(event);
+        }
+        let mut record = Record::new();
+
+        let edit = InsertCaptureEdit::from_running_capture(&seq).unwrap();
+        record.edit(&mut seq, SequencerEdit::InsertCapture(edit));
+
+        assert!(selected_clip_note_on_ticks(&seq).is_empty());
+        assert_eq!(
+            wheel_moves(seq.selected_clip().unwrap().events()),
+            vec![
+                (0, vec![0xB0, 0x01, 20]),
+                (400, vec![0xB0, 0x01, 90]),
+                (700, vec![0xB0, 0x01, 100])
+            ]
+        );
+        assert!(seq.capture_clip.events().is_empty(), "buffer consumed");
+
+        record.undo(&mut seq);
+        assert_eq!(
+            wheel_moves(seq.selected_clip().unwrap().events()),
+            wheel_moves(&curve)
+        );
+    }
+
+    /// A wheel-only take over a loop played several times lands the pass
+    /// holding its last move, carrying the value an earlier pass left the
+    /// wheel at onto its start.
+    #[test]
+    fn a_wheel_only_take_lands_the_pass_holding_its_last_move() {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        let mut seq = make_sequencer(0, bar);
+        add_and_select_clip(&mut seq, 0, bar);
+        for event in [mod_at(300, 90), mod_at(bar * 2 + 600, 30)] {
+            seq.capture_clip.add_event(event);
+        }
+
+        seq.insert_running_capture().unwrap();
+
+        assert_eq!(
+            wheel_moves(seq.selected_clip().unwrap().events()),
+            vec![(0, vec![0xB0, 0x01, 90]), (600, vec![0xB0, 0x01, 30])]
+        );
     }
 
     /// The capture buffer takes a wheel move off the input like a note.

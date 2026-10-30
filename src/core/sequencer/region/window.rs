@@ -15,6 +15,7 @@
 //! `stopped_capture.rs` and `capture.rs` are the callers; the region/cursor
 //! mutators that consume the results live in `mod.rs`.
 
+use crate::core::midi::message::parse_wheel;
 use crate::core::time::{self, Meter};
 use crate::models::clip::Clip;
 use crate::models::event::{Event, EventType};
@@ -46,7 +47,8 @@ impl Sequencer {
     ///    offset by exactly one `len`, so the loop-relative placement never drifts.
     /// 4. Only the pass holding the latest note-on is windowed: a multi-pass take commits its
     ///    last cycle, and a note at a phase before the anchor (played after the wrap) selects
-    ///    the pass it followed rather than pulling the window forward.
+    ///    the pass it followed rather than pulling the window forward. A take with no note is
+    ///    framed the same way by its latest wheel move ([`Self::take_framing_tick`]).
     ///
     /// A window longer than the loop (an existing clip longer than the arranger loop) simply
     /// extends past that pass's end; nothing later than the latest *inserted* note-on exists
@@ -66,13 +68,27 @@ impl Sequencer {
         // slide is a phase error.
         let region_start_tick = transport_loop.map_or(anchor_tick, |loop_len| {
             let loop_len = loop_len.max(min_len);
-            let last_note_on_tick =
-                Self::last_inserted_event_tick(clip.events(), EventType::NoteOn);
-            let loop_idx = (last_note_on_tick - anchor_tick).div_euclid(loop_len);
+            let loop_idx = (Self::take_framing_tick(clip) - anchor_tick).div_euclid(loop_len);
             anchor_tick + loop_idx * loop_len
         });
 
         (region_start_tick, region_start_tick + region_len)
+    }
+
+    /// The tick a running take's pass is found from: its most recently
+    /// inserted note-on, or with no note its most recently inserted wheel
+    /// move — the notes frame a take whenever it has them, so a bend easing
+    /// back after a wrap can't pull the window off them
+    /// (`370-wheel-capture.md` § Decisions 4). `0` with neither.
+    fn take_framing_tick(clip: &Clip) -> i32 {
+        if clip.has_notes() {
+            return Self::last_inserted_event_tick(clip.events(), EventType::NoteOn);
+        }
+        clip.events()
+            .iter()
+            .rev()
+            .find(|event| parse_wheel(event.midi_message()).is_some())
+            .map_or(0, Event::tick)
     }
 
     /// A `(start, end)` phrase window of `region_length` ending at the clip's
@@ -272,6 +288,33 @@ mod tests {
 
         assert_eq!(start, bar * 2);
         assert_eq!(end, bar * 5);
+    }
+
+    /// A take with no note is framed by the pass holding its last wheel
+    /// move (`370-wheel-capture.md` § Decisions 4).
+    #[test]
+    fn calculate_running_region_wheel_only_take_starts_at_the_pass_holding_the_last_move() {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        let mut clip = Clip::new();
+        clip.add_event(Event::new(bar * 2 + 300, 0, vec![0xB0, 0x01, 90]));
+        clip.add_event(Event::new(bar * 4 + 300, 0, vec![0xB0, 0x01, 20]));
+
+        let (start, end) = Sequencer::calculate_running_region(&clip, 0, bar, Some(bar * 2));
+
+        assert_eq!((start, end), (bar * 4, bar * 5));
+    }
+
+    /// With notes, the wheels never frame: a bend easing back after the
+    /// wrap leaves the window on the pass holding the notes.
+    #[test]
+    fn calculate_running_region_notes_frame_over_a_later_wheel_move() {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        let mut clip = clip_with_note_on(bar);
+        clip.add_event(Event::new(bar * 2 + 100, 0, vec![0xE0, 0x00, 0x40]));
+
+        let (start, _) = Sequencer::calculate_running_region(&clip, 0, bar * 2, Some(bar * 2));
+
+        assert_eq!(start, 0);
     }
 
     /// Mid-loop anchor (a bar into a 2-bar loop), last note played in bar 0
