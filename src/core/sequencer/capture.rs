@@ -81,6 +81,15 @@ enum RunningCaptureTarget {
     InsertFromArranger,
 }
 
+impl RunningCaptureTarget {
+    /// Whether `capture` is a take this target lands: a new clip needs a
+    /// note, an insert also takes wheel moves alone (`370-wheel-capture.md`
+    /// § Decisions 3).
+    fn lands(self, capture: &Clip) -> bool {
+        capture.has_notes() || matches!(self, Self::InsertFromArranger) && capture.has_wheel_moves()
+    }
+}
+
 impl Sequencer {
     /// Builds the clip a running-capture commit would place — the pure half of
     /// the commit, returning `(track index, positioned clip)` without touching
@@ -310,7 +319,7 @@ impl Sequencer {
     ///
     /// [`InsertCaptureEdit`]: crate::core::sequencer::edit::InsertCaptureEdit
     pub(crate) fn build_running_capture_insert(&self) -> Option<CaptureInsert> {
-        if !self.capture_clip.has_notes() && !self.capture_clip.has_wheel_moves() {
+        if !RunningCaptureTarget::InsertFromArranger.lands(&self.capture_clip) {
             return None;
         }
 
@@ -511,14 +520,7 @@ impl Sequencer {
             }
         }
 
-        // A new clip needs a note; an insert also takes wheel moves alone.
-        let lands = match target {
-            RunningCaptureTarget::NewClip => capture.has_notes(),
-            RunningCaptureTarget::InsertFromArranger => {
-                capture.has_notes() || capture.has_wheel_moves()
-            }
-        };
-        lands.then_some(capture)
+        target.lands(&capture).then_some(capture)
     }
 
     /// The capture buffer as `/` would frame it now, for the agent's

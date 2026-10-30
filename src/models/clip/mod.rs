@@ -188,9 +188,7 @@ impl Clip {
         &self.events
     }
 
-    /// Whether the clip holds a note (a `NoteOn`). A capture is a take only
-    /// when it does, except a running insert, which also takes wheel moves
-    /// alone ([`has_wheel_moves`](Self::has_wheel_moves)).
+    /// Whether the clip holds a note (a `NoteOn`).
     pub(crate) fn has_notes(&self) -> bool {
         self.events
             .iter()

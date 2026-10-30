@@ -81,13 +81,10 @@ impl Sequencer {
     /// back after a wrap can't pull the window off them
     /// (`370-wheel-capture.md` § Decisions 4). `0` with neither.
     fn take_framing_tick(clip: &Clip) -> i32 {
-        if clip.has_notes() {
-            return Self::last_inserted_event_tick(clip.events(), EventType::NoteOn);
-        }
-        clip.events()
-            .iter()
-            .rev()
-            .find(|event| parse_wheel(event.midi_message()).is_some())
+        let newest_first = || clip.events().iter().rev();
+        newest_first()
+            .find(|event| event.event_type() == Some(EventType::NoteOn))
+            .or_else(|| newest_first().find(|event| parse_wheel(event.midi_message()).is_some()))
             .map_or(0, Event::tick)
     }
 
@@ -189,7 +186,7 @@ impl Sequencer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::sequencer::test_support::note_on;
+    use crate::core::sequencer::test_support::{bend_at, mod_at, note_on};
 
     fn clip_with_note_on(last_note_on_tick: i32) -> Clip {
         let mut clip = Clip::new();
@@ -296,8 +293,8 @@ mod tests {
     fn calculate_running_region_wheel_only_take_starts_at_the_pass_holding_the_last_move() {
         let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut clip = Clip::new();
-        clip.add_event(Event::new(bar * 2 + 300, 0, vec![0xB0, 0x01, 90]));
-        clip.add_event(Event::new(bar * 4 + 300, 0, vec![0xB0, 0x01, 20]));
+        clip.add_event(mod_at(bar * 2 + 300, 90));
+        clip.add_event(mod_at(bar * 4 + 300, 20));
 
         let (start, end) = Sequencer::calculate_running_region(&clip, 0, bar, Some(bar * 2));
 
@@ -310,7 +307,7 @@ mod tests {
     fn calculate_running_region_notes_frame_over_a_later_wheel_move() {
         let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut clip = clip_with_note_on(bar);
-        clip.add_event(Event::new(bar * 2 + 100, 0, vec![0xE0, 0x00, 0x40]));
+        clip.add_event(bend_at(bar * 2 + 100, 0x40));
 
         let (start, _) = Sequencer::calculate_running_region(&clip, 0, bar * 2, Some(bar * 2));
 

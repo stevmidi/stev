@@ -122,8 +122,7 @@ impl Clip {
         self.calculate_note_lengths();
     }
 
-    /// Whether the clip holds a wheel move. A running take of these alone
-    /// lands in the lead clip (`370-wheel-capture.md` § Decisions 3–4).
+    /// Whether the clip holds a wheel move.
     pub(crate) fn has_wheel_moves(&self) -> bool {
         self.events
             .iter()
@@ -322,7 +321,7 @@ mod tests {
         );
     }
 
-    /// Moves at or past the wheel end stay out, and with them their span.
+    /// Notes aren't wheel moves.
     #[test]
     fn has_wheel_moves_ignores_notes() {
         let mut clip = clip_with(vec![Event::new(0, 0, vec![0x90, 60, 100])]);
@@ -332,6 +331,7 @@ mod tests {
         assert!(clip.has_wheel_moves());
     }
 
+    /// Moves at or past the wheel end stay out, and with them their span.
     #[test]
     fn moves_past_the_wheel_end_are_dropped() {
         let mut clip = clip_with(vec![modw(0, 30)]);
