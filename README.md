@@ -18,7 +18,7 @@ Website: [stevmidi.com](https://stevmidi.com)
 
 ![Stev: six tracks of captured clips in the arranger, with the clip panel open on a mallet part](docs/images/arranger.png)
 
-> **Status:** 0.11.0. Developed and tested on macOS, with a prebuilt app from
+> **Status:** 0.12.0. Developed and tested on macOS, with a prebuilt app from
 > 0.6.0 on ([Download](#download)). Linux and Windows build in CI and may work
 > (MIDI Out only, no plugin host), but are untested; ports welcome.
 
