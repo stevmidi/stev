@@ -40,6 +40,9 @@ impl Display {
     /// all three, so switching never moves the note grid
     /// (`380-wheel-lane.md`).
     const LOWER_LANE_H: f32 = 80.0;
+    /// Opacity of the `accent` fill over a piano-roll selection: the note
+    /// marquee, and the wheel lane's span.
+    pub(super) const MARQUEE_FILL_ALPHA: f32 = 0.18;
 
     /// Note-row viewport geometry shared by rendering (`draw_clip_view`) and
     /// mouse hit-testing (`Display::event_id_at`) — kept in one place so the
@@ -419,7 +422,7 @@ impl Display {
         painter.rect_filled(
             marquee_rect,
             CornerRadius::ZERO,
-            theme::accent().gamma_multiply(0.18),
+            theme::accent().gamma_multiply(Self::MARQUEE_FILL_ALPHA),
         );
         painter.rect_stroke(
             marquee_rect,

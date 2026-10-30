@@ -1370,8 +1370,9 @@ pub(super) fn past_drag_threshold(from: (f32, f32), to: (f32, f32), threshold: f
 }
 
 /// A marquee's `[tick_min, tick_max]` snapped to a `grid`-tick
-/// grid, as the duplicate span — `None` when it snaps to nothing.
-fn snapped_span(tick_min: i32, tick_max: i32, grid: i32) -> Option<(i32, i32)> {
+/// grid, as the duplicate span and the wheel lane's span — `None` when it
+/// snaps to nothing.
+pub(super) fn snapped_span(tick_min: i32, tick_max: i32, grid: i32) -> Option<(i32, i32)> {
     let (start, end) = (snap_to_grid(tick_min, grid), snap_to_grid(tick_max, grid));
     (end > start).then_some((start, end))
 }

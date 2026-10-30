@@ -59,6 +59,7 @@ impl Display {
     pub(super) fn clear_lead_clip_shapes(&mut self) {
         self.render.event_shapes.clear();
         self.render.wheel_moves = WheelMoves::default();
+        self.render.lead_clip_extent = (0, 0);
     }
 
     /// Makes `clip_view` the lead clip the clip view shows (`ClipEntered`,

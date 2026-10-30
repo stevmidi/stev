@@ -3,14 +3,15 @@
 //! marks a span of the shown wheel, `⌘A` marks the whole curve, `Delete`
 //! returns the span to rest (`InputEvent::RestWheel`), `Esc` drops the span
 //! and then the focus. A note command takes the keyboard back to the notes
-//! and acts there ([`Action::acts_on_notes`]). See `380-wheel-lane.md`
+//! and acts there ([`Action::leaves_wheel_lane`]). See `380-wheel-lane.md`
 //! decisions 14–19.
 
 use egui::Key;
 
-use crate::core::input_event::{InputEvent, KeyModifiers};
+use crate::core::input_event::InputEvent;
 use crate::core::keymap::Action;
 
+use super::gestures::snapped_span;
 use super::*;
 
 /// What a key does while the wheel lane has the keyboard.
@@ -28,41 +29,33 @@ enum WheelLaneKey {
     HandBack,
 }
 
-/// The wheel lane's keymap: plain Delete/Backspace returns the span to rest,
-/// `⌘A` (`SelectAllNotes`, whatever it is bound to) marks the whole curve,
-/// Esc drops the span or, with none, leaves; a note command, an arrow with
-/// notes selected, or a modified Delete hands the keyboard back first.
-/// `None` — every other key, the transport and `W` among them — falls
-/// through to the clip view as usual. `action` is what the keymap resolves
-/// the press to.
+/// The wheel lane's keymap, by the action the keymap resolves the press to
+/// (`action`): Delete notes (`Delete`/`⌫`) returns the span to rest, Select
+/// all notes (`⌘A`) marks the whole curve, whatever they are bound to; any
+/// other clip-view command hands the keyboard back first
+/// ([`Action::leaves_wheel_lane`]), and so does an arrow with notes
+/// selected, which edits them. Esc, not a command, drops the span or, with
+/// none, leaves. `None` — every other key, the transport and `W` among
+/// them — falls through to the clip view as usual.
 fn wheel_lane_key(
     key: Key,
-    modifiers: KeyModifiers,
     action: Option<Action>,
     has_span: bool,
     has_event_selection: bool,
 ) -> Option<WheelLaneKey> {
-    let plain = !modifiers.command && !modifiers.alt && !modifiers.shift;
-    let arrow = matches!(
-        key,
-        Key::ArrowLeft | Key::ArrowRight | Key::ArrowUp | Key::ArrowDown
-    );
-    match key {
-        Key::Delete | Key::Backspace if plain => Some(WheelLaneKey::RestSpan),
-        Key::Escape if has_span => Some(WheelLaneKey::DropSpan),
-        Key::Escape => Some(WheelLaneKey::Leave),
-        _ if action == Some(Action::SelectAllNotes) => Some(WheelLaneKey::MarkAll),
-        _ if action.is_some_and(Action::acts_on_notes) => Some(WheelLaneKey::HandBack),
-        Key::Delete | Key::Backspace => Some(WheelLaneKey::HandBack),
-        _ if arrow && has_event_selection => Some(WheelLaneKey::HandBack),
+    match (key, action) {
+        (Key::Escape, _) if has_span => Some(WheelLaneKey::DropSpan),
+        (Key::Escape, _) => Some(WheelLaneKey::Leave),
+        (Key::ArrowLeft | Key::ArrowRight | Key::ArrowUp | Key::ArrowDown, _)
+            if has_event_selection =>
+        {
+            Some(WheelLaneKey::HandBack)
+        }
+        (_, Some(Action::DeleteNotes)) => Some(WheelLaneKey::RestSpan),
+        (_, Some(Action::SelectAllNotes)) => Some(WheelLaneKey::MarkAll),
+        (_, Some(action)) if action.leaves_wheel_lane() => Some(WheelLaneKey::HandBack),
         _ => None,
     }
-}
-
-/// The span a drag from `anchor` to `tick` (both snapped) marks, either way
-/// round; `None` while they meet, so a span is never empty.
-fn span_between(anchor: i32, tick: i32) -> Option<(i32, i32)> {
-    (tick != anchor).then(|| (anchor.min(tick), anchor.max(tick)))
 }
 
 impl Display {
@@ -101,7 +94,9 @@ impl Display {
         let Some(anchor) = self.gesture.wheel_span_anchor else {
             return;
         };
-        self.gesture.wheel_span = span_between(anchor, self.snapped_tick_at(x));
+        let tick = self.snapped_tick_at(x);
+        self.gesture.wheel_span =
+            snapped_span(anchor.min(tick), anchor.max(tick), self.cursor_grid_ticks());
     }
 
     /// Drops the wheel span and any drag marking one.
@@ -136,15 +131,14 @@ impl Display {
         }
         let action = self.pressed_action(key, modifiers);
         let has_span = self.gesture.wheel_span.is_some();
-        match wheel_lane_key(key, modifiers, action, has_span, self.has_event_selection()) {
+        match wheel_lane_key(key, action, has_span, self.has_event_selection()) {
             Some(WheelLaneKey::RestSpan) => {
-                if let (Some((start, end)), Some(wheel)) =
-                    (self.gesture.wheel_span, self.render.clip_lane.wheel())
+                if let Some(wheel) = self.render.clip_lane.wheel()
+                    && let Some((start, end)) = self.gesture.wheel_span.take()
                 {
                     self.input_event_tx
                         .send(InputEvent::RestWheel { wheel, start, end })
                         .ok();
-                    self.gesture.wheel_span = None;
                 }
                 true
             }
@@ -174,36 +168,18 @@ impl Display {
 mod tests {
     use egui::Key;
 
-    use super::{WheelLaneKey, span_between, wheel_lane_key};
-    use crate::core::input_event::KeyModifiers;
+    use super::{WheelLaneKey, wheel_lane_key};
     use crate::core::keymap::Action;
 
-    const PLAIN: KeyModifiers = KeyModifiers {
-        shift: false,
-        command: false,
-        alt: false,
-        ctrl: false,
-    };
-
-    fn key(
-        key: Key,
-        action: Option<Action>,
-        has_span: bool,
-        selected: bool,
-    ) -> Option<WheelLaneKey> {
-        wheel_lane_key(key, PLAIN, action, has_span, selected)
-    }
-
-    /// Delete and Backspace rest the span, whether there is one or not (the
-    /// press is the lane's either way: it never deletes notes).
+    /// Delete notes rests the span, whether there is one or not (the press
+    /// is the lane's either way: it never deletes notes).
     #[test]
     fn delete_rests_the_span() {
-        for k in [Key::Delete, Key::Backspace] {
+        for has_span in [true, false] {
             assert_eq!(
-                key(k, Some(Action::DeleteNotes), true, true),
+                wheel_lane_key(Key::Delete, Some(Action::DeleteNotes), has_span, true),
                 Some(WheelLaneKey::RestSpan)
             );
-            assert_eq!(key(k, None, false, false), Some(WheelLaneKey::RestSpan));
         }
     }
 
@@ -211,37 +187,36 @@ mod tests {
     #[test]
     fn escape_drops_the_span_then_leaves() {
         assert_eq!(
-            key(Key::Escape, None, true, false),
+            wheel_lane_key(Key::Escape, None, true, false),
             Some(WheelLaneKey::DropSpan)
         );
         assert_eq!(
-            key(Key::Escape, None, false, false),
+            wheel_lane_key(Key::Escape, None, false, false),
             Some(WheelLaneKey::Leave)
         );
     }
 
-    /// `⌘A` marks the whole curve: the action, not a hard-coded chord.
+    /// Select all notes marks the curve: the action, not a hard-coded chord.
     #[test]
     fn select_all_marks_the_curve() {
         assert_eq!(
-            key(Key::A, Some(Action::SelectAllNotes), false, false),
+            wheel_lane_key(Key::A, Some(Action::SelectAllNotes), false, false),
             Some(WheelLaneKey::MarkAll)
         );
     }
 
-    /// A note command hands the keyboard back; the transport, `W` and undo
-    /// stay with the lane.
+    /// A clip-view command hands the keyboard back
+    /// (`Action::leaves_wheel_lane`); the transport stays with the lane.
     #[test]
-    fn note_commands_hand_the_keyboard_back() {
-        for action in [Action::MuteNotes, Action::Quantize, Action::DuplicateNotes] {
-            assert_eq!(
-                key(Key::M, Some(action), true, true),
-                Some(WheelLaneKey::HandBack)
-            );
-        }
-        for action in [Action::TogglePlayback, Action::CycleClipLane, Action::Undo] {
-            assert_eq!(key(Key::W, Some(action), true, true), None);
-        }
+    fn clip_commands_hand_the_keyboard_back() {
+        assert_eq!(
+            wheel_lane_key(Key::M, Some(Action::MuteNotes), true, true),
+            Some(WheelLaneKey::HandBack)
+        );
+        assert_eq!(
+            wheel_lane_key(Key::Space, Some(Action::TogglePlayback), true, true),
+            None
+        );
     }
 
     /// The arrows edit selected notes, so they hand back then; with none
@@ -249,31 +224,9 @@ mod tests {
     #[test]
     fn arrows_hand_back_only_with_notes_selected() {
         assert_eq!(
-            key(Key::ArrowUp, None, false, true),
+            wheel_lane_key(Key::ArrowUp, None, false, true),
             Some(WheelLaneKey::HandBack)
         );
-        assert_eq!(key(Key::ArrowLeft, None, false, false), None);
-    }
-
-    /// A modified Delete is a command (`⌘Delete`), never the lane's.
-    #[test]
-    fn modified_delete_hands_back() {
-        let cmd = KeyModifiers {
-            command: true,
-            ..PLAIN
-        };
-        assert_eq!(
-            wheel_lane_key(Key::Delete, cmd, None, true, false),
-            Some(WheelLaneKey::HandBack)
-        );
-    }
-
-    /// A drag marks the span between its press and the pointer, leftwards
-    /// too, and none while it is back on the press.
-    #[test]
-    fn a_drag_marks_the_span_either_way() {
-        assert_eq!(span_between(480, 960), Some((480, 960)));
-        assert_eq!(span_between(960, 480), Some((480, 960)));
-        assert_eq!(span_between(480, 480), None);
+        assert_eq!(wheel_lane_key(Key::ArrowLeft, None, false, false), None);
     }
 }

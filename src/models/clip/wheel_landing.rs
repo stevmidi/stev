@@ -12,6 +12,8 @@
 //! The wheel lane's `Delete` is built on the same rule: a span returned to
 //! rest ([`rest_wheel`](Clip::rest_wheel), `380-wheel-lane.md` decision 18).
 
+use std::ops::Range;
+
 use crate::{
     core::midi::message::{Wheel, parse_wheel, rewrite_channel},
     models::{
@@ -37,14 +39,7 @@ impl Clip {
     /// its rest there that doesn't move exactly there already, its last
     /// unmuted move before `tick` (value and channel), restamped at `tick`.
     pub(crate) fn carried_wheel_moves(&self, tick: i32) -> Vec<Event> {
-        let mut last: [Option<(&Event, u16)>; Wheel::ALL.len()] = [None; Wheel::ALL.len()];
-        for event in self.events.iter().take_while(|event| event.tick() < tick) {
-            if let Some((wheel, value)) = parse_wheel(event.midi_message())
-                && !event.is_muted()
-            {
-                last[wheel.index()] = Some((event, value));
-            }
-        }
+        let last = self.last_moves_before(tick);
         Wheel::ALL
             .into_iter()
             .filter_map(|wheel| {
@@ -82,7 +77,6 @@ impl Clip {
     pub(crate) fn land_take(&mut self, take: &[Event], wheel_end: i32) {
         let window_end = self.region().end();
         let wheel_end = wheel_end.min(window_end);
-        let old_at_end = self.wheels_before(wheel_end);
 
         for wheel in Wheel::ALL {
             let moves: Vec<(&Event, u16)> = take
@@ -99,20 +93,14 @@ impl Clip {
             ) else {
                 continue;
             };
-            let old = old_at_end[wheel.index()];
-            let write_back = wheel_end < window_end
-                && last_value != old
-                && !self.has_wheel_move_at(wheel, wheel_end);
-
-            self.events.retain(|event| {
-                !(is_move_of(event, wheel) && (first..wheel_end).contains(&event.tick()))
-            });
-
-            if write_back {
-                let mut message = wheel.message(old);
-                rewrite_channel(&mut message, last.midi_channel().unwrap_or(0));
-                self.add_event(Event::from_midi_with_tick(&message, wheel_end));
-            }
+            let channel = last.midi_channel().unwrap_or(0);
+            self.replace_wheel_span(
+                wheel,
+                first..wheel_end,
+                last_value,
+                Some(channel),
+                window_end,
+            );
         }
 
         for event in take {
@@ -140,27 +128,13 @@ impl Clip {
             return false;
         }
         let neutral = wheel.neutral();
-        let at_start = self.last_wheel_move_before(wheel, start);
-        let at_end = self.last_wheel_move_before(wheel, end);
-        let write_back = at_end
-            .filter(|&(value, _)| value != neutral)
-            .filter(|_| end < self.event_extent().1 && !self.has_wheel_move_at(wheel, end));
-
-        let len = self.events.len();
-        self.events
-            .retain(|event| !(is_move_of(event, wheel) && (start..end).contains(&event.tick())));
-        let mut changed = self.events.len() != len;
-
-        let moves = [
-            at_start
-                .filter(|&(value, _)| value != neutral)
-                .map(|(_, channel)| (start, neutral, channel)),
-            write_back.map(|(value, channel)| (end, value, channel)),
-        ];
-        for (tick, value, channel) in moves.into_iter().flatten() {
-            let mut message = wheel.message(value);
-            rewrite_channel(&mut message, channel);
-            self.add_event(Event::from_midi_with_tick(&message, tick));
+        let rest_channel = self.last_moves_before(start)[wheel.index()]
+            .filter(|&(_, value)| value != neutral)
+            .map(|(event, _)| event.midi_channel().unwrap_or(0));
+        let extent_end = self.event_extent().1;
+        let mut changed = self.replace_wheel_span(wheel, start..end, neutral, None, extent_end);
+        if let Some(channel) = rest_channel {
+            self.add_wheel_move(wheel, neutral, channel, start);
             changed = true;
         }
         if changed {
@@ -169,34 +143,77 @@ impl Clip {
         changed
     }
 
+    /// The landing rule's step for one wheel, shared by a take and a rest:
+    /// the clip's moves of `wheel` in `span` go, muted ones too, and the
+    /// value the old curve had at the span's end is written back there when
+    /// it differs from `span_last` (what the span ends on) and the clip
+    /// doesn't move the wheel exactly there — unless the end is at or past
+    /// `hand_back_before`, where nothing follows to hand back to. The
+    /// write-back goes on `channel`, or the old value's own. Leaves the
+    /// events unsorted; returns whether anything changed.
+    fn replace_wheel_span(
+        &mut self,
+        wheel: Wheel,
+        span: Range<i32>,
+        span_last: u16,
+        channel: Option<u8>,
+        hand_back_before: i32,
+    ) -> bool {
+        let end = span.end;
+        let old = self.last_moves_before(end)[wheel.index()];
+        let old_value = old.map_or(wheel.neutral(), |(_, value)| value);
+        let channel = channel
+            .or_else(|| old.and_then(|(event, _)| event.midi_channel()))
+            .unwrap_or(0);
+        let write_back =
+            end < hand_back_before && old_value != span_last && !self.has_wheel_move_at(wheel, end);
+
+        let len = self.events.len();
+        self.events
+            .retain(|event| !(is_move_of(event, wheel) && span.contains(&event.tick())));
+        let removed = self.events.len() != len;
+        if write_back {
+            self.add_wheel_move(wheel, old_value, channel, end);
+        }
+        removed || write_back
+    }
+
+    /// Adds a move of `wheel` to `value` on `channel` at event tick `tick`,
+    /// unsorted.
+    fn add_wheel_move(&mut self, wheel: Wheel, value: u16, channel: u8, tick: i32) {
+        let mut message = wheel.message(value);
+        rewrite_channel(&mut message, channel);
+        self.add_event(Event::from_midi_with_tick(&message, tick));
+    }
+
     /// The clip's whole extent in event ticks, `(start, end)`: from tick 0,
     /// or an earlier event, to the window's end or one past the last event,
     /// whichever is later — material outside the window included. The span
-    /// `⌘A` marks in a wheel lane (`380-wheel-lane.md` decision 17).
+    /// `⌘A` marks in a wheel lane (`380-wheel-lane.md` decision 17). Not
+    /// [`reach`](Self::reach), which frames the notes with headroom: this
+    /// covers every event, wheel moves included, and nothing more. The
+    /// events are kept in tick order, so the ends are the first and last.
     pub(crate) fn event_extent(&self) -> (i32, i32) {
-        let ticks = self.events.iter().map(Event::tick);
-        let start = ticks.clone().min().unwrap_or(0).min(0);
-        let end = ticks
-            .max()
-            .map_or(i32::MIN, |tick| tick + 1)
+        let (first, last) = (self.events.first(), self.events.last());
+        let start = first.map_or(0, Event::tick).min(0);
+        let end = last
+            .map_or(i32::MIN, |event| event.tick() + 1)
             .max(self.region().end());
         (start, end)
     }
 
-    /// The last unmuted move of `wheel` before event tick `tick`, as
-    /// `(value, channel)` — the value in force there.
-    fn last_wheel_move_before(&self, wheel: Wheel, tick: i32) -> Option<(u16, u8)> {
-        self.events
-            .iter()
-            .take_while(|event| event.tick() < tick)
-            .filter(|event| !event.is_muted())
-            .filter_map(|event| match parse_wheel(event.midi_message()) {
-                Some((moved, value)) if moved == wheel => {
-                    Some((value, event.midi_channel().unwrap_or(0)))
-                }
-                _ => None,
-            })
-            .last()
+    /// Per wheel, its last unmuted move before event tick `tick` and the
+    /// value it moved to — the value in force there, with its channel.
+    fn last_moves_before(&self, tick: i32) -> [Option<(&Event, u16)>; Wheel::ALL.len()] {
+        let mut last = [None; Wheel::ALL.len()];
+        for event in self.events.iter().take_while(|event| event.tick() < tick) {
+            if let Some((wheel, value)) = parse_wheel(event.midi_message())
+                && !event.is_muted()
+            {
+                last[wheel.index()] = Some((event, value));
+            }
+        }
+        last
     }
 
     /// Whether the clip holds a wheel move.

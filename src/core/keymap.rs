@@ -881,17 +881,21 @@ impl Action {
             )
     }
 
-    /// Whether this action acts on the clip view's notes. Pressed while a
-    /// wheel lane has the keyboard, it takes the keyboard back to the notes
-    /// and acts there, as a track command does from the track headers
-    /// (`Display::handle_wheel_lane_key`, `380-wheel-lane.md` decision 19).
-    /// `SelectAllNotes` is not here: the lane gives its chord a meaning of
-    /// its own, the whole curve.
-    pub(crate) fn acts_on_notes(self) -> bool {
-        matches!(
-            self,
-            Action::DeleteNotes | Action::MuteNotes | Action::Quantize | Action::DuplicateNotes
-        )
+    /// Whether this action, pressed while a wheel lane has the keyboard,
+    /// takes it back to the notes and acts there, so the Delete after it
+    /// acts on what it changed (`Display::handle_wheel_lane_key`,
+    /// `380-wheel-lane.md` decision 19) — the track headers' rule
+    /// ([`leaves_track_headers`](Self::leaves_track_headers)) for the clip
+    /// view. Every clip-view command does, so a new one does too, but the
+    /// lane's own: Delete notes and Select all notes, which the lane reads
+    /// as returning its span to rest and marking the whole curve, and the
+    /// lane switch.
+    pub(crate) fn leaves_wheel_lane(self) -> bool {
+        self.info().scope == Scope::Clip
+            && !matches!(
+                self,
+                Action::DeleteNotes | Action::SelectAllNotes | Action::CycleClipLane
+            )
     }
 
     /// This action's index in [`ACTIONS`].
@@ -1355,26 +1359,27 @@ mod tests {
         }
     }
 
-    /// The note commands hand the keyboard back from a wheel lane; the
-    /// transport, the lane switch, undo and `⌘A` stay with it.
+    /// The clip view's commands hand the keyboard back from a wheel lane;
+    /// the lane's own, the transport, undo and the zoom stay with it.
     #[test]
-    fn only_note_commands_act_on_notes() {
+    fn clip_commands_leave_the_wheel_lane() {
         for action in [
-            Action::DeleteNotes,
             Action::MuteNotes,
             Action::Quantize,
             Action::DuplicateNotes,
+            Action::StretchClipLonger,
         ] {
-            assert!(action.acts_on_notes(), "{action:?}");
+            assert!(action.leaves_wheel_lane(), "{action:?}");
         }
         for action in [
+            Action::DeleteNotes,
             Action::SelectAllNotes,
-            Action::TogglePlayback,
             Action::CycleClipLane,
+            Action::TogglePlayback,
             Action::Undo,
             Action::ZoomIn,
         ] {
-            assert!(!action.acts_on_notes(), "{action:?}");
+            assert!(!action.leaves_wheel_lane(), "{action:?}");
         }
     }
 
