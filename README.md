@@ -189,7 +189,7 @@ the [roadmap](docs/280-roadmap.md):
 - detecting the meter from what you play: set it with the meter chip
 - audio tracks and audio recording
 - a built-in sampler or instrument: plugins cover it
-- automation lanes and CC lane editing
+- track automation lanes and controller-data editing
 - mixing: EQ, compression, effect plugins, sends, a mixer panel. Stev arranges;
   a DAW mixes
 - MIDI clock, Ableton Link or other external sync

@@ -42,6 +42,7 @@ These guidelines are split into focused topic files. All of them live in [`docs/
 | 280 | [280-roadmap.md](docs/280-roadmap.md) | What may come next: the principle (an opinionated, capture-first app), platforms (macOS first; CI on all three), candidates (remaining MIDI Out timing runs, a signed macOS app, export follow-ups, staged Linux/Windows support, website extras) and what's not planned |
 | 360 | [360-mcp-server.md](docs/360-mcp-server.md) | The MCP server design for AI agents (agreed 2026-10-28; phases 1–3 built, experimental): bring-your-own client, `stev --mcp` stdio bridge to a user-only Unix socket, the marquee as the reading context, the nine tools (reads, `check_notes`, writes as one undo step each), the units and note rows, the cleanup, the server instructions, phases |
 | 370 | [370-wheel-capture.md](docs/370-wheel-capture.md) | Wheel capture (agreed 2026-10-30, phase 1 built; a proof of concept): riding pitch bend or the mod wheel into the lead clip with `/`, running or stopped; one framing rule (the notes' window, else the pass holding the last wheel move), one landing rule (per wheel, from its first move to the window's end, latched, the old value written back), phases |
+| 380 | [380-wheel-lane.md](docs/380-wheel-lane.md) | The wheel lane design (agreed 2026-10-30, not built): the piano roll's velocity lane switches to pitch bend or the mod wheel from the gutter (`VEL`/`PB`/`MW`, a key to cycle), stepped and read-only, view state that never switches on its own; a footer velocity readout during a ⌘-drag; phases |
 
 ## Archived
 
