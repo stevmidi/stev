@@ -34,6 +34,8 @@
 //! - `computer_keys.rs` — driving the computer keyboard (the letter keys
 //!   played as a piano, `view::computer_keyboard`): its toggle and the notes
 //!   it sends.
+//! - `clip_lane.rs` — which lane the piano roll shows under its notes
+//!   (`ClipLane`: velocity, pitch bend or the mod wheel).
 //! - `output_menu.rs` — the track header's output menu (MIDI channel /
 //!   remove the plugin), opened from a track's output chip; drawn by
 //!   `rendering/output_menu.rs`.
@@ -48,6 +50,7 @@ mod about_tab;
 mod ai_tab;
 mod browser;
 mod browser_rename;
+mod clip_lane;
 mod computer_keys;
 mod footer_hint;
 mod gesture_state;
@@ -78,6 +81,7 @@ mod track_rename;
 mod ui_event;
 
 use self::browser::{BrowserItem, BrowserPanel, BrowserPlugin, clamp_browser_width, footer_rect};
+use self::clip_lane::ClipLane;
 use self::gesture_state::GestureState;
 use self::grid::{GridSurface, GridTiers, grid_tiers};
 use self::input::DragPointer;
@@ -133,7 +137,7 @@ use crate::{
     },
     metadata::{
         clip_metadata::{ClipMetadata, note_thumbnails_from_spans},
-        clip_view::{ClipView, EventMetadata},
+        clip_view::{ClipView, EventMetadata, WheelMoves},
     },
     shapes::{clip_shape::ClipShape, event_shape::EventShape},
     view::{computer_keyboard::ComputerKeyboard, input_poller::InputPoller, theme},

@@ -3,7 +3,8 @@
 //!
 //! It shares the clip's *position* atoms (cursor / region) so the cursor and
 //! region shading track live without a `UiEvent`, but takes a flat copy of the
-//! events ([`EventMetadata`]). The `Display` piano-roll renderer works from
+//! events ([`EventMetadata`]) and of its wheel moves ([`WheelMoves`]). The
+//! `Display` piano-roll renderer works from
 //! this alone. The arranger's counterpart is
 //! [`ClipMetadata`](crate::metadata::clip_metadata::ClipMetadata). See
 //! `020-views-and-state.md`.
@@ -12,6 +13,7 @@ use std::sync::{Arc, atomic::AtomicI32};
 
 use uuid::Uuid;
 
+use crate::core::midi::message::{Wheel, parse_wheel};
 use crate::models::{clip::Clip, event::EventType};
 
 /// One `NoteOn` as the piano roll draws it.
@@ -31,6 +33,14 @@ pub(crate) struct EventMetadata {
     pub(crate) muted: bool,
 }
 
+/// One wheel move as the wheel lane draws it: `(tick, value)`, event ticks.
+pub(crate) type WheelMove = (i32, u16);
+
+/// The clip's unmuted wheel moves, per wheel (indexed by [`Wheel::index`]),
+/// each list in tick order — what plays, so a muted move is left out
+/// (`apply_wheel_move`). See `380-wheel-lane.md`.
+pub(crate) type WheelMoves = [Vec<WheelMove>; Wheel::ALL.len()];
+
 /// A whole piano-roll snapshot. See the module docs.
 #[derive(Debug, Clone)]
 pub(crate) struct ClipView {
@@ -42,6 +52,8 @@ pub(crate) struct ClipView {
     pub(crate) region_end: Arc<AtomicI32>,
     /// The clip's `NoteOn` events, flattened.
     pub(crate) events: Vec<EventMetadata>,
+    /// The clip's wheel moves, for the wheel lanes.
+    pub(crate) wheel_moves: WheelMoves,
     /// The clip's id.
     pub(crate) clip_id: Uuid,
     /// The event selection.
@@ -49,7 +61,7 @@ pub(crate) struct ClipView {
 }
 impl ClipView {
     /// Snapshots `clip` into a `ClipView`, sharing its position atoms and
-    /// copying its `NoteOn`s.
+    /// copying its `NoteOn`s and wheel moves.
     pub(crate) fn from_clip(clip: &Clip) -> ClipView {
         let events: Vec<EventMetadata> = clip
             .events()
@@ -65,11 +77,19 @@ impl ClipView {
             })
             .collect();
 
+        let mut wheel_moves = WheelMoves::default();
+        for event in clip.events().iter().filter(|event| !event.is_muted()) {
+            if let Some((wheel, value)) = parse_wheel(event.midi_message()) {
+                wheel_moves[wheel.index()].push((event.tick(), value));
+            }
+        }
+
         ClipView {
             cursor_tick: clip.cursor_tick_atomic(),
             region_start: clip.region().start_atomic(),
             region_end: clip.region().end_atomic(),
             events,
+            wheel_moves,
             clip_id: clip.id(),
             selected_event_ids: clip.selected_event_ids(),
         }

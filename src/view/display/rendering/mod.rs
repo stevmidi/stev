@@ -1,5 +1,6 @@
 //! All of `Display`'s painting, split by surface: `arranger.rs` (the clip
-//! timeline + track headers), `clip_view.rs` (the piano roll), `piano_keys.rs`
+//! timeline + track headers), `clip_view.rs` (the piano roll), `wheel_lane.rs`
+//! (its lower lane's switch and wheel curves), `piano_keys.rs`
 //! (the keyboard gutter), `timeline.rs` (the ruler / region strip),
 //! `overlays.rs` (cursor line, playhead), `modals/` (the settings
 //! modal and the project dialogs), `browser.rs` (the browser
@@ -14,6 +15,7 @@ mod output_menu;
 mod overlays;
 mod piano_keys;
 mod timeline;
+mod wheel_lane;
 
 #[cfg(target_os = "macos")]
 use std::io::Write;

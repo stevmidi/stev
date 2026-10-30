@@ -20,9 +20,11 @@ capture covers it. Key files: `src/core/midi/input.rs`,
   and resets on a stop (`050-undo-redo.md` § Invariants). Sustain is deliberately not a
   recorded controller: a sustain stuck on holds every note, so it would need the
   note-release machinery rather than this chase; it can join later as one more `Wheel`.
-- **Invisible in the base.** No lane shows controller data and no gesture edits it
-  (`280` § Not planned). No lighter hint either (a badge or a strip on the clip): if wheel
-  data is ever shown, it is in an automation lane, a feature of its own (decided 2026-10-14); note edits, quantize and transpose leave it where it was recorded
+- **Shown in the piano roll's wheel lanes, read-only** (`380-wheel-lane.md`): the lane
+  under the notes switches to pitch bend or the mod wheel and draws the lead clip's
+  moves as a line (a ride smooth, a hold stepped); no gesture edits them (`280` § Not planned). No lighter hint
+  on the clip (a badge or a strip, decided 2026-10-14) and nothing in the arranger
+  thumbnails; note edits, quantize and transpose leave it where it was recorded
   (`020` § Event Selection, `070`).
 
 - **Starting the transport empties the buffer, except what is held into the take**: the

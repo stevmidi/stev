@@ -290,6 +290,20 @@ impl Display {
             return true;
         }
 
+        // The gutter left of the lower lane: `VEL` / `PB` / `MW` pick the
+        // lane it shows (`380-wheel-lane.md`).
+        if is_clip_events_view && let Some(lane) = self.clip_lane_label_at(x, y) {
+            self.render.clip_lane = lane;
+            return true;
+        }
+        // A wheel lane is read-only: a press in it starts nothing.
+        if is_clip_events_view
+            && self.render.clip_lane.wheel().is_some()
+            && self.is_in_lower_lane(x, y)
+        {
+            return true;
+        }
+
         // The octave legend left of the keys: zoom (horizontal) and scroll
         // (vertical) the piano roll's rows.
         if is_clip_events_view && self.is_on_octave_legend(x, y) {
@@ -694,6 +708,12 @@ impl Display {
             // With the panel hidden it only flips the size it will show at.
             InputEvent::Action(Action::ToggleClipPanelSize) => {
                 self.toggle_clip_panel_size();
+                true
+            }
+            // `W` — the next lane under the piano roll (`380-wheel-lane.md`).
+            // View-local, like the gutter labels a click picks one from.
+            InputEvent::Action(Action::CycleClipLane) => {
+                self.render.clip_lane = self.render.clip_lane.next();
                 true
             }
             // Plain Tab with both panes on screen moves the keyboard to the

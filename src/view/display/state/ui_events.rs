@@ -116,7 +116,7 @@ impl Display {
                 UiEvent::ClipExited => {
                     // Leaving the clip view hides the panel.
                     self.render.clip_panel.visible = false;
-                    self.render.event_shapes.clear();
+                    self.clear_event_shapes();
                     // The arranger keeps its own scroll; follow re-arms, so
                     // it pages to the cursor if the clip view moved it off
                     // screen.
@@ -154,7 +154,7 @@ impl Display {
                     {
                         shape.update_note_thumbnails(thumbnails);
                     }
-                    self.rebuild_event_shapes(clip_view.events);
+                    self.rebuild_event_shapes(clip_view.events, clip_view.wheel_moves);
                     // No re-fit or scroll here: every note edit and every
                     // `[`/`]` lands here, and the view stays exactly where it
                     // is — only the shading changes.
@@ -202,7 +202,7 @@ impl Display {
                         None => self.project.project_current_name = None,
                     }
                     self.render.clip_shapes.clear();
-                    self.render.event_shapes.clear();
+                    self.clear_event_shapes();
                     self.render.arranger_scroll_x = 0.;
                     self.render.clip_scroll_x = 0.;
                     // The zoom itself is kept (a preference), but `X` must not

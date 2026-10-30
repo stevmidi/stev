@@ -10,8 +10,10 @@
 
 use egui::Rect;
 
+use super::clip_lane::ClipLane;
 use super::pane::{ClipPanel, Pane};
 use super::status_message::StatusMessage;
+use crate::metadata::clip_view::WheelMoves;
 use crate::shapes::{clip_shape::ClipShape, event_shape::EventShape};
 
 /// The render state, grouped out of [`Display`](super::Display). `canvas_rect`
@@ -25,6 +27,13 @@ pub(super) struct RenderState {
     pub(super) clip_shapes: Vec<ClipShape>,
     /// Piano-roll note bars, reconciled against `UiEvent`s.
     pub(super) event_shapes: Vec<EventShape>,
+    /// The lead clip's wheel moves, for the wheel lanes — replaced with the
+    /// event shapes, from the same snapshot.
+    pub(super) wheel_moves: WheelMoves,
+    /// The lane the piano roll shows under its notes. View state: not saved,
+    /// kept when the lead clip changes, switched only by the gutter labels
+    /// and `Action::CycleClipLane` (`380-wheel-lane.md`).
+    pub(super) clip_lane: ClipLane,
     /// Arranger horizontal scroll offset, in pixels. Written only by the
     /// arranger's scroll code (`sync_arranger_scroll`, `scroll_arranger_by`,
     /// the arranger zoom) — see `archive/210-docked-clip-panel.md`.
@@ -133,6 +142,8 @@ impl RenderState {
             canvas_rect: Rect::NOTHING,
             clip_shapes: Vec::new(),
             event_shapes: Vec::new(),
+            wheel_moves: WheelMoves::default(),
+            clip_lane: ClipLane::Velocity,
             arranger_scroll_x: 0.,
             arranger_scroll_y: 0.,
             clip_scroll_x: 0.,

@@ -38,13 +38,20 @@ impl Display {
         }
     }
 
-    /// Replaces the whole event-shape list from a fresh event snapshot of the
-    /// lead clip, reusing the list's allocation.
-    pub(super) fn rebuild_event_shapes(&mut self, events: Vec<EventMetadata>) {
+    /// Replaces the whole event-shape list and the wheel moves from a fresh
+    /// snapshot of the lead clip, reusing the list's allocation.
+    pub(super) fn rebuild_event_shapes(&mut self, events: Vec<EventMetadata>, wheels: WheelMoves) {
         self.render.event_shapes.clear();
         self.render
             .event_shapes
             .extend(events.into_iter().map(EventShape::from_metadata));
+        self.render.wheel_moves = wheels;
+    }
+
+    /// Drops the lead clip's event shapes and wheel moves: no clip is shown.
+    pub(super) fn clear_event_shapes(&mut self) {
+        self.render.event_shapes.clear();
+        self.render.wheel_moves = WheelMoves::default();
     }
 
     /// Makes `clip_view` the lead clip the clip view shows (`ClipEntered`,
@@ -53,8 +60,8 @@ impl Display {
     pub(super) fn show_lead_clip(&mut self, clip_view: Option<ClipView>) {
         self.lead_clip_time = clip_view.as_ref().map(ClipTimeAtomics::of);
         match clip_view {
-            Some(clip_view) => self.rebuild_event_shapes(clip_view.events),
-            None => self.render.event_shapes.clear(),
+            Some(clip_view) => self.rebuild_event_shapes(clip_view.events, clip_view.wheel_moves),
+            None => self.clear_event_shapes(),
         }
         // Each clip starts at its home framing.
         self.reset_clip_zoom();

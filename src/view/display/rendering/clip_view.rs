@@ -1,6 +1,6 @@
 //! Painting the piano roll (`Clip`): the note bars, the grid, the shading
-//! outside the clip's window, and the velocity panel at the bottom. See
-//! `030-ui-design.md`.
+//! outside the clip's window, and the lower lane at the bottom — the velocity
+//! panel here, a wheel's curve in `wheel_lane.rs`. See `030-ui-design.md`.
 
 use std::collections::HashMap;
 
@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use crate::models::clip::NoteBounds;
 
-use egui::{Align2, CornerRadius, FontId, Painter, Rect, Stroke, StrokeKind, pos2, vec2};
+use egui::{CornerRadius, Painter, Rect, Stroke, StrokeKind, pos2, vec2};
 
 use super::piano_keys::NoteAreaGeom;
 use super::*;
@@ -16,7 +16,7 @@ use super::*;
 impl Display {
     /// How strongly a note is drawn when it doesn't play — muted, or kept
     /// outside the clip's window (`220-capture-without-pending-view.md`).
-    const SILENT_NOTE_SCALE: f32 = 0.35;
+    pub(super) const SILENT_NOTE_SCALE: f32 = 0.35;
 
     /// Alpha of the background-tone shade laid over the note grid outside the
     /// clip's window, so kept material reads as not playing.
@@ -35,10 +35,11 @@ impl Display {
     /// breathing gap keeps the piano roll from starting flush against it.
     const NOTE_AREA_TOP_GAP: f32 = 6.0;
 
-    /// Height of the velocity panel drawn at the bottom of the piano roll —
-    /// always shown, whether or not an event is selected (display only: there
-    /// is no velocity-editing key yet, see `010-keybindings.md`).
-    const VELOCITY_PANEL_H: f32 = 80.0;
+    /// Height of the lower lane at the bottom of the piano roll — the
+    /// velocity panel or a wheel's curve (`ClipLane`), one fixed height for
+    /// all three, so switching never moves the note grid
+    /// (`380-wheel-lane.md`).
+    pub(super) const VELOCITY_PANEL_H: f32 = 80.0;
 
     /// Note-row viewport geometry shared by rendering (`draw_clip_view`) and
     /// mouse hit-testing (`Display::event_id_at`) — kept in one place so the
@@ -155,7 +156,7 @@ impl Display {
             );
         }
 
-        // Velocity lane — the DAW-standard treatment: the same background tone
+        // The lower lane (velocity or a wheel) — the DAW-standard treatment: the same background tone
         // as the white-key note lanes, so it reads as part of the piano-roll
         // editing surface rather than a separate readout. Filled on the raw
         // `painter` (outside the note-area clip) here, *before* `draw_timeline`,
@@ -332,7 +333,21 @@ impl Display {
         }
 
         self.draw_event_marquee(painter, geom);
-        self.draw_velocity_panel(painter, geom.top + geom.h, Self::VELOCITY_PANEL_H);
+        let lane = self.lower_lane_rect(geom);
+        // Divider — `grid_seam_color()` groove at 2px, the same lane-boundary
+        // treatment as the note grid's B/C octave seam and the arranger's
+        // track seams; with the lane sharing the note-grid background it is
+        // the only thing separating the two.
+        painter.hline(
+            lane.x_range(),
+            lane.top(),
+            Stroke::new(2.0_f32, grid_seam_color()),
+        );
+        match self.render.clip_lane.wheel() {
+            None => self.draw_velocity_panel(painter, lane),
+            Some(wheel) => self.draw_wheel_lane(painter, lane, wheel),
+        }
+        self.draw_lane_gutter(painter, geom);
     }
 
     /// Screen rect of a note bar from `start` to `end` (event ticks) on row
@@ -403,29 +418,20 @@ impl Display {
     }
 
     /// Velocity readout for every `NoteOn` event — one bar each, height
-    /// proportional to velocity. Display only for now: there is no
-    /// velocity-editing key yet (see `010-keybindings.md`), so nothing here
-    /// responds to input.
-    fn draw_velocity_panel(&self, painter: &Painter, panel_top: f32, panel_h: f32) {
-        let content_x = self.content_origin_x();
-        let content_right = self.content_right_x();
+    /// proportional to velocity, in the lower lane `lane`. Display only: a
+    /// velocity changes by ⌘-dragging its note (`020` § Velocity Drag).
+    fn draw_velocity_panel(&self, painter: &Painter, lane: Rect) {
+        let content_x = lane.left();
+        let content_right = lane.right();
+        let (panel_top, panel_h) = (lane.top(), lane.height());
 
         // Background and the vertical bar/beat/16th grid lines running through
         // this lane are painted upstream (`draw_note_lane_backgrounds` fills it
         // with the white-key lane tone before `draw_timeline` extends the grid
         // down into it) — the DAW-standard velocity lane, time-aligned with the
-        // piano roll above it and sharing its surface. Only the note-grid ↔
-        // velocity-lane divider and the bars themselves are drawn here.
-
-        // Divider — `grid_seam_color()` groove at 2px, the same lane-boundary
-        // treatment as the note grid's B/C octave seam and the arranger's
-        // track seams; with the lane now sharing the note-grid background it
-        // is the only thing separating the two.
-        painter.hline(
-            content_x..=content_right,
-            panel_top,
-            Stroke::new(2.0_f32, grid_seam_color()),
-        );
+        // piano roll above it and sharing its surface. Only the bars are drawn
+        // here; the divider above and the gutter's lane switch are
+        // `draw_clip_view`'s.
 
         // Draw bars — one per NoteOn event
         const BAR_W: f32 = 4.0;
@@ -461,15 +467,6 @@ impl Display {
                 bar_color,
             );
         }
-
-        // "VEL" label flush right inside the panel
-        painter.text(
-            pos2(content_right - 4.0, panel_top + 4.0),
-            Align2::RIGHT_TOP,
-            "VEL",
-            FontId::proportional(10.0),
-            theme::fg_dim(),
-        );
     }
 }
 
