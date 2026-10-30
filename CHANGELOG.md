@@ -26,6 +26,7 @@ Breaking entries are marked **Breaking** and say what to do about them.
 - A pitch bend held when the transport starts is kept in the take, as a held mod wheel already was.
 - Ride the mod wheel or pitch bend over a playing loop and `/` keeps it in the lead clip, with no notes played: the movement replaces that wheel's data over the span you touched.
 - The piano roll's lower lane can show the clip's pitch bend or mod wheel instead of the velocities: click `VEL`, `PB` or `MW` left of it, or press `W` to cycle. A dot beside `PB` or `MW` means the clip has data for that wheel. The curves are read-only.
+- A ⌘-drag on notes shows the velocity it is setting in the footer, or the range for a group, and holding ⌘ over a note turns the pointer into up-and-down arrows.
 
 ### Changed
 

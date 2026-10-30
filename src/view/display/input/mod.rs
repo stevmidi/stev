@@ -354,11 +354,11 @@ impl Display {
     /// `(x, y)`. Run
     /// on each `MouseMoved`, and on the release of a drag that held the
     /// pointer still (the octave-legend zoom), after which no move comes.
-    fn refresh_hovers(&mut self, x: f32, y: f32, modifiers: KeyModifiers) {
+    fn refresh_hovers(&mut self, x: f32, y: f32) {
         let pane = self.pointer_pane(x, y);
         self.in_pane(pane, |display| {
             display.update_hover_cursor_tick(x, y);
-            display.update_note_hover(x, y, modifiers.command);
+            display.update_note_hover(x, y);
             display.update_key_zoom_hover(x, y);
             display.update_clip_resize_hover(x, y);
             display.update_window_edge_hover(x, y);
@@ -825,7 +825,7 @@ impl Display {
                     display.extend_clip_move_drag(x, y);
                     display.extend_track_mix_drag(y, modifiers.shift);
                 });
-                self.refresh_hovers(x, y, modifiers);
+                self.refresh_hovers(x, y);
                 // A `.mid` or a Plugins row pressed in the browser shows it is
                 // being dragged once the pointer moves off the press point,
                 // and becomes the drag proper once it leaves the panel.
@@ -989,8 +989,7 @@ impl Display {
                 self.gesture.key_zoom_drag = None;
                 self.finish_tempo_drag();
                 if pointer_was_held && let Some(pos) = self.canvas_pointer() {
-                    let modifiers = ctx.input(|i| KeyModifiers::from(i.modifiers));
-                    self.refresh_hovers(pos.x, pos.y, modifiers);
+                    self.refresh_hovers(pos.x, pos.y);
                 }
                 true
             }

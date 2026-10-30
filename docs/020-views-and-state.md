@@ -126,7 +126,7 @@ Every range-scoped key below reads `self.gesture.time_selection`, but they split
 - **Past the edge**: a move held with the pointer past the note area's top or bottom auto-scrolls the view and the pitch follows the row at the edge (`Display::auto_scroll_note_area`, `030` § Piano Roll); a resize has no pitch and doesn't scroll.
 - **Audition on each pitch change**: whenever the pressed note's previewed pitch changes, `extend_note_drag` sends `InputEvent::PreviewNote { note, velocity }` → `SequencerCommand::PreviewNote` → `Sequencer::preview_pitch` (the selected track's channel, through `preview_note`, so plugin tracks hear it too).
 - **During playback**: each step that takes a sounding note away from the playhead (moved away, new pitch, end or start past it) releases it, and a note stretched step by step keeps sounding to its new end — `Track::edit_clip_events`, shared by every event edit (`050-undo-redo.md`).
-- **Cursor**: `Display.gesture.note_hover` (`update_note_hover`, clip pane, no button or ⌘/Ctrl held) shows `ResizeHorizontal` over an edge; a resize drag keeps it, a move drag shows `Grabbing` once latched.
+- **Cursor**: `Display.gesture.note_hover` (`update_note_hover`, clip pane, no button held) shows `ResizeHorizontal` over an edge, unless ⌘/Ctrl is held (§ Velocity Drag); a resize drag keeps it, a move drag shows `Grabbing` once latched.
 
 ### Event Marquee Selection
 
@@ -147,7 +147,9 @@ Every range-scoped key below reads `self.gesture.time_selection`, but they split
 - **View-local drag state**: `Display.gesture.velocity_drag: Option<VelocityDrag>` (anchor y, drag id, target event ids, running total nudge — `Some` only while held, doubling as the drag-active flag) and `Display.gesture.next_velocity_drag_id`, a counter handed out once per gesture. Only vertical movement matters; `x` is ignored.
 - **Every nudge round-trips through the model, like the marquee**: `Display::extend_velocity_drag` (driven by `MouseMoved`) recomputes the total nudge from the anchor (`VELOCITY_DRAG_PX_PER_UNIT`), diffs it against the last value sent, and — only when nonzero — sends `InputEvent::DragEventsVelocity { event_ids, nudge, drag_id }`, mapped 1:1 to `SequencerCommand::DragEventsVelocity`.
 - **Unlike the marquee, this *is* a data mutation, so it must still undo as one step**: continuous `MouseMoved`-driven velocity nudges are coalesced by `undo::Edit::merge` on `SequencerEdit` (see `050-undo-redo.md`), gated by `drag_id` so two separate drags on the same notes never merge into one undo entry.
-- **Release just drops the drag state**: `MouseReleased` clears `velocity_drag`; whatever velocity change happened stays, exactly like the marquee's selection persists after its drag state clears.
+- **The footer reads the velocity while held**: `Velocity 96`, or a group's range `Velocity 64–110` (`footer_hint.rs`, `velocity_readout`), from the targets' current shapes, so it follows the model's clamps and shows one value once a group is pinned at 1 or 127. In the hover hint's place and look (`030` § Header & Footer), in every lower lane (`VEL`, `PB`, `MW`: the drag starts on a note, not in the lane, `380`).
+- **The pointer says so**: with ⌘/Ctrl held anywhere on a note (`note_hover`, the ⌘ read live from egui each frame, so pressing it with the pointer still is enough), and through the drag, the pointer is `ResizeVertical`, the BPM chip's up-and-down arrows, in place of the edges' `ResizeHorizontal`.
+- **Release just drops the drag state**: `MouseReleased` clears `velocity_drag`; whatever velocity change happened stays, exactly like the marquee's selection persists after its drag state clears. The footer readout goes with it.
 
 ### Note Copy / Cut / Paste
 

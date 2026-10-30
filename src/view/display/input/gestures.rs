@@ -550,15 +550,16 @@ impl Display {
     }
 
     /// Updates which part of a note (if any) is under the pointer, for the
-    /// resize cursor on an edge. A no-op while a note drag is live; `None`
-    /// outside the clip pane's grid, with ⌘/Ctrl held (a press would be the
-    /// velocity drag) and during the other clip-pane drags.
-    pub(super) fn update_note_hover(&mut self, x: f32, y: f32, command: bool) {
+    /// resize cursor on an edge, or the velocity cursor anywhere on it while
+    /// ⌘/Ctrl is held (read live at paint time, so pressing ⌘ with the
+    /// pointer still shows it at once). A no-op while a note drag is live;
+    /// `None` outside the clip pane's grid and during the other clip-pane
+    /// drags.
+    pub(super) fn update_note_hover(&mut self, x: f32, y: f32) {
         if self.gesture.note_drag.is_some() {
             return;
         }
         self.gesture.note_hover = (self.active_pane() == Pane::Clip
-            && !command
             && self.gesture.velocity_drag.is_none()
             && self.gesture.event_marquee_anchor.is_none()
             && self.is_mouse_inside_grid(x, y))
