@@ -26,8 +26,15 @@ capture covers it. Key files: `src/core/midi/input.rs`,
   (`020` § Event Selection, `070`).
 
 - **Starting the transport empties the buffer, except what is held into the take**: the
-  notes still down and the mod wheel when off its rest land on the start tick, the notes
+  notes still down and each wheel when off its rest land on the start tick, the notes
   spread as they were pressed (`100` § Notes held into a take).
+- **A take into a clip replaces that clip's wheel data over the span played**
+  (`370-wheel-capture.md`, `Clip::land_take`): its notes are added, but for each wheel the
+  take moved, the clip's own moves of it go from the take's first move to the end of the
+  take's window, the take's come in, and the old curve's value at the window end is
+  written back. A wheel the take didn't move is left alone; a wheel off its rest where
+  the take's window starts counts as a move there (`Clip::carry_wheels_onto`), for new
+  clips too. Phase 1: a take still needs notes to commit (`100` § Invariants).
 
 ### Tick handling
 

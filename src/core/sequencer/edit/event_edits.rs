@@ -45,9 +45,12 @@ use super::{EditResult, SequencerEdit};
 pub(crate) struct InsertCaptureEdit {
     /// The target clip, its selection, and the pre-insert snapshot.
     state: ClipEventsEditState,
-    /// The inserted notes, in the clip's event ticks. Redo adds these same
-    /// notes (same ids) again.
+    /// The inserted notes and wheel moves, in the clip's event ticks. Redo
+    /// lands these same events (same ids) again.
     events: Vec<Event>,
+    /// Where the take's wheel span ends, in the clip's event ticks
+    /// ([`Clip::land_take`]).
+    wheel_end: i32,
     /// `true` until the first `edit()` has cleared the capture buffer.
     consume_capture: bool,
 }
@@ -80,6 +83,7 @@ impl InsertCaptureEdit {
                 pre_events: None,
             },
             events: insert.events,
+            wheel_end: insert.wheel_end,
             consume_capture: true,
         })
     }
@@ -94,18 +98,15 @@ impl InsertCaptureEdit {
         )
     }
 
-    /// Snapshots the clip's events, adds the take's notes and re-pairs, and,
-    /// once, clears the capture buffer. Reports the take's pitch range
+    /// Snapshots the clip's events, lands the take ([`Clip::land_take`]: its
+    /// notes added, its wheel moves replacing the clip's over the span
+    /// played) and, once, clears the capture buffer. Reports the take's pitch range
     /// (`EditResult::EventsModified::inserted_take`).
     pub(super) fn edit(&mut self, sequencer: &mut Sequencer) -> EditResult {
         let selected_event_ids = self.state.selected_event_ids.clone();
-        let events = &self.events;
+        let (events, wheel_end) = (&self.events, self.wheel_end);
         let mut result = self.state.edit_with(sequencer, |clip| {
-            for event in events {
-                clip.add_event(event.clone());
-            }
-            clip.sort_events_by_tick();
-            clip.calculate_note_lengths();
+            clip.land_take(events, wheel_end);
             selected_event_ids
         });
         // Every time the take lands — the commit and each redo — so the

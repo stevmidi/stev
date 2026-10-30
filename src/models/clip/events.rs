@@ -18,7 +18,7 @@
 use crate::core::time::Meter;
 use crate::models::{
     event::{Event, EventType},
-    wheels::{NEUTRAL_WHEELS, WheelValues, apply_wheel_move},
+    wheels::WheelValues,
 };
 
 use super::{Clip, EventSpaceRetime};
@@ -108,12 +108,7 @@ impl Clip {
     /// there is none. An event exactly at the target is left to the walk,
     /// which plays it next.
     pub(crate) fn wheels_at(&self, playback_tick: i32) -> WheelValues {
-        let target = self.event_tick_from_arrangement_tick(playback_tick);
-        let mut values = NEUTRAL_WHEELS;
-        for event in self.events.iter().take_while(|event| event.tick() < target) {
-            apply_wheel_move(&mut values, event);
-        }
-        values
+        self.wheels_before(self.event_tick_from_arrangement_tick(playback_tick))
     }
 
     /// Replaces the whole event list (undo restore), re-sorting and rebuilding

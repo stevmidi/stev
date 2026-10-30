@@ -217,7 +217,17 @@ pass alone — same "last pass only" rule, no exception for the cursor.
 - What lands: every note whose onset fits the room left in the clip, and every wheel move
   (pitch bend, mod wheel — `090`) in it, the one after the last note-off included — a
   bend easing back to centre must come along or the clip is left bent
-  (`Clip::cloned_events_in_range`)
+  (`Clip::cloned_events_in_range`). The notes are added; the wheels **replace** the
+  clip's own over the span played (`Clip::land_take`, `370-wheel-capture.md`): per wheel
+  the take moved, from its first move to the **wheel end**, where the old curve's value
+  is written back. A wheel off its rest at the window start counts as a move there
+  (`carry_wheels_onto` in `normalize_running_capture`, every target)
+- The wheel end (`CaptureInsert::wheel_end`) is the end of the loop **pass** the window
+  starts in, not the window's: a one-bar loop over a four-bar clip latches to the loop's
+  end, and a wheel move after the wrap belongs to another pass and stays out
+  (`a_short_loop_latches_the_wheel_to_the_pass_end`). Not looping, it is the window's
+  end. Never past the clip's end, where no write-back is made (the clip loops, and the
+  wrap's chase hands back)
 - A mid-clip cursor inserts at the correct phase; notes at a phase before the clip cursor
   (played after the wrap) and notes past the clip's span inside a longer loop are
   dropped, never shifted into the clip
@@ -256,9 +266,10 @@ the take:
   quarter) so a note added seconds later doesn't land deep in the bar. A rolled chord
   stays rolled, a block chord a block. Each keeps its real release, which arrives while
   playing, so its length is how long it was really held into the take;
-- **the mod wheel when off its rest** — `Sequencer::live_mod_wheel`, the player's last
-  mod-wheel move (whatever the buffer's resets did since), on the start tick ahead of the
-  notes. At 0 nothing is carried. Pitch bend is not: it springs back to centre.
+- **each wheel when off its rest** — `Sequencer::live_wheels`, the player's last move of
+  each (whatever the buffer's resets did since), on the start tick ahead of the notes. At
+  rest nothing is carried. A bend held into the take is kept too (`370` § Decisions 7):
+  it springs back to centre on release, but held, it is what was played.
 
 They go in at **cursor** ticks, since the clock's numbering isn't known until input
 arrives; `capture_held_start` marks them as not yet placed. The take's first input while
@@ -313,7 +324,7 @@ stopped commit (a wheel wiggled alone commits nothing, `a_capture_of_wheel_moves
 windows come from note-ons and note-offs (`calculate_running_region`,
 `linear_content_length`), and the stopped capture source is trimmed
 back from its last note edge (`040`). Wheel moves ride along inside whatever window the
-notes chose.
+notes chose, and into a clip they replace its own over the span played (`370`).
 
 `calculate_running_region` must preserve:
 
@@ -474,7 +485,8 @@ Tests for the notes held into a take (*Notes held into a take*), in
   first pass** (guards against placing by the latest clock offset),
 - **a linear take → the chord on the cursor, the clip placed there**,
 - **a mod wheel off its rest, even from before an earlier reset → carried onto the cursor;
-  one back at rest → nothing**,
+  one back at rest → nothing**, and its bend twin
+  (`a_bend_off_its_rest_is_carried_into_the_take`),
 - **a running `/` into a selected clip keeps the chord too**.
 
 `Clip::open_note_ons` is tested in `src/models/clip/pairing.rs`.

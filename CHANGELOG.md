@@ -23,6 +23,11 @@ Breaking entries are marked **Breaking** and say what to do about them.
 ### Added
 
 - A `TIME` chip in the header, right of `POS`, shows the song position as clock time (`mm:ss:SSS`) at the project tempo.
+- A pitch bend held when the transport starts is kept in the take, as a held mod wheel already was.
+
+### Changed
+
+- A take into a clip now replaces the clip's pitch-bend and mod-wheel data over the span you played, instead of mixing the two: each wheel you moved takes over from your first move to the end of the take, then hands back to the clip's old curve. A wheel you didn't touch is left as it was. A take session's bends run past the last note, so an ease-back played after it lands.
 
 ## [0.11.0] - 2026-10-29
 

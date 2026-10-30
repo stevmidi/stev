@@ -32,6 +32,8 @@
 //! - `pairing.rs` — matching `NoteOn`/`NoteOff` for playback and length calc;
 //!   `fold_into_loop`, which turns one loop of a take into a clip.
 //! - `selection.rs` — the per-clip event [`Selection`].
+//! - `wheel_landing.rs` — landing a captured take: notes added, wheel moves
+//!   replacing the clip's own over the span played (`370-wheel-capture.md`).
 //!
 //! Pure data, unit-tested per file.
 
@@ -44,6 +46,7 @@ mod note_edits;
 mod pairing;
 mod quantize;
 mod selection;
+mod wheel_landing;
 
 pub(crate) use cursor_region::{
     ClipBounds, ClipEdge, EventSpaceRetime, min_window_length, reach_over, window_with_edge_at,

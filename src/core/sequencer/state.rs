@@ -129,10 +129,11 @@ pub(crate) struct Sequencer {
     /// counted by [`Sequencer::tick`]: how far before its first input the
     /// clock stood at the start, which places what was held into it.
     pub(super) ticks_into_take: i32,
-    /// The player's last mod-wheel move while it is off its rest (`None` at
-    /// 0), for a take to start from (`begin_running_take`). Where the wheel
-    /// physically is, so the buffer's resets leave it alone.
-    pub(super) live_mod_wheel: Option<Midi3>,
+    /// Per wheel (by `Wheel::index`), the player's last move while it is
+    /// off its rest (`None` at rest), for a take to start from
+    /// (`begin_running_take`). Where the wheels physically are, so the
+    /// buffer's resets leave them alone.
+    pub(super) live_wheels: [Option<Midi3>; 2],
     /// `clock_tick − playback_tick` when the latest message was captured
     /// while running — how far the capture clock's numbering sits from the
     /// cursor's. The clock only ever matches playback's *phase*, so this is
@@ -227,7 +228,7 @@ impl Sequencer {
             capture_clip: Clip::new(),
             capture_held_start: None,
             ticks_into_take: 0,
-            live_mod_wheel: None,
+            live_wheels: [None; 2],
             capture_clock_offset: None,
             capture_last_note_at: None,
             take_framing: None,

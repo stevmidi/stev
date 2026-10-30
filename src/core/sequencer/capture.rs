@@ -15,7 +15,7 @@ use uuid::Uuid;
 use crate::{
     core::{
         config,
-        midi::message::{Wheel, midi3, parse_wheel},
+        midi::message::{midi3, parse_wheel},
         time,
     },
     models::{
@@ -35,8 +35,12 @@ pub(crate) struct CaptureInsert {
     pub(crate) track_idx: usize,
     /// The clip the take goes into.
     pub(crate) clip_id: Uuid,
-    /// The notes, already in the clip's event ticks.
+    /// The notes and wheel moves, already in the clip's event ticks.
     pub(crate) events: Vec<Event>,
+    /// Where the take's wheel span ends, in the clip's event ticks: the
+    /// wheels it moves latch to here, and the clip's old curve resumes
+    /// ([`Clip::land_take`]).
+    pub(crate) wheel_end: i32,
 }
 
 /// The capture buffer framed as `/` would frame it now
@@ -177,8 +181,8 @@ impl Sequencer {
         if is_note_on(message) {
             self.capture_last_note_at = Some(Instant::now());
         }
-        if let Some((Wheel::Modulation, value)) = parse_wheel(message) {
-            self.live_mod_wheel = (value != Wheel::Modulation.neutral()).then(|| midi3(message));
+        if let Some((wheel, value)) = parse_wheel(message) {
+            self.live_wheels[wheel.index()] = (value != wheel.neutral()).then(|| midi3(message));
         }
 
         self.add_midi_event_to_capture(message, tick);
@@ -188,7 +192,7 @@ impl Sequencer {
     /// Starts the capture of a running take from `start_tick`, where playback
     /// starts: empties the buffer, keeping what the player holds into the
     /// take — a chord pressed before the transport started would otherwise
-    /// lose its note-ons and commit nothing. A mod wheel off its rest lands
+    /// lose its note-ons and commit nothing. Each wheel off its rest lands
     /// on `start_tick`, then the notes still down: the first-pressed on
     /// `start_tick`, each other one after it by the gap it was pressed with,
     /// at most [`HELD_NOTE_SPREAD_TICKS`](config::HELD_NOTE_SPREAD_TICKS).
@@ -201,7 +205,7 @@ impl Sequencer {
         let first_on = held.iter().map(Event::tick).min().unwrap_or(0);
 
         self.reset_capture();
-        if let Some(wheel) = self.live_mod_wheel {
+        for wheel in self.live_wheels.into_iter().flatten() {
             self.capture_clip
                 .add_event(Event::from_midi_with_tick(&wheel, start_tick));
         }
@@ -257,7 +261,7 @@ impl Sequencer {
 
     /// The note pairs of `capture` (a crop, rebased to 0) whose onsets fall
     /// in `[0, keep_end_tick)` and the wheel moves inside it, shifted by
-    /// `event_offset_ticks`: what a capture insert adds to its target clip
+    /// `event_offset_ticks`: what a capture insert lands in its target clip
     /// (`InsertCaptureEdit`).
     pub(super) fn capture_events_to_insert(
         capture: &Clip,
@@ -271,8 +275,8 @@ impl Sequencer {
         events
     }
 
-    /// The running `/` with a lead clip: the notes the live capture inserts
-    /// into the selected clip, from the arranger or the clip view alike, since
+    /// The running `/` with a lead clip: the notes and wheel moves the live
+    /// capture lands in the selected clip, from the arranger or the clip view alike, since
     /// the clip view doesn't loop the transport on its clip
     /// (`archive/210-docked-clip-panel.md`). The pure half of the insert;
     /// [`InsertCaptureEdit`] adds the notes and clears the buffer. `None` on an
@@ -295,6 +299,12 @@ impl Sequencer {
     /// `clip.region_length()` — phases before the clip cursor, played after
     /// the loop wrapped, or past the clip's span inside a longer loop — are
     /// discarded, never shifted into the clip.
+    ///
+    /// The wheels latch to the end of the loop pass the window starts in,
+    /// not the window's: a one-bar loop over a four-bar clip hands back to
+    /// the clip's own curve at the loop's end, and a wheel move after it
+    /// belongs to another pass (`370-wheel-capture.md`). Not looping, they
+    /// latch to the window's end. Either way never past the clip's end.
     ///
     /// [`InsertCaptureEdit`]: crate::core::sequencer::edit::InsertCaptureEdit
     pub(crate) fn build_running_capture_insert(&self) -> Option<CaptureInsert> {
@@ -328,6 +338,12 @@ impl Sequencer {
         // keeps a wheel moved after the last note-off (a bend easing back).
         let clip_offset = anchor - clip_start_tick;
         let room = region_length - clip_offset;
+        let pass_room = if self.playback_is_looping() {
+            let loop_len = self.capture_loop_length();
+            loop_len - (anchor - self.region_start()).rem_euclid(loop_len)
+        } else {
+            region_length
+        };
 
         let events =
             Self::capture_events_to_insert(&capture, clip_region_start + clip_offset, room);
@@ -335,6 +351,7 @@ impl Sequencer {
             track_idx,
             clip_id,
             events,
+            wheel_end: clip_region_start + clip_offset + pass_room.min(room),
         })
     }
 
@@ -383,6 +400,11 @@ impl Sequencer {
     /// A silent region with retained pre-roll is still a clip: the user drags
     /// the left edge to reveal it.
     ///
+    /// Every target carries the wheels off their rest where the kept span
+    /// starts onto its start ([`Clip::carry_wheels_onto`]): a wheel set in an
+    /// earlier pass, or before the transport started, and held, is part of
+    /// the take (`370-wheel-capture.md` § Decisions 7).
+    ///
     /// **The insert targets** select a window of `region_length` ticks pinned
     /// at `anchor_tick`'s phase ([`Self::calculate_running_region`]) and crop
     /// to it; `InsertFromArranger` relocates wrap-anticipating notes to the
@@ -423,6 +445,7 @@ impl Sequencer {
                 );
                 let (pass_start, pass_end) = (pass_start + tolerance, pass_end + tolerance);
                 capture.relocate_late_notes_to_region_start(pass_start, pass_end, tolerance);
+                capture.carry_wheels_onto(pass_start);
                 capture.fold_into_loop(pass_start, pass_end, self.region_start(), loop_len);
 
                 let phase = (anchor_tick - self.region_start()).rem_euclid(loop_len);
@@ -438,6 +461,7 @@ impl Sequencer {
                 let pre_roll = (before_anchor + bar - 1) / bar * bar;
                 let retained_start = anchor_tick - pre_roll;
                 let retained_end = anchor_tick + self.linear_content_length(anchor_tick);
+                capture.carry_wheels_onto(retained_start);
 
                 capture
                     .region_mut()
@@ -461,6 +485,7 @@ impl Sequencer {
                     .region_mut()
                     .set_region(Some(region_start_tick), Some(region_end_tick));
                 capture.sort_events_by_tick();
+                capture.carry_wheels_onto(region_start_tick);
                 capture.calculate_note_lengths();
 
                 if let (RunningCaptureTarget::InsertFromArranger, Some(loop_len)) =
@@ -580,7 +605,7 @@ mod tests {
     use crate::{
         core::{
             config,
-            midi::out_queue::MidiOutMessage,
+            midi::{message::Wheel, out_queue::MidiOutMessage},
             sequencer::edit::{
                 CommitClipEdit, EditResult, InsertCaptureEdit, ResizeClipEdit, SequencerEdit,
             },
@@ -1853,6 +1878,157 @@ mod tests {
         );
     }
 
+    /// A mod-wheel move at `tick`.
+    fn mod_at(tick: i32, value: u8) -> Event {
+        Event::new(tick, 0, vec![0xB0, 0x01, value])
+    }
+
+    /// A pitch-bend move at `tick`, `msb` its upper seven bits.
+    fn bend_at(tick: i32, msb: u8) -> Event {
+        Event::new(tick, 0, vec![0xE0, 0x00, msb])
+    }
+
+    /// A clip holding `events`, for comparing curves.
+    fn clip_with_events(events: Vec<Event>) -> Clip {
+        let mut clip = Clip::new();
+        clip.restore_events(events);
+        clip
+    }
+
+    /// A 2-bar loop at 0 and a 2-bar lead clip there holding `curve`, with
+    /// a note at 100–300 and `moves` in the capture buffer.
+    fn take_over_curve(curve: Vec<Event>, moves: &[Event]) -> Sequencer {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        let mut seq = make_sequencer(0, bar * 2);
+        add_and_select_clip(&mut seq, 0, bar * 2);
+        seq.selected_clip_mut().unwrap().restore_events(curve);
+        let mut buffer = vec![note_on(100), note_off(300)];
+        buffer.extend_from_slice(moves);
+        buffer.sort_by_key(Event::tick);
+        for event in buffer {
+            seq.capture_clip.add_event(event);
+        }
+        seq
+    }
+
+    /// A second pass over a clip that already has a curve replaces it from
+    /// the take's first move on instead of interleaving the two, and ⌘Z
+    /// brings the old curve back.
+    #[test]
+    fn a_take_over_a_curve_replaces_it_instead_of_interleaving() {
+        let curve = vec![mod_at(0, 20), mod_at(500, 40), mod_at(1000, 60)];
+        let mut seq = take_over_curve(curve.clone(), &[mod_at(400, 90), mod_at(800, 100)]);
+        let mut record = Record::new();
+
+        let edit = InsertCaptureEdit::from_running_capture(&seq).unwrap();
+        record.edit(&mut seq, SequencerEdit::InsertCapture(edit));
+
+        assert_eq!(
+            wheel_moves(seq.selected_clip().unwrap()),
+            vec![
+                (0, vec![0xB0, 0x01, 20]),
+                (400, vec![0xB0, 0x01, 90]),
+                (800, vec![0xB0, 0x01, 100]),
+            ]
+        );
+        record.undo(&mut seq);
+        assert_eq!(
+            wheel_moves(seq.selected_clip().unwrap()),
+            wheel_moves(&clip_with_events(curve))
+        );
+    }
+
+    /// A take of notes alone leaves both of the clip's curves as they were.
+    #[test]
+    fn a_notes_only_take_leaves_both_wheels() {
+        let curve = vec![bend_at(0, 0x60), mod_at(200, 40), bend_at(600, 0x40)];
+        let mut seq = take_over_curve(curve.clone(), &[]);
+
+        seq.insert_running_capture().unwrap();
+
+        assert_eq!(selected_clip_note_on_ticks(&seq), vec![100]);
+        assert_eq!(
+            wheel_moves(seq.selected_clip().unwrap()),
+            wheel_moves(&clip_with_events(curve))
+        );
+    }
+
+    /// Riding the mod wheel replaces the mod curve and leaves the bends.
+    #[test]
+    fn riding_one_wheel_leaves_the_other() {
+        let curve = vec![bend_at(0, 0x60), mod_at(200, 40), bend_at(600, 0x40)];
+        let mut seq = take_over_curve(curve, &[mod_at(150, 90)]);
+
+        seq.insert_running_capture().unwrap();
+
+        assert_eq!(
+            wheel_moves(seq.selected_clip().unwrap()),
+            vec![
+                (0, vec![0xE0, 0x00, 0x60]),
+                (150, vec![0xB0, 0x01, 90]),
+                (600, vec![0xE0, 0x00, 0x40]),
+            ]
+        );
+    }
+
+    /// A one-bar loop over a four-bar clip: the wheel latches to the loop's
+    /// end, where the clip's old curve resumes, not to the clip's end; a
+    /// move after the wrap belongs to another pass and stays out
+    /// (`370-wheel-capture.md` § Open question).
+    #[test]
+    fn a_short_loop_latches_the_wheel_to_the_pass_end() {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        let mut seq = make_sequencer(bar * 2, bar);
+        add_and_select_clip(&mut seq, 0, bar * 4);
+        let sweep: Vec<_> = (0..4).map(|i| mod_at(i * bar, 20 + i as u8 * 20)).collect();
+        seq.selected_clip_mut().unwrap().restore_events(sweep);
+        move_cursor(&mut seq, bar * 2);
+        for event in [
+            note_on(bar * 2 + 100),
+            note_off(bar * 2 + 300),
+            mod_at(bar * 2 + 960, 100),
+            mod_at(bar * 3 + 100, 0),
+        ] {
+            seq.capture_clip.add_event(event);
+        }
+
+        seq.insert_running_capture().unwrap();
+
+        assert_eq!(
+            wheel_moves(seq.selected_clip().unwrap()),
+            vec![
+                (0, vec![0xB0, 0x01, 20]),
+                (bar, vec![0xB0, 0x01, 40]),
+                (bar * 2, vec![0xB0, 0x01, 60]),
+                (bar * 2 + 960, vec![0xB0, 0x01, 100]),
+                (bar * 3, vec![0xB0, 0x01, 80]),
+            ]
+        );
+    }
+
+    /// A wheel set in an earlier pass and held counts as a move at the
+    /// start of the pass the take lands from.
+    #[test]
+    fn a_wheel_held_from_an_earlier_pass_lands_from_the_window_start() {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        let mut seq = take_over_curve(vec![mod_at(0, 20)], &[]);
+        for event in [
+            mod_at(500, 70),
+            note_on(bar * 2 + 100),
+            note_off(bar * 2 + 300),
+        ] {
+            seq.capture_clip.add_event(event);
+        }
+
+        seq.insert_running_capture().unwrap();
+
+        assert_eq!(selected_clip_note_on_ticks(&seq), vec![100]);
+        assert_eq!(
+            wheel_moves(seq.selected_clip().unwrap()),
+            vec![(0, vec![0xB0, 0x01, 70])]
+        );
+    }
+
     /// A take is its notes: a wheel wiggled with nothing played commits no
     /// clip and inserts nothing, running or stopped.
     #[test]
@@ -2396,13 +2572,13 @@ mod tests {
         assert_eq!(notes_of(last_clip(&seq)), vec![(0, 60, 900), (20, 64, 880)]);
     }
 
-    /// The wheel moves of a take started after the mod wheel `moves`, made
+    /// The wheel moves of a take started after the wheel `moves`, made
     /// while stopped before an earlier reset emptied the buffer.
-    fn take_after_mod_wheel(moves: &[u8]) -> Vec<(i32, Vec<u8>)> {
+    fn take_after_wheel(moves: &[[u8; 3]]) -> Vec<(i32, Vec<u8>)> {
         let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut seq = make_sequencer(0, bar * 2);
-        for &value in moves {
-            input_at(&mut seq, [0xB0, 1, value], 0, 40_000);
+        for &message in moves {
+            input_at(&mut seq, message, 0, 40_000);
         }
         seq.reset_capture();
         hold_then_start(&mut seq, &[]);
@@ -2419,10 +2595,24 @@ mod tests {
     #[test]
     fn a_mod_wheel_off_its_rest_is_carried_into_the_take() {
         assert_eq!(
-            take_after_mod_wheel(&[64]),
+            take_after_wheel(&[[0xB0, 1, 64]]),
             vec![(0, Wheel::Modulation.message(64))]
         );
-        assert!(take_after_mod_wheel(&[64, 0]).is_empty());
+        assert!(take_after_wheel(&[[0xB0, 1, 64], [0xB0, 1, 0]]).is_empty());
+    }
+
+    /// The bend's twin: a bend held into the take starts it on the cursor,
+    /// alongside a held mod wheel; one back at centre adds nothing.
+    #[test]
+    fn a_bend_off_its_rest_is_carried_into_the_take() {
+        assert_eq!(
+            take_after_wheel(&[[0xE0, 0, 0x60], [0xB0, 1, 64]]),
+            vec![
+                (0, Wheel::PitchBend.message(0x3000)),
+                (0, Wheel::Modulation.message(64)),
+            ]
+        );
+        assert!(take_after_wheel(&[[0xE0, 0, 0x60], [0xE0, 0, 0x40]]).is_empty());
     }
 
     /// The held notes commit with a running `/` into a selected clip too.

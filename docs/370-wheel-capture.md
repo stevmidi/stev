@@ -1,6 +1,6 @@
 # Wheel Capture
 
-**Status: design agreed 2026-10-30, not started. A proof of concept: if riding a wheel into a clip earns its place, mapping a plugin parameter to a CC is the follow-up (§ Out of scope).** Capture-first automation for the two wheels the capture buffer already records, pitch bend and the mod wheel (CC1): play along with the loop moving only a wheel, press `/`, and the movement replaces that wheel's data in the lead clip over the stretch you touched, leaving the rest of the clip's curve as it was. One framing rule and one landing rule cover every take, running or stopped, with notes or without. Read `090` (what the buffer records), `100` (running capture), `040` (the stopped `/` and the take session) and `050` (edits and undo) first.
+**Status: design agreed 2026-10-30; phase 1 built 2026-10-30 (`feature/wheel-capture-landing`). Issue: #13. A proof of concept: if riding a wheel into a clip earns its place, mapping a plugin parameter to a CC is the follow-up (§ Out of scope).** Capture-first automation for the two wheels the capture buffer already records, pitch bend and the mod wheel (CC1): play along with the loop moving only a wheel, press `/`, and the movement replaces that wheel's data in the lead clip over the stretch you touched, leaving the rest of the clip's curve as it was. One framing rule and one landing rule cover every take, running or stopped, with notes or without. Read `090` (what the buffer records), `100` (running capture), `040` (the stopped `/` and the take session) and `050` (edits and undo) first.
 
 ## Background
 
@@ -39,9 +39,9 @@ A 4-bar clip with a mod sweep across it, the lead clip, the loop on bar 3 only.
 3. The clip's mod data from that first move to the end of bar 3 is replaced by the take's moves; at the start of bar 4 the old curve's value there is written back. Bars 1–2, the first half of bar 3, and bar 4 play as before. The clip's bends are untouched.
 4. ⌘Z restores the old curve.
 
-## Open question (settle in phase 1)
+## Open question (settled in phase 1)
 
-**The running insert's window over a short loop.** A running insert's window is the clip's region length pinned at the anchor's phase in the arranger loop (`100`). With a loop shorter than the clip, what the "window's end" of decision 5 is must be pinned by tests to the pass end, so a 1-bar loop over a 4-bar clip latches to the loop's end and not the clip's. If the current window can't give that, the wheel span ends at the pass end on its own.
+**The running insert's window over a short loop.** A running insert's window is the clip's region length pinned at the anchor's phase in the arranger loop (`100`), so with a loop shorter than the clip it runs past the pass. The wheel span therefore ends on its own, at the end of the pass the window starts in (`CaptureInsert::wheel_end`), never past the clip's end: a 1-bar loop over a 4-bar clip latches to the loop's end (`a_short_loop_latches_the_wheel_to_the_pass_end`). A span ending at the clip's window end writes nothing back: nothing plays there, and the wrap's chase hands back to the clip's start.
 
 ## Out of scope
 

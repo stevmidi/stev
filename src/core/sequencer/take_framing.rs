@@ -56,14 +56,25 @@ pub(crate) struct TakeFraming {
     return_to: ViewState,
 }
 
+/// A take's framed events as they land in the target, in its event ticks,
+/// and where their wheel span ends ([`Clip::land_take`]).
+struct Framed {
+    /// The framed notes and wheel moves.
+    events: Vec<Event>,
+    /// The end of the wheel span.
+    wheel_end: i32,
+}
+
 impl TakeFraming {
-    /// The framed notes as they land in the target, in its event ticks: the
+    /// The framed take as it lands in the target, in its event ticks: the
     /// notes starting in the take's window (or up to [`TAKE_EARLY_TICKS`]
     /// before it), whole, and the wheel moves from the window start to the
-    /// last of their note-offs, shifted so the window start is at the insert
-    /// point. A note starting outside the target's window is dropped, one
-    /// running past its end is closed there.
-    fn framed_events(&self) -> Vec<Event> {
+    /// [`wheel_end`](Self::wheel_end) — a wheel off its rest at the start
+    /// counted as a move there — shifted so the window start is at the
+    /// insert point. A note starting outside the target's window is dropped,
+    /// one running past its end is closed there; the wheel span never runs
+    /// past it.
+    fn framed_events(&self) -> Framed {
         let (start, end) = (self.take.region().start(), self.take.region().end());
         let notes: Vec<Event> = self
             .take
@@ -72,13 +83,16 @@ impl TakeFraming {
             .filter(Event::is_note_edge)
             .collect();
         let last_off = notes.iter().map(Event::tick).fold(end, i32::max);
-        let wheels = self
-            .take
+        let wheel_end = self.wheel_end(last_off);
+        let mut carried = self.take.clone();
+        carried.carry_wheels_onto(start);
+        let wheels: Vec<Event> = carried
             .events()
             .iter()
             .filter(|event| !event.is_note_edge())
-            .filter(|event| (start..=last_off).contains(&event.tick()))
-            .cloned();
+            .filter(|event| (start..wheel_end).contains(&event.tick()))
+            .cloned()
+            .collect();
 
         let shift = self.insert_at - start;
         let mut phrase = Clip::new();
@@ -99,7 +113,33 @@ impl TakeFraming {
             .set_region(Some(target_start), Some(target_end));
         phrase.calculate_note_lengths();
         phrase.crop(length);
-        Sequencer::capture_events_to_insert(&phrase, target_start, length)
+        Framed {
+            events: Sequencer::capture_events_to_insert(&phrase, target_start, length),
+            wheel_end: (wheel_end + shift).min(target_end),
+        }
+    }
+
+    /// Where the take's wheel span ends, in take ticks, for a take whose
+    /// notes end at `last_off` (`370-wheel-capture.md` § Decisions 10): a
+    /// bend easing back during the release belongs to the phrase, so the
+    /// span runs on to the take's next note-on after `last_off`; with none,
+    /// just past its last wheel move from `last_off` on; with none of those
+    /// either, to `last_off` itself.
+    fn wheel_end(&self, last_off: i32) -> i32 {
+        let events = self.take.events();
+        let next_on = events
+            .iter()
+            .filter(|event| event.event_type() == Some(EventType::NoteOn))
+            .map(Event::tick)
+            .filter(|&tick| tick > last_off)
+            .min();
+        next_on.unwrap_or_else(|| {
+            events
+                .iter()
+                .filter(|event| !event.is_note_edge() && event.tick() >= last_off)
+                .map(|event| event.tick() + 1)
+                .fold(last_off, i32::max)
+        })
     }
 }
 
@@ -146,7 +186,7 @@ impl Sequencer {
             return false;
         };
         let framed = framing.framed_events();
-        if framed.is_empty() {
+        if framed.events.is_empty() {
             return false;
         }
         self.take_framing = Some(framing);
@@ -226,17 +266,18 @@ impl Sequencer {
     }
 
     /// Enter: closes the session, the target's events put back as they were,
-    /// and returns the view to hand the keyboard back to and the framed notes
-    /// for `InsertCaptureEdit` to insert, so its undo state is the clip from
+    /// and returns the view to hand the keyboard back to and the framed take
+    /// for `InsertCaptureEdit` to land, so its undo state is the clip from
     /// before the session — `None` for a window that frames no note. `None`
     /// with no session open.
     pub(crate) fn finish_take_framing(&mut self) -> Option<(ViewState, Option<CaptureInsert>)> {
         let framing = self.close_take_framing()?;
-        let events = framing.framed_events();
+        let Framed { events, wheel_end } = framing.framed_events();
         let insert = (!events.is_empty()).then_some(CaptureInsert {
             track_idx: framing.track_idx,
             clip_id: framing.clip_id,
             events,
+            wheel_end,
         });
         Some((framing.return_to, insert))
     }
@@ -253,20 +294,20 @@ impl Sequencer {
         Some(framing)
     }
 
-    /// Swaps the target's temporary notes for `framed`, the session's framed
-    /// notes: its events from before the session plus those, through
-    /// `edit_clip_events`, so nothing hangs under a running playhead. The
-    /// current pass plays out; the next loop wrap plays the change.
-    fn hear_take_in_place(&mut self, framed: Vec<Event>) {
+    /// Swaps the target's temporary take for `framed`, the session's framed
+    /// take: its events from before the session with it landed on them, as
+    /// Enter will land it, through `edit_clip_events`, so nothing hangs
+    /// under a running playhead. The current pass plays out; the next loop
+    /// wrap plays the change.
+    fn hear_take_in_place(&mut self, framed: Framed) {
         let Some(framing) = &self.take_framing else {
             return;
         };
         let (track_idx, clip_id) = (framing.track_idx, framing.clip_id);
-        let mut events = framing.pre_events.clone();
-        events.extend(framed);
+        let pre_events = framing.pre_events.clone();
         self.edit_clip_events(track_idx, clip_id, |clip| {
-            clip.restore_events(events);
-            clip.calculate_note_lengths();
+            clip.restore_events(pre_events);
+            clip.land_take(&framed.events, framed.wheel_end);
         });
     }
 }
@@ -632,5 +673,65 @@ mod tests {
         // The loop wraps: the transport re-seeks to the region start.
         seq.reset_to_tick(BAR * 4);
         assert_eq!(tick_and_collect(&mut seq, &mut rx, BAR), vec![60]);
+    }
+
+    /// Six notes a quarter apart (500–5780), their last off at 5780, with
+    /// `wheels` (`(tick, msb)` pitch bends each) in the buffer, into a 4-bar
+    /// lead clip holding `curve` with its clip cursor at `clip_cursor`;
+    /// opened and entered. The lead clip's bends as `(tick, msb)`.
+    fn bends_after_enter(
+        clip_cursor: i32,
+        curve: &[(i32, u8)],
+        wheels: &[(i32, u8)],
+    ) -> Vec<(i32, u8)> {
+        let bend = |&(tick, msb): &(i32, u8)| Event::new(tick, 0, vec![0xE0, 0x00, msb]);
+        let notes: Vec<_> = (0..6).map(|i| (500 + i * 960, 980 + i * 960, 60)).collect();
+        let (mut seq, _) = session_seq(BAR * 4, clip_cursor, &notes);
+        seq.selected_clip_mut()
+            .unwrap()
+            .restore_events(curve.iter().map(bend).collect());
+        for event in wheels.iter().map(bend) {
+            seq.capture_clip.add_event(event);
+        }
+        seq.capture_clip.sort_events_by_tick();
+        assert!(seq.open_take_framing(ViewState::Clip));
+        enter(&mut seq, &mut Record::new());
+        seq.lead_clip()
+            .unwrap()
+            .events()
+            .iter()
+            .filter(|event| !event.is_note_edge())
+            .map(|event| (event.tick(), event.midi_message()[2]))
+            .collect()
+    }
+
+    /// A bend easing back after the last note-off belongs to the phrase and
+    /// lands as played; the clip's curve before the take's first move stays.
+    #[test]
+    fn an_ease_back_after_the_last_note_off_lands() {
+        assert_eq!(
+            bends_after_enter(BAR, &[(0, 0x50)], &[(5000, 0x60), (6000, 0x50)]),
+            vec![(0, 0x50), (BAR + 4500, 0x60), (BAR + 5500, 0x50)]
+        );
+    }
+
+    /// A bend still held when `/` was pressed drops to the clip's old value
+    /// at the last note-off.
+    #[test]
+    fn a_held_bend_drops_to_the_old_value_at_the_last_note_off() {
+        assert_eq!(
+            bends_after_enter(BAR, &[(0, 0x50)], &[(5000, 0x60)]),
+            vec![(0, 0x50), (BAR + 4500, 0x60), (BAR + 5280, 0x50)]
+        );
+    }
+
+    /// Neither the moves nor the hand-back run past the clip's window end.
+    #[test]
+    fn the_wheels_stop_at_the_clips_window_end() {
+        let near_end = BAR * 4 - 600;
+        assert_eq!(
+            bends_after_enter(near_end, &[], &[(600, 0x60), (6000, 0x40)]),
+            vec![(near_end + 100, 0x60)]
+        );
     }
 }
