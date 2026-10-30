@@ -61,7 +61,8 @@ pub(super) struct VelocityDrag {
     /// Identifies this gesture to the sequencer's undo coalescing.
     pub(super) drag_id: u64,
     /// Events the drag applies to: the whole selection if the pressed note
-    /// was part of it, otherwise just that single note.
+    /// was part of it, otherwise just that single note. Sorted, so the
+    /// footer's readout finds them by binary search.
     pub(super) target_event_ids: Vec<Uuid>,
     /// Total nudge already sent for this drag, so each `MouseMoved` only
     /// sends the incremental delta since the last one.

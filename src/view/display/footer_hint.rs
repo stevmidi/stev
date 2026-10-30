@@ -9,6 +9,8 @@
 //! `030-ui-design.md` § Header & Footer.
 
 use crate::core::keymap::{Action, Chord, Keymap};
+use crate::models::clip::min_max;
+use crate::shapes::event_shape::EventShape;
 
 use super::Display;
 use super::browser::BrowserCategory;
@@ -85,10 +87,18 @@ impl Display {
     /// the hint for the control under the pointer, if it has one.
     pub(super) fn footer_hint(&mut self) -> Option<String> {
         if let Some(drag) = &self.gesture.velocity_drag {
+            // One pass over the shapes against the sorted targets: a lookup
+            // per target would scan the shapes once each, every frame.
             return velocity_readout(
-                drag.target_event_ids
+                self.render
+                    .event_shapes
                     .iter()
-                    .filter_map(|&id| self.event_shape(id).map(|shape| shape.velocity())),
+                    .filter(|shape| {
+                        drag.target_event_ids
+                            .binary_search(&shape.event_id())
+                            .is_ok()
+                    })
+                    .map(EventShape::velocity),
             );
         }
         self.hovered_control()?.hint(&self.keymap)
@@ -97,11 +107,8 @@ impl Display {
 
 /// The velocity drag's readout for its notes' current `velocities`: the one
 /// value when they all agree, else the group's range. `None` for no notes.
-fn velocity_readout(velocities: impl Iterator<Item = u8>) -> Option<String> {
-    let (low, high) = velocities.fold(None, |range, velocity| match range {
-        None => Some((velocity, velocity)),
-        Some((low, high)) => Some((velocity.min(low), velocity.max(high))),
-    })?;
+fn velocity_readout(velocities: impl IntoIterator<Item = u8>) -> Option<String> {
+    let (low, high) = min_max(velocities)?;
     Some(if low == high {
         format!("Velocity {low}")
     } else {
@@ -139,16 +146,13 @@ mod tests {
 
     #[test]
     fn the_readout_shows_one_notes_velocity() {
-        assert_eq!(
-            velocity_readout([96].into_iter()).as_deref(),
-            Some("Velocity 96")
-        );
+        assert_eq!(velocity_readout([96]).as_deref(), Some("Velocity 96"));
     }
 
     #[test]
     fn the_readout_shows_a_groups_range() {
         assert_eq!(
-            velocity_readout([110, 64, 80].into_iter()).as_deref(),
+            velocity_readout([110, 64, 80]).as_deref(),
             Some("Velocity 64–110")
         );
     }
@@ -157,18 +161,15 @@ mod tests {
     #[test]
     fn a_group_at_a_clamp_reads_as_one_value() {
         assert_eq!(
-            velocity_readout([127, 127].into_iter()).as_deref(),
+            velocity_readout([127, 127]).as_deref(),
             Some("Velocity 127")
         );
-        assert_eq!(
-            velocity_readout([1, 1, 1].into_iter()).as_deref(),
-            Some("Velocity 1")
-        );
+        assert_eq!(velocity_readout([1, 1, 1]).as_deref(), Some("Velocity 1"));
     }
 
     #[test]
     fn no_notes_give_no_readout() {
-        assert_eq!(velocity_readout(std::iter::empty()), None);
+        assert_eq!(velocity_readout([]), None);
     }
 
     #[test]

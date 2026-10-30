@@ -1314,7 +1314,6 @@ impl eframe::App for Display {
         // the closed hand once a body press becomes a move. With ⌘/Ctrl held
         // anywhere on a note, and through the velocity drag, the vertical
         // arrows: a press there drags the velocity up and down.
-        let command = ctx.input(|input| input.modifiers.command);
         match &self.gesture.note_drag {
             Some(drag) if drag.is_resize() => {
                 ctx.set_cursor_icon(CursorIcon::ResizeHorizontal);
@@ -1322,7 +1321,8 @@ impl eframe::App for Display {
             Some(drag) if drag.dragging => ctx.set_cursor_icon(CursorIcon::Grabbing),
             Some(_) => {}
             None if self.gesture.velocity_drag.is_some()
-                || (command && self.gesture.note_hover.is_some()) =>
+                || (self.gesture.note_hover.is_some()
+                    && ctx.input(|input| input.modifiers.command)) =>
             {
                 ctx.set_cursor_icon(CursorIcon::ResizeVertical);
             }

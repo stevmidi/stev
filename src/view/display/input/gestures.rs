@@ -212,7 +212,8 @@ impl Display {
     /// the whole selection when the pressed note is in it, otherwise only the
     /// pressed note, with the real selection left untouched.
     pub(super) fn begin_velocity_drag(&mut self, y: f32, hit_id: Uuid) {
-        let (_, target_event_ids) = self.drag_targets(hit_id);
+        let (_, mut target_event_ids) = self.drag_targets(hit_id);
+        target_event_ids.sort_unstable();
 
         let drag_id = self.gesture.take_drag_id();
 

@@ -107,7 +107,8 @@ pub(super) struct GestureState {
     /// `DragNotes` step. Clip pane only.
     pub(super) note_drag: Option<NoteMouseDrag>,
     /// Hover-only counterpart of `note_drag`: the part of the note under the
-    /// pointer with no button held, driving the resize cursor on an edge.
+    /// pointer with no button held, driving the resize cursor on an edge,
+    /// or, with ⌘/Ctrl held, the velocity cursor anywhere on the note.
     /// Clip pane only.
     pub(super) note_hover: Option<NotePart>,
     /// In-progress key-column zoom / scroll drag. `Some` only while the
