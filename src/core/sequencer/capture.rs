@@ -297,22 +297,22 @@ impl Sequencer {
     /// wheel moves alone lands too, framed by the pass holding its last move
     /// (`370-wheel-capture.md` § Decisions 3–4).
     ///
-    /// Anchored on the **clip cursor** — the arrangement tick `⌥Space` plays
-    /// from ([`Clip::play_from_arrangement_tick`]), always on the clip — not
-    /// the arranger cursor, which `⌥Space` leaves where it was. An arranger
-    /// cursor move resets the clip cursor to it, so a take started with
-    /// `Space` from the clip anchors where it always did. The window is pinned
-    /// at the anchor's phase in the arranger loop, so a note lands at the
-    /// region phase it was played at whatever the anchor's offset into the
-    /// clip.
+    /// An overdub: everything lands where it was heard, wherever the cursors
+    /// are. Anchored on the first arrangement tick of the clip that playback
+    /// goes through ([`overdub_anchor`](Self::overdub_anchor)): the clip's
+    /// start, or the loop's start when the loop starts inside the clip. The
+    /// clip cursor plays no part — anchoring on it dropped everything played
+    /// at a phase before it, so a cursor left near the clip's end lost the
+    /// whole take (removed 2026-10-31, `100-running-capture.md` § Anchor
+    /// contract). The window is pinned at the anchor's phase in the arranger
+    /// loop, in the pass holding the take's last note-on (or last controller
+    /// move), so a note lands at the region phase it was played at.
     ///
     /// After the crop window is computed and rebased to 0, a `clip_offset` of
     /// `anchor - clip.start_tick()` converts from anchor-relative ticks into
-    /// clip-local ticks (0-based from `clip.start_tick()`). When the clip
-    /// cursor is at the clip start this is 0. Notes the shift would push past
-    /// `clip.region_length()` — phases before the clip cursor, played after
-    /// the loop wrapped, or past the clip's span inside a longer loop — are
-    /// discarded, never shifted into the clip.
+    /// clip-local ticks (0-based from `clip.start_tick()`). Notes the shift
+    /// would push past `clip.region_length()` — past the clip's span inside a
+    /// longer loop — are discarded, never shifted into the clip.
     ///
     /// The wheels latch to the end of the loop pass the window starts in,
     /// not the window's: a one-bar loop over a four-bar clip hands back to
@@ -328,11 +328,11 @@ impl Sequencer {
 
         let track_idx = self.selected_track_index()?;
         let clip = self.selected_clip()?;
-        let anchor = clip.play_from_arrangement_tick(clip.cursor_tick());
         let clip_id = clip.id();
         let clip_start_tick = clip.start_tick();
         let clip_region_start = clip.region().start();
         let region_length = clip.region_length().max(time::min_clip_length_ticks());
+        let anchor = self.overdub_anchor(clip_start_tick, region_length);
 
         // The crop window is the target clip's length, pinned at the anchor's
         // phase in the arranger loop (independent of the clip).
@@ -368,6 +368,20 @@ impl Sequencer {
             events,
             wheel_end: insert_at + wheel_room,
         })
+    }
+
+    /// Where a running insert into a clip spanning `clip_start` for `length`
+    /// ticks is anchored: the first of its arrangement ticks playback goes
+    /// through — the loop's start when looping and the loop starts inside
+    /// the clip, otherwise the clip's start (a loop starting before it
+    /// reaches its start; not looping, playback runs through it from there).
+    fn overdub_anchor(&self, clip_start: i32, length: i32) -> i32 {
+        let loop_start = self.region_start();
+        if self.playback_is_looping() && (clip_start..clip_start + length).contains(&loop_start) {
+            loop_start
+        } else {
+            clip_start
+        }
     }
 
     /// The played span of a linear take from `cursor_tick`: the last note-on
@@ -2361,11 +2375,12 @@ mod tests {
         );
     }
 
-    /// Cursor a bar into a 2-bar clip, loop wrapped: the post-wrap bar-1 note
-    /// is at a phase before the cursor and must be dropped, not inserted past
-    /// the clip end where it would resurface on a later region extend.
+    /// An overdub lands the last pass where it was heard, wherever the
+    /// cursors are: the cursors a bar into a 2-bar clip, the post-wrap note
+    /// at a phase before them lands at its phase, and the pass before it
+    /// (one note) is not the take.
     #[test]
-    fn insert_running_capture_drops_post_wrap_notes_before_cursor_phase() {
+    fn insert_running_capture_lands_notes_before_the_cursor_phase() {
         let bar = Meter::FOUR_FOUR.bar_ticks();
         let clip_start = bar * 3;
         let mut seq = make_sequencer(clip_start, bar * 2);
@@ -2381,12 +2396,56 @@ mod tests {
 
         seq.insert_running_capture().unwrap();
 
-        assert_eq!(selected_clip_note_on_ticks(&seq), vec![bar + 600]);
-        let clip = seq.selected_clip().unwrap();
-        assert!(
-            clip.events().iter().all(|e| e.tick() < bar * 2),
-            "no event may be parked past the clip end"
+        assert_eq!(selected_clip_note_on_ticks(&seq), vec![100]);
+    }
+
+    /// Regression (knobs.stev, 2026-10-31): a clip cursor left a few ticks
+    /// inside the clip's end — where Enter's tempo fit could leave it after
+    /// `]` — anchored every take there, and everything played before it was
+    /// dropped: a knob turn landed nothing. The clip cursor plays no part.
+    #[test]
+    fn insert_running_capture_ignores_a_clip_cursor_near_the_end() {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        let mut seq = make_sequencer(0, bar * 2);
+        add_and_select_clip(&mut seq, 0, bar * 2);
+        seq.set_selected_clip_cursor_tick(bar * 2 - 16);
+        for event in [
+            note_on(600),
+            note_off(900),
+            cc_at(bar + 100, 14, 30),
+            cc_at(bar + 200, 14, 60),
+        ] {
+            seq.capture_clip.add_event(event);
+        }
+
+        seq.insert_running_capture().unwrap();
+
+        assert_eq!(selected_clip_note_on_ticks(&seq), vec![600]);
+        assert_eq!(
+            wheel_moves(seq.selected_clip().unwrap().events()),
+            vec![
+                (0, vec![0xB0, 14, 30]),
+                (bar + 100, vec![0xB0, 14, 30]),
+                (bar + 200, vec![0xB0, 14, 60])
+            ],
+            "the turn's start value held from the window's start (`390` decision 9)"
         );
+    }
+
+    /// A loop starting inside the clip: the take lands from the loop's
+    /// start, where playback goes through the clip, not from the clip's.
+    #[test]
+    fn insert_running_capture_into_a_clip_longer_than_the_loop_lands_at_the_loop() {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        let mut seq = make_sequencer(bar * 2, bar); // loop over bar 3
+        add_and_select_clip(&mut seq, 0, bar * 4);
+        seq.set_selected_clip_cursor_tick(0);
+        seq.capture_clip.add_event(note_on(bar * 2 + 600));
+        seq.capture_clip.add_event(note_off(bar * 2 + 900));
+
+        seq.insert_running_capture().unwrap();
+
+        assert_eq!(selected_clip_note_on_ticks(&seq), vec![bar * 2 + 600]);
     }
 
     /// A 2-bar clip inside a 4-bar arranger loop, cursor at the clip start:
@@ -2413,9 +2472,9 @@ mod tests {
     /// leaves where it was. A 4-bar clip under a 4-bar loop, the arranger
     /// cursor at bar 3, the take played from the clip cursor at bar 2 with
     /// `⌥Space`: its notes in bars 2–3 sat at phases before the arranger
-    /// cursor and were all dropped. They land from the clip cursor.
+    /// cursor and were all dropped. Neither cursor anchors the take now.
     #[test]
-    fn insert_running_capture_anchors_on_the_clip_cursor() {
+    fn insert_running_capture_ignores_the_arranger_cursor() {
         let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut seq = make_sequencer(0, bar * 4);
         add_and_select_clip(&mut seq, 0, bar * 4);

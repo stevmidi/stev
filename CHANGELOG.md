@@ -26,6 +26,10 @@ Breaking entries are marked **Breaking** and say what to do about them.
 - Turning a knob is captured with `/` like the mod wheel: with notes, or alone over a playing loop into the lead clip, it replaces that knob's data over the stretch you touched, and the clip plays the knob where it stood before you turned it until the turn. Playback moves the knobs with their CCs, a knob you're dragging wins over the clip until you let go, and a stop leaves a knob's CC where it is.
 - Each knob's CC has a lane in the piano roll: with a clip open, click a knob's `CC` label to show it, or press `W`, which now cycles through the eight knobs after `MW`. A dot beside a label means the clip has data for that CC. Drag a span and press Delete to clear it (the value before the span holds across it), or ⌘A then Delete to clear the CC from the clip.
 
+### Changed
+
+- A running `/` into a clip is an overdub: everything in the last pass lands where you heard it, wherever the clip's cursor is. Before, anything played earlier in the loop than the clip's cursor was dropped.
+
 ### Fixed
 
 - After framing a take with `]` and fitting the tempo with Enter, the clip's cursor could be left just inside the clip's end instead of on it, so `⌥Space` played the last few ticks of the clip instead of from its start.
