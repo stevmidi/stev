@@ -266,13 +266,14 @@ pub(crate) enum SequencerCommand {
     /// `070-quantization.md`). Bound to `Q` in `Clip`; the Arranger has no
     /// quantize.
     QuantizeEvents,
-    /// `Delete` in a wheel lane: returns `wheel` to rest over the event-tick
-    /// span `start..end` of the lead clip (`RestWheelEdit`, undoable — see
-    /// `380-wheel-lane.md` decision 18). Nothing is recorded when the wheel
-    /// is at rest across the span already.
-    RestWheel {
-        /// The wheel the lane shows.
-        wheel: Controller,
+    /// `Delete` in a controller lane: clears `controller` over the event-tick
+    /// span `start..end` of the lead clip — a wheel back to rest, a knob's CC
+    /// held at the value before the span (`ClearControllerSpanEdit`, undoable
+    /// — see `380-wheel-lane.md` decision 18, `390-knob-panel.md` decision
+    /// 13). Nothing is recorded when the span would change nothing.
+    ClearControllerSpan {
+        /// The controller the lane shows.
+        controller: Controller,
         /// The span's start, event ticks.
         start: i32,
         /// The span's end (exclusive), event ticks.

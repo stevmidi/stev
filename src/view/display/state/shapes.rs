@@ -39,26 +39,26 @@ impl Display {
     }
 
     /// Replaces the lead clip's render data — the event shapes (reusing the
-    /// list's allocation), the wheel moves and the extent — from a fresh
+    /// list's allocation), the controller moves and the extent — from a fresh
     /// snapshot.
     pub(super) fn set_lead_clip_shapes(
         &mut self,
         events: Vec<EventMetadata>,
-        wheels: WheelMoves,
+        controllers: ControllerMoves,
         extent: (i32, i32),
     ) {
         self.render.event_shapes.clear();
         self.render
             .event_shapes
             .extend(events.into_iter().map(EventShape::from_metadata));
-        self.render.wheel_moves = wheels;
+        self.render.controller_moves = controllers;
         self.render.lead_clip_extent = extent;
     }
 
     /// Drops the lead clip's render data: no clip is shown.
     pub(super) fn clear_lead_clip_shapes(&mut self) {
         self.render.event_shapes.clear();
-        self.render.wheel_moves = WheelMoves::default();
+        self.render.controller_moves = ControllerMoves::default();
         self.render.lead_clip_extent = (0, 0);
     }
 
@@ -68,9 +68,11 @@ impl Display {
     pub(super) fn show_lead_clip(&mut self, clip_view: Option<ClipView>) {
         self.lead_clip_time = clip_view.as_ref().map(ClipTimeAtomics::of);
         match clip_view {
-            Some(clip_view) => {
-                self.set_lead_clip_shapes(clip_view.events, clip_view.wheel_moves, clip_view.extent)
-            }
+            Some(clip_view) => self.set_lead_clip_shapes(
+                clip_view.events,
+                clip_view.controller_moves,
+                clip_view.extent,
+            ),
             None => self.clear_lead_clip_shapes(),
         }
         // Each clip starts at its home framing.

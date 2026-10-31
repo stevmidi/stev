@@ -17,8 +17,10 @@
 //! ([`hold_cc_start_values`](Clip::hold_cc_start_values),
 //! `390-knob-panel.md` decision 9).
 //!
-//! The wheel lane's `Delete` is built on the same rule: a span returned to
-//! rest ([`rest_wheel`](Clip::rest_wheel), `380-wheel-lane.md` decision 18).
+//! A lane's `Delete` is built on the same rule: a span of a wheel returned
+//! to rest, a span of a knob's CC held at the value before it
+//! ([`clear_controller_span`](Clip::clear_controller_span),
+//! `380-wheel-lane.md` decision 18, `390-knob-panel.md` decision 13).
 
 use std::ops::Range;
 
@@ -186,7 +188,7 @@ impl Clip {
             self.replace_controller_span(
                 controller,
                 first..wheel_end,
-                last_value,
+                Some(last_value),
                 Some(channel),
                 window_end,
             );
@@ -203,32 +205,43 @@ impl Clip {
         self.calculate_note_lengths();
     }
 
-    /// Returns `wheel` to rest over event ticks `start..end` — the wheel
-    /// lane's `Delete` (`380-wheel-lane.md` decision 18), the same result as
-    /// riding the wheel at rest across the span under the landing rule. Every
-    /// move of `wheel` inside the span goes, muted ones too; a rest move goes
-    /// in at `start` unless the wheel is at rest there already; and the value
-    /// in force at `end` is written back there, so the curve after the span
-    /// is unchanged — unless it is rest, the clip moves the wheel exactly at
-    /// `end` anyway, or nothing follows (`end` at or past
-    /// [`event_extent`](Self::event_extent)'s end). The other controllers and
-    /// the notes are left alone. Returns whether anything changed — never,
-    /// for a controller with no rest.
-    pub(crate) fn rest_wheel(&mut self, wheel: Controller, start: i32, end: i32) -> bool {
-        let Some(rest) = wheel.rest() else {
-            return false;
-        };
+    /// Clears `controller` over event ticks `start..end` — a lane's `Delete`
+    /// (`380-wheel-lane.md` decision 18, `390-knob-panel.md` decision 13).
+    /// Every move of `controller` inside the span goes, muted ones too. A
+    /// wheel is returned to rest there, the same result as riding it at rest
+    /// across the span under the landing rule: a rest move goes in at `start`
+    /// unless the wheel is at rest there already. A knob's CC has no rest, so
+    /// the value in force just before the span holds across it instead. Either
+    /// way the value in force at `end` is written back there, so the curve
+    /// after the span is unchanged — unless it is what the span holds, the
+    /// clip moves the controller exactly at `end` anyway, or nothing follows
+    /// (`end` at or past [`event_extent`](Self::event_extent)'s end). The
+    /// other controllers and the notes are left alone. Returns whether
+    /// anything changed.
+    pub(crate) fn clear_controller_span(
+        &mut self,
+        controller: Controller,
+        start: i32,
+        end: i32,
+    ) -> bool {
         if start >= end {
             return false;
         }
-        let rest_channel = self
-            .last_move_before(wheel, start)
-            .filter(|&(_, value)| value != rest)
-            .map(|(event, _)| event.midi_channel().unwrap_or(0));
+        let before = self.last_move_before(controller, start);
+        let (held, rest_channel) = match controller.rest() {
+            Some(rest) => (
+                Some(rest),
+                before
+                    .filter(|&(_, value)| value != rest)
+                    .map(|(event, _)| event.midi_channel().unwrap_or(0)),
+            ),
+            None => (before.map(|(_, value)| value), None),
+        };
         let extent_end = self.event_extent().1;
-        let mut changed = self.replace_controller_span(wheel, start..end, rest, None, extent_end);
-        if let Some(channel) = rest_channel {
-            self.add_controller_move(wheel, rest, channel, start);
+        let mut changed =
+            self.replace_controller_span(controller, start..end, held, None, extent_end);
+        if let (Some(rest), Some(channel)) = (controller.rest(), rest_channel) {
+            self.add_controller_move(controller, rest, channel, start);
             changed = true;
         }
         if changed {
@@ -241,7 +254,8 @@ impl Clip {
     /// rest: the clip's moves of `controller` in `span` go, muted ones too,
     /// and the value the old curve had at the span's end — a wheel's rest
     /// where nothing moved it, nothing for a CC nothing moved — is written
-    /// back there when it differs from `span_last` (what the span ends on)
+    /// back there when it differs from `span_last` (what the span ends on,
+    /// `None` for a CC the span leaves with no value in force)
     /// and the clip doesn't move the controller exactly there — unless the
     /// end is at or past `hand_back_before`, where nothing follows to hand
     /// back to. The write-back goes on `channel`, or the old value's own.
@@ -250,7 +264,7 @@ impl Clip {
         &mut self,
         controller: Controller,
         span: Range<i32>,
-        span_last: u16,
+        span_last: Option<u16>,
         channel: Option<u8>,
         hand_back_before: i32,
     ) -> bool {
@@ -261,7 +275,7 @@ impl Clip {
             .or_else(|| old.and_then(|(event, _)| event.midi_channel()))
             .unwrap_or(0);
         let write_back = end < hand_back_before
-            && old_value.is_some_and(|value| value != span_last)
+            && old_value.is_some_and(|value| Some(value) != span_last)
             && !self.has_move_at(controller, end);
 
         let len = self.events.len();
@@ -586,14 +600,14 @@ mod tests {
     /// The moves inside the span go, muted ones too; the wheel is set to
     /// rest at the start and the value in force at the end is written back.
     #[test]
-    fn rest_wheel_clears_the_span_and_hands_back() {
+    fn clearing_a_wheel_span_clears_the_span_and_hands_back() {
         let mut clip = swept();
         let mut muted = modw(BAR + 960, 99);
         muted.set_muted(true);
         clip.add_event(muted);
         clip.sort_events_by_tick();
 
-        assert!(clip.rest_wheel(Controller::MOD_WHEEL, BAR + 480, BAR * 2 + 480));
+        assert!(clip.clear_controller_span(Controller::MOD_WHEEL, BAR + 480, BAR * 2 + 480));
 
         assert_eq!(
             wheel_moves(&clip),
@@ -610,10 +624,10 @@ mod tests {
     /// A wheel already at rest at the span's start gets no rest move there,
     /// and a rest value at its end needs no write-back.
     #[test]
-    fn rest_wheel_adds_nothing_where_the_wheel_rests() {
+    fn clearing_a_wheel_span_adds_nothing_where_the_wheel_rests() {
         let mut clip = clip_with(vec![bend(BAR, 0x60), bend(BAR + 500, 0x40)]);
 
-        assert!(clip.rest_wheel(Controller::PitchBend, 0, BAR * 2));
+        assert!(clip.clear_controller_span(Controller::PitchBend, 0, BAR * 2));
 
         assert_eq!(wheel_moves(&clip), vec![]);
     }
@@ -621,10 +635,10 @@ mod tests {
     /// A move exactly at the span's end already hands back; nothing outside
     /// the span changes.
     #[test]
-    fn rest_wheel_keeps_a_move_at_the_end() {
+    fn clearing_a_wheel_span_keeps_a_move_at_the_end() {
         let mut clip = swept();
 
-        assert!(clip.rest_wheel(Controller::MOD_WHEEL, BAR, BAR * 2));
+        assert!(clip.clear_controller_span(Controller::MOD_WHEEL, BAR, BAR * 2));
 
         assert_eq!(
             wheel_moves(&clip),
@@ -640,7 +654,7 @@ mod tests {
     /// The whole extent (`⌘A`) leaves no moves of the wheel, material past
     /// the window included, and the other wheel and the notes untouched.
     #[test]
-    fn rest_wheel_over_the_whole_clip_clears_the_wheel() {
+    fn clearing_a_wheel_span_over_the_whole_clip_clears_the_wheel() {
         let mut clip = clip_with(vec![
             modw(0, 30),
             bend(100, 0x60),
@@ -651,7 +665,7 @@ mod tests {
         let (start, end) = clip.event_extent();
         assert_eq!((start, end), (0, BAR * 5 + 1));
 
-        assert!(clip.rest_wheel(Controller::MOD_WHEEL, start, end));
+        assert!(clip.clear_controller_span(Controller::MOD_WHEEL, start, end));
 
         assert_eq!(wheel_moves(&clip), vec![(100, vec![0xE0, 0x00, 0x60])]);
         assert_eq!(clip.events().iter().filter(|e| e.is_note_edge()).count(), 2);
@@ -659,10 +673,10 @@ mod tests {
 
     /// The rest move and the write-back keep the wheel's channel.
     #[test]
-    fn rest_wheel_keeps_the_channel() {
+    fn clearing_a_wheel_span_keeps_the_channel() {
         let mut clip = clip_with(vec![Event::new(100, 0, vec![0xE3, 0x00, 0x60])]);
 
-        assert!(clip.rest_wheel(Controller::PitchBend, 200, 300));
+        assert!(clip.clear_controller_span(Controller::PitchBend, 200, 300));
 
         assert_eq!(
             wheel_moves(&clip),
@@ -676,12 +690,12 @@ mod tests {
 
     /// A span over a wheel at rest throughout changes nothing.
     #[test]
-    fn rest_wheel_at_rest_is_a_no_op() {
+    fn clearing_a_wheel_span_at_rest_is_a_no_op() {
         let mut clip = clip_with(vec![modw(BAR * 2, 50), bend(BAR, 0x60)]);
         let before = wheel_moves(&clip);
 
-        assert!(!clip.rest_wheel(Controller::MOD_WHEEL, 0, BAR));
-        assert!(!clip.rest_wheel(Controller::MOD_WHEEL, BAR, BAR));
+        assert!(!clip.clear_controller_span(Controller::MOD_WHEEL, 0, BAR));
+        assert!(!clip.clear_controller_span(Controller::MOD_WHEEL, BAR, BAR));
 
         assert_eq!(wheel_moves(&clip), before);
     }
@@ -802,11 +816,78 @@ mod tests {
         );
     }
 
-    /// The wheel lane's rest has nothing to return a knob's CC to.
+    /// A knob's CC has no rest: the moves inside the span go, the value in
+    /// force before it holds across it (no move at the start), and the value
+    /// in force at the span's end is written back there.
     #[test]
-    fn a_cc_with_no_rest_is_never_rested() {
-        let mut clip = clip_with(vec![knob(100, 14, 30)]);
-        assert!(!clip.rest_wheel(Controller::Cc(14), 0, BAR));
-        assert_eq!(wheel_moves(&clip), vec![(100, vec![0xB0, 14, 30])]);
+    fn clearing_a_cc_span_holds_the_value_before_it() {
+        let mut clip = clip_with(vec![
+            knob(0, 14, 30),
+            knob(BAR, 14, 70),
+            knob(BAR + 480, 14, 90),
+            knob(BAR * 3, 14, 10),
+            modw(BAR + 100, 50),
+        ]);
+
+        assert!(clip.clear_controller_span(Controller::Cc(14), BAR - 10, BAR * 2));
+
+        assert_eq!(
+            wheel_moves(&clip),
+            vec![
+                (0, vec![0xB0, 14, 30]),
+                (BAR + 100, vec![0xB0, 0x01, 50]),
+                (BAR * 2, vec![0xB0, 14, 90]),
+                (BAR * 3, vec![0xB0, 14, 10]),
+            ]
+        );
+    }
+
+    /// A CC with no value before the span is left with none there: nothing
+    /// is written at the start, only the value in force at the end is handed
+    /// back.
+    #[test]
+    fn clearing_a_cc_span_with_nothing_before_writes_only_the_end() {
+        let mut clip = clip_with(vec![knob(100, 14, 30), knob(BAR * 2, 14, 60)]);
+
+        assert!(clip.clear_controller_span(Controller::Cc(14), 0, BAR));
+
+        assert_eq!(
+            wheel_moves(&clip),
+            vec![(BAR, vec![0xB0, 14, 30]), (BAR * 2, vec![0xB0, 14, 60])]
+        );
+    }
+
+    /// `⌘A` then `Delete` clears one CC from the clip and nothing else: the
+    /// other knobs' CCs, the wheels and the notes stay.
+    #[test]
+    fn clearing_a_cc_over_the_whole_clip_clears_that_cc_only() {
+        let mut clip = clip_with(vec![
+            knob(0, 14, 30),
+            knob(50, 15, 40),
+            modw(80, 20),
+            Event::new(200, 0, vec![0x90, 60, 100]),
+            Event::new(400, 0, vec![0x80, 60, 0]),
+            knob(BAR * 4, 14, 90),
+        ]);
+        let (start, end) = clip.event_extent();
+
+        assert!(clip.clear_controller_span(Controller::Cc(14), start, end));
+
+        assert_eq!(
+            wheel_moves(&clip),
+            vec![(50, vec![0xB0, 15, 40]), (80, vec![0xB0, 0x01, 20])]
+        );
+        assert_eq!(clip.events().iter().filter(|e| e.is_note_edge()).count(), 2);
+    }
+
+    /// A span over a CC that holds one value throughout changes nothing.
+    #[test]
+    fn clearing_a_cc_span_with_no_moves_in_it_is_a_no_op() {
+        let mut clip = clip_with(vec![knob(100, 14, 30), knob(BAR * 3, 14, 60)]);
+        let before = wheel_moves(&clip);
+
+        assert!(!clip.clear_controller_span(Controller::Cc(14), BAR, BAR * 2));
+
+        assert_eq!(wheel_moves(&clip), before);
     }
 }

@@ -11,7 +11,7 @@
 //! `QuantizeEventsEdit` is the one that also acts with nothing selected.
 //! `InsertNotesEdit` (a double-click or `⌘/Ctrl+V`) and `DragNotesEdit` are
 //! the piano roll's note edits (`clip/note_edits.rs`). `ReplaceClipNotesEdit`
-//! is the agent bridge's, on a clip named by id. `RestWheelEdit` is the
+//! is the agent bridge's, on a clip named by id. `ClearControllerSpanEdit` is the
 //! wheel lane's `Delete`: a span of a wheel back to rest. See
 //! `050-undo-redo.md`.
 
@@ -499,53 +499,56 @@ impl DragNotesEdit {
 }
 
 // ---------------------------------------------------------------------------
-// RestWheelEdit — hand-rolled around `ClipEventsEditState`: it acts on a span
-// of one wheel, not the note selection (which it keeps), and refuses a span
-// that would change nothing, so no empty step enters the record.
+// ClearControllerSpanEdit — hand-rolled around `ClipEventsEditState`: it acts
+// on a span of one controller, not the note selection (which it keeps), and
+// refuses a span that would change nothing, so no empty step enters the record.
 // ---------------------------------------------------------------------------
 
-/// The wheel lane's `Delete` (`380-wheel-lane.md` decision 18): `wheel`
-/// returned to rest over the event-tick span `start..end` of the lead clip
-/// ([`Clip::rest_wheel`]). `undo()` restores the clip's events from before,
-/// as the wheel takes' undo does. The note selection is kept.
-pub(crate) struct RestWheelEdit {
+/// A controller lane's `Delete` (`380-wheel-lane.md` decision 18,
+/// `390-knob-panel.md` decision 13): `controller` cleared over the
+/// event-tick span `start..end` of the lead clip — a wheel back to rest, a
+/// knob's CC held at the value before the span
+/// ([`Clip::clear_controller_span`]). `undo()` restores the clip's events
+/// from before, as the controller takes' undo does. The note selection is
+/// kept.
+pub(crate) struct ClearControllerSpanEdit {
     /// The target clip, its selection, and the pre-edit snapshot.
     state: ClipEventsEditState,
-    /// The wheel returned to rest.
-    wheel: Controller,
+    /// The controller cleared.
+    controller: Controller,
     /// The span's start, event ticks.
     start: i32,
     /// The span's end (exclusive), event ticks.
     end: i32,
 }
 
-impl RestWheelEdit {
-    /// The span on the selected clip. `None` with no clip, or when the
-    /// wheel is at rest across the span already, so nothing would change.
+impl ClearControllerSpanEdit {
+    /// The span on the selected clip. `None` with no clip, or when nothing
+    /// would change.
     pub(crate) fn from_sequencer(
         sequencer: &Sequencer,
-        wheel: Controller,
+        controller: Controller,
         start: i32,
         end: i32,
     ) -> Option<Self> {
         let mut probe = sequencer.selected_clip()?.clone();
-        if !probe.rest_wheel(wheel, start, end) {
+        if !probe.clear_controller_span(controller, start, end) {
             return None;
         }
         Some(Self {
             state: ClipEventsEditState::from_selected_clip(sequencer)?,
-            wheel,
+            controller,
             start,
             end,
         })
     }
 
-    /// Returns the span to rest.
+    /// Clears the span.
     pub(super) fn edit(&mut self, sequencer: &mut Sequencer) -> EditResult {
-        let (wheel, start, end) = (self.wheel, self.start, self.end);
+        let (controller, start, end) = (self.controller, self.start, self.end);
         let selection = self.state.selected_event_ids.clone();
         self.state.edit_with(sequencer, |clip| {
-            clip.rest_wheel(wheel, start, end);
+            clip.clear_controller_span(controller, start, end);
             selection
         })
     }

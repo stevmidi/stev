@@ -510,9 +510,13 @@ impl EventHandlers {
                 });
             }
 
-            InputEvent::RestWheel { wheel, start, end } => {
-                self.send_sequencer(SequencerCommand::RestWheel {
-                    wheel: *wheel,
+            InputEvent::ClearControllerSpan {
+                controller,
+                start,
+                end,
+            } => {
+                self.send_sequencer(SequencerCommand::ClearControllerSpan {
+                    controller: *controller,
                     start: *start,
                     end: *end,
                 });

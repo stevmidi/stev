@@ -13,7 +13,7 @@ use egui::Rect;
 use super::clip_lane::ClipLane;
 use super::pane::{ClipPanel, Pane};
 use super::status_message::StatusMessage;
-use crate::metadata::clip_view::WheelMoves;
+use crate::metadata::clip_view::ControllerMoves;
 use crate::shapes::{clip_shape::ClipShape, event_shape::EventShape};
 
 /// The render state, grouped out of [`Display`](super::Display). `canvas_rect`
@@ -27,15 +27,16 @@ pub(super) struct RenderState {
     pub(super) clip_shapes: Vec<ClipShape>,
     /// Piano-roll note bars, reconciled against `UiEvent`s.
     pub(super) event_shapes: Vec<EventShape>,
-    /// The lead clip's wheel moves, for the wheel lanes — replaced with the
+    /// The lead clip's controller moves, for the controller lanes — replaced with the
     /// event shapes, from the same snapshot.
-    pub(super) wheel_moves: WheelMoves,
+    pub(super) controller_moves: ControllerMoves,
     /// The lead clip's whole extent in event ticks, from the same snapshot:
     /// what `⌘A` marks in a wheel lane (`380-wheel-lane.md` decision 17).
     pub(super) lead_clip_extent: (i32, i32),
     /// The lane the piano roll shows under its notes. View state: not saved,
-    /// kept when the lead clip changes, switched only by the gutter labels
-    /// and `Action::CycleClipLane` (`380-wheel-lane.md`).
+    /// kept when the lead clip changes, switched only by the gutter labels,
+    /// the knob labels and `Action::CycleClipLane` (`380-wheel-lane.md`,
+    /// `390-knob-panel.md` decision 11).
     pub(super) clip_lane: ClipLane,
     /// Arranger horizontal scroll offset, in pixels. Written only by the
     /// arranger's scroll code (`sync_arranger_scroll`, `scroll_arranger_by`,
@@ -145,7 +146,7 @@ impl RenderState {
             canvas_rect: Rect::NOTHING,
             clip_shapes: Vec::new(),
             event_shapes: Vec::new(),
-            wheel_moves: WheelMoves::default(),
+            controller_moves: ControllerMoves::default(),
             lead_clip_extent: (0, 0),
             clip_lane: ClipLane::default(),
             arranger_scroll_x: 0.,

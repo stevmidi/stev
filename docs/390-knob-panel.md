@@ -1,6 +1,6 @@
 # Knob Panel
 
-**Status: design agreed 2026-10-31; phase 1 (the knobs) built 2026-10-31 (`feature/knob-panel`); phase 2 (capture and playback) built 2026-10-31 (`feature/knob-capture`). Issue: #15.** Eight virtual knobs in a panel of their own under the track-header column, beside the docked clip view, each sending a MIDI CC the selected track chooses, so a plugin's macro controls (Spire's four macros listen on CC 14–17) can be turned with the mouse at any time, captured with `/` like the mod wheel, and seen in the clip's lower lane beside velocity, pitch bend and the mod wheel. The follow-up `370` § Out of scope names. Read `370` (wheel capture: what lands in a clip and how), `380` (the wheel lanes), `090` (what the capture buffer records) and `130` (how MIDI reaches a plugin) first.
+**Status: design agreed 2026-10-31; phase 1 (the knobs) built 2026-10-31 (`feature/knob-panel`); phase 2 (capture and playback) built 2026-10-31 (`feature/knob-capture`); phase 3 (the lanes) built 2026-10-31 (`feature/knob-lanes`). Issue: #15.** Eight virtual knobs in a panel of their own under the track-header column, beside the docked clip view, each sending a MIDI CC the selected track chooses, so a plugin's macro controls (Spire's four macros listen on CC 14–17) can be turned with the mouse at any time, captured with `/` like the mod wheel, and seen in the clip's lower lane beside velocity, pitch bend and the mod wheel. The follow-up `370` § Out of scope names. Read `370` (wheel capture: what lands in a clip and how), `380` (the wheel lanes), `090` (what the capture buffer records) and `130` (how MIDI reaches a plugin) first.
 
 ## Background
 
@@ -49,6 +49,14 @@ Details the decisions left open, as built: a knob's position is `None` until it 
 - **Where a turn started** (decision 9's last sentence): the knob panel sends the knob's position just ahead of a gesture's first move (a drag, a scroll turn, a ⌘-click reset), on the same tick — the same value again, so nothing is heard — and the take records it. `Clip::land_take` writes it at the window's start when the clip has no move of that CC before the take's first; a new clip, running or stopped, gets it from where it keeps material (`Clip::hold_cc_start_values`). The copy on the turn's own tick, superseded by the move, is dropped (`Clip::drop_superseded_controller_moves`). A turn begun in an earlier pass than the one kept holds the first value the kept pass has.
 - **Merge and export** write a CC held from hidden material before a window at the window's start, as for a wheel, and no reset at its end.
 - **MCP reads** list a CC other than the mod wheel as a `cc<number> <beat> <value>` row (`get_notes` with `include_wheels`).
+
+### Phase 3 as built (2026-10-31)
+
+`ClipLane` gained `Knob(n)`, by position (`clip_lane.rs`): `ClipLane::controller` reads the CC from the lead clip's track (the selected one, `Display::clip_lane_controller`), so the lane follows a renumbered knob and a change of track. The gutter keeps its three labels (`ClipLane::GUTTER`); a knob lane is picked from the knob's label (`handle_knob_panel_click`, only with a lead clip, `knob_labels_switch_lanes`) and colour-coded like the gutter's (`toggle_icon_color`), with the data marker beside it. The press never takes the keyboard (decision 1): a lane focus already held stays, as a gutter switch keeps it. `ClipView::wheel_moves` became `controller_moves` (`ControllerMoves`, every controller the clip moves). `RestWheelEdit` became `ClearControllerSpanEdit` (`Clip::clear_controller_span`, `InputEvent`/`SequencerCommand::ClearControllerSpan`): a wheel's span returns to rest as before, a CC's holds the value in force before it, and with none before the span nothing is written at its start. Choices the decisions left open:
+
+- **A CC's line starts at its first move** where nothing is in force before the lane: no rest to draw from, and a line from 0 would show a value the CC never had (`fold_wheel_columns` takes an optional neutral).
+- **A single click on a label switches; a double-click still opens the CC field**, its first click having switched the lane.
+- **The Keyboard tab's "Wheel lane" group is now "Controller lane"**, and `W`'s label names the knobs.
 
 ## Out of scope
 

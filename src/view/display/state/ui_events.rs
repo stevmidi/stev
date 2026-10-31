@@ -157,7 +157,7 @@ impl Display {
                     }
                     self.set_lead_clip_shapes(
                         clip_view.events,
-                        clip_view.wheel_moves,
+                        clip_view.controller_moves,
                         clip_view.extent,
                     );
                     // No re-fit or scroll here: every note edit and every

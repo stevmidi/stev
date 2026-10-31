@@ -11,12 +11,13 @@ use undo::Record;
 use crate::core::agent::{AgentAnswer, AgentReply, answer};
 use crate::core::project::StagedProject;
 use crate::core::sequencer::{
-    CommitClipEdit, DeleteSelectedEventsEdit, DeleteTimeEdit, DragEventsVelocityEdit,
-    DragNotesEdit, DuplicateClipsEdit, DuplicateTimeEdit, InsertCaptureEdit, InsertNotesEdit,
-    InsertSilenceEdit, MoveClipEdit, MoveRangeEdit, MuteInRangeEdit, MuteSelectedEventsEdit,
-    NudgeSelectedEventsEdit, NudgeSelectedEventsLengthEdit, PasteClipsEdit, QuantizeEventsEdit,
-    RenameTrackEdit, RestWheelEdit, SequencerEdit, SetMeterEdit, SetTempoEdit, SetTrackOutputEdit,
-    SplitClipsEdit, TempoGesture, TransposeSelectedEventsEdit,
+    ClearControllerSpanEdit, CommitClipEdit, DeleteSelectedEventsEdit, DeleteTimeEdit,
+    DragEventsVelocityEdit, DragNotesEdit, DuplicateClipsEdit, DuplicateTimeEdit,
+    InsertCaptureEdit, InsertNotesEdit, InsertSilenceEdit, MoveClipEdit, MoveRangeEdit,
+    MuteInRangeEdit, MuteSelectedEventsEdit, NudgeSelectedEventsEdit,
+    NudgeSelectedEventsLengthEdit, PasteClipsEdit, QuantizeEventsEdit, RenameTrackEdit,
+    SequencerEdit, SetMeterEdit, SetTempoEdit, SetTrackOutputEdit, SplitClipsEdit, TempoGesture,
+    TransposeSelectedEventsEdit,
 };
 use crate::core::time::TapTempo;
 use crate::models::clip::ClipEdge;
@@ -341,11 +342,15 @@ impl EventHandlers {
                 );
             }
 
-            SequencerCommand::RestWheel { wheel, start, end } => {
+            SequencerCommand::ClearControllerSpan {
+                controller,
+                start,
+                end,
+            } => {
                 self.record_edit(
                     sequencer,
                     undo_record,
-                    RestWheelEdit::from_sequencer(sequencer, *wheel, *start, *end),
+                    ClearControllerSpanEdit::from_sequencer(sequencer, *controller, *start, *end),
                 );
             }
 
@@ -1339,7 +1344,7 @@ mod tests {
     /// The wheel lane's `Delete`: one undo step that returns the span to
     /// rest, undone and redone whole; a span already at rest records none.
     #[test]
-    fn resting_a_wheel_span_is_one_undo_step() {
+    fn clearing_a_wheel_span_is_one_undo_step() {
         let (mut h, clip_id, _) = harness_with_clip();
         let mut record: Record<SequencerEdit> = Record::new();
         let curve = vec![
@@ -1362,8 +1367,8 @@ mod tests {
                 .map(|e| (e.tick(), e.midi_message()[2]))
                 .collect()
         };
-        let rest = |start, end| SequencerCommand::RestWheel {
-            wheel: Controller::MOD_WHEEL,
+        let rest = |start, end| SequencerCommand::ClearControllerSpan {
+            controller: Controller::MOD_WHEEL,
             start,
             end,
         };

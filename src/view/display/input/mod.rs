@@ -300,11 +300,11 @@ impl Display {
             self.set_clip_lane(lane);
             return true;
         }
-        // A press in a wheel lane gives it the keyboard and starts a span
-        // drag (`380-wheel-lane.md` decisions 14–16); nothing else. Not in
-        // a take session, whose clip is framed, never edited.
+        // A press in a controller lane gives it the keyboard and starts a
+        // span drag (`380-wheel-lane.md` decisions 14–16); nothing else. Not
+        // in a take session, whose clip is framed, never edited.
         if is_clip_events_view
-            && self.render.clip_lane.wheel().is_some()
+            && self.clip_lane_controller().is_some()
             && self.is_in_lower_lane(x, y)
         {
             if self.take_session.is_none() {

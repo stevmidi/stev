@@ -1,10 +1,12 @@
-//! The piano roll's lower lane when it shows a wheel, and the gutter switch
-//! that picks the lane (`ClipLane`): the `VEL` / `PB` / `MW` labels left of
-//! the lane, and the lead clip's pitch bend or mod wheel drawn as a line,
-//! a ride smooth, a held value flat until the next move steps off it
-//! ([`wheel_path`]), under the span `Delete` would return to rest. The moves
-//! are folded per pixel column ([`fold_wheel_columns`]) so what is drawn
-//! follows the lane's width, not the event count. See `380-wheel-lane.md`.
+//! The piano roll's lower lane when it shows a controller, and the gutter
+//! switch that picks the lane (`ClipLane`): the `VEL` / `PB` / `MW` labels
+//! left of the lane, and the lead clip's pitch bend, mod wheel or a knob's
+//! CC drawn as a line, a ride smooth, a held value flat until the next move
+//! steps off it ([`wheel_path`]), under the span `Delete` would clear. The
+//! moves are folded per pixel column ([`fold_wheel_columns`]) so what is
+//! drawn follows the lane's width, not the event count. The knob lanes
+//! switch from the knobs' labels (`rendering/knob_panel.rs`). See
+//! `380-wheel-lane.md`, `390-knob-panel.md` decisions 11–13.
 
 use egui::{Align2, CornerRadius, FontId, Painter, Pos2, Rect, Shape, Stroke, pos2, vec2};
 
@@ -12,7 +14,7 @@ use super::piano_keys::NoteAreaGeom;
 use super::*;
 use crate::core::midi::message::{Controller, PITCH_BEND_CENTRE};
 use crate::core::time::PPQN;
-use crate::metadata::clip_view::WheelMove;
+use crate::metadata::clip_view::ControllerMove;
 
 impl Display {
     /// Space above and below a wheel's curve inside the lane, so its
@@ -62,17 +64,19 @@ impl Display {
             .contains(pos2(x, y))
     }
 
-    /// Whether the pointer is on a gutter label a click would switch to —
-    /// not the lane already shown.
+    /// Whether the pointer is on a lane label a click would switch to — a
+    /// gutter label or a knob's — not the lane already shown.
     pub(in crate::view::display) fn is_pointer_on_clip_lane_switch(&mut self) -> bool {
         let shown = self.render.clip_lane;
-        self.in_pane(Pane::Clip, |display| {
-            display.clip_lane_label_under_pointer()
-        })
-        .is_some_and(|lane| lane != shown)
+        self.knob_lane_switch_under_pointer().is_some()
+            || self
+                .in_pane(Pane::Clip, |display| {
+                    display.clip_lane_label_under_pointer()
+                })
+                .is_some_and(|lane| lane != shown)
     }
 
-    /// Draws the lane switch: `VEL`, `PB`, `MW` stacked in the gutter,
+    /// Draws the gutter's lane switch: `VEL`, `PB`, `MW` stacked,
     /// coloured as the header's toggles are (`toggle_icon_color`): the shown
     /// one `accent`, one under the pointer `fg`, the rest `fg_dim` — so a
     /// hover is never mistaken for the shown lane. A dot, in the label's
@@ -81,36 +85,49 @@ impl Display {
         let gutter = self.lane_gutter_rect(geom);
         let hovered = self.canvas_pointer().and_then(|p| lane_label_in(gutter, p));
         let font = FontId::proportional(theme::FONT_SIZE_TL);
-        for (i, lane) in ClipLane::ALL.into_iter().enumerate() {
+        for (i, lane) in ClipLane::GUTTER.into_iter().enumerate() {
             let row = lane_label_row(gutter, i);
             let color = toggle_icon_color(lane == self.render.clip_lane, hovered == Some(lane));
             let label = painter.text(
                 pos2(row.left() + Self::LANE_LABEL_INSET_X, row.center().y),
                 Align2::LEFT_CENTER,
-                lane.label(),
+                lane.gutter_label().unwrap_or_default(),
                 font.clone(),
                 color,
             );
             if lane
-                .wheel()
-                .is_some_and(|wheel| !self.render.wheel_moves.of(wheel).is_empty())
+                .controller(&[])
+                .is_some_and(|controller| self.lead_clip_moves(controller))
             {
-                painter.circle_filled(
-                    pos2(label.right() + Self::LANE_MARKER_GAP, row.center().y),
-                    Self::LANE_MARKER_R,
-                    color,
-                );
+                self.draw_lane_marker(painter, label, color);
             }
         }
     }
 
+    /// Whether the lead clip has moves of `controller` — a lane label's
+    /// data marker (`380-wheel-lane.md` decision 6).
+    pub(super) fn lead_clip_moves(&self, controller: Controller) -> bool {
+        !self.render.controller_moves.of(controller).is_empty()
+    }
+
+    /// The data marker beside the lane label drawn at `label`, in its
+    /// colour.
+    pub(super) fn draw_lane_marker(&self, painter: &Painter, label: Rect, color: Color32) {
+        painter.circle_filled(
+            pos2(label.right() + Self::LANE_MARKER_GAP, label.center().y),
+            Self::LANE_MARKER_R,
+            color,
+        );
+    }
+
     /// Draws `wheel`'s curve for the lead clip into the lower lane `lane`
     /// ([`wheel_path`]): a ride joined smoothly, a held value flat until the
-    /// next move steps off it, from rest before the first move, dimmed
-    /// outside the clip's window. Pitch bend gets a faint centre line at
-    /// rest; the span, if one is marked, a tint across the lane's height
-    /// under the line, filled as the note marquee is. Nothing else with no
-    /// moves.
+    /// next move steps off it, dimmed outside the clip's window. A wheel's
+    /// line runs from rest before its first move; a knob's CC has no rest,
+    /// so its line starts at its first move. Pitch bend gets a faint centre
+    /// line at rest; the span, if one is marked, a tint across the lane's
+    /// height under the line, filled as the note marquee is. Nothing else
+    /// with no moves.
     pub(super) fn draw_wheel_lane(&self, painter: &Painter, lane: Rect, wheel: Controller) {
         if let Some((start, end)) = self.gesture.wheel_span {
             let x_range = self.tick_to_screen_x(start).max(lane.left())
@@ -136,7 +153,7 @@ impl Display {
             );
         }
 
-        let moves = self.render.wheel_moves.of(wheel);
+        let moves = self.render.controller_moves.of(wheel);
         if moves.is_empty() {
             return;
         }
@@ -146,12 +163,14 @@ impl Display {
         let cols = lane.width().max(0.0);
         let (start, knots) = fold_wheel_columns(
             moves,
-            wheel.rest().unwrap_or(0),
+            wheel.rest(),
             first_tick,
             ticks_per_col,
             cols as usize,
         );
-        let path = wheel_path(start, &knots, cols);
+        let Some(path) = wheel_path(start, &knots, cols) else {
+            return;
+        };
         let to_screen = |&(x, value): &PathPoint| pos2(lane.left() + x, y_of(value));
         let line: Vec<Pos2> = path.line.iter().map(to_screen).collect();
         let line = simplify(&line, Self::WHEEL_SIMPLIFY_PX);
@@ -188,7 +207,7 @@ impl Display {
 
 /// Row `i` of the gutter's three label rows, top to bottom.
 fn lane_label_row(gutter: Rect, i: usize) -> Rect {
-    let row_h = gutter.height() / ClipLane::ALL.len() as f32;
+    let row_h = gutter.height() / ClipLane::GUTTER.len() as f32;
     Rect::from_min_size(
         pos2(gutter.left(), gutter.top() + i as f32 * row_h),
         vec2(gutter.width(), row_h),
@@ -200,8 +219,8 @@ fn lane_label_in(gutter: Rect, pos: Pos2) -> Option<ClipLane> {
     if !gutter.contains(pos) {
         return None;
     }
-    let row_h = gutter.height() / ClipLane::ALL.len() as f32;
-    ClipLane::ALL
+    let row_h = gutter.height() / ClipLane::GUTTER.len() as f32;
+    ClipLane::GUTTER
         .get(((pos.y - gutter.top()) / row_h) as usize)
         .copied()
 }
@@ -283,23 +302,24 @@ struct WheelPath {
 /// Folds `moves` (tick order) into `cols` pixel columns of `ticks_per_col`
 /// ticks each, the first starting at `first_tick`. Returns where the line
 /// starts — the last move before the lane, at its own x left of it, as
-/// playback chases it, or `neutral` at the lane's edge with none — and one
+/// playback chases it, or with none `neutral` at the lane's edge (a wheel's
+/// rest), or nowhere (`None`, a CC with no rest) — and one
 /// [`Knot`] per column holding moves, plus the first move past the right
 /// edge, so a ride crossing either edge still joins up. Visits each visible
 /// move once; its output follows the columns.
 fn fold_wheel_columns(
-    moves: &[WheelMove],
-    neutral: u16,
+    moves: &[ControllerMove],
+    neutral: Option<u16>,
     first_tick: f32,
     ticks_per_col: f32,
     cols: usize,
-) -> (PathPoint, Vec<Knot>) {
+) -> (Option<PathPoint>, Vec<Knot>) {
     let x_of = |tick: i32| (tick as f32 - first_tick) / ticks_per_col;
     let first = moves.partition_point(|&(tick, _)| (tick as f32) < first_tick);
     let mut prev_tick = first.checked_sub(1).map(|i| moves[i].0);
     let start = match first.checked_sub(1).map(|i| moves[i]) {
-        Some((tick, value)) => (x_of(tick), value),
-        None => (0.0, neutral),
+        Some((tick, value)) => Some((x_of(tick), value)),
+        None => neutral.map(|value| (0.0, value)),
     };
 
     let mut knots: Vec<Knot> = Vec::new();
@@ -327,9 +347,12 @@ fn fold_wheel_columns(
 
 /// The wheel's line from `start` through `knots` to the lane's right edge
 /// at `cols`: into a riding knot, a diagonal; otherwise flat at the held
-/// value, then a vertical step at the knot. A column whose moves reach past
-/// the values the line passes through there gets a span over them.
-fn wheel_path(start: PathPoint, knots: &[Knot], cols: f32) -> WheelPath {
+/// value, then a vertical step at the knot. With no `start` (a CC with
+/// nothing in force before the lane) the line begins at the first knot,
+/// `None` with none. A column whose moves reach past the values the line
+/// passes through there gets a span over them.
+fn wheel_path(start: Option<PathPoint>, knots: &[Knot], cols: f32) -> Option<WheelPath> {
+    let start = start.or_else(|| knots.first().map(|knot| (knot.x, knot.last)))?;
     let mut line = Vec::with_capacity(knots.len() * 2 + 2);
     let mut push = |point: PathPoint| {
         if line.last() != Some(&point) {
@@ -355,7 +378,7 @@ fn wheel_path(start: PathPoint, knots: &[Knot], cols: f32) -> WheelPath {
     if line.last().is_some_and(|&(x, _)| x < cols) {
         line.push((cols, value));
     }
-    WheelPath { line, spans }
+    Some(WheelPath { line, spans })
 }
 
 /// Drops the points of `points` that lie within `tolerance` of the line
@@ -451,8 +474,8 @@ mod tests {
     fn a_column_with_many_moves_folds_to_one_knot() {
         // Ten ticks a column; column 1 holds four moves.
         let moves = [(10, 50), (12, 90), (15, 20), (19, 60)];
-        let (start, knots) = fold_wheel_columns(&moves, 0, 0.0, 10.0, 3);
-        assert_eq!(start, (0.0, 0), "at rest before the first move");
+        let (start, knots) = fold_wheel_columns(&moves, Some(0), 0.0, 10.0, 3);
+        assert_eq!(start, Some((0.0, 0)), "at rest before the first move");
         assert_eq!(
             knots,
             vec![Knot {
@@ -471,22 +494,34 @@ mod tests {
     #[test]
     fn the_line_starts_with_the_value_in_force() {
         let moves = [(100, 30), (400, 80), (960, 120)];
-        let (start, knots) = fold_wheel_columns(&moves, 0x2000, 960.0, 10.0, 2);
-        assert_eq!(start, (-56.0, 80));
+        let (start, knots) = fold_wheel_columns(&moves, Some(0x2000), 960.0, 10.0, 2);
+        assert_eq!(start, Some((-56.0, 80)));
         assert_eq!(knots, vec![Knot::at(0.5, 120, false)]);
 
-        let (start, knots) = fold_wheel_columns(&moves, 0x2000, 0.0, 10.0, 1);
-        assert_eq!(start, (0.0, 0x2000));
+        let (start, knots) = fold_wheel_columns(&moves, Some(0x2000), 0.0, 10.0, 1);
+        assert_eq!(start, Some((0.0, 0x2000)));
         assert_eq!(
             knots[0].x, 10.0,
             "the first move past the edge, at its own x"
         );
     }
 
+    /// A knob's CC has no rest: with nothing in force before the lane, the
+    /// line starts at the first move, not at 0 from the lane's edge.
+    #[test]
+    fn a_cc_line_starts_at_its_first_move() {
+        let moves = [(15, 40), (25, 60)];
+        let (start, knots) = fold_wheel_columns(&moves, None, 0.0, 10.0, 3);
+        assert_eq!(start, None);
+        let path = wheel_path(start, &knots, 3.0).unwrap();
+        assert_eq!(path.line, vec![(1.5, 40), (2.5, 60), (3.0, 60)]);
+        assert_eq!(wheel_path(None, &[], 3.0), None, "no moves, no line");
+    }
+
     #[test]
     fn folding_stops_at_the_first_move_past_the_right_edge() {
         let moves = [(5, 1), (25, 2), (35, 3)];
-        let (_, knots) = fold_wheel_columns(&moves, 0, 0.0, 10.0, 2);
+        let (_, knots) = fold_wheel_columns(&moves, Some(0), 0.0, 10.0, 2);
         assert_eq!(knots.iter().map(|k| k.last).collect::<Vec<_>>(), vec![1, 2]);
     }
 
@@ -494,8 +529,8 @@ mod tests {
     #[test]
     fn a_ride_is_joined_smoothly() {
         let moves = [(0, 10), (10, 20), (20, 30)];
-        let (start, knots) = fold_wheel_columns(&moves, 0, 0.0, 10.0, 3);
-        let path = wheel_path(start, &knots, 3.0);
+        let (start, knots) = fold_wheel_columns(&moves, Some(0), 0.0, 10.0, 3);
+        let path = wheel_path(start, &knots, 3.0).unwrap();
         assert_eq!(
             path.line,
             vec![
@@ -516,9 +551,9 @@ mod tests {
     fn a_held_value_steps_to_the_next_move() {
         let gap = RIDE_GAP_TICKS + 1;
         let moves = [(0, 10), (gap, 50)];
-        let (start, knots) = fold_wheel_columns(&moves, 0, 0.0, 1.0, gap as usize + 2);
+        let (start, knots) = fold_wheel_columns(&moves, Some(0), 0.0, 1.0, gap as usize + 2);
         let x = knots[1].x;
-        let path = wheel_path(start, &knots, x + 1.5);
+        let path = wheel_path(start, &knots, x + 1.5).unwrap();
         assert_eq!(
             path.line[3..],
             [(x, 10), (x, 50), (x + 1.5, 50)],
@@ -530,8 +565,8 @@ mod tests {
     #[test]
     fn a_ride_crosses_the_left_edge() {
         let moves = [(95, 40), (105, 60)];
-        let (start, knots) = fold_wheel_columns(&moves, 0, 100.0, 10.0, 2);
-        let path = wheel_path(start, &knots, 2.0);
+        let (start, knots) = fold_wheel_columns(&moves, Some(0), 100.0, 10.0, 2);
+        let path = wheel_path(start, &knots, 2.0).unwrap();
         assert_eq!(path.line[..2], [(-0.5, 40), (0.5, 60)]);
     }
 
@@ -540,8 +575,8 @@ mod tests {
     #[test]
     fn a_spike_inside_a_column_gets_a_span() {
         let moves = [(10, 50), (12, 90), (15, 20), (19, 60)];
-        let (start, knots) = fold_wheel_columns(&moves, 0, 0.0, 10.0, 3);
-        let path = wheel_path(start, &knots, 3.0);
+        let (start, knots) = fold_wheel_columns(&moves, Some(0), 0.0, 10.0, 3);
+        let path = wheel_path(start, &knots, 3.0).unwrap();
         assert_eq!(
             path.spans,
             vec![Segment {
@@ -551,8 +586,8 @@ mod tests {
         );
 
         let moves = [(10, 50), (12, 55), (15, 60)];
-        let (start, knots) = fold_wheel_columns(&moves, 0, 0.0, 10.0, 3);
-        assert!(wheel_path(start, &knots, 3.0).spans.is_empty());
+        let (start, knots) = fold_wheel_columns(&moves, Some(0), 0.0, 10.0, 3);
+        assert!(wheel_path(start, &knots, 3.0).unwrap().spans.is_empty());
     }
 
     #[test]

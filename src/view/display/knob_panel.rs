@@ -9,9 +9,10 @@
 //! turns it the same way — a scroll that began on that dial, its momentum
 //! included; momentum coasting onto the panel from elsewhere turns nothing
 //! ([`WheelLatch`]).
-//! The label under a dial names its CC: a double-click opens a field to type
-//! another, an undoable `SetKnobCcEdit`. A scroll anywhere else on the panel
-//! does nothing.
+//! The label under a dial names its CC: a click, with a clip open, shows
+//! that CC's lane under the piano roll (`ClipLane::Knob`); a double-click
+//! opens a field to type another, an undoable `SetKnobCcEdit`. A scroll
+//! anywhere else on the panel does nothing.
 //!
 //! The geometry is pure and unit-tested here; the drawing is
 //! `rendering/knob_panel.rs`. See `030-ui-design.md` § Knob Panel.
@@ -26,6 +27,7 @@ use crate::core::midi::message::control_change;
 use crate::models::knobs::{CC_VALUE_MAX, KNOB_COUNT};
 
 use super::Display;
+use super::clip_lane::ClipLane;
 use super::text_field::{CHIP_MARGIN, FieldEvent, FieldStyle, TextField, field_event};
 
 /// The panel's inset from its column's edges, around the knob grid.
@@ -414,15 +416,36 @@ impl Display {
 
     /// A press in the knob panel: a dial starts its drag, or with ⌘/Ctrl
     /// goes back to 0 and starts none — the track header bars' reset
-    /// gesture; anything else does nothing yet. Never takes the keyboard.
+    /// gesture; a label, with a clip open, shows its CC's lane under the
+    /// piano roll (`390-knob-panel.md` decision 11). Never takes the
+    /// keyboard.
     pub(super) fn handle_knob_panel_click(&mut self, x: f32, y: f32, command: bool) {
-        let Some(knob) = self.dial_at(x, y) else {
-            return;
-        };
-        if command {
-            self.reset_knob(knob);
-        } else {
-            self.begin_knob_drag(knob);
+        match self.knob_at(x, y) {
+            Some(KnobHit::Dial(knob)) if command => self.reset_knob(knob),
+            Some(KnobHit::Dial(knob)) => self.begin_knob_drag(knob),
+            Some(KnobHit::Label(knob)) if self.knob_labels_switch_lanes() => {
+                self.set_clip_lane(ClipLane::Knob(knob));
+            }
+            Some(KnobHit::Label(_)) | None => {}
+        }
+    }
+
+    /// Whether a knob's label switches the piano roll's lower lane: only
+    /// with a clip open, since there is no lane without one.
+    pub(super) fn knob_labels_switch_lanes(&self) -> bool {
+        self.lead_clip_time.is_some()
+    }
+
+    /// The knob whose label is under the pointer, when a click there would
+    /// switch the lane — not the lane already shown.
+    pub(super) fn knob_lane_switch_under_pointer(&self) -> Option<usize> {
+        if !self.knob_labels_switch_lanes() {
+            return None;
+        }
+        let pos = self.canvas_pointer()?;
+        match self.knob_at(pos.x, pos.y)? {
+            KnobHit::Label(knob) if self.render.clip_lane != ClipLane::Knob(knob) => Some(knob),
+            _ => None,
         }
     }
 

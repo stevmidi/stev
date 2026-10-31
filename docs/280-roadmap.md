@@ -92,7 +92,7 @@ Mirrored in the README's *Not planned* list, so nobody expects these. Some may c
 - detecting the meter from a take: Enter fits the tempo in the project's meter and the meter chip sets it. Probed 2026-10-27 over the pinned takes and dropped. A free noodle doesn't reveal its meter: its phrase ends on a rest of unknown length, so 10–12 played eighths fit two bars of 3/4 as well as two of 4/4, and the accents were at noise level. A cleanly repeating riff does (one 3/4 test take repeated its rhythm exactly every three beats), but its whole-bar length fits 4/4 just as well, and a three-beat riff can be meant over 4/4. Too narrow and too subjective to save one click on the chip; Ableton's Capture doesn't detect the meter either
 - audio tracks and audio recording
 - a built-in sampler or other built-in instrument: sampler and instrument plugins cover it, loaded through the plugin host (`130`)
-- track automation lanes and drawing controller data: the piano roll shows the clip's pitch bend and mod wheel in a lane (`380`) that only returns a span to rest or clears the wheel; no lane draws values and no automation lives on the arranger's tracks
+- track automation lanes and drawing controller data: the piano roll shows the clip's pitch bend, mod wheel and knob CCs in a lane (`380`, `390`) that only clears a span or the whole controller; no lane draws values and no automation lives on the arranger's tracks
 - mixing: built-in EQ, compression or other effects, effect plugins, sends, a mixer panel (Stev arranges, a DAW mixes: § Principle; the hand-off is a stem export)
 - MIDI clock / Ableton Link / external sync
 - notation

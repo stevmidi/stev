@@ -42,9 +42,9 @@ pub(crate) use clip_edits::{
     PasteClipsEdit, ResizeClipEdit, RetimeClipEdit, SplitClipsEdit,
 };
 pub(crate) use event_edits::{
-    DeleteSelectedEventsEdit, DragEventsVelocityEdit, DragNotesEdit, InsertCaptureEdit,
-    InsertNotesEdit, MuteSelectedEventsEdit, NudgeSelectedEventsEdit,
-    NudgeSelectedEventsLengthEdit, QuantizeEventsEdit, ReplaceClipNotesEdit, RestWheelEdit,
+    ClearControllerSpanEdit, DeleteSelectedEventsEdit, DragEventsVelocityEdit, DragNotesEdit,
+    InsertCaptureEdit, InsertNotesEdit, MuteSelectedEventsEdit, NudgeSelectedEventsEdit,
+    NudgeSelectedEventsLengthEdit, QuantizeEventsEdit, ReplaceClipNotesEdit,
     TransposeSelectedEventsEdit,
 };
 pub(crate) use meter_edit::SetMeterEdit;
@@ -745,7 +745,7 @@ sequencer_edit_dispatch!(
     DragEventsVelocity(DragEventsVelocityEdit),
     MuteSelectedEvents(MuteSelectedEventsEdit),
     QuantizeEvents(QuantizeEventsEdit),
-    RestWheel(RestWheelEdit),
+    ClearControllerSpan(ClearControllerSpanEdit),
     InsertCapture(InsertCaptureEdit),
     InsertNotes(InsertNotesEdit),
     ReplaceClipNotes(ReplaceClipNotesEdit),

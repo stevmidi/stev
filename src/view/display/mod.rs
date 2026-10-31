@@ -139,7 +139,7 @@ use crate::{
     },
     metadata::{
         clip_metadata::{ClipMetadata, note_thumbnails_from_spans},
-        clip_view::{ClipView, EventMetadata, WheelMoves},
+        clip_view::{ClipView, ControllerMoves, EventMetadata},
     },
     shapes::{clip_shape::ClipShape, event_shape::EventShape},
     view::{computer_keyboard::ComputerKeyboard, input_poller::InputPoller, theme},
@@ -647,7 +647,8 @@ impl Display {
         match self.key_focus {
             KeyFocus::TrackHeaders if self.view_state() != ViewState::Arranger => KeyFocus::Pane,
             KeyFocus::WheelLane
-                if !self.view_state().is_clip_view() || self.render.clip_lane.wheel().is_none() =>
+                if !self.view_state().is_clip_view()
+                    || self.render.clip_lane == ClipLane::Velocity =>
             {
                 KeyFocus::Pane
             }

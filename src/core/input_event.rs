@@ -460,11 +460,12 @@ pub(crate) enum InputEvent {
         /// Identifies the drag so the undo stack coalesces its nudges into one step.
         drag_id: u64,
     },
-    /// `Delete` in a wheel lane with a span marked: return the wheel to rest
-    /// across it. Maps 1:1 to `SequencerCommand::RestWheel`.
-    RestWheel {
-        /// The wheel the lane shows.
-        wheel: Controller,
+    /// `Delete` in a controller lane with a span marked: return a wheel to
+    /// rest across it, hold a knob's CC at the value before it. Maps 1:1 to
+    /// `SequencerCommand::ClearControllerSpan`.
+    ClearControllerSpan {
+        /// The controller the lane shows.
+        controller: Controller,
         /// The span's start, event ticks.
         start: i32,
         /// The span's end (exclusive), event ticks.

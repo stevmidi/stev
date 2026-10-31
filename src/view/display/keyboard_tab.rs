@@ -458,11 +458,14 @@ const FIXED: &[FixedGroup] = &[
         ],
     ),
     (
-        "Wheel lane",
+        "Controller lane",
         &[
-            ("Drag", "Mark a span of pitch bend or the mod wheel"),
+            (
+                "Drag",
+                "Mark a span of pitch bend, the mod wheel or a knob's CC",
+            ),
             ("⌘A", "Mark the whole curve"),
-            ("Delete", "Return the span to rest"),
+            ("Delete", "Clear the span: a wheel to rest, a CC held"),
             ("Esc", "Drop the span, then give back the keyboard"),
         ],
     ),
@@ -473,6 +476,7 @@ const FIXED: &[FixedGroup] = &[
             ("Scroll", "Turn the knob under the pointer"),
             ("⇧ drag / scroll", "Turn it in fine steps"),
             ("⌘ click", "Turn the knob back to 0"),
+            ("Click", "On a CC label: show its lane under the notes"),
             ("Double-click", "On a CC label: type the knob's CC"),
         ],
     ),

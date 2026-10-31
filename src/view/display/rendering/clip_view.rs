@@ -358,7 +358,7 @@ impl Display {
             Stroke::new(2.0_f32, grid_seam_color())
         };
         painter.hline(lane.x_range(), lane.top(), divider);
-        match self.render.clip_lane.wheel() {
+        match self.clip_lane_controller() {
             None => self.draw_velocity_panel(painter, lane),
             Some(wheel) => self.draw_wheel_lane(painter, lane, wheel),
         }

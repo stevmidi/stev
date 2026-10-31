@@ -122,7 +122,8 @@ pub(crate) enum Action {
     /// Stretch the clip a bar shorter, retiming its notes (clip view).
     StretchClipShorter,
     /// Show the next lane under the piano roll: velocity, pitch bend, the
-    /// mod wheel (clip view, `380-wheel-lane.md`).
+    /// mod wheel, then each knob's CC (clip view, `380-wheel-lane.md`,
+    /// `390-knob-panel.md` decision 11).
     CycleClipLane,
 }
 
@@ -829,7 +830,7 @@ pub(crate) const ACTIONS: &[ActionInfo] = &[
     row(
         Action::CycleClipLane,
         "clip.cycle_lane",
-        "Velocity / pitch bend / mod wheel lane",
+        "Next lane: velocity, pitch bend, mod wheel, knobs",
         CLIP,
         Scope::Clip,
         &[Chord::plain(Key::W)],

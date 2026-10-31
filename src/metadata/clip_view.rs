@@ -3,7 +3,8 @@
 //!
 //! It shares the clip's *position* atoms (cursor / region) so the cursor and
 //! region shading track live without a `UiEvent`, but takes a flat copy of the
-//! events ([`EventMetadata`]) and of its wheel moves ([`WheelMoves`]). The
+//! events ([`EventMetadata`]) and of its controller moves
+//! ([`ControllerMoves`]). The
 //! `Display` piano-roll renderer works from
 //! this alone. The arranger's counterpart is
 //! [`ClipMetadata`](crate::metadata::clip_metadata::ClipMetadata). See
@@ -33,19 +34,32 @@ pub(crate) struct EventMetadata {
     pub(crate) muted: bool,
 }
 
-/// One wheel move as the wheel lane draws it: `(tick, value)`, event ticks.
-pub(crate) type WheelMove = (i32, u16);
+/// One controller move as a lane draws it: `(tick, value)`, event ticks.
+pub(crate) type ControllerMove = (i32, u16);
 
-/// The clip's unmuted wheel moves, per wheel ([`Controller::WHEELS`]), each
-/// list in tick order — what plays, so a muted move is left out
-/// (`ControllerValues::apply`). See `380-wheel-lane.md`.
+/// The clip's unmuted controller moves — pitch bend, the mod wheel, any
+/// other CC — per controller, each list in tick order: what plays, so a
+/// muted move is left out (`ControllerValues::apply`). See
+/// `380-wheel-lane.md`, `390-knob-panel.md` decision 11.
 #[derive(Debug, Clone, Default)]
-pub(crate) struct WheelMoves([Vec<WheelMove>; Controller::WHEELS.len()]);
+pub(crate) struct ControllerMoves(Vec<(Controller, Vec<ControllerMove>)>);
 
-impl WheelMoves {
-    /// `wheel`'s moves; none for a controller that isn't a wheel.
-    pub(crate) fn of(&self, wheel: Controller) -> &[WheelMove] {
-        wheel.wheel_index().map_or(&[], |i| &self.0[i])
+impl ControllerMoves {
+    /// `controller`'s moves; none when the clip has none.
+    pub(crate) fn of(&self, controller: Controller) -> &[ControllerMove] {
+        self.0
+            .iter()
+            .find(|(moved, _)| *moved == controller)
+            .map_or(&[], |(_, moves)| moves)
+    }
+
+    /// Adds a move of `controller` to `value` at `tick`, after every move
+    /// added before it.
+    fn push(&mut self, controller: Controller, tick: i32, value: u16) {
+        match self.0.iter_mut().find(|(moved, _)| *moved == controller) {
+            Some((_, moves)) => moves.push((tick, value)),
+            None => self.0.push((controller, vec![(tick, value)])),
+        }
     }
 }
 
@@ -60,10 +74,10 @@ pub(crate) struct ClipView {
     pub(crate) region_end: Arc<AtomicI32>,
     /// The clip's `NoteOn` events, flattened.
     pub(crate) events: Vec<EventMetadata>,
-    /// The clip's wheel moves, for the wheel lanes.
-    pub(crate) wheel_moves: WheelMoves,
+    /// The clip's controller moves, for the controller lanes.
+    pub(crate) controller_moves: ControllerMoves,
     /// The clip's whole extent in event ticks (`Clip::event_extent`): the
-    /// span `⌘A` marks in a wheel lane.
+    /// span `⌘A` marks in a controller lane.
     pub(crate) extent: (i32, i32),
     /// The clip's id.
     pub(crate) clip_id: Uuid,
@@ -72,7 +86,7 @@ pub(crate) struct ClipView {
 }
 impl ClipView {
     /// Snapshots `clip` into a `ClipView`, sharing its position atoms and
-    /// copying its `NoteOn`s and wheel moves.
+    /// copying its `NoteOn`s and controller moves.
     pub(crate) fn from_clip(clip: &Clip) -> ClipView {
         let events: Vec<EventMetadata> = clip
             .events()
@@ -88,12 +102,10 @@ impl ClipView {
             })
             .collect();
 
-        let mut wheel_moves = WheelMoves::default();
+        let mut controller_moves = ControllerMoves::default();
         for event in clip.events().iter().filter(|event| !event.is_muted()) {
-            if let Some((wheel, value)) = parse_controller(event.midi_message())
-                && let Some(i) = wheel.wheel_index()
-            {
-                wheel_moves.0[i].push((event.tick(), value));
+            if let Some((controller, value)) = parse_controller(event.midi_message()) {
+                controller_moves.push(controller, event.tick(), value);
             }
         }
 
@@ -102,7 +114,7 @@ impl ClipView {
             region_start: clip.region().start_atomic(),
             region_end: clip.region().end_atomic(),
             events,
-            wheel_moves,
+            controller_moves,
             extent: clip.event_extent(),
             clip_id: clip.id(),
             selected_event_ids: clip.selected_event_ids(),

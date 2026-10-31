@@ -1,15 +1,18 @@
 //! Painting the knob panel (`knob_panel.rs`): its column fill, under the
 //! track headers and in their tone, and each knob — a trough along the
 //! dial's sweep, the value in the selected track's colour along it, a
-//! pointer to the value, and the CC label under it. A knob never turned has
-//! no value arc and a dim pointer at 0. See `030-ui-design.md` § Knob Panel.
+//! pointer to the value, and the CC label under it — with a clip open, a
+//! lane switch coloured as the gutter's labels are, with their data marker.
+//! A knob never turned has no value arc and a dim pointer at 0. See
+//! `030-ui-design.md` § Knob Panel.
 
 use std::f32::consts::TAU;
 
 use egui::{Align2, CornerRadius, FontId, Painter, Pos2, Rect, Shape, Stroke, pos2, vec2};
 
 use super::*;
-use crate::view::display::knob_panel::{KnobRects, LABEL_FONT_SIZE, SWEEP, knob_angle};
+use crate::core::midi::message::Controller;
+use crate::view::display::knob_panel::{KnobHit, KnobRects, LABEL_FONT_SIZE, SWEEP, knob_angle};
 
 /// The width of a dial's trough and value arc.
 const ARC_W: f32 = 3.0;
@@ -36,6 +39,13 @@ impl Display {
             Stroke::new(1.0, grid_seam_color()),
         );
         let accent = self.track_color(self.selected_track_idx);
+        let switches = self.knob_labels_switch_lanes();
+        let hovered = self
+            .canvas_pointer()
+            .and_then(|pos| match self.knob_at(pos.x, pos.y) {
+                Some(KnobHit::Label(knob)) => Some(knob),
+                _ => None,
+            });
         for (knob, rects) in knobs.iter().enumerate() {
             let Some((cc, value)) = self.knob_shown(knob) else {
                 continue;
@@ -46,14 +56,26 @@ impl Display {
                 ..*rects
             };
             draw_knob(painter, &rects, value, accent);
-            if !self.knob_cc_field_open_on(knob) {
-                painter.text(
-                    rects.label.center(),
-                    Align2::CENTER_CENTER,
-                    format!("CC{cc}"),
-                    FontId::proportional(LABEL_FONT_SIZE),
-                    theme::fg_dim(),
-                );
+            if self.knob_cc_field_open_on(knob) {
+                continue;
+            }
+            let color = if switches {
+                toggle_icon_color(
+                    self.render.clip_lane == ClipLane::Knob(knob),
+                    hovered == Some(knob),
+                )
+            } else {
+                theme::fg_dim()
+            };
+            let label = painter.text(
+                rects.label.center(),
+                Align2::CENTER_CENTER,
+                format!("CC{cc}"),
+                FontId::proportional(LABEL_FONT_SIZE),
+                color,
+            );
+            if switches && self.lead_clip_moves(Controller::Cc(cc)) {
+                self.draw_lane_marker(painter, label, color);
             }
         }
     }

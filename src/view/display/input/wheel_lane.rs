@@ -1,15 +1,18 @@
-//! The wheel lane's keyboard focus (`KeyFocus::WheelLane`) and its span: a
-//! press in the PB or MW lane gives it the keyboard, a press-drag there
-//! marks a span of the shown wheel, `⌘A` marks the whole curve, `Delete`
-//! returns the span to rest (`InputEvent::RestWheel`), `Esc` drops the span
-//! and then the focus. A note command takes the keyboard back to the notes
-//! and acts there ([`Action::leaves_wheel_lane`]). See `380-wheel-lane.md`
-//! decisions 14–19.
+//! The controller lanes' keyboard focus (`KeyFocus::WheelLane`) and its
+//! span: a press in the PB, MW or a knob's lane gives it the keyboard, a
+//! press-drag there marks a span of the shown controller, `⌘A` marks the
+//! whole curve, `Delete` clears the span — a wheel back to rest, a knob's
+//! CC held at the value before it (`InputEvent::ClearControllerSpan`) —
+//! `Esc` drops the span and then the focus. A note command takes the
+//! keyboard back to the notes and acts there
+//! ([`Action::leaves_wheel_lane`]). See `380-wheel-lane.md` decisions 14–19
+//! and `390-knob-panel.md` decisions 11 and 13.
 
 use egui::Key;
 
 use crate::core::input_event::InputEvent;
 use crate::core::keymap::Action;
+use crate::core::midi::message::Controller;
 
 use super::gestures::snapped_span;
 use super::*;
@@ -17,8 +20,8 @@ use super::*;
 /// What a key does while the wheel lane has the keyboard.
 #[derive(Debug, PartialEq, Eq)]
 enum WheelLaneKey {
-    /// Return the span to rest (nothing without one).
-    RestSpan,
+    /// Clear the span (nothing without one).
+    ClearSpan,
     /// Mark the clip's whole extent.
     MarkAll,
     /// Drop the span.
@@ -30,7 +33,7 @@ enum WheelLaneKey {
 }
 
 /// The wheel lane's keymap, by the action the keymap resolves the press to
-/// (`action`): Delete notes (`Delete`/`⌫`) returns the span to rest, Select
+/// (`action`): Delete notes (`Delete`/`⌫`) clears the span, Select
 /// all notes (`⌘A`) marks the whole curve, whatever they are bound to; any
 /// other clip-view command hands the keyboard back first
 /// ([`Action::leaves_wheel_lane`]), and so does an arrow with notes
@@ -51,7 +54,7 @@ fn wheel_lane_key(
         {
             Some(WheelLaneKey::HandBack)
         }
-        (_, Some(Action::DeleteNotes)) => Some(WheelLaneKey::RestSpan),
+        (_, Some(Action::DeleteNotes)) => Some(WheelLaneKey::ClearSpan),
         (_, Some(Action::SelectAllNotes)) => Some(WheelLaneKey::MarkAll),
         (_, Some(action)) if action.leaves_wheel_lane() => Some(WheelLaneKey::HandBack),
         _ => None,
@@ -64,16 +67,27 @@ impl Display {
         self.key_owner() == KeyFocus::WheelLane
     }
 
-    /// Shows `lane` under the piano roll — a gutter label or `W`. Velocity
-    /// gives the keyboard back to the notes; a switch between the wheels
-    /// keeps the focus but drops the span, which was the other wheel's.
+    /// The controller the lower lane shows — a knob lane's from the lead
+    /// clip's track (the selected one) — `None` for velocity.
+    pub(in crate::view::display) fn clip_lane_controller(&self) -> Option<Controller> {
+        let knob_ccs = self
+            .tracks
+            .get(self.selected_track_idx)
+            .map_or(&[][..], |track| &track.knob_ccs[..]);
+        self.render.clip_lane.controller(knob_ccs)
+    }
+
+    /// Shows `lane` under the piano roll — a gutter label, a knob label or
+    /// `W`. Velocity gives the keyboard back to the notes; a switch between
+    /// two controllers keeps the focus but drops the span, which was the
+    /// other one's.
     pub(in crate::view::display) fn set_clip_lane(&mut self, lane: ClipLane) {
         if lane == self.render.clip_lane {
             return;
         }
         self.render.clip_lane = lane;
         self.clear_wheel_span();
-        if lane.wheel().is_none() && self.key_focus == KeyFocus::WheelLane {
+        if lane == ClipLane::Velocity && self.key_focus == KeyFocus::WheelLane {
             self.key_focus = KeyFocus::Pane;
         }
     }
@@ -132,12 +146,16 @@ impl Display {
         let action = self.pressed_action(key, modifiers);
         let has_span = self.gesture.wheel_span.is_some();
         match wheel_lane_key(key, action, has_span, self.has_event_selection()) {
-            Some(WheelLaneKey::RestSpan) => {
-                if let Some(wheel) = self.render.clip_lane.wheel()
+            Some(WheelLaneKey::ClearSpan) => {
+                if let Some(controller) = self.clip_lane_controller()
                     && let Some((start, end)) = self.gesture.wheel_span.take()
                 {
                     self.input_event_tx
-                        .send(InputEvent::RestWheel { wheel, start, end })
+                        .send(InputEvent::ClearControllerSpan {
+                            controller,
+                            start,
+                            end,
+                        })
                         .ok();
                 }
                 true
@@ -171,14 +189,14 @@ mod tests {
     use super::{WheelLaneKey, wheel_lane_key};
     use crate::core::keymap::Action;
 
-    /// Delete notes rests the span, whether there is one or not (the press
+    /// Delete notes clears the span, whether there is one or not (the press
     /// is the lane's either way: it never deletes notes).
     #[test]
     fn delete_rests_the_span() {
         for has_span in [true, false] {
             assert_eq!(
                 wheel_lane_key(Key::Delete, Some(Action::DeleteNotes), has_span, true),
-                Some(WheelLaneKey::RestSpan)
+                Some(WheelLaneKey::ClearSpan)
             );
         }
     }
