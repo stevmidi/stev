@@ -43,5 +43,5 @@ Before wheel capture, recorded bends and mod moves only rode in with notes, so l
 - Showing what a take replaced: the old curve ghosted under the new one over the landed span, after a take or an undo. It would make `370`'s landing rule visible, but needs the replaced span kept somewhere for the view; decide after using phase 1.
 - A resizable lane (dragging the divider between the notes and the lane), if 80 px proves too short in use. Its height would be kept in settings, like the browser's width, and shared by all three lanes.
 - Wheel data in the arranger thumbnails.
-- Other CCs, aftertouch and sustain (decision 1).
+- Other CCs, aftertouch and sustain (decision 1). Other CCs are designed in `390`: one lane per knob, in the same switch.
 - Arranger or track automation lanes (decision 2).
