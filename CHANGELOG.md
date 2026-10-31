@@ -28,6 +28,7 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ### Changed
 
+- `V` shows and hides the selected track's plugin from the clip view and the knobs too, not only from the arranger.
 - A running `/` into a clip is an overdub: everything in the last pass lands where you heard it, wherever the clip's cursor is. Before, anything played earlier in the loop than the clip's cursor was dropped.
 
 ### Fixed

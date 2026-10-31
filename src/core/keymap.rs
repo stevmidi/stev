@@ -764,7 +764,7 @@ pub(crate) const ACTIONS: &[ActionInfo] = &[
         "arranger.plugin_editor",
         "Show / hide the plugin",
         ARRANGER,
-        Scope::Arranger,
+        Scope::Global,
         &[Chord::plain(Key::V)],
     ),
     // --- Clip ---
@@ -1443,6 +1443,24 @@ mod tests {
         assert_eq!(keymap.bare_keys(Action::Stop), vec![Key::Num0]);
         assert_eq!(keymap.bare_keys(Action::TogglePluginEditor), vec![Key::V]);
         assert!(keymap.bare_keys(Action::Undo).is_empty());
+    }
+
+    /// `V` shows the plugin from either pane: the knobs drive that plugin
+    /// from the clip view, so it must open from there too. It leaves a
+    /// wheel lane or the knob panel with the keyboard.
+    #[test]
+    fn plugin_editor_key_works_in_both_panes() {
+        let keymap = Keymap::default();
+        let v = Chord::plain(Key::V);
+        for pane in [Pane::Arranger, Pane::Clip] {
+            assert_eq!(
+                keymap.resolve(v, pane),
+                Some(Action::TogglePluginEditor),
+                "{pane:?}"
+            );
+        }
+        assert!(!Action::TogglePluginEditor.leaves_wheel_lane());
+        assert!(!Action::TogglePluginEditor.leaves_knob_panel());
     }
 
     /// Whether `keymap` puts no chord on two overlapping actions.

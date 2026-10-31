@@ -247,8 +247,8 @@ methods take a track's position and look the slot up in its `tracks` mirror
   `Display::track_instruments[track]` (a `TrackInstrument`, beside its catalog entry). It is pumped once per frame from
   `Display::logic` (via `pump_instrument_editors` — `logic` rather than `ui` so it
   keeps running while the main window is minimised), which schedules the next repaint
-  at the shortest plugin timer cadence across all open editors. `v` in the
-  Arranger toggles the selected track's editor window (`InstrumentEditor::toggle`).
+  at the shortest plugin timer cadence across all open editors. `v`, in either
+  pane, toggles the selected track's editor window (`InstrumentEditor::toggle`).
   A plugin picked in the browser opens its editor immediately; plugins restored on
   project load come up with **no editor** (the GUI is only ever built on the
   first `show`). The editor window is brought up with `orderFront`
