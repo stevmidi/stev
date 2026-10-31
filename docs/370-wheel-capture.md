@@ -45,7 +45,7 @@ A 4-bar clip with a mod sweep across it, the lead clip, the loop on bar 3 only.
 
 ## Out of scope
 
-- Any CC other than CC1, and with it the follow-up: a mapping from a plugin parameter to a CC, so riding one knob captures a parameter. Designed in `390` (the knob panel): the plugin does the mapping, Stev's knobs send and capture the CC.
+- Any CC other than CC1, and with it the follow-up: a mapping from a plugin parameter to a CC, so riding one knob captures a parameter. Designed in `390` (the knob panel): the plugin does the mapping, Stev's knobs send and capture the CC. Built in `390` phase 2: the rules here apply unchanged per controller (`Controller`, pitch bend or a CC by number), the knobs' CCs among them; a knob's CC has no rest, so it is never carried into a take, never written back where the clip had no data for it, and never reset on a stop; where the clip had no data for it, the value the knob turned from is held from the window's start instead.
 - Showing the data (an automation lane, `280` § Not planned).
 - A wheel-only stopped take, gesture splitting, a glide at the hand-back.
 - MCP writes of wheel rows (`360`): the reads list them, the writes stay notes-only. If this lands, a write tool could feed the same landing rule later.

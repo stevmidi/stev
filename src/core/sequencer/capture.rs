@@ -86,7 +86,8 @@ impl RunningCaptureTarget {
     /// note, an insert also takes wheel moves alone (`370-wheel-capture.md`
     /// § Decisions 3).
     fn lands(self, capture: &Clip) -> bool {
-        capture.has_notes() || matches!(self, Self::InsertFromArranger) && capture.has_wheel_moves()
+        capture.has_notes()
+            || matches!(self, Self::InsertFromArranger) && capture.has_controller_moves()
     }
 }
 
@@ -161,10 +162,10 @@ impl Sequencer {
         // note the player is holding on an instrument track. See `130-plugin-host.md`.
         let live_target = self.live_instrument_target();
         self.instrument_notes.observe_live(live_target, message);
-        // Likewise a wheel the player moves: the armed track's synth is now
-        // where the player put it, not where a clip did.
+        // Likewise a wheel or a knob the player moves: the armed track's
+        // synth is now where the player put it, not where a clip did.
         if let Some(track) = self.selected_track_mut() {
-            track.hand_wheel_to_player(message);
+            track.hand_controller_to_player(message);
         }
 
         // Remember how far the capture clock's numbering sits from playback's,
@@ -190,8 +191,10 @@ impl Sequencer {
         if is_note_on(message) {
             self.capture_last_note_at = Some(Instant::now());
         }
-        if let Some((wheel, value)) = parse_wheel(message) {
-            self.live_wheels[wheel.index()] = (value != wheel.neutral()).then(|| midi3(message));
+        if let Some((wheel, value)) = parse_wheel(message)
+            && let Some(i) = wheel.wheel_index()
+        {
+            self.live_wheels[i] = (Some(value) != wheel.rest()).then(|| midi3(message));
         }
 
         self.add_midi_event_to_capture(message, tick);
@@ -415,7 +418,10 @@ impl Sequencer {
     /// Every target carries the wheels off their rest where the kept span
     /// starts onto its start ([`Clip::carry_wheels_onto`]): a wheel set in an
     /// earlier pass, or before the transport started, and held, is part of
-    /// the take (`370-wheel-capture.md` § Decisions 7).
+    /// the take (`370-wheel-capture.md` § Decisions 7). A new clip also holds
+    /// each knob's start value there ([`Clip::hold_cc_start_values`]), so the
+    /// stretch before a turn plays where the knob stood; an insert leaves
+    /// that to [`Clip::land_take`], which knows the clip's own data.
     ///
     /// **The insert targets** select a window of `region_length` ticks pinned
     /// at `anchor_tick`'s phase ([`Self::calculate_running_region`]) and crop
@@ -460,6 +466,8 @@ impl Sequencer {
                 let (pass_start, pass_end) = (pass_start + tolerance, pass_end + tolerance);
                 capture.relocate_late_notes_to_region_start(pass_start, pass_end, tolerance);
                 capture.carry_wheels_onto(pass_start);
+                capture.hold_cc_start_values(pass_start);
+                capture.drop_superseded_controller_moves();
                 capture.fold_into_loop(pass_start, pass_end, self.region_start(), loop_len);
 
                 let phase = (anchor_tick - self.region_start()).rem_euclid(loop_len);
@@ -476,6 +484,8 @@ impl Sequencer {
                 let retained_start = anchor_tick - pre_roll;
                 let retained_end = anchor_tick + self.linear_content_length(anchor_tick);
                 capture.carry_wheels_onto(retained_start);
+                capture.hold_cc_start_values(retained_start);
+                capture.drop_superseded_controller_moves();
 
                 capture
                     .region_mut()
@@ -616,12 +626,12 @@ mod tests {
     use crate::{
         core::{
             config,
-            midi::{message::Wheel, out_queue::MidiOutMessage},
+            midi::{message::Controller, out_queue::MidiOutMessage},
             sequencer::edit::{
                 CommitClipEdit, EditResult, InsertCaptureEdit, ResizeClipEdit, SequencerEdit,
             },
             sequencer::test_support::{
-                bend_at, clip_at, instrument_track_0, mod_at, note_off, note_on, rect,
+                bend_at, cc_at, clip_at, instrument_track_0, mod_at, note_off, note_on, rect,
                 sequencer_with_outputs, test_sequencer, wheel_moves,
             },
             time::{self, Meter},
@@ -2089,6 +2099,120 @@ mod tests {
         );
     }
 
+    /// A knob turned with notes lands by the wheels' latch rule, and the
+    /// other knobs' curves and the wheels are left as they were
+    /// (`390-knob-panel.md` decision 9).
+    #[test]
+    fn a_knob_take_with_notes_lands_and_leaves_the_other_controllers() {
+        let curve = vec![
+            cc_at(0, 14, 10),
+            cc_at(0, 15, 40),
+            mod_at(200, 50),
+            cc_at(1000, 14, 60),
+        ];
+        let mut seq = take_over_curve(curve, &[cc_at(400, 14, 90), cc_at(800, 14, 100)]);
+
+        seq.insert_running_capture().unwrap();
+
+        assert_eq!(selected_clip_note_on_ticks(&seq), vec![100]);
+        assert_eq!(
+            wheel_moves(seq.selected_clip().unwrap().events()),
+            vec![
+                (0, vec![0xB0, 14, 10]),
+                (0, vec![0xB0, 15, 40]),
+                (200, vec![0xB0, 0x01, 50]),
+                (400, vec![0xB0, 14, 90]),
+                (800, vec![0xB0, 14, 100]),
+            ]
+        );
+    }
+
+    /// Running with a lead clip, a take of a knob alone lands in it like a
+    /// wheel-only one, and ⌘Z brings the old curve back.
+    #[test]
+    fn a_running_take_of_a_knob_alone_lands_in_the_lead_clip() {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        let mut seq = make_sequencer(0, bar * 2);
+        add_and_select_clip(&mut seq, 0, bar * 2);
+        let curve = vec![cc_at(0, 14, 20), cc_at(bar, 14, 40)];
+        seq.selected_clip_mut()
+            .unwrap()
+            .restore_events(curve.clone());
+        for event in [cc_at(400, 14, 90), cc_at(700, 14, 100)] {
+            seq.capture_clip.add_event(event);
+        }
+        let mut record = Record::new();
+
+        let edit = InsertCaptureEdit::from_running_capture(&seq).unwrap();
+        record.edit(&mut seq, SequencerEdit::InsertCapture(edit));
+
+        assert_eq!(
+            wheel_moves(seq.selected_clip().unwrap().events()),
+            vec![
+                (0, vec![0xB0, 14, 20]),
+                (400, vec![0xB0, 14, 90]),
+                (700, vec![0xB0, 14, 100])
+            ]
+        );
+        record.undo(&mut seq);
+        assert_eq!(
+            wheel_moves(seq.selected_clip().unwrap().events()),
+            wheel_moves(&curve)
+        );
+    }
+
+    /// A knob turned with nothing played commits nothing stopped, as a
+    /// wheel-only take doesn't, and opens no take session into a lead clip.
+    #[test]
+    fn a_stopped_take_of_a_knob_alone_commits_nothing() {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        let mut seq = make_sequencer(0, bar * 2);
+        for tick in [100, 400, 700] {
+            seq.capture_clip.add_event(cc_at(tick, 14, 90));
+        }
+
+        assert!(seq.build_committed_capture_clip().is_none());
+        assert!(seq.build_stopped_capture_clip().is_none());
+        add_and_select_clip(&mut seq, 0, bar * 2);
+        assert!(!seq.open_take_framing(ViewState::Clip));
+    }
+
+    /// A new clip from a pass where a knob was turned mid-way plays the
+    /// value the turn started from before it, so the loop's wrap doesn't
+    /// leave the knob where the pass ended (`390-knob-panel.md` decision 9).
+    #[test]
+    fn a_new_clip_holds_where_a_knob_stood_before_its_turn() {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        let mut seq = make_sequencer(0, bar * 2);
+        for event in [
+            note_on(100),
+            note_off(300),
+            cc_at(bar, 14, 20),
+            cc_at(bar, 14, 30),
+            cc_at(bar + 400, 14, 90),
+        ] {
+            seq.capture_clip.add_event(event);
+        }
+
+        let (_, clip) = seq.build_committed_capture_clip().unwrap();
+
+        assert_eq!(
+            wheel_moves(clip.events()),
+            vec![
+                (0, vec![0xB0, 14, 20]),
+                (bar, vec![0xB0, 14, 30]),
+                (bar + 400, vec![0xB0, 14, 90]),
+            ]
+        );
+    }
+
+    /// A knob's CC has no rest to be off: where the player left it is never
+    /// carried into a take, as a wheel off its rest is.
+    #[test]
+    fn a_turned_knob_is_not_carried_into_the_take() {
+        assert!(take_after_wheel(&[[0xB0, 14, 64]]).is_empty());
+    }
+
     /// The capture buffer takes a wheel move off the input like a note.
     #[test]
     fn a_wheel_move_reaches_the_capture_buffer() {
@@ -2638,7 +2762,7 @@ mod tests {
     fn a_mod_wheel_off_its_rest_is_carried_into_the_take() {
         assert_eq!(
             take_after_wheel(&[[0xB0, 1, 64]]),
-            vec![(0, Wheel::Modulation.message(64))]
+            vec![(0, Controller::MOD_WHEEL.message(64))]
         );
         assert!(take_after_wheel(&[[0xB0, 1, 64], [0xB0, 1, 0]]).is_empty());
     }
@@ -2650,8 +2774,8 @@ mod tests {
         assert_eq!(
             take_after_wheel(&[[0xE0, 0, 0x60], [0xB0, 1, 64]]),
             vec![
-                (0, Wheel::PitchBend.message(0x3000)),
-                (0, Wheel::Modulation.message(64)),
+                (0, Controller::PitchBend.message(0x3000)),
+                (0, Controller::MOD_WHEEL.message(64)),
             ]
         );
         assert!(take_after_wheel(&[[0xE0, 0, 0x60], [0xE0, 0, 0x40]]).is_empty());

@@ -58,6 +58,9 @@ impl Sequencer {
         // grid (quantize, swing, the clip view) is the phrase's.
         clip.align_window_start_to_bar(self.meter());
         clip.nudge_cursor_to_region_start();
+        // The stretch before a knob's turn plays where the knob stood.
+        clip.hold_cc_start_values(clip.region().start());
+        clip.drop_superseded_controller_moves();
 
         clip.sort_events_by_tick();
         clip.calculate_note_lengths();

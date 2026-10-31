@@ -25,7 +25,7 @@ pub(crate) fn start_computer_keys_thread(
     thread::Builder::new()
         .name("computerkeys".to_string())
         .spawn(move || {
-            let mut router = forwarder.router();
+            let mut router = forwarder.knob_router();
             for (message, arrival_ns) in computer_keys_rx {
                 router.route(&message, forwarder.tick_at(arrival_ns));
             }

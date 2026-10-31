@@ -7,8 +7,8 @@ use std::collections::HashMap;
 
 use uuid::Uuid;
 
-use crate::core::midi::message::Wheel;
-use crate::models::{event::Event, wheels::apply_wheel_move};
+use crate::core::midi::message::Controller;
+use crate::models::event::Event;
 
 use super::Clip;
 
@@ -132,33 +132,32 @@ impl Clip {
         lossless
     }
 
-    /// The wheel moves playback makes around this clip's window that no
-    /// event in it holds, so a bake sounds as the clip did: at `start_tick`
-    /// the value of a wheel held from hidden material before the window (the
-    /// track's arrival chase, `Track::tick`), and at `end_tick` neutral for a
-    /// wheel the window leaves off it (the chase when playback moves on,
-    /// `Track::seek`). `kept` is the window's events
-    /// ([`windowed_events`](Self::windowed_events)); muted ones never sound,
-    /// so they move nothing.
+    /// The controller moves playback makes around this clip's window that
+    /// no event in it holds, so a bake sounds as the clip did: at
+    /// `start_tick` the value of a controller held from hidden material
+    /// before the window (the track's arrival chase, `Track::tick`) — a wheel
+    /// off its rest, any other CC moved there — and at `end_tick` the rest of
+    /// a wheel the window leaves off it (the chase when playback moves on,
+    /// `Track::seek`); a CC with no rest stays where it is. `kept` is the
+    /// window's events ([`windowed_events`](Self::windowed_events)); muted
+    /// ones never sound, so they move nothing.
     fn wheel_edges(&self, kept: &[Event], start_tick: i32, end_tick: i32) -> Vec<Event> {
-        let held = self.wheels_at(self.start_tick);
+        let held = self.controllers_at(self.start_tick);
         let mut at_end = held;
         for event in kept {
-            apply_wheel_move(&mut at_end, event);
+            at_end.apply(event);
         }
 
-        let (mut starts, mut ends) = (Vec::new(), Vec::new());
-        for wheel in Wheel::ALL {
-            let (neutral, i) = (wheel.neutral(), wheel.index());
-            if held[i] != neutral {
-                starts.push(Event::new(start_tick, 0, wheel.message(held[i])));
-            }
-            if at_end[i] != neutral {
-                ends.push(Event::new(end_tick, 0, wheel.message(neutral)));
-            }
-        }
-        starts.extend(ends);
-        starts
+        let mut edges: Vec<Event> = held
+            .moved()
+            .filter(|&(controller, value)| controller.rest() != Some(value))
+            .map(|(controller, value)| Event::new(start_tick, 0, controller.message(value)))
+            .collect();
+        edges.extend(Controller::WHEELS.into_iter().filter_map(|wheel| {
+            let rest = wheel.rest()?;
+            (at_end.get(wheel) != Some(rest)).then(|| Event::new(end_tick, 0, wheel.message(rest)))
+        }));
+        edges
     }
 }
 

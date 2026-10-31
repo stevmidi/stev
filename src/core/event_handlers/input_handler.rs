@@ -320,6 +320,17 @@ impl EventHandlers {
                 });
             }
 
+            InputEvent::HoldKnob { track_idx, knob } => {
+                self.send_sequencer(SequencerCommand::HoldKnob {
+                    track_idx: *track_idx,
+                    knob: *knob,
+                });
+            }
+
+            InputEvent::ReleaseKnobs => {
+                self.send_sequencer(SequencerCommand::ReleaseKnobs);
+            }
+
             InputEvent::SendKnobPositions => {
                 self.send_sequencer(SequencerCommand::SendKnobPositions);
             }

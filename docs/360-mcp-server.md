@@ -83,7 +83,7 @@ Nine tools in three groups. Each description below is close to the text the serv
 
 **`get_notes`** — The notes tracks play over a range, as rows: rhythm, lengths and velocities, whichever clips they come from. Clip windows and muted notes are applied, so the rows are what is heard. Use it to continue, vary or answer a part.
 
-- In: `from`, `to` (default the marquee's range, else the loop region; at most 32 bars), `tracks` (default the marqueed tracks), `include_wheels` (default false; pitch bend and mod wheel as `bend <beat> <value>` / `mod <beat> <value>` rows).
+- In: `from`, `to` (default the marquee's range, else the loop region; at most 32 bars), `tracks` (default the marqueed tracks), `include_wheels` (default false; pitch bend, the mod wheel and any other CC — the knobs' among them, `390` — as `bend <beat> <value>` / `mod <beat> <value>` / `cc<number> <beat> <value>` rows).
 - Out: per track, its name, then rows with starts in beats from `from`, sorted by start. A note already sounding at `from` is listed with a negative start, so a held note reads as held. A track with nothing in the range says `no notes`.
 - Size: 4 tokens a note; a busy 8-bar part of 200 notes about 1k.
 

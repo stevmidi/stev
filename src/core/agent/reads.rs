@@ -11,7 +11,7 @@ use std::time::Duration;
 use serde_json::Value;
 
 use crate::core::input_event::TimeSelectionRect;
-use crate::core::midi::message::{Wheel, parse_wheel};
+use crate::core::midi::message::{Controller, PITCH_BEND_CENTRE, parse_controller};
 use crate::core::sequencer::{Sequencer, TakePlace};
 use crate::core::time::{Meter, PPQN, format_bpm};
 use crate::models::clip::{Clip, min_max};
@@ -68,27 +68,29 @@ impl PlayedNote {
     }
 }
 
-/// One wheel move as it plays, in arrangement ticks.
+/// One controller move as it plays, in arrangement ticks: a wheel's or a
+/// CC's, a knob's among them.
 pub(super) struct WheelMove {
     /// Where.
     tick: i32,
-    /// Which wheel.
-    wheel: Wheel,
-    /// Its raw value: 14-bit bend, 7-bit mod.
+    /// Which controller.
+    wheel: Controller,
+    /// Its raw value: 14-bit bend, 7-bit CC.
     value: u16,
 }
 
 impl WheelMove {
     /// The move as a row relative to `origin`: `bend 2.5 -1200` (bend
-    /// signed around its centre), `mod 4 64`.
+    /// signed around its centre), `mod 4 64`, `cc14 4 90`.
     fn format(&self, origin: i32) -> String {
         let at = format_beats(self.tick - origin);
         match self.wheel {
-            Wheel::PitchBend => {
-                let value = i32::from(self.value) - i32::from(Wheel::PitchBend.neutral());
+            Controller::PitchBend => {
+                let value = i32::from(self.value) - i32::from(PITCH_BEND_CENTRE);
                 format!("bend {at} {value}")
             }
-            Wheel::Modulation => format!("mod {at} {}", self.value),
+            Controller::MOD_WHEEL => format!("mod {at} {}", self.value),
+            Controller::Cc(cc) => format!("cc{cc} {at} {}", self.value),
         }
     }
 }
@@ -108,7 +110,7 @@ fn clip_played(clip: &Clip) -> (Vec<PlayedNote>, Vec<WheelMove>) {
                 end: event.end_tick(),
                 velocity: event.velocity().map_or(0, i32::from),
             });
-        } else if let Some((wheel, value)) = parse_wheel(event.midi_message()) {
+        } else if let Some((wheel, value)) = parse_controller(event.midi_message()) {
             wheels.push(WheelMove {
                 tick: event.tick(),
                 wheel,
@@ -975,8 +977,13 @@ mod tests {
     #[test]
     fn wheels_are_rows_when_asked_for() {
         let mut bent = clip(0, BAR, &[(60, 0, 1920)]);
-        bent.add_event(Event::new(960, 0, Wheel::PitchBend.message(0x2000 + 1000)));
-        bent.add_event(Event::new(1920, 0, Wheel::Modulation.message(64)));
+        bent.add_event(Event::new(
+            960,
+            0,
+            Controller::PitchBend.message(0x2000 + 1000),
+        ));
+        bent.add_event(Event::new(1920, 0, Controller::MOD_WHEEL.message(64)));
+        bent.add_event(Event::new(2400, 0, Controller::Cc(14).message(90)));
         bent.sort_events_by_tick();
         let sequencer = sequencer(vec![(0, bent)]);
         let args = json!({ "from": 1, "to": 2, "tracks": [1], "include_wheels": true });
@@ -985,7 +992,7 @@ mod tests {
         // The wheels centred again at the clip's end fall outside the range.
         assert_eq!(
             rows,
-            vec!["C4 0 2 100", "bend 1 1000", "mod 2 64"],
+            vec!["C4 0 2 100", "bend 1 1000", "mod 2 64", "cc14 2.5 90"],
             "{text}"
         );
         let plain = get_notes(&sequencer, &json!({ "from": 1, "to": 2, "tracks": [1] })).unwrap();

@@ -3,8 +3,8 @@
 //!
 //! [`tick`](Clip::tick) and [`seek`](Clip::seek) are the playback side — the
 //! sequencer steps the list one tick at a time using each event's cached
-//! `delta_ticks` — with [`wheels_at`](Clip::wheels_at), the wheel values a
-//! seek chases. The rest reshape the list around the region: [`crop`](Clip::crop),
+//! `delta_ticks` — with [`controllers_at`](Clip::controllers_at), the
+//! controller values a seek chases. The rest reshape the list around the region: [`crop`](Clip::crop),
 //! [`trim_before_tick`](Clip::trim_before_tick),
 //! [`relocate_late_notes_to_region_start`](Clip::relocate_late_notes_to_region_start).
 //! All of it keeps two invariants: the list stays sorted by tick, and
@@ -19,8 +19,8 @@ use uuid::Uuid;
 
 use crate::core::time::Meter;
 use crate::models::{
+    controllers::ControllerValues,
     event::{Event, EventType},
-    wheels::WheelValues,
 };
 
 use super::{Clip, EventSpaceRetime};
@@ -103,14 +103,14 @@ impl Clip {
         self.elapsed_delta_ticks = elapsed_into_delta.clamp(0, event_delta);
     }
 
-    /// The wheel values in force at arrangement tick `playback_tick`: per
-    /// wheel, the last unmuted pitch bend / mod-wheel event before it in
-    /// event space — hidden material before the window included, as for
-    /// [`chased_note_ons_at`](Self::chased_note_ons_at) — or neutral when
-    /// there is none. An event exactly at the target is left to the walk,
-    /// which plays it next.
-    pub(crate) fn wheels_at(&self, playback_tick: i32) -> WheelValues {
-        self.wheels_before(self.event_tick_from_arrangement_tick(playback_tick))
+    /// The controller values in force at arrangement tick `playback_tick`:
+    /// per controller, the last unmuted move before it in event space —
+    /// hidden material before the window included, as for
+    /// [`chased_note_ons_at`](Self::chased_note_ons_at) — or with none a
+    /// wheel's rest, and nothing for another CC. An event exactly at the
+    /// target is left to the walk, which plays it next.
+    pub(crate) fn controllers_at(&self, playback_tick: i32) -> ControllerValues {
+        self.controllers_before(self.event_tick_from_arrangement_tick(playback_tick))
     }
 
     /// The ids of the clip's moves of controller `cc` — what a knob's CC

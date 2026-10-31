@@ -1,6 +1,8 @@
 //! The knob panel's sequencer side (`390-knob-panel.md`): a knob's position
-//! set by a drag, mirrored into `TrackMixAtomics` for the view, and every
-//! track's positions sent to its output once a project is loaded. Moving a
+//! set by a drag — or by playback, which `Sequencer::tick` republishes —
+//! mirrored into `TrackMixAtomics` for the view, a drag's hold over
+//! playback, and every track's positions sent to its output once a project
+//! is loaded. Moving a
 //! knob is not undoable, like volume and pan; reassigning its CC is
 //! (`SetKnobCcEdit`). The live CC a drag sends goes out through the view's
 //! live-input route, not from here.
@@ -41,15 +43,30 @@ impl Sequencer {
     /// sent live. Saved with the project, so it counts toward the unsaved
     /// prompt. Out-of-range indices are ignored.
     pub(crate) fn set_knob_value(&mut self, track_idx: usize, knob: usize, value: u8) {
-        let Some(slot) = self
-            .tracks
-            .get_mut(track_idx)
-            .and_then(|t| t.knob_mut(knob))
-        else {
+        let Some(track) = self.tracks.get_mut(track_idx) else {
             return;
         };
-        slot.value = Some(value.min(CC_VALUE_MAX));
-        self.publish_knobs(track_idx);
+        if track.set_knob_by_hand(knob, value.min(CC_VALUE_MAX)) {
+            self.publish_knobs(track_idx);
+        }
+    }
+
+    /// A drag took hold of knob `knob` of the track at `track_idx`: playback
+    /// sends none of its CC's clip moves until [`release_knobs`](Self::release_knobs)
+    /// — the hand wins (`390-knob-panel.md` decision 7). Out-of-range
+    /// indices are ignored.
+    pub(crate) fn hold_knob(&mut self, track_idx: usize, knob: usize) {
+        if let Some(track) = self.tracks.get_mut(track_idx) {
+            track.hold_knob(knob);
+        }
+    }
+
+    /// The drag let go: every track's knobs follow playback again, from
+    /// their CCs' next moves.
+    pub(crate) fn release_knobs(&mut self) {
+        for track in &mut self.tracks {
+            track.release_knobs();
+        }
     }
 
     /// Sends every track's turned knobs to its output, now — after a project

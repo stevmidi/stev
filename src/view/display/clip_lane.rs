@@ -3,7 +3,7 @@
 //! (`RenderState::clip_lane`): never saved, never switched by anything but
 //! the user. See `380-wheel-lane.md`.
 
-use crate::core::midi::message::Wheel;
+use crate::core::midi::message::Controller;
 
 /// The piano roll's lower lane.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
@@ -46,11 +46,11 @@ impl ClipLane {
     }
 
     /// The wheel the lane draws, `None` for velocity.
-    pub(super) fn wheel(self) -> Option<Wheel> {
+    pub(super) fn wheel(self) -> Option<Controller> {
         match self {
             ClipLane::Velocity => None,
-            ClipLane::PitchBend => Some(Wheel::PitchBend),
-            ClipLane::Modulation => Some(Wheel::Modulation),
+            ClipLane::PitchBend => Some(Controller::PitchBend),
+            ClipLane::Modulation => Some(Controller::MOD_WHEEL),
         }
     }
 }

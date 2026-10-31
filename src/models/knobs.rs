@@ -5,7 +5,7 @@
 //! knob that never moved, so a plugin keeps what its own state holds. Pure
 //! data, unit-tested at the bottom of the file. See `390-knob-panel.md`.
 
-use crate::core::midi::message::MOD_WHEEL_CC;
+use crate::core::midi::message::{FIRST_CHANNEL_MODE_CC, MOD_WHEEL_CC};
 
 /// How many knobs a track has: two columns of four.
 pub(crate) const KNOB_COUNT: usize = 8;
@@ -14,9 +14,6 @@ pub(crate) const KNOB_COUNT: usize = 8;
 /// track's knobs are CC 14–21 — undefined or general-purpose in the MIDI
 /// spec, and right for Spire's macros with no setup (`390` decision 4).
 const FIRST_DEFAULT_CC: u8 = 14;
-
-/// The first of the channel mode messages (120–127), which no knob may send.
-const FIRST_CHANNEL_MODE_CC: u8 = 120;
 
 /// The highest value a CC carries.
 pub(crate) const CC_VALUE_MAX: u8 = 127;

@@ -43,16 +43,16 @@ use crate::view::theme;
 use crate::view::theme::fonts::font_definitions;
 
 /// Pure data — `Clip`, `Event`, `Track`, `Region`, `PerformanceLane`,
-/// `Selection`, `WheelTracker`, `Knob`. No I/O.
+/// `Selection`, `ControllerTracker`, `Knob`. No I/O.
 mod models {
     pub mod clip;
+    pub mod controllers;
     pub mod event;
     pub mod knobs;
     pub mod performance_lane;
     pub mod region;
     pub mod selection;
     pub mod track;
-    pub mod wheels;
 }
 /// Render-side clip snapshots, built by the engine and shipped in `UiEvent`s.
 mod metadata {

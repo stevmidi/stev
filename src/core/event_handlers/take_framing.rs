@@ -114,6 +114,8 @@ impl EventHandlers {
             | SequencerCommand::SetTrackOutput { .. }
             | SequencerCommand::SetTrackInstrumentState { .. }
             | SequencerCommand::SetKnobValue { .. }
+            | SequencerCommand::HoldKnob { .. }
+            | SequencerCommand::ReleaseKnobs
             | SequencerCommand::SendKnobPositions
             // A running export's end, which the session can't hold up.
             | SequencerCommand::AudioExportWritten(_)

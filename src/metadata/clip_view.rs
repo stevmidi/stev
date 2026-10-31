@@ -13,7 +13,7 @@ use std::sync::{Arc, atomic::AtomicI32};
 
 use uuid::Uuid;
 
-use crate::core::midi::message::{Wheel, parse_wheel};
+use crate::core::midi::message::{Controller, parse_wheel};
 use crate::models::{clip::Clip, event::EventType};
 
 /// One `NoteOn` as the piano roll draws it.
@@ -36,10 +36,18 @@ pub(crate) struct EventMetadata {
 /// One wheel move as the wheel lane draws it: `(tick, value)`, event ticks.
 pub(crate) type WheelMove = (i32, u16);
 
-/// The clip's unmuted wheel moves, per wheel (indexed by [`Wheel::index`]),
-/// each list in tick order — what plays, so a muted move is left out
-/// (`apply_wheel_move`). See `380-wheel-lane.md`.
-pub(crate) type WheelMoves = [Vec<WheelMove>; Wheel::ALL.len()];
+/// The clip's unmuted wheel moves, per wheel ([`Controller::WHEELS`]), each
+/// list in tick order — what plays, so a muted move is left out
+/// (`ControllerValues::apply`). See `380-wheel-lane.md`.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct WheelMoves([Vec<WheelMove>; Controller::WHEELS.len()]);
+
+impl WheelMoves {
+    /// `wheel`'s moves; none for a controller that isn't a wheel.
+    pub(crate) fn of(&self, wheel: Controller) -> &[WheelMove] {
+        wheel.wheel_index().map_or(&[], |i| &self.0[i])
+    }
+}
 
 /// A whole piano-roll snapshot. See the module docs.
 #[derive(Debug, Clone)]
@@ -82,8 +90,10 @@ impl ClipView {
 
         let mut wheel_moves = WheelMoves::default();
         for event in clip.events().iter().filter(|event| !event.is_muted()) {
-            if let Some((wheel, value)) = parse_wheel(event.midi_message()) {
-                wheel_moves[wheel.index()].push((event.tick(), value));
+            if let Some((wheel, value)) = parse_wheel(event.midi_message())
+                && let Some(i) = wheel.wheel_index()
+            {
+                wheel_moves.0[i].push((event.tick(), value));
             }
         }
 

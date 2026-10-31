@@ -175,16 +175,15 @@ pub(crate) struct KnobData {
     /// it nothing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) value: Option<u8>,
-}
-
-impl From<Knob> for KnobData {
-    fn from(Knob { cc, value }: Knob) -> Self {
-        KnobData { cc, value }
-    }
+    /// Where the hand or a load last put it (`Track::knobs_by_hand`) — what
+    /// [`ProjectData::fingerprint`] hashes instead of `value`, so a knob only
+    /// playback moved never asks to be saved. Never written.
+    #[serde(skip)]
+    pub(crate) by_hand: Option<u8>,
 }
 
 impl From<KnobData> for Knob {
-    fn from(KnobData { cc, value }: KnobData) -> Self {
+    fn from(KnobData { cc, value, .. }: KnobData) -> Self {
         Knob { cc, value }
     }
 }
@@ -305,13 +304,18 @@ impl ProjectData {
     /// The blobs are left out because plenty of plugins write a different one
     /// on every save of an unchanged preset (Nexus encrypts it afresh, DUNE
     /// recompresses it), so they would make such a project always look
-    /// changed. Takes the snapshot by value — every caller is done with it —
+    /// changed. Knob positions count as the hand or a load left them
+    /// (`KnobData::by_hand`): a knob playback moved is saved where it stands,
+    /// but listening to a project never asks to save it. Takes the snapshot by value — every caller is done with it —
     /// and streams the JSON into the hasher, so nothing is copied or buffered.
     /// Stable within one run only — never persisted.
     pub(crate) fn fingerprint(mut self) -> u64 {
         for track in &mut self.tracks {
             if let TrackOutputData::Instrument { state, .. } = &mut track.output {
                 state.clear();
+            }
+            for knob in &mut track.knobs {
+                knob.value = knob.by_hand;
             }
         }
         let mut hasher = HashWriter(DefaultHasher::new());
@@ -389,7 +393,16 @@ impl ProjectData {
                     muted: sequencer.track_muted(track_idx),
                     color: Some(track.color_slot()),
                     name: track.name().map(str::to_owned),
-                    knobs: track.knobs().iter().copied().map(KnobData::from).collect(),
+                    knobs: track
+                        .knobs()
+                        .iter()
+                        .zip(track.knobs_by_hand())
+                        .map(|(knob, &by_hand)| KnobData {
+                            cc: knob.cc,
+                            value: knob.value,
+                            by_hand,
+                        })
+                        .collect(),
                     clips,
                 }
             })
@@ -476,7 +489,7 @@ impl ProjectData {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::sequencer::test_support::{test_sequencer, track_colors};
+    use crate::core::sequencer::test_support::{clip_at, test_sequencer, track_colors};
     use crate::models::knobs::default_knobs;
 
     /// A default project with `count` tracks.
@@ -686,6 +699,26 @@ mod tests {
         let saved = ProjectData::from_sequencer(&sequencer).fingerprint();
         sequencer.set_knob_value(0, 0, 1);
         assert_ne!(ProjectData::from_sequencer(&sequencer).fingerprint(), saved);
+    }
+
+    /// A knob playback moved is saved where it stands, but listening to a
+    /// project never makes it look changed.
+    #[test]
+    fn a_knob_only_playback_moved_saves_but_never_changes_the_fingerprint() {
+        let mut sequencer = test_sequencer();
+        let mut clip = clip_at(0, 960);
+        clip.add_event(Event::new(100, 0, vec![0xB0, 14, 90]));
+        sequencer.tracks_mut()[0].add_clip(&clip);
+        let saved = ProjectData::from_sequencer(&sequencer).fingerprint();
+        let track = &mut sequencer.tracks_mut()[0];
+        track.seek(0);
+        for _ in 0..200 {
+            while track.tick().is_some() {}
+        }
+
+        let data = ProjectData::from_sequencer(&sequencer);
+        assert_eq!(data.tracks[0].knobs[0].value, Some(90));
+        assert_eq!(data.fingerprint(), saved);
     }
 
     #[test]

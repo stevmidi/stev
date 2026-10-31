@@ -200,6 +200,10 @@ methods take a track's position and look the slot up in its `tracks` mirror
   `"computerkeys"` thread routes it as a played note is — the selected
   track's plugin through `live_instrument_target`, MIDI Out thru on its
   channel, not while the performance lane is armed or an audio export runs.
+  That thread's router is the one source that records any controller move
+  (`MidiInputForwarder::knob_router`), so a knob's turn reaches the capture
+  buffer; a port's router records only the wheels, and a hardware
+  controller's CC plays live only (`090`).
   Loading a project sends each track's turned knobs once its plugins are in
   their slots (`Sequencer::send_knob_positions`, on `ProjectLoaded`, after
   `sync_instruments_to_tracks` queued each voice's insert ahead of them):

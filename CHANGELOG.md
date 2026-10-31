@@ -23,6 +23,7 @@ Breaking entries are marked **Breaking** and say what to do about them.
 ### Added
 
 - Eight knobs beside the clip view send a MIDI CC each to the selected track's instrument or MIDI Out: drag one or scroll on it to turn it (⇧ for fine steps), ⌘-click it to turn it back to 0. Each track picks its own CC numbers, CC 14–21 to start with (Spire's macros listen on 14–17): double-click a knob's `CC` label to type another. A track keeps where its knobs were left, and sends them to its instrument when the project opens.
+- Turning a knob is captured with `/` like the mod wheel: with notes, or alone over a playing loop into the lead clip, it replaces that knob's data over the stretch you touched, and the clip plays the knob where it stood before you turned it until the turn. Playback moves the knobs with their CCs, a knob you're dragging wins over the clip until you let go, and a stop leaves a knob's CC where it is.
 
 ## [0.12.0] - 2026-10-30
 

@@ -44,8 +44,8 @@ impl EventHandlers {
     /// `new_tick` — re-seek every track, realign the free-running clock, and
     /// flush sounding notes (MIDI-out `NoteLogger` + CLAP `instrument_notes`) so
     /// nothing hangs across the discontinuity. That flush drops the
-    /// `"midiout"` delay queue, so the re-seek resends every wheel value a
-    /// track sent (`Sequencer::invalidate_wheels`) rather than trust it arrived. A loop wrap leaves the clock
+    /// `"midiout"` delay queue, so the re-seek resends every controller value a
+    /// track sent (`Sequencer::invalidate_controllers`) rather than trust it arrived. A loop wrap leaves the clock
     /// phases equal in principle and a few ticks of command latency apart in
     /// practice, so the realign only nudges the phase there — it must never move
     /// the clock out of the loop it has free-run to, or running capture keeps
@@ -64,7 +64,7 @@ impl EventHandlers {
         sequencer: &mut Sequencer,
         transport: &Transport,
     ) {
-        sequencer.invalidate_wheels();
+        sequencer.invalidate_controllers();
         sequencer.reset_to_tick(new_tick);
         transport.align_clock_with_playback();
         self.release_all_notes(sequencer);

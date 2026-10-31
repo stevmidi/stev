@@ -18,7 +18,7 @@
 use undo::Record;
 use uuid::Uuid;
 
-use crate::core::midi::message::{Wheel, parse_wheel};
+use crate::core::midi::message::{Controller, parse_wheel};
 use crate::models::{
     clip::{Clip, NoteDrag, min_max},
     event::{Event, EventType},
@@ -512,7 +512,7 @@ pub(crate) struct RestWheelEdit {
     /// The target clip, its selection, and the pre-edit snapshot.
     state: ClipEventsEditState,
     /// The wheel returned to rest.
-    wheel: Wheel,
+    wheel: Controller,
     /// The span's start, event ticks.
     start: i32,
     /// The span's end (exclusive), event ticks.
@@ -524,7 +524,7 @@ impl RestWheelEdit {
     /// wheel is at rest across the span already, so nothing would change.
     pub(crate) fn from_sequencer(
         sequencer: &Sequencer,
-        wheel: Wheel,
+        wheel: Controller,
         start: i32,
         end: i32,
     ) -> Option<Self> {

@@ -28,7 +28,8 @@ use uuid::Uuid;
 
 use crate::{
     core::{
-        keymap::Action, midi::message::Wheel, project::ProjectAction, time::Meter, view_state::Pane,
+        keymap::Action, midi::message::Controller, project::ProjectAction, time::Meter,
+        view_state::Pane,
     },
     models::{
         clip::{Clip, ClipEdge, NoteDrag},
@@ -463,7 +464,7 @@ pub(crate) enum InputEvent {
     /// across it. Maps 1:1 to `SequencerCommand::RestWheel`.
     RestWheel {
         /// The wheel the lane shows.
-        wheel: Wheel,
+        wheel: Controller,
         /// The span's start, event ticks.
         start: i32,
         /// The span's end (exclusive), event ticks.
@@ -803,6 +804,16 @@ pub(crate) enum InputEvent {
         /// Its position, `0..=127`.
         value: u8,
     },
+    /// A drag took hold of knob `knob` of `track_idx`: the hand wins over
+    /// playback until [`ReleaseKnobs`](Self::ReleaseKnobs).
+    HoldKnob {
+        /// The knob's track.
+        track_idx: usize,
+        /// Which knob, `0..KNOB_COUNT`.
+        knob: usize,
+    },
+    /// The knob drag let go: playback takes every knob over again.
+    ReleaseKnobs,
     /// A loaded project's plugins are in their slots: send every track's
     /// knob positions to its output.
     SendKnobPositions,

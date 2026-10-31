@@ -158,7 +158,9 @@ The MIDI-input callback stamps every message with the `clock_tick` it landed
 on: `midi_in_tx` carries `RecordedMidi`, `(Vec<u8>, i32)`. `precise_input_tick`
 (`src/core/midi/input_tick.rs`) adds the sub-tick correction for a note
 landing between clock firings; the computer keyboard goes through
-`input_tick_at_arrival` with its frame's stamp.
+`input_tick_at_arrival` with its frame's stamp, and so does a knob panel
+drag (`390-knob-panel.md`), whose CCs share its `"computerkeys"` thread: a
+knob's move is stamped like a mod-wheel move.
 `Sequencer::handle_midi_input` hands the tick to
 `add_midi_event_to_capture`.
 

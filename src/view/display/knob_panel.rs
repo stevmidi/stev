@@ -268,6 +268,9 @@ struct KnobDrag {
     /// The value reached, shown in the dial while the drag runs (the hand
     /// wins).
     value: u8,
+    /// Where the knob stood when the drag began, until its first move has
+    /// gone out ahead of it ([`Display::send_knob_value`]).
+    from: Option<u8>,
 }
 
 /// A dial being turned by scrolling: the value it has reached, ahead of
@@ -282,6 +285,9 @@ struct WheelTurn {
     cc: u8,
     /// The value reached.
     value: u8,
+    /// Where the knob stood when the turn began, until its first step has
+    /// gone out ahead of it ([`Display::send_knob_value`]).
+    from: Option<u8>,
     /// Points of travel (upward positive) short of a step.
     pending: f32,
     /// When its last scroll event came.
@@ -424,11 +430,12 @@ impl Display {
     /// never turned is drawn — a macro's rest. Sent even when it shows 0
     /// already, so a plugin moved some other way follows.
     fn reset_knob(&mut self, knob: usize) {
-        let (Some(track_idx), Some((cc, _))) = (self.knobs_track(), self.knob_shown(knob)) else {
+        let (Some(track_idx), Some((cc, from))) = (self.knobs_track(), self.knob_shown(knob))
+        else {
             return;
         };
         self.knob_panel.wheel_turn = None;
-        self.send_knob_value(track_idx, knob, cc, 0);
+        self.send_knob_value(track_idx, knob, cc, from.unwrap_or(0), 0);
     }
 
     /// A double-click in the knob panel: on a label, opens its CC field.
@@ -439,7 +446,9 @@ impl Display {
     }
 
     /// Starts dragging knob `knob` of the selected track, from where it
-    /// stands (0 for a knob never turned).
+    /// stands (0 for a knob never turned), and takes hold of it: until the
+    /// release, playback leaves its CC to the hand (`390-knob-panel.md`
+    /// decision 7).
     fn begin_knob_drag(&mut self, knob: usize) {
         let Some(track_idx) = self.knobs_track() else {
             return;
@@ -456,7 +465,11 @@ impl Display {
             travel: 0.0,
             fine: false,
             value,
+            from: Some(value),
         });
+        self.input_event_tx
+            .send(InputEvent::HoldKnob { track_idx, knob })
+            .ok();
     }
 
     /// Raw pointer motion `dy` (downward positive) with the button held: the
@@ -486,15 +499,27 @@ impl Display {
             track_idx,
             knob,
             cc,
+            from,
             ..
         } = *drag;
-        self.send_knob_value(track_idx, knob, cc, value);
+        drag.from = None;
+        self.send_knob_value(track_idx, knob, cc, from.unwrap_or(value), value);
     }
 
     /// Knob `knob` of `track_idx`, sending `cc`, now stands at `value`: its
-    /// CC goes out live, and the sequencer keeps the position.
-    fn send_knob_value(&self, track_idx: usize, knob: usize, cc: u8, value: u8) {
-        self.send_computer_keys(vec![control_change(cc, value)]);
+    /// CC goes out live, and the sequencer keeps the position. A gesture's
+    /// first move sends `from`, where the knob stood, just ahead of it — the
+    /// same value again, so nothing is heard, but the take records where the
+    /// turn started, which a clip with no earlier data for the CC plays
+    /// before it (`Clip::land_take`, `390-knob-panel.md` decision 9). Every
+    /// later move passes `from == value`, which sends nothing extra.
+    fn send_knob_value(&self, track_idx: usize, knob: usize, cc: u8, from: u8, value: u8) {
+        let mut messages = Vec::with_capacity(2);
+        if from != value {
+            messages.push(control_change(cc, from));
+        }
+        messages.push(control_change(cc, value));
+        self.send_computer_keys(messages);
         self.input_event_tx
             .send(InputEvent::SetKnobValue {
                 track_idx,
@@ -504,9 +529,12 @@ impl Display {
             .ok();
     }
 
-    /// The button came up: the drag is done, its values already sent.
+    /// The button came up: the drag is done, its values already sent, and
+    /// playback takes the knob over again at its CC's next move.
     pub(super) fn finish_knob_drag(&mut self) {
-        self.knob_panel.drag = None;
+        if self.knob_panel.drag.take().is_some() {
+            self.input_event_tx.send(InputEvent::ReleaseKnobs).ok();
+        }
     }
 
     /// One raw scroll event (`InputEvent::WheelScrolled`), the pointer at
@@ -535,11 +563,13 @@ impl Display {
                 let Some((cc, value)) = self.knob_shown(knob) else {
                     return;
                 };
+                let value = value.unwrap_or(0);
                 WheelTurn {
                     track_idx,
                     knob,
                     cc,
-                    value: value.unwrap_or(0),
+                    value,
+                    from: Some(value),
                     pending: 0.0,
                     last: now,
                 }
@@ -551,9 +581,10 @@ impl Display {
         let value = (i32::from(turn.value) + steps).clamp(0, i32::from(CC_VALUE_MAX)) as u8;
         let changed = value != turn.value;
         turn.value = value;
+        let from = if changed { turn.from.take() } else { None };
         self.knob_panel.wheel_turn = Some(turn);
         if changed {
-            self.send_knob_value(track_idx, knob, turn.cc, value);
+            self.send_knob_value(track_idx, knob, turn.cc, from.unwrap_or(value), value);
         }
     }
 

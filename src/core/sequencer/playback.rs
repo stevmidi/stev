@@ -163,6 +163,12 @@ impl Sequencer {
                     }
                 }
             }
+            // The knobs follow their CCs as playback moves them
+            // (`390-knob-panel.md` decision 7).
+            if track.take_knobs_moved() {
+                self.track_mix
+                    .publish_knobs(track.slot(), Some(track.knobs()));
+            }
         }
     }
 
@@ -281,10 +287,12 @@ impl Sequencer {
         self.send_wheel_resets(track_idx);
     }
 
-    /// Puts back to neutral every wheel a track's clips moved — on a
+    /// Puts back to its rest every wheel a track's clips moved — on a
     /// transport stop, where no [`tick`](Self::tick) runs to send a chase. A
     /// wheel the player moved last on the armed track is left where it is
-    /// (`Track::hand_wheel_to_player`), as a live-held note is.
+    /// (`Track::hand_controller_to_player`), as a live-held note is, and a
+    /// knob's CC has no rest: it stays where it was (`390-knob-panel.md`
+    /// decision 8).
     pub(crate) fn reset_wheels(&mut self) {
         for track_idx in 0..self.tracks.len() {
             self.send_wheel_resets(track_idx);
@@ -323,12 +331,12 @@ impl Sequencer {
         }
     }
 
-    /// Makes every track's next seek resend the wheel values it sent
-    /// ([`Track::invalidate_wheels`]) — for a jump, which drops the `"midiout"`
-    /// delay queue the last of them may still have sat in.
-    pub(crate) fn invalidate_wheels(&mut self) {
+    /// Makes every track's next seek resend the controller values it sent
+    /// ([`Track::invalidate_controllers`]) — for a jump, which drops the
+    /// `"midiout"` delay queue the last of them may still have sat in.
+    pub(crate) fn invalidate_controllers(&mut self) {
         for track in &mut self.tracks {
-            track.invalidate_wheels();
+            track.invalidate_controllers();
         }
     }
 
@@ -749,7 +757,7 @@ mod tests {
         midi_out_bytes(&midi_out_rx);
 
         // What `reanchor_playback` does on the wrap.
-        sequencer.invalidate_wheels();
+        sequencer.invalidate_controllers();
         sequencer.reset_to_tick(0);
         sequencer.tick(at);
 
@@ -774,5 +782,30 @@ mod tests {
             midi_out_bytes(&midi_out_rx),
             vec![vec![0x80, 60, 0], vec![0xE0, 0x00, 0x40]]
         );
+    }
+
+    /// A knob follows its CC as playback moves it — published for the
+    /// panel — and a stop leaves the CC where it is while it centres the
+    /// bend (`390-knob-panel.md` decisions 7–8).
+    #[test]
+    fn a_knob_follows_playback_and_a_stop_leaves_its_cc() {
+        let (mut sequencer, midi_out_rx) = sequencer_and_midi_out_rx(config::TEMPO_US_DEFAULT);
+        let mut clip = clip_at(0, 960);
+        clip.add_event(Event::new(100, 0, vec![0xE0, 0x00, 0x60]));
+        clip.add_event(Event::new(150, 0, vec![0xB0, 14, 90]));
+        sequencer.tracks_mut()[0].add_clip(&clip);
+        sequencer.reset_to_tick(0);
+        assert_eq!(sequencer.published_knob_value(0, 0), None);
+        let at = Instant::now();
+        for _ in 0..200 {
+            sequencer.tick(at);
+        }
+        assert_eq!(sequencer.published_knob_value(0, 0), Some(90));
+        midi_out_bytes(&midi_out_rx);
+
+        sequencer.reset_wheels();
+
+        assert_eq!(midi_out_bytes(&midi_out_rx), vec![vec![0xE0, 0x00, 0x40]]);
+        assert_eq!(sequencer.published_knob_value(0, 0), Some(90));
     }
 }

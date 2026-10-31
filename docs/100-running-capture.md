@@ -214,8 +214,8 @@ pass alone — same "last pass only" rule, no exception for the cursor.
   clip-local space
 - No cursor guard: the clip cursor is always on its clip (one on material outside the
   window anchors at the clip start, as `⌥Space` starts there)
-- What lands: every note whose onset fits the room left in the clip, and every wheel move
-  (pitch bend, mod wheel — `090`) in it, the one after the last note-off included — a
+- What lands: every note whose onset fits the room left in the clip, and every
+  controller move (pitch bend, mod wheel, a knob's CC — `090`) in it, the one after the last note-off included — a
   bend easing back to centre must come along or the clip is left bent
   (`Clip::cloned_events_in_range`). The notes are added; the wheels **replace** the
   clip's own over the span played (`Clip::land_take`, `370-wheel-capture.md`): per wheel
@@ -319,16 +319,17 @@ sequencer (`playback_is_looping().then(|| region_end() - region_start())`).
 ### Invariants
 
 **A take is its notes, or its wheels when inserting.** The capture buffer also holds
-wheel moves (`090`), and every gate and size reads notes first: `Clip::has_notes` gates
+wheel moves and knob turns (`090`), and every gate and size reads notes first: `Clip::has_notes` gates
 the running new-clip commit and the stopped commit (a wheel wiggled alone commits no clip,
 `a_capture_of_wheel_moves_alone_commits_no_clip`), windows come from note-ons and
 note-offs (`calculate_running_region`, `linear_content_length`), and the stopped capture
 source is trimmed back from its last note edge (`040`). Wheel moves ride along inside
 whatever window the notes chose, and into a clip they replace its own over the span
 played (`370`). The one exception is the **running insert**: a buffer of wheel moves
-alone lands in the lead clip (`Clip::has_wheel_moves`,
-`a_running_take_of_wheel_moves_alone_lands_in_the_lead_clip`), its pass found from its
-last wheel move instead of its last note-on (`take_framing_tick`, invariant 4). With
+alone, or of knob turns, lands in the lead clip (`Clip::has_controller_moves`,
+`a_running_take_of_wheel_moves_alone_lands_in_the_lead_clip`,
+`a_running_take_of_a_knob_alone_lands_in_the_lead_clip`), its pass found from its
+last controller move instead of its last note-on (`take_framing_tick`, invariant 4). With
 notes in the buffer the wheels never frame: a bend easing back after a wrap would
 otherwise move the window off the notes. Without a lead clip, or stopped, wheel moves
 alone still commit nothing (`370` § Decisions 2–3).

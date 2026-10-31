@@ -158,6 +158,11 @@ pub(crate) fn mod_at(tick: i32, value: u8) -> Event {
     Event::new(tick, 0, vec![0xB0, 0x01, value])
 }
 
+/// A knob's move: Control Change `cc` to `value` at `tick`.
+pub(crate) fn cc_at(tick: i32, cc: u8, value: u8) -> Event {
+    Event::new(tick, 0, vec![0xB0, cc, value])
+}
+
 /// The wheel moves among `events` as `(tick, message)`.
 pub(crate) fn wheel_moves(events: &[Event]) -> Vec<(i32, Vec<u8>)> {
     events

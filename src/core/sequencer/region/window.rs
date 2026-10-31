@@ -15,7 +15,7 @@
 //! `stopped_capture.rs` and `capture.rs` are the callers; the region/cursor
 //! mutators that consume the results live in `mod.rs`.
 
-use crate::core::midi::message::parse_wheel;
+use crate::core::midi::message::parse_controller;
 use crate::core::time::{self, Meter};
 use crate::models::clip::Clip;
 use crate::models::event::{Event, EventType};
@@ -76,15 +76,17 @@ impl Sequencer {
     }
 
     /// The tick a running take's pass is found from: its most recently
-    /// inserted note-on, or with no note its most recently inserted wheel
-    /// move — the notes frame a take whenever it has them, so a bend easing
+    /// inserted note-on, or with no note its most recently inserted
+    /// controller move, a wheel's or a knob's — the notes frame a take whenever it has them, so a bend easing
     /// back after a wrap can't pull the window off them
     /// (`370-wheel-capture.md` § Decisions 4). `0` with neither.
     fn take_framing_tick(clip: &Clip) -> i32 {
         let newest_first = || clip.events().iter().rev();
         newest_first()
             .find(|event| event.event_type() == Some(EventType::NoteOn))
-            .or_else(|| newest_first().find(|event| parse_wheel(event.midi_message()).is_some()))
+            .or_else(|| {
+                newest_first().find(|event| parse_controller(event.midi_message()).is_some())
+            })
             .map_or(0, Event::tick)
     }
 

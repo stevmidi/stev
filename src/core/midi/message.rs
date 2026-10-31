@@ -42,55 +42,106 @@ pub(crate) fn parse_note(msg: &[u8]) -> Option<(usize, bool)> {
     }
 }
 
-/// One of the two performance wheels a take records beside its notes
-/// (`090-recording-midi-input.md`): the pitch bend wheel and the mod wheel (CC1).
-/// Every other controller stays live-only.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Wheel {
+/// A performance controller a take records beside its notes
+/// (`090-recording-midi-input.md`): pitch bend, or a Control Change by
+/// number — the mod wheel (CC1) and the knob panel's CCs among them
+/// (`390-knob-panel.md` decision 10). The two wheels have a rest a stop
+/// returns them to; any other CC has none and stays where it was.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum Controller {
     /// Pitch bend (`0xEn`), a 14-bit value centred on `0x2000`.
-    PitchBend = 0,
-    /// The mod wheel, Control Change 1 (`0xBn 01`), `0`–`127`, at rest at 0.
-    Modulation = 1,
+    PitchBend,
+    /// Control Change `n` (`0xBn n`), `0`–`127` — never a channel mode
+    /// message (120–127), which [`parse_controller`] doesn't read as one.
+    Cc(u8),
 }
 
-impl Wheel {
-    /// Both wheels, in a fixed order — the index [`index`](Self::index) gives.
-    pub(crate) const ALL: [Wheel; 2] = [Wheel::PitchBend, Wheel::Modulation];
+impl Controller {
+    /// The mod wheel, CC1, at rest at 0.
+    pub(crate) const MOD_WHEEL: Controller = Controller::Cc(MOD_WHEEL_CC);
 
-    /// The wheel's position in [`ALL`](Self::ALL), for per-wheel arrays.
+    /// The two wheels, in the order the wheel lanes list them
+    /// ([`wheel_index`](Self::wheel_index)).
+    pub(crate) const WHEELS: [Controller; 2] = [Controller::PitchBend, Controller::MOD_WHEEL];
+
+    /// How many controllers there are — pitch bend and a CC per number, the
+    /// channel mode numbers included so [`index`](Self::index) stays a plain
+    /// offset — for per-controller arrays.
+    pub(crate) const COUNT: usize = 1 + 128;
+
+    /// The controller's slot in a per-controller array of
+    /// [`COUNT`](Self::COUNT).
     pub(crate) const fn index(self) -> usize {
-        self as usize
-    }
-
-    /// Where the wheel rests: bend centred, mod wheel down.
-    pub(crate) const fn neutral(self) -> u16 {
         match self {
-            Wheel::PitchBend => 0x2000,
-            Wheel::Modulation => 0,
+            Controller::PitchBend => 0,
+            Controller::Cc(cc) => 1 + (cc & 0x7F) as usize,
         }
     }
 
-    /// The channel-0 message that puts the wheel at `value` — the caller
-    /// rewrites the channel for its output, as for any clip event.
+    /// The controller at slot `index` — the inverse of [`index`](Self::index).
+    pub(crate) const fn from_index(index: usize) -> Controller {
+        match index {
+            0 => Controller::PitchBend,
+            _ => Controller::Cc((index - 1) as u8 & 0x7F),
+        }
+    }
+
+    /// The controller's position in [`WHEELS`](Self::WHEELS), `None` for a
+    /// CC that isn't the mod wheel.
+    pub(crate) fn wheel_index(self) -> Option<usize> {
+        Self::WHEELS.iter().position(|&wheel| wheel == self)
+    }
+
+    /// Where the controller rests, if it has a rest: bend centred, mod wheel
+    /// down. `None` for any other CC — a filter cutoff "at rest" at 0 would
+    /// be wrong, so it is never reset (`390-knob-panel.md` decision 8).
+    pub(crate) const fn rest(self) -> Option<u16> {
+        match self {
+            Controller::PitchBend => Some(PITCH_BEND_CENTRE),
+            Controller::Cc(MOD_WHEEL_CC) => Some(0),
+            Controller::Cc(_) => None,
+        }
+    }
+
+    /// The channel-0 message that puts the controller at `value` — the
+    /// caller rewrites the channel for its output, as for any clip event.
     pub(crate) fn message(self, value: u16) -> Vec<u8> {
         match self {
-            Wheel::PitchBend => vec![0xE0, (value & 0x7F) as u8, ((value >> 7) & 0x7F) as u8],
-            Wheel::Modulation => control_change(MOD_WHEEL_CC, value as u8).to_vec(),
+            Controller::PitchBend => {
+                vec![0xE0, (value & 0x7F) as u8, ((value >> 7) & 0x7F) as u8]
+            }
+            Controller::Cc(cc) => control_change(cc, value as u8).to_vec(),
         }
     }
 }
 
-/// The wheel `msg` moves and the value it moves it to, or `None` for any
-/// other message (another controller, a note, a short message).
-pub(crate) fn parse_wheel(msg: &[u8]) -> Option<(Wheel, u16)> {
+/// Pitch bend's rest: centred.
+pub(crate) const PITCH_BEND_CENTRE: u16 = 0x2000;
+
+/// The first of the channel mode messages (120–127): Control Change numbers
+/// that switch a synth's modes rather than move a controller.
+pub(crate) const FIRST_CHANNEL_MODE_CC: u8 = 120;
+
+/// The controller `msg` moves and the value it moves it to, or `None` for
+/// anything else (a note, a channel mode message, a short message).
+pub(crate) fn parse_controller(msg: &[u8]) -> Option<(Controller, u16)> {
     let (&status, &data1, &data2) = (msg.first()?, msg.get(1)?, msg.get(2)?);
     match status & 0xF0 {
-        0xE0 => Some((Wheel::PitchBend, pitch_bend_value([status, data1, data2]))),
-        CONTROL_CHANGE if data1 == MOD_WHEEL_CC => {
-            Some((Wheel::Modulation, u16::from(data2 & 0x7F)))
+        0xE0 => Some((
+            Controller::PitchBend,
+            pitch_bend_value([status, data1, data2]),
+        )),
+        CONTROL_CHANGE if data1 & 0x7F < FIRST_CHANNEL_MODE_CC => {
+            Some((Controller::Cc(data1 & 0x7F), u16::from(data2 & 0x7F)))
         }
         _ => None,
     }
+}
+
+/// The wheel `msg` moves — pitch bend or the mod wheel — and its value, or
+/// `None` for anything else, any other CC included.
+pub(crate) fn parse_wheel(msg: &[u8]) -> Option<(Controller, u16)> {
+    parse_controller(msg).filter(|(controller, _)| controller.rest().is_some())
 }
 
 /// Reassembles pitch bend's 14-bit value from its LSB-then-MSB pair.
@@ -99,9 +150,16 @@ pub(crate) fn pitch_bend_value(bytes: Midi3) -> u16 {
 }
 
 /// Whether a take records live-input `msg`: a note edge or a wheel move
-/// ([`parse_wheel`]). Everything else on the input is played live only.
-pub(crate) fn is_recorded(msg: &[u8]) -> bool {
-    parse_note(msg).is_some() || parse_wheel(msg).is_some()
+/// ([`parse_wheel`]), and with `any_controller` (the knob panel's source,
+/// whose only CCs are its knobs') any controller move. Everything else on the
+/// input is played live only — a hardware controller's CC among it.
+pub(crate) fn is_recorded(msg: &[u8], any_controller: bool) -> bool {
+    parse_note(msg).is_some()
+        || if any_controller {
+            parse_controller(msg).is_some()
+        } else {
+            parse_wheel(msg).is_some()
+        }
 }
 
 /// Whether `message` is a complete channel voice message: status `0x80`–`0xEF`
@@ -133,7 +191,8 @@ pub(crate) fn rewrite_channel(msg: &mut [u8], midi_channel: u8) {
 #[cfg(test)]
 mod tests {
     use super::{
-        Wheel, is_channel_message, is_recorded, parse_note, parse_wheel, pitch_bend_value,
+        Controller, is_channel_message, is_recorded, parse_controller, parse_note, parse_wheel,
+        pitch_bend_value,
     };
 
     #[test]
@@ -161,21 +220,52 @@ mod tests {
     fn parse_wheel_reads_bend_and_the_mod_wheel_only() {
         assert_eq!(
             parse_wheel(&[0xE3, 0x00, 0x40]),
-            Some((Wheel::PitchBend, 0x2000))
+            Some((Controller::PitchBend, 0x2000))
         );
         assert_eq!(
             parse_wheel(&[0xE0, 0x7F, 0x7F]),
-            Some((Wheel::PitchBend, 0x3FFF))
+            Some((Controller::PitchBend, 0x3FFF))
         );
         assert_eq!(
             parse_wheel(&[0xB5, 0x01, 90]),
-            Some((Wheel::Modulation, 90))
+            Some((Controller::MOD_WHEEL, 90))
         );
         // Other controllers (sustain, CC74), notes and short messages aren't.
         assert_eq!(parse_wheel(&[0xB0, 64, 127]), None);
         assert_eq!(parse_wheel(&[0xB0, 74, 64]), None);
         assert_eq!(parse_wheel(&[0x90, 60, 100]), None);
         assert_eq!(parse_wheel(&[0xE0, 0x00]), None);
+    }
+
+    #[test]
+    fn parse_controller_reads_any_cc_but_the_channel_mode_messages() {
+        assert_eq!(
+            parse_controller(&[0xB2, 14, 90]),
+            Some((Controller::Cc(14), 90))
+        );
+        assert_eq!(
+            parse_controller(&[0xB0, 0x01, 5]),
+            Some((Controller::MOD_WHEEL, 5))
+        );
+        assert_eq!(
+            parse_controller(&[0xE0, 0x00, 0x40]),
+            Some((Controller::PitchBend, 0x2000))
+        );
+        assert_eq!(
+            parse_controller(&[0xB0, 119, 1]),
+            Some((Controller::Cc(119), 1))
+        );
+        assert_eq!(parse_controller(&[0xB0, 120, 0]), None);
+        assert_eq!(parse_controller(&[0xB0, 123, 0]), None);
+        assert_eq!(parse_controller(&[0x90, 60, 100]), None);
+    }
+
+    #[test]
+    fn only_the_two_wheels_rest() {
+        assert_eq!(Controller::PitchBend.rest(), Some(0x2000));
+        assert_eq!(Controller::MOD_WHEEL.rest(), Some(0));
+        assert_eq!(Controller::Cc(14).rest(), None);
+        assert_eq!(Controller::Cc(0).rest(), None);
     }
 
     #[test]
@@ -186,30 +276,44 @@ mod tests {
     }
 
     #[test]
-    fn a_wheel_message_parses_back_to_its_value() {
-        for (wheel, value) in [
-            (Wheel::PitchBend, 0),
-            (Wheel::PitchBend, 0x2000),
-            (Wheel::PitchBend, 0x3FFF),
-            (Wheel::Modulation, 0),
-            (Wheel::Modulation, 127),
+    fn a_controller_message_parses_back_to_its_value() {
+        for (controller, value) in [
+            (Controller::PitchBend, 0),
+            (Controller::PitchBend, 0x2000),
+            (Controller::PitchBend, 0x3FFF),
+            (Controller::MOD_WHEEL, 0),
+            (Controller::MOD_WHEEL, 127),
+            (Controller::Cc(14), 64),
+            (Controller::Cc(0), 127),
         ] {
-            assert_eq!(parse_wheel(&wheel.message(value)), Some((wheel, value)));
+            assert_eq!(
+                parse_controller(&controller.message(value)),
+                Some((controller, value))
+            );
         }
-        for wheel in Wheel::ALL {
-            assert_eq!(Wheel::ALL[wheel.index()], wheel);
+        for index in 0..Controller::COUNT {
+            assert_eq!(Controller::from_index(index).index(), index);
         }
+        for (i, wheel) in Controller::WHEELS.into_iter().enumerate() {
+            assert_eq!(wheel.wheel_index(), Some(i));
+        }
+        assert_eq!(Controller::Cc(14).wheel_index(), None);
     }
 
     #[test]
     fn a_take_records_note_edges_and_the_two_wheels() {
-        assert!(is_recorded(&[0x90, 60, 100]));
-        assert!(is_recorded(&[0x80, 60, 0]));
-        assert!(is_recorded(&[0xE0, 0x00, 0x50]));
-        assert!(is_recorded(&[0xB0, 0x01, 64]));
-        assert!(!is_recorded(&[0xB0, 64, 127]));
-        assert!(!is_recorded(&[0xC0, 5]));
-        assert!(!is_recorded(&[0xD0, 40]));
-        assert!(!is_recorded(&[0xF8]));
+        for any_controller in [false, true] {
+            assert!(is_recorded(&[0x90, 60, 100], any_controller));
+            assert!(is_recorded(&[0x80, 60, 0], any_controller));
+            assert!(is_recorded(&[0xE0, 0x00, 0x50], any_controller));
+            assert!(is_recorded(&[0xB0, 0x01, 64], any_controller));
+            assert!(!is_recorded(&[0xB0, 123, 0], any_controller));
+            assert!(!is_recorded(&[0xC0, 5], any_controller));
+            assert!(!is_recorded(&[0xD0, 40], any_controller));
+            assert!(!is_recorded(&[0xF8], any_controller));
+        }
+        // A hardware CC plays live only; the knob panel's are recorded.
+        assert!(!is_recorded(&[0xB0, 14, 127], false));
+        assert!(is_recorded(&[0xB0, 14, 127], true));
     }
 }

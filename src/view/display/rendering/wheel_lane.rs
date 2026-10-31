@@ -10,7 +10,7 @@ use egui::{Align2, CornerRadius, FontId, Painter, Pos2, Rect, Shape, Stroke, pos
 
 use super::piano_keys::NoteAreaGeom;
 use super::*;
-use crate::core::midi::message::Wheel;
+use crate::core::midi::message::{Controller, PITCH_BEND_CENTRE};
 use crate::core::time::PPQN;
 use crate::metadata::clip_view::WheelMove;
 
@@ -93,7 +93,7 @@ impl Display {
             );
             if lane
                 .wheel()
-                .is_some_and(|wheel| !self.render.wheel_moves[wheel.index()].is_empty())
+                .is_some_and(|wheel| !self.render.wheel_moves.of(wheel).is_empty())
             {
                 painter.circle_filled(
                     pos2(label.right() + Self::LANE_MARKER_GAP, row.center().y),
@@ -111,7 +111,7 @@ impl Display {
     /// rest; the span, if one is marked, a tint across the lane's height
     /// under the line, filled as the note marquee is. Nothing else with no
     /// moves.
-    pub(super) fn draw_wheel_lane(&self, painter: &Painter, lane: Rect, wheel: Wheel) {
+    pub(super) fn draw_wheel_lane(&self, painter: &Painter, lane: Rect, wheel: Controller) {
         if let Some((start, end)) = self.gesture.wheel_span {
             let x_range = self.tick_to_screen_x(start).max(lane.left())
                 ..=self.tick_to_screen_x(end).min(lane.right());
@@ -128,15 +128,15 @@ impl Display {
         let inner_h = lane.height() - 2.0 * Self::WHEEL_LANE_PAD;
         let y_of = |value| inner_top + (1.0 - wheel_fraction(wheel, value)) * inner_h;
 
-        if wheel == Wheel::PitchBend {
+        if wheel == Controller::PitchBend {
             painter.hline(
                 lane.x_range(),
-                y_of(wheel.neutral()).round(),
+                y_of(wheel.rest().unwrap_or(0)).round(),
                 Stroke::new(1.0_f32, theme::fg_dim().gamma_multiply(0.3)),
             );
         }
 
-        let moves = &self.render.wheel_moves[wheel.index()];
+        let moves = self.render.wheel_moves.of(wheel);
         if moves.is_empty() {
             return;
         }
@@ -146,7 +146,7 @@ impl Display {
         let cols = lane.width().max(0.0);
         let (start, knots) = fold_wheel_columns(
             moves,
-            wheel.neutral(),
+            wheel.rest().unwrap_or(0),
             first_tick,
             ticks_per_col,
             cols as usize,
@@ -207,15 +207,15 @@ fn lane_label_in(gutter: Rect, pos: Pos2) -> Option<ClipLane> {
 }
 
 /// Where `value` sits in the lane, `0.0` at the bottom to `1.0` at the top:
-/// pitch bend centred, its rest (`0x2000`) exactly halfway; the mod wheel
-/// from 0 to 127.
-fn wheel_fraction(wheel: Wheel, value: u16) -> f32 {
+/// pitch bend centred, its rest (`0x2000`) exactly halfway; the mod wheel,
+/// as any CC, from 0 to 127.
+fn wheel_fraction(wheel: Controller, value: u16) -> f32 {
     match wheel {
-        Wheel::PitchBend => {
-            let centre = f32::from(Wheel::PitchBend.neutral());
+        Controller::PitchBend => {
+            let centre = f32::from(PITCH_BEND_CENTRE);
             0.5 + (f32::from(value) - centre) / (2.0 * centre)
         }
-        Wheel::Modulation => f32::from(value.min(127)) / 127.0,
+        Controller::Cc(_) => f32::from(value.min(127)) / 127.0,
     }
 }
 
@@ -444,7 +444,7 @@ mod tests {
         Knot, RIDE_GAP_TICKS, Segment, fold_wheel_columns, lane_label_in, simplify, split_at_x,
         wheel_fraction, wheel_path,
     };
-    use crate::core::midi::message::Wheel;
+    use crate::core::midi::message::Controller;
     use crate::view::display::clip_lane::ClipLane;
 
     #[test]
@@ -614,14 +614,14 @@ mod tests {
 
     #[test]
     fn pitch_bend_rests_at_the_centre() {
-        assert_eq!(wheel_fraction(Wheel::PitchBend, 0x2000), 0.5);
-        assert_eq!(wheel_fraction(Wheel::PitchBend, 0), 0.0);
-        assert!((wheel_fraction(Wheel::PitchBend, 0x3FFF) - 1.0).abs() < 0.001);
+        assert_eq!(wheel_fraction(Controller::PitchBend, 0x2000), 0.5);
+        assert_eq!(wheel_fraction(Controller::PitchBend, 0), 0.0);
+        assert!((wheel_fraction(Controller::PitchBend, 0x3FFF) - 1.0).abs() < 0.001);
     }
 
     #[test]
     fn the_mod_wheel_runs_from_bottom_to_top() {
-        assert_eq!(wheel_fraction(Wheel::Modulation, 0), 0.0);
-        assert_eq!(wheel_fraction(Wheel::Modulation, 127), 1.0);
+        assert_eq!(wheel_fraction(Controller::MOD_WHEEL, 0), 0.0);
+        assert_eq!(wheel_fraction(Controller::MOD_WHEEL, 127), 1.0);
     }
 }

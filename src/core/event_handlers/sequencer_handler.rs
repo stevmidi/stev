@@ -651,6 +651,10 @@ impl EventHandlers {
                 sequencer.set_knob_value(*track_idx, *knob, *value);
             }
 
+            SequencerCommand::HoldKnob { track_idx, knob } => {
+                sequencer.hold_knob(*track_idx, *knob);
+            }
+            SequencerCommand::ReleaseKnobs => sequencer.release_knobs(),
             SequencerCommand::SendKnobPositions => sequencer.send_knob_positions(),
 
             SequencerCommand::FitTempo => {
@@ -672,7 +676,7 @@ mod tests {
 
     use crate::core::agent::{AgentReply, AgentRequest};
     use crate::core::event_handlers::test_harness::{Harness, add_clip, harness, run_command};
-    use crate::core::midi::message::Wheel;
+    use crate::core::midi::message::Controller;
     use crate::core::project::{ProjectAction, ProjectData};
     use crate::core::sequencer::test_support::{rect, stub_instrument};
     use crate::core::sequencer::{SequencerCommand, SequencerEdit};
@@ -1359,7 +1363,7 @@ mod tests {
                 .collect()
         };
         let rest = |start, end| SequencerCommand::RestWheel {
-            wheel: Wheel::Modulation,
+            wheel: Controller::MOD_WHEEL,
             start,
             end,
         };

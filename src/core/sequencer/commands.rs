@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 use crate::core::agent::{AgentReply, AgentRequest};
 use crate::core::input_event::TimeSelectionRect;
-use crate::core::midi::message::Wheel;
+use crate::core::midi::message::Controller;
 use crate::core::project::ProjectAction;
 use crate::core::sequencer::{AudioExportOutcome, TempoGesture};
 use crate::core::time::Meter;
@@ -272,7 +272,7 @@ pub(crate) enum SequencerCommand {
     /// is at rest across the span already.
     RestWheel {
         /// The wheel the lane shows.
-        wheel: Wheel,
+        wheel: Controller,
         /// The span's start, event ticks.
         start: i32,
         /// The span's end (exclusive), event ticks.
@@ -453,6 +453,19 @@ pub(crate) enum SequencerCommand {
         /// Its position, `0..=127`.
         value: u8,
     },
+    /// A drag took hold of knob `knob` of `track_idx`: playback sends none of
+    /// the clip's moves of its CC until [`ReleaseKnobs`](Self::ReleaseKnobs)
+    /// (`Track::hold_knob`, `390-knob-panel.md` decision 7).
+    HoldKnob {
+        /// The knob's track.
+        track_idx: usize,
+        /// Which knob, `0..KNOB_COUNT`.
+        knob: usize,
+    },
+    /// The knob drag let go: playback takes every knob of every track over
+    /// again at its CC's next move (`Track::release_knobs`) — every track, so
+    /// a drag whose track moved meanwhile can't stay held.
+    ReleaseKnobs,
     /// A project load is done and its plugins are in their slots: every
     /// track's turned knobs go to its output (`Sequencer::send_knob_positions`).
     SendKnobPositions,
