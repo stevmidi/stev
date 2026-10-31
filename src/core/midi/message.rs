@@ -17,6 +17,18 @@ pub(crate) fn midi3(bytes: &[u8]) -> Midi3 {
     ]
 }
 
+/// A Control Change's status byte, on channel 0.
+pub(crate) const CONTROL_CHANGE: u8 = 0xB0;
+
+/// The mod wheel's controller number — never a knob's (`models::knobs`).
+pub(crate) const MOD_WHEEL_CC: u8 = 0x01;
+
+/// The channel-0 Control Change that puts controller `cc` at `value` — the
+/// caller rewrites the channel for its output.
+pub(crate) fn control_change(cc: u8, value: u8) -> Midi3 {
+    [CONTROL_CHANGE, cc & 0x7F, value & 0x7F]
+}
+
 /// A parsed note edge: `Some((note, is_on))` for note-on / note-off (a
 /// velocity-0 note-on counts as off), `None` for anything else.
 pub(crate) fn parse_note(msg: &[u8]) -> Option<(usize, bool)> {
@@ -63,7 +75,7 @@ impl Wheel {
     pub(crate) fn message(self, value: u16) -> Vec<u8> {
         match self {
             Wheel::PitchBend => vec![0xE0, (value & 0x7F) as u8, ((value >> 7) & 0x7F) as u8],
-            Wheel::Modulation => vec![0xB0, 0x01, (value & 0x7F) as u8],
+            Wheel::Modulation => control_change(MOD_WHEEL_CC, value as u8).to_vec(),
         }
     }
 }
@@ -74,7 +86,9 @@ pub(crate) fn parse_wheel(msg: &[u8]) -> Option<(Wheel, u16)> {
     let (&status, &data1, &data2) = (msg.first()?, msg.get(1)?, msg.get(2)?);
     match status & 0xF0 {
         0xE0 => Some((Wheel::PitchBend, pitch_bend_value([status, data1, data2]))),
-        0xB0 if data1 == 0x01 => Some((Wheel::Modulation, u16::from(data2 & 0x7F))),
+        CONTROL_CHANGE if data1 == MOD_WHEEL_CC => {
+            Some((Wheel::Modulation, u16::from(data2 & 0x7F)))
+        }
         _ => None,
     }
 }

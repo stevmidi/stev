@@ -717,10 +717,10 @@ impl Display {
     /// The visible pane under the pointer at `(x, y)`, `None` over the
     /// header, the status bar or the knob panel, or outside the window.
     fn pane_at(&self, x: f32, y: f32) -> Option<Pane> {
-        if !self.render.canvas_rect.contains(pos2(x, y)) || self.is_over_knob_panel(x, y) {
+        if !self.render.canvas_rect.contains(pos2(x, y)) {
             return None;
         }
-        self.pane_rects().pane_at_y(y)
+        self.pane_rects().pane_at(pos2(x, y))
     }
 
     /// The lane area both panes share: below the header, above the status
@@ -1176,8 +1176,15 @@ impl Display {
     /// gutter of the active pane).
     fn content_origin_x(&self) -> f32 {
         match self.active_pane() {
-            // Right of the knob panel's column (`pane_rects`).
-            Pane::Clip => Self::KNOB_COLUMN_W + Self::PIANO_MARGIN_W * 2.0,
+            // From the clip pane's own left edge, right of the knob panel's
+            // column (`pane_rects`).
+            Pane::Clip => {
+                let pane_left = self
+                    .pane_rects()
+                    .clip
+                    .map_or(0.0, |clip| clip.min.x - self.render.canvas_rect.min.x);
+                pane_left + Self::PIANO_MARGIN_W * 2.0
+            }
             Pane::Arranger => Self::PADDING_X + Self::TRACK_HEADER_W,
         }
     }

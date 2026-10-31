@@ -7,7 +7,7 @@
 //! `Display::active_pane`). Pure layout here, unit-tested; see
 //! `archive/210-docked-clip-panel.md`.
 
-use egui::Rect;
+use egui::{Pos2, Rect};
 
 pub(crate) use crate::core::view_state::Pane;
 
@@ -121,6 +121,16 @@ impl PaneRects {
             Pane::Arranger => self.arranger,
             Pane::Clip => self.clip,
         }
+    }
+
+    /// The visible pane holding `pos`: [`pane_at_y`](Self::pane_at_y), but
+    /// `None` over the knob panel's column, which shares the clip view's
+    /// height.
+    pub(super) fn pane_at(self, pos: Pos2) -> Option<Pane> {
+        if self.knobs.is_some_and(|knobs| knobs.contains(pos)) {
+            return None;
+        }
+        self.pane_at_y(pos.y)
     }
 
     /// The visible pane holding screen y `y`. A y in the gap between docked
@@ -262,6 +272,13 @@ mod tests {
 
         let single = pane_rects(lane_area(), PaneLayout::ClipOnly, KNOBS_W);
         assert_eq!(single.pane_at_y(100.0), Some(Pane::Clip));
+        // Beside the clip view, the knob panel's column is no pane.
+        assert_eq!(single.pane_at(pos2(KNOBS_W + 1.0, 100.0)), Some(Pane::Clip));
+        assert_eq!(single.pane_at(pos2(KNOBS_W - 1.0, 100.0)), None);
+        assert_eq!(
+            rects.pane_at(pos2(10.0, arranger.min.y)),
+            Some(Pane::Arranger)
+        );
     }
 
     #[test]

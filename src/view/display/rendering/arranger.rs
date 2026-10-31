@@ -45,7 +45,7 @@ impl Display {
         painter.rect_filled(
             Rect::from_min_size(pos2(rect.min.x, column_top), vec2(labels_right, column_h)),
             CornerRadius::ZERO,
-            theme::bg_panel().gamma_multiply(0.8),
+            track_column_fill(),
         );
 
         // Track-column right edge — same `grid_seam_color()` groove tone as

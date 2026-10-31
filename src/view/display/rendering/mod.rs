@@ -364,6 +364,12 @@ pub(super) fn grid_seam_color() -> Color32 {
     shifted_rgb(theme::bg(), -8)
 }
 
+/// The left columns' panel tone: the arranger's track headers, the clip
+/// view's legend and keys, the knob panel.
+pub(super) fn track_column_fill() -> Color32 {
+    theme::bg_panel().gamma_multiply(0.8)
+}
+
 /// `color` with every RGB channel moved `delta` steps (saturating), opaque —
 /// the brightness-not-alpha nudge the grid and lane tones are built from
 /// (`030-ui-design.md` § Grid Hierarchy).

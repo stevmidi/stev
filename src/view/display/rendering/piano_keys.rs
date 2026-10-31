@@ -458,8 +458,7 @@ impl Display {
 
         // The panel ground under this column is painted by
         // `draw_note_lane_backgrounds` as part of one continuous left-gutter
-        // panel (`bg_panel().gamma_multiply(0.8)`, the arranger track-column
-        // fill) — nothing to fill here, just the octave seams and labels.
+        // panel (`track_column_fill()`, the arranger track-column fill) — nothing to fill here, just the octave seams and labels.
         let font = FontId::proportional(theme::FONT_SIZE_TL);
 
         for nn in geom.note_lo..=geom.note_hi {

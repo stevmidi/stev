@@ -22,6 +22,7 @@ use std::time::{Duration, Instant};
 use egui::{FontId, Id, Pos2, Rect, TouchPhase, Ui, pos2, vec2};
 
 use crate::core::input_event::InputEvent;
+use crate::core::midi::message::control_change;
 use crate::models::knobs::{CC_VALUE_MAX, KNOB_COUNT};
 
 use super::Display;
@@ -178,13 +179,15 @@ enum WheelGesture {
 
 impl WheelLatch {
     /// The knob a scroll event of `phase` at `now` turns, `dial` the dial
-    /// under the pointer.
+    /// under the pointer, and how much of its travel counts
+    /// ([`travel_scale`](Self::travel_scale), of the gesture the event
+    /// belongs to — an `End`'s is the one it closes).
     pub(super) fn on_wheel(
         &mut self,
         phase: TouchPhase,
         now: Instant,
         dial: Option<usize>,
-    ) -> Option<usize> {
+    ) -> Option<(usize, f32)> {
         match phase {
             TouchPhase::Start => {
                 let carried = self
@@ -196,25 +199,30 @@ impl WheelLatch {
                     Some(knob) => WheelGesture::Knob(knob),
                     None => WheelGesture::Elsewhere,
                 }));
-                self.knob()
+                self.turned()
             }
             TouchPhase::Move => match self.gesture {
-                Some(_) => self.knob(),
-                None => dial,
+                Some(_) => self.turned(),
+                None => dial.map(|knob| (knob, 1.0)),
             },
             TouchPhase::End | TouchPhase::Cancel => {
-                let knob = self.knob();
+                let turned = self.turned();
                 self.last_end = self.gesture.take().map(|gesture| (now, gesture));
-                knob
+                turned
             }
         }
+    }
+
+    /// The open gesture's knob and travel scale, if it turns one.
+    fn turned(&self) -> Option<(usize, f32)> {
+        self.knob().map(|knob| (knob, self.travel_scale()))
     }
 
     /// How much of the open gesture's travel turns the dial:
     /// [`MOMENTUM_SCALE`] while it carries the last one on, else all of it.
     /// A touch that cut the coasting short counts as carried too (the OS
     /// shows no difference); it soon coasts itself.
-    pub(super) fn travel_scale(&self) -> f32 {
+    fn travel_scale(&self) -> f32 {
         if self.gesture.is_some() && self.carried {
             MOMENTUM_SCALE
         } else {
@@ -357,11 +365,19 @@ impl Display {
         })
     }
 
+    /// The dial under `(x, y)`, if any.
+    fn dial_at(&self, x: f32, y: f32) -> Option<usize> {
+        match self.knob_at(x, y)? {
+            KnobHit::Dial(knob) => Some(knob),
+            KnobHit::Label(_) => None,
+        }
+    }
+
     /// Whether the pointer is on a dial — the vertical arrows, as on the
     /// track header's bars.
     pub(super) fn is_pointer_on_knob_dial(&self) -> bool {
         self.canvas_pointer()
-            .is_some_and(|pos| matches!(self.knob_at(pos.x, pos.y), Some(KnobHit::Dial(_))))
+            .is_some_and(|pos| self.dial_at(pos.x, pos.y).is_some())
     }
 
     /// The track the knobs act on: the selected one, if there is one.
@@ -394,7 +410,7 @@ impl Display {
     /// goes back to 0 and starts none — the track header bars' reset
     /// gesture; anything else does nothing yet. Never takes the keyboard.
     pub(super) fn handle_knob_panel_click(&mut self, x: f32, y: f32, command: bool) {
-        let Some(KnobHit::Dial(knob)) = self.knob_at(x, y) else {
+        let Some(knob) = self.dial_at(x, y) else {
             return;
         };
         if command {
@@ -478,7 +494,7 @@ impl Display {
     /// Knob `knob` of `track_idx`, sending `cc`, now stands at `value`: its
     /// CC goes out live, and the sequencer keeps the position.
     fn send_knob_value(&self, track_idx: usize, knob: usize, cc: u8, value: u8) {
-        self.send_computer_keys(vec![[0xB0, cc, value]]);
+        self.send_computer_keys(vec![control_change(cc, value)]);
         self.input_event_tx
             .send(InputEvent::SetKnobValue {
                 track_idx,
@@ -506,26 +522,14 @@ impl Display {
         pointer: Option<(f32, f32)>,
     ) {
         let now = Instant::now();
-        let dial = pointer.and_then(|(x, y)| match self.knob_at(x, y) {
-            Some(KnobHit::Dial(knob)) => Some(knob),
-            _ => None,
-        });
-        let wheel = &mut self.knob_panel.wheel;
-        // Read before an `End` closes the gesture: its travel is still the
-        // gesture's.
-        let scale_before = wheel.travel_scale();
-        let Some(knob) = wheel.on_wheel(phase, now, dial) else {
+        let dial = pointer.and_then(|(x, y)| self.dial_at(x, y));
+        let Some((knob, scale)) = self.knob_panel.wheel.on_wheel(phase, now, dial) else {
             return;
-        };
-        let scale = if phase == TouchPhase::Start {
-            wheel.travel_scale()
-        } else {
-            scale_before
         };
         let Some(track_idx) = self.knobs_track() else {
             return;
         };
-        let turn = match self.knob_panel.wheel_turn {
+        let mut turn = match self.knob_panel.wheel_turn {
             Some(turn) if turn.holds(track_idx, knob, now) => turn,
             _ => {
                 let Some((cc, value)) = self.knob_shown(knob) else {
@@ -541,11 +545,8 @@ impl Display {
                 }
             }
         };
-        let mut turn = WheelTurn {
-            pending: turn.pending - delta_y * scale,
-            last: now,
-            ..turn
-        };
+        turn.pending -= delta_y * scale;
+        turn.last = now;
         let steps = take_steps(&mut turn.pending, fine);
         let value = (i32::from(turn.value) + steps).clamp(0, i32::from(CC_VALUE_MAX)) as u8;
         let changed = value != turn.value;
@@ -558,7 +559,8 @@ impl Display {
 
     /// Whether the panes' scroll (`InputEvent::TimelineScroll`) is the knob
     /// panel's: over the panel, or while a trackpad gesture or its momentum
-    /// turns a dial (it may have left the panel). The panel scrolls nothing of its own.
+    /// turns a dial (it may have left the panel). The panel scrolls nothing
+    /// of its own.
     pub(super) fn knob_panel_takes_scroll(&self, pointer: Option<(f32, f32)>) -> bool {
         self.knob_panel.wheel.knob().is_some()
             || pointer.is_some_and(|(x, y)| self.is_over_knob_panel(x, y))
@@ -672,12 +674,9 @@ pub(super) const LABEL_FONT_SIZE: f32 = 11.0;
 #[cfg(test)]
 mod tests {
     use std::f32::consts::PI;
-
-    use egui::{Rect, pos2};
-
     use std::time::{Duration, Instant};
 
-    use egui::TouchPhase;
+    use egui::{Rect, TouchPhase, pos2};
 
     use super::{
         CC_VALUE_MAX, DIAL_MAX_D, DIAL_MIN_D, MOMENTUM_SCALE, SWEEP, SWEEP_START, WheelLatch,
@@ -759,6 +758,16 @@ mod tests {
         assert_eq!(pending, 4.0);
     }
 
+    /// The knob `latch` turns for a scroll event, its travel scale aside.
+    fn knob_on(
+        latch: &mut WheelLatch,
+        phase: TouchPhase,
+        now: Instant,
+        dial: Option<usize>,
+    ) -> Option<usize> {
+        latch.on_wheel(phase, now, dial).map(|(knob, _)| knob)
+    }
+
     /// `ms` milliseconds after `t0`.
     fn at(t0: Instant, ms: u64) -> Instant {
         t0 + Duration::from_millis(ms)
@@ -768,18 +777,24 @@ mod tests {
     fn a_trackpad_gesture_turns_the_dial_it_started_on_wherever_it_goes() {
         let t0 = Instant::now();
         let mut latch = WheelLatch::default();
-        assert_eq!(latch.on_wheel(TouchPhase::Start, t0, Some(2)), Some(2));
+        assert_eq!(knob_on(&mut latch, TouchPhase::Start, t0, Some(2)), Some(2));
         assert_eq!(
-            latch.on_wheel(TouchPhase::Move, at(t0, 10), Some(2)),
+            knob_on(&mut latch, TouchPhase::Move, at(t0, 10), Some(2)),
             Some(2)
         );
         // Off the dial, onto another: still knob 2.
-        assert_eq!(latch.on_wheel(TouchPhase::Move, at(t0, 20), None), Some(2));
         assert_eq!(
-            latch.on_wheel(TouchPhase::Move, at(t0, 30), Some(5)),
+            knob_on(&mut latch, TouchPhase::Move, at(t0, 20), None),
             Some(2)
         );
-        assert_eq!(latch.on_wheel(TouchPhase::End, at(t0, 40), None), Some(2));
+        assert_eq!(
+            knob_on(&mut latch, TouchPhase::Move, at(t0, 30), Some(5)),
+            Some(2)
+        );
+        assert_eq!(
+            knob_on(&mut latch, TouchPhase::End, at(t0, 40), None),
+            Some(2)
+        );
         assert_eq!(latch.knob(), None);
     }
 
@@ -787,18 +802,24 @@ mod tests {
     fn a_flick_on_a_dial_coasts_on_it() {
         let t0 = Instant::now();
         let mut latch = WheelLatch::default();
-        latch.on_wheel(TouchPhase::Start, t0, Some(1));
-        latch.on_wheel(TouchPhase::End, at(t0, 80), Some(1));
+        knob_on(&mut latch, TouchPhase::Start, t0, Some(1));
+        knob_on(&mut latch, TouchPhase::End, at(t0, 80), Some(1));
         // The coasting starts at once, the pointer drifting off the dial.
-        assert_eq!(latch.on_wheel(TouchPhase::Start, at(t0, 85), None), Some(1));
         assert_eq!(
-            latch.on_wheel(TouchPhase::Move, at(t0, 120), Some(6)),
+            knob_on(&mut latch, TouchPhase::Start, at(t0, 85), None),
             Some(1)
         );
-        assert_eq!(latch.on_wheel(TouchPhase::End, at(t0, 600), None), Some(1));
+        assert_eq!(
+            knob_on(&mut latch, TouchPhase::Move, at(t0, 120), Some(6)),
+            Some(1)
+        );
+        assert_eq!(
+            knob_on(&mut latch, TouchPhase::End, at(t0, 600), None),
+            Some(1)
+        );
         // A touch long after is a gesture of its own.
         assert_eq!(
-            latch.on_wheel(TouchPhase::Start, at(t0, 1500), Some(6)),
+            knob_on(&mut latch, TouchPhase::Start, at(t0, 1500), Some(6)),
             Some(6)
         );
     }
@@ -807,33 +828,41 @@ mod tests {
     fn only_the_coasting_is_damped() {
         let t0 = Instant::now();
         let mut latch = WheelLatch::default();
-        latch.on_wheel(TouchPhase::Start, t0, Some(1));
-        assert_eq!(latch.travel_scale(), 1.0, "the fingers' own travel");
-        latch.on_wheel(TouchPhase::End, at(t0, 80), Some(1));
-        latch.on_wheel(TouchPhase::Start, at(t0, 85), Some(1));
-        assert_eq!(latch.travel_scale(), MOMENTUM_SCALE);
-        latch.on_wheel(TouchPhase::End, at(t0, 600), Some(1));
+        let mut scale = |phase, ms| latch.on_wheel(phase, at(t0, ms), Some(1)).map(|(_, s)| s);
+        assert_eq!(
+            scale(TouchPhase::Start, 0),
+            Some(1.0),
+            "the fingers' own travel"
+        );
+        assert_eq!(scale(TouchPhase::End, 80), Some(1.0));
+        assert_eq!(scale(TouchPhase::Start, 85), Some(MOMENTUM_SCALE));
+        assert_eq!(scale(TouchPhase::Move, 100), Some(MOMENTUM_SCALE));
+        // The `End` closing the coasting is still the coasting's.
+        assert_eq!(scale(TouchPhase::End, 600), Some(MOMENTUM_SCALE));
         // A mouse wheel, with no gesture open.
-        assert_eq!(latch.travel_scale(), 1.0);
-        latch.on_wheel(TouchPhase::Start, at(t0, 2000), Some(1));
-        assert_eq!(latch.travel_scale(), 1.0, "a touch of its own");
+        assert_eq!(scale(TouchPhase::Move, 700), Some(1.0));
+        assert_eq!(
+            scale(TouchPhase::Start, 2000),
+            Some(1.0),
+            "a touch of its own"
+        );
     }
 
     #[test]
     fn a_quick_reflick_cutting_the_coasting_short_keeps_turning_the_dial() {
         let t0 = Instant::now();
         let mut latch = WheelLatch::default();
-        latch.on_wheel(TouchPhase::Start, t0, Some(2));
-        latch.on_wheel(TouchPhase::End, at(t0, 60), Some(2));
-        latch.on_wheel(TouchPhase::Start, at(t0, 62), Some(2));
+        knob_on(&mut latch, TouchPhase::Start, t0, Some(2));
+        knob_on(&mut latch, TouchPhase::End, at(t0, 60), Some(2));
+        knob_on(&mut latch, TouchPhase::Start, at(t0, 62), Some(2));
         // The fingers touch down mid-coast: macOS ends it, the touch starts.
-        latch.on_wheel(TouchPhase::End, at(t0, 200), Some(2));
+        knob_on(&mut latch, TouchPhase::End, at(t0, 200), Some(2));
         assert_eq!(
-            latch.on_wheel(TouchPhase::Start, at(t0, 201), Some(2)),
+            knob_on(&mut latch, TouchPhase::Start, at(t0, 201), Some(2)),
             Some(2)
         );
         assert_eq!(
-            latch.on_wheel(TouchPhase::Move, at(t0, 220), Some(2)),
+            knob_on(&mut latch, TouchPhase::Move, at(t0, 220), Some(2)),
             Some(2)
         );
     }
@@ -843,27 +872,36 @@ mod tests {
         let t0 = Instant::now();
         let mut latch = WheelLatch::default();
         // A clip-view scroll: started off the dials.
-        assert_eq!(latch.on_wheel(TouchPhase::Start, t0, None), None);
-        assert_eq!(latch.on_wheel(TouchPhase::Move, at(t0, 50), Some(3)), None);
-        latch.on_wheel(TouchPhase::End, at(t0, 100), Some(3));
-        // Its momentum, over a dial, still turns nothing.
+        assert_eq!(knob_on(&mut latch, TouchPhase::Start, t0, None), None);
         assert_eq!(
-            latch.on_wheel(TouchPhase::Start, at(t0, 110), Some(3)),
+            knob_on(&mut latch, TouchPhase::Move, at(t0, 50), Some(3)),
             None
         );
-        assert_eq!(latch.on_wheel(TouchPhase::Move, at(t0, 130), Some(3)), None);
+        knob_on(&mut latch, TouchPhase::End, at(t0, 100), Some(3));
+        // Its momentum, over a dial, still turns nothing.
+        assert_eq!(
+            knob_on(&mut latch, TouchPhase::Start, at(t0, 110), Some(3)),
+            None
+        );
+        assert_eq!(
+            knob_on(&mut latch, TouchPhase::Move, at(t0, 130), Some(3)),
+            None
+        );
     }
 
     #[test]
     fn a_mouse_wheel_turns_the_dial_under_the_pointer() {
         let t0 = Instant::now();
         let mut latch = WheelLatch::default();
-        assert_eq!(latch.on_wheel(TouchPhase::Move, t0, Some(4)), Some(4));
+        assert_eq!(knob_on(&mut latch, TouchPhase::Move, t0, Some(4)), Some(4));
         assert_eq!(
-            latch.on_wheel(TouchPhase::Move, at(t0, 30), Some(6)),
+            knob_on(&mut latch, TouchPhase::Move, at(t0, 30), Some(6)),
             Some(6)
         );
-        assert_eq!(latch.on_wheel(TouchPhase::Move, at(t0, 60), None), None);
+        assert_eq!(
+            knob_on(&mut latch, TouchPhase::Move, at(t0, 60), None),
+            None
+        );
         // No gesture is ever open: over the panel its scroll is swallowed
         // (`knob_panel_takes_scroll`), elsewhere the panes keep it.
         assert_eq!(latch.knob(), None);

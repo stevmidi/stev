@@ -133,7 +133,7 @@ impl Display {
 
         // Left-gutter panel — the legend + piano-key columns *and the strip
         // corner above them*, filled as one continuous
-        // `bg_panel().gamma_multiply(0.8)` panel from the top of the timeline
+        // `track_column_fill()` panel from the top of the timeline
         // strip down through the clip area, exactly as the arranger's track
         // column owns its strip corner. `draw_timeline` stops its strip fill
         // at `content_x`, and this runs first, so the panel owns everything
@@ -147,7 +147,7 @@ impl Display {
                 vec2(content_x, self.track_area_h()),
             ),
             CornerRadius::ZERO,
-            theme::bg_panel().gamma_multiply(0.8),
+            track_column_fill(),
         );
 
         let note_area_rect = Rect::from_min_size(

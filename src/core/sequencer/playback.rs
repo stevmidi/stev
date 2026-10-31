@@ -298,16 +298,26 @@ impl Sequencer {
             return;
         };
         let resets = track.take_wheel_resets();
+        self.send_to_track_now(track_idx, resets);
+    }
+
+    /// Sends `messages` (channel 0) to the track at `track_idx`'s output,
+    /// now: MIDI Out on its channel, or its plugin for the next block.
+    /// Out-of-range indices are ignored.
+    pub(super) fn send_to_track_now(&mut self, track_idx: usize, messages: Vec<Vec<u8>>) {
+        let Some(track) = self.tracks.get(track_idx) else {
+            return;
+        };
         let slot = track.slot();
         match *track.output() {
             TrackOutput::MidiOut { channel } => {
-                for reset in resets {
-                    self.send_midi_out_now(reset, channel);
+                for msg in messages {
+                    self.send_midi_out_now(msg, channel);
                 }
             }
             TrackOutput::Instrument(_) => {
-                for reset in resets {
-                    self.push_instrument_now(slot, &reset);
+                for msg in messages {
+                    self.push_instrument_now(slot, &msg);
                 }
             }
         }
@@ -324,14 +334,14 @@ impl Sequencer {
 
     /// Sends `msg` on `channel` to MIDI out, undelayed — a release or reset
     /// has no tick instant to offset from.
-    pub(super) fn send_midi_out_now(&self, mut msg: Vec<u8>, channel: u8) {
+    fn send_midi_out_now(&self, mut msg: Vec<u8>, channel: u8) {
         rewrite_channel(&mut msg, channel);
         self.midi_out_tx.send(MidiOutMessage::now(msg)).ok();
     }
 
     /// Pushes `msg` to engine slot `slot`'s plugin for the next block
     /// (`EventTime::Immediate`, behind anything already scheduled there).
-    pub(super) fn push_instrument_now(&mut self, slot: usize, msg: &[u8]) {
+    fn push_instrument_now(&mut self, slot: usize, msg: &[u8]) {
         self.instrument_midi_tx
             .push(ClipInstrumentEvent {
                 track: slot,

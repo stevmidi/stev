@@ -177,6 +177,18 @@ pub(crate) struct KnobData {
     pub(crate) value: Option<u8>,
 }
 
+impl From<Knob> for KnobData {
+    fn from(Knob { cc, value }: Knob) -> Self {
+        KnobData { cc, value }
+    }
+}
+
+impl From<KnobData> for Knob {
+    fn from(KnobData { cc, value }: KnobData) -> Self {
+        Knob { cc, value }
+    }
+}
+
 /// An [`io::Write`] that feeds everything written into a hasher — what
 /// [`ProjectData::fingerprint`] serializes into.
 struct HashWriter(DefaultHasher);
@@ -377,14 +389,7 @@ impl ProjectData {
                     muted: sequencer.track_muted(track_idx),
                     color: Some(track.color_slot()),
                     name: track.name().map(str::to_owned),
-                    knobs: track
-                        .knobs()
-                        .iter()
-                        .map(|knob| KnobData {
-                            cc: knob.cc,
-                            value: knob.value,
-                        })
-                        .collect(),
+                    knobs: track.knobs().iter().copied().map(KnobData::from).collect(),
                     clips,
                 }
             })
@@ -433,14 +438,7 @@ impl ProjectData {
             sequencer.set_track_volume(track_idx, track_data.volume_db);
             sequencer.set_track_pan(track_idx, track_data.pan);
             sequencer.set_track_muted(track_idx, track_data.muted);
-            let knobs: Vec<Knob> = track_data
-                .knobs
-                .iter()
-                .map(|knob| Knob {
-                    cc: knob.cc,
-                    value: knob.value,
-                })
-                .collect();
+            let knobs: Vec<Knob> = track_data.knobs.iter().copied().map(Knob::from).collect();
             sequencer.set_track_knobs(track_idx, knobs_from_saved(&knobs));
             if let Some(track) = sequencer.tracks_mut().get_mut(track_idx) {
                 track.set_color_slot(track_data.color.unwrap_or(track_idx));

@@ -10,6 +10,8 @@
 
 use uuid::Uuid;
 
+use crate::core::midi::message::CONTROL_CHANGE;
+
 /// The two note edges the sequencer cares about. Derived from the MIDI status
 /// byte and velocity by [`Event::event_type`]; everything else (CC, sysex,
 /// realtime) is `None`.
@@ -173,7 +175,7 @@ impl Event {
     /// message.
     pub(crate) fn controller(&self) -> Option<u8> {
         match self.midi_message.as_slice() {
-            [status, cc, ..] if status & 0xF0 == 0xB0 => Some(*cc),
+            [status, cc, ..] if status & 0xF0 == CONTROL_CHANGE => Some(*cc),
             _ => None,
         }
     }

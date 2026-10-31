@@ -5,13 +5,10 @@
 //! (`SetKnobCcEdit`). The live CC a drag sends goes out through the view's
 //! live-input route, not from here.
 
+use crate::core::midi::message::control_change;
 use crate::models::knobs::{CC_VALUE_MAX, Knobs};
-use crate::models::track::TrackOutput;
 
 use super::Sequencer;
-
-/// A Control Change status byte, on channel 0 until it is sent.
-const CONTROL_CHANGE: u8 = 0xB0;
 
 impl Sequencer {
     /// Publishes the knob positions of the track at `track_idx` to its
@@ -61,23 +58,12 @@ impl Sequencer {
     /// keeps what its own state holds.
     pub(crate) fn send_knob_positions(&mut self) {
         for track_idx in 0..self.tracks.len() {
-            let track = &self.tracks[track_idx];
-            let slot = track.slot();
-            let channel = match *track.output() {
-                TrackOutput::MidiOut { channel } => Some(channel),
-                TrackOutput::Instrument(_) => None,
-            };
-            let knobs = *track.knobs();
-            for knob in knobs {
-                let Some(value) = knob.value else {
-                    continue;
-                };
-                let message = [CONTROL_CHANGE, knob.cc, value];
-                match channel {
-                    Some(channel) => self.send_midi_out_now(message.to_vec(), channel),
-                    None => self.push_instrument_now(slot, &message),
-                }
-            }
+            let messages = self.tracks[track_idx]
+                .knobs()
+                .iter()
+                .filter_map(|knob| Some(control_change(knob.cc, knob.value?).to_vec()))
+                .collect();
+            self.send_to_track_now(track_idx, messages);
         }
     }
 }

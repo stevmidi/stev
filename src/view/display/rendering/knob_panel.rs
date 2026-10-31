@@ -27,7 +27,7 @@ impl Display {
         painter.rect_filled(
             panel.translate(offset),
             CornerRadius::ZERO,
-            theme::bg_panel().gamma_multiply(0.8),
+            track_column_fill(),
         );
         // The column's lip on its grid side, as the track headers'.
         painter.vline(

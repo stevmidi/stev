@@ -5,6 +5,8 @@
 //! knob that never moved, so a plugin keeps what its own state holds. Pure
 //! data, unit-tested at the bottom of the file. See `390-knob-panel.md`.
 
+use crate::core::midi::message::MOD_WHEEL_CC;
+
 /// How many knobs a track has: two columns of four.
 pub(crate) const KNOB_COUNT: usize = 8;
 
@@ -12,9 +14,6 @@ pub(crate) const KNOB_COUNT: usize = 8;
 /// track's knobs are CC 14–21 — undefined or general-purpose in the MIDI
 /// spec, and right for Spire's macros with no setup (`390` decision 4).
 const FIRST_DEFAULT_CC: u8 = 14;
-
-/// The mod wheel, which has a lane of its own and is never a knob.
-const MOD_WHEEL_CC: u8 = 1;
 
 /// The first of the channel mode messages (120–127), which no knob may send.
 const FIRST_CHANNEL_MODE_CC: u8 = 120;
@@ -53,16 +52,12 @@ pub(crate) enum CcRefusal {
     Taken(usize),
 }
 
-/// Whether `cc` may be sent by any knob: `0..=119` but the mod wheel.
-pub(crate) fn is_knob_cc(cc: u8) -> bool {
-    cc != MOD_WHEEL_CC && cc < FIRST_CHANNEL_MODE_CC
-}
-
 /// Why knob `knob` of `knobs` can't send `cc`, or `None` when it can (its
 /// own number included). No two knobs of a track share a CC: both would
 /// claim the same data (`390` decision 5).
 pub(crate) fn cc_refusal(knobs: &Knobs, knob: usize, cc: u8) -> Option<CcRefusal> {
-    if !is_knob_cc(cc) {
+    // `0..=119` but the mod wheel, which has a lane of its own.
+    if cc == MOD_WHEEL_CC || cc >= FIRST_CHANNEL_MODE_CC {
         return Some(CcRefusal::Reserved);
     }
     knobs
