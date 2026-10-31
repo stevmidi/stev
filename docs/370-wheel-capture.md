@@ -11,7 +11,7 @@ What the code does today:
 - **Recorded, never committed alone.** Every bend and mod-wheel move on the armed track lands in the capture buffer (`090`), but "a take is its notes" (`100` § Invariants): every gate and window reads notes, and a buffer of wheel moves alone commits nothing (then `a_capture_of_wheel_moves_alone_commits_nothing`; phase 2 split it in two).
 - **Wheels ride inside the notes' window and are added.** A running insert brings the wheel moves in its window, the one after the last note-off included (`Clip::cloned_events_in_range`); the take session's Enter brings those from the window start to the last note-off (`TakeFraming::framed_events`). Both *add* them to the clip's own, so a second pass over a clip that already has a curve interleaves the two.
 - **Other controllers aren't recorded.** Sustain, other CCs and aftertouch play live only (`090`).
-- **Playback is already right.** `WheelTracker` (`src/models/wheels.rs`) chases the value in force on every seek, from `Clip::wheels_at`, which folds every wheel move before the playback point, the clip's material outside its window included.
+- **Playback is already right.** `WheelTracker` (`src/models/wheels.rs`; since `390` phase 2 `ControllerTracker` in `models/controllers.rs`) chases the value in force on every seek, from `Clip::controllers_at` (now `Clip::controllers_at`), which folds every wheel move before the playback point, the clip's material outside its window included.
 
 ## Decisions (2026-10-30)
 

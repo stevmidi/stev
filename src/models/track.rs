@@ -367,9 +367,10 @@ impl Track {
         std::mem::take(&mut self.knobs_moved)
     }
 
-    /// Whether `msg` moves a knob's CC that a drag holds — playback drops it.
-    fn is_held_by_hand(&self, msg: &[u8]) -> bool {
-        let Some((Controller::Cc(cc), _)) = parse_controller(msg) else {
+    /// Whether `controller` is a knob's CC that a drag holds — playback
+    /// drops its moves.
+    fn is_held_by_hand(&self, controller: Controller) -> bool {
+        let Controller::Cc(cc) = controller else {
             return false;
         };
         self.knobs
@@ -378,11 +379,11 @@ impl Track {
             .any(|(knob, held)| held && knob.cc == cc)
     }
 
-    /// Playback sent `msg`, unmuted: a controller move is now where the
-    /// synth sits, and one of a knob's CC moves the knob with it.
-    fn played_controller(&mut self, msg: &[u8]) {
-        self.controllers.observe(msg);
-        let Some((Controller::Cc(cc), value)) = parse_controller(msg) else {
+    /// Playback sent an unmuted move of `controller` to `value`: it is now
+    /// where the synth sits, and a knob's CC moves the knob with it.
+    fn played_controller(&mut self, controller: Controller, value: u16) {
+        self.controllers.observe(controller, value);
+        let Controller::Cc(cc) = controller else {
             return;
         };
         let value = Some(value as u8);
@@ -399,15 +400,16 @@ impl Track {
     /// Another CC in a clip (pasted, imported) plays as it comes and is never
     /// chased: a sustain pedal chased down by a seek would hold every note
     /// past the stop that releases it.
-    fn chase_controllers(&mut self, mut target: ControllerValues) {
-        let knobs = self.knobs;
-        target.retain(|controller| match controller {
-            Controller::PitchBend => true,
-            Controller::Cc(cc) => {
-                controller.rest().is_some() || knobs.iter().any(|knob| knob.cc == cc)
-            }
-        });
-        self.controllers.chase(&target);
+    fn chase_controllers(&mut self, target: &ControllerValues) {
+        let mut followed = [Controller::PitchBend; Controller::WHEELS.len() + KNOB_COUNT];
+        followed[..Controller::WHEELS.len()].copy_from_slice(&Controller::WHEELS);
+        for (slot, knob) in followed[Controller::WHEELS.len()..]
+            .iter_mut()
+            .zip(self.knobs)
+        {
+            *slot = Controller::Cc(knob.cc);
+        }
+        self.controllers.chase(target, &followed);
     }
 
     /// Returns the MIDI channel for this track. Instrument tracks play into the
@@ -620,7 +622,7 @@ impl Track {
                     self.pending_note_ons = clip.chased_note_ons_at(self.current_tick);
                     // A wheel held from that hidden material likewise.
                     let held = clip.controllers_at(self.current_tick);
-                    self.chase_controllers(held);
+                    self.chase_controllers(&held);
                     self.chased_start_tick = Some(self.current_tick);
                 }
                 // Anything staged on this very call — the release of the
@@ -633,11 +635,13 @@ impl Track {
                 // Play clip (MIDI events). A move of a knob's CC that a drag
                 // holds is dropped: the hand wins (`390` decision 7).
                 while let Some(event) = self.clips.get_mut(clip_idx).and_then(Clip::tick) {
-                    if !event.is_muted() {
-                        if self.is_held_by_hand(event.midi_message()) {
+                    if !event.is_muted()
+                        && let Some((controller, value)) = parse_controller(event.midi_message())
+                    {
+                        if self.is_held_by_hand(controller) {
                             continue;
                         }
-                        self.played_controller(event.midi_message());
+                        self.played_controller(controller, value);
                     }
                     return Some(event);
                 }
@@ -672,12 +676,12 @@ impl Track {
         if let Some(off) = self.pending_note_offs.pop() {
             return Some(off);
         }
-        while let Some(msg) = self.controllers.next_due() {
-            if self.is_held_by_hand(&msg) {
+        while let Some((controller, value)) = self.controllers.next_due() {
+            if self.is_held_by_hand(controller) {
                 continue;
             }
-            self.played_controller(&msg);
-            return Some(Event::from_midi(&msg));
+            self.played_controller(controller, value);
+            return Some(Event::from_midi(&controller.message(value)));
         }
         self.pending_note_ons.pop()
     }
@@ -877,7 +881,7 @@ impl Track {
         );
         if let Some((ons, controllers)) = chased {
             self.pending_note_ons.extend(ons);
-            self.chase_controllers(controllers);
+            self.chase_controllers(&controllers);
         }
         Some((result, moved))
     }
@@ -921,7 +925,7 @@ impl Track {
             self.current_clip_idx = None;
         }
 
-        self.chase_controllers(controllers);
+        self.chase_controllers(&controllers);
         self.current_tick = playback_tick;
     }
 }

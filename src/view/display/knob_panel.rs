@@ -435,7 +435,7 @@ impl Display {
             return;
         };
         self.knob_panel.wheel_turn = None;
-        self.send_knob_value(track_idx, knob, cc, from.unwrap_or(0), 0);
+        self.send_knob_value(track_idx, knob, cc, Some(from.unwrap_or(0)), 0);
     }
 
     /// A double-click in the knob panel: on a label, opens its CC field.
@@ -495,27 +495,26 @@ impl Display {
             return;
         }
         drag.value = value;
+        let from = drag.from.take();
         let KnobDrag {
             track_idx,
             knob,
             cc,
-            from,
             ..
         } = *drag;
-        drag.from = None;
-        self.send_knob_value(track_idx, knob, cc, from.unwrap_or(value), value);
+        self.send_knob_value(track_idx, knob, cc, from, value);
     }
 
     /// Knob `knob` of `track_idx`, sending `cc`, now stands at `value`: its
     /// CC goes out live, and the sequencer keeps the position. A gesture's
-    /// first move sends `from`, where the knob stood, just ahead of it — the
-    /// same value again, so nothing is heard, but the take records where the
-    /// turn started, which a clip with no earlier data for the CC plays
-    /// before it (`Clip::land_take`, `390-knob-panel.md` decision 9). Every
-    /// later move passes `from == value`, which sends nothing extra.
-    fn send_knob_value(&self, track_idx: usize, knob: usize, cc: u8, from: u8, value: u8) {
+    /// first move passes `from`, where the knob stood, sent just ahead of it
+    /// — the same value again, so nothing is heard, but the take records
+    /// where the turn started, which a clip with no earlier data for the CC
+    /// plays before it (`Clip::hold_cc_start_values`, `390-knob-panel.md`
+    /// decision 9). Every later move passes `None`.
+    fn send_knob_value(&self, track_idx: usize, knob: usize, cc: u8, from: Option<u8>, value: u8) {
         let mut messages = Vec::with_capacity(2);
-        if from != value {
+        if let Some(from) = from.filter(|&from| from != value) {
             messages.push(control_change(cc, from));
         }
         messages.push(control_change(cc, value));
@@ -579,13 +578,14 @@ impl Display {
         turn.last = now;
         let steps = take_steps(&mut turn.pending, fine);
         let value = (i32::from(turn.value) + steps).clamp(0, i32::from(CC_VALUE_MAX)) as u8;
-        let changed = value != turn.value;
-        turn.value = value;
-        let from = if changed { turn.from.take() } else { None };
-        self.knob_panel.wheel_turn = Some(turn);
-        if changed {
-            self.send_knob_value(track_idx, knob, turn.cc, from.unwrap_or(value), value);
+        if value == turn.value {
+            self.knob_panel.wheel_turn = Some(turn);
+            return;
         }
+        turn.value = value;
+        let from = turn.from.take();
+        self.knob_panel.wheel_turn = Some(turn);
+        self.send_knob_value(track_idx, knob, turn.cc, from, value);
     }
 
     /// Whether the panes' scroll (`InputEvent::TimelineScroll`) is the knob

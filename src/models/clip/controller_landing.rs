@@ -74,17 +74,26 @@ impl Clip {
     /// tick `tick` but not at or before it: its first move after `tick` is
     /// copied to `tick` — where the knob stood when the turn began — so the
     /// stretch before the turn plays that value, not whatever the end of the
-    /// last pass left. A new clip's counterpart of
-    /// [`carry_wheels_onto`](Self::carry_wheels_onto), called with the start
-    /// of what the clip keeps.
+    /// last pass left. Then the turn's start value, sent on the same tick as
+    /// its first move, goes from there
+    /// ([`drop_superseded_controller_moves`](Self::drop_superseded_controller_moves)).
+    /// A new clip's counterpart of [`carry_wheels_onto`](Self::carry_wheels_onto),
+    /// called with the start of what the clip keeps.
     pub(crate) fn hold_cc_start_values(&mut self, tick: i32) {
+        self.hold_start_values_of(tick, |_| true);
+    }
+
+    /// [`hold_cc_start_values`](Self::hold_cc_start_values) for the CCs
+    /// `holds` accepts only — a landing's, the ones its take moved into a
+    /// stretch the clip had no data for.
+    fn hold_start_values_of(&mut self, tick: i32, holds: impl Fn(Controller) -> bool) {
         let mut seen: Vec<Controller> = Vec::new();
         let mut starts = Vec::new();
         for event in self.events.iter().filter(|event| !event.is_muted()) {
             let Some((controller, _)) = parse_controller(event.midi_message()) else {
                 continue;
             };
-            if controller.rest().is_some() || seen.contains(&controller) {
+            if controller.is_wheel() || !holds(controller) || seen.contains(&controller) {
                 continue;
             }
             seen.push(controller);
@@ -92,22 +101,21 @@ impl Clip {
                 starts.push(Event::from_midi_with_tick(event.midi_message(), tick));
             }
         }
-        if starts.is_empty() {
-            return;
+        if !starts.is_empty() {
+            for event in starts {
+                self.add_event(event);
+            }
+            self.sort_events_by_tick();
         }
-        for event in starts {
-            self.add_event(event);
-        }
-        self.sort_events_by_tick();
+        self.drop_superseded_controller_moves();
     }
 
     /// Drops every controller move another move of the same controller
     /// follows on the same tick: only the last sounds. A turn's start value
-    /// goes out just ahead of its first move, on the same tick; once a take
-    /// has landed, the start value is either written at the window's start
-    /// or was in force already, and the move itself is all that's left to
-    /// keep there.
-    pub(crate) fn drop_superseded_controller_moves(&mut self) {
+    /// goes out just ahead of its first move, on the same tick; once held
+    /// from the window's start, or in force there already, the move itself
+    /// is all that's left to keep there.
+    fn drop_superseded_controller_moves(&mut self) {
         let superseded: Vec<bool> = self
             .events
             .iter()
@@ -138,17 +146,15 @@ impl Clip {
     /// `wheel_end` is written back there when the clip has one, it differs
     /// from the take's last and the clip doesn't move that controller exactly
     /// there anyway — unless `wheel_end` is the window's end, where the clip
-    /// loops and the chase at the wrap hands back. A CC with no rest that the
-    /// clip doesn't move before the take's first move gets that first move —
-    /// the value the knob turned from — at the window's start too, when the
-    /// take starts after it. Take moves at or past `wheel_end` are dropped,
-    /// and a move superseded on its own tick
-    /// ([`drop_superseded_controller_moves`](Self::drop_superseded_controller_moves)).
-    /// Re-sorted and note lengths recomputed.
+    /// loops and the chase at the wrap hands back. A CC with no rest the take
+    /// moves, which the clip has no move of before the take's first, is then
+    /// held from the window's start at the value the turn started from
+    /// ([`hold_cc_start_values`](Self::hold_cc_start_values)).
+    /// Take moves at or past `wheel_end` are dropped. Re-sorted and note
+    /// lengths recomputed.
     pub(crate) fn land_take(&mut self, take: &[Event], wheel_end: i32) {
         let (window_start, window_end) = (self.region().start(), self.region().end());
         let wheel_end = wheel_end.min(window_end);
-        let mut start_values = Vec::new();
 
         let mut controllers: Vec<Controller> = take
             .iter()
@@ -157,15 +163,15 @@ impl Clip {
             .collect();
         controllers.sort_by_key(|controller| controller.index());
         controllers.dedup();
+        // The CCs the clip has no data for before the take moves them: their
+        // stretch before the turn is held at its start value.
+        let mut unheld = Vec::new();
 
         for controller in controllers {
             let moves: Vec<(&Event, u16)> = take
                 .iter()
                 .filter(|event| event.tick() < wheel_end)
-                .filter_map(|event| match parse_controller(event.midi_message()) {
-                    Some((moved, value)) if moved == controller => Some((event, value)),
-                    _ => None,
-                })
+                .filter_map(|event| Some((event, move_value(event, controller)?)))
                 .collect();
             let (Some(first), Some(&(last, last_value))) = (
                 moves.iter().map(|(event, _)| event.tick()).min(),
@@ -173,15 +179,8 @@ impl Clip {
             ) else {
                 continue;
             };
-            if controller.rest().is_none()
-                && first > window_start
-                && self.last_move_before(controller, first).is_none()
-                && let Some((from, _)) = moves.iter().min_by_key(|(event, _)| event.tick())
-            {
-                start_values.push(Event::from_midi_with_tick(
-                    from.midi_message(),
-                    window_start,
-                ));
+            if self.last_move_before(controller, first).is_none() {
+                unheld.push(controller);
             }
             let channel = last.midi_channel().unwrap_or(0);
             self.replace_controller_span(
@@ -199,11 +198,8 @@ impl Clip {
                 self.add_event(event.clone());
             }
         }
-        for event in start_values {
-            self.add_event(event);
-        }
         self.sort_events_by_tick();
-        self.drop_superseded_controller_moves();
+        self.hold_start_values_of(window_start, |controller| unheld.contains(&controller));
         self.calculate_note_lengths();
     }
 
@@ -309,10 +305,7 @@ impl Clip {
             .iter()
             .take_while(|event| event.tick() < tick)
             .filter(|event| !event.is_muted())
-            .filter_map(|event| match parse_controller(event.midi_message()) {
-                Some((moved, value)) if moved == controller => Some((event, value)),
-                _ => None,
-            })
+            .filter_map(|event| Some((event, move_value(event, controller)?)))
             .last()
     }
 
@@ -332,9 +325,16 @@ impl Clip {
     }
 }
 
+/// The value `event` moves `controller` to, muted or not; `None` when it
+/// moves something else.
+fn move_value(event: &Event, controller: Controller) -> Option<u16> {
+    parse_controller(event.midi_message())
+        .and_then(|(moved, value)| (moved == controller).then_some(value))
+}
+
 /// Whether `event` moves `controller`, muted or not.
 fn is_move_of(event: &Event, controller: Controller) -> bool {
-    parse_controller(event.midi_message()).is_some_and(|(moved, _)| moved == controller)
+    move_value(event, controller).is_some()
 }
 
 #[cfg(test)]
@@ -739,7 +739,6 @@ mod tests {
         ]);
 
         clip.hold_cc_start_values(0);
-        clip.drop_superseded_controller_moves();
 
         assert_eq!(
             wheel_moves(&clip),
@@ -784,7 +783,7 @@ mod tests {
             knob(BAR + 100, 15, 60),
         ]);
         assert!(clip.carried_wheel_moves(BAR).iter().all(|event| {
-            parse_controller(event.midi_message()).is_some_and(|(c, _)| c.rest().is_some())
+            parse_controller(event.midi_message()).is_some_and(|(c, _)| c.is_wheel())
         }));
 
         clip.land_take(&[knob(600, 14, 90)], BAR * 2);

@@ -13,7 +13,7 @@ use std::sync::{Arc, atomic::AtomicI32};
 
 use uuid::Uuid;
 
-use crate::core::midi::message::{Controller, parse_wheel};
+use crate::core::midi::message::{Controller, parse_controller};
 use crate::models::{clip::Clip, event::EventType};
 
 /// One `NoteOn` as the piano roll draws it.
@@ -90,7 +90,7 @@ impl ClipView {
 
         let mut wheel_moves = WheelMoves::default();
         for event in clip.events().iter().filter(|event| !event.is_muted()) {
-            if let Some((wheel, value)) = parse_wheel(event.midi_message())
+            if let Some((wheel, value)) = parse_controller(event.midi_message())
                 && let Some(i) = wheel.wheel_index()
             {
                 wheel_moves.0[i].push((event.tick(), value));

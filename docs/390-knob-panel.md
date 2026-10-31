@@ -9,7 +9,7 @@ From a discussion on 2026-10-31. `370` and `380` gave the two wheels a capture r
 - **The mapping already exists, in the plugin.** A plugin either listens on fixed CCs (Spire's macros on 14–17) or has a MIDI learn of its own, and keeps the result in its own state. Stev only needs to send, record and play back the right CC number. A host-side map from a CC to a parameter ID is not needed for the plugins in use (§ Out of scope).
 - **Hardware comes later, through Stev's knobs.** A controller sends from a fixed template, and Stev rewriting the controller's mapping is not the answer. The right shape is a converter: a hardware encoder drives knob *n* of the selected track, so one fixed template plays whichever track is up. That only needs Stev's own knobs to exist first, so this design builds them and leaves hardware out (§ Out of scope).
 
-What the code does today: CCs other than CC1 arriving on the input are played live to the selected track's plugin (and MIDI Out thru) and never recorded (`090`). The clip model stores events as raw MIDI, so CC moves need no new storage. `Wheel` (`core/midi/message.rs`) is a two-variant enum, pitch bend and CC1, used by the capture buffer's filter, `Track`'s `WheelTracker` chase, `370`'s landing rule and `380`'s lanes.
+What the code did before phase 2: CCs other than CC1 arriving on the input are played live to the selected track's plugin (and MIDI Out thru) and never recorded (`090`). The clip model stores events as raw MIDI, so CC moves need no new storage. `Wheel` (`core/midi/message.rs`) is a two-variant enum, pitch bend and CC1, used by the capture buffer's filter, `Track`'s `WheelTracker` chase, `370`'s landing rule and `380`'s lanes.
 
 ## Decisions (2026-10-31)
 

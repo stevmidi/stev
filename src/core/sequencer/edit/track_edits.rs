@@ -493,13 +493,12 @@ mod tests {
     use crate::core::config::{MAX_TRACKS, TRACK_COLOR_COUNT, TRACK_VOLUME_DB_DEFAULT};
     use crate::core::midi::out_queue::MidiOutMessage;
     use crate::core::sequencer::test_support::{
-        clip_at, note_off, note_on, sequencer_with_outputs, stub_instrument, test_sequencer,
+        cc_at, clip_at, note_off, note_on, sequencer_with_outputs, stub_instrument, test_sequencer,
         track_colors,
     };
     use crate::core::sequencer::{
         ClipInstrumentEvent, DeleteInRangeEdit, EditResult, Sequencer, SequencerEdit,
     };
-    use crate::models::event::Event;
     use crate::models::knobs::CcRefusal;
     use crate::models::track::TrackOutput;
 
@@ -997,11 +996,6 @@ mod tests {
         // The clip's own note-off plays into the plugin, harmlessly; no
         // note-on reaches it.
         assert_eq!(plugin_events(&mut plugin_rx), vec![(1, [0x80, 60, 0])]);
-    }
-
-    /// A move of controller `cc` to `value` at `tick`.
-    fn cc_at(tick: i32, cc: u8, value: u8) -> Event {
-        Event::new(tick, 0, vec![0xB0, cc, value])
     }
 
     /// Every message in the clips of the track at `track_idx`, clip by clip.

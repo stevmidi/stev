@@ -15,7 +15,7 @@ use uuid::Uuid;
 use crate::{
     core::{
         config,
-        midi::message::{midi3, parse_wheel},
+        midi::message::{midi3, parse_controller},
         time,
     },
     models::{
@@ -191,7 +191,7 @@ impl Sequencer {
         if is_note_on(message) {
             self.capture_last_note_at = Some(Instant::now());
         }
-        if let Some((wheel, value)) = parse_wheel(message)
+        if let Some((wheel, value)) = parse_controller(message)
             && let Some(i) = wheel.wheel_index()
         {
             self.live_wheels[i] = (Some(value) != wheel.rest()).then(|| midi3(message));
@@ -467,7 +467,6 @@ impl Sequencer {
                 capture.relocate_late_notes_to_region_start(pass_start, pass_end, tolerance);
                 capture.carry_wheels_onto(pass_start);
                 capture.hold_cc_start_values(pass_start);
-                capture.drop_superseded_controller_moves();
                 capture.fold_into_loop(pass_start, pass_end, self.region_start(), loop_len);
 
                 let phase = (anchor_tick - self.region_start()).rem_euclid(loop_len);
@@ -485,7 +484,6 @@ impl Sequencer {
                 let retained_end = anchor_tick + self.linear_content_length(anchor_tick);
                 capture.carry_wheels_onto(retained_start);
                 capture.hold_cc_start_values(retained_start);
-                capture.drop_superseded_controller_moves();
 
                 capture
                     .region_mut()

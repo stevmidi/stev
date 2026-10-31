@@ -86,6 +86,12 @@ impl Controller {
         }
     }
 
+    /// Whether the controller is one of the two wheels — the ones with a
+    /// [`rest`](Self::rest).
+    pub(crate) const fn is_wheel(self) -> bool {
+        self.rest().is_some()
+    }
+
     /// The controller's position in [`WHEELS`](Self::WHEELS), `None` for a
     /// CC that isn't the mod wheel.
     pub(crate) fn wheel_index(self) -> Option<usize> {
@@ -141,7 +147,7 @@ pub(crate) fn parse_controller(msg: &[u8]) -> Option<(Controller, u16)> {
 /// The wheel `msg` moves — pitch bend or the mod wheel — and its value, or
 /// `None` for anything else, any other CC included.
 pub(crate) fn parse_wheel(msg: &[u8]) -> Option<(Controller, u16)> {
-    parse_controller(msg).filter(|(controller, _)| controller.rest().is_some())
+    parse_controller(msg).filter(|(controller, _)| controller.is_wheel())
 }
 
 /// Reassembles pitch bend's 14-bit value from its LSB-then-MSB pair.

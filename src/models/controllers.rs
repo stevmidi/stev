@@ -51,16 +51,6 @@ impl ControllerValues {
         }
     }
 
-    /// Forgets every move of a controller `keep` refuses, as though nothing
-    /// had moved it.
-    pub(crate) fn retain(&mut self, keep: impl Fn(Controller) -> bool) {
-        for (index, value) in self.0.iter_mut().enumerate() {
-            if !keep(Controller::from_index(index)) {
-                *value = None;
-            }
-        }
-    }
-
     /// Every controller something moved, with the value it moved to.
     pub(crate) fn moved(&self) -> impl Iterator<Item = (Controller, u16)> + '_ {
         self.0
@@ -101,27 +91,31 @@ impl Default for ControllerTracker {
 }
 
 impl ControllerTracker {
-    /// Records a clip event the track just played: a controller message is
-    /// that controller's value now; anything else is ignored.
-    pub(crate) fn observe(&mut self, msg: &[u8]) {
-        if let Some((controller, value)) = parse_controller(msg) {
-            self.sent[controller.index()] = Some(value);
-        }
+    /// Records a clip move the track just played: `controller` is at
+    /// `value` now.
+    pub(crate) fn observe(&mut self, controller: Controller, value: u16) {
+        self.sent[controller.index()] = Some(value);
     }
 
     /// Playback moved to where `target` is in force (a seek, a re-seek onto
     /// another clip or into a gap, the arrival at a clip's start): due is
-    /// every controller with a value there not already at it. A wheel the
-    /// track never sent counts as at rest, so a plain note track sends
-    /// nothing, and a wheel the player moved is only taken over by a clip
-    /// value. A CC with no value in `target` is left where it is.
-    pub(crate) fn chase(&mut self, target: &ControllerValues) {
-        self.any_due = false;
-        for (index, due) in self.due.iter_mut().enumerate() {
-            let controller = Controller::from_index(index);
-            *due = target
+    /// every controller of `followed` with a value there not already at it,
+    /// and nothing else. A wheel the track never sent counts as at rest, so a
+    /// plain note track sends nothing, and a wheel the player moved is only
+    /// taken over by a clip value. A CC with no value in `target` is left
+    /// where it is. Only `followed` is visited — a seek runs every tick once
+    /// playback is past a track's last clip.
+    pub(crate) fn chase(&mut self, target: &ControllerValues, followed: &[Controller]) {
+        if self.any_due {
+            self.due = [None; Controller::COUNT];
+            self.any_due = false;
+        }
+        for &controller in followed {
+            let index = controller.index();
+            let due = target
                 .get(controller)
                 .filter(|&value| self.sent[index].or(controller.rest()) != Some(value));
+            self.due[index] = due;
             self.any_due |= due.is_some();
         }
     }
@@ -138,9 +132,11 @@ impl ControllerTracker {
         }
     }
 
-    /// The next due message (channel 0, for the output to rewrite), recorded
-    /// as sent. `None` when nothing is due.
-    pub(crate) fn next_due(&mut self) -> Option<Vec<u8>> {
+    /// The next due controller and its value, taken off the due list —
+    /// recorded as sent once the caller [`observe`](Self::observe)s it, which
+    /// it skips for a value it drops (a knob a drag holds). `None` when
+    /// nothing is due.
+    pub(crate) fn next_due(&mut self) -> Option<(Controller, u16)> {
         if !self.any_due {
             return None;
         }
@@ -149,8 +145,7 @@ impl ControllerTracker {
             return None;
         };
         let value = self.due[index].take()?;
-        self.sent[index] = Some(value);
-        Some(Controller::from_index(index).message(value))
+        Some((Controller::from_index(index), value))
     }
 
     /// For a transport stop or a track leaving the arrangement: a message
@@ -189,8 +184,29 @@ mod tests {
     const MOD_HALF: [u8; 3] = [0xB0, 0x01, 64];
     const KNOB_HALF: [u8; 3] = [0xB0, 14, 64];
 
+    /// The wheels and one knob's CC, as a track with a knob on CC 14
+    /// follows them.
+    const FOLLOWED: [Controller; 3] = [
+        Controller::PitchBend,
+        Controller::MOD_WHEEL,
+        Controller::Cc(14),
+    ];
+
+    /// Records a played message, as the track does.
+    fn observe(tracker: &mut ControllerTracker, msg: &[u8]) {
+        if let Some((controller, value)) = parse_controller(msg) {
+            tracker.observe(controller, value);
+        }
+    }
+
+    /// Sends everything due, as the track does: each recorded as sent.
     fn drain(tracker: &mut ControllerTracker) -> Vec<Vec<u8>> {
-        std::iter::from_fn(|| tracker.next_due()).collect()
+        let mut sent = Vec::new();
+        while let Some((controller, value)) = tracker.next_due() {
+            tracker.observe(controller, value);
+            sent.push(controller.message(value));
+        }
+        sent
     }
 
     /// Values with the bend at `bend` and the mod wheel at `modulation`.
@@ -204,8 +220,8 @@ mod tests {
     #[test]
     fn an_untouched_track_chased_to_rest_sends_nothing() {
         let mut tracker = ControllerTracker::default();
-        tracker.observe(&[0x90, 60, 100]);
-        tracker.chase(&ControllerValues::default());
+        observe(&mut tracker, &[0x90, 60, 100]);
+        tracker.chase(&ControllerValues::default(), &FOLLOWED);
         assert!(drain(&mut tracker).is_empty());
         assert!(tracker.take_resets().is_empty());
     }
@@ -213,50 +229,50 @@ mod tests {
     #[test]
     fn a_chase_sends_only_the_controllers_not_already_there() {
         let mut tracker = ControllerTracker::default();
-        tracker.observe(&MOD_HALF);
+        observe(&mut tracker, &MOD_HALF);
         // Land where the clip holds a bend and the mod wheel is at rest.
-        tracker.chase(&wheels(0x3000, 0));
+        tracker.chase(&wheels(0x3000, 0), &FOLLOWED);
         assert_eq!(
             drain(&mut tracker),
             vec![BEND_UP.to_vec(), vec![0xB0, 0x01, 0]]
         );
 
         // Already there: nothing, however often playback re-seeks.
-        tracker.chase(&wheels(0x3000, 0));
+        tracker.chase(&wheels(0x3000, 0), &FOLLOWED);
         assert!(drain(&mut tracker).is_empty());
     }
 
     #[test]
     fn a_later_chase_replaces_what_an_earlier_one_left_due() {
         let mut tracker = ControllerTracker::default();
-        tracker.observe(&BEND_UP);
-        tracker.chase(&ControllerValues::default());
-        tracker.chase(&wheels(0x3000, 0));
+        observe(&mut tracker, &BEND_UP);
+        tracker.chase(&ControllerValues::default(), &FOLLOWED);
+        tracker.chase(&wheels(0x3000, 0), &FOLLOWED);
         assert!(drain(&mut tracker).is_empty());
-        tracker.chase(&ControllerValues::default());
+        tracker.chase(&ControllerValues::default(), &FOLLOWED);
         assert_eq!(drain(&mut tracker), vec![BEND_CENTRE.to_vec()]);
     }
 
     #[test]
     fn after_an_invalidate_a_chase_resends_what_the_track_sent() {
         let mut tracker = ControllerTracker::default();
-        tracker.observe(&BEND_UP);
-        tracker.observe(&BEND_CENTRE);
+        observe(&mut tracker, &BEND_UP);
+        observe(&mut tracker, &BEND_CENTRE);
         tracker.invalidate();
-        tracker.chase(&ControllerValues::default());
+        tracker.chase(&ControllerValues::default(), &FOLLOWED);
         assert_eq!(drain(&mut tracker), vec![BEND_CENTRE.to_vec()]);
         // A wheel it never sent stays untouched.
         tracker.invalidate();
-        tracker.chase(&ControllerValues::default());
+        tracker.chase(&ControllerValues::default(), &FOLLOWED);
         assert_eq!(drain(&mut tracker), vec![BEND_CENTRE.to_vec()]);
     }
 
     #[test]
     fn a_stop_resets_every_wheel_sent_once_and_drops_what_was_due() {
         let mut tracker = ControllerTracker::default();
-        tracker.observe(&BEND_UP);
-        tracker.observe(&BEND_CENTRE);
-        tracker.chase(&wheels(0x2000, 90));
+        observe(&mut tracker, &BEND_UP);
+        observe(&mut tracker, &BEND_CENTRE);
+        tracker.chase(&wheels(0x2000, 90), &FOLLOWED);
         assert_eq!(tracker.take_resets(), vec![BEND_CENTRE.to_vec()]);
         assert!(tracker.next_due().is_none());
         assert!(tracker.take_resets().is_empty());
@@ -265,7 +281,7 @@ mod tests {
     #[test]
     fn a_sent_chase_counts_as_sent() {
         let mut tracker = ControllerTracker::default();
-        tracker.chase(&wheels(0x2000, 90));
+        tracker.chase(&wheels(0x2000, 90), &FOLLOWED);
         drain(&mut tracker);
         assert_eq!(tracker.take_resets(), vec![vec![0xB0, 0x01, 0]]);
     }
@@ -273,18 +289,18 @@ mod tests {
     #[test]
     fn a_wheel_the_player_moved_last_is_left_alone() {
         let mut tracker = ControllerTracker::default();
-        tracker.observe(&BEND_UP);
-        tracker.observe(&MOD_HALF);
+        observe(&mut tracker, &BEND_UP);
+        observe(&mut tracker, &MOD_HALF);
         tracker.hand_to_player(&[0xB3, 0x01, 20]);
         // Stop resets the bend the clip left, not the player's mod wheel.
         assert_eq!(tracker.take_resets(), vec![BEND_CENTRE.to_vec()]);
 
-        tracker.observe(&MOD_HALF);
+        observe(&mut tracker, &MOD_HALF);
         tracker.hand_to_player(&[0xB0, 0x01, 20]);
         // A seek to rest doesn't pull it back either; a clip value does.
-        tracker.chase(&ControllerValues::default());
+        tracker.chase(&ControllerValues::default(), &FOLLOWED);
         assert!(drain(&mut tracker).is_empty());
-        tracker.chase(&wheels(0x2000, 64));
+        tracker.chase(&wheels(0x2000, 64), &FOLLOWED);
         assert_eq!(drain(&mut tracker), vec![MOD_HALF.to_vec()]);
     }
 
@@ -293,40 +309,48 @@ mod tests {
     #[test]
     fn a_cc_with_no_rest_is_never_reset_and_only_chased_to_data() {
         let mut tracker = ControllerTracker::default();
-        tracker.observe(&KNOB_HALF);
-        tracker.observe(&BEND_UP);
+        observe(&mut tracker, &KNOB_HALF);
+        observe(&mut tracker, &BEND_UP);
         assert_eq!(tracker.take_resets(), vec![BEND_CENTRE.to_vec()]);
 
-        tracker.chase(&ControllerValues::default());
+        tracker.chase(&ControllerValues::default(), &FOLLOWED);
         assert!(drain(&mut tracker).is_empty());
 
         let mut target = ControllerValues::default();
         target.set(Controller::Cc(14), 100);
-        tracker.chase(&target);
+        tracker.chase(&target, &FOLLOWED);
         assert_eq!(drain(&mut tracker), vec![vec![0xB0, 14, 100]]);
-        tracker.chase(&target);
+        tracker.chase(&target, &FOLLOWED);
         assert!(drain(&mut tracker).is_empty());
 
         // A CC the track never sent goes out when a clip has data for it.
         let mut fresh = ControllerTracker::default();
-        fresh.chase(&target);
+        fresh.chase(&target, &FOLLOWED);
         assert_eq!(drain(&mut fresh), vec![vec![0xB0, 14, 100]]);
     }
 
     #[test]
-    fn values_keep_a_wheels_rest_and_forget_what_is_not_retained() {
+    fn values_keep_a_wheels_rest_and_a_ccs_last_move() {
         let mut values = ControllerValues::default();
         assert_eq!(values.get(Controller::PitchBend), Some(0x2000));
         assert_eq!(values.get(Controller::Cc(14)), None);
         values.apply(&Event::new(0, 0, KNOB_HALF.to_vec()));
-        values.apply(&Event::new(0, 0, vec![0xB0, 64, 127]));
         assert_eq!(values.get(Controller::Cc(14)), Some(64));
-        values.retain(|controller| controller == Controller::Cc(14));
-        assert_eq!(values.get(Controller::Cc(14)), Some(64));
-        assert_eq!(values.get(Controller::Cc(64)), None);
         assert_eq!(
             values.moved().collect::<Vec<_>>(),
             vec![(Controller::Cc(14), 64)]
         );
+    }
+
+    /// A controller the track doesn't follow (a sustain pedal in an
+    /// imported clip) is never chased.
+    #[test]
+    fn a_chase_visits_only_the_followed_controllers() {
+        let mut tracker = ControllerTracker::default();
+        let mut target = ControllerValues::default();
+        target.set(Controller::Cc(14), 90);
+        target.set(Controller::Cc(64), 127);
+        tracker.chase(&target, &FOLLOWED);
+        assert_eq!(drain(&mut tracker), vec![vec![0xB0, 14, 90]]);
     }
 }
