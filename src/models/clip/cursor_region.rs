@@ -289,6 +289,7 @@ impl Clip {
         current_tempo: i32,
         meter: Meter,
     ) -> EventSpaceRetime {
+        let cursor_on_end = self.cursor_tick() == self.region.end();
         let region_start =
             Self::adjust_tick_to_tempo(self.region.start(), clip_tempo, current_tempo);
         let region_end = Self::adjust_tick_to_tempo(self.region.end(), clip_tempo, current_tempo);
@@ -316,13 +317,17 @@ impl Clip {
             ));
         }
         // The cursor lives in the same event space, so it moves with the
-        // notes: it stays on the musical point it was on (after a first-clip
-        // fit, exactly on the new end the user set).
-        self.set_cursor_tick(Self::adjust_tick_to_tempo(
-            self.cursor_tick(),
-            clip_tempo,
-            current_tempo,
-        ));
+        // notes: it stays on the musical point it was on. One on the window's
+        // end (where `]` leaves it, so after a first-clip fit) stays on the
+        // end the bar snap set, rather than a few ticks inside the window
+        // when the snap moved the end later — a running `/` anchors on the
+        // clip cursor and would drop everything played before it.
+        let cursor = if cursor_on_end {
+            self.region.end()
+        } else {
+            Self::adjust_tick_to_tempo(self.cursor_tick(), clip_tempo, current_tempo)
+        };
+        self.set_cursor_tick(cursor);
 
         self.sort_events_by_tick();
         self.calculate_note_lengths();
@@ -648,6 +653,22 @@ mod tests {
             clip.cursor_tick(),
             "still on the note"
         );
+    }
+
+    /// A cursor on the window's end — where `]` leaves it — stays on the end
+    /// when the retime snaps the end to a whole bar, either way: never left
+    /// just inside the window, where a running `/` would anchor every take
+    /// a few ticks before the clip's end and drop what came before it.
+    #[test]
+    fn a_tempo_retime_keeps_a_cursor_on_the_end_on_the_snapped_end() {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        for length in [bar * 2 - 300, bar * 2 + 300] {
+            let mut clip = make_clip(0, 0, length);
+            clip.set_cursor_tick(length);
+            clip.adjust_to_tempo(500_000, 500_000, Meter::FOUR_FOUR);
+            assert_eq!(clip.region().end(), bar * 2);
+            assert_eq!(clip.cursor_tick(), clip.region().end(), "length {length}");
+        }
     }
 
     /// A tempo retime snaps the window to whole bars of the project's
