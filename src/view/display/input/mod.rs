@@ -15,6 +15,7 @@ use crate::core::project::{ProjectAction, clip_path};
 use crate::core::time::PPQN;
 
 mod gestures;
+mod knob_focus;
 mod midi_drag;
 mod modal;
 mod plugin_drag;
@@ -450,8 +451,11 @@ impl Display {
             self.key_focus = KeyFocus::Pane;
         }
         // Leaving the clip view takes the keyboard from the wheel lane, and
-        // its span with it.
-        if !in_clip_view && self.input_was_clip_view && self.key_focus == KeyFocus::WheelLane {
+        // its span with it, and from the knob panel.
+        if !in_clip_view
+            && self.input_was_clip_view
+            && matches!(self.key_focus, KeyFocus::WheelLane | KeyFocus::KnobPanel)
+        {
             self.key_focus = KeyFocus::Pane;
         }
         self.drop_stale_wheel_span();
@@ -482,6 +486,9 @@ impl Display {
                     }
                     KeyFocus::WheelLane if self.wheel_lane_has_keyboard() => {
                         self.handle_wheel_lane_key(&event)
+                    }
+                    KeyFocus::KnobPanel if self.knob_panel_has_keyboard() => {
+                        self.handle_knob_panel_key(&event)
                     }
                     _ => false,
                 }
@@ -933,8 +940,8 @@ impl Display {
                     self.handle_browser_click(x, y, false);
                     return true;
                 }
-                // The knob panel never takes the keyboard, not even back
-                // from the browser panel.
+                // The knob panel takes the keyboard only for a click that
+                // selects a knob (`select_knob`); a turn never.
                 if self.is_over_knob_panel(x, y) {
                     self.handle_knob_panel_click(x, y, modifiers.command);
                     return true;

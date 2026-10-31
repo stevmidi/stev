@@ -61,16 +61,6 @@ impl Display {
             Stroke::new(1.0_f32, grid_seam_color()),
         );
 
-        // The header column with the keyboard: the docked panes' focus edge
-        // (`draw_pane_split`), across the top of the column only.
-        if self.track_headers_have_keyboard() {
-            painter.hline(
-                rect.min.x..=(rect.min.x + labels_right),
-                column_top,
-                focus_edge_stroke(),
-            );
-        }
-
         self.draw_performance_lane_row(
             painter,
             rect,

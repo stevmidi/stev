@@ -76,10 +76,12 @@ impl Display {
         self.render.clip_lane.controller(knob_ccs)
     }
 
-    /// Shows `lane` under the piano roll — a gutter label, a knob label or
-    /// `W`. Velocity gives the keyboard back to the notes; a switch between
-    /// two controllers keeps the focus but drops the span, which was the
-    /// other one's.
+    /// Shows `lane` under the piano roll — a gutter label, a knob or `W`.
+    /// Velocity gives the keyboard back to the notes; a switch between two
+    /// controllers keeps the lane's focus but drops the span, which was the
+    /// other one's. A switch away from the knobs' lanes takes the keyboard
+    /// from the knob panel, whose selected knob is the one shown; from one
+    /// knob's lane to another's the selection follows.
     pub(in crate::view::display) fn set_clip_lane(&mut self, lane: ClipLane) {
         if lane == self.render.clip_lane {
             return;
@@ -87,6 +89,9 @@ impl Display {
         self.render.clip_lane = lane;
         self.clear_wheel_span();
         if lane == ClipLane::Velocity && self.key_focus == KeyFocus::WheelLane {
+            self.key_focus = KeyFocus::Pane;
+        }
+        if !matches!(lane, ClipLane::Knob(_)) && self.key_focus == KeyFocus::KnobPanel {
             self.key_focus = KeyFocus::Pane;
         }
     }

@@ -476,8 +476,13 @@ const FIXED: &[FixedGroup] = &[
             ("Scroll", "Turn the knob under the pointer"),
             ("⇧ drag / scroll", "Turn it in fine steps"),
             ("⌘ click", "Turn the knob back to 0"),
-            ("Click", "On a CC label: show its lane under the notes"),
+            (
+                "Click",
+                "On a knob or its CC label: select it and show its lane",
+            ),
             ("Double-click", "On a CC label: type the knob's CC"),
+            ("Delete", "With a knob selected: clear its CC from the clip"),
+            ("Esc", "With a knob selected: give back the keyboard"),
         ],
     ),
     (

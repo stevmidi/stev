@@ -79,10 +79,11 @@ const MOVING_FRAME: Duration = Duration::from_millis(33);
 /// Thickness of the accent along the top of the docked pane with the keyboard.
 const FOCUS_EDGE_W: f32 = 2.0;
 
-/// The keyboard-focus edge: along the top of the focused docked pane
-/// (`draw_pane_split`), or of the track-header column or the browser panel
-/// while it has the keyboard (`draw_arranger_backgrounds`, `draw_browser`);
-/// and the rename field's outline.
+/// The keyboard-focus edge: along the top of the focused docked pane, right
+/// of its column (`draw_pane_split`), or of the track-header column, the knob panel or the
+/// browser panel while it has the keyboard (`draw_column_focus_edge`,
+/// `draw_browser`); under the selected knob's label; and the rename field's
+/// outline.
 pub(super) fn focus_edge_stroke() -> Stroke {
     Stroke::new(FOCUS_EDGE_W, theme::accent().gamma_multiply(0.7))
 }
@@ -828,8 +829,9 @@ impl Display {
     }
 
     /// With the clip view docked: the split line in the gap between the two
-    /// panes, and a thin accent along the top of the pane with the keyboard
-    /// (unless the track headers or the browser panel have it).
+    /// panes, and a thin accent along the top of the pane with the keyboard,
+    /// right of its column (unless the track headers, the knob panel or the
+    /// browser panel have it).
     /// Nothing with one pane showing — it has the whole lane area and the
     /// keyboard both.
     fn draw_pane_split(&self, painter: &Painter, panes: PaneRects, rect: Rect) {
@@ -843,20 +845,46 @@ impl Display {
             split_y,
             Stroke::new(1.0, theme::separator()),
         );
-        // The header column and the browser panel draw their own edge while
-        // they have the keyboard (`draw_arranger_backgrounds`,
+        // The header column, the knob panel and the browser panel draw their
+        // own edge while they have the keyboard (`draw_column_focus_edge`,
         // `draw_browser`): one edge, on what the keys act on.
         if self.key_owner() != KeyFocus::Pane {
             return;
         }
-        let focused = if self.focused_pane() == Pane::Clip {
-            clip
+        // Over what the keys act on only: the clip view right of the knob
+        // panel, the arranger's grid right of its track headers. The two
+        // columns have edges of their own (`draw_column_focus_edge`), so the
+        // four never overlap.
+        let (focused, left) = if self.focused_pane() == Pane::Clip {
+            (clip, clip.min.x)
         } else {
-            arranger
+            (arranger, arranger.min.x + Self::KNOB_COLUMN_W)
         };
         painter.hline(
-            focused.min.x + offset.x..=focused.max.x + offset.x,
+            left + offset.x..=focused.max.x + offset.x,
             focused.min.y + offset.y,
+            focus_edge_stroke(),
+        );
+    }
+
+    /// The track-header column or the knob panel with the keyboard: the
+    /// panes' focus edge across the top of that column only, in every
+    /// layout. Drawn here, over the panes and unclipped, so it has the
+    /// pane edge's full width: a pane's clipped painter would cut off the
+    /// half above its top.
+    fn draw_column_focus_edge(&self, painter: &Painter, panes: PaneRects, rect: Rect) {
+        let column = match self.key_owner() {
+            KeyFocus::TrackHeaders => panes.arranger,
+            KeyFocus::KnobPanel => panes.knobs,
+            _ => None,
+        };
+        let Some(column) = column else {
+            return;
+        };
+        let left = column.min.x + rect.min.x;
+        painter.hline(
+            left..=(left + Self::KNOB_COLUMN_W - Self::TRACK_COLUMN_GRID_GAP_X),
+            column.min.y + rect.min.y,
             focus_edge_stroke(),
         );
     }
@@ -1440,8 +1468,11 @@ impl eframe::App for Display {
                         self.in_pane(pane, |display| display.draw_pane(&clipped, rect));
                     }
                 }
-                self.draw_pane_split(painter, panes, rect);
+                // The knob panel first: its fill would cover the lower half
+                // of a focus edge along its top.
                 self.draw_knob_panel(painter, rect);
+                self.draw_pane_split(painter, panes, rect);
+                self.draw_column_focus_edge(painter, panes, rect);
                 let hint = self.footer_hint();
                 self.draw_status_bar(painter, hint.as_deref());
                 self.show_track_rename(ui);

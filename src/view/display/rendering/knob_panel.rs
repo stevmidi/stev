@@ -14,6 +14,8 @@ use super::*;
 use crate::core::midi::message::Controller;
 use crate::view::display::knob_panel::{KnobRects, LABEL_FONT_SIZE, SWEEP, knob_angle};
 
+/// Points between a selected knob's label and the focus edge under it.
+const SELECTED_UNDERLINE_GAP: f32 = 2.0;
 /// The width of a dial's trough and value arc.
 const ARC_W: f32 = 3.0;
 /// The arc's points per full turn — smooth at the largest dial.
@@ -40,7 +42,11 @@ impl Display {
         );
         let accent = self.track_color(self.selected_track_idx);
         let switches = self.knob_labels_switch_lanes();
-        let hovered = self.knob_label_under_pointer();
+        let hovered = self.knob_under_pointer();
+        let selected = match self.render.clip_lane {
+            ClipLane::Knob(knob) if self.knob_panel_has_keyboard() => Some(knob),
+            _ => None,
+        };
         for (knob, rects) in knobs.iter().enumerate() {
             let Some((cc, value)) = self.knob_shown(knob) else {
                 continue;
@@ -71,6 +77,15 @@ impl Display {
             );
             if switches && self.lead_clip_moves(Controller::Cc(cc)) {
                 self.draw_lane_marker(painter, label, color);
+            }
+            // The selected knob, while the panel has the keyboard: the focus
+            // edge under its label (`390-knob-panel.md` decision 14).
+            if selected == Some(knob) {
+                painter.hline(
+                    label.x_range(),
+                    label.max.y + SELECTED_UNDERLINE_GAP,
+                    focus_edge_stroke(),
+                );
             }
         }
     }

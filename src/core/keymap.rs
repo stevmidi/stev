@@ -899,6 +899,19 @@ impl Action {
             )
     }
 
+    /// Whether this action, pressed while the knob panel has the keyboard,
+    /// takes it back to the notes and acts there
+    /// (`Display::handle_knob_panel_key`, `390-knob-panel.md` decision 14)
+    /// — the wheel lane's rule ([`leaves_wheel_lane`](Self::leaves_wheel_lane))
+    /// for the selected knob. Every clip-view command does, Select all notes
+    /// among them (the panel has no span to mark), but Delete notes, which
+    /// the panel reads as clearing the knob's CC, and the lane switch, which
+    /// moves the selection along the knobs.
+    pub(crate) fn leaves_knob_panel(self) -> bool {
+        self.info().scope == Scope::Clip
+            && !matches!(self, Action::DeleteNotes | Action::CycleClipLane)
+    }
+
     /// This action's index in [`ACTIONS`].
     fn index(self) -> usize {
         ACTIONS
@@ -1381,6 +1394,30 @@ mod tests {
             Action::ZoomIn,
         ] {
             assert!(!action.leaves_wheel_lane(), "{action:?}");
+        }
+    }
+
+    /// The clip view's commands hand the keyboard back from the knob panel,
+    /// ⌘A among them; Delete, the lane switch, the transport, undo and the
+    /// zoom stay with it.
+    #[test]
+    fn clip_commands_leave_the_knob_panel() {
+        for action in [
+            Action::MuteNotes,
+            Action::Quantize,
+            Action::SelectAllNotes,
+            Action::DuplicateNotes,
+        ] {
+            assert!(action.leaves_knob_panel(), "{action:?}");
+        }
+        for action in [
+            Action::DeleteNotes,
+            Action::CycleClipLane,
+            Action::TogglePlayback,
+            Action::Undo,
+            Action::ZoomIn,
+        ] {
+            assert!(!action.leaves_knob_panel(), "{action:?}");
         }
     }
 

@@ -31,6 +31,11 @@ pub(super) enum KeyFocus {
     /// effective in the clip view with a wheel lane shown
     /// (`380-wheel-lane.md` decision 14).
     WheelLane,
+    /// The knob panel (a click on a knob with a clip open), the knob whose
+    /// lane is shown selected, so `Delete` clears its CC from the clip.
+    /// Only effective in the clip view with a knob's lane shown
+    /// (`390-knob-panel.md` decision 14).
+    KnobPanel,
 }
 
 /// The clip panel's height: the whole lane area, or a band docked below the
@@ -110,7 +115,8 @@ pub(super) struct PaneRects {
     pub(super) clip: Option<Rect>,
     /// The knob panel's column, left of the clip view and as tall: shown
     /// whenever the clip view is (`390-knob-panel.md` decision 3). Not a
-    /// pane — it never takes the keyboard.
+    /// pane, but a focus of its own, as the track-header column is
+    /// (`KeyFocus::KnobPanel`).
     pub(super) knobs: Option<Rect>,
 }
 

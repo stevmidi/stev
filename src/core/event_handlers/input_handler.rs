@@ -510,6 +510,10 @@ impl EventHandlers {
                 });
             }
 
+            InputEvent::ClearEventSelection => {
+                self.send_sequencer(SequencerCommand::ClearEventSelection);
+            }
+
             InputEvent::ClearControllerSpan {
                 controller,
                 start,
@@ -864,6 +868,18 @@ mod tests {
         assert!(matches!(
             h.sequencer_commands.try_recv(),
             Ok(SequencerCommand::Commit)
+        ));
+    }
+
+    /// A knob click's deselect reaches the sequencer as Esc's does.
+    #[test]
+    fn clearing_the_event_selection_clears_it() {
+        let h = harness();
+        h.handlers
+            .handle_input_event(&InputEvent::ClearEventSelection);
+        assert!(matches!(
+            h.sequencer_commands.try_recv(),
+            Ok(SequencerCommand::ClearEventSelection)
         ));
     }
 }

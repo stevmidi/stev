@@ -640,9 +640,9 @@ impl Display {
     }
 
     /// The surface the keys act on — `key_focus`, with a header focus left
-    /// over from before the clip view took the keyboard, or a wheel-lane
-    /// focus from before the arranger did or the lane showed velocity, read
-    /// as the pane. The one owner the focus edge marks (`focus_edge_stroke`).
+    /// over from before the clip view took the keyboard, or a wheel-lane or
+    /// knob-panel focus from before the arranger did or the lane switched
+    /// away, read as the pane. The one owner the focus edge marks (`focus_edge_stroke`).
     fn key_owner(&self) -> KeyFocus {
         match self.key_focus {
             KeyFocus::TrackHeaders if self.view_state() != ViewState::Arranger => KeyFocus::Pane,
@@ -652,8 +652,20 @@ impl Display {
             {
                 KeyFocus::Pane
             }
+            KeyFocus::KnobPanel
+                if !self.view_state().is_clip_view()
+                    || !matches!(self.render.clip_lane, ClipLane::Knob(_)) =>
+            {
+                KeyFocus::Pane
+            }
             focus => focus,
         }
+    }
+
+    /// Whether the knob panel has the keyboard: a knob clicked, its lane
+    /// still shown in the clip view.
+    fn knob_panel_has_keyboard(&self) -> bool {
+        self.key_owner() == KeyFocus::KnobPanel
     }
 
     /// Whether the track-header column has the keyboard: focused by a click,
