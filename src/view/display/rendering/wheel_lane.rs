@@ -85,13 +85,13 @@ impl Display {
         let gutter = self.lane_gutter_rect(geom);
         let hovered = self.canvas_pointer().and_then(|p| lane_label_in(gutter, p));
         let font = FontId::proportional(theme::FONT_SIZE_TL);
-        for (i, lane) in ClipLane::GUTTER.into_iter().enumerate() {
+        for (i, (lane, text)) in ClipLane::GUTTER.into_iter().enumerate() {
             let row = lane_label_row(gutter, i);
             let color = toggle_icon_color(lane == self.render.clip_lane, hovered == Some(lane));
             let label = painter.text(
                 pos2(row.left() + Self::LANE_LABEL_INSET_X, row.center().y),
                 Align2::LEFT_CENTER,
-                lane.gutter_label().unwrap_or_default(),
+                text,
                 font.clone(),
                 color,
             );
@@ -120,7 +120,7 @@ impl Display {
         );
     }
 
-    /// Draws `wheel`'s curve for the lead clip into the lower lane `lane`
+    /// Draws `controller`'s curve for the lead clip into the lower lane `lane`
     /// ([`wheel_path`]): a ride joined smoothly, a held value flat until the
     /// next move steps off it, dimmed outside the clip's window. A wheel's
     /// line runs from rest before its first move; a knob's CC has no rest,
@@ -128,7 +128,7 @@ impl Display {
     /// line at rest; the span, if one is marked, a tint across the lane's
     /// height under the line, filled as the note marquee is. Nothing else
     /// with no moves.
-    pub(super) fn draw_wheel_lane(&self, painter: &Painter, lane: Rect, wheel: Controller) {
+    pub(super) fn draw_wheel_lane(&self, painter: &Painter, lane: Rect, controller: Controller) {
         if let Some((start, end)) = self.gesture.wheel_span {
             let x_range = self.tick_to_screen_x(start).max(lane.left())
                 ..=self.tick_to_screen_x(end).min(lane.right());
@@ -143,17 +143,17 @@ impl Display {
 
         let inner_top = lane.top() + Self::WHEEL_LANE_PAD;
         let inner_h = lane.height() - 2.0 * Self::WHEEL_LANE_PAD;
-        let y_of = |value| inner_top + (1.0 - wheel_fraction(wheel, value)) * inner_h;
+        let y_of = |value| inner_top + (1.0 - wheel_fraction(controller, value)) * inner_h;
 
-        if wheel == Controller::PitchBend {
+        if controller == Controller::PitchBend {
             painter.hline(
                 lane.x_range(),
-                y_of(wheel.rest().unwrap_or(0)).round(),
+                y_of(controller.rest().unwrap_or(0)).round(),
                 Stroke::new(1.0_f32, theme::fg_dim().gamma_multiply(0.3)),
             );
         }
 
-        let moves = self.render.controller_moves.of(wheel);
+        let moves = self.render.controller_moves.of(controller);
         if moves.is_empty() {
             return;
         }
@@ -163,7 +163,7 @@ impl Display {
         let cols = lane.width().max(0.0);
         let (start, knots) = fold_wheel_columns(
             moves,
-            wheel.rest(),
+            controller.rest(),
             first_tick,
             ticks_per_col,
             cols as usize,
@@ -222,7 +222,7 @@ fn lane_label_in(gutter: Rect, pos: Pos2) -> Option<ClipLane> {
     let row_h = gutter.height() / ClipLane::GUTTER.len() as f32;
     ClipLane::GUTTER
         .get(((pos.y - gutter.top()) / row_h) as usize)
-        .copied()
+        .map(|&(lane, _)| lane)
 }
 
 /// Where `value` sits in the lane, `0.0` at the bottom to `1.0` at the top:

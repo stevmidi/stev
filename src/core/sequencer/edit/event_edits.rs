@@ -12,7 +12,7 @@
 //! `InsertNotesEdit` (a double-click or `⌘/Ctrl+V`) and `DragNotesEdit` are
 //! the piano roll's note edits (`clip/note_edits.rs`). `ReplaceClipNotesEdit`
 //! is the agent bridge's, on a clip named by id. `ClearControllerSpanEdit` is the
-//! wheel lane's `Delete`: a span of a wheel back to rest. See
+//! controller lane's `Delete`: a span of a controller cleared. See
 //! `050-undo-redo.md`.
 
 use undo::Record;

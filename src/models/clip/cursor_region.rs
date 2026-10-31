@@ -320,8 +320,8 @@ impl Clip {
         // notes: it stays on the musical point it was on. One on the window's
         // end (where `]` leaves it, so after a first-clip fit) stays on the
         // end the bar snap set, rather than a few ticks inside the window
-        // when the snap moved the end later — a running `/` anchors on the
-        // clip cursor and would drop everything played before it.
+        // when the snap moved the end later, where `⌥Space` would play the
+        // clip's last few ticks instead of from its start.
         let cursor = if cursor_on_end {
             self.region.end()
         } else {
@@ -657,8 +657,8 @@ mod tests {
 
     /// A cursor on the window's end — where `]` leaves it — stays on the end
     /// when the retime snaps the end to a whole bar, either way: never left
-    /// just inside the window, where a running `/` would anchor every take
-    /// a few ticks before the clip's end and drop what came before it.
+    /// just inside the window, where `⌥Space` would play the clip's last few
+    /// ticks instead of from its start (outside it, from the start).
     #[test]
     fn a_tempo_retime_keeps_a_cursor_on_the_end_on_the_snapped_end() {
         let bar = Meter::FOUR_FOUR.bar_ticks();

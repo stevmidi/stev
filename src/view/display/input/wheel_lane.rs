@@ -71,9 +71,8 @@ impl Display {
     /// clip's track (the selected one) — `None` for velocity.
     pub(in crate::view::display) fn clip_lane_controller(&self) -> Option<Controller> {
         let knob_ccs = self
-            .tracks
-            .get(self.selected_track_idx)
-            .map_or(&[][..], |track| &track.knob_ccs[..]);
+            .knobs_track()
+            .map_or(&[][..], |track| &self.tracks[track].knob_ccs[..]);
         self.render.clip_lane.controller(knob_ccs)
     }
 

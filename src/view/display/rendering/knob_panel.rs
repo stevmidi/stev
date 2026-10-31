@@ -12,7 +12,7 @@ use egui::{Align2, CornerRadius, FontId, Painter, Pos2, Rect, Shape, Stroke, pos
 
 use super::*;
 use crate::core::midi::message::Controller;
-use crate::view::display::knob_panel::{KnobHit, KnobRects, LABEL_FONT_SIZE, SWEEP, knob_angle};
+use crate::view::display::knob_panel::{KnobRects, LABEL_FONT_SIZE, SWEEP, knob_angle};
 
 /// The width of a dial's trough and value arc.
 const ARC_W: f32 = 3.0;
@@ -40,12 +40,7 @@ impl Display {
         );
         let accent = self.track_color(self.selected_track_idx);
         let switches = self.knob_labels_switch_lanes();
-        let hovered = self
-            .canvas_pointer()
-            .and_then(|pos| match self.knob_at(pos.x, pos.y) {
-                Some(KnobHit::Label(knob)) => Some(knob),
-                _ => None,
-            });
+        let hovered = self.knob_label_under_pointer();
         for (knob, rects) in knobs.iter().enumerate() {
             let Some((cc, value)) = self.knob_shown(knob) else {
                 continue;

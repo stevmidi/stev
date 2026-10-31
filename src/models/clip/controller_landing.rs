@@ -227,21 +227,19 @@ impl Clip {
         if start >= end {
             return false;
         }
-        let before = self.last_move_before(controller, start);
-        let (held, rest_channel) = match controller.rest() {
-            Some(rest) => (
-                Some(rest),
-                before
-                    .filter(|&(_, value)| value != rest)
-                    .map(|(event, _)| event.midi_channel().unwrap_or(0)),
-            ),
-            None => (before.map(|(_, value)| value), None),
-        };
+        // What the span holds: a wheel's rest, a CC's value before it. Set
+        // at the start when the value in force there differs — never for a
+        // CC, which holds that very value.
+        let before = self
+            .last_move_before(controller, start)
+            .map(|(event, value)| (event.midi_channel().unwrap_or(0), value));
+        let held = controller.rest().or(before.map(|(_, value)| value));
+        let set_at_start = before.zip(held).filter(|&((_, value), held)| value != held);
         let extent_end = self.event_extent().1;
         let mut changed =
             self.replace_controller_span(controller, start..end, held, None, extent_end);
-        if let (Some(rest), Some(channel)) = (controller.rest(), rest_channel) {
-            self.add_controller_move(controller, rest, channel, start);
+        if let Some(((channel, _), held)) = set_at_start {
+            self.add_controller_move(controller, held, channel, start);
             changed = true;
         }
         if changed {

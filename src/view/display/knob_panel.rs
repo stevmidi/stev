@@ -389,7 +389,7 @@ impl Display {
     }
 
     /// The track the knobs act on: the selected one, if there is one.
-    fn knobs_track(&self) -> Option<usize> {
+    pub(super) fn knobs_track(&self) -> Option<usize> {
         (self.selected_track_idx < self.tracks.len()).then_some(self.selected_track_idx)
     }
 
@@ -436,17 +436,21 @@ impl Display {
         self.lead_clip_time.is_some()
     }
 
+    /// The knob whose label is under the pointer.
+    pub(super) fn knob_label_under_pointer(&self) -> Option<usize> {
+        let pos = self.canvas_pointer()?;
+        match self.knob_at(pos.x, pos.y)? {
+            KnobHit::Label(knob) => Some(knob),
+            KnobHit::Dial(_) => None,
+        }
+    }
+
     /// The knob whose label is under the pointer, when a click there would
     /// switch the lane — not the lane already shown.
     pub(super) fn knob_lane_switch_under_pointer(&self) -> Option<usize> {
-        if !self.knob_labels_switch_lanes() {
-            return None;
-        }
-        let pos = self.canvas_pointer()?;
-        match self.knob_at(pos.x, pos.y)? {
-            KnobHit::Label(knob) if self.render.clip_lane != ClipLane::Knob(knob) => Some(knob),
-            _ => None,
-        }
+        self.knob_label_under_pointer().filter(|&knob| {
+            self.knob_labels_switch_lanes() && self.render.clip_lane != ClipLane::Knob(knob)
+        })
     }
 
     /// Turns knob `knob` of the selected track back to 0, where a knob

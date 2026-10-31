@@ -24,12 +24,12 @@ pub(super) enum ClipLane {
 }
 
 impl ClipLane {
-    /// The lanes the gutter switches, top to bottom as it stacks their
-    /// labels. The knob lanes switch from the knobs' own labels.
-    pub(super) const GUTTER: [ClipLane; 3] = [
-        ClipLane::Velocity,
-        ClipLane::PitchBend,
-        ClipLane::Modulation,
+    /// The lanes the gutter switches and their labels, top to bottom as it
+    /// stacks them. The knob lanes switch from the knobs' own labels.
+    pub(super) const GUTTER: [(ClipLane, &'static str); 3] = [
+        (ClipLane::Velocity, "VEL"),
+        (ClipLane::PitchBend, "PB"),
+        (ClipLane::Modulation, "MW"),
     ];
 
     /// The lane after this one (`Action::CycleClipLane`): VEL → PB → MW →
@@ -41,17 +41,6 @@ impl ClipLane {
             ClipLane::Modulation => ClipLane::Knob(0),
             ClipLane::Knob(knob) if knob + 1 < KNOB_COUNT => ClipLane::Knob(knob + 1),
             ClipLane::Knob(_) => ClipLane::Velocity,
-        }
-    }
-
-    /// The lane's gutter label; `None` for a knob lane, whose label is the
-    /// knob's own.
-    pub(super) fn gutter_label(self) -> Option<&'static str> {
-        match self {
-            ClipLane::Velocity => Some("VEL"),
-            ClipLane::PitchBend => Some("PB"),
-            ClipLane::Modulation => Some("MW"),
-            ClipLane::Knob(_) => None,
         }
     }
 

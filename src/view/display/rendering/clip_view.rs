@@ -360,7 +360,7 @@ impl Display {
         painter.hline(lane.x_range(), lane.top(), divider);
         match self.clip_lane_controller() {
             None => self.draw_velocity_panel(painter, lane),
-            Some(wheel) => self.draw_wheel_lane(painter, lane, wheel),
+            Some(controller) => self.draw_wheel_lane(painter, lane, controller),
         }
         self.draw_lane_gutter(painter, geom);
     }
