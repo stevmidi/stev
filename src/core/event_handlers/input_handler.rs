@@ -296,6 +296,34 @@ impl EventHandlers {
                 });
             }
 
+            InputEvent::SetKnobCc {
+                track_idx,
+                knob,
+                cc,
+            } => {
+                self.send_sequencer(SequencerCommand::SetKnobCc {
+                    track_idx: *track_idx,
+                    knob: *knob,
+                    cc: *cc,
+                });
+            }
+
+            InputEvent::SetKnobValue {
+                track_idx,
+                knob,
+                value,
+            } => {
+                self.send_sequencer(SequencerCommand::SetKnobValue {
+                    track_idx: *track_idx,
+                    knob: *knob,
+                    value: *value,
+                });
+            }
+
+            InputEvent::SendKnobPositions => {
+                self.send_sequencer(SequencerCommand::SendKnobPositions);
+            }
+
             InputEvent::ConfirmMidiPorts { in_port, out_port } => {
                 update_settings("MIDI ports", |settings| {
                     settings.midi_in_port = (!in_port.is_empty()).then(|| in_port.clone());

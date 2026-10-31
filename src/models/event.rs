@@ -169,6 +169,23 @@ impl Event {
         }
     }
 
+    /// The controller number of a Control Change, `None` for any other
+    /// message.
+    pub(crate) fn controller(&self) -> Option<u8> {
+        match self.midi_message.as_slice() {
+            [status, cc, ..] if status & 0xF0 == 0xB0 => Some(*cc),
+            _ => None,
+        }
+    }
+
+    /// Renumbers a Control Change to controller `cc`, keeping its value.
+    /// No-op on any other message.
+    pub(crate) fn set_controller(&mut self, cc: u8) {
+        if self.controller().is_some() {
+            self.midi_message[1] = cc;
+        }
+    }
+
     /// Whether this event is muted — see the [`muted`](Self::muted) field.
     pub(crate) fn is_muted(&self) -> bool {
         self.muted
@@ -319,6 +336,19 @@ mod tests {
         let mut e = Event::new(0, 0, vec![0xF8]);
         e.set_note_number(70);
         assert_eq!(e.midi_message(), &[0xF8]);
+    }
+
+    #[test]
+    fn only_a_control_change_has_a_controller_to_renumber() {
+        let mut cc = Event::new(0, 0, vec![0xB3, 14, 90]);
+        assert_eq!(cc.controller(), Some(14));
+        cc.set_controller(74);
+        assert_eq!(cc.midi_message(), &[0xB3, 74, 90]);
+
+        let mut note = Event::new(0, 0, vec![0x90, 14, 90]);
+        assert_eq!(note.controller(), None);
+        note.set_controller(74);
+        assert_eq!(note.midi_message(), &[0x90, 14, 90]);
     }
 
     #[test]

@@ -1,5 +1,6 @@
 //! The panes the lane area is split into: the arranger and the clip view
-//! (piano roll), and the clip panel state that picks the split. Each visible
+//! (piano roll), with the knob panel in a column of its own left of the clip
+//! view, and the clip panel state that picks the split. Each visible
 //! pane owns a rect, and the coordinate helpers on `Display`
 //! (`pixels_per_tick`, `content_origin_x`, `track_area_top`, …) answer for
 //! the **active** pane — the one being drawn, or hit-tested, or focused (see
@@ -107,6 +108,10 @@ pub(super) struct PaneRects {
     pub(super) arranger: Option<Rect>,
     /// The clip view's rect, when shown.
     pub(super) clip: Option<Rect>,
+    /// The knob panel's column, left of the clip view and as tall: shown
+    /// whenever the clip view is (`390-knob-panel.md` decision 3). Not a
+    /// pane — it never takes the keyboard.
+    pub(super) knobs: Option<Rect>,
 }
 
 impl PaneRects {
@@ -134,17 +139,13 @@ impl PaneRects {
     }
 }
 
-/// Splits `lane_area` into pane rects for `layout`.
-pub(super) fn pane_rects(lane_area: Rect, layout: PaneLayout) -> PaneRects {
-    match layout {
-        PaneLayout::ArrangerOnly => PaneRects {
-            arranger: Some(lane_area),
-            clip: None,
-        },
-        PaneLayout::ClipOnly => PaneRects {
-            arranger: None,
-            clip: Some(lane_area),
-        },
+/// Splits `lane_area` into pane rects for `layout`, the knob panel taking
+/// the `knob_column_w` left of the clip view — the arranger's track-header
+/// reservation, so the panel lines up under the headers.
+pub(super) fn pane_rects(lane_area: Rect, layout: PaneLayout, knob_column_w: f32) -> PaneRects {
+    let (arranger, clip_band) = match layout {
+        PaneLayout::ArrangerOnly => (Some(lane_area), None),
+        PaneLayout::ClipOnly => (None, Some(lane_area)),
         PaneLayout::Docked => {
             let clip_h = (lane_area.height() * DOCKED_CLIP_FRACTION).round();
             let clip_top = lane_area.max.y - clip_h;
@@ -152,11 +153,21 @@ pub(super) fn pane_rects(lane_area: Rect, layout: PaneLayout) -> PaneRects {
             arranger.max.y = clip_top - PANE_GAP_Y;
             let mut clip = lane_area;
             clip.min.y = clip_top;
-            PaneRects {
-                arranger: Some(arranger),
-                clip: Some(clip),
-            }
+            (Some(arranger), Some(clip))
         }
+    };
+    let split = clip_band.map(|band| {
+        let knobs_right = (band.min.x + knob_column_w).min(band.max.x);
+        let mut knobs = band;
+        knobs.max.x = knobs_right;
+        let mut clip = band;
+        clip.min.x = knobs_right;
+        (clip, knobs)
+    });
+    PaneRects {
+        arranger,
+        clip: split.map(|(clip, _)| clip),
+        knobs: split.map(|(_, knobs)| knobs),
     }
 }
 
@@ -220,20 +231,26 @@ mod tests {
 
     #[test]
     fn docked_splits_the_lane_area_with_the_clip_view_below() {
-        let rects = pane_rects(lane_area(), PaneLayout::Docked);
+        let rects = pane_rects(lane_area(), PaneLayout::Docked, KNOBS_W);
         let arranger = rects.get(Pane::Arranger).unwrap();
         let clip = rects.get(Pane::Clip).unwrap();
+        let knobs = rects.knobs.unwrap();
 
         assert_eq!(arranger.min, lane_area().min);
         assert_eq!(clip.max, lane_area().max);
         assert_eq!(clip.height(), (lane_area().height() * 0.4).round());
         assert_eq!(clip.min.y - arranger.max.y, PANE_GAP_Y);
-        assert_eq!((arranger.width(), clip.width()), (1300.0, 1300.0));
+        // The knob panel takes the header column's width under the
+        // arranger; the clip view moves right by it.
+        assert_eq!((arranger.width(), clip.width()), (1300.0, 1300.0 - KNOBS_W));
+        assert_eq!((knobs.min.x, knobs.max.x), (0.0, KNOBS_W));
+        assert_eq!(knobs.y_range(), clip.y_range());
+        assert_eq!(clip.min.x, knobs.max.x);
     }
 
     #[test]
     fn pane_at_y_picks_the_pane_and_gives_the_gap_to_the_one_below() {
-        let rects = pane_rects(lane_area(), PaneLayout::Docked);
+        let rects = pane_rects(lane_area(), PaneLayout::Docked, KNOBS_W);
         let arranger = rects.get(Pane::Arranger).unwrap();
         let clip = rects.get(Pane::Clip).unwrap();
 
@@ -243,7 +260,7 @@ mod tests {
         assert_eq!(rects.pane_at_y(10.0), None, "the header");
         assert_eq!(rects.pane_at_y(clip.max.y + 5.0), None, "the status bar");
 
-        let single = pane_rects(lane_area(), PaneLayout::ClipOnly);
+        let single = pane_rects(lane_area(), PaneLayout::ClipOnly, KNOBS_W);
         assert_eq!(single.pane_at_y(100.0), Some(Pane::Clip));
     }
 
@@ -286,14 +303,22 @@ mod tests {
         Rect::from_min_max(pos2(0.0, 46.0), pos2(1300.0, 800.0))
     }
 
+    /// The knob panel's column under the track headers.
+    const KNOBS_W: f32 = 168.0;
+
     #[test]
-    fn a_single_pane_takes_the_whole_lane_area() {
-        let arranger = pane_rects(lane_area(), PaneLayout::ArrangerOnly);
+    fn a_single_pane_takes_the_whole_lane_area_beside_the_knobs() {
+        let arranger = pane_rects(lane_area(), PaneLayout::ArrangerOnly, KNOBS_W);
         assert_eq!(arranger.get(Pane::Arranger), Some(lane_area()));
         assert_eq!(arranger.get(Pane::Clip), None);
+        assert_eq!(arranger.knobs, None, "hidden with the clip view");
 
-        let clip = pane_rects(lane_area(), PaneLayout::ClipOnly);
-        assert_eq!(clip.get(Pane::Clip), Some(lane_area()));
+        let clip = pane_rects(lane_area(), PaneLayout::ClipOnly, KNOBS_W);
+        let mut beside = lane_area();
+        beside.min.x = KNOBS_W;
+        assert_eq!(clip.get(Pane::Clip), Some(beside));
         assert_eq!(clip.get(Pane::Arranger), None);
+        assert_eq!(clip.knobs.unwrap().y_range(), lane_area().y_range());
+        assert_eq!(clip.knobs.unwrap().width(), KNOBS_W);
     }
 }

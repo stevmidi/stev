@@ -324,14 +324,14 @@ impl Sequencer {
 
     /// Sends `msg` on `channel` to MIDI out, undelayed — a release or reset
     /// has no tick instant to offset from.
-    fn send_midi_out_now(&self, mut msg: Vec<u8>, channel: u8) {
+    pub(super) fn send_midi_out_now(&self, mut msg: Vec<u8>, channel: u8) {
         rewrite_channel(&mut msg, channel);
         self.midi_out_tx.send(MidiOutMessage::now(msg)).ok();
     }
 
     /// Pushes `msg` to engine slot `slot`'s plugin for the next block
     /// (`EventTime::Immediate`, behind anything already scheduled there).
-    fn push_instrument_now(&mut self, slot: usize, msg: &[u8]) {
+    pub(super) fn push_instrument_now(&mut self, slot: usize, msg: &[u8]) {
         self.instrument_midi_tx
             .push(ClipInstrumentEvent {
                 track: slot,

@@ -138,10 +138,10 @@ pub(crate) struct SharedChannels {
     pub(crate) midi_out_reconnect_tx: Sender<String>,
     /// Receiving half of the pair documented above.
     pub(crate) midi_out_reconnect_rx: Receiver<String>,
-    /// `Display` (the computer keyboard's note keys) → `"computerkeys"` thread:
-    /// a note-on / note-off and the
-    /// [`monotonic_nanos`](crate::core::time::monotonic_nanos) of the frame
-    /// that read its key. That thread routes it like a port's input (its own
+    /// `Display` (the computer keyboard's note keys, the knob panel's dials)
+    /// → `"computerkeys"` thread: a note-on / note-off or a knob's Control
+    /// Change and the [`monotonic_nanos`](crate::core::time::monotonic_nanos)
+    /// of the frame that read it. That thread routes it like a port's input (its own
     /// `LiveInputRouter`), so the render thread takes no lock for it.
     pub(crate) computer_keys_tx: Sender<(Midi3, u64)>,
     /// Receiving half of the pair documented above.

@@ -635,6 +635,24 @@ impl EventHandlers {
                 self.record_edit(sequencer, undo_record, edit);
             }
 
+            SequencerCommand::SetKnobCc {
+                track_idx,
+                knob,
+                cc,
+            } => {
+                self.set_knob_cc_workflow(sequencer, undo_record, *track_idx, *knob, *cc);
+            }
+
+            SequencerCommand::SetKnobValue {
+                track_idx,
+                knob,
+                value,
+            } => {
+                sequencer.set_knob_value(*track_idx, *knob, *value);
+            }
+
+            SequencerCommand::SendKnobPositions => sequencer.send_knob_positions(),
+
             SequencerCommand::FitTempo => {
                 self.fit_first_clip_tempo_workflow(sequencer, undo_record);
             }

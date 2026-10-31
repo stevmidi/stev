@@ -150,7 +150,7 @@ impl Sequencer {
 
     /// Puts engine slot `slot` back at a fresh track's mix —
     /// [`TRACK_VOLUME_DB_DEFAULT`], centre, unmuted, unsoloed, its meter
-    /// empty: for every slot on a new project, and for one whose track has
+    /// empty, its knobs unturned: for every slot on a new project, and for one whose track has
     /// left the arrangement, so an idle slot never counts toward
     /// `any_track_soloed` and the next track to take it starts clean.
     pub(super) fn reset_slot_mix(&mut self, slot: usize) {
@@ -160,6 +160,7 @@ impl Sequencer {
         mix.mute[slot].store(false, Ordering::Relaxed);
         mix.solo[slot].store(false, Ordering::Relaxed);
         mix.reset_meter(slot);
+        mix.publish_knobs(slot, None);
     }
 }
 

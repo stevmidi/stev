@@ -10,6 +10,7 @@
 mod arranger;
 mod browser;
 mod clip_view;
+mod knob_panel;
 mod modals;
 mod output_menu;
 mod overlays;
@@ -1165,7 +1166,9 @@ impl Display {
     /// the drag runs on `PointerMotion`, and no hover follows it — the one
     /// test every site of that rule asks.
     pub(super) fn pointer_held_drag(&self) -> bool {
-        self.gesture.key_zoom_drag.is_some() || self.tempo_chip.dragging()
+        self.gesture.key_zoom_drag.is_some()
+            || self.tempo_chip.dragging()
+            || self.knob_panel.dragging()
     }
 
     /// Holds the (hidden) pointer while a [pointer-holding
@@ -1368,6 +1371,7 @@ impl eframe::App for Display {
         if self.gesture.track_mix_drag.is_some()
             || self.gesture.track_mix_hover.is_some()
             || self.tempo_chip.hover
+            || self.is_pointer_on_knob_dial()
         {
             ctx.set_cursor_icon(CursorIcon::ResizeVertical);
         }
@@ -1431,11 +1435,13 @@ impl eframe::App for Display {
                     }
                 }
                 self.draw_pane_split(painter, panes, rect);
+                self.draw_knob_panel(painter, rect);
                 let hint = self.footer_hint();
                 self.draw_status_bar(painter, hint.as_deref());
                 self.show_track_rename(ui);
                 self.show_tempo_field(ui, Self::header_value_font());
                 self.show_meter_field(ui, Self::header_value_font());
+                self.show_knob_cc_field(ui);
                 self.draw_output_menu(painter);
 
                 match self.overlay {

@@ -62,6 +62,7 @@ mod instrument;
 #[cfg(target_os = "macos")]
 mod instrument_restore;
 mod keyboard_tab;
+mod knob_panel;
 mod meter_field;
 mod midi_tab;
 mod modal_focus;
@@ -87,6 +88,7 @@ use self::grid::{GridSurface, GridTiers, grid_tiers};
 use self::input::DragPointer;
 #[cfg(target_os = "macos")]
 use self::instrument::InstrumentHost;
+use self::knob_panel::KnobPanel;
 use self::meter_field::MeterChip;
 use self::midi_tab::MidiTab;
 use self::output_menu::OutputMenuHit;
@@ -263,6 +265,9 @@ pub(crate) struct Display {
     /// The header's meter chip as a control: its field (which has the
     /// keyboard while open). See `meter_field.rs`.
     meter_chip: MeterChip,
+    /// The knob panel beside the clip view: its drag, wheel turn and CC
+    /// field (which has the keyboard while open). See `knob_panel.rs`.
+    knob_panel: KnobPanel,
     /// The open Save As field or unsaved-changes prompt, if any — it has the
     /// keyboard while open. See `project_dialog.rs`.
     project_dialog: Option<ProjectDialog>,
@@ -322,9 +327,9 @@ pub(crate) struct Display {
     /// The computer keyboard — the letter keys played as a piano while it is
     /// on. See `computer_keys.rs`.
     computer_keyboard: ComputerKeyboard,
-    /// The computer keyboard's notes, each with the `monotonic_nanos` the
-    /// frame read it at, to the `"computerkeys"` thread, which routes them as
-    /// a MIDI port's input.
+    /// The computer keyboard's notes and the knob panel's CCs, each with the
+    /// `monotonic_nanos` the frame read it at, to the `"computerkeys"`
+    /// thread, which routes them as a MIDI port's input.
     computer_keys_tx: Sender<(Midi3, u64)>,
 
     // --- macOS instrument plugin host ---
@@ -378,6 +383,12 @@ impl Display {
     /// flush against the column. `content_origin_x()` itself is unchanged, so
     /// nothing in the grid moves.
     const TRACK_COLUMN_GRID_GAP_X: f32 = 8.0;
+    /// The column the knob panel takes left of the clip view: the arranger's
+    /// track-header reservation, so the panel lines up under the headers
+    /// and the clip view's keys start where the arranger's grid does
+    /// (`390-knob-panel.md` decision 3). The panel's fill stops
+    /// `TRACK_COLUMN_GRID_GAP_X` short of it, as the header column's does.
+    const KNOB_COLUMN_W: f32 = Self::PADDING_X + Self::TRACK_HEADER_W;
     /// Right content padding, pixels.
     const RIGHT_PADDING_X: f32 = 8.0;
     /// Width of the octave-legend column and, separately, the piano-key
@@ -460,6 +471,7 @@ impl Display {
             track_rename: None,
             tempo_chip: TempoChip::default(),
             meter_chip: MeterChip::default(),
+            knob_panel: KnobPanel::default(),
             project_dialog: None,
             project_dialog_shown: false,
             raise_main_window: false,
@@ -690,7 +702,11 @@ impl Display {
 
     /// Each visible pane's rect this frame, per the clip panel's layout.
     fn pane_rects(&self) -> PaneRects {
-        pane_rects(self.lane_area_rect(), self.render.clip_panel.layout())
+        pane_rects(
+            self.lane_area_rect(),
+            self.render.clip_panel.layout(),
+            Self::KNOB_COLUMN_W,
+        )
     }
 
     /// Whether `pane` is on screen.
@@ -699,9 +715,9 @@ impl Display {
     }
 
     /// The visible pane under the pointer at `(x, y)`, `None` over the
-    /// header or status bar or outside the window.
+    /// header, the status bar or the knob panel, or outside the window.
     fn pane_at(&self, x: f32, y: f32) -> Option<Pane> {
-        if !self.render.canvas_rect.contains(pos2(x, y)) {
+        if !self.render.canvas_rect.contains(pos2(x, y)) || self.is_over_knob_panel(x, y) {
             return None;
         }
         self.pane_rects().pane_at_y(y)
@@ -1160,7 +1176,8 @@ impl Display {
     /// gutter of the active pane).
     fn content_origin_x(&self) -> f32 {
         match self.active_pane() {
-            Pane::Clip => Self::PADDING_X + Self::PIANO_MARGIN_W * 2.0,
+            // Right of the knob panel's column (`pane_rects`).
+            Pane::Clip => Self::KNOB_COLUMN_W + Self::PIANO_MARGIN_W * 2.0,
             Pane::Arranger => Self::PADDING_X + Self::TRACK_HEADER_W,
         }
     }

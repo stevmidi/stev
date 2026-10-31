@@ -467,6 +467,16 @@ const FIXED: &[FixedGroup] = &[
         ],
     ),
     (
+        "Knob panel",
+        &[
+            ("Drag", "Turn a knob: its CC to the selected track"),
+            ("Scroll", "Turn the knob under the pointer"),
+            ("⇧ drag / scroll", "Turn it in fine steps"),
+            ("⌘ click", "Turn the knob back to 0"),
+            ("Double-click", "On a CC label: type the knob's CC"),
+        ],
+    ),
+    (
         "Browser",
         &[
             ("Enter", "Open the project or template, import the clip"),

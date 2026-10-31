@@ -49,7 +49,9 @@ pub(crate) use event_edits::{
 };
 pub(crate) use meter_edit::SetMeterEdit;
 pub(crate) use tempo_edit::{SetTempoEdit, TempoGesture};
-pub(crate) use track_edits::{AddTrackEdit, RemoveTrackEdit, RenameTrackEdit, SetTrackOutputEdit};
+pub(crate) use track_edits::{
+    AddTrackEdit, RemoveTrackEdit, RenameTrackEdit, SetKnobCcEdit, SetTrackOutputEdit,
+};
 
 /// Which clip a paste makes the lead (`EditResult::ClipsPasted`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -508,6 +510,10 @@ pub(crate) enum EditResult {
     /// A track's name changed (`RenameTrackEdit`'s edit and undo). The
     /// handler re-sends the view its track list (`TracksChanged`, no shift).
     TrackRenamed,
+    /// A knob's CC number changed (`SetKnobCcEdit`'s edit and undo). The
+    /// handler re-sends the view its track list, which carries the knobs'
+    /// CC numbers (`TracksChanged`, no shift).
+    KnobsChanged,
     /// A track's output changed (`SetTrackOutputEdit`'s edit and undo). The
     /// handler re-sends the view its track list and has `Display` bring the
     /// plugin in `slot` in line with `instrument` (`UiEvent::SlotInstrument`):
@@ -748,6 +754,7 @@ sequencer_edit_dispatch!(
     RemoveTrack(RemoveTrackEdit),
     RenameTrack(RenameTrackEdit),
     SetTrackOutput(SetTrackOutputEdit),
+    SetKnobCc(SetKnobCcEdit),
     SetTempo(SetTempoEdit),
     SetMeter(SetMeterEdit),
 );

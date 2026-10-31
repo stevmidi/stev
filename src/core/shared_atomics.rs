@@ -22,10 +22,11 @@ use egui::Context;
 
 use crate::core::audio::meter::ChannelLevel;
 use crate::core::config::{MAX_TRACKS, TRACK_VOLUME_DB_DEFAULT};
+use crate::models::knobs::{KNOB_COUNT, Knobs};
 
 /// Per-track mixer state — volume, stereo balance, mute and solo — plus what
 /// each track's meter reads: its last note-on (`note_on`) and its audio level
-/// (`audio_level`). `volume_db`
+/// (`audio_level`), and where its knobs stand (`knob_value`). `volume_db`
 /// and `pan` are stored as `f32` bit patterns
 /// ([`f32::to_bits`]/[`f32::from_bits`]) so each is a single lock-free atomic;
 /// `mute` and `solo` are plain [`AtomicBool`]. Written by the sequencer thread
@@ -74,7 +75,17 @@ pub(crate) struct TrackMixAtomics {
     /// by the sequencer thread (`Sequencer::reset_slot_mix`), read once per
     /// block by the mixer.
     pub(crate) meter_resets: [AtomicU32; MAX_TRACKS],
+    /// Each slot's knob positions (`Track::knobs`), [`KNOB_UNTURNED`] for a
+    /// knob never turned: what the knob panel draws (`390-knob-panel.md`).
+    /// Not part of the mix, and unlike the rest a mirror: the track owns its
+    /// knobs, and the sequencer thread publishes them here whenever they
+    /// change (`Sequencer::publish_knobs`); read by the render thread.
+    knob_value: [[AtomicU8; KNOB_COUNT]; MAX_TRACKS],
 }
+
+/// A [`TrackMixAtomics::knob_value`] for a knob never turned — never a CC
+/// value (`0..=127`).
+const KNOB_UNTURNED: u8 = u8::MAX;
 
 /// One channel of [`TrackMixAtomics::audio_level`]: a [`ChannelLevel`]'s
 /// linear amplitudes as `f32` bit patterns, so the all-zero default is
@@ -121,6 +132,9 @@ impl TrackMixAtomics {
             note_on: std::array::from_fn(|_| AtomicU64::new(0)),
             audio_level: std::array::from_fn(|_| Default::default()),
             meter_resets: std::array::from_fn(|_| AtomicU32::new(0)),
+            knob_value: std::array::from_fn(|_| {
+                std::array::from_fn(|_| AtomicU8::new(KNOB_UNTURNED))
+            }),
         }
     }
 
@@ -208,6 +222,26 @@ impl TrackMixAtomics {
         self.audio_level
             .get(track_idx)
             .map_or_else(Default::default, |[l, r]| [l.load(), r.load()])
+    }
+
+    /// Publishes slot `track_idx`'s knob positions from `knobs`; `None`
+    /// (a slot no track holds) marks every knob unturned. Out-of-range
+    /// indices are ignored.
+    pub(crate) fn publish_knobs(&self, track_idx: usize, knobs: Option<&Knobs>) {
+        let Some(values) = self.knob_value.get(track_idx) else {
+            return;
+        };
+        for (i, value) in values.iter().enumerate() {
+            let knob = knobs.and_then(|knobs| knobs[i].value);
+            value.store(knob.unwrap_or(KNOB_UNTURNED), Ordering::Relaxed);
+        }
+    }
+
+    /// Slot `track_idx`'s knob `knob`'s position; `None` while unturned, or
+    /// out of range.
+    pub(crate) fn knob_value(&self, track_idx: usize, knob: usize) -> Option<u8> {
+        let value = self.knob_value.get(track_idx)?.get(knob)?;
+        Some(value.load(Ordering::Relaxed)).filter(|&value| value != KNOB_UNTURNED)
     }
 }
 
@@ -380,6 +414,7 @@ pub(crate) struct SharedAtomics {
 mod tests {
     use super::{LiveNotes, TrackMixAtomics};
     use crate::core::audio::meter::ChannelLevel;
+    use crate::models::knobs::default_knobs;
 
     #[test]
     fn live_notes_track_each_held_note_across_both_words() {
@@ -393,6 +428,25 @@ mod tests {
         live.set(100, false);
         live.set(200, true);
         assert!(!live.is_held(100) && !live.is_held(127));
+    }
+
+    #[test]
+    fn knob_positions_publish_per_slot_and_start_unturned() {
+        let mix = TrackMixAtomics::new();
+        assert_eq!(mix.knob_value(2, 0), None);
+        let mut knobs = default_knobs();
+        knobs[0].value = Some(0);
+        knobs[7].value = Some(127);
+        mix.publish_knobs(2, Some(&knobs));
+        assert_eq!(mix.knob_value(2, 0), Some(0));
+        assert_eq!(mix.knob_value(2, 1), None);
+        assert_eq!(mix.knob_value(2, 7), Some(127));
+        assert_eq!(mix.knob_value(3, 0), None);
+        mix.publish_knobs(2, None);
+        assert_eq!(mix.knob_value(2, 7), None);
+        mix.publish_knobs(999, Some(&knobs));
+        assert_eq!(mix.knob_value(999, 0), None);
+        assert_eq!(mix.knob_value(2, 8), None);
     }
 
     #[test]

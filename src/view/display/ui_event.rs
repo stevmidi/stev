@@ -14,6 +14,7 @@ use crate::{
     metadata::clip_metadata::ClipMetadata,
     metadata::clip_view::ClipView,
     models::clip::EventSpaceRetime,
+    models::knobs::{KNOB_COUNT, default_knobs},
     models::track::{InstrumentRef, TrackShift},
 };
 
@@ -59,6 +60,10 @@ pub(crate) struct TrackLane {
     /// The user's name for it; `None` while unnamed (the header shows its
     /// number).
     pub(crate) name: Option<String>,
+    /// The CC each of its knobs sends, in reading order — the knob panel's
+    /// labels while it is selected. Their positions are read from
+    /// `TrackMixAtomics`.
+    pub(crate) knob_ccs: [u8; KNOB_COUNT],
 }
 
 impl TrackLane {
@@ -74,6 +79,7 @@ impl TrackLane {
                 route: TrackRoute::MidiOut { channel: idx as u8 },
                 color: idx,
                 name: None,
+                knob_ccs: default_knobs().map(|knob| knob.cc),
             })
             .collect()
     }

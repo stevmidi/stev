@@ -24,6 +24,7 @@ use crate::{
     models::{
         clip::Clip,
         event::Event,
+        knobs::{Knob, knobs_from_saved},
         track::{InstrumentRef, TrackOutput, track_name_from_input},
     },
 };
@@ -155,8 +156,25 @@ pub(crate) struct TrackData {
     /// tracks had names.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) name: Option<String>,
+    /// The track's eight knobs (`Track::knobs`), in reading order. Empty in
+    /// a project saved before knobs, and in `ProjectData::default`: the track
+    /// then gets a fresh track's (CC 14–21, none turned), as does a list no
+    /// track could have (`knobs_from_saved`).
+    #[serde(default)]
+    pub(crate) knobs: Vec<KnobData>,
     /// The track's clips.
     pub(crate) clips: Vec<ClipData>,
+}
+
+/// One knob, on disk.
+#[derive(Serialize, Deserialize, Clone, Copy)]
+pub(crate) struct KnobData {
+    /// The CC number it sends.
+    pub(crate) cc: u8,
+    /// Its position, `0..=127`; absent while never turned, so a load sends
+    /// it nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) value: Option<u8>,
 }
 
 /// An [`io::Write`] that feeds everything written into a hasher — what
@@ -258,6 +276,7 @@ impl Default for ProjectData {
                     muted: false,
                     color: Some(i),
                     name: None,
+                    knobs: Vec::new(),
                     clips: Vec::new(),
                 })
                 .collect(),
@@ -358,6 +377,14 @@ impl ProjectData {
                     muted: sequencer.track_muted(track_idx),
                     color: Some(track.color_slot()),
                     name: track.name().map(str::to_owned),
+                    knobs: track
+                        .knobs()
+                        .iter()
+                        .map(|knob| KnobData {
+                            cc: knob.cc,
+                            value: knob.value,
+                        })
+                        .collect(),
                     clips,
                 }
             })
@@ -406,6 +433,15 @@ impl ProjectData {
             sequencer.set_track_volume(track_idx, track_data.volume_db);
             sequencer.set_track_pan(track_idx, track_data.pan);
             sequencer.set_track_muted(track_idx, track_data.muted);
+            let knobs: Vec<Knob> = track_data
+                .knobs
+                .iter()
+                .map(|knob| Knob {
+                    cc: knob.cc,
+                    value: knob.value,
+                })
+                .collect();
+            sequencer.set_track_knobs(track_idx, knobs_from_saved(&knobs));
             if let Some(track) = sequencer.tracks_mut().get_mut(track_idx) {
                 track.set_color_slot(track_data.color.unwrap_or(track_idx));
                 // Through the rename's own rules, so a hand-edited blank name
@@ -443,6 +479,7 @@ impl ProjectData {
 mod tests {
     use super::*;
     use crate::core::sequencer::test_support::{test_sequencer, track_colors};
+    use crate::models::knobs::default_knobs;
 
     /// A default project with `count` tracks.
     fn project_with_tracks(count: usize) -> ProjectData {
@@ -604,6 +641,53 @@ mod tests {
 
         let names: Vec<Option<&str>> = sequencer.tracks().iter().map(|t| t.name()).collect();
         assert_eq!(names, vec![None, Some("Bass"), None, None]);
+    }
+
+    #[test]
+    fn knobs_survive_a_save_and_load_and_a_new_project_resets_them() {
+        let mut sequencer = test_sequencer();
+        let mut knobs = default_knobs();
+        knobs[2].cc = 74;
+        knobs[2].value = Some(90);
+        sequencer.set_track_knobs(1, knobs);
+        let json = serde_json::to_string(&ProjectData::from_sequencer(&sequencer)).unwrap();
+
+        sequencer.new_project();
+        assert_eq!(*sequencer.tracks()[1].knobs(), default_knobs());
+        assert_eq!(sequencer.published_knob_value(1, 2), None);
+        let data: ProjectData = serde_json::from_str(&json).unwrap();
+        data.apply_to_sequencer(&mut sequencer);
+
+        assert_eq!(*sequencer.tracks()[1].knobs(), knobs);
+        assert_eq!(*sequencer.tracks()[0].knobs(), default_knobs());
+        // Published for the knob panel.
+        assert_eq!(sequencer.published_knob_value(1, 2), Some(90));
+    }
+
+    #[test]
+    fn a_track_saved_before_knobs_loads_on_cc_14_to_21_unturned() {
+        let back: TrackData =
+            serde_json::from_str(r#"{"output":{"type":"MidiOut","channel":2},"clips":[]}"#)
+                .unwrap();
+        assert!(back.knobs.is_empty());
+        let data = ProjectData {
+            tracks: vec![back],
+            ..ProjectData::default()
+        };
+        let mut sequencer = test_sequencer();
+        sequencer.set_knob_value(0, 0, 50);
+        data.apply_to_sequencer(&mut sequencer);
+        assert_eq!(*sequencer.tracks()[0].knobs(), default_knobs());
+        assert_eq!(sequencer.published_knob_value(0, 0), None);
+    }
+
+    /// Turning a knob is saved, so it is a change for the unsaved prompt.
+    #[test]
+    fn turning_a_knob_changes_the_fingerprint() {
+        let mut sequencer = test_sequencer();
+        let saved = ProjectData::from_sequencer(&sequencer).fingerprint();
+        sequencer.set_knob_value(0, 0, 1);
+        assert_ne!(ProjectData::from_sequencer(&sequencer).fingerprint(), saved);
     }
 
     #[test]
@@ -803,6 +887,7 @@ mod tests {
             muted: true,
             color: None,
             name: None,
+            knobs: Vec::new(),
             clips: Vec::new(),
         };
         let json = serde_json::to_string(&track).unwrap();

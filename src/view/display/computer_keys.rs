@@ -55,8 +55,9 @@ impl Display {
         self.send_computer_keys(messages);
     }
 
-    /// Sends `messages` to the `"computerkeys"` thread, stamped now.
-    fn send_computer_keys(&self, messages: Vec<Midi3>) {
+    /// Sends `messages` to the `"computerkeys"` thread, stamped now — the
+    /// note keys' and the knob panel's (`knob_panel.rs`).
+    pub(super) fn send_computer_keys(&self, messages: Vec<Midi3>) {
         if messages.is_empty() {
             return;
         }

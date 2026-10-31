@@ -396,7 +396,9 @@ impl EventHandlers {
             } => {
                 self.track_removed_workflow(sequencer, track_idx, track_id, slot);
             }
-            EditResult::TrackRenamed => self.emit_tracks(sequencer, None),
+            EditResult::TrackRenamed | EditResult::KnobsChanged => {
+                self.emit_tracks(sequencer, None);
+            }
             EditResult::TrackOutputChanged {
                 track_id,
                 slot,

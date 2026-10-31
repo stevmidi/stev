@@ -35,6 +35,7 @@ use crate::core::config::TRACK_NAME_MAX_CHARS;
 use crate::models::{
     clip::{Clip, ClipBounds, EventSpaceRetime},
     event::Event,
+    knobs::{Knob, Knobs, default_knobs},
     wheels::{NEUTRAL_WHEELS, WheelTracker},
 };
 
@@ -209,6 +210,11 @@ pub(crate) struct Track {
     // --- Output routing ---
     /// Where this track's events go — see [`TrackOutput`].
     output: TrackOutput,
+    /// The knob panel's eight knobs while this track is selected: the CC
+    /// each sends and where it stands, persisted (`TrackData::knobs`). The
+    /// sequencer mirrors the positions into `TrackMixAtomics` for the view.
+    /// See `models::knobs`.
+    knobs: Knobs,
 }
 
 impl Track {
@@ -230,6 +236,7 @@ impl Track {
             awaiting_start_tick: None,
             current_tick: 0,
             output,
+            knobs: default_knobs(),
         }
     }
 
@@ -288,6 +295,21 @@ impl Track {
     /// place without rebuilding the [`InstrumentRef`]).
     pub(crate) fn output_mut(&mut self) -> &mut TrackOutput {
         &mut self.output
+    }
+
+    /// The track's knobs — see the field.
+    pub(crate) fn knobs(&self) -> &Knobs {
+        &self.knobs
+    }
+
+    /// Replaces all the knobs (a project load).
+    pub(crate) fn set_knobs(&mut self, knobs: Knobs) {
+        self.knobs = knobs;
+    }
+
+    /// Knob `knob`, if there is one.
+    pub(crate) fn knob_mut(&mut self, knob: usize) -> Option<&mut Knob> {
+        self.knobs.get_mut(knob)
     }
 
     /// Returns the MIDI channel for this track. Instrument tracks play into the

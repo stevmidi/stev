@@ -220,6 +220,9 @@ impl Display {
                     for clip in clips {
                         self.add_clip_shape(clip);
                     }
+                    // Its plugins are in their slots now: each track's knobs
+                    // can tell its plugin where they stand.
+                    self.input_event_tx.send(InputEvent::SendKnobPositions).ok();
                 }
                 UiEvent::UnsavedChanges { action } => self.open_unsaved_prompt(action),
                 UiEvent::QuitApproved => self.quit_approved = true,

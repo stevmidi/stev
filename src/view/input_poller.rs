@@ -33,7 +33,9 @@
 
 use std::path::{Path, PathBuf};
 
-use egui::{Context, Event, HoveredFile, InputOptions, Key, PointerButton, Pos2, Vec2, vec2};
+use egui::{
+    Context, Event, HoveredFile, InputOptions, Key, MouseWheelUnit, PointerButton, Pos2, Vec2, vec2,
+};
 
 use crate::core::{
     input_event::{InputEvent, KeyModifiers},
@@ -287,7 +289,7 @@ impl InputPoller {
         self.input_events.clear();
         self.note_keys.clear();
         // Read before `ctx.input`, which holds the context lock.
-        let click_limits = ctx.options(|options| options.input_options);
+        let input_options = ctx.options(|options| options.input_options);
 
         ctx.input(|i| {
             let modifiers = KeyModifiers::from(i.modifiers);
@@ -336,13 +338,13 @@ impl InputPoller {
                     y: pos.y,
                     modifiers,
                 });
-                if self.double_click.pressed(i.time, pos, &click_limits) {
+                if self.double_click.pressed(i.time, pos, &input_options) {
                     self.input_events
                         .push(InputEvent::MouseDoubleClicked { x: pos.x, y: pos.y });
                 }
             } else if !left_down && self.left_mouse_down {
                 self.input_events.push(InputEvent::MouseReleased);
-                self.double_click.released(i.time, pos, &click_limits);
+                self.double_click.released(i.time, pos, &input_options);
             }
             self.left_mouse_down = left_down;
 
@@ -446,6 +448,33 @@ impl InputPoller {
                     // `CLIP_CLIPBOARD_SENTINEL`; the text itself is never read.
                     Event::Paste(_) => {
                         self.input_events.push(InputEvent::Paste);
+                    }
+                    // Each raw scroll, for the knob panel's dials, which need
+                    // its phase (`InputEvent::WheelScrolled`); the smoothed
+                    // delta below still scrolls the panes.
+                    Event::MouseWheel {
+                        unit,
+                        delta,
+                        phase,
+                        modifiers: mods,
+                    } if !mods.command => {
+                        let delta = match unit {
+                            MouseWheelUnit::Point => *delta,
+                            MouseWheelUnit::Line | MouseWheelUnit::Page => {
+                                *delta * input_options.line_scroll_speed
+                            }
+                        };
+                        self.input_events.push(InputEvent::WheelScrolled {
+                            delta_y: if mods.shift {
+                                delta.y + delta.x
+                            } else {
+                                delta.y
+                            },
+                            fine: mods.shift,
+                            phase: *phase,
+                            pointer_x: latest_pos.map(|pos| pos.x),
+                            pointer_y: latest_pos.map(|pos| pos.y),
+                        });
                     }
                     _ => {}
                 }

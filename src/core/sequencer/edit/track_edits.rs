@@ -1,8 +1,9 @@
 //! Adding, removing, renaming and re-routing tracks: [`AddTrackEdit`] (⌘T,
 //! the `+` row), [`RemoveTrackEdit`] (Delete in track header focus, the
 //! output menu's `Delete track`), [`RenameTrackEdit`] (⌘R, a double-click on
-//! the header's name) and [`SetTrackOutputEdit`] (a plugin put on a track,
-//! the output menu's channels and `Remove`), each one undo step.
+//! the header's name), [`SetTrackOutputEdit`] (a plugin put on a track,
+//! the output menu's channels and `Remove`) and [`SetKnobCcEdit`] (a knob's
+//! CC number typed on its label), each one undo step.
 //!
 //! They are mirror images built on one pair of helpers: [`Sequencer::lift_track`]
 //! takes a track out of the arrangement whole (its clips, output and mix
@@ -19,7 +20,10 @@
 //! state by track id), and a restore reloads it the way a project load does.
 //! See `050-undo-redo.md` § Track add / remove.
 
+use uuid::Uuid;
+
 use crate::core::config::{MAX_TRACKS, TRACK_COLOR_COUNT, TRACK_VOLUME_DB_DEFAULT};
+use crate::models::knobs::{CcRefusal, cc_refusal};
 use crate::models::track::{Track, TrackOutput};
 
 use super::{EditResult, Sequencer};
@@ -82,7 +86,8 @@ impl Sequencer {
 
     /// Puts `lifted` back into the arrangement at `track_idx` (clamped to an
     /// append): in its own slot when that is free, else the lowest free one;
-    /// caught up to the playhead; its mix values written back. Returns where it landed. Never
+    /// caught up to the playhead; its mix values and knob positions written
+    /// back. Returns where it landed. Never
     /// grows past `MAX_TRACKS` (`None`).
     pub(crate) fn restore_track(&mut self, track_idx: usize, lifted: LiftedTrack) -> Option<usize> {
         if self.tracks.len() >= MAX_TRACKS {
@@ -106,6 +111,7 @@ impl Sequencer {
         self.set_track_pan(track_idx, pan);
         self.set_track_muted(track_idx, muted);
         self.set_track_soloed(track_idx, soloed);
+        self.publish_knobs(track_idx);
         // A restored solo silences the others.
         if soloed {
             self.release_newly_silenced_tracks();
@@ -365,6 +371,102 @@ impl Sequencer {
     }
 }
 
+/// A knob's CC number typed on its label (`390-knob-panel.md` decisions 5
+/// and 6): the knob sends `to` instead of `from`, and every move of `from`
+/// in the track's clips is renumbered with it, so the knob keeps its data
+/// and nothing goes on playing out of sight. The moves are named by id,
+/// found once when the edit is made, so undo renumbers exactly those back —
+/// not moves of `to` that were in the clips already (pasted from another
+/// track), which no knob held.
+pub(crate) struct SetKnobCcEdit {
+    /// The track's position.
+    track_idx: usize,
+    /// Which knob.
+    knob: usize,
+    /// Its CC before the edit.
+    from: u8,
+    /// Its CC after.
+    to: u8,
+    /// The renumbered moves: per clip id, the event ids.
+    moves: Vec<(Uuid, Vec<Uuid>)>,
+}
+
+impl SetKnobCcEdit {
+    /// Knob `knob` of the track at `track_idx` sends `cc` instead. `Err`
+    /// when the knob can't take it (reserved, or another knob's);
+    /// `Ok(None)` with no such track or knob, or when it sends `cc` already
+    /// — no undo step for a change that changes nothing.
+    pub(crate) fn new(
+        sequencer: &Sequencer,
+        track_idx: usize,
+        knob: usize,
+        cc: u8,
+    ) -> Result<Option<Self>, CcRefusal> {
+        let Some(track) = sequencer.tracks().get(track_idx) else {
+            return Ok(None);
+        };
+        let Some(from) = track.knobs().get(knob).map(|knob| knob.cc) else {
+            return Ok(None);
+        };
+        if let Some(refusal) = cc_refusal(track.knobs(), knob, cc) {
+            return Err(refusal);
+        }
+        if from == cc {
+            return Ok(None);
+        }
+        let moves = track
+            .clips()
+            .iter()
+            .map(|clip| (clip.id(), clip.controller_move_ids(from)))
+            .filter(|(_, ids)| !ids.is_empty())
+            .collect();
+        Ok(Some(SetKnobCcEdit {
+            track_idx,
+            knob,
+            from,
+            to: cc,
+            moves,
+        }))
+    }
+
+    /// Gives the knob its new CC, its moves with it.
+    pub(crate) fn edit(&mut self, sequencer: &mut Sequencer) -> EditResult {
+        sequencer.set_knob_cc(self.track_idx, self.knob, self.to, &self.moves)
+    }
+
+    /// Gives it back its old one.
+    pub(crate) fn undo(&mut self, sequencer: &mut Sequencer) -> EditResult {
+        sequencer.set_knob_cc(self.track_idx, self.knob, self.from, &self.moves)
+    }
+}
+
+impl Sequencer {
+    /// Puts knob `knob` of the track at `track_idx` on `cc` and renumbers
+    /// `moves` to it — both halves of [`SetKnobCcEdit`]. Only the controller
+    /// number changes, never a tick, so playback needs no re-seek.
+    fn set_knob_cc(
+        &mut self,
+        track_idx: usize,
+        knob: usize,
+        cc: u8,
+        moves: &[(Uuid, Vec<Uuid>)],
+    ) -> EditResult {
+        let Some(track) = self.tracks.get_mut(track_idx) else {
+            return EditResult::NoOp;
+        };
+        let Some(slot) = track.knob_mut(knob) else {
+            return EditResult::NoOp;
+        };
+        slot.cc = cc;
+        for (clip_id, ids) in moves {
+            if let Some(clip) = track.get_clip_by_id_mut(*clip_id) {
+                clip.renumber_controller_moves(ids, cc);
+            }
+        }
+        EditResult::KnobsChanged
+    }
+}
+
 /// The colour a new track takes, given the tracks' colours in order: the
 /// first in rotation from just past the last track's that no track uses, so
 /// adding keeps walking the palette and a colour freed by a remove comes back
@@ -397,10 +499,13 @@ mod tests {
     use crate::core::sequencer::{
         ClipInstrumentEvent, DeleteInRangeEdit, EditResult, Sequencer, SequencerEdit,
     };
+    use crate::models::event::Event;
+    use crate::models::knobs::CcRefusal;
     use crate::models::track::TrackOutput;
 
     use super::{
-        AddTrackEdit, RemoveTrackEdit, RenameTrackEdit, SetTrackOutputEdit, next_color_slot,
+        AddTrackEdit, RemoveTrackEdit, RenameTrackEdit, SetKnobCcEdit, SetTrackOutputEdit,
+        next_color_slot,
     };
 
     /// The tracks' ids, in order.
@@ -892,5 +997,150 @@ mod tests {
         // The clip's own note-off plays into the plugin, harmlessly; no
         // note-on reaches it.
         assert_eq!(plugin_events(&mut plugin_rx), vec![(1, [0x80, 60, 0])]);
+    }
+
+    /// A move of controller `cc` to `value` at `tick`.
+    fn cc_at(tick: i32, cc: u8, value: u8) -> Event {
+        Event::new(tick, 0, vec![0xB0, cc, value])
+    }
+
+    /// Every message in the clips of the track at `track_idx`, clip by clip.
+    fn messages(sequencer: &Sequencer, track_idx: usize) -> Vec<Vec<u8>> {
+        sequencer.tracks()[track_idx]
+            .clips()
+            .iter()
+            .flat_map(|clip| clip.events().iter().map(|e| e.midi_message().to_vec()))
+            .collect()
+    }
+
+    /// Track 0 with two clips holding moves of CC 14 (knob 1's), CC 15
+    /// (knob 2's), CC 30 (no knob's) and a note; track 1 with a CC 14 move
+    /// of its own.
+    fn sequencer_with_knob_moves() -> Sequencer {
+        let mut sequencer = test_sequencer();
+        let mut first = clip_at(0, 960);
+        first.add_event(cc_at(0, 14, 10));
+        first.add_event(note_on(10));
+        first.add_event(cc_at(20, 15, 20));
+        first.add_event(note_off(240));
+        let mut second = clip_at(960, 960);
+        second.add_event(cc_at(0, 30, 40));
+        second.add_event(cc_at(100, 14, 50));
+        sequencer.tracks_mut()[0].add_clip(&first);
+        sequencer.tracks_mut()[0].add_clip(&second);
+        let mut other = clip_at(0, 960);
+        other.add_event(cc_at(0, 14, 60));
+        sequencer.tracks_mut()[1].add_clip(&other);
+        sequencer
+    }
+
+    #[test]
+    fn a_knobs_new_cc_renumbers_its_moves_on_its_track_and_nothing_else() {
+        let mut sequencer = sequencer_with_knob_moves();
+        let mut record = Record::new();
+
+        let edit = SetKnobCcEdit::new(&sequencer, 0, 0, 74).unwrap().unwrap();
+        let result = record.edit(&mut sequencer, SequencerEdit::from(edit));
+
+        assert!(matches!(result, EditResult::KnobsChanged));
+        assert_eq!(sequencer.tracks()[0].knobs()[0].cc, 74);
+        assert_eq!(
+            messages(&sequencer, 0),
+            vec![
+                vec![0xB0, 74, 10],
+                vec![0x90, 60, 100],
+                vec![0xB0, 15, 20],
+                vec![0x80, 60, 0],
+                vec![0xB0, 30, 40],
+                vec![0xB0, 74, 50],
+            ]
+        );
+        // Another track's knob 1 is its own.
+        assert_eq!(messages(&sequencer, 1), vec![vec![0xB0, 14, 60]]);
+        assert_eq!(sequencer.tracks()[1].knobs()[0].cc, 14);
+    }
+
+    #[test]
+    fn undo_and_redo_give_back_the_number_and_the_moves_it_renumbered() {
+        let mut sequencer = sequencer_with_knob_moves();
+        let before = messages(&sequencer, 0);
+        let mut record = Record::new();
+
+        // Onto CC 30, which a move no knob held already uses: undo must put
+        // back only the moves the edit renumbered.
+        let edit = SetKnobCcEdit::new(&sequencer, 0, 0, 30).unwrap().unwrap();
+        record.edit(&mut sequencer, SequencerEdit::from(edit));
+        let after = messages(&sequencer, 0);
+        assert_eq!(after[0], vec![0xB0, 30, 10]);
+
+        record.undo(&mut sequencer);
+        assert_eq!(sequencer.tracks()[0].knobs()[0].cc, 14);
+        assert_eq!(messages(&sequencer, 0), before);
+
+        record.redo(&mut sequencer);
+        assert_eq!(sequencer.tracks()[0].knobs()[0].cc, 30);
+        assert_eq!(messages(&sequencer, 0), after);
+    }
+
+    #[test]
+    fn a_cc_another_knob_sends_or_no_knob_may_send_is_refused() {
+        let sequencer = sequencer_with_knob_moves();
+        assert!(matches!(
+            SetKnobCcEdit::new(&sequencer, 0, 0, 15),
+            Err(CcRefusal::Taken(1))
+        ));
+        assert!(matches!(
+            SetKnobCcEdit::new(&sequencer, 0, 0, 1),
+            Err(CcRefusal::Reserved)
+        ));
+        assert!(matches!(
+            SetKnobCcEdit::new(&sequencer, 0, 0, 123),
+            Err(CcRefusal::Reserved)
+        ));
+    }
+
+    #[test]
+    fn a_knob_cc_change_that_changes_nothing_is_no_edit() {
+        let sequencer = sequencer_with_knob_moves();
+        assert!(matches!(SetKnobCcEdit::new(&sequencer, 0, 0, 14), Ok(None)));
+        assert!(matches!(SetKnobCcEdit::new(&sequencer, 0, 8, 40), Ok(None)));
+        assert!(matches!(
+            SetKnobCcEdit::new(&sequencer, 99, 0, 40),
+            Ok(None)
+        ));
+    }
+
+    #[test]
+    fn a_turned_knob_is_published_and_comes_back_with_its_removed_track() {
+        let mut sequencer = test_sequencer();
+        sequencer.set_knob_value(1, 3, 99);
+        assert_eq!(sequencer.tracks()[1].knobs()[3].value, Some(99));
+        assert_eq!(sequencer.track_mix.knob_value(1, 3), Some(99));
+        // Clamped to a CC value.
+        sequencer.set_knob_value(1, 4, 200);
+        assert_eq!(sequencer.track_mix.knob_value(1, 4), Some(127));
+
+        let mut record = Record::new();
+        let edit = RemoveTrackEdit::new(&sequencer, Some(1)).unwrap();
+        record.edit(&mut sequencer, SequencerEdit::from(edit));
+        // The freed slot's knobs read unturned.
+        assert_eq!(sequencer.track_mix.knob_value(1, 3), None);
+
+        record.undo(&mut sequencer);
+        assert_eq!(sequencer.track_mix.knob_value(1, 3), Some(99));
+    }
+
+    #[test]
+    fn a_load_sends_each_tracks_turned_knobs_to_its_own_output() {
+        let (mut sequencer, midi_out_rx, mut plugin_rx) = sequencer_with_outputs(false);
+        sequencer.tracks_mut()[2].set_output(stub_instrument(Vec::new()));
+        sequencer.set_knob_value(1, 0, 64);
+        sequencer.set_knob_value(2, 7, 5);
+
+        sequencer.send_knob_positions();
+
+        // Track 2 on MIDI channel 2; untouched knobs send nothing.
+        assert_eq!(midi_out(&midi_out_rx), vec![vec![0xB1, 14, 64]]);
+        assert_eq!(plugin_events(&mut plugin_rx), vec![(2, [0xB0, 21, 5])]);
     }
 }

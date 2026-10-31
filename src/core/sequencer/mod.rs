@@ -23,6 +23,8 @@
 //!   framing the notes to insert, heard in place (`archive/290-framing-a-take.md`).
 //! - `selection.rs` / `view.rs` — clip & event selection, clip-view snapshots.
 //! - `mix.rs` — the not-undoable per-track mixer writers.
+//! - `knobs.rs` — the knob panel's positions: set by a drag, mirrored for the
+//!   view, sent on a load (`390-knob-panel.md`).
 //! - `export.rs` — the MIDI clip export: which clip, and its `.mid` bytes.
 //! - `audio_export.rs` — the audio export's plan (which tracks get a stem,
 //!   their file names, the span) and the run's start/end marks
@@ -42,6 +44,7 @@ mod edit;
 mod export;
 mod instrument_event;
 mod instrument_notes;
+mod knobs;
 mod mix;
 mod performance_lane;
 mod playback;
@@ -73,8 +76,8 @@ pub(crate) use edit::{
     MuteInRangeEdit, MuteSelectedEventsEdit, NudgeSelectedEventsEdit,
     NudgeSelectedEventsLengthEdit, PasteClipsEdit, PasteLead, QuantizeEventsEdit, RemoveTrackEdit,
     RenameTrackEdit, ReplaceClipNotesEdit, ResizeClipEdit, RestWheelEdit, RetimeClipEdit,
-    SequencerEdit, SetMeterEdit, SetTempoEdit, SetTrackOutputEdit, SplitClipsEdit, TempoGesture,
-    TransposeSelectedEventsEdit,
+    SequencerEdit, SetKnobCcEdit, SetMeterEdit, SetTempoEdit, SetTrackOutputEdit, SplitClipsEdit,
+    TempoGesture, TransposeSelectedEventsEdit,
 };
 pub(crate) use export::ExportRefusal;
 pub(crate) use instrument_event::ClipInstrumentEvent;

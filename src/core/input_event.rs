@@ -23,7 +23,7 @@
 
 use std::path::PathBuf;
 
-use egui::{Key, Modifiers};
+use egui::{Key, Modifiers, TouchPhase};
 use uuid::Uuid;
 
 use crate::{
@@ -178,6 +178,26 @@ pub(crate) enum InputEvent {
     /// context; the Arranger handler no-ops unless a keyboard-armed
     /// `ClipMoveDrag` is actually pending.
     MoveModifierReleased,
+    /// One raw wheel or trackpad scroll event, unsmoothed and with its phase:
+    /// what turns a dial in the knob panel (`knob_panel.rs`), which needs the
+    /// phase to tell a gesture started on a dial from trackpad momentum
+    /// coasting onto one. Sent ahead of the frame's `TimelineScroll`. Not
+    /// while ⌘/Ctrl is down (a zoom). View-local.
+    WheelScrolled {
+        /// Vertical travel in points, the sign `TimelineScroll`'s: positive
+        /// = content moves down. With ⇧ the horizontal travel is added in,
+        /// since macOS turns a ⇧ mouse wheel into a sideways scroll.
+        delta_y: f32,
+        /// Whether ⇧ was down: fine steps.
+        fine: bool,
+        /// The gesture's phase: `Start` / `End` around a trackpad gesture
+        /// and again around its momentum; always `Move` for a mouse wheel.
+        phase: TouchPhase,
+        /// Pointer x in canvas space; `None` with no pointer over the window.
+        pointer_x: Option<f32>,
+        /// Pointer y; `None` with no pointer over the window.
+        pointer_y: Option<f32>,
+    },
     /// Two-finger trackpad / wheel scroll over the arranger or the clip view.
     /// The deltas are egui's smoothed scroll delta in points. View-local:
     /// resolved in `Display::forward_input_event`, never reaches
@@ -763,6 +783,29 @@ pub(crate) enum InputEvent {
         /// Its new name, already through `track_name_from_input`.
         name: Option<String>,
     },
+    /// A number typed in a knob's CC field: knob `knob` of `track_idx` sends
+    /// `cc` instead (`SetKnobCcEdit`).
+    SetKnobCc {
+        /// The knob's track.
+        track_idx: usize,
+        /// Which knob, `0..KNOB_COUNT`.
+        knob: usize,
+        /// The CC it is to send.
+        cc: u8,
+    },
+    /// A knob drag moved knob `knob` of `track_idx` to `value`; the view has
+    /// sent its CC live already. Not undoable, like volume and pan.
+    SetKnobValue {
+        /// The knob's track.
+        track_idx: usize,
+        /// Which knob, `0..KNOB_COUNT`.
+        knob: usize,
+        /// Its position, `0..=127`.
+        value: u8,
+    },
+    /// A loaded project's plugins are in their slots: send every track's
+    /// knob positions to its output.
+    SendKnobPositions,
     /// ⌘/Ctrl+C (optionally with Shift). egui-winit turns the copy chord into
     /// `egui::Event::Copy` regardless of Shift and swallows the raw `C` key
     /// press, so this is the only way the app sees it; `shift` is sampled

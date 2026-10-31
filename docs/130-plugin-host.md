@@ -195,6 +195,16 @@ methods take a track's position and look the slot up in its `tracks` mirror
   `route_held`, which `route_channel` also uses for `held_note_channels` on
   MIDI-OUT) — otherwise switching the armed track mid-hold sends the note-off
   to the new track's plugin and strands the note sounding on the old one.
+- **The knob panel's CCs take the live route** (`390-knob-panel.md`): a
+  knob drag sends its Control Change on `computer_keys_tx`, so the
+  `"computerkeys"` thread routes it as a played note is — the selected
+  track's plugin through `live_instrument_target`, MIDI Out thru on its
+  channel, not while the performance lane is armed or an audio export runs.
+  Loading a project sends each track's turned knobs once its plugins are in
+  their slots (`Sequencer::send_knob_positions`, on `ProjectLoaded`, after
+  `sync_instruments_to_tracks` queued each voice's insert ahead of them):
+  to a plugin as `EventTime::Immediate` clip events tagged with the track's
+  slot, to MIDI Out undelayed on its channel.
 - **Clip playback → plugin.** `TrackOutput::Instrument(InstrumentRef)` (in
   `models::track`) routes a track's clip events into `Sequencer`'s
   `instrument_midi_tx` ring as a `ClipInstrumentEvent { track, message, when }`

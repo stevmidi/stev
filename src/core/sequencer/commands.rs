@@ -431,6 +431,31 @@ pub(crate) enum SequencerCommand {
         /// Its new name, already through `track_name_from_input`.
         name: Option<String>,
     },
+    /// Knob `knob` of `track_idx` sends `cc` instead, its moves in the
+    /// track's clips renumbered with it, as one undo step (`SetKnobCcEdit`).
+    /// Refused, with a footer message, on a reserved CC or another knob's.
+    SetKnobCc {
+        /// The knob's track.
+        track_idx: usize,
+        /// Which knob, `0..KNOB_COUNT`.
+        knob: usize,
+        /// The CC it is to send.
+        cc: u8,
+    },
+    /// Knob `knob` of `track_idx` was turned to `value` — sent continuously
+    /// while it is dragged, its CC already sent live by the view. Not
+    /// undoable, like volume and pan; saved with the project.
+    SetKnobValue {
+        /// The knob's track.
+        track_idx: usize,
+        /// Which knob, `0..KNOB_COUNT`.
+        knob: usize,
+        /// Its position, `0..=127`.
+        value: u8,
+    },
+    /// A project load is done and its plugins are in their slots: every
+    /// track's turned knobs go to its output (`Sequencer::send_knob_positions`).
+    SendKnobPositions,
 
     // --- Arranger performance lane ---
     /// Arms the physical MIDI keyboard for bar-jump triggering instead of

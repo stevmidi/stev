@@ -470,6 +470,7 @@ impl Display {
                 || self.handle_browser_rename_input_event(&event)
                 || self.handle_tempo_field_input_event(&event)
                 || self.handle_meter_field_input_event(&event)
+                || self.handle_knob_cc_field_input_event(&event)
                 || self.handle_output_menu_input_event(&event)
                 || self.handle_shortcut_recorder_input_event(&event)
                 || self.handle_project_input_event(&event)
@@ -506,6 +507,7 @@ impl Display {
             || self.browser.rename.is_some()
             || self.tempo_chip.editing()
             || self.meter_chip.editing()
+            || self.knob_panel.editing()
             || self.overlay.is_some()
     }
 
@@ -776,14 +778,26 @@ impl Display {
                 pointer_x,
                 pointer_y,
             } => {
-                if pointer_x
-                    .zip(pointer_y)
-                    .is_some_and(|(x, y)| self.is_over_browser(x, y))
-                {
+                let pointer = pointer_x.zip(pointer_y);
+                if pointer.is_some_and(|(x, y)| self.is_over_browser(x, y)) {
                     self.scroll_browser(delta_y);
+                } else if self.knob_panel_takes_scroll(pointer) {
+                    // The dials turn on the raw events (`WheelScrolled`).
                 } else {
                     self.scroll_timeline_by(delta_x, delta_y, pointer_y);
                 }
+                true
+            }
+            // A raw scroll event: the knob panel's dials turn on it. View-local,
+            // consumed in every view (the panes scroll on `TimelineScroll`).
+            InputEvent::WheelScrolled {
+                delta_y,
+                fine,
+                phase,
+                pointer_x,
+                pointer_y,
+            } => {
+                self.handle_knob_wheel(delta_y, fine, phase, pointer_x.zip(pointer_y));
                 true
             }
             // ⌘/Ctrl+wheel / pinch zoom, anchored on the pointer. View-local
@@ -891,10 +905,11 @@ impl Display {
             // Consumed in every view.
             InputEvent::PointerMotion { dx, dy } => {
                 self.in_pane(Pane::Clip, |display| display.extend_key_zoom_drag(dx, dy));
+                let fine = ctx.input(|i| i.modifiers.shift);
                 if self.tempo_chip.dragging() {
-                    let fine = ctx.input(|i| i.modifiers.shift);
                     self.extend_tempo_drag(dy, fine);
                 }
+                self.extend_knob_drag(dy, fine);
                 true
             }
             // A press goes to the pane it lands in. In the pane without the
@@ -916,6 +931,12 @@ impl Display {
                 // else takes the keyboard back from it.
                 if self.is_over_browser(x, y) {
                     self.handle_browser_click(x, y, false);
+                    return true;
+                }
+                // The knob panel never takes the keyboard, not even back
+                // from the browser panel.
+                if self.is_over_knob_panel(x, y) {
+                    self.handle_knob_panel_click(x, y, modifiers.command);
                     return true;
                 }
                 if self.key_focus == KeyFocus::Browser {
@@ -962,6 +983,8 @@ impl Display {
                     self.open_meter_field();
                 } else if self.is_over_browser(x, y) {
                     self.handle_browser_click(x, y, true);
+                } else if self.is_over_knob_panel(x, y) {
+                    self.handle_knob_panel_double_click(x, y);
                 } else if self.pane_at(x, y) == Some(Pane::Clip) {
                     self.in_pane(Pane::Clip, |display| display.handle_double_click(x, y));
                 } else if let Some(track_idx) =
@@ -1008,6 +1031,7 @@ impl Display {
                 let pointer_was_held = self.pointer_held_drag();
                 self.gesture.key_zoom_drag = None;
                 self.finish_tempo_drag();
+                self.finish_knob_drag();
                 if pointer_was_held && let Some(pos) = self.canvas_pointer() {
                     self.refresh_hovers(pos.x, pos.y);
                 }

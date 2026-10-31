@@ -15,6 +15,8 @@
 //! Selected-event editing is in `edits.rs`; quantize and swing detection in
 //! `quantize.rs`.
 
+use uuid::Uuid;
+
 use crate::core::time::Meter;
 use crate::models::{
     event::{Event, EventType},
@@ -109,6 +111,26 @@ impl Clip {
     /// which plays it next.
     pub(crate) fn wheels_at(&self, playback_tick: i32) -> WheelValues {
         self.wheels_before(self.event_tick_from_arrangement_tick(playback_tick))
+    }
+
+    /// The ids of the clip's moves of controller `cc` — what a knob's CC
+    /// reassignment renumbers (`390-knob-panel.md` decision 6).
+    pub(crate) fn controller_move_ids(&self, cc: u8) -> Vec<Uuid> {
+        self.events
+            .iter()
+            .filter(|event| event.controller() == Some(cc))
+            .map(Event::id)
+            .collect()
+    }
+
+    /// Renumbers the Control Changes among `ids` to controller `cc`. Ticks
+    /// don't move, so the list stays sorted.
+    pub(crate) fn renumber_controller_moves(&mut self, ids: &[Uuid], cc: u8) {
+        for event in &mut self.events {
+            if ids.contains(&event.id()) {
+                event.set_controller(cc);
+            }
+        }
     }
 
     /// Replaces the whole event list (undo restore), re-sorting and rebuilding

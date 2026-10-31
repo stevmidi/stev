@@ -96,8 +96,8 @@ impl EventHandlers {
             }
 
             // The cursor moves on the take as on any clip (`selected_clip`
-            // is the take). Playing, auditioning, mixing and re-routing a
-            // track go through (`Display` swaps a plugin before it asks);
+            // is the take). Playing, auditioning, mixing, turning a knob and
+            // re-routing a track go through (`Display` swaps a plugin before it asks);
             // `⌥Space` plays from where the take's cursor sounds in place.
             SequencerCommand::NudgeClipCursor(_)
             | SequencerCommand::NudgeClipCursorByGrid { .. }
@@ -113,6 +113,8 @@ impl EventHandlers {
             | SequencerCommand::ToggleTrackSolo { .. }
             | SequencerCommand::SetTrackOutput { .. }
             | SequencerCommand::SetTrackInstrumentState { .. }
+            | SequencerCommand::SetKnobValue { .. }
+            | SequencerCommand::SendKnobPositions
             // A running export's end, which the session can't hold up.
             | SequencerCommand::AudioExportWritten(_)
             // A save, which writes the target as it was before the session
@@ -124,7 +126,9 @@ impl EventHandlers {
             SequencerCommand::ProjectAction { .. }
             | SequencerCommand::ExportClip { .. }
             | SequencerCommand::ExportAudio { .. }
-            | SequencerCommand::ImportMidiClip { .. } => {
+            | SequencerCommand::ImportMidiClip { .. }
+            // A knob's reassignment rewrites the take's clip too.
+            | SequencerCommand::SetKnobCc { .. } => {
                 self.send_status_ui_event(FINISH_TAKE_FIRST.to_string());
             }
 
