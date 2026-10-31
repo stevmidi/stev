@@ -20,6 +20,8 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-10-31
+
 ### Added
 
 - Eight knobs beside the clip view send a MIDI CC each to the selected track's instrument or MIDI Out: drag one or scroll on it to turn it (⇧ for fine steps), ⌘-click it to turn it back to 0. Each track picks its own CC numbers, CC 14–21 to start with (Spire's macros listen on 14–17): double-click a knob's `CC` label to type another. A track keeps where its knobs were left, and sends them to its instrument when the project opens.
