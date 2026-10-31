@@ -40,8 +40,8 @@ fn knob_panel_key(key: Key, action: Option<Action>) -> Option<KnobPanelKey> {
 }
 
 impl Display {
-    /// A click on knob `knob` (its dial or label) with a clip open selects
-    /// it: its lane shows and the knob panel takes the keyboard — the clip
+    /// A click on knob `knob` (its dial or label) selects it, with a clip
+    /// open (nothing without one: there is no lane): its lane shows and the knob panel takes the keyboard — the clip
     /// pane's first, if the arranger had it, and back from the browser. The
     /// note selection is dropped, and the marquee's duplicate span with it,
     /// so the `Delete` that follows can't be read as one on the notes and
@@ -49,6 +49,9 @@ impl Display {
     /// session's keys stay where they are, and dropping the selection there
     /// would cancel the take.
     pub(in crate::view::display) fn select_knob(&mut self, knob: usize) {
+        if !self.knob_labels_switch_lanes() {
+            return;
+        }
         self.set_clip_lane(ClipLane::Knob(knob));
         if self.take_session.is_some() {
             return;
@@ -68,38 +71,21 @@ impl Display {
         }
     }
 
-    /// The knob panel's keys while it has the keyboard ([`knob_panel_key`]).
-    /// Returns whether it consumed `event`. A clipboard chord hands the
-    /// keyboard back and goes on to the notes, as a note command does.
+    /// The knob panel's keys while it has the keyboard ([`knob_panel_key`],
+    /// read through [`focus_key_press`](Self::focus_key_press)). Returns
+    /// whether it consumed `event`.
     pub(super) fn handle_knob_panel_key(&mut self, event: &InputEvent) -> bool {
-        let (key, modifiers) = match *event {
-            InputEvent::KeyPressed { key, modifiers } => (key, modifiers),
-            InputEvent::Copy { .. } | InputEvent::Cut { .. } | InputEvent::Paste => {
-                self.key_focus = KeyFocus::Pane;
-                return false;
-            }
-            _ => return false,
-        };
-        // Esc during an audio export goes on to cancel it.
-        if key == Key::Escape && self.is_exporting_audio() {
+        let Some((key, action)) = self.focus_key_press(event) else {
             return false;
-        }
-        match knob_panel_key(key, self.pressed_action(key, modifiers)) {
+        };
+        match knob_panel_key(key, action) {
             Some(KnobPanelKey::ClearKnob) => {
                 // The whole clip, material outside the window included: the
-                // lane's `⌘A` then `Delete`, one undo step. Nothing for a clip
-                // with no events.
+                // lane's `⌘A` then `Delete`. Nothing for a clip with no
+                // events.
                 let (start, end) = self.render.lead_clip_extent;
-                if let Some(controller) = self.clip_lane_controller()
-                    && start < end
-                {
-                    self.input_event_tx
-                        .send(InputEvent::ClearControllerSpan {
-                            controller,
-                            start,
-                            end,
-                        })
-                        .ok();
+                if start < end {
+                    self.send_clear_controller_span(start, end);
                 }
                 true
             }

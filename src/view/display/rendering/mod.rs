@@ -858,7 +858,7 @@ impl Display {
         let (focused, left) = if self.focused_pane() == Pane::Clip {
             (clip, clip.min.x)
         } else {
-            (arranger, arranger.min.x + Self::KNOB_COLUMN_W)
+            (arranger, arranger.min.x + Self::TRACK_COLUMN_W)
         };
         painter.hline(
             left + offset.x..=focused.max.x + offset.x,
@@ -873,17 +873,17 @@ impl Display {
     /// pane edge's full width: a pane's clipped painter would cut off the
     /// half above its top.
     fn draw_column_focus_edge(&self, painter: &Painter, panes: PaneRects, rect: Rect) {
-        let column = match self.key_owner() {
-            KeyFocus::TrackHeaders => panes.arranger,
-            KeyFocus::KnobPanel => panes.knobs,
-            _ => None,
+        let (column, width) = match self.key_owner() {
+            KeyFocus::TrackHeaders => (panes.arranger, Self::TRACK_COLUMN_W),
+            KeyFocus::KnobPanel => (panes.knobs, Self::KNOB_COLUMN_W),
+            _ => return,
         };
         let Some(column) = column else {
             return;
         };
         let left = column.min.x + rect.min.x;
         painter.hline(
-            left..=(left + Self::KNOB_COLUMN_W - Self::TRACK_COLUMN_GRID_GAP_X),
+            left..=(left + width - Self::TRACK_COLUMN_GRID_GAP_X),
             column.min.y + rect.min.y,
             focus_edge_stroke(),
         );

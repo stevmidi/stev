@@ -908,8 +908,7 @@ impl Action {
     /// the panel reads as clearing the knob's CC, and the lane switch, which
     /// moves the selection along the knobs.
     pub(crate) fn leaves_knob_panel(self) -> bool {
-        self.info().scope == Scope::Clip
-            && !matches!(self, Action::DeleteNotes | Action::CycleClipLane)
+        self.leaves_wheel_lane() || self == Action::SelectAllNotes
     }
 
     /// This action's index in [`ACTIONS`].

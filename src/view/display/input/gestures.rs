@@ -16,9 +16,10 @@ impl Display {
     /// Below this screen-space distance from the press point, a press is
     /// still just a press, not a drag — for the event marquee
     /// (`extend_event_marquee`), the clip band move (`extend_clip_move_drag`)
-    /// and a browser row pressed for a drag (`BrowserPress::dragging`) alike.
+    /// a browser row pressed for a drag (`BrowserPress::dragging`) and a
+    /// knob's dial (`KnobDrag::extend`) alike.
     /// See [`past_drag_threshold`].
-    pub(super) const DRAG_THRESHOLD_PX: f32 = 3.0;
+    pub(in crate::view::display) const DRAG_THRESHOLD_PX: f32 = 3.0;
     /// Screen-space pixels of vertical drag per unit of velocity change —
     /// see `extend_velocity_drag`. Tunable to taste; full range (1..=127) is
     /// currently about 380px.

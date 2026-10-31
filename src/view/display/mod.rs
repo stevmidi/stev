@@ -383,12 +383,15 @@ impl Display {
     /// flush against the column. `content_origin_x()` itself is unchanged, so
     /// nothing in the grid moves.
     const TRACK_COLUMN_GRID_GAP_X: f32 = 8.0;
+    /// The arranger's track-header column, its gap to the grid included:
+    /// where the arranger's grid starts (`content_origin_x`).
+    const TRACK_COLUMN_W: f32 = Self::PADDING_X + Self::TRACK_HEADER_W;
     /// The column the knob panel takes left of the clip view: the arranger's
-    /// track-header reservation, so the panel lines up under the headers
+    /// track-header column, so the panel lines up under the headers
     /// and the clip view's keys start where the arranger's grid does
     /// (`390-knob-panel.md` decision 3). The panel's fill stops
     /// `TRACK_COLUMN_GRID_GAP_X` short of it, as the header column's does.
-    const KNOB_COLUMN_W: f32 = Self::PADDING_X + Self::TRACK_HEADER_W;
+    const KNOB_COLUMN_W: f32 = Self::TRACK_COLUMN_W;
     /// Right content padding, pixels.
     const RIGHT_PADDING_X: f32 = 8.0;
     /// Width of the octave-legend column and, separately, the piano-key
@@ -1198,7 +1201,7 @@ impl Display {
                     .map_or(0.0, |clip| clip.min.x - self.render.canvas_rect.min.x);
                 pane_left + Self::PIANO_MARGIN_W * 2.0
             }
-            Pane::Arranger => Self::PADDING_X + Self::TRACK_HEADER_W,
+            Pane::Arranger => Self::TRACK_COLUMN_W,
         }
     }
 

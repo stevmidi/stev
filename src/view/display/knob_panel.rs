@@ -51,10 +51,6 @@ const DIAL_MIN_D: f32 = 6.0;
 /// Points of vertical travel per CC step, dragged or scrolled — the whole
 /// range in about 190.
 const DRAG_PX_PER_STEP: f32 = 1.5;
-/// Points of vertical travel a press on a dial may wander before it turns
-/// the knob: within it the press is a click, which selects the knob,
-/// and a hand's jitter never sends (or records) a stray step.
-const DRAG_DEAD_ZONE: f32 = 4.0;
 /// How much slower a ⇧-drag turns.
 const FINE_FACTOR: f32 = 5.0;
 /// Where a dial's sweep starts, the value 0: down-left, in screen radians
@@ -281,7 +277,8 @@ struct KnobDrag {
     /// Where the knob stood when the drag began, until its first move has
     /// gone out ahead of it ([`Display::send_knob_value`]).
     from: Option<u8>,
-    /// Points travelled upward while still inside [`DRAG_DEAD_ZONE`];
+    /// Points travelled upward while still inside the drag threshold
+    /// ([`Display::DRAG_THRESHOLD_PX`], every press's click-or-drag line);
     /// `None` once the drag has left it and turns the knob.
     slop: Option<f32>,
 }
@@ -303,14 +300,16 @@ impl KnobDrag {
     }
 
     /// Raw pointer motion `dy` (downward positive): the new value, when it
-    /// changed. Nothing turns until the travel leaves [`DRAG_DEAD_ZONE`],
+    /// changed. Nothing turns until the travel leaves the drag threshold
+    /// ([`Display::DRAG_THRESHOLD_PX`]: within it the press is a click, which
+    /// selects the knob, and a hand's jitter never sends or records a step),
     /// and the turn then counts from there, so the knob never jumps. ⇧
     /// going down or up re-anchors at the value reached, and so does
     /// hitting either end.
     fn extend(&mut self, dy: f32, fine: bool) -> Option<u8> {
         if let Some(slop) = self.slop.as_mut() {
             *slop -= dy;
-            if slop.abs() >= DRAG_DEAD_ZONE {
+            if slop.abs() >= Display::DRAG_THRESHOLD_PX {
                 self.slop = None;
                 self.fine = fine;
             }
@@ -488,10 +487,8 @@ impl Display {
         match self.knob_at(x, y) {
             Some(KnobHit::Dial(knob)) if command => self.reset_knob(knob),
             Some(KnobHit::Dial(knob)) => self.begin_knob_drag(knob),
-            Some(KnobHit::Label(knob)) if self.knob_labels_switch_lanes() => {
-                self.select_knob(knob);
-            }
-            Some(KnobHit::Label(_)) | None => {}
+            Some(KnobHit::Label(knob)) => self.select_knob(knob),
+            None => {}
         }
     }
 
@@ -501,31 +498,33 @@ impl Display {
         self.lead_clip_time.is_some()
     }
 
+    /// The dial or label under the pointer.
+    fn knob_hit_under_pointer(&self) -> Option<KnobHit> {
+        let pos = self.canvas_pointer()?;
+        self.knob_at(pos.x, pos.y)
+    }
+
     /// The knob whose dial or label is under the pointer — the label lit as
     /// a hover, since a click on either shows its lane.
     pub(super) fn knob_under_pointer(&self) -> Option<usize> {
-        let pos = self.canvas_pointer()?;
-        match self.knob_at(pos.x, pos.y)? {
+        match self.knob_hit_under_pointer()? {
             KnobHit::Dial(knob) | KnobHit::Label(knob) => Some(knob),
         }
     }
 
-    /// The knob whose label is under the pointer — the pointing hand; a
-    /// dial keeps its vertical arrows, a drag being its main use.
-    fn knob_label_under_pointer(&self) -> Option<usize> {
-        let pos = self.canvas_pointer()?;
-        match self.knob_at(pos.x, pos.y)? {
-            KnobHit::Label(knob) => Some(knob),
-            KnobHit::Dial(_) => None,
-        }
-    }
-
     /// The knob whose label is under the pointer, when a click there would
-    /// switch the lane — not the lane already shown.
+    /// switch the lane — not the lane already shown. The pointing hand; a
+    /// dial keeps its vertical arrows, a drag being its main use.
     pub(super) fn knob_lane_switch_under_pointer(&self) -> Option<usize> {
-        self.knob_label_under_pointer().filter(|&knob| {
-            self.knob_labels_switch_lanes() && self.render.clip_lane != ClipLane::Knob(knob)
-        })
+        match self.knob_hit_under_pointer()? {
+            KnobHit::Label(knob)
+                if self.knob_labels_switch_lanes()
+                    && self.render.clip_lane != ClipLane::Knob(knob) =>
+            {
+                Some(knob)
+            }
+            _ => None,
+        }
     }
 
     /// Turns knob `knob` of the selected track back to 0, where a knob
@@ -617,10 +616,7 @@ impl Display {
             return;
         };
         self.input_event_tx.send(InputEvent::ReleaseKnobs).ok();
-        if drag.is_click()
-            && self.knobs_track() == Some(drag.track_idx)
-            && self.knob_labels_switch_lanes()
-        {
+        if drag.is_click() && self.knobs_track() == Some(drag.track_idx) {
             self.select_knob(drag.knob);
         }
     }
@@ -799,9 +795,8 @@ mod tests {
     use egui::{Rect, TouchPhase, pos2};
 
     use super::{
-        CC_VALUE_MAX, DIAL_MAX_D, DIAL_MIN_D, DRAG_DEAD_ZONE, DRAG_PX_PER_STEP, KnobDrag,
-        MOMENTUM_SCALE, SWEEP, SWEEP_START, WheelLatch, dragged_knob_value, knob_angle,
-        knob_layout, take_steps,
+        CC_VALUE_MAX, DIAL_MAX_D, DIAL_MIN_D, DRAG_PX_PER_STEP, Display, KnobDrag, MOMENTUM_SCALE,
+        SWEEP, SWEEP_START, WheelLatch, dragged_knob_value, knob_angle, knob_layout, take_steps,
     };
 
     fn panel(height: f32) -> Rect {
@@ -858,7 +853,7 @@ mod tests {
     #[test]
     fn a_press_that_wanders_inside_the_dead_zone_is_a_click_and_turns_nothing() {
         let mut drag = KnobDrag::new(0, 3, 14, 64);
-        let jitter = DRAG_DEAD_ZONE * 0.6;
+        let jitter = Display::DRAG_THRESHOLD_PX * 0.6;
         // Up and back down: the travel is net, so it never leaves the zone.
         assert_eq!(drag.extend(-jitter, false), None);
         assert_eq!(drag.extend(jitter, false), None);
@@ -871,7 +866,7 @@ mod tests {
     fn a_drag_out_of_the_dead_zone_turns_from_its_edge_without_a_jump() {
         let mut drag = KnobDrag::new(0, 0, 14, 64);
         // Leaving the zone turns nothing yet, and the press is no click.
-        assert_eq!(drag.extend(-DRAG_DEAD_ZONE, false), None);
+        assert_eq!(drag.extend(-Display::DRAG_THRESHOLD_PX, false), None);
         assert!(!drag.is_click());
         // One step's travel from the edge is one step.
         assert_eq!(drag.extend(-DRAG_PX_PER_STEP, false), Some(65));

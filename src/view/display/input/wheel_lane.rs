@@ -131,36 +131,56 @@ impl Display {
         }
     }
 
-    /// The wheel lane's keys while it has the keyboard ([`wheel_lane_key`]).
-    /// Returns whether it consumed `event`. A clipboard chord hands the
-    /// keyboard back and goes on to the notes, as a note command does.
-    pub(super) fn handle_wheel_lane_key(&mut self, event: &InputEvent) -> bool {
-        let (key, modifiers) = match *event {
-            InputEvent::KeyPressed { key, modifiers } => (key, modifiers),
+    /// The key press a focus beside the notes (a wheel lane, the knob panel)
+    /// reads, with the action the keymap resolves it to: `None` for anything
+    /// else, and for what goes on past it — a clipboard chord, which first
+    /// hands the keyboard back to the notes as a note command does, and Esc
+    /// during an audio export, which goes on to cancel it.
+    pub(super) fn focus_key_press(&mut self, event: &InputEvent) -> Option<(Key, Option<Action>)> {
+        match *event {
+            InputEvent::KeyPressed { key, .. }
+                if key == Key::Escape && self.is_exporting_audio() =>
+            {
+                None
+            }
+            InputEvent::KeyPressed { key, modifiers } => {
+                Some((key, self.pressed_action(key, modifiers)))
+            }
             InputEvent::Copy { .. } | InputEvent::Cut { .. } | InputEvent::Paste => {
                 self.key_focus = KeyFocus::Pane;
-                return false;
+                None
             }
-            _ => return false,
-        };
-        // Esc during an audio export goes on to cancel it.
-        if key == Key::Escape && self.is_exporting_audio() {
-            return false;
+            _ => None,
         }
-        let action = self.pressed_action(key, modifiers);
+    }
+
+    /// Clears the shown controller from `start` to `end` in the lead clip
+    /// (`InputEvent::ClearControllerSpan`, one undo step): a wheel back to
+    /// rest, a knob's CC held at the value before the span.
+    pub(super) fn send_clear_controller_span(&self, start: i32, end: i32) {
+        if let Some(controller) = self.clip_lane_controller() {
+            self.input_event_tx
+                .send(InputEvent::ClearControllerSpan {
+                    controller,
+                    start,
+                    end,
+                })
+                .ok();
+        }
+    }
+
+    /// The wheel lane's keys while it has the keyboard ([`wheel_lane_key`],
+    /// read through [`focus_key_press`](Self::focus_key_press)). Returns
+    /// whether it consumed `event`.
+    pub(super) fn handle_wheel_lane_key(&mut self, event: &InputEvent) -> bool {
+        let Some((key, action)) = self.focus_key_press(event) else {
+            return false;
+        };
         let has_span = self.gesture.wheel_span.is_some();
         match wheel_lane_key(key, action, has_span, self.has_event_selection()) {
             Some(WheelLaneKey::ClearSpan) => {
-                if let Some(controller) = self.clip_lane_controller()
-                    && let Some((start, end)) = self.gesture.wheel_span.take()
-                {
-                    self.input_event_tx
-                        .send(InputEvent::ClearControllerSpan {
-                            controller,
-                            start,
-                            end,
-                        })
-                        .ok();
+                if let Some((start, end)) = self.gesture.wheel_span.take() {
+                    self.send_clear_controller_span(start, end);
                 }
                 true
             }
