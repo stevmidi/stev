@@ -50,7 +50,7 @@ pub(crate) use event_edits::{
 pub(crate) use meter_edit::SetMeterEdit;
 pub(crate) use tempo_edit::{SetTempoEdit, TempoGesture};
 pub(crate) use track_edits::{
-    AddTrackEdit, RemoveTrackEdit, RenameTrackEdit, SetKnobCcEdit, SetTrackOutputEdit,
+    AddTrackEdit, RemoveTrackEdit, RenameTrackEdit, SetKnobParamEdit, SetTrackOutputEdit,
 };
 
 /// Which clip a paste makes the lead (`EditResult::ClipsPasted`).
@@ -510,9 +510,9 @@ pub(crate) enum EditResult {
     /// A track's name changed (`RenameTrackEdit`'s edit and undo). The
     /// handler re-sends the view its track list (`TracksChanged`, no shift).
     TrackRenamed,
-    /// A knob's CC number changed (`SetKnobCcEdit`'s edit and undo). The
-    /// handler re-sends the view its track list, which carries the knobs'
-    /// CC numbers (`TracksChanged`, no shift).
+    /// A knob's parameter changed (`SetKnobParamEdit`'s edit and undo). The
+    /// handler re-sends the view its track list, which carries what the
+    /// knobs drive (`TracksChanged`, no shift).
     KnobsChanged,
     /// A track's output changed (`SetTrackOutputEdit`'s edit and undo). The
     /// handler re-sends the view its track list and has `Display` bring the
@@ -754,7 +754,7 @@ sequencer_edit_dispatch!(
     RemoveTrack(RemoveTrackEdit),
     RenameTrack(RenameTrackEdit),
     SetTrackOutput(SetTrackOutputEdit),
-    SetKnobCc(SetKnobCcEdit),
+    SetKnobParam(SetKnobParamEdit),
     SetTempo(SetTempoEdit),
     SetMeter(SetMeterEdit),
 );

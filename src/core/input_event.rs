@@ -33,6 +33,7 @@ use crate::{
     },
     models::{
         clip::{Clip, ClipEdge, NoteDrag},
+        knobs::ParamId,
         track::TrackOutput,
     },
 };
@@ -791,39 +792,28 @@ pub(crate) enum InputEvent {
         /// Its new name, already through `track_name_from_input`.
         name: Option<String>,
     },
-    /// A number typed in a knob's CC field: knob `knob` of `track_idx` sends
-    /// `cc` instead (`SetKnobCcEdit`).
-    SetKnobCc {
+    /// An armed knob's assignment: knob `knob` of `track_idx` drives the
+    /// plugin parameter the user turned in the plugin's editor, or none
+    /// (`Delete` while armed) — `SetKnobParamEdit`.
+    SetKnobParam {
         /// The knob's track.
         track_idx: usize,
         /// Which knob, `0..KNOB_COUNT`.
         knob: usize,
-        /// The CC it is to send.
-        cc: u8,
+        /// The parameter it is to drive.
+        param: Option<ParamId>,
     },
-    /// A knob drag moved knob `knob` of `track_idx` to `value`; the view has
-    /// sent its CC live already. Not undoable, like volume and pan.
+    /// The hand turned knob `knob` of `track_idx` to `value`, from Stev's
+    /// knob or the parameter's control in the plugin's editor; the view has
+    /// set the parameter already. Not undoable, like volume and pan.
     SetKnobValue {
         /// The knob's track.
         track_idx: usize,
         /// Which knob, `0..KNOB_COUNT`.
         knob: usize,
-        /// Its position, `0..=127`.
-        value: u8,
+        /// The parameter's normalized value, `0.0..=1.0`.
+        value: f64,
     },
-    /// A drag took hold of knob `knob` of `track_idx`: the hand wins over
-    /// playback until [`ReleaseKnobs`](Self::ReleaseKnobs).
-    HoldKnob {
-        /// The knob's track.
-        track_idx: usize,
-        /// Which knob, `0..KNOB_COUNT`.
-        knob: usize,
-    },
-    /// The knob drag let go: playback takes every knob over again.
-    ReleaseKnobs,
-    /// A loaded project's plugins are in their slots: send every track's
-    /// knob positions to its output.
-    SendKnobPositions,
     /// ⌘/Ctrl+C (optionally with Shift). egui-winit turns the copy chord into
     /// `egui::Event::Copy` regardless of Shift and swallows the raw `C` key
     /// press, so this is the only way the app sees it; `shift` is sampled

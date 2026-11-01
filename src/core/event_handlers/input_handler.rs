@@ -296,15 +296,15 @@ impl EventHandlers {
                 });
             }
 
-            InputEvent::SetKnobCc {
+            InputEvent::SetKnobParam {
                 track_idx,
                 knob,
-                cc,
+                param,
             } => {
-                self.send_sequencer(SequencerCommand::SetKnobCc {
+                self.send_sequencer(SequencerCommand::SetKnobParam {
                     track_idx: *track_idx,
                     knob: *knob,
-                    cc: *cc,
+                    param: *param,
                 });
             }
 
@@ -318,21 +318,6 @@ impl EventHandlers {
                     knob: *knob,
                     value: *value,
                 });
-            }
-
-            InputEvent::HoldKnob { track_idx, knob } => {
-                self.send_sequencer(SequencerCommand::HoldKnob {
-                    track_idx: *track_idx,
-                    knob: *knob,
-                });
-            }
-
-            InputEvent::ReleaseKnobs => {
-                self.send_sequencer(SequencerCommand::ReleaseKnobs);
-            }
-
-            InputEvent::SendKnobPositions => {
-                self.send_sequencer(SequencerCommand::SendKnobPositions);
             }
 
             InputEvent::ConfirmMidiPorts { in_port, out_port } => {

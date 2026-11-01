@@ -114,9 +114,6 @@ impl EventHandlers {
             | SequencerCommand::SetTrackOutput { .. }
             | SequencerCommand::SetTrackInstrumentState { .. }
             | SequencerCommand::SetKnobValue { .. }
-            | SequencerCommand::HoldKnob { .. }
-            | SequencerCommand::ReleaseKnobs
-            | SequencerCommand::SendKnobPositions
             // A running export's end, which the session can't hold up.
             | SequencerCommand::AudioExportWritten(_)
             // A save, which writes the target as it was before the session
@@ -129,8 +126,9 @@ impl EventHandlers {
             | SequencerCommand::ExportClip { .. }
             | SequencerCommand::ExportAudio { .. }
             | SequencerCommand::ImportMidiClip { .. }
-            // A knob's reassignment rewrites the take's clip too.
-            | SequencerCommand::SetKnobCc { .. } => {
+            // A knob's reassignment rewrites its data in the take's clip
+            // too (`400-parameter-knobs.md` decision 7).
+            | SequencerCommand::SetKnobParam { .. } => {
                 self.send_status_ui_event(FINISH_TAKE_FIRST.to_string());
             }
 

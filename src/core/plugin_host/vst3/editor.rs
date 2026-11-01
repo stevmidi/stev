@@ -23,9 +23,12 @@
 //! See `docs/180-vst3-host.md`.
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::rc::{Rc, Weak};
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
+use crossbeam_channel::Receiver;
 use log::{debug, warn};
 use objc2_foundation::NSPoint;
 use vst3::Steinberg::Vst::ViewType::kEditor;
@@ -39,8 +42,9 @@ use vst3::Steinberg::{
 };
 use vst3::{Class, ComPtr, ComRef, ComWrapper};
 
-use crate::core::plugin_host::editor::InstrumentEditor;
+use crate::core::plugin_host::editor::{InstrumentEditor, ParameterGesture, ParameterInfo};
 use crate::core::plugin_host::window::{FALLBACK_SIZE, PluginWindow, editor_level, editor_title};
+use crate::models::knobs::ParamId;
 
 use super::component::MainThreadHalf;
 use super::state;
@@ -125,12 +129,26 @@ pub(super) struct Vst3Editor {
     /// Set once the plugin has been terminated, so `deactivate` and `Drop`
     /// don't do it twice.
     finished: bool,
+    /// Every parameter's name and default, by id, read once at load
+    /// (`component::parameter_infos`) — the knob panel's labels.
+    parameters: HashMap<ParamId, ParameterInfo>,
+    /// What the plugin's editor turns, from its component handler — the knob
+    /// panel's assignments and hand turns.
+    gestures: Receiver<ParameterGesture>,
 }
 
 impl Vst3Editor {
-    /// Wraps the main-thread half of a freshly loaded plugin. The editor itself
-    /// is not created until the first [`show`](InstrumentEditor::show).
-    pub(super) fn new(plugin: MainThreadHalf, plugin_name: &str, track: usize) -> Self {
+    /// Wraps the main-thread half of a freshly loaded plugin, with its
+    /// `parameters` and the `gestures` its component handler reports. The
+    /// editor itself is not created until the first
+    /// [`show`](InstrumentEditor::show).
+    pub(super) fn new(
+        plugin: MainThreadHalf,
+        plugin_name: &str,
+        track: usize,
+        parameters: HashMap<ParamId, ParameterInfo>,
+        gestures: Receiver<ParameterGesture>,
+    ) -> Self {
         Self {
             plugin,
             title: editor_title(plugin_name, track),
@@ -142,6 +160,8 @@ impl Vst3Editor {
             }),
             window_top_left: None,
             finished: false,
+            parameters,
+            gestures,
         }
     }
 
@@ -324,6 +344,45 @@ impl InstrumentEditor for Vst3Editor {
         // extension to service, unlike CLAP. The view drives its own animation
         // off the AppKit run loop.
         None
+    }
+
+    fn has_parameters(&self) -> bool {
+        self.plugin.controller.is_some()
+    }
+
+    fn parameter_info(&self, id: ParamId) -> Option<&ParameterInfo> {
+        self.parameters.get(&id)
+    }
+
+    fn parameter_value(&self, id: ParamId) -> Option<f64> {
+        let controller = self.plugin.controller.as_ref()?;
+        if !self.parameters.contains_key(&id) {
+            return None;
+        }
+        // SAFETY: the main thread, which owns the live controller.
+        Some(unsafe { controller.getParamNormalized(id) }.clamp(0.0, 1.0))
+    }
+
+    /// Tells the edit controller, so the plugin's editor follows, then the
+    /// processor through the parameter ring, as the plugin's own editor turns
+    /// reach it (`180-vst3-host.md` § Parameter knobs). The controller call is
+    /// fenced off from the gesture feed: a plugin that answers
+    /// `setParamNormalized` with a `performEdit` would otherwise report
+    /// Stev's own move as the user's turn.
+    fn set_parameter(&mut self, id: ParamId, value: f64) {
+        let value = value.clamp(0.0, 1.0);
+        let handler = &self.plugin.host.handler;
+        if let Some(controller) = &self.plugin.controller {
+            handler.host_edit.store(true, Ordering::Relaxed);
+            // SAFETY: the main thread, which owns the live controller.
+            unsafe { controller.setParamNormalized(id, value) };
+            handler.host_edit.store(false, Ordering::Relaxed);
+        }
+        handler.params.send(id, value);
+    }
+
+    fn take_parameter_gestures(&mut self) -> Vec<ParameterGesture> {
+        self.gestures.try_iter().collect()
     }
 }
 

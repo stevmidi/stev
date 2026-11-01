@@ -63,6 +63,7 @@ mod instrument;
 mod instrument_restore;
 mod keyboard_tab;
 mod knob_panel;
+mod knob_params;
 mod meter_field;
 mod midi_tab;
 mod modal_focus;
@@ -327,7 +328,7 @@ pub(crate) struct Display {
     /// The computer keyboard — the letter keys played as a piano while it is
     /// on. See `computer_keys.rs`.
     computer_keyboard: ComputerKeyboard,
-    /// The computer keyboard's notes and the knob panel's CCs, each with the
+    /// The computer keyboard's notes, each with the
     /// `monotonic_nanos` the frame read it at, to the `"computerkeys"`
     /// thread, which routes them as a MIDI port's input.
     computer_keys_tx: Sender<(Midi3, u64)>,

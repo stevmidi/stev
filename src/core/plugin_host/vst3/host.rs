@@ -20,7 +20,10 @@
 
 use std::cell::UnsafeCell;
 use std::ffi::c_void;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock};
 
+use crossbeam_channel::Sender;
 use log::debug;
 use vst3::Steinberg::Vst::{Event, String128};
 use vst3::Steinberg::Vst::{
@@ -34,6 +37,7 @@ use vst3::{Class, ComPtr, ComWrapper};
 
 use super::message::{HostAttributeList, HostMessage};
 use super::params::ParamSender;
+use crate::core::plugin_host::editor::ParameterGesture;
 
 /// The host application object, handed to every plugin's `initialize`.
 ///
@@ -109,9 +113,24 @@ impl IHostApplicationTrait for Vst3Host {
 /// For a **dual-component** plugin they are the only way a knob turn reaches
 /// the processor at all, and the host must carry them across — which is what
 /// [`ParamSender`] does. See [`params`](super::params).
+///
+/// Either way a copy goes to the knob panel ([`ParameterGesture`]): a turn's
+/// start assigns an armed knob, and a move of a knob's parameter is a hand
+/// turn (`400-parameter-knobs.md` decisions 3 and 9).
 pub(super) struct ComponentHandler {
     /// Carries parameter changes to the audio thread.
-    params: ParamSender,
+    pub(super) params: ParamSender,
+    /// The knob panel's copy of every change the plugin reports, drained by
+    /// the editor (`Vst3Editor::take_parameter_gestures`).
+    gestures: Sender<ParameterGesture>,
+    /// Set while the host sets a parameter on the edit controller itself
+    /// (`Vst3Editor::set_parameter`): a plugin that reports
+    /// `setParamNormalized` back through `performEdit` must not have Stev's
+    /// own move read as the user's turn.
+    pub(super) host_edit: AtomicBool,
+    /// The app's egui context, so a change in the plugin's editor wakes the
+    /// reactive UI and the knob follows at once.
+    repaint: Arc<OnceLock<egui::Context>>,
 }
 
 impl Class for ComponentHandler {
@@ -119,22 +138,46 @@ impl Class for ComponentHandler {
 }
 
 impl ComponentHandler {
-    /// Wraps the sending half of the parameter bridge.
-    fn new(params: ParamSender) -> Self {
-        Self { params }
+    /// Wraps the sending half of the parameter bridge and the knob panel's
+    /// gesture feed.
+    fn new(
+        params: ParamSender,
+        gestures: Sender<ParameterGesture>,
+        repaint: Arc<OnceLock<egui::Context>>,
+    ) -> Self {
+        Self {
+            params,
+            gestures,
+            host_edit: AtomicBool::new(false),
+            repaint,
+        }
+    }
+
+    /// Hands `gesture` to the knob panel, unless the host itself is setting
+    /// a parameter, and wakes the UI.
+    fn report(&self, gesture: ParameterGesture) {
+        if self.host_edit.load(Ordering::Relaxed) {
+            return;
+        }
+        self.gestures.send(gesture).ok();
+        if let Some(ctx) = self.repaint.get() {
+            ctx.request_repaint();
+        }
     }
 }
 
 impl IComponentHandlerTrait for ComponentHandler {
-    /// A UI gesture started. Nothing to do — Stev has no automation to
-    /// latch — but it is deliberately *not* an error return: a plugin that gets
+    /// A UI gesture started: the knob panel's cue to assign an armed knob.
+    /// Deliberately *not* an error return either way: a plugin that gets
     /// `kNotImplemented` here may refuse to let its UI move at all.
-    unsafe fn beginEdit(&self, _id: ParamID) -> tresult {
+    unsafe fn beginEdit(&self, id: ParamID) -> tresult {
+        self.report(ParameterGesture::Begin(id));
         kResultOk
     }
 
     unsafe fn performEdit(&self, id: ParamID, value: ParamValue) -> tresult {
         self.params.send(id, value);
+        self.report(ParameterGesture::Move(id, value));
         kResultOk
     }
 
@@ -142,11 +185,15 @@ impl IComponentHandlerTrait for ComponentHandler {
         kResultOk
     }
 
-    /// The plugin is asking to be reconfigured — its parameter list changed, or
-    /// it wants its state reloaded. Accepted and ignored: acting on it would
-    /// mean tearing the voice down and rebuilding it mid-playback, and nothing
-    /// Stev shows depends on the parameter list.
+    /// The plugin is asking to be reconfigured — its parameter list changed,
+    /// its values did (a preset), or it wants its state reloaded. Accepted
+    /// and otherwise ignored: acting on it would mean tearing the voice down
+    /// and rebuilding it mid-playback. The UI is woken, so a knob whose
+    /// parameter a preset moved follows at once.
     unsafe fn restartComponent(&self, _flags: int32) -> tresult {
+        if let Some(ctx) = self.repaint.get() {
+            ctx.request_repaint();
+        }
         kResultOk
     }
 }
@@ -279,11 +326,16 @@ pub(super) struct HostObjects {
 impl HostObjects {
     /// Creates a fresh set. One per plugin instance — they are cheap, and
     /// sharing them across instances would only add lifetime questions.
-    /// `params` is the sending half of that instance's parameter bridge.
-    pub(super) fn new(params: ParamSender) -> Self {
+    /// `params` is the sending half of that instance's parameter bridge,
+    /// `gestures` the knob panel's feed and `repaint` the app's UI wake.
+    pub(super) fn new(
+        params: ParamSender,
+        gestures: Sender<ParameterGesture>,
+        repaint: Arc<OnceLock<egui::Context>>,
+    ) -> Self {
         Self {
             host: ComWrapper::new(Vst3Host),
-            handler: ComWrapper::new(ComponentHandler::new(params)),
+            handler: ComWrapper::new(ComponentHandler::new(params, gestures, repaint)),
         }
     }
 }

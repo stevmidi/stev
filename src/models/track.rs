@@ -11,11 +11,10 @@
 //! re-triggers a note that is already sounding when playback arrives at a
 //! clip's start — the counterpart case, where the `NoteOn` is hidden just
 //! *before* the region. Its [`ControllerTracker`] does the same for the
-//! pitch bend and mod wheels, which have no release, and for its knobs' CCs:
-//! every [`seek`](Track::seek) and clip-start arrival chases the value in
-//! force where playback lands (a wheel's rest in a gap; a knob's CC stays
-//! where it was), so a clip end, a loop wrap or a jump never leaves the synth
-//! bent. Clips are kept sorted
+//! pitch bend and mod wheels, which have no release: every
+//! [`seek`](Track::seek) and clip-start arrival chases the value in force
+//! where playback lands (a wheel's rest in a gap), so a clip end, a loop
+//! wrap or a jump never leaves the synth bent. Clips are kept sorted
 //! by start tick and rejected on overlap. Pure data — the sequencer drives it
 //! one [`tick`](Track::tick) at a time.
 //!
@@ -38,7 +37,7 @@ use crate::models::{
     clip::{Clip, ClipBounds, EventSpaceRetime},
     controllers::{ControllerTracker, ControllerValues},
     event::Event,
-    knobs::{KNOB_COUNT, Knob, Knobs, default_knobs},
+    knobs::{KNOB_COUNT, KnobParams, ParamId, UNASSIGNED_KNOBS},
 };
 
 /// Identifies a CLAP instrument plugin for a track: the `.clap` bundle on disk
@@ -185,8 +184,8 @@ pub(crate) struct Track {
     /// Which controllers the track's playback has moved, and the values due
     /// at the next [`tick`](Self::tick) — drained after
     /// `pending_note_offs`, before `pending_note_ons`, so a chased note
-    /// sounds at the chased bend. Only the wheels and the knobs' CCs are
-    /// chased ([`chase_controllers`](Self::chase_controllers)). See
+    /// sounds at the chased bend. Only the wheels are chased
+    /// ([`chase_controllers`](Self::chase_controllers)). See
     /// `models::controllers`.
     controllers: ControllerTracker,
 
@@ -214,22 +213,15 @@ pub(crate) struct Track {
     // --- Output routing ---
     /// Where this track's events go — see [`TrackOutput`].
     output: TrackOutput,
-    /// The knob panel's eight knobs while this track is selected: the CC
-    /// each sends and where it stands — put there by the hand, a load or
-    /// playback (`390-knob-panel.md` decision 7) — persisted
-    /// (`TrackData::knobs`). The sequencer mirrors the positions into
-    /// `TrackMixAtomics` for the view. See `models::knobs`.
-    knobs: Knobs,
-    /// Where the hand or a load last put each knob — what the unsaved check
-    /// compares (`TrackData::knobs`), so a knob that only playback moved
-    /// never asks to be saved.
-    knobs_by_hand: [Option<u8>; KNOB_COUNT],
-    /// Per knob, whether a drag holds it: the hand wins, and playback sends
-    /// none of the clip's moves of its CC until release (`390` decision 7).
-    held_knobs: [bool; KNOB_COUNT],
-    /// Whether playback moved a knob since the sequencer last asked
-    /// ([`take_knobs_moved`](Self::take_knobs_moved)), to republish it.
-    knobs_moved: bool,
+    /// What the knob panel's eight knobs drive while this track is selected:
+    /// a parameter of its plugin each, or none — persisted
+    /// (`TrackData::knobs`). See `models::knobs`.
+    knobs: KnobParams,
+    /// Where the hand last put each knob, as a normalized parameter value:
+    /// what the unsaved check compares (`400-parameter-knobs.md` decision 9),
+    /// never saved. `None` until the hand turns it after a load, so a knob
+    /// moved only by playback or the plugin itself never asks to be saved.
+    knobs_by_hand: [Option<f64>; KNOB_COUNT],
 }
 
 impl Track {
@@ -251,10 +243,8 @@ impl Track {
             awaiting_start_tick: None,
             current_tick: 0,
             output,
-            knobs: default_knobs(),
+            knobs: UNASSIGNED_KNOBS,
             knobs_by_hand: [None; KNOB_COUNT],
-            held_knobs: [false; KNOB_COUNT],
-            knobs_moved: false,
         }
     }
 
@@ -315,101 +305,47 @@ impl Track {
         &mut self.output
     }
 
-    /// The track's knobs — see the field.
-    pub(crate) fn knobs(&self) -> &Knobs {
+    /// What the track's knobs drive — see the field.
+    pub(crate) fn knobs(&self) -> &KnobParams {
         &self.knobs
     }
 
-    /// Replaces all the knobs (a project load).
-    pub(crate) fn set_knobs(&mut self, knobs: Knobs) {
+    /// Replaces all the knobs' assignments (a project load, a plugin swap
+    /// and its undo). Where the hand put them is forgotten: the project as
+    /// it now stands is the one the unsaved check starts from.
+    pub(crate) fn set_knobs(&mut self, knobs: KnobParams) {
         self.knobs = knobs;
-        self.knobs_by_hand = knobs.map(|knob| knob.value);
+        self.knobs_by_hand = [None; KNOB_COUNT];
     }
 
-    /// Knob `knob`, if there is one.
-    pub(crate) fn knob_mut(&mut self, knob: usize) -> Option<&mut Knob> {
+    /// Mutable access to knob `knob`'s assignment, if there is such a knob.
+    pub(crate) fn knob_mut(&mut self, knob: usize) -> Option<&mut Option<ParamId>> {
         self.knobs.get_mut(knob)
     }
 
-    /// Where the hand or a load last put each knob — see the field.
-    pub(crate) fn knobs_by_hand(&self) -> &[Option<u8>; KNOB_COUNT] {
+    /// Where the hand last put each knob — see the field.
+    pub(crate) fn knobs_by_hand(&self) -> &[Option<f64>; KNOB_COUNT] {
         &self.knobs_by_hand
     }
 
-    /// The hand put knob `knob` at `value`. Returns whether there is such a
-    /// knob.
-    pub(crate) fn set_knob_by_hand(&mut self, knob: usize, value: u8) -> bool {
-        let Some(slot) = self.knobs.get_mut(knob) else {
+    /// The hand put knob `knob` at `value` (normalized), from Stev's knob
+    /// or the parameter's control in the plugin's editor. Returns whether
+    /// there is such a knob.
+    pub(crate) fn set_knob_by_hand(&mut self, knob: usize, value: f64) -> bool {
+        let Some(slot) = self.knobs_by_hand.get_mut(knob) else {
             return false;
         };
-        slot.value = Some(value);
-        self.knobs_by_hand[knob] = Some(value);
+        *slot = Some(value);
         true
     }
 
-    /// A drag takes hold of knob `knob`: until [`release_knobs`](Self::release_knobs),
-    /// playback sends none of the clip's moves of its CC.
-    pub(crate) fn hold_knob(&mut self, knob: usize) {
-        if let Some(held) = self.held_knobs.get_mut(knob) {
-            *held = true;
-        }
-    }
-
-    /// The drag let go: playback takes the knobs over again at their CCs'
-    /// next moves.
-    pub(crate) fn release_knobs(&mut self) {
-        self.held_knobs = [false; KNOB_COUNT];
-    }
-
-    /// Whether playback moved a knob since the last call — the sequencer's
-    /// cue to republish the positions.
-    pub(crate) fn take_knobs_moved(&mut self) -> bool {
-        std::mem::take(&mut self.knobs_moved)
-    }
-
-    /// Whether `controller` is a knob's CC that a drag holds — playback
-    /// drops its moves.
-    fn is_held_by_hand(&self, controller: Controller) -> bool {
-        let Controller::Cc(cc) = controller else {
-            return false;
-        };
-        self.knobs
-            .iter()
-            .zip(self.held_knobs)
-            .any(|(knob, held)| held && knob.cc == cc)
-    }
-
-    /// Playback sent an unmuted move of `controller` to `value`: it is now
-    /// where the synth sits, and a knob's CC moves the knob with it.
-    fn played_controller(&mut self, controller: Controller, value: u16) {
-        self.controllers.observe(controller, value);
-        let Controller::Cc(cc) = controller else {
-            return;
-        };
-        let value = Some(value as u8);
-        for knob in self.knobs.iter_mut().filter(|knob| knob.cc == cc) {
-            if knob.value != value {
-                knob.value = value;
-                self.knobs_moved = true;
-            }
-        }
-    }
-
     /// Chases `target` — the values in force where playback lands — on the
-    /// controllers this track follows: the two wheels and its knobs' CCs.
-    /// Another CC in a clip (pasted, imported) plays as it comes and is never
-    /// chased: a sustain pedal chased down by a seek would hold every note
-    /// past the stop that releases it.
+    /// controllers this track follows: the two wheels. A CC in a clip
+    /// (pasted, imported, a CC knob's from an older project) plays as it
+    /// comes and is never chased: a sustain pedal chased down by a seek would
+    /// hold every note past the stop that releases it.
     fn chase_controllers(&mut self, target: &ControllerValues) {
-        let mut followed = [Controller::PitchBend; Controller::WHEELS.len() + KNOB_COUNT];
-        followed[..Controller::WHEELS.len()].copy_from_slice(&Controller::WHEELS);
-        for (slot, knob) in followed[Controller::WHEELS.len()..]
-            .iter_mut()
-            .zip(self.knobs)
-        {
-            *slot = Controller::Cc(knob.cc);
-        }
-        self.controllers.chase(target, &followed);
+        self.controllers.chase(target, &Controller::WHEELS);
     }
 
     /// Returns the MIDI channel for this track. Instrument tracks play into the
@@ -632,16 +568,12 @@ impl Track {
                 if let Some(event) = self.drain_pending() {
                     return Some(event);
                 }
-                // Play clip (MIDI events). A move of a knob's CC that a drag
-                // holds is dropped: the hand wins (`390` decision 7).
-                while let Some(event) = self.clips.get_mut(clip_idx).and_then(Clip::tick) {
+                // Play clip (MIDI events).
+                if let Some(event) = self.clips.get_mut(clip_idx).and_then(Clip::tick) {
                     if !event.is_muted()
                         && let Some((controller, value)) = parse_controller(event.midi_message())
                     {
-                        if self.is_held_by_hand(controller) {
-                            continue;
-                        }
-                        self.played_controller(controller, value);
+                        self.controllers.observe(controller, value);
                     }
                     return Some(event);
                 }
@@ -668,7 +600,7 @@ impl Track {
 
     /// Pops one staged event: note-offs queued from a clip that was muted,
     /// removed, or reached its own region end mid-playback go first, then
-    /// the due controller values (a seek's chase; not a knob's a drag holds),
+    /// the due controller values (a seek's chase),
     /// then the chased note-ons queued when playback arrived at a clip whose
     /// content has a note already "in flight" at its start. `None` once
     /// nothing is staged.
@@ -676,11 +608,8 @@ impl Track {
         if let Some(off) = self.pending_note_offs.pop() {
             return Some(off);
         }
-        while let Some((controller, value)) = self.controllers.next_due() {
-            if self.is_held_by_hand(controller) {
-                continue;
-            }
-            self.played_controller(controller, value);
+        if let Some((controller, value)) = self.controllers.next_due() {
+            self.controllers.observe(controller, value);
             return Some(Event::from_midi(&controller.message(value)));
         }
         self.pending_note_ons.pop()
@@ -714,8 +643,7 @@ impl Track {
     /// Messages (channel 0) putting every wheel the track's playback moved
     /// back to its rest, for the sequencer to send at once: a transport stop
     /// (no [`tick`](Self::tick) runs to drain a chase) or a track leaving the
-    /// arrangement. A knob's CC has no rest and stays where it is. Nothing
-    /// stays due.
+    /// arrangement. Nothing stays due.
     pub(crate) fn take_wheel_resets(&mut self) -> Vec<Vec<u8>> {
         self.controllers.take_resets()
     }
@@ -890,8 +818,8 @@ impl Track {
     /// else the next clip after it, else `None` past the end, and seeks that
     /// clip internally. Muted clips are skipped. The controllers chase the
     /// values in force there — the containing clip's; in a gap the wheels'
-    /// rest, and a knob's CC where it is — for the next [`tick`](Self::tick)
-    /// to send ([`ControllerTracker::chase`]).
+    /// rest — for the next [`tick`](Self::tick) to send
+    /// ([`ControllerTracker::chase`]).
     pub(crate) fn seek(&mut self, playback_tick: i32) {
         // A new arrival: whichever clip start we land on gets chased afresh.
         self.chased_start_tick = None;
@@ -1950,84 +1878,47 @@ mod tests {
         clip
     }
 
+    /// A CC — an older project's CC knob, a pasted or imported one — plays
+    /// as it comes, is never chased by a seek and never reset by a stop:
+    /// only the wheels are (`400-parameter-knobs.md` decision 13).
     #[test]
-    fn a_knob_follows_playback_of_its_cc_without_counting_as_the_hands() {
-        let mut track = Track::new(TrackOutput::MidiOut { channel: 0 }, 0, 0);
-        track.add_clip(&clip_with_ccs(0, &[(100, 14, 90), (200, 30, 5)]));
-        track.seek(0);
-
-        wheel_moves_until(&mut track, 150);
-        assert_eq!(track.knobs()[0].value, Some(90));
-        assert!(track.take_knobs_moved());
-        assert!(!track.take_knobs_moved());
-        // CC 30 is no knob's: it plays and moves none.
-        wheel_moves_until(&mut track, 400);
-        assert!(!track.take_knobs_moved());
-        assert_eq!(*track.knobs_by_hand(), [None; KNOB_COUNT]);
-    }
-
-    /// A knob's CC has no rest: a stop leaves it where playback put it,
-    /// while the wheels go back to theirs.
-    #[test]
-    fn a_stop_leaves_a_knobs_cc_where_it_is_while_the_wheels_reset() {
-        let mut clip = clip_with_ccs(0, &[(150, 14, 90)]);
+    fn a_cc_plays_as_it_comes_and_is_neither_chased_nor_reset() {
+        let mut clip = clip_with_ccs(0, &[(150, 14, 90), (150, 64, 127)]);
         clip.add_event(Event::new(100, 0, BEND_UP.to_vec()));
         clip.sort_events_by_tick();
         let mut track = Track::new(TrackOutput::MidiOut { channel: 0 }, 0, 0);
         track.add_clip(&clip);
         track.seek(0);
-        wheel_moves_until(&mut track, 400);
-
+        assert_eq!(
+            wheel_moves_until(&mut track, 400),
+            vec![
+                (100, BEND_UP.to_vec()),
+                (150, vec![0xB0, 14, 90]),
+                (150, vec![0xB0, 64, 127])
+            ]
+        );
         assert_eq!(track.take_wheel_resets(), vec![BEND_CENTRE.to_vec()]);
-        assert_eq!(track.knobs()[0].value, Some(90));
-    }
 
-    /// A seek chases a knob's CC to the clip's value there, and leaves it
-    /// alone in a gap; a CC no knob holds (a sustain pedal, imported) is
-    /// never chased.
-    #[test]
-    fn a_seek_chases_a_knobs_cc_but_not_a_cc_no_knob_holds() {
-        let mut track = Track::new(TrackOutput::MidiOut { channel: 0 }, 0, 0);
-        track.add_clip(&clip_with_ccs(0, &[(100, 14, 90), (100, 64, 127)]));
-
+        track.invalidate_controllers();
         track.seek(300);
         assert_eq!(
             wheel_moves_until(&mut track, 400),
-            vec![(300, vec![0xB0, 14, 90])]
+            vec![(300, BEND_UP.to_vec())]
         );
-        assert_eq!(track.knobs()[0].value, Some(90));
-
-        track.invalidate_controllers();
-        track.seek(1000);
-        assert!(wheel_moves_until(&mut track, 1100).is_empty());
     }
 
-    /// While a drag holds a knob the hand wins: the clip's moves of its CC
-    /// are dropped, and the knob stays; after the release, playback takes
-    /// it over at the next move.
+    /// The hand's knob values are what the unsaved check reads; a load or a
+    /// plugin swap (`set_knobs`) forgets them.
     #[test]
-    fn a_held_knob_drops_the_clips_moves_of_its_cc_until_release() {
+    fn a_hand_turn_is_kept_per_knob_until_the_assignments_are_replaced() {
         let mut track = Track::new(TrackOutput::MidiOut { channel: 0 }, 0, 0);
-        track.add_clip(&clip_with_ccs(
-            0,
-            &[(100, 15, 40), (200, 14, 90), (600, 14, 30)],
-        ));
-        track.seek(0);
-        assert!(track.set_knob_by_hand(0, 10));
-        track.hold_knob(0);
-
-        assert_eq!(
-            wheel_moves_until(&mut track, 400),
-            vec![(100, vec![0xB0, 15, 40])]
-        );
-        assert_eq!(track.knobs()[0].value, Some(10));
-
-        track.release_knobs();
-        assert_eq!(
-            wheel_moves_until(&mut track, 700),
-            vec![(600, vec![0xB0, 14, 30])]
-        );
-        assert_eq!(track.knobs()[0].value, Some(30));
-        assert_eq!(track.knobs_by_hand()[0], Some(10));
+        assert!(track.set_knob_by_hand(3, 0.25));
+        assert!(!track.set_knob_by_hand(KNOB_COUNT, 0.5));
+        assert_eq!(track.knobs_by_hand()[3], Some(0.25));
+        let mut knobs = UNASSIGNED_KNOBS;
+        knobs[3] = Some(714);
+        track.set_knobs(knobs);
+        assert_eq!(*track.knobs(), knobs);
+        assert_eq!(*track.knobs_by_hand(), [None; KNOB_COUNT]);
     }
 }

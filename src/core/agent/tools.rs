@@ -114,8 +114,8 @@ pub(crate) fn tool_list() -> Value {
     );
     notes_properties["include_wheels"] = json!({
         "type": "boolean",
-        "description": "Also list pitch bend, mod wheel and other controller moves (the \
-                        knobs' CCs) as \"bend <beat> <value>\" (centre 0), \
+        "description": "Also list pitch bend, mod wheel and other controller moves as \
+                        \"bend <beat> <value>\" (centre 0), \
                         \"mod <beat> <value>\" and \"cc<number> <beat> <value>\" rows.",
     });
     let mut create_properties = cleanup_properties();

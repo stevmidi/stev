@@ -44,9 +44,10 @@ pub(crate) fn parse_note(msg: &[u8]) -> Option<(usize, bool)> {
 
 /// A performance controller a take records beside its notes
 /// (`090-recording-midi-input.md`): pitch bend, or a Control Change by
-/// number — the mod wheel (CC1) and the knob panel's CCs among them
-/// (`390-knob-panel.md` decision 10). The two wheels have a rest a stop
-/// returns them to; any other CC has none and stays where it was.
+/// number — the mod wheel (CC1) among them, and any other CC a clip holds
+/// (pasted, imported, an older project's CC knobs). The two wheels have a
+/// rest a stop returns them to; any other CC has none and stays where it
+/// was.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Controller {
     /// Pitch bend (`0xEn`), a 14-bit value centred on `0x2000`.
@@ -156,16 +157,10 @@ pub(crate) fn pitch_bend_value(bytes: Midi3) -> u16 {
 }
 
 /// Whether a take records live-input `msg`: a note edge or a wheel move
-/// ([`parse_wheel`]), and with `any_controller` (the knob panel's source,
-/// whose only CCs are its knobs') any controller move. Everything else on the
-/// input is played live only — a hardware controller's CC among it.
-pub(crate) fn is_recorded(msg: &[u8], any_controller: bool) -> bool {
-    parse_note(msg).is_some()
-        || if any_controller {
-            parse_controller(msg).is_some()
-        } else {
-            parse_wheel(msg).is_some()
-        }
+/// ([`parse_wheel`]). Everything else on the input is played live only — a
+/// hardware controller's CC among it.
+pub(crate) fn is_recorded(msg: &[u8]) -> bool {
+    parse_note(msg).is_some() || parse_wheel(msg).is_some()
 }
 
 /// Whether `message` is a complete channel voice message: status `0x80`–`0xEF`
@@ -308,18 +303,15 @@ mod tests {
 
     #[test]
     fn a_take_records_note_edges_and_the_two_wheels() {
-        for any_controller in [false, true] {
-            assert!(is_recorded(&[0x90, 60, 100], any_controller));
-            assert!(is_recorded(&[0x80, 60, 0], any_controller));
-            assert!(is_recorded(&[0xE0, 0x00, 0x50], any_controller));
-            assert!(is_recorded(&[0xB0, 0x01, 64], any_controller));
-            assert!(!is_recorded(&[0xB0, 123, 0], any_controller));
-            assert!(!is_recorded(&[0xC0, 5], any_controller));
-            assert!(!is_recorded(&[0xD0, 40], any_controller));
-            assert!(!is_recorded(&[0xF8], any_controller));
-        }
-        // A hardware CC plays live only; the knob panel's are recorded.
-        assert!(!is_recorded(&[0xB0, 14, 127], false));
-        assert!(is_recorded(&[0xB0, 14, 127], true));
+        assert!(is_recorded(&[0x90, 60, 100]));
+        assert!(is_recorded(&[0x80, 60, 0]));
+        assert!(is_recorded(&[0xE0, 0x00, 0x50]));
+        assert!(is_recorded(&[0xB0, 0x01, 64]));
+        assert!(!is_recorded(&[0xB0, 123, 0]));
+        assert!(!is_recorded(&[0xC0, 5]));
+        assert!(!is_recorded(&[0xD0, 40]));
+        assert!(!is_recorded(&[0xF8]));
+        // A hardware CC plays live only.
+        assert!(!is_recorded(&[0xB0, 14, 127]));
     }
 }

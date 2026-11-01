@@ -104,7 +104,7 @@ impl Display {
                 color,
             );
             if lane
-                .controller(&[])
+                .controller()
                 .is_some_and(|controller| self.lead_clip_moves(controller))
             {
                 self.draw_lane_marker(painter, label, color);

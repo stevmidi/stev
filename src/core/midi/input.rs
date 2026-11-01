@@ -1,8 +1,7 @@
 //! [`MidiInputForwarder`] — owns the live `midir` input connection and fans
 //! each incoming message out to live MIDI-thru and the instrument-plugin tap,
-//! its note edges and wheel moves (from the knob panel's source, any
-//! controller move) to the sequencer (for capture),
-//! and its note edges to the `NoteLogger`. The fan-out itself is a
+//! its note edges and wheel moves to the sequencer (for capture), and its
+//! note edges to the `NoteLogger`. The fan-out itself is a
 //! [`LiveInputRouter`], one per source: the computer keyboard (`Display`'s
 //! note keys, routed on the `"computerkeys"` thread) gets one of its own and so
 //! reaches everything a port does.
@@ -162,19 +161,6 @@ impl MidiInputForwarder {
             live_notes: self.live_notes.clone(),
             held_note_channels: [None; 128],
             held_live_targets: [None; 128],
-            records_any_controller: false,
-        }
-    }
-
-    /// A [`router`](Self::router) for the computer keyboard's source, which
-    /// carries the knob panel's CCs too: it records any controller move, so a
-    /// knob's turn is captured with `/` like the mod wheel
-    /// (`390-knob-panel.md` decision 9). A port's router records only the
-    /// wheels — a hardware controller's CC stays live-only.
-    pub(crate) fn knob_router(&self) -> LiveInputRouter {
-        LiveInputRouter {
-            records_any_controller: true,
-            ..self.router()
         }
     }
 
@@ -281,9 +267,6 @@ pub(crate) struct LiveInputRouter {
     /// Same idea for the plugin tap: which instrument track each held note's
     /// note-on was tagged for. See [`route_held`].
     held_live_targets: [Option<usize>; 128],
-    /// Whether every controller move goes on to the sequencer, not only the
-    /// wheels' — the knob panel's source ([`MidiInputForwarder::knob_router`]).
-    records_any_controller: bool,
 }
 
 impl LiveInputRouter {
@@ -332,15 +315,14 @@ impl LiveInputRouter {
             self.live_notes.set(note, on);
         }
 
-        // Note edges and the two wheels — any controller, from the knob
-        // panel's source — go on to the sequencer (capture, `is_recorded`);
-        // only note edges to the note logger.
+        // Note edges and the two wheels go on to the sequencer (capture,
+        // `is_recorded`); only note edges to the note logger.
         if parse_note(&msg).is_some() {
             self.note_logger_command_tx
                 .send(NoteLoggerCommand::LogInputEvent(midi3(&msg)))
                 .ok();
         }
-        if is_recorded(&msg, self.records_any_controller) {
+        if is_recorded(&msg) {
             self.midi_in_tx.send((msg, tick)).ok();
         }
     }
@@ -474,7 +456,6 @@ mod tests {
     /// A router on fresh channels and atomics, the live keyboard routed to
     /// plugin track 2: the router, the sequencer's end and the plugin ring's.
     fn test_router(
-        records_any_controller: bool,
         audio_export: Arc<AudioExportAtomics>,
     ) -> (
         LiveInputRouter,
@@ -495,7 +476,6 @@ mod tests {
             live_notes: Arc::new(LiveNotes::new(Default::default())),
             held_note_channels: [None; 128],
             held_live_targets: [None; 128],
-            records_any_controller,
         };
         (router, midi_in_rx, instrument_rx)
     }
@@ -503,7 +483,7 @@ mod tests {
     #[test]
     fn an_audio_export_keeps_the_keyboard_off_the_plugins_but_lets_a_held_note_go() {
         let audio_export = Arc::new(AudioExportAtomics::default());
-        let (mut router, _, mut instrument_rx) = test_router(false, audio_export.clone());
+        let (mut router, _, mut instrument_rx) = test_router(audio_export.clone());
         router.route(&note_on(0), 0);
         audio_export.running.store(true, Ordering::Relaxed);
         router.route(&[0x90, NOTE + 1, 100], 0);
@@ -514,16 +494,13 @@ mod tests {
         assert_eq!(sent, [(2, note_on(0)), (2, note_off(0))]);
     }
 
-    /// The knob panel's CCs are recorded; a hardware controller's play live
-    /// only (`390-knob-panel.md` decision 9). Both reach the plugin.
+    /// A hardware controller's CC plays live into the plugin and is never
+    /// recorded.
     #[test]
-    fn only_the_knob_panels_source_records_a_cc() {
-        for (records_any_controller, recorded) in [(false, 0), (true, 1)] {
-            let (mut router, midi_in_rx, mut instrument_rx) =
-                test_router(records_any_controller, Arc::default());
-            router.route(&[0xB0, 14, 90], 7);
-            assert_eq!(midi_in_rx.try_iter().count(), recorded);
-            assert_eq!(iter::from_fn(|| instrument_rx.pop().ok()).count(), 1);
-        }
+    fn a_cc_plays_live_and_is_not_recorded() {
+        let (mut router, midi_in_rx, mut instrument_rx) = test_router(Arc::default());
+        router.route(&[0xB0, 14, 90], 7);
+        assert_eq!(midi_in_rx.try_iter().count(), 0);
+        assert_eq!(iter::from_fn(|| instrument_rx.pop().ok()).count(), 1);
     }
 }

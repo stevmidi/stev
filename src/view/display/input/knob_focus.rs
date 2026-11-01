@@ -3,7 +3,7 @@
 //! selects it — its lane shows under the piano roll, and the panel takes the
 //! keyboard, as a click on a track header gives the header column it. The
 //! selected knob is the one whose lane is shown, never stored. `Delete`
-//! clears its CC from the lead clip; `Esc` leaves; a clip-view command
+//! clears its data from the lead clip; `Esc` leaves; a clip-view command
 //! hands the keyboard back to the notes and acts there
 //! ([`Action::leaves_knob_panel`]).
 
@@ -17,7 +17,7 @@ use super::*;
 /// What a key does while the knob panel has the keyboard.
 #[derive(Debug, PartialEq, Eq)]
 enum KnobPanelKey {
-    /// Clear the selected knob's CC from the lead clip.
+    /// Clear the selected knob's data from the lead clip.
     ClearKnob,
     /// Give the keyboard back to the notes.
     Leave,

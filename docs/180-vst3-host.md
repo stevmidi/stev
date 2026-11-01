@@ -510,6 +510,16 @@ here, since a `crossbeam_channel` may allocate inside `pop`.
   would reach the processor only with the next note, and a ⌘S in between
   would save the processor's stale state.
 
+### Parameter knobs
+
+The knob panel drives a VST3 plugin's parameters by ID (`400-parameter-knobs.md`; the format-neutral side is `130` § What it does). Everything rides on the objects above:
+
+- **Names and defaults** come from `getParameterInfo` over every index, once at load (`component::parameter_infos`): the title and `defaultNormalizedValue` by `ParamID`, kept in `Vst3Editor::parameters`. The same map names the MIDI map's targets in the load's log line. A plugin that renames its parameters later keeps the old names until it is loaded again.
+- **Values** are `getParamNormalized` on the edit controller, read each frame the panel draws (`Vst3Editor::parameter_value`). A preset change, a turn in the editor and Stev's own set all show, since each ends on the controller.
+- **Setting one** (`Vst3Editor::set_parameter`) tells the controller first, `setParamNormalized`, so the plugin's editor follows, then the processor through the same parameter ring the editor's own turns use (`ParamSender::send`, § The parameter bridge): at sample offset 0 of the next block, waking a sleeping voice. Both halves of a single-component plugin get it the same way.
+- **The editor's turns** already arrive at `beginEdit` / `performEdit`. `ComponentHandler` now also hands a copy to the knob panel (`ParameterGesture::Begin` / `Move`, an unbounded channel the editor drains each frame) and wakes the UI through the app's egui context, so the knob follows at once; `restartComponent` wakes it too, for a preset that moved a knob's parameter. `beginEdit` reported each control's own ID and title before any value moved, in both Spire (`macro1`, ID 714) and Serum 2 (`HIGH BOOST`, ID 7000000) — the probe behind `400` § Background — which is what assigning a knob by turning the control rests on.
+- **No echo** (`400` decision 6): a plugin may answer `setParamNormalized` with a `performEdit` of its own. `ComponentHandler::host_edit` is set around Stev's `setParamNormalized`, and `report` drops whatever arrives meanwhile, so Stev's own move is never read as the user's turn (the change still crosses to the processor). A plugin that reports it later, from a timer, isn't caught.
+
 ## State persistence
 
 VST3 splits state in two and a host is expected to keep **both**:
@@ -588,7 +598,7 @@ which exist precisely because those messages have no CC number.
 
 The load logs the answer at `info`: how many channel/controller pairs are
 mapped, and channel 1's assignments by parameter title (`CC 1 → Mod Wheel, …`),
-so which CCs reach a plugin — a knob's included — can be read from
+so which CCs reach a plugin can be read from
 `~/Library/Logs/stev/stev.log` without a debugger.
 
 Changes go into the same `params::HostParameterChanges` the UI relay fills.

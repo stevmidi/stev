@@ -303,12 +303,13 @@ impl Display {
         }
         // A press in a controller lane gives it the keyboard and starts a
         // span drag (`380-wheel-lane.md` decisions 14–16); nothing else. Not
-        // in a take session, whose clip is framed, never edited.
+        // in a take session, whose clip is framed, never edited. A knob's
+        // lane has nothing to mark yet.
         if is_clip_events_view
-            && self.clip_lane_controller().is_some()
+            && self.render.clip_lane != ClipLane::Velocity
             && self.is_in_lower_lane(x, y)
         {
-            if self.take_session.is_none() {
+            if self.take_session.is_none() && self.clip_lane_controller().is_some() {
                 self.begin_wheel_span(x);
             }
             return true;
@@ -474,7 +475,7 @@ impl Display {
                 || self.handle_browser_rename_input_event(&event)
                 || self.handle_tempo_field_input_event(&event)
                 || self.handle_meter_field_input_event(&event)
-                || self.handle_knob_cc_field_input_event(&event)
+                || self.handle_knob_arming_input_event(&event)
                 || self.handle_output_menu_input_event(&event)
                 || self.handle_shortcut_recorder_input_event(&event)
                 || self.handle_project_input_event(&event)
@@ -514,7 +515,6 @@ impl Display {
             || self.browser.rename.is_some()
             || self.tempo_chip.editing()
             || self.meter_chip.editing()
-            || self.knob_panel.editing()
             || self.overlay.is_some()
     }
 

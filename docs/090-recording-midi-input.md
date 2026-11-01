@@ -1,6 +1,6 @@
 ## Recording MIDI input
 
-Every note, wheel move and knob turn played on the armed track goes into the capture
+Every note and wheel move played on the armed track goes into the capture
 buffer, whatever the transport is doing; `/` commits from it (`100`, `220`,
 `archive/290`). There is no record mode: live recording on `R` was removed, since
 capture covers it. Key files: `src/core/midi/input.rs`,
@@ -8,12 +8,13 @@ capture covers it. Key files: `src/core/midi/input.rs`,
 
 ### What a take records
 
-- **Note edges, two wheels — pitch bend and the mod wheel (CC1) — and the knob panel's
-  CCs.** A `LiveInputRouter` forwards a message to the sequencer only when
+- **Note edges and two wheels — pitch bend and the mod wheel (CC1).** A
+  `LiveInputRouter` forwards a message to the sequencer only when
   `message::is_recorded` says so: a note edge or a wheel move (`parse_note`,
-  `parse_wheel`), and from the computer keyboard's `"computerkeys"` thread, which also
-  carries the knob panel's CCs (`MidiInputForwarder::knob_router`), any controller move
-  (`parse_controller`; `390-knob-panel.md` decision 9). Everything else on the input —
+  `parse_wheel`), from a port or the computer keyboard alike. The knob panel no longer
+  sends CCs (`400-parameter-knobs.md`), so nothing records a knob until `400` phase 2
+  makes its parameter moves an event kind of their own; the rules below that name a
+  knob's CC are the CC machinery that phase reuses. Everything else on the input —
   sustain, a hardware controller's other CCs, aftertouch, program change — is played live
   (thru and the plugin tap) and never recorded. The `NoteLogger` still gets only note
   edges. The capture buffer behind `/` stores a controller move like a note, at its own

@@ -460,10 +460,7 @@ const FIXED: &[FixedGroup] = &[
     (
         "Controller lane",
         &[
-            (
-                "Drag",
-                "Mark a span of pitch bend, the mod wheel or a knob's CC",
-            ),
+            ("Drag", "Mark a span of pitch bend or the mod wheel"),
             ("⌘A", "Mark the whole curve"),
             ("Delete", "Clear the span: a wheel to rest, a CC held"),
             ("Esc", "Drop the span, then give back the keyboard"),
@@ -472,17 +469,20 @@ const FIXED: &[FixedGroup] = &[
     (
         "Knob panel",
         &[
-            ("Drag", "Turn a knob: its CC to the selected track"),
+            ("Drag", "Turn a knob: its parameter in the plugin"),
             ("Scroll", "Turn the knob under the pointer"),
             ("⇧ drag / scroll", "Turn it in fine steps"),
-            ("⌘ click", "Turn the knob back to 0"),
+            ("⌘ click", "Turn the knob back to the parameter's default"),
             (
                 "Click",
-                "On a knob or its CC label: select it and show its lane",
+                "On a knob or its label: select it and show its lane",
             ),
-            ("Double-click", "On a CC label: type the knob's CC"),
-            ("Delete", "With a knob selected: clear its CC from the clip"),
-            ("Esc", "With a knob selected: give back the keyboard"),
+            (
+                "Double-click",
+                "On a label: assign the knob, then turn a control in the plugin",
+            ),
+            ("Delete", "While assigning: unassign the knob"),
+            ("Esc", "Stop assigning, or give back the keyboard"),
         ],
     ),
     (

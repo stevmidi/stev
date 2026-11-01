@@ -1,84 +1,50 @@
-//! A track's eight knobs: the virtual controllers of the knob panel, each
-//! sending one MIDI CC the track chooses, so a plugin's macros (Spire's on
-//! CC 14–17) can be turned with the mouse. Each [`Knob`] holds its CC number
-//! and its position, `None` until it is first turned — nothing is sent for a
-//! knob that never moved, so a plugin keeps what its own state holds. Pure
-//! data, unit-tested at the bottom of the file. See `390-knob-panel.md`.
-
-use crate::core::midi::message::{FIRST_CHANNEL_MODE_CC, MOD_WHEEL_CC};
+//! A track's eight knobs: the knob panel's virtual controllers, each
+//! driving one parameter of the track's plugin, by the parameter's ID
+//! (`400-parameter-knobs.md`). A knob is assigned by turning the control in
+//! the plugin's own editor; until then it drives nothing. Only the
+//! assignment is the track's: where a parameter stands is the plugin's, in
+//! its own state. Pure data, unit-tested at the bottom of the file.
 
 /// How many knobs a track has: two columns of four.
 pub(crate) const KNOB_COUNT: usize = 8;
 
-/// The CC a new track's first knob sends; the rest follow on, so a fresh
-/// track's knobs are CC 14–21 — undefined or general-purpose in the MIDI
-/// spec, and right for Spire's macros with no setup (`390` decision 4).
-const FIRST_DEFAULT_CC: u8 = 14;
+/// A plugin parameter's ID: VST3's `ParamID`, CLAP's `clap_id` — an
+/// arbitrary number the plugin gives each parameter, never a position in
+/// its parameter list.
+pub(crate) type ParamId = u32;
 
-/// The highest value a CC carries.
-pub(crate) const CC_VALUE_MAX: u8 = 127;
+/// What each of a track's knobs drives, in reading order (the first column
+/// top to bottom, then the second): a parameter, or `None` while the knob is
+/// unassigned. No two knobs hold the same parameter ([`param_taken_by`]).
+pub(crate) type KnobParams = [Option<ParamId>; KNOB_COUNT];
 
-/// One knob: the CC it sends and where it stands.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct Knob {
-    /// The controller number it sends, never one [`cc_refusal`] refuses.
-    pub(crate) cc: u8,
-    /// Its position, `0..=CC_VALUE_MAX`; `None` until first turned.
-    pub(crate) value: Option<u8>,
-}
+/// A fresh track's knobs: none assigned.
+pub(crate) const UNASSIGNED_KNOBS: KnobParams = [None; KNOB_COUNT];
 
-/// A track's knobs, in reading order: the first column top to bottom, then
-/// the second.
-pub(crate) type Knobs = [Knob; KNOB_COUNT];
-
-/// A fresh track's knobs: CC 14–21, none turned yet.
-pub(crate) fn default_knobs() -> Knobs {
-    std::array::from_fn(|i| Knob {
-        cc: FIRST_DEFAULT_CC + i as u8,
-        value: None,
-    })
-}
-
-/// Why a knob can't take a CC number.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum CcRefusal {
-    /// Not a number a knob may send: past 127, the mod wheel, or a channel
-    /// mode message.
-    Reserved,
-    /// Another knob of the track sends it already — this one, by index.
-    Taken(usize),
-}
-
-/// Why knob `knob` of `knobs` can't send `cc`, or `None` when it can (its
-/// own number included). No two knobs of a track share a CC: both would
-/// claim the same data (`390` decision 5).
-pub(crate) fn cc_refusal(knobs: &Knobs, knob: usize, cc: u8) -> Option<CcRefusal> {
-    // `0..=119` but the mod wheel, which has a lane of its own.
-    if cc == MOD_WHEEL_CC || cc >= FIRST_CHANNEL_MODE_CC {
-        return Some(CcRefusal::Reserved);
-    }
+/// The other knob of `knobs` that holds `param` already, if any — knob
+/// `knob` can't take it then: both would claim the same data
+/// (`400-parameter-knobs.md` decision 4). A knob's own parameter is no
+/// refusal.
+pub(crate) fn param_taken_by(knobs: &KnobParams, knob: usize, param: ParamId) -> Option<usize> {
     knobs
         .iter()
         .enumerate()
-        .position(|(i, other)| i != knob && other.cc == cc)
-        .map(CcRefusal::Taken)
+        .position(|(i, other)| i != knob && *other == Some(param))
 }
 
-/// The knobs a saved track names, or a fresh track's when it names none (a
-/// project saved before knobs) or a set no track could have: the wrong
-/// count, a reserved CC, two knobs on one CC. A position past
-/// [`CC_VALUE_MAX`] is clamped.
-pub(crate) fn knobs_from_saved(saved: &[Knob]) -> Knobs {
-    let Ok(knobs) = <Knobs>::try_from(saved) else {
-        return default_knobs();
+/// The knobs a saved track names, or none assigned when it names a set no
+/// track could have: the wrong count, or two knobs on one parameter. A
+/// project saved before parameter knobs (its CC knobs) reads as eight
+/// unassigned knobs, its entries naming no parameter.
+pub(crate) fn knobs_from_saved(saved: &[Option<ParamId>]) -> KnobParams {
+    let Ok(knobs) = KnobParams::try_from(saved) else {
+        return UNASSIGNED_KNOBS;
     };
-    if (0..KNOB_COUNT).any(|i| cc_refusal(&knobs, i, knobs[i].cc).is_some()) {
-        return default_knobs();
-    }
-    knobs.map(|knob| Knob {
-        value: knob.value.map(|value| value.min(CC_VALUE_MAX)),
-        ..knob
-    })
+    let duplicate = knobs
+        .iter()
+        .enumerate()
+        .any(|(i, param)| param.is_some_and(|param| param_taken_by(&knobs, i, param).is_some()));
+    if duplicate { UNASSIGNED_KNOBS } else { knobs }
 }
 
 #[cfg(test)]
@@ -86,60 +52,31 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_fresh_track_sends_cc_14_to_21_with_no_knob_turned() {
-        let knobs = default_knobs();
-        let ccs: Vec<u8> = knobs.iter().map(|knob| knob.cc).collect();
-        assert_eq!(ccs, (14..=21).collect::<Vec<u8>>());
-        assert!(knobs.iter().all(|knob| knob.value.is_none()));
+    fn a_parameter_another_knob_holds_is_taken_but_a_knobs_own_is_not() {
+        let mut knobs = UNASSIGNED_KNOBS;
+        knobs[0] = Some(714);
+        knobs[5] = Some(7_000_000);
+        assert_eq!(param_taken_by(&knobs, 3, 714), Some(0));
+        assert_eq!(param_taken_by(&knobs, 0, 7_000_000), Some(5));
+        assert_eq!(param_taken_by(&knobs, 0, 714), None);
+        assert_eq!(param_taken_by(&knobs, 3, 1), None);
     }
 
     #[test]
-    fn the_mod_wheel_and_the_channel_mode_messages_are_refused() {
-        let knobs = default_knobs();
-        for cc in [1, 120, 127, 128, 255] {
-            assert_eq!(cc_refusal(&knobs, 0, cc), Some(CcRefusal::Reserved));
-        }
-        for cc in [0, 2, 74, 119] {
-            assert_eq!(cc_refusal(&knobs, 0, cc), None);
-        }
+    fn a_saved_set_loads_as_saved() {
+        let mut saved = UNASSIGNED_KNOBS;
+        saved[2] = Some(714);
+        saved[7] = Some(0);
+        assert_eq!(knobs_from_saved(&saved), saved);
     }
 
     #[test]
-    fn a_cc_another_knob_sends_is_refused_but_a_knobs_own_is_not() {
-        let knobs = default_knobs();
-        assert_eq!(cc_refusal(&knobs, 0, 15), Some(CcRefusal::Taken(1)));
-        assert_eq!(cc_refusal(&knobs, 7, 14), Some(CcRefusal::Taken(0)));
-        assert_eq!(cc_refusal(&knobs, 0, 14), None);
-    }
-
-    #[test]
-    fn a_saved_set_loads_as_saved_with_positions_clamped() {
-        let mut saved = default_knobs();
-        saved[2] = Knob {
-            cc: 74,
-            value: Some(200),
-        };
-        saved[5].value = Some(64);
-        let knobs = knobs_from_saved(&saved);
-        assert_eq!(
-            knobs[2],
-            Knob {
-                cc: 74,
-                value: Some(CC_VALUE_MAX)
-            }
-        );
-        assert_eq!(knobs[5].value, Some(64));
-    }
-
-    #[test]
-    fn a_set_no_track_could_have_loads_as_a_fresh_tracks() {
-        assert_eq!(knobs_from_saved(&[]), default_knobs());
-        assert_eq!(knobs_from_saved(&default_knobs()[..7]), default_knobs());
-        let mut duplicate = default_knobs();
-        duplicate[3].cc = 14;
-        assert_eq!(knobs_from_saved(&duplicate), default_knobs());
-        let mut reserved = default_knobs();
-        reserved[3].cc = 1;
-        assert_eq!(knobs_from_saved(&reserved), default_knobs());
+    fn a_set_no_track_could_have_loads_unassigned() {
+        assert_eq!(knobs_from_saved(&[]), UNASSIGNED_KNOBS);
+        assert_eq!(knobs_from_saved(&[Some(1); 7]), UNASSIGNED_KNOBS);
+        let mut duplicate = UNASSIGNED_KNOBS;
+        duplicate[1] = Some(714);
+        duplicate[6] = Some(714);
+        assert_eq!(knobs_from_saved(&duplicate), UNASSIGNED_KNOBS);
     }
 }

@@ -84,7 +84,9 @@ impl Display {
     }
 
     /// The footer's hint line: the velocity a held ⌘-drag is setting, else
-    /// the hint for the control under the pointer, if it has one.
+    /// the knob panel's line (an armed knob's prompt, the parameter under the
+    /// pointer — `Display::knob_footer_hint`), else the hint for the control
+    /// under the pointer, if it has one.
     pub(super) fn footer_hint(&mut self) -> Option<String> {
         if let Some(drag) = &self.gesture.velocity_drag {
             // One pass over the shapes against the sorted targets: a lookup
@@ -100,6 +102,9 @@ impl Display {
                     })
                     .map(EventShape::velocity),
             );
+        }
+        if let Some(hint) = self.knob_footer_hint() {
+            return Some(hint);
         }
         self.hovered_control()?.hint(&self.keymap)
     }

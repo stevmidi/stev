@@ -122,8 +122,8 @@ pub(crate) enum Action {
     /// Stretch the clip a bar shorter, retiming its notes (clip view).
     StretchClipShorter,
     /// Show the next lane under the piano roll: velocity, pitch bend, the
-    /// mod wheel, then each knob's CC (clip view, `380-wheel-lane.md`,
-    /// `390-knob-panel.md` decision 11).
+    /// mod wheel, then each knob's lane (clip view, `380-wheel-lane.md`,
+    /// `400-parameter-knobs.md` decision 12).
     CycleClipLane,
 }
 
@@ -905,7 +905,7 @@ impl Action {
     /// — the wheel lane's rule ([`leaves_wheel_lane`](Self::leaves_wheel_lane))
     /// for the selected knob. Every clip-view command does, Select all notes
     /// among them (the panel has no span to mark), but Delete notes, which
-    /// the panel reads as clearing the knob's CC, and the lane switch, which
+    /// the panel reads as clearing the knob's data, and the lane switch, which
     /// moves the selection along the knobs.
     pub(crate) fn leaves_knob_panel(self) -> bool {
         self.leaves_wheel_lane() || self == Action::SelectAllNotes

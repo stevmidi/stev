@@ -1,9 +1,8 @@
 //! `EventHandlers` workflows for the track list itself: the view's mirror of
 //! it (`UiEvent::TracksChanged`), and adding / removing a track — the
 //! refusals, and the fan-out after `AddTrackEdit` / `RemoveTrackEdit` (or
-//! the undo of either). A rename (`RenameTrackEdit`) and a knob's CC
-//! reassignment (`SetKnobCcEdit`) only re-send the mirror, the latter after
-//! its refusals. See `050-undo-redo.md` § Track add / remove and
+//! the undo of either). A rename (`RenameTrackEdit`) and a knob's
+//! assignment (`SetKnobParamEdit`) only re-send the mirror. See `050-undo-redo.md` § Track add / remove and
 //! `020-views-and-state.md`.
 
 use undo::Record;
@@ -11,9 +10,9 @@ use undo::Record;
 use crate::{
     core::{
         config::MAX_TRACKS,
-        sequencer::{AddTrackEdit, RemoveTrackEdit, SequencerEdit, SetKnobCcEdit},
+        sequencer::{AddTrackEdit, RemoveTrackEdit, SequencerEdit, SetKnobParamEdit},
     },
-    models::knobs::CcRefusal,
+    models::knobs::ParamId,
     models::track::{InstrumentRef, TrackOutput, TrackShift},
     view::display::{TrackLane, TrackRoute},
 };
@@ -22,10 +21,10 @@ use super::*;
 
 impl EventHandlers {
     /// Sends `Display` the whole track list — each track's slot, output,
-    /// colour, name and knob CCs — with the add / remove that just happened, if any
+    /// colour, name and knobs' parameters — with the add / remove that just happened, if any
     /// (`shift`). When the thread starts, after a project load / new-project,
     /// every output change, every track add / remove, every rename and every
-    /// knob CC change.
+    /// knob assignment — and wakes the view to show it.
     pub(crate) fn emit_tracks(&self, sequencer: &Sequencer, shift: Option<TrackShift>) {
         let tracks = sequencer
             .tracks()
@@ -41,12 +40,17 @@ impl EventHandlers {
                 },
                 color: track.color_slot(),
                 name: track.name().map(str::to_owned),
-                knob_ccs: track.knobs().map(|knob| knob.cc),
+                knob_params: *track.knobs(),
             })
             .collect();
         self.ui_event_tx
             .send(UiEvent::TracksChanged { tracks, shift })
             .ok();
+        // The view may have no input of its own to wake it: a knob is
+        // assigned by a turn in the plugin's window, and the frame that sent
+        // it is done before this arrives, so its label would stay stale
+        // until the pointer next moved over Stev.
+        self.request_repaint();
     }
 
     /// Tells `Display` which plugin engine slot `slot` (track `track_id`'s)
@@ -66,22 +70,25 @@ impl EventHandlers {
             .ok();
     }
 
-    /// A knob's CC field: records a `SetKnobCcEdit` putting knob `knob` of
-    /// `track_idx` on `cc`. Refused, with a footer message, on a CC no knob
-    /// may send or another knob's (`390-knob-panel.md` decision 5).
-    pub(super) fn set_knob_cc_workflow(
+    /// An armed knob's assignment: records a `SetKnobParamEdit` putting knob
+    /// `knob` of `track_idx` on `param`. Refused, with a footer message, on a
+    /// parameter another knob of the track holds (`400-parameter-knobs.md`
+    /// decision 4) — the view checks first and names it, so this is the
+    /// guard for a mirror that lagged.
+    pub(super) fn set_knob_param_workflow(
         &self,
         sequencer: &mut Sequencer,
         undo_record: &mut Record<SequencerEdit>,
         track_idx: usize,
         knob: usize,
-        cc: u8,
+        param: Option<ParamId>,
     ) {
-        match SetKnobCcEdit::new(sequencer, track_idx, knob, cc) {
+        match SetKnobParamEdit::new(sequencer, track_idx, knob, param) {
             Ok(edit) => {
                 self.record_edit(sequencer, undo_record, edit);
             }
-            Err(refusal) => self.send_status_ui_event(knob_cc_refusal_message(cc, refusal)),
+            Err(other) => self
+                .send_status_ui_event(format!("That parameter is on knob {} already", other + 1)),
         }
     }
 
@@ -169,15 +176,6 @@ impl EventHandlers {
             let select_idx = track_idx.min(sequencer.tracks().len() - 1);
             self.select_track_workflow(sequencer, select_idx);
         }
-    }
-}
-
-/// The footer's answer to a knob CC that was refused.
-fn knob_cc_refusal_message(cc: u8, refusal: CcRefusal) -> String {
-    match refusal {
-        CcRefusal::Taken(other) => format!("CC {cc} is on knob {} already", other + 1),
-        CcRefusal::Reserved if cc == 1 => "CC 1 is the mod wheel, not a knob".to_string(),
-        CcRefusal::Reserved => format!("A knob can't send CC {cc}: 0–119 but 1"),
     }
 }
 

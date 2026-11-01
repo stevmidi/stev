@@ -1,22 +1,28 @@
-//! The knob panel (`390-knob-panel.md`): eight virtual knobs in a column of
-//! their own left of the clip view, under the track headers, acting on the
-//! selected track. Mouse only — a turn never takes the keyboard. A
-//! vertical drag on a dial turns it (⇧ for fine steps) once it has moved
-//! past a small dead zone, a ⌘/Ctrl-click puts it back to 0: each new value
-//! goes
-//! out live as the knob's CC through the `"computerkeys"` thread, routed
-//! like a played note to the selected track's output, and to the sequencer
-//! to be kept (`InputEvent::SetKnobValue`, not undoable). A scroll on a dial
-//! turns it the same way — a scroll that began on that dial, its momentum
-//! included; momentum coasting onto the panel from elsewhere turns nothing
-//! ([`WheelLatch`]).
-//! A click on a dial — a press and release that never left the dead zone —
-//! or on the label under it, with a clip open, selects the knob: its CC
-//! lane shows under the piano roll (`ClipLane::Knob`) and the panel takes
-//! the keyboard, so `Delete` clears the CC from the clip
-//! (`Display::select_knob`, `input/knob_focus.rs`). The label names the CC; a double-click
-//! there opens a field to type another, an undoable `SetKnobCcEdit`. A scroll
-//! anywhere else on the panel does nothing.
+//! The knob panel (`400-parameter-knobs.md`, the panel itself from
+//! `390-knob-panel.md`): eight virtual knobs in a column of their own left
+//! of the clip view, under the track headers, each driving one parameter of
+//! the selected track's plugin. Mouse only — a turn never takes the
+//! keyboard. A vertical drag on a dial turns it (⇧ for fine steps) once it
+//! has moved past a small dead zone, a ⌘/Ctrl-click puts it back to the
+//! parameter's default: each new value goes straight to the plugin, its
+//! sound and its editor alike (`Display::set_knob_param_value`), and to the
+//! sequencer as a hand turn for the unsaved prompt
+//! (`InputEvent::SetKnobValue`, not undoable). A scroll on a dial turns it
+//! the same way — a scroll that began on that dial, its momentum included;
+//! momentum coasting onto the panel from elsewhere turns nothing
+//! ([`WheelLatch`]). The knob shows the parameter's value wherever it came
+//! from: a drag, the plugin's editor, a preset.
+//!
+//! A double-click on a knob's label arms it: the next control turned in the
+//! plugin's editor becomes its parameter (`knob_params.rs`), an undoable
+//! `SetKnobParamEdit`; `Esc` or a press elsewhere disarms, `Delete`
+//! unassigns. An unassigned knob turns nothing. A click on a dial — a press
+//! and release that never left the dead zone — or on the label under it,
+//! with a clip open, selects the knob: its lane shows under the piano roll
+//! (`ClipLane::Knob`) and the panel takes the keyboard
+//! (`Display::select_knob`, `input/knob_focus.rs`). A track whose knobs
+//! can't drive anything (no plugin, or a CLAP one for now) shows a one-line
+//! hint instead of knobs. A scroll anywhere else on the panel does nothing.
 //!
 //! The geometry is pure and unit-tested here; the drawing is
 //! `rendering/knob_panel.rs`. See `030-ui-design.md` § Knob Panel.
@@ -24,21 +30,19 @@
 use std::f32::consts::PI;
 use std::time::{Duration, Instant};
 
-use egui::{FontId, Id, Pos2, Rect, TouchPhase, Ui, pos2, vec2};
+use egui::{Key, Pos2, Rect, TouchPhase, pos2, vec2};
 
 use crate::core::input_event::InputEvent;
-use crate::core::midi::message::control_change;
-use crate::models::knobs::{CC_VALUE_MAX, KNOB_COUNT};
+use crate::models::knobs::{KNOB_COUNT, ParamId};
 
 use super::Display;
 use super::clip_lane::ClipLane;
-use super::text_field::{CHIP_MARGIN, FieldEvent, FieldStyle, TextField, field_event};
 
 /// The panel's inset from its column's edges, around the knob grid.
 const PANEL_PAD: f32 = 8.0;
 /// How many rows each of the two columns of knobs has.
 const ROWS: usize = KNOB_COUNT / 2;
-/// The height of the CC label under each dial.
+/// The height of the label under each dial.
 pub(super) const LABEL_H: f32 = 14.0;
 /// The gap between a dial and its label.
 const LABEL_GAP: f32 = 2.0;
@@ -48,16 +52,16 @@ const DIAL_MAX_D: f32 = 40.0;
 /// The smallest, in a panel too short for the rest: the dials shrink to fit
 /// rather than clip (`390` decision 3).
 const DIAL_MIN_D: f32 = 6.0;
-/// Points of vertical travel per CC step, dragged or scrolled — the whole
-/// range in about 190.
-const DRAG_PX_PER_STEP: f32 = 1.5;
+/// Points of vertical travel across a knob's whole range, dragged or
+/// scrolled.
+const DRAG_PX_PER_RANGE: f32 = 190.0;
 /// How much slower a ⇧-drag turns.
 const FINE_FACTOR: f32 = 5.0;
 /// Where a dial's sweep starts, the value 0: down-left, in screen radians
 /// (0 = right, growing clockwise since screen y points down).
 const SWEEP_START: f32 = 0.75 * PI;
-/// How far the sweep turns from 0 to 127: three quarters of a circle,
-/// through the top.
+/// How far the sweep turns from 0 to 1: three quarters of a circle, through
+/// the top.
 pub(super) const SWEEP: f32 = 1.5 * PI;
 /// A trackpad gesture that starts this soon after the last one ended carries
 /// it on: macOS sends the coasting as a second gesture right after the
@@ -65,13 +69,13 @@ pub(super) const SWEEP: f32 = 1.5 * PI;
 /// touch's own gesture right behind.
 const MOMENTUM_GAP: Duration = Duration::from_millis(150);
 /// How much of a coasting gesture's travel turns the dial: the OS's inertia
-/// is tuned for scrolling pages, far too lively for a dial's 128 steps. A
-/// faster flick still coasts further, in proportion. The fingers' own travel
-/// counts in full.
+/// is tuned for scrolling pages, far too lively for a dial. A faster flick
+/// still coasts further, in proportion. The fingers' own travel counts in
+/// full.
 const MOMENTUM_SCALE: f32 = 0.35;
 /// How long a wheel turn's value stays the one shown and counted from after
-/// its last event, ahead of the published value catching up. A turn on the
-/// same dial after a longer pause starts again from the published value.
+/// its last event, ahead of the plugin's value catching up. A turn on the
+/// same dial after a longer pause starts again from the plugin's value.
 const WHEEL_TURN_HOLD: Duration = Duration::from_millis(500);
 
 /// Where one knob is drawn and hit.
@@ -81,7 +85,7 @@ pub(super) struct KnobRects {
     pub(super) center: Pos2,
     /// The dial's radius.
     pub(super) radius: f32,
-    /// The CC label under it.
+    /// The label under it: the parameter's name.
     pub(super) label: Rect,
 }
 
@@ -121,37 +125,29 @@ pub(super) fn knob_layout(panel: Rect) -> [KnobRects; KNOB_COUNT] {
     })
 }
 
-/// The screen angle of a dial's pointer at `value`, `0..=127` along
-/// [`SWEEP`] from [`SWEEP_START`].
-pub(super) fn knob_angle(value: u8) -> f32 {
-    SWEEP_START + SWEEP * f32::from(value.min(CC_VALUE_MAX)) / f32::from(CC_VALUE_MAX)
+/// The screen angle of a dial's pointer at `value` (normalized, clamped)
+/// along [`SWEEP`] from [`SWEEP_START`].
+pub(super) fn knob_angle(value: f64) -> f32 {
+    SWEEP_START + SWEEP * value.clamp(0.0, 1.0) as f32
 }
 
-/// The value a drag reaches: `anchor` moved by `travel` points (upward
-/// positive), [`FINE_FACTOR`] slower with `fine`, and whether it ran into
-/// either end of the range.
-pub(super) fn dragged_knob_value(anchor: u8, travel: f32, fine: bool) -> (u8, bool) {
-    let raw = f32::from(anchor) + (travel / px_per_step(fine)).trunc();
-    let value = raw.clamp(0.0, f32::from(CC_VALUE_MAX));
-    (value as u8, raw != value)
+/// The value `travel` points (upward positive) turn a knob from `anchor`,
+/// [`FINE_FACTOR`] slower with `fine`, and whether it ran into either end of
+/// the range.
+pub(super) fn turned_knob_value(anchor: f64, travel: f32, fine: bool) -> (f64, bool) {
+    let raw = anchor + f64::from(travel / px_per_range(fine));
+    let value = raw.clamp(0.0, 1.0);
+    (value, raw != value)
 }
 
-/// Points of travel per CC step, [`FINE_FACTOR`] more with `fine`.
-fn px_per_step(fine: bool) -> f32 {
+/// Points of travel across the whole range, [`FINE_FACTOR`] more with
+/// `fine`.
+fn px_per_range(fine: bool) -> f32 {
     if fine {
-        DRAG_PX_PER_STEP * FINE_FACTOR
+        DRAG_PX_PER_RANGE * FINE_FACTOR
     } else {
-        DRAG_PX_PER_STEP
+        DRAG_PX_PER_RANGE
     }
-}
-
-/// Takes the whole CC steps out of `pending` points of scroll travel
-/// (upward positive), leaving the rest for the next event.
-pub(super) fn take_steps(pending: &mut f32, fine: bool) -> i32 {
-    let per_step = px_per_step(fine);
-    let steps = (*pending / per_step).trunc();
-    *pending -= steps * per_step;
-    steps as i32
 }
 
 /// Which dial a stream of scroll events turns. A trackpad gesture (`Start`
@@ -251,7 +247,7 @@ impl WheelLatch {
 pub(super) enum KnobHit {
     /// Knob `n`'s dial.
     Dial(usize),
-    /// Knob `n`'s CC label.
+    /// Knob `n`'s label.
     Label(usize),
 }
 
@@ -263,20 +259,18 @@ struct KnobDrag {
     track_idx: usize,
     /// Which knob.
     knob: usize,
-    /// The CC it sends.
-    cc: u8,
+    /// The parameter it drives; `None` for an unassigned knob, whose drag
+    /// turns nothing but can still be a click.
+    param: Option<ParamId>,
     /// The value the travel counts from.
-    anchor: u8,
+    anchor: f64,
     /// Points travelled upward since the anchor.
     travel: f32,
     /// Whether ⇧ was down at the last step.
     fine: bool,
     /// The value reached, shown in the dial while the drag runs (the hand
     /// wins).
-    value: u8,
-    /// Where the knob stood when the drag began, until its first move has
-    /// gone out ahead of it ([`Display::send_knob_value`]).
-    from: Option<u8>,
+    value: f64,
     /// Points travelled upward while still inside the drag threshold
     /// ([`Display::DRAG_THRESHOLD_PX`], every press's click-or-drag line);
     /// `None` once the drag has left it and turns the knob.
@@ -285,16 +279,15 @@ struct KnobDrag {
 
 impl KnobDrag {
     /// A drag of a knob standing at `value`, not yet out of the dead zone.
-    fn new(track_idx: usize, knob: usize, cc: u8, value: u8) -> Self {
+    fn new(track_idx: usize, knob: usize, param: Option<ParamId>, value: f64) -> Self {
         Self {
             track_idx,
             knob,
-            cc,
+            param,
             anchor: value,
             travel: 0.0,
             fine: false,
             value,
-            from: Some(value),
             slop: Some(0.0),
         }
     }
@@ -302,11 +295,10 @@ impl KnobDrag {
     /// Raw pointer motion `dy` (downward positive): the new value, when it
     /// changed. Nothing turns until the travel leaves the drag threshold
     /// ([`Display::DRAG_THRESHOLD_PX`]: within it the press is a click, which
-    /// selects the knob, and a hand's jitter never sends or records a step),
-    /// and the turn then counts from there, so the knob never jumps. ⇧
-    /// going down or up re-anchors at the value reached, and so does
-    /// hitting either end.
-    fn extend(&mut self, dy: f32, fine: bool) -> Option<u8> {
+    /// selects the knob, and a hand's jitter never sends a step), and the
+    /// turn then counts from there, so the knob never jumps. ⇧ going down or
+    /// up re-anchors at the value reached, and so does hitting either end.
+    fn extend(&mut self, dy: f32, fine: bool) -> Option<f64> {
         if let Some(slop) = self.slop.as_mut() {
             *slop -= dy;
             if slop.abs() >= Display::DRAG_THRESHOLD_PX {
@@ -321,7 +313,7 @@ impl KnobDrag {
             self.anchor = self.value;
         }
         self.travel -= dy;
-        let (value, clamped) = dragged_knob_value(self.anchor, self.travel, fine);
+        let (value, clamped) = turned_knob_value(self.anchor, self.travel, fine);
         if clamped {
             self.travel = 0.0;
             self.anchor = value;
@@ -338,23 +330,18 @@ impl KnobDrag {
     }
 }
 
-/// A dial being turned by scrolling: the value it has reached, ahead of
-/// the published one, and the travel not yet worth a step.
+/// A dial being turned by scrolling: the value it has reached, ahead of the
+/// plugin's.
 #[derive(Clone, Copy, Debug)]
 struct WheelTurn {
     /// The knob's track.
     track_idx: usize,
     /// Which knob.
     knob: usize,
-    /// The CC it sends.
-    cc: u8,
+    /// The parameter it drives.
+    param: ParamId,
     /// The value reached.
-    value: u8,
-    /// Where the knob stood when the turn began, until its first step has
-    /// gone out ahead of it ([`Display::send_knob_value`]).
-    from: Option<u8>,
-    /// Points of travel (upward positive) short of a step.
-    pending: f32,
+    value: f64,
     /// When its last scroll event came.
     last: Instant,
 }
@@ -367,17 +354,19 @@ impl WheelTurn {
     }
 }
 
-/// The open CC field on a label.
-struct CcField {
-    /// The knob's track.
-    track_idx: usize,
-    /// Which knob.
-    knob: usize,
-    /// The field itself.
-    field: TextField,
+/// One knob of the selected track as drawn.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct KnobShown {
+    /// The parameter it drives; `None` while unassigned.
+    pub(super) param: Option<ParamId>,
+    /// Where it stands, normalized: the drag's value while dragged, else the
+    /// plugin's (a wheel turn's, for a moment after it). `None` while
+    /// unassigned.
+    pub(super) value: Option<f64>,
 }
 
-/// The knob panel's view state: the drag, the wheel and the CC field. Where the knobs are is derived from the pane layout every frame.
+/// The knob panel's view state: the drag, the wheel and the armed knob.
+/// Where the knobs are is derived from the pane layout every frame.
 #[derive(Default)]
 pub(super) struct KnobPanel {
     /// The dial being dragged.
@@ -386,19 +375,16 @@ pub(super) struct KnobPanel {
     wheel: WheelLatch,
     /// The dial being turned by scrolling.
     wheel_turn: Option<WheelTurn>,
-    /// The open CC field.
-    field: Option<CcField>,
+    /// The knob a double-click on its label armed — its track and which —
+    /// waiting for a control turned in the plugin's editor
+    /// (`400-parameter-knobs.md` decision 3).
+    armed: Option<(usize, usize)>,
 }
 
 impl KnobPanel {
     /// Whether a dial is being dragged — a drag that holds the pointer.
     pub(super) fn dragging(&self) -> bool {
         self.drag.is_some()
-    }
-
-    /// Whether the CC field is open; it has the keyboard while it is.
-    pub(super) fn editing(&self) -> bool {
-        self.field.is_some()
     }
 }
 
@@ -419,9 +405,19 @@ impl Display {
             .is_some_and(|column| column.contains(pos2(x, y)))
     }
 
-    /// The knobs' layout this frame.
+    /// The knobs' layout this frame — `None` while the panel is hidden or
+    /// shows its hint instead ([`knob_hint`](Self::knob_hint)).
     pub(super) fn knob_rects(&self) -> Option<[KnobRects; KNOB_COUNT]> {
+        if self.knob_hint().is_some() {
+            return None;
+        }
         self.knob_panel_rect().map(knob_layout)
+    }
+
+    /// The line the panel shows instead of knobs, when the selected track's
+    /// knobs can't drive anything (`400-parameter-knobs.md` decision 2).
+    pub(super) fn knob_hint(&self) -> Option<String> {
+        self.knob_panel_hint(self.knobs_track()?)
     }
 
     /// The dial or label under `(x, y)`.
@@ -456,33 +452,43 @@ impl Display {
         (self.selected_track_idx < self.tracks.len()).then_some(self.selected_track_idx)
     }
 
-    /// Knob `knob` of the selected track as drawn: its CC and where it
-    /// stands — the drag's value while it is dragged, else the published
-    /// one (a wheel turn's, for a moment after it), `None` while never
-    /// turned.
-    pub(super) fn knob_shown(&self, knob: usize) -> Option<(u8, Option<u8>)> {
+    /// The parameter knob `knob` of the selected track drives, if any.
+    fn knob_param(&self, knob: usize) -> Option<ParamId> {
+        *self.tracks[self.knobs_track()?].knob_params.get(knob)?
+    }
+
+    /// Knob `knob` of the selected track as drawn — see [`KnobShown`].
+    /// `None` with no such knob.
+    pub(super) fn knob_shown(&self, knob: usize) -> Option<KnobShown> {
         let track_idx = self.knobs_track()?;
-        let lane = &self.tracks[track_idx];
-        if let Some(drag) = self.knob_panel.drag
+        let param = *self.tracks[track_idx].knob_params.get(knob)?;
+        let value = if let Some(drag) = self.knob_panel.drag
             && (drag.track_idx, drag.knob) == (track_idx, knob)
+            && drag.param.is_some()
         {
-            return Some((drag.cc, Some(drag.value)));
-        }
-        if let Some(turn) = self.knob_panel.wheel_turn
+            Some(drag.value)
+        } else if let Some(turn) = self.knob_panel.wheel_turn
             && turn.holds(track_idx, knob, Instant::now())
         {
-            return Some((turn.cc, Some(turn.value)));
-        }
-        let cc = *lane.knob_ccs.get(knob)?;
-        Some((cc, self.track_mix.knob_value(lane.slot, knob)))
+            Some(turn.value)
+        } else {
+            param.and_then(|param| self.knob_param_value(track_idx, param))
+        };
+        Some(KnobShown { param, value })
+    }
+
+    /// The name of knob `knob`'s parameter on the selected track, if it has
+    /// one.
+    pub(super) fn knob_name(&self, knob: usize) -> Option<&str> {
+        self.knob_param_name(self.knobs_track()?, self.knob_param(knob)?)
     }
 
     /// A press in the knob panel: a dial starts its drag (a click if it
     /// never turns, shown on the release — [`Display::finish_knob_drag`]),
-    /// or with ⌘/Ctrl goes back to 0 and starts none — the track header
-    /// bars' reset gesture; a label, with a clip open, selects the
-    /// knob, its CC's lane under the piano roll (`390-knob-panel.md` decisions 11 and 14).
-    /// Only that selection takes the keyboard.
+    /// or with ⌘/Ctrl goes back to its parameter's default and starts none —
+    /// the track header bars' reset gesture; a label, with a clip open,
+    /// selects the knob, its lane under the piano roll (`390-knob-panel.md`
+    /// decisions 11 and 14). Only that selection takes the keyboard.
     pub(super) fn handle_knob_panel_click(&mut self, x: f32, y: f32, command: bool) {
         match self.knob_at(x, y) {
             Some(KnobHit::Dial(knob)) if command => self.reset_knob(knob),
@@ -527,45 +533,53 @@ impl Display {
         }
     }
 
-    /// Turns knob `knob` of the selected track back to 0, where a knob
-    /// never turned is drawn — a macro's rest. Sent even when it shows 0
-    /// already, so a plugin moved some other way follows.
+    /// The footer's line for the knob panel: the arming prompt while a knob
+    /// is armed, else the full name of the parameter under the pointer — a
+    /// label shortens it — or how to assign an unassigned knob.
+    pub(super) fn knob_footer_hint(&self) -> Option<String> {
+        if self.armed_knob().is_some() {
+            return Some("Turn a control in the plugin".to_owned());
+        }
+        let knob = self.knob_under_pointer()?;
+        Some(match self.knob_name(knob) {
+            Some(name) => name.to_owned(),
+            None if self.knob_param(knob).is_some() => "Unknown parameter".to_owned(),
+            None => "Double-click the label, then turn a control in the plugin".to_owned(),
+        })
+    }
+
+    /// Turns knob `knob` of the selected track back to its parameter's
+    /// default — sent even when it shows that already, so a plugin moved
+    /// some other way follows. Nothing for an unassigned knob.
     fn reset_knob(&mut self, knob: usize) {
-        let (Some(track_idx), Some((cc, from))) = (self.knobs_track(), self.knob_shown(knob))
-        else {
+        let (Some(track_idx), Some(param)) = (self.knobs_track(), self.knob_param(knob)) else {
+            return;
+        };
+        let Some(default) = self.knob_param_default(track_idx, param) else {
             return;
         };
         self.knob_panel.wheel_turn = None;
-        self.send_knob_value(track_idx, knob, cc, Some(from.unwrap_or(0)), 0);
-    }
-
-    /// A double-click in the knob panel: on a label, opens its CC field.
-    pub(super) fn handle_knob_panel_double_click(&mut self, x: f32, y: f32) {
-        if let Some(KnobHit::Label(knob)) = self.knob_at(x, y) {
-            self.open_knob_cc_field(knob);
-        }
+        self.send_knob_value(track_idx, knob, param, default);
     }
 
     /// Starts dragging knob `knob` of the selected track, from where it
-    /// stands (0 for a knob never turned), and takes hold of it: until the
-    /// release, playback leaves its CC to the hand (`390-knob-panel.md`
-    /// decision 7).
+    /// stands. An unassigned knob's drag turns nothing, but a click on it
+    /// still selects it.
     fn begin_knob_drag(&mut self, knob: usize) {
-        let Some(track_idx) = self.knobs_track() else {
+        let (Some(track_idx), Some(shown)) = (self.knobs_track(), self.knob_shown(knob)) else {
             return;
         };
-        let Some((cc, value)) = self.knob_shown(knob) else {
-            return;
-        };
-        self.knob_panel.drag = Some(KnobDrag::new(track_idx, knob, cc, value.unwrap_or(0)));
-        self.input_event_tx
-            .send(InputEvent::HoldKnob { track_idx, knob })
-            .ok();
+        self.knob_panel.drag = Some(KnobDrag::new(
+            track_idx,
+            knob,
+            shown.param,
+            shown.value.unwrap_or(0.0),
+        ));
     }
 
     /// Raw pointer motion `dy` (downward positive) with the button held: the
-    /// value for the travel since the anchor, sent live and to the
-    /// sequencer when it changed ([`KnobDrag::extend`]).
+    /// value for the travel since the anchor, set on the parameter when it
+    /// changed ([`KnobDrag::extend`]).
     pub(super) fn extend_knob_drag(&mut self, dy: f32, fine: bool) {
         let Some(drag) = self.knob_panel.drag.as_mut() else {
             return;
@@ -573,30 +587,22 @@ impl Display {
         let Some(value) = drag.extend(dy, fine) else {
             return;
         };
-        let from = drag.from.take();
         let KnobDrag {
             track_idx,
             knob,
-            cc,
+            param,
             ..
         } = *drag;
-        self.send_knob_value(track_idx, knob, cc, from, value);
+        if let Some(param) = param {
+            self.send_knob_value(track_idx, knob, param, value);
+        }
     }
 
-    /// Knob `knob` of `track_idx`, sending `cc`, now stands at `value`: its
-    /// CC goes out live, and the sequencer keeps the position. A gesture's
-    /// first move passes `from`, where the knob stood, sent just ahead of it
-    /// — the same value again, so nothing is heard, but the take records
-    /// where the turn started, which a clip with no earlier data for the CC
-    /// plays before it (`Clip::hold_cc_start_values`, `390-knob-panel.md`
-    /// decision 9). Every later move passes `None`.
-    fn send_knob_value(&self, track_idx: usize, knob: usize, cc: u8, from: Option<u8>, value: u8) {
-        let mut messages = Vec::with_capacity(2);
-        if let Some(from) = from.filter(|&from| from != value) {
-            messages.push(control_change(cc, from));
-        }
-        messages.push(control_change(cc, value));
-        self.send_computer_keys(messages);
+    /// Knob `knob` of `track_idx`, on parameter `param`, now stands at
+    /// `value`: the plugin gets it, and the sequencer counts the hand turn
+    /// for the unsaved prompt.
+    fn send_knob_value(&mut self, track_idx: usize, knob: usize, param: ParamId, value: f64) {
+        self.set_knob_param_value(track_idx, param, value);
         self.input_event_tx
             .send(InputEvent::SetKnobValue {
                 track_idx,
@@ -606,8 +612,7 @@ impl Display {
             .ok();
     }
 
-    /// The button came up: the drag is done, its values already sent, and
-    /// playback takes the knob over again at its CC's next move. A drag
+    /// The button came up: the drag is done, its values already set. A drag
     /// that never left the dead zone was a click: with a clip open it
     /// selects the knob, as a click on its label does (`390-knob-panel.md`
     /// decision 11) — on the release, so a turn never switches the lane.
@@ -615,7 +620,6 @@ impl Display {
         let Some(drag) = self.knob_panel.drag.take() else {
             return;
         };
-        self.input_event_tx.send(InputEvent::ReleaseKnobs).ok();
         if drag.is_click() && self.knobs_track() == Some(drag.track_idx) {
             self.select_knob(drag.knob);
         }
@@ -625,7 +629,8 @@ impl Display {
     /// `pointer`: turns the dial the [`WheelLatch`] says it turns, if any,
     /// by `delta_y` points (content down positive, so the knob turns up as
     /// the content would move up — fingers up on a trackpad), damped while
-    /// it coasts ([`WheelLatch::travel_scale`]).
+    /// it coasts ([`WheelLatch::travel_scale`]). An unassigned knob turns
+    /// nothing.
     pub(super) fn handle_knob_wheel(
         &mut self,
         delta_y: f32,
@@ -644,33 +649,30 @@ impl Display {
         let mut turn = match self.knob_panel.wheel_turn {
             Some(turn) if turn.holds(track_idx, knob, now) => turn,
             _ => {
-                let Some((cc, value)) = self.knob_shown(knob) else {
+                let Some(KnobShown {
+                    param: Some(param),
+                    value,
+                }) = self.knob_shown(knob)
+                else {
                     return;
                 };
-                let value = value.unwrap_or(0);
                 WheelTurn {
                     track_idx,
                     knob,
-                    cc,
-                    value,
-                    from: Some(value),
-                    pending: 0.0,
+                    param,
+                    value: value.unwrap_or(0.0),
                     last: now,
                 }
             }
         };
-        turn.pending -= delta_y * scale;
         turn.last = now;
-        let steps = take_steps(&mut turn.pending, fine);
-        let value = (i32::from(turn.value) + steps).clamp(0, i32::from(CC_VALUE_MAX)) as u8;
-        if value == turn.value {
-            self.knob_panel.wheel_turn = Some(turn);
-            return;
-        }
+        let (value, _) = turned_knob_value(turn.value, -delta_y * scale, fine);
+        let changed = value != turn.value;
         turn.value = value;
-        let from = turn.from.take();
         self.knob_panel.wheel_turn = Some(turn);
-        self.send_knob_value(track_idx, knob, turn.cc, from, value);
+        if changed {
+            self.send_knob_value(track_idx, knob, turn.param, value);
+        }
     }
 
     /// Whether the panes' scroll (`InputEvent::TimelineScroll`) is the knob
@@ -682,109 +684,77 @@ impl Display {
             || pointer.is_some_and(|(x, y)| self.is_over_knob_panel(x, y))
     }
 
-    /// Opens the CC field on knob `knob`'s label, its number in it selected.
-    fn open_knob_cc_field(&mut self, knob: usize) {
-        let Some((cc, _)) = self.knob_shown(knob) else {
-            return;
-        };
-        let Some(track_idx) = self.knobs_track() else {
-            return;
-        };
-        self.close_output_menu();
-        self.knob_panel.field = Some(CcField {
-            track_idx,
-            knob,
-            field: TextField::new(cc.to_string()),
-        });
-    }
-
-    /// Whether the CC field is open on knob `knob`'s label — the label
-    /// isn't drawn under it.
-    pub(super) fn knob_cc_field_open_on(&self, knob: usize) -> bool {
-        self.knob_panel
-            .field
-            .as_ref()
-            .is_some_and(|field| field.knob == knob)
-    }
-
-    /// Where the open CC field is: over its label.
-    fn knob_cc_field_rect(&self) -> Option<Rect> {
-        let field = self.knob_panel.field.as_ref()?;
-        Some(self.knob_rects()?[field.knob].label)
-    }
-
-    /// The number the open field holds, if it is one. Whether a knob may
-    /// send it is the sequencer's to answer (a refusal says why in the
-    /// footer).
-    fn typed_knob_cc(&self) -> Option<u8> {
-        self.knob_panel
-            .field
-            .as_ref()?
-            .field
-            .text
-            .trim()
-            .parse()
-            .ok()
-    }
-
-    /// Closes the CC field, putting its knob on `cc` unless that is `None`.
-    fn close_knob_cc_field(&mut self, cc: Option<u8>) {
-        let Some(field) = self.knob_panel.field.take() else {
-            return;
-        };
-        if let Some(cc) = cc {
-            self.input_event_tx
-                .send(InputEvent::SetKnobCc {
-                    track_idx: field.track_idx,
-                    knob: field.knob,
-                    cc,
-                })
-                .ok();
+    /// A double-click in the knob panel: on a label, arms its knob for the
+    /// next control turned in the plugin's editor (`400-parameter-knobs.md`
+    /// decision 3).
+    pub(super) fn handle_knob_panel_double_click(&mut self, x: f32, y: f32) {
+        if let (Some(KnobHit::Label(knob)), Some(track_idx)) =
+            (self.knob_at(x, y), self.knobs_track())
+        {
+            self.close_output_menu();
+            self.knob_panel.armed = Some((track_idx, knob));
         }
     }
 
-    /// While the CC field is open it gets first look at every event, by the
-    /// inline text fields' rule ([`field_event`]); Enter on text that isn't
-    /// a number leaves it open. Returns whether the event was consumed.
-    pub(super) fn handle_knob_cc_field_input_event(&mut self, event: &InputEvent) -> bool {
-        if !self.knob_panel.editing() {
-            return false;
-        }
-        // The panel can go (⌘⌥E hides the clip view): the field goes with it.
-        let Some(rect) = self.knob_cc_field_rect() else {
-            self.close_knob_cc_field(None);
+    /// The armed knob, while it is still the selected track's and the panel
+    /// shows it.
+    pub(super) fn armed_knob(&self) -> Option<usize> {
+        let (track_idx, knob) = self.knob_panel.armed?;
+        (self.knobs_track() == Some(track_idx) && self.knob_rects().is_some()).then_some(knob)
+    }
+
+    /// Ends arming, nothing assigned.
+    pub(super) fn disarm_knob(&mut self) {
+        self.knob_panel.armed = None;
+    }
+
+    /// While a knob is armed it gets first look at every event: `Esc`
+    /// disarms, `Delete` (or `⌫`) unassigns it, and a press anywhere but on
+    /// its own label disarms and goes on to act there. Everything else
+    /// passes, the keys to the computer keyboard among them. An arming whose
+    /// knob is gone (another track selected, the panel hidden) just ends.
+    /// Returns whether the event was consumed.
+    pub(super) fn handle_knob_arming_input_event(&mut self, event: &InputEvent) -> bool {
+        let Some((track_idx, _)) = self.knob_panel.armed else {
             return false;
         };
-        let action = field_event(event, Some(rect));
-        match action {
-            FieldEvent::Commit => {
-                if let Some(cc) = self.typed_knob_cc() {
-                    self.close_knob_cc_field(Some(cc));
-                }
+        let Some(knob) = self.armed_knob() else {
+            self.disarm_knob();
+            return false;
+        };
+        match *event {
+            InputEvent::KeyPressed {
+                key: Key::Escape, ..
+            } => {
+                self.disarm_knob();
+                true
             }
-            FieldEvent::CommitAndPass => self.close_knob_cc_field(self.typed_knob_cc()),
-            FieldEvent::Cancel => self.close_knob_cc_field(None),
-            FieldEvent::Swallow | FieldEvent::Pass => {}
-        }
-        action.consumed()
-    }
-
-    /// Shows the open CC field over its label, in the canvas `ui`. Its first
-    /// frame takes the egui focus and selects the number.
-    pub(super) fn show_knob_cc_field(&mut self, ui: &mut Ui) {
-        let Some(rect) = self.knob_cc_field_rect() else {
-            return;
-        };
-        if let Some(open) = self.knob_panel.field.as_mut() {
-            let style =
-                FieldStyle::new(FontId::proportional(LABEL_FONT_SIZE), CHIP_MARGIN).max_chars(3);
-            open.field
-                .show(ui, Id::new("knob-cc-field"), rect, style, true);
+            InputEvent::KeyPressed {
+                key: Key::Delete | Key::Backspace,
+                ..
+            } => {
+                self.disarm_knob();
+                self.input_event_tx
+                    .send(InputEvent::SetKnobParam {
+                        track_idx,
+                        knob,
+                        param: None,
+                    })
+                    .ok();
+                true
+            }
+            InputEvent::MouseClicked { x, y, .. }
+                if self.knob_at(x, y) != Some(KnobHit::Label(knob)) =>
+            {
+                self.disarm_knob();
+                false
+            }
+            _ => false,
         }
     }
 }
 
-/// The size of a knob's label, and of its CC field.
+/// The size of a knob's label.
 pub(super) const LABEL_FONT_SIZE: f32 = 11.0;
 
 #[cfg(test)]
@@ -795,8 +765,8 @@ mod tests {
     use egui::{Rect, TouchPhase, pos2};
 
     use super::{
-        CC_VALUE_MAX, DIAL_MAX_D, DIAL_MIN_D, DRAG_PX_PER_STEP, Display, KnobDrag, MOMENTUM_SCALE,
-        SWEEP, SWEEP_START, WheelLatch, dragged_knob_value, knob_angle, knob_layout, take_steps,
+        DIAL_MAX_D, DIAL_MIN_D, DRAG_PX_PER_RANGE, Display, KnobDrag, MOMENTUM_SCALE, SWEEP,
+        SWEEP_START, WheelLatch, knob_angle, knob_layout, turned_knob_value,
     };
 
     fn panel(height: f32) -> Rect {
@@ -841,60 +811,55 @@ mod tests {
 
     #[test]
     fn the_pointer_sweeps_three_quarters_through_the_top() {
-        assert_eq!(knob_angle(0), SWEEP_START);
-        assert_eq!(knob_angle(CC_VALUE_MAX), SWEEP_START + SWEEP);
+        assert_eq!(knob_angle(0.0), SWEEP_START);
+        assert_eq!(knob_angle(1.0), SWEEP_START + SWEEP);
         // Halfway is straight up (-π/2, or 3π/2 a turn on).
-        let mid = (f32::from(CC_VALUE_MAX) / 2.0) / f32::from(CC_VALUE_MAX);
-        let up = SWEEP_START + SWEEP * mid;
-        assert!((up - 1.5 * PI).abs() < 1e-5);
-        assert_eq!(knob_angle(200), knob_angle(CC_VALUE_MAX));
+        assert!((knob_angle(0.5) - 1.5 * PI).abs() < 1e-5);
+        assert_eq!(knob_angle(2.0), knob_angle(1.0));
+        assert_eq!(knob_angle(-1.0), knob_angle(0.0));
     }
 
     #[test]
     fn a_press_that_wanders_inside_the_dead_zone_is_a_click_and_turns_nothing() {
-        let mut drag = KnobDrag::new(0, 3, 14, 64);
+        let mut drag = KnobDrag::new(0, 3, Some(714), 0.5);
         let jitter = Display::DRAG_THRESHOLD_PX * 0.6;
         // Up and back down: the travel is net, so it never leaves the zone.
         assert_eq!(drag.extend(-jitter, false), None);
         assert_eq!(drag.extend(jitter, false), None);
         assert_eq!(drag.extend(jitter, false), None);
         assert!(drag.is_click());
-        assert_eq!(drag.value, 64);
+        assert_eq!(drag.value, 0.5);
     }
 
     #[test]
     fn a_drag_out_of_the_dead_zone_turns_from_its_edge_without_a_jump() {
-        let mut drag = KnobDrag::new(0, 0, 14, 64);
+        let mut drag = KnobDrag::new(0, 0, Some(714), 0.5);
         // Leaving the zone turns nothing yet, and the press is no click.
         assert_eq!(drag.extend(-Display::DRAG_THRESHOLD_PX, false), None);
         assert!(!drag.is_click());
-        // One step's travel from the edge is one step.
-        assert_eq!(drag.extend(-DRAG_PX_PER_STEP, false), Some(65));
-        assert_eq!(drag.extend(DRAG_PX_PER_STEP * 2.0, false), Some(63));
+        // A tenth of the range's travel from the edge is a tenth.
+        let tenth = drag.extend(-DRAG_PX_PER_RANGE / 10.0, false).unwrap();
+        assert!((tenth - 0.6).abs() < 1e-6, "{tenth}");
     }
 
     #[test]
-    fn a_drag_up_turns_the_knob_up_and_stops_at_either_end() {
-        assert_eq!(dragged_knob_value(64, 0.0, false), (64, false));
-        assert_eq!(dragged_knob_value(64, 15.0, false), (74, false));
-        assert_eq!(dragged_knob_value(64, -15.0, false), (54, false));
-        // Fine steps are five times slower.
-        assert_eq!(dragged_knob_value(64, 15.0, true), (66, false));
-        assert_eq!(dragged_knob_value(120, 300.0, false), (127, true));
-        assert_eq!(dragged_knob_value(5, -300.0, false), (0, true));
-    }
-
-    #[test]
-    fn scroll_travel_turns_in_whole_steps_and_keeps_the_rest() {
-        let mut pending = 4.0;
-        assert_eq!(take_steps(&mut pending, false), 2);
-        assert!((pending - 1.0).abs() < 1e-5);
-        let mut pending = -4.0;
-        assert_eq!(take_steps(&mut pending, false), -2);
-        // Fine: five times the travel per step.
-        let mut pending = 4.0;
-        assert_eq!(take_steps(&mut pending, true), 0);
-        assert_eq!(pending, 4.0);
+    fn a_turn_up_turns_the_knob_up_and_stops_at_either_end() {
+        assert_eq!(turned_knob_value(0.5, 0.0, false), (0.5, false));
+        let (up, clamped) = turned_knob_value(0.5, DRAG_PX_PER_RANGE / 4.0, false);
+        assert!((up - 0.75).abs() < 1e-6 && !clamped);
+        let (down, _) = turned_knob_value(0.5, -DRAG_PX_PER_RANGE / 4.0, false);
+        assert!((down - 0.25).abs() < 1e-6);
+        // Fine is five times slower.
+        let (fine, _) = turned_knob_value(0.5, DRAG_PX_PER_RANGE / 4.0, true);
+        assert!((fine - 0.55).abs() < 1e-6);
+        assert_eq!(
+            turned_knob_value(0.9, DRAG_PX_PER_RANGE, false),
+            (1.0, true)
+        );
+        assert_eq!(
+            turned_knob_value(0.1, -DRAG_PX_PER_RANGE, false),
+            (0.0, true)
+        );
     }
 
     /// The knob `latch` turns for a scroll event, its travel scale aside.

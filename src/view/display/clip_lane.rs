@@ -1,8 +1,8 @@
 //! [`ClipLane`] — which lane the piano roll shows under its notes: the
-//! velocity bars, one of the two wheels' recorded curves, or the curve of
-//! one of the knobs' CCs. View state only (`RenderState::clip_lane`): never
-//! saved, never switched by anything but the user. See `380-wheel-lane.md`
-//! and `390-knob-panel.md` decision 11.
+//! velocity bars, one of the two wheels' recorded curves, or one of the
+//! knobs' lanes. View state only (`RenderState::clip_lane`): never saved,
+//! never switched by anything but the user. See `380-wheel-lane.md` and
+//! `400-parameter-knobs.md` decision 12.
 
 use crate::core::midi::message::Controller;
 use crate::models::knobs::KNOB_COUNT;
@@ -17,9 +17,10 @@ pub(super) enum ClipLane {
     PitchBend,
     /// The lead clip's mod wheel (CC1).
     Modulation,
-    /// The lead clip's moves of knob `n`'s CC (`0..KNOB_COUNT`, the knobs'
-    /// reading order): by position, so the lane stays up across a change of
-    /// track and shows that track's CC there.
+    /// Knob `n`'s lane (`0..KNOB_COUNT`, the knobs' reading order): by
+    /// position, so the lane stays up across a change of track and shows
+    /// that track's knob there. Empty until a clip can hold a parameter's
+    /// moves (`400-parameter-knobs.md` phase 2).
     Knob(usize),
 }
 
@@ -44,14 +45,13 @@ impl ClipLane {
         }
     }
 
-    /// The controller the lane draws, `None` for velocity. A knob lane's is
-    /// the CC `knob_ccs` (the lead clip's track's) holds in its position.
-    pub(super) fn controller(self, knob_ccs: &[u8]) -> Option<Controller> {
+    /// The controller the lane draws: `None` for velocity, and for a knob's
+    /// lane, which has no data to draw yet.
+    pub(super) fn controller(self) -> Option<Controller> {
         match self {
-            ClipLane::Velocity => None,
+            ClipLane::Velocity | ClipLane::Knob(_) => None,
             ClipLane::PitchBend => Some(Controller::PitchBend),
             ClipLane::Modulation => Some(Controller::MOD_WHEEL),
-            ClipLane::Knob(knob) => knob_ccs.get(knob).map(|&cc| Controller::Cc(cc)),
         }
     }
 }
@@ -83,17 +83,19 @@ mod tests {
         assert_eq!(order.len(), 11);
     }
 
-    /// A knob lane draws the CC its track holds in that position.
+    /// The wheels' lanes draw their controllers; velocity and a knob's lane
+    /// none.
     #[test]
-    fn a_knob_lane_draws_its_tracks_cc() {
-        let ccs = [14, 15, 16, 17, 18, 19, 20, 22];
-        assert_eq!(ClipLane::Knob(7).controller(&ccs), Some(Controller::Cc(22)));
-        assert_eq!(ClipLane::Knob(0).controller(&ccs), Some(Controller::Cc(14)));
+    fn only_the_wheel_lanes_draw_a_controller() {
         assert_eq!(
-            ClipLane::Modulation.controller(&ccs),
+            ClipLane::PitchBend.controller(),
+            Some(Controller::PitchBend)
+        );
+        assert_eq!(
+            ClipLane::Modulation.controller(),
             Some(Controller::MOD_WHEEL)
         );
-        assert_eq!(ClipLane::Velocity.controller(&ccs), None);
-        assert_eq!(ClipLane::Knob(0).controller(&[]), None);
+        assert_eq!(ClipLane::Velocity.controller(), None);
+        assert_eq!(ClipLane::Knob(0).controller(), None);
     }
 }

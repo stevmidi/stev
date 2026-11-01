@@ -238,6 +238,10 @@ impl Display {
             }
         }
 
+        // What the editors turned: an armed knob's assignment, a knob's
+        // parameter turned by hand (`knob_params.rs`).
+        self.handle_parameter_gestures();
+
         // An open project dialog must not sit behind a floating editor.
         let yield_to_main = self.project_dialog.is_some();
         let mut next: Option<Duration> = None;
@@ -334,7 +338,7 @@ impl Display {
                         })
                         .ok();
                 }
-                self.instruments.track_instruments[slot] = Some(TrackInstrument { editor, entry });
+                self.install_editor(slot, editor, entry);
                 self.sync_live_instrument_target();
             }
             Err(e) => {
@@ -535,6 +539,21 @@ impl Display {
         self.sync_live_instrument_target();
     }
 
+    /// Puts a loaded plugin's `editor`, from `entry`, into engine slot
+    /// `slot`. Whatever its editor reported while it loaded — a plugin may
+    /// answer its own state restore with `performEdit`s — is dropped first:
+    /// it is no hand turn, and counted as one it would make a project just
+    /// opened ask to be saved (`400-parameter-knobs.md` decision 9).
+    fn install_editor(
+        &mut self,
+        slot: usize,
+        mut editor: Box<dyn InstrumentEditor>,
+        entry: PluginCatalogEntry,
+    ) {
+        editor.take_parameter_gestures();
+        self.instruments.track_instruments[slot] = Some(TrackInstrument { editor, entry });
+    }
+
     /// Puts a staged plugin into its slot: its voice to the mixer, its editor
     /// (closed) to the track.
     fn install_staged_instrument(&mut self, staged: StagedInstrument) {
@@ -548,9 +567,7 @@ impl Display {
             return;
         };
         match prepared.insert(handle) {
-            Ok(editor) => {
-                self.instruments.track_instruments[slot] = Some(TrackInstrument { editor, entry });
-            }
+            Ok(editor) => self.install_editor(slot, editor, entry),
             Err(e) => error!("plugin host: failed to load '{}': {e}", entry.name),
         }
     }

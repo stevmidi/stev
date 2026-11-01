@@ -24,7 +24,7 @@ use crate::{
     models::{
         clip::Clip,
         event::Event,
-        knobs::{Knob, knobs_from_saved},
+        knobs::{ParamId, knobs_from_saved},
         track::{InstrumentRef, TrackOutput, track_name_from_input},
     },
 };
@@ -156,11 +156,14 @@ pub(crate) struct TrackData {
     /// tracks had names.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) name: Option<String>,
-    /// The track's eight knobs (`Track::knobs`), in reading order. Empty in
-    /// a project saved before knobs, and in `ProjectData::default`: the track
-    /// then gets a fresh track's (CC 14–21, none turned), as does a list no
-    /// track could have (`knobs_from_saved`).
-    #[serde(default)]
+    /// What the track's eight knobs drive (`Track::knobs`), in reading
+    /// order. Not written while no knob is assigned; empty then, in a
+    /// project saved before knobs, and in `ProjectData::default`. A list no
+    /// track could have loads unassigned (`knobs_from_saved`), and so does a
+    /// project saved with CC knobs: their entries name no parameter, and
+    /// their CC numbers and positions are ignored (`400-parameter-knobs.md`
+    /// decision 13).
+    #[serde(default, skip_serializing_if = "no_knob_assigned")]
     pub(crate) knobs: Vec<KnobData>,
     /// The track's clips.
     pub(crate) clips: Vec<ClipData>,
@@ -169,23 +172,20 @@ pub(crate) struct TrackData {
 /// One knob, on disk.
 #[derive(Serialize, Deserialize, Clone, Copy)]
 pub(crate) struct KnobData {
-    /// The CC number it sends.
-    pub(crate) cc: u8,
-    /// Its position, `0..=127`; absent while never turned, so a load sends
-    /// it nothing.
+    /// The plugin parameter it drives, by ID; absent while unassigned.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) value: Option<u8>,
-    /// Where the hand or a load last put it (`Track::knobs_by_hand`) — what
-    /// [`ProjectData::fingerprint`] hashes instead of `value`, so a knob only
-    /// playback moved never asks to be saved. Never written.
+    pub(crate) param: Option<ParamId>,
+    /// Where the hand last put it (`Track::knobs_by_hand`), as a normalized
+    /// value — what [`ProjectData::fingerprint`] hashes, so a hand turn asks
+    /// to be saved though the value itself is the plugin's to save. Never
+    /// written.
     #[serde(skip)]
-    pub(crate) by_hand: Option<u8>,
+    pub(crate) by_hand: Option<f64>,
 }
 
-impl From<KnobData> for Knob {
-    fn from(KnobData { cc, value, .. }: KnobData) -> Self {
-        Knob { cc, value }
-    }
+/// Whether no knob in `knobs` is assigned — the list isn't written then.
+fn no_knob_assigned(knobs: &[KnobData]) -> bool {
+    knobs.iter().all(|knob| knob.param.is_none())
 }
 
 /// An [`io::Write`] that feeds everything written into a hasher — what
@@ -304,9 +304,10 @@ impl ProjectData {
     /// The blobs are left out because plenty of plugins write a different one
     /// on every save of an unchanged preset (Nexus encrypts it afresh, DUNE
     /// recompresses it), so they would make such a project always look
-    /// changed. Knob positions count as the hand or a load left them
-    /// (`KnobData::by_hand`): a knob playback moved is saved where it stands,
-    /// but listening to a project never asks to save it. Takes the snapshot by value — every caller is done with it —
+    /// changed. Where the hand left each knob counts though it is never
+    /// written (`KnobData::by_hand`): a hand turn changes the plugin's state,
+    /// which is saved, while playback's never asks to save. Takes the
+    /// snapshot by value — every caller is done with it —
     /// and streams the JSON into the hasher, so nothing is copied or buffered.
     /// Stable within one run only — never persisted.
     pub(crate) fn fingerprint(mut self) -> u64 {
@@ -314,14 +315,16 @@ impl ProjectData {
             if let TrackOutputData::Instrument { state, .. } = &mut track.output {
                 state.clear();
             }
-            for knob in &mut track.knobs {
-                knob.value = knob.by_hand;
-            }
         }
         let mut hasher = HashWriter(DefaultHasher::new());
         // Writing into a hasher can't fail; a serialization error would hash
         // a prefix, which still differs from any complete project.
         serde_json::to_writer(&mut hasher, &self).ok();
+        for knob in self.tracks.iter().flat_map(|track| &track.knobs) {
+            hasher
+                .0
+                .write_u64(knob.by_hand.map_or(u64::MAX, f64::to_bits));
+        }
         hasher.0.finish()
     }
 
@@ -397,11 +400,7 @@ impl ProjectData {
                         .knobs()
                         .iter()
                         .zip(track.knobs_by_hand())
-                        .map(|(knob, &by_hand)| KnobData {
-                            cc: knob.cc,
-                            value: knob.value,
-                            by_hand,
-                        })
+                        .map(|(&param, &by_hand)| KnobData { param, by_hand })
                         .collect(),
                     clips,
                 }
@@ -451,7 +450,8 @@ impl ProjectData {
             sequencer.set_track_volume(track_idx, track_data.volume_db);
             sequencer.set_track_pan(track_idx, track_data.pan);
             sequencer.set_track_muted(track_idx, track_data.muted);
-            let knobs: Vec<Knob> = track_data.knobs.iter().copied().map(Knob::from).collect();
+            let knobs: Vec<Option<ParamId>> =
+                track_data.knobs.iter().map(|knob| knob.param).collect();
             sequencer.set_track_knobs(track_idx, knobs_from_saved(&knobs));
             if let Some(track) = sequencer.tracks_mut().get_mut(track_idx) {
                 track.set_color_slot(track_data.color.unwrap_or(track_idx));
@@ -489,8 +489,8 @@ impl ProjectData {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::sequencer::test_support::{clip_at, test_sequencer, track_colors};
-    use crate::models::knobs::default_knobs;
+    use crate::core::sequencer::test_support::{test_sequencer, track_colors};
+    use crate::models::knobs::UNASSIGNED_KNOBS;
 
     /// A default project with `count` tracks.
     fn project_with_tracks(count: usize) -> ProjectData {
@@ -655,70 +655,87 @@ mod tests {
     }
 
     #[test]
-    fn knobs_survive_a_save_and_load_and_a_new_project_resets_them() {
+    fn knob_assignments_survive_a_save_and_load_and_a_new_project_resets_them() {
         let mut sequencer = test_sequencer();
-        let mut knobs = default_knobs();
-        knobs[2].cc = 74;
-        knobs[2].value = Some(90);
+        let mut knobs = UNASSIGNED_KNOBS;
+        knobs[2] = Some(714);
+        knobs[7] = Some(7_000_000);
         sequencer.set_track_knobs(1, knobs);
         let json = serde_json::to_string(&ProjectData::from_sequencer(&sequencer)).unwrap();
 
         sequencer.new_project();
-        assert_eq!(*sequencer.tracks()[1].knobs(), default_knobs());
-        assert_eq!(sequencer.published_knob_value(1, 2), None);
+        assert_eq!(*sequencer.tracks()[1].knobs(), UNASSIGNED_KNOBS);
         let data: ProjectData = serde_json::from_str(&json).unwrap();
         data.apply_to_sequencer(&mut sequencer);
 
         assert_eq!(*sequencer.tracks()[1].knobs(), knobs);
-        assert_eq!(*sequencer.tracks()[0].knobs(), default_knobs());
-        // Published for the knob panel.
-        assert_eq!(sequencer.published_knob_value(1, 2), Some(90));
+        assert_eq!(*sequencer.tracks()[0].knobs(), UNASSIGNED_KNOBS);
     }
 
+    /// A track with no knob assigned writes no knob list, and the hand's
+    /// values are never written.
     #[test]
-    fn a_track_saved_before_knobs_loads_on_cc_14_to_21_unturned() {
-        let back: TrackData =
-            serde_json::from_str(r#"{"output":{"type":"MidiOut","channel":2},"clips":[]}"#)
-                .unwrap();
-        assert!(back.knobs.is_empty());
-        let data = ProjectData {
-            tracks: vec![back],
-            ..ProjectData::default()
-        };
+    fn unassigned_knobs_and_hand_values_are_not_written() {
         let mut sequencer = test_sequencer();
-        sequencer.set_knob_value(0, 0, 50);
-        data.apply_to_sequencer(&mut sequencer);
-        assert_eq!(*sequencer.tracks()[0].knobs(), default_knobs());
-        assert_eq!(sequencer.published_knob_value(0, 0), None);
+        sequencer.set_knob_value(0, 0, 0.5);
+        let json = serde_json::to_string(&ProjectData::from_sequencer(&sequencer)).unwrap();
+        assert!(!json.contains("knobs"), "{json}");
+        let mut knobs = UNASSIGNED_KNOBS;
+        knobs[1] = Some(3);
+        sequencer.set_track_knobs(0, knobs);
+        sequencer.set_knob_value(0, 1, 0.5);
+        let json = serde_json::to_string(&ProjectData::from_sequencer(&sequencer)).unwrap();
+        assert!(
+            json.contains(r#""knobs":[{},{"param":3},{},{},{},{},{},{}]"#),
+            "{json}"
+        );
     }
 
-    /// Turning a knob is saved, so it is a change for the unsaved prompt.
+    /// A project saved with CC knobs (`390`) loads with its knobs
+    /// unassigned: the CC numbers and positions are ignored
+    /// (`400-parameter-knobs.md` decision 13). So does one saved before
+    /// knobs.
     #[test]
-    fn turning_a_knob_changes_the_fingerprint() {
-        let mut sequencer = test_sequencer();
-        let saved = ProjectData::from_sequencer(&sequencer).fingerprint();
-        sequencer.set_knob_value(0, 0, 1);
-        assert_ne!(ProjectData::from_sequencer(&sequencer).fingerprint(), saved);
-    }
-
-    /// A knob playback moved is saved where it stands, but listening to a
-    /// project never makes it look changed.
-    #[test]
-    fn a_knob_only_playback_moved_saves_but_never_changes_the_fingerprint() {
-        let mut sequencer = test_sequencer();
-        let mut clip = clip_at(0, 960);
-        clip.add_event(Event::new(100, 0, vec![0xB0, 14, 90]));
-        sequencer.tracks_mut()[0].add_clip(&clip);
-        let saved = ProjectData::from_sequencer(&sequencer).fingerprint();
-        let track = &mut sequencer.tracks_mut()[0];
-        track.seek(0);
-        for _ in 0..200 {
-            while track.tick().is_some() {}
+    fn an_old_projects_cc_knobs_load_unassigned() {
+        let cc_knobs = (14..22)
+            .map(|cc| format!(r#"{{"cc":{cc},"value":64}}"#))
+            .collect::<Vec<_>>()
+            .join(",");
+        for json in [
+            format!(
+                r#"{{"output":{{"type":"MidiOut","channel":2}},"knobs":[{cc_knobs}],"clips":[]}}"#
+            ),
+            r#"{"output":{"type":"MidiOut","channel":2},"clips":[]}"#.to_owned(),
+        ] {
+            let back: TrackData = serde_json::from_str(&json).unwrap();
+            let data = ProjectData {
+                tracks: vec![back],
+                ..ProjectData::default()
+            };
+            let mut sequencer = test_sequencer();
+            let mut knobs = UNASSIGNED_KNOBS;
+            knobs[0] = Some(1);
+            sequencer.set_track_knobs(0, knobs);
+            data.apply_to_sequencer(&mut sequencer);
+            assert_eq!(*sequencer.tracks()[0].knobs(), UNASSIGNED_KNOBS);
         }
+    }
 
-        let data = ProjectData::from_sequencer(&sequencer);
-        assert_eq!(data.tracks[0].knobs[0].value, Some(90));
-        assert_eq!(data.fingerprint(), saved);
+    /// A hand turn — Stev's knob or the parameter's control in the plugin's
+    /// editor — is a change for the unsaved prompt, though only the plugin's
+    /// state saves the value (`400-parameter-knobs.md` decision 9).
+    #[test]
+    fn a_hand_turn_changes_the_fingerprint() {
+        let mut sequencer = test_sequencer();
+        let saved = ProjectData::from_sequencer(&sequencer).fingerprint();
+        sequencer.set_knob_value(0, 0, 0.25);
+        let turned = ProjectData::from_sequencer(&sequencer).fingerprint();
+        assert_ne!(turned, saved);
+        sequencer.set_knob_value(0, 0, 0.75);
+        assert_ne!(
+            ProjectData::from_sequencer(&sequencer).fingerprint(),
+            turned
+        );
     }
 
     #[test]

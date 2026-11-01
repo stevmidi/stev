@@ -28,6 +28,9 @@ mod state;
 mod stream;
 mod voice;
 
+use std::sync::Arc;
+
+use crossbeam_channel::unbounded;
 use log::info;
 
 use crate::core::audio::MAX_FRAMES;
@@ -46,21 +49,27 @@ pub(super) fn load(
     entry: &PluginCatalogEntry,
     state: Option<&[u8]>,
 ) -> Result<LoadedInstrument, String> {
+    let (gesture_tx, gesture_rx) = unbounded();
     let loaded = component::load(
         &entry.bundle_path,
         &entry.plugin_id,
         handle.sample_rate,
         MAX_FRAMES as u32,
         state,
+        gesture_tx,
+        Arc::clone(&handle.repaint),
     )?;
     // Which controllers reach the plugin at all: a VST3 plugin hears a CC only
-    // through `IMidiMapping`, so a knob on an unmapped CC does nothing.
-    let names = component::parameter_names(loaded.main.controller.as_ref());
+    // through `IMidiMapping`, so a hardware CC on an unmapped controller does
+    // nothing.
+    let parameters = component::parameter_infos(loaded.main.controller.as_ref());
     info!(
         "plugin host: VST3 '{}' maps {} channel/controller pairs; channel 1: {}",
         entry.name,
         loaded.midi_map.assignment_count(),
-        loaded.midi_map.describe(|id| names.get(&id).cloned())
+        loaded
+            .midi_map
+            .describe(|id| parameters.get(&id).map(|info| info.name.clone()))
     );
     let voice = Vst3Voice::new(
         loaded.processor,
@@ -72,7 +81,7 @@ pub(super) fn load(
         handle.sample_rate,
     )
     .staggered_for(track);
-    let editor = Vst3Editor::new(loaded.main, &entry.name, track);
+    let editor = Vst3Editor::new(loaded.main, &entry.name, track, parameters, gesture_rx);
     Ok((Box::new(voice), Box::new(editor)))
 }
 

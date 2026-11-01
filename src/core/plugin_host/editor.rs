@@ -9,8 +9,34 @@
 //! Implemented by `clap::ClapEditor` and `vst3::Vst3Editor`. Deliberately
 //! **not** `Send`: the CLAP `PluginInstance` (and a VST3 `IEditController`) may
 //! only be touched from the thread with the AppKit run loop.
+//!
+//! The knob panel reaches a plugin's parameters through it too
+//! (`400-parameter-knobs.md`): their names, their values, setting one, and
+//! the gestures the plugin's own editor reports. A format without that yet
+//! (CLAP, until phase 3) keeps the defaults: no parameters.
 
 use std::time::Duration;
+
+use crate::models::knobs::ParamId;
+
+/// One of a plugin's parameters, as the knob panel shows it.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ParameterInfo {
+    /// Its name, as the plugin gives it.
+    pub(crate) name: String,
+    /// Its default, normalized — where a ⌘-click on its knob puts it.
+    pub(crate) default_value: f64,
+}
+
+/// A parameter change the plugin reported from its own editor — the user
+/// turning one of its controls, or a preset it loaded.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum ParameterGesture {
+    /// A turn began (VST3 `beginEdit`): what assigns an armed knob.
+    Begin(ParamId),
+    /// The parameter moved to a normalized value (VST3 `performEdit`).
+    Move(ParamId, f64),
+}
 
 /// One hosted plugin's main-thread half. See the module docs.
 pub(crate) trait InstrumentEditor {
@@ -60,4 +86,32 @@ pub(crate) trait InstrumentEditor {
     /// interval at which this plugin wants to be pumped again, so the caller
     /// can schedule the next repaint; `None` if it needs no timed wake-up.
     fn pump(&mut self, yield_to_main: bool) -> Option<Duration>;
+
+    /// Whether the knobs can drive this plugin's parameters.
+    fn has_parameters(&self) -> bool {
+        false
+    }
+
+    /// Parameter `id`'s name and default, if the plugin has such a
+    /// parameter.
+    fn parameter_info(&self, _id: ParamId) -> Option<&ParameterInfo> {
+        None
+    }
+
+    /// Parameter `id`'s value in force, normalized to `0.0..=1.0` — what its
+    /// knob shows, wherever it came from.
+    fn parameter_value(&self, _id: ParamId) -> Option<f64> {
+        None
+    }
+
+    /// Sets parameter `id` to `value` (normalized), for the sound and for
+    /// the plugin's editor alike — a knob turned in Stev. Never reported
+    /// back as a [`ParameterGesture`].
+    fn set_parameter(&mut self, _id: ParamId, _value: f64) {}
+
+    /// The gestures the plugin's editor has reported since the last call,
+    /// oldest first.
+    fn take_parameter_gestures(&mut self) -> Vec<ParameterGesture> {
+        Vec::new()
+    }
 }

@@ -195,20 +195,22 @@ methods take a track's position and look the slot up in its `tracks` mirror
   `route_held`, which `route_channel` also uses for `held_note_channels` on
   MIDI-OUT) — otherwise switching the armed track mid-hold sends the note-off
   to the new track's plugin and strands the note sounding on the old one.
-- **The knob panel's CCs take the live route** (`390-knob-panel.md`): a
-  knob drag sends its Control Change on `computer_keys_tx`, so the
-  `"computerkeys"` thread routes it as a played note is — the selected
-  track's plugin through `live_instrument_target`, MIDI Out thru on its
-  channel, not while the performance lane is armed or an audio export runs.
-  That thread's router is the one source that records any controller move
-  (`MidiInputForwarder::knob_router`), so a knob's turn reaches the capture
-  buffer; a port's router records only the wheels, and a hardware
-  controller's CC plays live only (`090`).
-  Loading a project sends each track's turned knobs once its plugins are in
-  their slots (`Sequencer::send_knob_positions`, on `ProjectLoaded`, after
-  `sync_instruments_to_tracks` queued each voice's insert ahead of them):
-  to a plugin as `EventTime::Immediate` clip events tagged with the track's
-  slot, to MIDI Out undelayed on its channel.
+- **The knob panel drives parameters, not MIDI** (`400-parameter-knobs.md`):
+  the knobs reach a plugin through its `InstrumentEditor`, on the main thread,
+  never through a ring of Stev's own: `has_parameters` (whether the knobs can
+  drive it — VST3 yes, CLAP not until `400` phase 3, whose panel shows a hint),
+  `parameter_info` (the name and default, read once at load and never saved),
+  `parameter_value` (the value in force, normalized, read each frame the panel
+  draws), `set_parameter` (a knob turned in Stev — the sound and the plugin's
+  editor follow, and it is never reported back as the user's turn) and
+  `take_parameter_gestures` (what the plugin's own editor reported:
+  `ParameterGesture::Begin` assigns an armed knob, `Move` of a knob's parameter
+  is a hand turn for the unsaved prompt). `Display` drains the gestures once a
+  frame from `pump_instrument_editors` (`view/display/knob_params.rs`). Every
+  method has a do-nothing default, so a format without parameters yet needs no
+  code. VST3's side is in `180` § Parameter knobs. A hardware controller's CC
+  still plays live to the selected track's plugin and MIDI Out and is never
+  recorded (`090`).
 - **Clip playback → plugin.** `TrackOutput::Instrument(InstrumentRef)` (in
   `models::track`) routes a track's clip events into `Sequencer`'s
   `instrument_midi_tx` ring as a `ClipInstrumentEvent { track, message, when }`

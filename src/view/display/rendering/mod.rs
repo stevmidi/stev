@@ -1478,7 +1478,6 @@ impl eframe::App for Display {
                 self.show_track_rename(ui);
                 self.show_tempo_field(ui, Self::header_value_font());
                 self.show_meter_field(ui, Self::header_value_font());
-                self.show_knob_cc_field(ui);
                 self.draw_output_menu(painter);
 
                 match self.overlay {

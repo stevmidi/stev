@@ -13,6 +13,7 @@ use crate::core::sequencer::{AudioExportOutcome, TempoGesture};
 use crate::core::time::Meter;
 use crate::core::view_state::Pane;
 use crate::models::clip::{Clip, ClipEdge, NoteDrag};
+use crate::models::knobs::ParamId;
 use crate::models::track::TrackOutput;
 
 /// Everything the `"sequencer"` thread can be asked to do, other than the
@@ -432,44 +433,31 @@ pub(crate) enum SequencerCommand {
         /// Its new name, already through `track_name_from_input`.
         name: Option<String>,
     },
-    /// Knob `knob` of `track_idx` sends `cc` instead, its moves in the
-    /// track's clips renumbered with it, as one undo step (`SetKnobCcEdit`).
-    /// Refused, with a footer message, on a reserved CC or another knob's.
-    SetKnobCc {
+    /// Knob `knob` of `track_idx` drives plugin parameter `param` instead
+    /// (none for `None`), as one undo step (`SetKnobParamEdit`). Refused on
+    /// a parameter another knob of the track holds — the view checks first,
+    /// naming the parameter in the footer.
+    SetKnobParam {
         /// The knob's track.
         track_idx: usize,
         /// Which knob, `0..KNOB_COUNT`.
         knob: usize,
-        /// The CC it is to send.
-        cc: u8,
+        /// The parameter it is to drive.
+        param: Option<ParamId>,
     },
-    /// Knob `knob` of `track_idx` was turned to `value` — sent continuously
-    /// while it is dragged, its CC already sent live by the view. Not
-    /// undoable, like volume and pan; saved with the project.
+    /// The hand turned knob `knob` of `track_idx` to `value` — a drag in the
+    /// knob panel, or the parameter's control in the plugin's editor; the
+    /// view has set the parameter already. Not undoable, like volume and
+    /// pan, but a change for the unsaved prompt (`400-parameter-knobs.md`
+    /// decision 9).
     SetKnobValue {
         /// The knob's track.
         track_idx: usize,
         /// Which knob, `0..KNOB_COUNT`.
         knob: usize,
-        /// Its position, `0..=127`.
-        value: u8,
+        /// The parameter's normalized value, `0.0..=1.0`.
+        value: f64,
     },
-    /// A drag took hold of knob `knob` of `track_idx`: playback sends none of
-    /// the clip's moves of its CC until [`ReleaseKnobs`](Self::ReleaseKnobs)
-    /// (`Track::hold_knob`, `390-knob-panel.md` decision 7).
-    HoldKnob {
-        /// The knob's track.
-        track_idx: usize,
-        /// Which knob, `0..KNOB_COUNT`.
-        knob: usize,
-    },
-    /// The knob drag let go: playback takes every knob of every track over
-    /// again at its CC's next move (`Track::release_knobs`) — every track, so
-    /// a drag whose track moved meanwhile can't stay held.
-    ReleaseKnobs,
-    /// A project load is done and its plugins are in their slots: every
-    /// track's turned knobs go to its output (`Sequencer::send_knob_positions`).
-    SendKnobPositions,
 
     // --- Arranger performance lane ---
     /// Arms the physical MIDI keyboard for bar-jump triggering instead of

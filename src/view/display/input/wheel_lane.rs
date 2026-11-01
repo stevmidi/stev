@@ -67,13 +67,10 @@ impl Display {
         self.key_owner() == KeyFocus::WheelLane
     }
 
-    /// The controller the lower lane shows — a knob lane's from the lead
-    /// clip's track (the selected one) — `None` for velocity.
+    /// The controller the lower lane shows — `None` for velocity and a
+    /// knob's lane.
     pub(in crate::view::display) fn clip_lane_controller(&self) -> Option<Controller> {
-        let knob_ccs = self
-            .knobs_track()
-            .map_or(&[][..], |track| &self.tracks[track].knob_ccs[..]);
-        self.render.clip_lane.controller(knob_ccs)
+        self.render.clip_lane.controller()
     }
 
     /// Shows `lane` under the piano roll — a gutter label, a knob or `W`.

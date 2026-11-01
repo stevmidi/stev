@@ -358,9 +358,11 @@ impl Display {
             Stroke::new(2.0_f32, grid_seam_color())
         };
         painter.hline(lane.x_range(), lane.top(), divider);
-        match self.clip_lane_controller() {
-            None => self.draw_velocity_panel(painter, lane),
-            Some(controller) => self.draw_wheel_lane(painter, lane, controller),
+        match (self.render.clip_lane, self.clip_lane_controller()) {
+            (ClipLane::Velocity, _) => self.draw_velocity_panel(painter, lane),
+            (_, Some(controller)) => self.draw_wheel_lane(painter, lane, controller),
+            // A knob's lane: no data a clip can hold yet.
+            (_, None) => {}
         }
         self.draw_lane_gutter(painter, geom);
     }

@@ -16,6 +16,9 @@ use std::collections::HashMap;
 use std::ffi::c_void;
 use std::marker::PhantomData;
 use std::path::Path;
+use std::sync::{Arc, OnceLock};
+
+use crossbeam_channel::Sender;
 
 use vst3::Steinberg::Vst::{
     BusDirections_::{kInput, kOutput},
@@ -34,6 +37,7 @@ use vst3::Steinberg::{
 use vst3::{ComPtr, Interface};
 
 use crate::core::plugin_host::buffers::AudioIoLayout;
+use crate::core::plugin_host::editor::{ParameterGesture, ParameterInfo as KnobParameter};
 
 use super::discovery::uid_from_hex;
 use super::events::MidiMap;
@@ -90,23 +94,30 @@ pub(super) struct MainThreadHalf {
     /// twice. See [`super::state`].
     pub(super) controller_is_component: bool,
     /// The host objects handed to the plugin. Kept alive here because the
-    /// plugin holds raw pointers to them for as long as it is initialised.
-    pub(super) _host: HostObjects,
+    /// plugin holds raw pointers to them for as long as it is initialised;
+    /// the editor reaches the component handler through them to set a
+    /// parameter.
+    pub(super) host: HostObjects,
     /// Makes this half `!Send`, so it cannot accidentally be moved to the audio
     /// thread with the processor. VST3 gives no such guarantee itself.
     _not_send: PhantomData<*const ()>,
 }
 
 /// Instantiates `plugin_id` from `bundle_path`, wires it up and activates it.
+/// `gestures` and `repaint` go to its component handler: the knob panel's
+/// copy of what the plugin's editor turns, and the UI wake.
 ///
 /// Runs on the eframe main thread. Any failure is returned as `Err` and leaves
 /// nothing loaded.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn load(
     bundle_path: &Path,
     plugin_id: &str,
     sample_rate: f64,
     max_frames: u32,
     saved_state: Option<&[u8]>,
+    gestures: Sender<ParameterGesture>,
+    repaint: Arc<OnceLock<egui::Context>>,
 ) -> Result<LoadedPlugin, String> {
     let cid = uid_from_hex(plugin_id)
         .ok_or_else(|| format!("vst3: '{plugin_id}' is not a valid class id"))?;
@@ -115,7 +126,7 @@ pub(super) fn load(
     // unloads as soon as it has read the metadata. See `module.rs`.
     let module = cached_module(bundle_path)?;
     let (param_tx, param_rx) = bridge();
-    let hosts = HostObjects::new(param_tx);
+    let hosts = HostObjects::new(param_tx, gestures, repaint);
 
     // SAFETY: every call below is on a live COM object obtained from this
     // module's factory, in the order the VST3 lifecycle requires: create,
@@ -199,7 +210,7 @@ pub(super) fn load(
                 component,
                 controller,
                 controller_is_component,
-                _host: hosts,
+                host: hosts,
                 _not_send: PhantomData,
             },
             processor,
@@ -388,11 +399,14 @@ unsafe fn channel_counts(component: &ComPtr<IComponent>, dir: int32) -> Vec<u16>
     }
 }
 
-/// Every parameter's title, by id, for naming what a MIDI controller drives
-/// in the log. Empty when the plugin has no edit controller.
-pub(super) fn parameter_names(
+/// Every parameter's title and default, by id: the knob panel's labels and
+/// ⌘-click resets, and the names of what a MIDI controller drives in the
+/// log. Read once at load; a plugin that renames its parameters later keeps
+/// the old names until it is loaded again. Empty when the plugin has no edit
+/// controller.
+pub(super) fn parameter_infos(
     controller: Option<&ComPtr<IEditController>>,
-) -> HashMap<ParamID, String> {
+) -> HashMap<ParamID, KnobParameter> {
     let Some(controller) = controller else {
         return HashMap::new();
     };
@@ -402,8 +416,15 @@ pub(super) fn parameter_names(
         (0..controller.getParameterCount())
             .filter_map(|index| {
                 let mut info: ParameterInfo = std::mem::zeroed();
-                (controller.getParameterInfo(index, &mut info) == kResultOk)
-                    .then(|| (info.id, string128_text(&info.title)))
+                (controller.getParameterInfo(index, &mut info) == kResultOk).then(|| {
+                    (
+                        info.id,
+                        KnobParameter {
+                            name: string128_text(&info.title),
+                            default_value: info.defaultNormalizedValue.clamp(0.0, 1.0),
+                        },
+                    )
+                })
             })
             .collect()
     }

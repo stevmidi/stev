@@ -37,7 +37,7 @@ use crate::{
     models::selection::Selection,
     models::{
         clip::{Clip, CopiedNote},
-        knobs::default_knobs,
+        knobs::UNASSIGNED_KNOBS,
         performance_lane::PerformanceLane,
         track::{Track, TrackOutput},
     },
@@ -446,7 +446,7 @@ impl Sequencer {
             track.set_slot(idx);
             track.set_color_slot(idx);
             track.set_name(None);
-            track.set_knobs(default_knobs());
+            track.set_knobs(UNASSIGNED_KNOBS);
         }
         self.instrument_notes.clear();
         self.reset_capture();
