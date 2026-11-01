@@ -1,10 +1,12 @@
 //! The piano roll's lower lane when it shows a controller, and the gutter
 //! switch that picks the lane (`ClipLane`): the `VEL` / `PB` / `MW` labels
 //! left of the lane, and the lead clip's pitch bend, mod wheel or a knob's
-//! CC drawn as a line, a ride smooth, a held value flat until the next move
-//! steps off it ([`wheel_path`]), under the span `Delete` would clear. The
-//! moves are folded per pixel column ([`fold_wheel_columns`]) so what is
-//! drawn follows the lane's width, not the event count. The knob lanes
+//! CC drawn as a line: built as playback holds it, each value flat until the
+//! next move steps off it ([`wheel_path`]), then drawn as a DAW draws
+//! automation — a straight line from move to move, a held value and the jump
+//! off it still a step ([`ease_steps`]) — and thinned ([`simplify`]). Drawn under the span `Delete` would clear. The moves are
+//! folded per pixel column ([`fold_wheel_columns`]) so what is drawn follows
+//! the lane's width, not the event count. The knob lanes
 //! switch from the knobs' labels (`rendering/knob_panel.rs`). See
 //! `380-wheel-lane.md`, `390-knob-panel.md` decisions 11–13.
 
@@ -13,7 +15,6 @@ use egui::{Align2, CornerRadius, FontId, Painter, Pos2, Rect, Shape, Stroke, pos
 use super::piano_keys::NoteAreaGeom;
 use super::*;
 use crate::core::midi::message::{Controller, PITCH_BEND_CENTRE};
-use crate::core::time::PPQN;
 use crate::metadata::clip_view::ControllerMove;
 
 impl Display {
@@ -23,9 +24,15 @@ impl Display {
     /// Thickness of a wheel's line.
     const WHEEL_LINE_W: f32 = 1.5;
     /// How far a point of a wheel's line may lie off the straight line
-    /// through its neighbours and still be dropped (`simplify`): half a
-    /// pixel, under what the eye sees as a bend.
-    const WHEEL_SIMPLIFY_PX: f32 = 0.5;
+    /// through its neighbours and still be dropped (`simplify`): a pixel
+    /// and a half, about the line's own thickness, so the stairs of a ride
+    /// thin to its slope while the curve stays where it plays.
+    const WHEEL_SIMPLIFY_PX: f32 = 1.5;
+    /// A step taller than this, after a hold wider than this, is a held
+    /// value and the jump off it: `ease_steps` keeps it a step; any other
+    /// move is joined from the one before by a diagonal, never wider than
+    /// this, so a change always shows where it happens.
+    const WHEEL_CORNER_PX: f32 = 4.0;
     /// Space left of a gutter label.
     const LANE_LABEL_INSET_X: f32 = 12.0;
     /// Radius of the data marker beside `PB` / `MW`.
@@ -121,8 +128,9 @@ impl Display {
     }
 
     /// Draws `controller`'s curve for the lead clip into the lower lane `lane`
-    /// ([`wheel_path`]): a ride joined smoothly, a held value flat until the
-    /// next move steps off it, dimmed outside the clip's window. A wheel's
+    /// ([`wheel_path`], [`ease_steps`], [`simplify`]): a straight line from
+    /// move to move, a held value flat until a jump steps off it, dimmed
+    /// outside the clip's window. A wheel's
     /// line runs from rest before its first move; a knob's CC has no rest,
     /// so its line starts at its first move. Pitch bend gets a faint centre
     /// line at rest; the span, if one is marked, a tint across the lane's
@@ -173,7 +181,10 @@ impl Display {
         };
         let to_screen = |&(x, value): &PathPoint| pos2(lane.left() + x, y_of(value));
         let line: Vec<Pos2> = path.line.iter().map(to_screen).collect();
-        let line = simplify(&line, Self::WHEEL_SIMPLIFY_PX);
+        let line = simplify(
+            &ease_steps(&line, Self::WHEEL_CORNER_PX),
+            Self::WHEEL_SIMPLIFY_PX,
+        );
 
         let (window_start, window_end) = self.clip_window_for_render();
         let window_x = [self.tick_to_x(window_start), self.tick_to_x(window_end)];
@@ -238,20 +249,12 @@ fn wheel_fraction(wheel: Controller, value: u16) -> f32 {
     }
 }
 
-/// The longest gap between two moves that the lane joins as one ride: a
-/// 32nd note. A wheel being moved sends every few milliseconds, so moves
-/// closer than this are drawn as a smooth line between them; a longer gap is
-/// a value held, drawn flat until the next move steps off it — as the synth
-/// hears it, since Stev never sends a value in between.
-const RIDE_GAP_TICKS: i32 = PPQN / 8;
-
 /// A point the wheel's line passes through, in column units across the lane
 /// (`0.0` its left edge) and wheel value.
 type PathPoint = (f32, u16);
 
 /// The moves inside one pixel column (or, past the lane's right edge, the
-/// first move after it), folded: where they sit, the values they reach, and
-/// whether the line rides into them.
+/// first move after it), folded: where they sit and the values they reach.
 #[derive(Copy, Clone, Debug, PartialEq)]
 struct Knot {
     /// The column's centre, or the move's own x past the right edge.
@@ -262,20 +265,16 @@ struct Knot {
     hi: u16,
     /// The last value moved to — held after the column.
     last: u16,
-    /// Whether the first move came within [`RIDE_GAP_TICKS`] of the move
-    /// before it: the line joins it with a diagonal rather than a step.
-    ride: bool,
 }
 
 impl Knot {
     /// A knot of one move to `value`.
-    fn at(x: f32, value: u16, ride: bool) -> Self {
+    fn at(x: f32, value: u16) -> Self {
         Knot {
             x,
             lo: value,
             hi: value,
             last: value,
-            ride,
         }
     }
 }
@@ -316,7 +315,6 @@ fn fold_wheel_columns(
 ) -> (Option<PathPoint>, Vec<Knot>) {
     let x_of = |tick: i32| (tick as f32 - first_tick) / ticks_per_col;
     let first = moves.partition_point(|&(tick, _)| (tick as f32) < first_tick);
-    let mut prev_tick = first.checked_sub(1).map(|i| moves[i].0);
     let start = match first.checked_sub(1).map(|i| moves[i]) {
         Some((tick, value)) => Some((x_of(tick), value)),
         None => neutral.map(|value| (0.0, value)),
@@ -325,11 +323,9 @@ fn fold_wheel_columns(
     let mut knots: Vec<Knot> = Vec::new();
     let mut last_col = None;
     for &(tick, value) in &moves[first..] {
-        let ride = prev_tick.is_some_and(|prev| tick - prev <= RIDE_GAP_TICKS);
-        prev_tick = Some(tick);
         let col = x_of(tick).floor() as usize;
         if col >= cols {
-            knots.push(Knot::at(x_of(tick), value, ride));
+            knots.push(Knot::at(x_of(tick), value));
             break;
         }
         match knots.last_mut() {
@@ -338,7 +334,7 @@ fn fold_wheel_columns(
                 knot.hi = knot.hi.max(value);
                 knot.last = value;
             }
-            _ => knots.push(Knot::at(col as f32 + 0.5, value, ride)),
+            _ => knots.push(Knot::at(col as f32 + 0.5, value)),
         }
         last_col = Some(col);
     }
@@ -346,8 +342,8 @@ fn fold_wheel_columns(
 }
 
 /// The wheel's line from `start` through `knots` to the lane's right edge
-/// at `cols`: into a riding knot, a diagonal; otherwise flat at the held
-/// value, then a vertical step at the knot. With no `start` (a CC with
+/// at `cols`, as playback holds it: flat at the held value, then a vertical
+/// step at each knot. [`ease_steps`] turns the small steps into diagonals. With no `start` (a CC with
 /// nothing in force before the lane) the line begins at the first knot,
 /// `None` with none. A column whose moves reach past the values the line
 /// passes through there gets a span over them.
@@ -363,9 +359,7 @@ fn wheel_path(start: Option<PathPoint>, knots: &[Knot], cols: f32) -> Option<Whe
     let mut value = start.1;
     push(start);
     for knot in knots {
-        if !knot.ride {
-            push((knot.x, value));
-        }
+        push((knot.x, value));
         push((knot.x, knot.last));
         if knot.lo < value.min(knot.last) || knot.hi > value.max(knot.last) {
             spans.push(Segment {
@@ -381,13 +375,47 @@ fn wheel_path(start: Option<PathPoint>, knots: &[Knot], cols: f32) -> Option<Whe
     Some(WheelPath { line, spans })
 }
 
+/// The stepped line `points` (screen space, left to right, as
+/// [`wheel_path`] builds it) drawn as a DAW draws automation: each move
+/// joined from the one before by a diagonal, so a pause of the hand reads as
+/// a bend rather than a notch — except a held value and the jump off it, a
+/// step taller than `corner` after a hold wider than `corner`, which stays a
+/// step. Every other step's diagonal starts at most `corner` before its
+/// move: the hold's corner point is dropped, or, after a hold wider than
+/// that, moved to `corner` before the move, so a nudge after a long hold
+/// stays flat until just before it rather than creeping up across the hold.
+/// Drawing only: playback still holds each value until the next move.
+fn ease_steps(points: &[Pos2], corner: f32) -> Vec<Pos2> {
+    let mut eased = Vec::with_capacity(points.len());
+    for (i, &point) in points.iter().enumerate() {
+        let before = i.checked_sub(1).map(|h| points[h]);
+        let step_to = points.get(i + 1).filter(|next| next.x == point.x);
+        let jump = |before: Pos2, next: &Pos2| {
+            before.y != point.y
+                || ((point.x - before.x) > corner && (next.y - point.y).abs() > corner)
+        };
+        if let (Some(before), Some(next)) = (before, step_to)
+            && !jump(before, next)
+        {
+            if point.x - before.x > corner {
+                eased.push(pos2(point.x - corner, point.y));
+            }
+            continue;
+        }
+        eased.push(point);
+    }
+    eased
+}
+
 /// Drops the points of `points` that lie within `tolerance` of the line
-/// through the points kept either side (Ramer–Douglas–Peucker), so a ride
-/// of the mod wheel's coarse steps — about half a pixel each — draws as the
-/// slope it is rather than a wobble. Both ends of every vertical step (a
-/// hold's corner and the move it steps to) are kept outright and split the
-/// line into the rides between them, each simplified alone: a staircase of
-/// holds costs one pass, never the algorithm's quadratic worst case.
+/// through the points kept either side (Ramer–Douglas–Peucker), as a DAW
+/// thins recorded automation, but for drawing only: a ride of the mod
+/// wheel's coarse steps draws as the slope it is rather than a wobble,
+/// never more than `tolerance` off it. Both ends of every vertical step
+/// left by [`ease_steps`] (a held value and its jump) are kept outright and
+/// split the line into the rides between them, each simplified alone: a
+/// staircase of holds costs one pass, never the algorithm's quadratic worst
+/// case.
 fn simplify(points: &[Pos2], tolerance: f32) -> Vec<Pos2> {
     let n = points.len();
     let mut keep = vec![false; n];
@@ -464,7 +492,7 @@ mod tests {
     use egui::{Rect, pos2, vec2};
 
     use super::{
-        Knot, RIDE_GAP_TICKS, Segment, fold_wheel_columns, lane_label_in, simplify, split_at_x,
+        Knot, Segment, ease_steps, fold_wheel_columns, lane_label_in, simplify, split_at_x,
         wheel_fraction, wheel_path,
     };
     use crate::core::midi::message::Controller;
@@ -483,7 +511,6 @@ mod tests {
                 lo: 20,
                 hi: 90,
                 last: 60,
-                ride: false,
             }]
         );
     }
@@ -496,7 +523,7 @@ mod tests {
         let moves = [(100, 30), (400, 80), (960, 120)];
         let (start, knots) = fold_wheel_columns(&moves, Some(0x2000), 960.0, 10.0, 2);
         assert_eq!(start, Some((-56.0, 80)));
-        assert_eq!(knots, vec![Knot::at(0.5, 120, false)]);
+        assert_eq!(knots, vec![Knot::at(0.5, 120)]);
 
         let (start, knots) = fold_wheel_columns(&moves, Some(0x2000), 0.0, 10.0, 1);
         assert_eq!(start, Some((0.0, 0x2000)));
@@ -514,7 +541,7 @@ mod tests {
         let (start, knots) = fold_wheel_columns(&moves, None, 0.0, 10.0, 3);
         assert_eq!(start, None);
         let path = wheel_path(start, &knots, 3.0).unwrap();
-        assert_eq!(path.line, vec![(1.5, 40), (2.5, 60), (3.0, 60)]);
+        assert_eq!(path.line, vec![(1.5, 40), (2.5, 40), (2.5, 60), (3.0, 60)]);
         assert_eq!(wheel_path(None, &[], 3.0), None, "no moves, no line");
     }
 
@@ -525,9 +552,10 @@ mod tests {
         assert_eq!(knots.iter().map(|k| k.last).collect::<Vec<_>>(), vec![1, 2]);
     }
 
-    /// Moves a few ticks apart are a ride: one diagonal into each.
+    /// The line is built as playback holds it: flat, then a step at each
+    /// move, however close the moves are. Thinning makes a ride a slope.
     #[test]
-    fn a_ride_is_joined_smoothly() {
+    fn the_line_holds_each_value_until_the_next_move() {
         let moves = [(0, 10), (10, 20), (20, 30)];
         let (start, knots) = fold_wheel_columns(&moves, Some(0), 0.0, 10.0, 3);
         let path = wheel_path(start, &knots, 3.0).unwrap();
@@ -537,29 +565,14 @@ mod tests {
                 (0.0, 0),
                 (0.5, 0),
                 (0.5, 10),
+                (1.5, 10),
                 (1.5, 20),
+                (2.5, 20),
                 (2.5, 30),
                 (3.0, 30)
-            ],
-            "the first move steps off rest; the rest of the ride is diagonal"
+            ]
         );
         assert!(path.spans.is_empty());
-    }
-
-    /// A value held longer than a 32nd stays flat, then steps.
-    #[test]
-    fn a_held_value_steps_to_the_next_move() {
-        let gap = RIDE_GAP_TICKS + 1;
-        let moves = [(0, 10), (gap, 50)];
-        let (start, knots) = fold_wheel_columns(&moves, Some(0), 0.0, 1.0, gap as usize + 2);
-        let x = knots[1].x;
-        let path = wheel_path(start, &knots, x + 1.5).unwrap();
-        assert_eq!(
-            path.line[3..],
-            [(x, 10), (x, 50), (x + 1.5, 50)],
-            "{:?}",
-            path.line
-        );
     }
 
     #[test]
@@ -567,7 +580,7 @@ mod tests {
         let moves = [(95, 40), (105, 60)];
         let (start, knots) = fold_wheel_columns(&moves, Some(0), 100.0, 10.0, 2);
         let path = wheel_path(start, &knots, 2.0).unwrap();
-        assert_eq!(path.line[..2], [(-0.5, 40), (0.5, 60)]);
+        assert_eq!(path.line[..3], [(-0.5, 40), (0.5, 40), (0.5, 60)]);
     }
 
     /// A spike inside one column reaches past the line, so it gets a span;
@@ -590,25 +603,90 @@ mod tests {
         assert!(wheel_path(start, &knots, 3.0).unwrap().spans.is_empty());
     }
 
+    /// A staircase from `(x, y)`: `n` steps, each a hold `w` wide, then a
+    /// step `h` (negative: up the screen).
+    fn stairs(x: f32, y: f32, n: usize, w: f32, h: f32) -> Vec<egui::Pos2> {
+        let mut points = vec![pos2(x, y)];
+        for i in 1..=n {
+            let step_x = x + i as f32 * w;
+            points.push(pos2(step_x, y + (i - 1) as f32 * h));
+            points.push(pos2(step_x, y + i as f32 * h));
+        }
+        points
+    }
+
+    /// A slow mod-wheel sweep — wide holds, half-pixel steps — draws as
+    /// its slope, as a DAW draws it.
     #[test]
-    fn simplifying_drops_sub_pixel_wobble_and_keeps_corners() {
-        // A slope with half-pixel wobble, then a hold and a step.
+    fn a_slow_sweep_draws_as_its_slope() {
+        let points = stairs(0.0, 50.0, 20, 12.0, -0.5);
+        assert_eq!(
+            simplify(&ease_steps(&points, 4.0), 1.5),
+            vec![pos2(0.0, 50.0), pos2(240.0, 40.0)]
+        );
+    }
+
+    /// A fast ride — one-pixel holds, tall steps — draws as its slope too.
+    #[test]
+    fn a_fast_ride_draws_as_its_slope() {
+        let points = stairs(0.0, 50.0, 10, 1.0, -5.0);
+        assert_eq!(
+            simplify(&ease_steps(&points, 4.0), 1.5),
+            vec![pos2(0.0, 50.0), pos2(10.0, 0.0)]
+        );
+    }
+
+    /// A pause of the hand mid-ride — a short hold, then a small step —
+    /// bends the line rather than notching it.
+    #[test]
+    fn a_pause_bends_rather_than_notches() {
         let points = [
-            pos2(0.0, 10.0),
-            pos2(1.0, 9.3),
-            pos2(2.0, 8.0),
-            pos2(3.0, 7.2),
-            pos2(4.0, 6.0),
-            pos2(20.0, 6.0),
-            pos2(20.0, 30.0),
+            pos2(0.0, 50.0),
+            pos2(3.0, 50.0),
+            pos2(3.0, 47.0),
+            pos2(5.0, 47.0),
+            pos2(5.0, 44.0),
         ];
         assert_eq!(
-            simplify(&points, 0.5),
+            ease_steps(&points, 4.0),
+            vec![pos2(0.0, 50.0), pos2(3.0, 47.0), pos2(5.0, 44.0)]
+        );
+    }
+
+    /// A nudge after a long hold stays flat until just before it, not a
+    /// ramp creeping up across the whole hold.
+    #[test]
+    fn a_nudge_after_a_long_hold_shows_where_it_happens() {
+        let points = [
+            pos2(0.0, 50.0),
+            pos2(100.0, 50.0),
+            pos2(100.0, 47.0),
+            pos2(120.0, 47.0),
+        ];
+        assert_eq!(
+            ease_steps(&points, 4.0),
             vec![
-                pos2(0.0, 10.0),
-                pos2(4.0, 6.0),
-                pos2(20.0, 6.0),
-                pos2(20.0, 30.0)
+                pos2(0.0, 50.0),
+                pos2(96.0, 50.0),
+                pos2(100.0, 47.0),
+                pos2(120.0, 47.0)
+            ]
+        );
+    }
+
+    /// A value held, then a jump: it stays a step, both corners kept; the
+    /// ride after it still draws as its slope.
+    #[test]
+    fn a_hold_and_its_jump_stay_a_step() {
+        let mut points = vec![pos2(0.0, 40.0), pos2(30.0, 40.0), pos2(30.0, 10.0)];
+        points.extend(stairs(30.0, 10.0, 10, 2.0, 0.5).into_iter().skip(1));
+        assert_eq!(
+            simplify(&ease_steps(&points, 4.0), 1.5),
+            vec![
+                pos2(0.0, 40.0),
+                pos2(30.0, 40.0),
+                pos2(30.0, 10.0),
+                pos2(50.0, 15.0)
             ]
         );
     }

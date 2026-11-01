@@ -28,7 +28,7 @@ capture covers it. Key files: `src/core/midi/input.rs`,
   holds every note, so it would need the note-release machinery rather than this chase.
 - **Shown in the piano roll's controller lanes** (`380-wheel-lane.md`, `390-knob-panel.md`):
   the lane under the notes switches to pitch bend, the mod wheel or a knob's CC and draws
-  the lead clip's moves as a line (a ride smooth, a hold stepped). The one edit there clears
+  the lead clip's moves as a line (move to move as a DAW draws it, a held value and its jump stepped). The one edit there clears
   a span (a wheel back to rest, a CC held at the value before it), or with `⌘A` the whole
   controller (`Clip::clear_controller_span`); nothing draws values (`280` § Not planned). No lighter hint
   on the clip (a badge or a strip, decided 2026-10-14) and nothing in the arranger

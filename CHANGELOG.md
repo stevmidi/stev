@@ -20,6 +20,10 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ## [Unreleased]
 
+### Changed
+
+- The pitch-bend, mod-wheel and knob lanes draw a recorded ride as a DAW draws automation, a straight line from move to move, rather than a staircase of small steps; a value held and then jumped still draws as a step. Only the drawing changed: playback sends exactly what was recorded.
+
 ## [0.13.0] - 2026-10-31
 
 ### Added
