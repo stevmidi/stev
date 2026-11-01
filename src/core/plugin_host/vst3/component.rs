@@ -12,6 +12,7 @@
 //! plugins' module initialisation demands it (see `180-vst3-host.md`), and the
 //! `!Send` half must be created where it will live.
 
+use std::collections::HashMap;
 use std::ffi::c_void;
 use std::marker::PhantomData;
 use std::path::Path;
@@ -25,7 +26,7 @@ use vst3::Steinberg::Vst::{
 use vst3::Steinberg::Vst::{
     IAudioProcessor, IAudioProcessorTrait, IComponent, IComponentTrait, IConnectionPoint,
     IConnectionPointTrait, IEditController, IEditControllerTrait, IHostApplication, IMidiMapping,
-    ProcessSetup, SpeakerArrangement,
+    ParamID, ParameterInfo, ProcessSetup, SpeakerArrangement,
 };
 use vst3::Steinberg::{
     IPluginBaseTrait, IPluginFactory, IPluginFactoryTrait, TUID, int32, kResultOk,
@@ -387,6 +388,33 @@ unsafe fn channel_counts(component: &ComPtr<IComponent>, dir: int32) -> Vec<u16>
     }
 }
 
+/// Every parameter's title, by id, for naming what a MIDI controller drives
+/// in the log. Empty when the plugin has no edit controller.
+pub(super) fn parameter_names(
+    controller: Option<&ComPtr<IEditController>>,
+) -> HashMap<ParamID, String> {
+    let Some(controller) = controller else {
+        return HashMap::new();
+    };
+    // SAFETY: a live, initialised edit controller on the main thread; `info`
+    // is a local of the matching type, read only when the call succeeds.
+    unsafe {
+        (0..controller.getParameterCount())
+            .filter_map(|index| {
+                let mut info: ParameterInfo = std::mem::zeroed();
+                (controller.getParameterInfo(index, &mut info) == kResultOk)
+                    .then(|| (info.id, string128_text(&info.title)))
+            })
+            .collect()
+    }
+}
+
+/// The text of a VST3 `String128`: UTF-16 up to its first `NUL`.
+fn string128_text(units: &[u16]) -> String {
+    let end = units.iter().position(|&c| c == 0).unwrap_or(units.len());
+    String::from_utf16_lossy(&units[..end])
+}
+
 /// The low `channels` bits set — VST3's speaker arrangement is a channel
 /// bitmask, and mono/stereo are its first one and two bits (`kSpeakerL`,
 /// `kSpeakerL | kSpeakerR`). Good enough for the instrument layouts Stev
@@ -401,6 +429,18 @@ fn speaker_arrangement(channels: u16) -> SpeakerArrangement {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_string128_reads_up_to_its_terminator() {
+        let mut units = [0xFFFFu16; 128];
+        for (slot, c) in units.iter_mut().zip("Macro 1".encode_utf16()) {
+            *slot = c;
+        }
+        units[7] = 0;
+        assert_eq!(string128_text(&units), "Macro 1");
+        // No terminator: the whole buffer, lossily.
+        assert_eq!(string128_text(&[0x41; 3]), "AAA");
+    }
 
     #[test]
     fn speaker_arrangements_are_channel_masks() {

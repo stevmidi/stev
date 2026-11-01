@@ -171,6 +171,45 @@ impl MidiMap {
     fn param_for(&self, channel: usize, controller: usize) -> Option<ParamID> {
         self.params.get(channel)?.get(controller).copied().flatten()
     }
+
+    /// How many channel/controller pairs drive a parameter, over all channels.
+    pub(super) fn assignment_count(&self) -> usize {
+        self.params.iter().flatten().flatten().count()
+    }
+
+    /// Describes channel 1's assignments for the log, one `controller → name`
+    /// entry each, so a user can see which of a plugin's parameters a CC can
+    /// reach. `name_of` turns a parameter id into its title. Channel 1 only:
+    /// Stev sends every controller on it, and plugins that map anything map
+    /// the same controllers on every channel.
+    pub(super) fn describe(&self, name_of: impl Fn(ParamID) -> Option<String>) -> String {
+        let entries: Vec<String> = self.params[0]
+            .iter()
+            .enumerate()
+            .filter_map(|(controller, id)| {
+                let id = (*id)?;
+                let name = name_of(id).unwrap_or_else(|| format!("parameter {id}"));
+                Some(format!("{} → {name}", controller_label(controller)))
+            })
+            .collect();
+        if entries.is_empty() {
+            "none".to_string()
+        } else {
+            entries.join(", ")
+        }
+    }
+}
+
+/// A VST3 controller number as a person reads it: `CC 14`, or the name of one
+/// of the two synthetic controllers past MIDI's 128.
+fn controller_label(controller: usize) -> String {
+    if controller == kAfterTouch as usize {
+        "aftertouch".to_string()
+    } else if controller == kPitchBend as usize {
+        "pitch bend".to_string()
+    } else {
+        format!("CC {controller}")
+    }
 }
 
 /// Interprets one `getMidiControllerAssignment` answer.
@@ -319,6 +358,30 @@ mod tests {
             Translated::Param(id, v) => Some((id, v)),
             _ => None,
         }
+    }
+
+    #[test]
+    fn the_description_names_channel_one_controllers_in_order() {
+        // Channel 2 maps CC 7 too; only channel 1 is described, but counted.
+        let map = MidiMap::build(|channel, c| match (channel, c as u32) {
+            (0, 1) => Some(10),
+            (0, 15) => Some(20),
+            (0, c) if c == kPitchBend => Some(30),
+            (1, 7) => Some(40),
+            _ => None,
+        });
+        let names = |id: ParamID| (id != 20).then(|| format!("P{id}"));
+        assert_eq!(
+            map.describe(names),
+            "CC 1 → P10, CC 15 → parameter 20, pitch bend → P30"
+        );
+        assert_eq!(map.assignment_count(), 4);
+    }
+
+    #[test]
+    fn an_empty_map_is_described_as_none() {
+        assert_eq!(MidiMap::empty().describe(|_| None), "none");
+        assert_eq!(MidiMap::empty().assignment_count(), 0);
     }
 
     #[test]

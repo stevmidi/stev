@@ -28,6 +28,8 @@ mod state;
 mod stream;
 mod voice;
 
+use log::info;
+
 use crate::core::audio::MAX_FRAMES;
 use crate::core::plugin_host::catalog::PluginCatalogEntry;
 use crate::core::plugin_host::{LoadedInstrument, PluginAudioHandle};
@@ -51,6 +53,15 @@ pub(super) fn load(
         MAX_FRAMES as u32,
         state,
     )?;
+    // Which controllers reach the plugin at all: a VST3 plugin hears a CC only
+    // through `IMidiMapping`, so a knob on an unmapped CC does nothing.
+    let names = component::parameter_names(loaded.main.controller.as_ref());
+    info!(
+        "plugin host: VST3 '{}' maps {} channel/controller pairs; channel 1: {}",
+        entry.name,
+        loaded.midi_map.assignment_count(),
+        loaded.midi_map.describe(|id| names.get(&id).cloned())
+    );
     let voice = Vst3Voice::new(
         loaded.processor,
         MAX_FRAMES,

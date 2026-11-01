@@ -586,6 +586,11 @@ calls — so the audio thread is left with an array index. The 130 is MIDI's 128
 controllers plus VST3's two synthetic ones, `kAfterTouch` and `kPitchBend`,
 which exist precisely because those messages have no CC number.
 
+The load logs the answer at `info`: how many channel/controller pairs are
+mapped, and channel 1's assignments by parameter title (`CC 1 → Mod Wheel, …`),
+so which CCs reach a plugin — a knob's included — can be read from
+`~/Library/Logs/stev/stev.log` without a debugger.
+
 Changes go into the same `params::HostParameterChanges` the UI relay fills.
 That is why `ParamReceiver::reset` is called from `clear_events` at the **end**
 of a block rather than at the start of `render_block`: CCs are pushed in during
