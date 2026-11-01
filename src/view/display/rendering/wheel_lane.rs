@@ -4,11 +4,12 @@
 //! CC drawn as a line: built as playback holds it, each value flat until the
 //! next move steps off it ([`wheel_path`]), then drawn as a DAW draws
 //! automation — a straight line from move to move, a held value and the jump
-//! off it still a step ([`ease_steps`]) — and thinned ([`simplify`]). Drawn under the span `Delete` would clear. The moves are
-//! folded per pixel column ([`fold_wheel_columns`]) so what is drawn follows
-//! the lane's width, not the event count. The knob lanes
-//! switch from the knobs' labels (`rendering/knob_panel.rs`). See
-//! `380-wheel-lane.md`, `390-knob-panel.md` decisions 11–13.
+//! off it still a step ([`ease_steps`]) — and thinned ([`simplify`]), under
+//! the span `Delete` would clear. The moves are folded per pixel column
+//! ([`fold_wheel_columns`]) so what is drawn follows the lane's width, not
+//! the event count. The knob lanes switch from the knobs' labels
+//! (`rendering/knob_panel.rs`). See `380-wheel-lane.md`,
+//! `390-knob-panel.md` decisions 11–13.
 
 use egui::{Align2, CornerRadius, FontId, Painter, Pos2, Rect, Shape, Stroke, pos2, vec2};
 
@@ -22,10 +23,10 @@ impl Display {
     /// extremes clear the divider and the lane's bottom edge.
     const WHEEL_LANE_PAD: f32 = 4.0;
     /// Thickness of a wheel's line.
-    const WHEEL_LINE_W: f32 = 1.5;
+    const WHEEL_LINE_W: f32 = 2.5;
     /// How far a point of a wheel's line may lie off the straight line
     /// through its neighbours and still be dropped (`simplify`): a pixel
-    /// and a half, about the line's own thickness, so the stairs of a ride
+    /// and a half, inside the line's own thickness, so the stairs of a ride
     /// thin to its slope while the curve stays where it plays.
     const WHEEL_SIMPLIFY_PX: f32 = 1.5;
     /// A step taller than this, after a hold wider than this, is a held
@@ -130,9 +131,9 @@ impl Display {
     /// Draws `controller`'s curve for the lead clip into the lower lane `lane`
     /// ([`wheel_path`], [`ease_steps`], [`simplify`]): a straight line from
     /// move to move, a held value flat until a jump steps off it, dimmed
-    /// outside the clip's window. A wheel's
-    /// line runs from rest before its first move; a knob's CC has no rest,
-    /// so its line starts at its first move. Pitch bend gets a faint centre
+    /// outside the clip's window. A wheel's line runs from rest before its
+    /// first move; a knob's CC has no rest, so its line starts at its first
+    /// move. Pitch bend gets a faint centre
     /// line at rest; the span, if one is marked, a tint across the lane's
     /// height under the line, filled as the note marquee is. Nothing else
     /// with no moves.
@@ -343,9 +344,10 @@ fn fold_wheel_columns(
 
 /// The wheel's line from `start` through `knots` to the lane's right edge
 /// at `cols`, as playback holds it: flat at the held value, then a vertical
-/// step at each knot. [`ease_steps`] turns the small steps into diagonals. With no `start` (a CC with
-/// nothing in force before the lane) the line begins at the first knot,
-/// `None` with none. A column whose moves reach past the values the line
+/// step at each knot: each knot's hold corner, then the value it moves to.
+/// The corners are intermediate: [`ease_steps`] drops or moves all but a
+/// real jump's. With no `start` (a CC with nothing in force before the
+/// lane) the line begins at the first knot, `None` with none. A column whose moves reach past the values the line
 /// passes through there gets a span over them.
 fn wheel_path(start: Option<PathPoint>, knots: &[Knot], cols: f32) -> Option<WheelPath> {
     let start = start.or_else(|| knots.first().map(|knot| (knot.x, knot.last)))?;
@@ -388,21 +390,21 @@ fn wheel_path(start: Option<PathPoint>, knots: &[Knot], cols: f32) -> Option<Whe
 fn ease_steps(points: &[Pos2], corner: f32) -> Vec<Pos2> {
     let mut eased = Vec::with_capacity(points.len());
     for (i, &point) in points.iter().enumerate() {
-        let before = i.checked_sub(1).map(|h| points[h]);
-        let step_to = points.get(i + 1).filter(|next| next.x == point.x);
-        let jump = |before: Pos2, next: &Pos2| {
-            before.y != point.y
-                || ((point.x - before.x) > corner && (next.y - point.y).abs() > corner)
-        };
-        if let (Some(before), Some(next)) = (before, step_to)
-            && !jump(before, next)
-        {
-            if point.x - before.x > corner {
-                eased.push(pos2(point.x - corner, point.y));
-            }
+        let hold_corner = i
+            .checked_sub(1)
+            .zip(points.get(i + 1).filter(|next| next.x == point.x));
+        let Some((before, next)) = hold_corner else {
+            eased.push(point);
             continue;
+        };
+        if point.x - points[before].x > corner {
+            let jump = (next.y - point.y).abs() > corner;
+            eased.push(if jump {
+                point
+            } else {
+                pos2(point.x - corner, point.y)
+            });
         }
-        eased.push(point);
     }
     eased
 }
@@ -413,9 +415,11 @@ fn ease_steps(points: &[Pos2], corner: f32) -> Vec<Pos2> {
 /// wheel's coarse steps draws as the slope it is rather than a wobble,
 /// never more than `tolerance` off it. Both ends of every vertical step
 /// left by [`ease_steps`] (a held value and its jump) are kept outright and
-/// split the line into the rides between them, each simplified alone: a
-/// staircase of holds costs one pass, never the algorithm's quadratic worst
-/// case.
+/// split the line into the rides between them, each simplified alone, so a
+/// staircase of jumps costs one pass. A ride has no anchors inside it: the
+/// algorithm's quadratic worst case (every split beside an end) needs a
+/// shape a hand on a wheel doesn't make, and the line is at most a few
+/// points per pixel column.
 fn simplify(points: &[Pos2], tolerance: f32) -> Vec<Pos2> {
     let n = points.len();
     let mut keep = vec![false; n];
@@ -489,7 +493,7 @@ fn split_at_x(points: &[Pos2], cuts: [f32; 2]) -> Vec<Vec<Pos2>> {
 
 #[cfg(test)]
 mod tests {
-    use egui::{Rect, pos2, vec2};
+    use egui::{Pos2, Rect, pos2, vec2};
 
     use super::{
         Knot, Segment, ease_steps, fold_wheel_columns, lane_label_in, simplify, split_at_x,
@@ -605,7 +609,7 @@ mod tests {
 
     /// A staircase from `(x, y)`: `n` steps, each a hold `w` wide, then a
     /// step `h` (negative: up the screen).
-    fn stairs(x: f32, y: f32, n: usize, w: f32, h: f32) -> Vec<egui::Pos2> {
+    fn stairs(x: f32, y: f32, n: usize, w: f32, h: f32) -> Vec<Pos2> {
         let mut points = vec![pos2(x, y)];
         for i in 1..=n {
             let step_x = x + i as f32 * w;
@@ -670,6 +674,33 @@ mod tests {
                 pos2(96.0, 50.0),
                 pos2(100.0, 47.0),
                 pos2(120.0, 47.0)
+            ]
+        );
+    }
+
+    /// The whole pipeline on `wheel_path`'s own output: a held value and
+    /// its jump stay a step, a ride after it draws as one slope.
+    #[test]
+    fn a_held_jump_and_a_ride_from_the_folded_moves() {
+        // One tick a column, a pixel a value: hold at rest for 20 columns,
+        // jump to 10, then ride a value a column up to 20.
+        let mut moves = vec![(20, 10)];
+        moves.extend((21..=30).map(|tick| (tick, tick as u16 - 10)));
+        let (start, knots) = fold_wheel_columns(&moves, Some(0), 0.0, 1.0, 40);
+        let path = wheel_path(start, &knots, 40.0).unwrap();
+        let line: Vec<Pos2> = path
+            .line
+            .iter()
+            .map(|&(x, v)| pos2(x, f32::from(v)))
+            .collect();
+        assert_eq!(
+            simplify(&ease_steps(&line, 4.0), 1.5),
+            vec![
+                pos2(0.0, 0.0),
+                pos2(20.5, 0.0),
+                pos2(20.5, 10.0),
+                pos2(30.5, 20.0),
+                pos2(40.0, 20.0)
             ]
         );
     }
