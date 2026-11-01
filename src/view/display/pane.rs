@@ -31,11 +31,11 @@ pub(super) enum KeyFocus {
     /// effective in the clip view with a wheel lane shown
     /// (`380-wheel-lane.md` decision 14).
     WheelLane,
-    /// The knob panel (a click on a knob with a clip open), the knob whose
-    /// lane is shown selected, so `Delete` clears its CC from the clip.
-    /// Only effective in the clip view with a knob's lane shown
-    /// (`390-knob-panel.md` decision 14).
-    KnobPanel,
+    /// The knob panel, with the selected knob (a click or right-click on
+    /// it), so `Delete` removes that knob's mapping. Only effective while
+    /// the panel shows knobs, clip open or not (`400-parameter-knobs.md`
+    /// decision 14).
+    KnobPanel(usize),
 }
 
 /// The clip panel's height: the whole lane area, or a band docked below the

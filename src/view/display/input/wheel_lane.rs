@@ -70,15 +70,28 @@ impl Display {
     /// The controller the lower lane shows — `None` for velocity and a
     /// knob's lane.
     pub(in crate::view::display) fn clip_lane_controller(&self) -> Option<Controller> {
-        self.render.clip_lane.controller()
+        self.shown_clip_lane().controller()
+    }
+
+    /// The lane under the piano roll as it shows: the chosen one
+    /// (`RenderState::clip_lane`), but velocity in place of a knob's lane
+    /// whose knob has no parameter on the selected track — the lead clip's
+    /// — since a lane belongs to a parameter (`400-parameter-knobs.md`
+    /// decision 14). Drawn so, not stored: back on a track whose knob there
+    /// has one, its lane shows again, the choice never switched by itself
+    /// (`380-wheel-lane.md` decision 7).
+    pub(in crate::view::display) fn shown_clip_lane(&self) -> ClipLane {
+        match self.render.clip_lane {
+            ClipLane::Knob(knob) if self.knob_param(knob).is_none() => ClipLane::Velocity,
+            lane => lane,
+        }
     }
 
     /// Shows `lane` under the piano roll — a gutter label, a knob or `W`.
     /// Velocity gives the keyboard back to the notes; a switch between two
     /// controllers keeps the lane's focus but drops the span, which was the
-    /// other one's. A switch away from the knobs' lanes takes the keyboard
-    /// from the knob panel, whose selected knob is the one shown; from one
-    /// knob's lane to another's the selection follows.
+    /// other one's. The knob panel's selection is its own: a lane switch
+    /// leaves it alone.
     pub(in crate::view::display) fn set_clip_lane(&mut self, lane: ClipLane) {
         if lane == self.render.clip_lane {
             return;
@@ -86,9 +99,6 @@ impl Display {
         self.render.clip_lane = lane;
         self.clear_wheel_span();
         if lane == ClipLane::Velocity && self.key_focus == KeyFocus::WheelLane {
-            self.key_focus = KeyFocus::Pane;
-        }
-        if !matches!(lane, ClipLane::Knob(_)) && self.key_focus == KeyFocus::KnobPanel {
             self.key_focus = KeyFocus::Pane;
         }
     }

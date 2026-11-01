@@ -3,7 +3,8 @@
 //! dial's sweep, the value in the selected track's colour along it, a
 //! pointer to the value, and the parameter's name under it, shortened to
 //! fit — with a clip open, a lane switch coloured as the gutter's labels
-//! are. An unassigned knob has an empty dial and a dim placeholder label; an
+//! are. The selected knob, while the panel has the keyboard, gets corner
+//! brackets around its dial. An unassigned knob has an empty dial and a dim placeholder label; an
 //! armed one reads `Turn…` in `accent`. A track whose knobs can't drive
 //! anything shows the panel's hint instead. See `030-ui-design.md` § Knob
 //! Panel.
@@ -13,12 +14,19 @@ use std::f32::consts::TAU;
 use egui::{Align2, CornerRadius, FontId, Painter, Pos2, Rect, Shape, Stroke, pos2, vec2};
 
 use super::*;
-use crate::view::display::knob_panel::{KnobRects, LABEL_FONT_SIZE, SWEEP, knob_angle};
+use crate::view::display::knob_panel::{ARC_W, KnobRects, LABEL_FONT_SIZE, SWEEP, knob_angle};
 
-/// Points between a selected knob's label and the focus edge under it.
-const SELECTED_UNDERLINE_GAP: f32 = 2.0;
-/// The width of a dial's trough and value arc.
-const ARC_W: f32 = 3.0;
+/// The stroke width of a selected knob's corner brackets: a hairline, one
+/// physical pixel on a Retina screen, so the focus edge across the panel's
+/// top stays the strong mark.
+const FRAME_W: f32 = 0.5;
+/// Opacity of the `fg_dim` a dial's trough is drawn in: light enough that
+/// the whole dial reads against the panel at any value, so a turned-down
+/// knob doesn't look like its value arc alone (and sit off-centre in its
+/// selection brackets), well under the value arc.
+const TROUGH_ALPHA: f32 = 0.35;
+/// How long each bracket's arms are, as a share of the frame's shorter side.
+const FRAME_ARM: f32 = 0.2;
 /// The arc's points per full turn — smooth at the largest dial.
 const ARC_SEGMENTS_PER_TURN: f32 = 48.0;
 /// What an armed knob's label reads while it waits for a control turned in
@@ -64,10 +72,7 @@ impl Display {
         let switches = self.knob_labels_switch_lanes();
         let hovered = self.knob_under_pointer();
         let armed = self.armed_knob();
-        let selected = match self.render.clip_lane {
-            ClipLane::Knob(knob) if self.knob_panel_has_keyboard() => Some(knob),
-            _ => None,
-        };
+        let selected = self.selected_knob();
         let font = FontId::proportional(LABEL_FONT_SIZE);
         for (knob, rects) in knobs.iter().enumerate() {
             let Some(shown) = self.knob_shown(knob) else {
@@ -76,44 +81,77 @@ impl Display {
             let rects = KnobRects {
                 center: rects.center + offset,
                 label: rects.label.translate(offset),
+                frame: rects.frame.translate(offset),
                 ..*rects
             };
             draw_knob(painter, &rects, shown.value, accent);
-            let lane_color = if switches {
-                toggle_icon_color(
-                    self.render.clip_lane == ClipLane::Knob(knob),
-                    hovered == Some(knob),
-                )
-            } else {
-                theme::fg_dim()
-            };
+            // The gutter's toggle colours, the knob's label being its lane's
+            // switch: `accent` while its lane is up, so the lane stays named
+            // once the panel loses the keyboard and the brackets go; `fg`
+            // under the pointer, since a press selects any knob. An
+            // unassigned knob has no lane to name, so it only lights up.
+            let lane_up =
+                switches && shown.param.is_some() && self.render.clip_lane == ClipLane::Knob(knob);
+            let name_color = toggle_icon_color(lane_up, hovered == Some(knob));
             let (text, color) = if armed == Some(knob) {
                 (ARMED_LABEL.to_owned(), theme::accent())
             } else if shown.param.is_some() {
                 let name = self.knob_name(knob).unwrap_or("?");
                 let max_w = rects.label.width() - 2.0 * LABEL_INSET_X;
-                (fit_label(painter, name, &font, max_w), lane_color)
+                (fit_label(painter, name, &font, max_w), name_color)
             } else {
-                (format!("Knob {}", knob + 1), theme::fg_dim())
+                (format!("Knob {}", knob + 1), name_color)
             };
-            let label = painter.text(
+            painter.text(
                 rects.label.center(),
                 Align2::CENTER_CENTER,
                 text,
                 font.clone(),
                 color,
             );
-            // The selected knob, while the panel has the keyboard: the focus
-            // edge under its label (`390-knob-panel.md` decision 14).
+            // The selected knob, while the panel has the keyboard: quiet
+            // corner brackets around its dial, neutral, since the focus edge
+            // already says the panel has the keyboard and the label may be
+            // `accent` for its lane (`400-parameter-knobs.md` decision 14).
             if selected == Some(knob) {
-                painter.hline(
-                    label.x_range(),
-                    label.max.y + SELECTED_UNDERLINE_GAP,
-                    focus_edge_stroke(),
-                );
+                let stroke = Stroke::new(FRAME_W, theme::fg_dim());
+                // On pixel centres, so a one-pixel line lights one row or
+                // column instead of greying two: crisp, and the same tone
+                // across and down.
+                let snap = |p: Pos2| {
+                    pos2(
+                        painter.round_to_pixel_center(p.x),
+                        painter.round_to_pixel_center(p.y),
+                    )
+                };
+                for corner in frame_brackets(rects.frame) {
+                    painter.add(Shape::line(corner.map(snap).to_vec(), stroke));
+                }
             }
         }
     }
+}
+
+/// The four L-shaped corners of `frame`, each a polyline from the end of
+/// one arm through the corner to the end of the other, the arms
+/// [`FRAME_ARM`] of the shorter side long.
+fn frame_brackets(frame: Rect) -> [[Pos2; 3]; 4] {
+    let arm = frame.width().min(frame.height()) * FRAME_ARM;
+    let Rect { min, max } = frame;
+    [
+        [pos2(min.x, min.y + arm), min, pos2(min.x + arm, min.y)],
+        [
+            pos2(max.x - arm, min.y),
+            pos2(max.x, min.y),
+            pos2(max.x, min.y + arm),
+        ],
+        [pos2(max.x, max.y - arm), max, pos2(max.x - arm, max.y)],
+        [
+            pos2(min.x + arm, max.y),
+            pos2(min.x, max.y),
+            pos2(min.x, max.y - arm),
+        ],
+    ]
 }
 
 /// `text` as it fits in `max_w` points of `font`: whole when it does, else
@@ -147,7 +185,7 @@ fn draw_knob(painter: &Painter, rects: &KnobRects, value: Option<f64>, accent: C
         arc_r,
         start,
         start + SWEEP,
-        grid_seam_color(),
+        theme::fg_dim().gamma_multiply(TROUGH_ALPHA),
     ));
     if let Some(value) = value {
         let end = knob_angle(value);
@@ -176,4 +214,34 @@ fn arc(center: Pos2, r: f32, from: f32, to: f32, color: Color32) -> Shape {
         })
         .collect();
     Shape::line(points, Stroke::new(ARC_W, color))
+}
+
+#[cfg(test)]
+mod tests {
+    use egui::{Rect, pos2};
+
+    use super::{FRAME_ARM, frame_brackets};
+
+    /// Each bracket turns at its own corner of the frame, its two arms a
+    /// quarter of the shorter side long, along the frame's edges.
+    #[test]
+    fn the_brackets_hug_the_frame_corners() {
+        let frame = Rect::from_min_max(pos2(10.0, 20.0), pos2(58.0, 66.0));
+        let arm = 46.0 * FRAME_ARM;
+        let corners = [
+            frame.left_top(),
+            frame.right_top(),
+            frame.right_bottom(),
+            frame.left_bottom(),
+        ];
+        for (bracket, corner) in frame_brackets(frame).iter().zip(corners) {
+            assert_eq!(bracket[1], corner);
+            for end in [bracket[0], bracket[2]] {
+                let (dx, dy) = ((end.x - corner.x).abs(), (end.y - corner.y).abs());
+                assert!(dx == 0.0 || dy == 0.0, "an arm runs along an edge");
+                assert!((dx + dy - arm).abs() < 1e-4, "{dx} + {dy} vs {arm}");
+                assert!(frame.contains(end));
+            }
+        }
+    }
 }

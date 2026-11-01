@@ -306,7 +306,7 @@ impl Display {
         // in a take session, whose clip is framed, never edited. A knob's
         // lane has nothing to mark yet.
         if is_clip_events_view
-            && self.render.clip_lane != ClipLane::Velocity
+            && self.shown_clip_lane() != ClipLane::Velocity
             && self.is_in_lower_lane(x, y)
         {
             if self.take_session.is_none() && self.clip_lane_controller().is_some() {
@@ -452,11 +452,9 @@ impl Display {
             self.key_focus = KeyFocus::Pane;
         }
         // Leaving the clip view takes the keyboard from the wheel lane, and
-        // its span with it, and from the knob panel.
-        if !in_clip_view
-            && self.input_was_clip_view
-            && matches!(self.key_focus, KeyFocus::WheelLane | KeyFocus::KnobPanel)
-        {
+        // its span with it. The knob panel keeps it while it shows: its
+        // selection doesn't need a clip.
+        if !in_clip_view && self.input_was_clip_view && self.key_focus == KeyFocus::WheelLane {
             self.key_focus = KeyFocus::Pane;
         }
         self.drop_stale_wheel_span();
@@ -488,9 +486,10 @@ impl Display {
                     KeyFocus::WheelLane if self.wheel_lane_has_keyboard() => {
                         self.handle_wheel_lane_key(&event)
                     }
-                    KeyFocus::KnobPanel if self.knob_panel_has_keyboard() => {
-                        self.handle_knob_panel_key(&event)
-                    }
+                    KeyFocus::KnobPanel(_) => match self.selected_knob() {
+                        Some(knob) => self.handle_knob_panel_key(knob, &event),
+                        None => false,
+                    },
                     _ => false,
                 }
                 || self.forward_input_event(event, ctx);
@@ -740,7 +739,7 @@ impl Display {
             // `W` — the next lane under the piano roll (`380-wheel-lane.md`).
             // View-local, like the gutter labels a click picks one from.
             InputEvent::Action(Action::CycleClipLane) => {
-                self.set_clip_lane(self.render.clip_lane.next());
+                self.set_clip_lane(self.shown_clip_lane().next());
                 true
             }
             // Plain Tab with both panes on screen moves the keyboard to the
@@ -983,6 +982,14 @@ impl Display {
                 self.gesture.press_pane = Some(pane);
                 self.in_pane(pane, |display| display.handle_mouse_click(x, y, modifiers))
             }
+            // Only the knob panel reads a right-click: it arms the knob for
+            // the plugin's next turned control.
+            InputEvent::MouseRightClicked { x, y } => {
+                if self.is_over_knob_panel(x, y) {
+                    self.handle_knob_panel_right_click(x, y);
+                }
+                true
+            }
             InputEvent::MouseDoubleClicked { x, y } => {
                 if self.tempo_chip.contains(x, y) {
                     self.open_tempo_field();
@@ -990,8 +997,6 @@ impl Display {
                     self.open_meter_field();
                 } else if self.is_over_browser(x, y) {
                     self.handle_browser_click(x, y, true);
-                } else if self.is_over_knob_panel(x, y) {
-                    self.handle_knob_panel_double_click(x, y);
                 } else if self.pane_at(x, y) == Some(Pane::Clip) {
                     self.in_pane(Pane::Clip, |display| display.handle_double_click(x, y));
                 } else if let Some(track_idx) =

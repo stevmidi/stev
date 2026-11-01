@@ -5,7 +5,6 @@
 //! `400-parameter-knobs.md` decision 12.
 
 use crate::core::midi::message::Controller;
-use crate::models::knobs::KNOB_COUNT;
 
 /// The piano roll's lower lane.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
@@ -34,14 +33,14 @@ impl ClipLane {
     ];
 
     /// The lane after this one (`Action::CycleClipLane`): VEL → PB → MW →
-    /// the knobs in reading order → back to VEL.
+    /// back to VEL, the gutter's three. The knobs' lanes are picked by a
+    /// click on the knob only (`400-parameter-knobs.md` decision 14): from
+    /// one, the cycle starts again at VEL.
     pub(super) fn next(self) -> ClipLane {
         match self {
             ClipLane::Velocity => ClipLane::PitchBend,
             ClipLane::PitchBend => ClipLane::Modulation,
-            ClipLane::Modulation => ClipLane::Knob(0),
-            ClipLane::Knob(knob) if knob + 1 < KNOB_COUNT => ClipLane::Knob(knob + 1),
-            ClipLane::Knob(_) => ClipLane::Velocity,
+            ClipLane::Modulation | ClipLane::Knob(_) => ClipLane::Velocity,
         }
     }
 
@@ -62,25 +61,17 @@ mod tests {
     use crate::core::midi::message::Controller;
     use crate::models::knobs::KNOB_COUNT;
 
-    /// Eleven lanes in one cycle: VEL, PB, MW, the eight knobs in reading
-    /// order, back to VEL.
+    /// The cycle is the gutter's three lanes, VEL, PB, MW, back to VEL; the
+    /// knobs' lanes are never in it, and from one the cycle goes to VEL.
     #[test]
-    fn the_lanes_cycle_vel_pb_mw_then_the_knobs_and_back() {
+    fn the_lanes_cycle_vel_pb_mw_and_skip_the_knobs() {
         assert_eq!(ClipLane::default(), ClipLane::Velocity);
-        let mut order = vec![ClipLane::Velocity];
-        let mut lane = ClipLane::Velocity.next();
-        while lane != ClipLane::Velocity {
-            order.push(lane);
-            lane = lane.next();
+        assert_eq!(ClipLane::Velocity.next(), ClipLane::PitchBend);
+        assert_eq!(ClipLane::PitchBend.next(), ClipLane::Modulation);
+        assert_eq!(ClipLane::Modulation.next(), ClipLane::Velocity);
+        for knob in 0..KNOB_COUNT {
+            assert_eq!(ClipLane::Knob(knob).next(), ClipLane::Velocity);
         }
-        let mut expected = vec![
-            ClipLane::Velocity,
-            ClipLane::PitchBend,
-            ClipLane::Modulation,
-        ];
-        expected.extend((0..KNOB_COUNT).map(ClipLane::Knob));
-        assert_eq!(order, expected);
-        assert_eq!(order.len(), 11);
     }
 
     /// The wheels' lanes draw their controllers; velocity and a knob's lane

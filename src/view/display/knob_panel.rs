@@ -13,21 +13,24 @@
 //! ([`WheelLatch`]). The knob shows the parameter's value wherever it came
 //! from: a drag, the plugin's editor, a preset.
 //!
-//! A double-click on a knob's label arms it: the next control turned in the
-//! plugin's editor becomes its parameter (`knob_params.rs`), an undoable
-//! `SetKnobParamEdit`; `Esc` or a press elsewhere disarms, `Delete`
-//! unassigns. An unassigned knob turns nothing. A click on a dial — a press
-//! and release that never left the dead zone — or on the label under it,
-//! with a clip open, selects the knob: its lane shows under the piano roll
-//! (`ClipLane::Knob`) and the panel takes the keyboard
-//! (`Display::select_knob`, `input/knob_focus.rs`). A track whose knobs
+//! A right-click on a knob (dial or label) arms it and selects it: the next
+//! control turned in the plugin's editor becomes its parameter
+//! (`knob_params.rs`), an undoable `SetKnobParamEdit`; `Esc` or a press
+//! elsewhere disarms. An unassigned knob turns nothing. A press on a knob,
+//! its dial or its label, selects it on the press, a drag after it
+//! included (a ⌘-click reset and a scroll select nothing): the panel takes
+//! the keyboard, `Delete`
+//! removing the knob's mapping, and with a clip open its lane shows under
+//! the piano roll (`ClipLane::Knob`; `Display::select_knob`,
+//! `input/knob_focus.rs`). See `400-parameter-knobs.md` decisions 3 and 14
+//! for the whole grammar. A track whose knobs
 //! can't drive anything (no plugin, or a CLAP one for now) shows a one-line
 //! hint instead of knobs. A scroll anywhere else on the panel does nothing.
 //!
 //! The geometry is pure and unit-tested here; the drawing is
 //! `rendering/knob_panel.rs`. See `030-ui-design.md` § Knob Panel.
 
-use std::f32::consts::PI;
+use std::f32::consts::{FRAC_1_SQRT_2, PI};
 use std::time::{Duration, Instant};
 
 use egui::{Key, Pos2, Rect, TouchPhase, pos2, vec2};
@@ -37,6 +40,7 @@ use crate::models::knobs::{KNOB_COUNT, ParamId};
 
 use super::Display;
 use super::clip_lane::ClipLane;
+use super::status_message::StatusMessage;
 
 /// The panel's inset from its column's edges, around the knob grid.
 const PANEL_PAD: f32 = 8.0;
@@ -78,6 +82,15 @@ const MOMENTUM_SCALE: f32 = 0.35;
 /// same dial after a longer pause starts again from the plugin's value.
 const WHEEL_TURN_HOLD: Duration = Duration::from_millis(500);
 
+/// How far a selected knob's corner brackets stand off its dial, room
+/// allowing.
+const FRAME_GAP: f32 = 4.0;
+/// The least clear space kept between the brackets' bottom and the label,
+/// in a cell too tight for the whole [`FRAME_GAP`].
+const FRAME_LABEL_CLEAR: f32 = 2.0;
+/// The width of a dial's trough and value arc.
+pub(super) const ARC_W: f32 = 3.0;
+
 /// Where one knob is drawn and hit.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) struct KnobRects {
@@ -87,13 +100,44 @@ pub(super) struct KnobRects {
     pub(super) radius: f32,
     /// The label under it: the parameter's name.
     pub(super) label: Rect,
+    /// Where the selected knob's corner brackets go: [`FRAME_GAP`] out
+    /// from what the dial draws ([`dial_ink`]), so it sits centred in
+    /// them, but at least [`FRAME_LABEL_CLEAR`] short of the label under
+    /// it, and never past its cell's top or across into the next column.
+    pub(super) frame: Rect,
 }
 
 impl KnobRects {
-    /// The square the dial is drawn in — where a press starts a drag.
+    /// The square the dial is drawn in.
     pub(super) fn dial(&self) -> Rect {
         Rect::from_center_size(self.center, vec2(self.radius, self.radius) * 2.0)
     }
+
+    /// The whole knob as one solid target: the label's width, from the top
+    /// of the selection brackets down to the label's bottom, with no gap
+    /// between dial and label. Above the label it is the dial's part.
+    fn hit(&self) -> Rect {
+        Rect::from_min_max(
+            pos2(self.label.min.x, self.frame.min.y.min(self.dial().min.y)),
+            self.label.max,
+        )
+    }
+}
+
+/// What a press at `pos` lands on among `knobs`: a knob's [`hit`] area,
+/// its label's part from the label's top down, its dial's above.
+///
+/// [`hit`]: KnobRects::hit
+fn knob_hit_at(knobs: &[KnobRects], pos: Pos2) -> Option<KnobHit> {
+    knobs.iter().enumerate().find_map(|(i, knob)| {
+        if !knob.hit().contains(pos) {
+            None
+        } else if pos.y < knob.label.min.y {
+            Some(KnobHit::Dial(i))
+        } else {
+            Some(KnobHit::Label(i))
+        }
+    })
 }
 
 /// Lays the eight knobs out in `panel`: two columns of four, in reading
@@ -114,6 +158,9 @@ pub(super) fn knob_layout(panel: Rect) -> [KnobRects; KNOB_COUNT] {
         let block_top = inner.min.y + cell_h * row as f32 + ((cell_h - block_h) * 0.5).max(0.0);
         let center = pos2(center_x, block_top + dial_d * 0.5);
         let label_top = block_top + dial_d + LABEL_GAP;
+        let cell_top = inner.min.y + cell_h * row as f32;
+        let half_w = (dial_d * 0.5 + FRAME_GAP).min(cell_w * 0.5);
+        let ink = dial_ink(center, dial_d * 0.5);
         KnobRects {
             center,
             radius: dial_d * 0.5,
@@ -121,8 +168,32 @@ pub(super) fn knob_layout(panel: Rect) -> [KnobRects; KNOB_COUNT] {
                 pos2(center_x - cell_w * 0.5, label_top),
                 vec2(cell_w, LABEL_H),
             ),
+            frame: Rect::from_min_max(
+                pos2(
+                    center_x - half_w,
+                    (ink.min.y - FRAME_GAP).max(cell_top).min(ink.min.y),
+                ),
+                pos2(
+                    center_x + half_w,
+                    (ink.max.y + FRAME_GAP).min(label_top - FRAME_LABEL_CLEAR),
+                ),
+            ),
         }
     })
+}
+
+/// What a dial of `radius` about `center` draws: its full square across and
+/// at the top, but only down to the ends of its sweep at the bottom, where
+/// the three-quarter sweep is open (the arc's ends at 45° below the
+/// centre, plus half the stroke).
+pub(super) fn dial_ink(center: Pos2, radius: f32) -> Rect {
+    Rect::from_min_max(
+        pos2(center.x - radius, center.y - radius),
+        pos2(
+            center.x + radius,
+            center.y + radius * FRAC_1_SQRT_2 + ARC_W * 0.5,
+        ),
+    )
 }
 
 /// The screen angle of a dial's pointer at `value` (normalized, clamped)
@@ -323,11 +394,6 @@ impl KnobDrag {
             value
         })
     }
-
-    /// Whether the drag never left the dead zone: a click.
-    fn is_click(&self) -> bool {
-        self.slop.is_some()
-    }
 }
 
 /// A dial being turned by scrolling: the value it has reached, ahead of the
@@ -375,7 +441,7 @@ pub(super) struct KnobPanel {
     wheel: WheelLatch,
     /// The dial being turned by scrolling.
     wheel_turn: Option<WheelTurn>,
-    /// The knob a double-click on its label armed — its track and which —
+    /// The knob a right-click armed — its track and which —
     /// waiting for a control turned in the plugin's editor
     /// (`400-parameter-knobs.md` decision 3).
     armed: Option<(usize, usize)>,
@@ -420,16 +486,9 @@ impl Display {
         self.knob_panel_hint(self.knobs_track()?)
     }
 
-    /// The dial or label under `(x, y)`.
+    /// The dial or label under `(x, y)` ([`knob_hit_at`]).
     pub(super) fn knob_at(&self, x: f32, y: f32) -> Option<KnobHit> {
-        let pos = pos2(x, y);
-        self.knob_rects()?.iter().enumerate().find_map(|(i, knob)| {
-            if knob.dial().contains(pos) {
-                Some(KnobHit::Dial(i))
-            } else {
-                knob.label.contains(pos).then_some(KnobHit::Label(i))
-            }
-        })
+        knob_hit_at(&self.knob_rects()?, pos2(x, y))
     }
 
     /// The dial under `(x, y)`, if any.
@@ -440,11 +499,13 @@ impl Display {
         }
     }
 
-    /// Whether the pointer is on a dial — the vertical arrows, as on the
-    /// track header's bars.
+    /// Whether the pointer is on a dial that turns — the vertical arrows,
+    /// as on the track header's bars. An unassigned knob's dial keeps the
+    /// plain pointer: it turns nothing, and the arrows would promise it.
     pub(super) fn is_pointer_on_knob_dial(&self) -> bool {
         self.canvas_pointer()
-            .is_some_and(|pos| self.dial_at(pos.x, pos.y).is_some())
+            .and_then(|pos| self.dial_at(pos.x, pos.y))
+            .is_some_and(|knob| self.knob_param(knob).is_some())
     }
 
     /// The track the knobs act on: the selected one, if there is one.
@@ -453,7 +514,7 @@ impl Display {
     }
 
     /// The parameter knob `knob` of the selected track drives, if any.
-    fn knob_param(&self, knob: usize) -> Option<ParamId> {
+    pub(super) fn knob_param(&self, knob: usize) -> Option<ParamId> {
         *self.tracks[self.knobs_track()?].knob_params.get(knob)?
     }
 
@@ -483,23 +544,25 @@ impl Display {
         self.knob_param_name(self.knobs_track()?, self.knob_param(knob)?)
     }
 
-    /// A press in the knob panel: a dial starts its drag (a click if it
-    /// never turns, shown on the release — [`Display::finish_knob_drag`]),
-    /// or with ⌘/Ctrl goes back to its parameter's default and starts none —
-    /// the track header bars' reset gesture; a label, with a clip open,
-    /// selects the knob, its lane under the piano roll (`390-knob-panel.md`
-    /// decisions 11 and 14). Only that selection takes the keyboard.
+    /// A press in the knob panel selects the knob there on the press
+    /// (`400-parameter-knobs.md` decision 14), the panel taking the
+    /// keyboard, and on the dial starts its drag too; with ⌘/Ctrl a dial
+    /// instead goes back to its parameter's default, selecting nothing and
+    /// starting no drag — the track header bars' reset gesture.
     pub(super) fn handle_knob_panel_click(&mut self, x: f32, y: f32, command: bool) {
         match self.knob_at(x, y) {
             Some(KnobHit::Dial(knob)) if command => self.reset_knob(knob),
-            Some(KnobHit::Dial(knob)) => self.begin_knob_drag(knob),
+            Some(KnobHit::Dial(knob)) => {
+                self.select_knob(knob);
+                self.begin_knob_drag(knob);
+            }
             Some(KnobHit::Label(knob)) => self.select_knob(knob),
             None => {}
         }
     }
 
-    /// Whether a knob's label switches the piano roll's lower lane: only
-    /// with a clip open, since there is no lane without one.
+    /// Whether a click on a knob also switches the piano roll's lower lane:
+    /// only with a clip open, since there is no lane without one.
     pub(super) fn knob_labels_switch_lanes(&self) -> bool {
         self.lead_clip_time.is_some()
     }
@@ -525,6 +588,7 @@ impl Display {
         match self.knob_hit_under_pointer()? {
             KnobHit::Label(knob)
                 if self.knob_labels_switch_lanes()
+                    && self.knob_param(knob).is_some()
                     && self.render.clip_lane != ClipLane::Knob(knob) =>
             {
                 Some(knob)
@@ -544,7 +608,7 @@ impl Display {
         Some(match self.knob_name(knob) {
             Some(name) => name.to_owned(),
             None if self.knob_param(knob).is_some() => "Unknown parameter".to_owned(),
-            None => "Double-click the label, then turn a control in the plugin".to_owned(),
+            None => "Right-click, then turn a control in the plugin".to_owned(),
         })
     }
 
@@ -584,18 +648,26 @@ impl Display {
         let Some(drag) = self.knob_panel.drag.as_mut() else {
             return;
         };
-        let Some(value) = drag.extend(dy, fine) else {
-            return;
-        };
+        let changed = drag.extend(dy, fine);
         let KnobDrag {
             track_idx,
             knob,
             param,
             ..
         } = *drag;
-        if let Some(param) = param {
-            self.send_knob_value(track_idx, knob, param, value);
+        match (param, changed) {
+            (Some(param), Some(value)) => self.send_knob_value(track_idx, knob, param, value),
+            // Out of the dead zone on an unassigned knob: a turn that turns
+            // nothing, whichever way.
+            (None, _) if drag.slop.is_none() => self.show_unassigned_knob_turned(knob),
+            _ => {}
         }
+    }
+
+    /// A turn of unassigned knob `knob`, which turns nothing: the footer
+    /// says why and how to assign it, at the moment the knob didn't move.
+    fn show_unassigned_knob_turned(&mut self, knob: usize) {
+        self.render.status = Some(StatusMessage::new(unassigned_turn_message(knob)));
     }
 
     /// Knob `knob` of `track_idx`, on parameter `param`, now stands at
@@ -612,17 +684,10 @@ impl Display {
             .ok();
     }
 
-    /// The button came up: the drag is done, its values already set. A drag
-    /// that never left the dead zone was a click: with a clip open it
-    /// selects the knob, as a click on its label does (`390-knob-panel.md`
-    /// decision 11) — on the release, so a turn never switches the lane.
+    /// The button came up: the drag is done, its values already set, the
+    /// knob selected on the press.
     pub(super) fn finish_knob_drag(&mut self) {
-        let Some(drag) = self.knob_panel.drag.take() else {
-            return;
-        };
-        if drag.is_click() && self.knobs_track() == Some(drag.track_idx) {
-            self.select_knob(drag.knob);
-        }
+        self.knob_panel.drag = None;
     }
 
     /// One raw scroll event (`InputEvent::WheelScrolled`), the pointer at
@@ -649,11 +714,11 @@ impl Display {
         let mut turn = match self.knob_panel.wheel_turn {
             Some(turn) if turn.holds(track_idx, knob, now) => turn,
             _ => {
-                let Some(KnobShown {
-                    param: Some(param),
-                    value,
-                }) = self.knob_shown(knob)
-                else {
+                let Some(KnobShown { param, value }) = self.knob_shown(knob) else {
+                    return;
+                };
+                let Some(param) = param else {
+                    self.show_unassigned_knob_turned(knob);
                     return;
                 };
                 WheelTurn {
@@ -684,16 +749,23 @@ impl Display {
             || pointer.is_some_and(|(x, y)| self.is_over_knob_panel(x, y))
     }
 
-    /// A double-click in the knob panel: on a label, arms its knob for the
-    /// next control turned in the plugin's editor (`400-parameter-knobs.md`
-    /// decision 3).
-    pub(super) fn handle_knob_panel_double_click(&mut self, x: f32, y: f32) {
-        if let (Some(KnobHit::Label(knob)), Some(track_idx)) =
-            (self.knob_at(x, y), self.knobs_track())
-        {
-            self.close_output_menu();
-            self.knob_panel.armed = Some((track_idx, knob));
+    /// A right-click in the knob panel: on a dial or a label, arms its knob
+    /// for the next control turned in the plugin's editor and selects it
+    /// (`400-parameter-knobs.md` decision 3), so a `Delete` then removes the
+    /// mapping instead. An assigned knob re-arms, to be reassigned. Not
+    /// during a drag.
+    pub(super) fn handle_knob_panel_right_click(&mut self, x: f32, y: f32) {
+        if self.knob_panel.dragging() {
+            return;
         }
+        let (Some(KnobHit::Dial(knob) | KnobHit::Label(knob)), Some(track_idx)) =
+            (self.knob_at(x, y), self.knobs_track())
+        else {
+            return;
+        };
+        self.close_output_menu();
+        self.knob_panel.armed = Some((track_idx, knob));
+        self.select_knob(knob);
     }
 
     /// The armed knob, while it is still the selected track's and the panel
@@ -709,19 +781,21 @@ impl Display {
     }
 
     /// While a knob is armed it gets first look at every event: `Esc`
-    /// disarms, `Delete` (or `⌫`) unassigns it, and a press anywhere but on
-    /// its own label disarms and goes on to act there. Everything else
-    /// passes, the keys to the computer keyboard among them. An arming whose
-    /// knob is gone (another track selected, the panel hidden) just ends.
-    /// Returns whether the event was consumed.
+    /// disarms, and a press anywhere — a right-click on another knob
+    /// re-arms there — disarms and goes on to act there. Everything else
+    /// passes, the keys to the computer keyboard among them, and `Delete`
+    /// to the knob panel, which has the keyboard and removes the mapping
+    /// (`input/knob_focus.rs`). An arming whose knob is gone (another track
+    /// selected, the panel hidden) just ends. Returns whether the event was
+    /// consumed.
     pub(super) fn handle_knob_arming_input_event(&mut self, event: &InputEvent) -> bool {
-        let Some((track_idx, _)) = self.knob_panel.armed else {
+        if self.knob_panel.armed.is_none() {
             return false;
-        };
-        let Some(knob) = self.armed_knob() else {
+        }
+        if self.armed_knob().is_none() {
             self.disarm_knob();
             return false;
-        };
+        }
         match *event {
             InputEvent::KeyPressed {
                 key: Key::Escape, ..
@@ -729,29 +803,22 @@ impl Display {
                 self.disarm_knob();
                 true
             }
-            InputEvent::KeyPressed {
-                key: Key::Delete | Key::Backspace,
-                ..
-            } => {
-                self.disarm_knob();
-                self.input_event_tx
-                    .send(InputEvent::SetKnobParam {
-                        track_idx,
-                        knob,
-                        param: None,
-                    })
-                    .ok();
-                true
-            }
-            InputEvent::MouseClicked { x, y, .. }
-                if self.knob_at(x, y) != Some(KnobHit::Label(knob)) =>
-            {
+            InputEvent::MouseClicked { .. } | InputEvent::MouseRightClicked { .. } => {
                 self.disarm_knob();
                 false
             }
             _ => false,
         }
     }
+}
+
+/// The footer's line for a turn of unassigned knob `knob` (counted from 1,
+/// as its placeholder label is).
+fn unassigned_turn_message(knob: usize) -> String {
+    format!(
+        "Knob {} has no parameter: right-click it, then turn a control in the plugin",
+        knob + 1
+    )
 }
 
 /// The size of a knob's label.
@@ -765,8 +832,9 @@ mod tests {
     use egui::{Rect, TouchPhase, pos2};
 
     use super::{
-        DIAL_MAX_D, DIAL_MIN_D, DRAG_PX_PER_RANGE, Display, KnobDrag, MOMENTUM_SCALE, SWEEP,
-        SWEEP_START, WheelLatch, knob_angle, knob_layout, turned_knob_value,
+        DIAL_MAX_D, DIAL_MIN_D, DRAG_PX_PER_RANGE, Display, FRAME_GAP, FRAME_LABEL_CLEAR, KnobDrag,
+        KnobHit, MOMENTUM_SCALE, ROWS, SWEEP, SWEEP_START, WheelLatch, dial_ink, knob_angle,
+        knob_hit_at, knob_layout, turned_knob_value, unassigned_turn_message,
     };
 
     fn panel(height: f32) -> Rect {
@@ -805,8 +873,69 @@ mod tests {
             assert!(short.contains_rect(knob.dial()));
             assert!(short.contains_rect(knob.label));
         }
+        // The selection brackets stand off the dial with room to spare, and
+        // never reach into the label or the cell above.
+        // With room, the dial's ink sits centred in them, the same gap on
+        // every side.
+        let ink = dial_ink(roomy[0].center, roomy[0].radius);
+        let frame = roomy[0].frame;
+        for gap in [
+            ink.min.x - frame.min.x,
+            frame.max.x - ink.max.x,
+            ink.min.y - frame.min.y,
+            frame.max.y - ink.max.y,
+        ] {
+            assert!((gap - FRAME_GAP).abs() < 1e-4, "{gap}");
+        }
+        assert!(frame.max.y <= roomy[0].label.min.y - FRAME_LABEL_CLEAR);
+        for pair in knobs.windows(2).take(ROWS - 1) {
+            assert!(pair[1].frame.min.y >= pair[0].label.max.y);
+            let (frame, dial) = (pair[1].frame, pair[1].dial());
+            assert!(frame.min.y <= dial.min.y && frame.x_range().contains(dial.center().x));
+            assert!(frame.min.y >= pair[0].label.max.y);
+            assert!(frame.max.y <= pair[1].label.min.y - FRAME_LABEL_CLEAR);
+        }
         // And a tiny one never goes below the smallest dial.
         assert_eq!(knob_layout(panel(40.0))[0].radius * 2.0, DIAL_MIN_D);
+    }
+
+    /// A knob is one solid target: the gap between dial and label, the
+    /// space beside the dial and the brackets' standoff above it all hit
+    /// it, the dial's part down to the label's top; nothing between two
+    /// knobs' areas belongs to a third.
+    #[test]
+    fn a_knob_is_one_solid_target() {
+        let knobs = knob_layout(panel(800.0));
+        let knob = knobs[0];
+        let at = |x: f32, y: f32| knob_hit_at(&knobs, pos2(x, y));
+        let gap_y = (knob.dial().max.y + knob.label.min.y) * 0.5;
+        assert_eq!(at(knob.center.x, gap_y), Some(KnobHit::Dial(0)));
+        assert_eq!(
+            at(knob.label.min.x + 1.0, knob.center.y),
+            Some(KnobHit::Dial(0))
+        );
+        assert_eq!(
+            at(knob.center.x, knob.frame.min.y + 0.5),
+            Some(KnobHit::Dial(0))
+        );
+        assert_eq!(at(knob.center.x, knob.label.min.y), Some(KnobHit::Label(0)));
+        assert_eq!(at(knob.center.x, knob.frame.min.y - 0.5), None);
+        // The second column's first knob, beside it.
+        let right = knobs[ROWS];
+        assert_eq!(
+            at(right.label.min.x + 1.0, right.center.y),
+            Some(KnobHit::Dial(ROWS))
+        );
+    }
+
+    /// A turn of an unassigned knob names it, counted from 1, and says how
+    /// to assign it.
+    #[test]
+    fn an_unassigned_turn_says_how_to_assign() {
+        assert_eq!(
+            unassigned_turn_message(2),
+            "Knob 3 has no parameter: right-click it, then turn a control in the plugin"
+        );
     }
 
     #[test]
@@ -827,7 +956,7 @@ mod tests {
         assert_eq!(drag.extend(-jitter, false), None);
         assert_eq!(drag.extend(jitter, false), None);
         assert_eq!(drag.extend(jitter, false), None);
-        assert!(drag.is_click());
+        assert!(drag.slop.is_some());
         assert_eq!(drag.value, 0.5);
     }
 
@@ -836,7 +965,7 @@ mod tests {
         let mut drag = KnobDrag::new(0, 0, Some(714), 0.5);
         // Leaving the zone turns nothing yet, and the press is no click.
         assert_eq!(drag.extend(-Display::DRAG_THRESHOLD_PX, false), None);
-        assert!(!drag.is_click());
+        assert!(drag.slop.is_none());
         // A tenth of the range's travel from the edge is a tenth.
         let tenth = drag.extend(-DRAG_PX_PER_RANGE / 10.0, false).unwrap();
         assert!((tenth - 0.6).abs() < 1e-6, "{tenth}");

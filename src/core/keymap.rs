@@ -830,7 +830,7 @@ pub(crate) const ACTIONS: &[ActionInfo] = &[
     row(
         Action::CycleClipLane,
         "clip.cycle_lane",
-        "Next lane: velocity, pitch bend, mod wheel, knobs",
+        "Next lane: velocity, pitch bend, mod wheel",
         CLIP,
         Scope::Clip,
         &[Chord::plain(Key::W)],
@@ -900,15 +900,19 @@ impl Action {
     }
 
     /// Whether this action, pressed while the knob panel has the keyboard,
-    /// takes it back to the notes and acts there
-    /// (`Display::handle_knob_panel_key`, `390-knob-panel.md` decision 14)
-    /// — the wheel lane's rule ([`leaves_wheel_lane`](Self::leaves_wheel_lane))
-    /// for the selected knob. Every clip-view command does, Select all notes
-    /// among them (the panel has no span to mark), but Delete notes, which
-    /// the panel reads as clearing the knob's data, and the lane switch, which
-    /// moves the selection along the knobs.
+    /// takes it back to the pane and acts there
+    /// (`Display::handle_knob_panel_key`, `400-parameter-knobs.md` decision
+    /// 14). The panel takes the keyboard in either pane, so every pane
+    /// command does, Select all notes among them (the panel has nothing to
+    /// mark), but the Deletes, which the panel reads as removing the
+    /// knob's mapping, and the lane switch. A global action (the transport,
+    /// undo, the zoom, `V`) acts from the panel and keeps it.
     pub(crate) fn leaves_knob_panel(self) -> bool {
-        self.leaves_wheel_lane() || self == Action::SelectAllNotes
+        self.info().scope != Scope::Global
+            && !matches!(
+                self,
+                Action::DeleteNotes | Action::DeleteSelection | Action::CycleClipLane
+            )
     }
 
     /// This action's index in [`ACTIONS`].
@@ -1396,21 +1400,23 @@ mod tests {
         }
     }
 
-    /// The clip view's commands hand the keyboard back from the knob panel,
-    /// ⌘A among them; Delete, the lane switch, the transport, undo and the
-    /// zoom stay with it.
+    /// Either pane's commands hand the keyboard back from the knob panel,
+    /// ⌘A among them; the Deletes, the lane switch, the transport, undo and
+    /// the zoom stay with it.
     #[test]
-    fn clip_commands_leave_the_knob_panel() {
+    fn pane_commands_leave_the_knob_panel() {
         for action in [
             Action::MuteNotes,
             Action::Quantize,
             Action::SelectAllNotes,
             Action::DuplicateNotes,
+            Action::DeleteTime,
         ] {
             assert!(action.leaves_knob_panel(), "{action:?}");
         }
         for action in [
             Action::DeleteNotes,
+            Action::DeleteSelection,
             Action::CycleClipLane,
             Action::TogglePlayback,
             Action::Undo,

@@ -652,24 +652,22 @@ impl Display {
             KeyFocus::TrackHeaders if self.view_state() != ViewState::Arranger => KeyFocus::Pane,
             KeyFocus::WheelLane
                 if !self.view_state().is_clip_view()
-                    || self.render.clip_lane == ClipLane::Velocity =>
+                    || self.shown_clip_lane() == ClipLane::Velocity =>
             {
                 KeyFocus::Pane
             }
-            KeyFocus::KnobPanel
-                if !self.view_state().is_clip_view()
-                    || !matches!(self.render.clip_lane, ClipLane::Knob(_)) =>
-            {
-                KeyFocus::Pane
-            }
+            KeyFocus::KnobPanel(_) if self.knob_rects().is_none() => KeyFocus::Pane,
             focus => focus,
         }
     }
 
-    /// Whether the knob panel has the keyboard: a knob clicked, its lane
-    /// still shown in the clip view.
-    fn knob_panel_has_keyboard(&self) -> bool {
-        self.key_owner() == KeyFocus::KnobPanel
+    /// The selected knob, while the knob panel has the keyboard: the one
+    /// last clicked or right-clicked, its knobs still shown.
+    fn selected_knob(&self) -> Option<usize> {
+        match self.key_owner() {
+            KeyFocus::KnobPanel(knob) => Some(knob),
+            _ => None,
+        }
     }
 
     /// Whether the track-header column has the keyboard: focused by a click,

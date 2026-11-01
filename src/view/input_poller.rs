@@ -190,6 +190,8 @@ pub(super) struct InputPoller {
     last_mouse_pos: Option<Pos2>,
     /// Primary button state last frame, to detect press / release edges.
     left_mouse_down: bool,
+    /// Secondary button state last frame, to detect a right-click's press.
+    right_mouse_down: bool,
     /// Primary-button double-click detection, on the second press.
     double_click: DoubleClick,
     /// The keys held down, which decide whether a key press is a repeat.
@@ -244,6 +246,7 @@ impl InputPoller {
             note_keys: Vec::new(),
             last_mouse_pos: None,
             left_mouse_down: false,
+            right_mouse_down: false,
             double_click: DoubleClick::default(),
             held_keys: HeldKeys::default(),
             key_repeat: [const { None }; REPEATABLE_KEYS.len()],
@@ -347,6 +350,12 @@ impl InputPoller {
                 self.double_click.released(i.time, pos, &input_options);
             }
             self.left_mouse_down = left_down;
+            let right_down = i.pointer.button_down(PointerButton::Secondary);
+            if right_down && !self.right_mouse_down {
+                self.input_events
+                    .push(InputEvent::MouseRightClicked { x: pos.x, y: pos.y });
+            }
+            self.right_mouse_down = right_down;
 
             // Raw motion with the button held, which (unlike the position
             // above) keeps coming past the window and screen edges.

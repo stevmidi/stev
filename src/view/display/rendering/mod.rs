@@ -875,7 +875,7 @@ impl Display {
     fn draw_column_focus_edge(&self, painter: &Painter, panes: PaneRects, rect: Rect) {
         let (column, width) = match self.key_owner() {
             KeyFocus::TrackHeaders => (panes.arranger, Self::TRACK_COLUMN_W),
-            KeyFocus::KnobPanel => (panes.knobs, Self::KNOB_COLUMN_W),
+            KeyFocus::KnobPanel(_) => (panes.knobs, Self::KNOB_COLUMN_W),
             _ => return,
         };
         let Some(column) = column else {

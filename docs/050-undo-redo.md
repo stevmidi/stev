@@ -92,7 +92,7 @@ Undo/redo uses the [`undo` crate](https://docs.rs/undo) (`Record<SequencerEdit>`
 
 ## Knob assignment
 
-`SetKnobParamEdit` (`track_edits.rs`, `400-parameter-knobs.md` decisions 3–4) makes an armed knob's assignment one undo step: the knob takes the parameter the user turned in the plugin's editor, or none (`Delete` while armed).
+`SetKnobParamEdit` (`track_edits.rs`, `400-parameter-knobs.md` decisions 3–4) makes an armed knob's assignment one undo step: the knob takes the parameter the user turned in the plugin's editor, or none (`Delete` on the selected knob, `400` decision 14; removing a mapping deletes its moves too once phase 2 records them).
 
 - **A plain swap of the knob's parameter** (`{ track_idx, knob, from, to }`): edit puts `to`, undo `from` (`Sequencer::set_knob_param`). Nothing in the clips changes yet; rewriting a knob's recorded moves to its new parameter (decision 7) comes with the parameter moves of `400` phase 2.
 - **Refusals are the constructor's** (`SetKnobParamEdit::new` → `Err(other knob)`): a parameter another knob of the track holds. The view checks first and names the parameter in the footer (`knob_params.rs`); the handler's footer message is the guard for a lagging mirror (`set_knob_param_workflow`). `Ok(None)` for the knob's own parameter, no such knob or track.

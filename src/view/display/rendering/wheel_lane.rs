@@ -75,7 +75,7 @@ impl Display {
     /// Whether the pointer is on a lane label a click would switch to — a
     /// gutter label or a knob's — not the lane already shown.
     pub(in crate::view::display) fn is_pointer_on_clip_lane_switch(&mut self) -> bool {
-        let shown = self.render.clip_lane;
+        let shown = self.shown_clip_lane();
         self.knob_lane_switch_under_pointer().is_some()
             || self
                 .in_pane(Pane::Clip, |display| {
@@ -95,7 +95,7 @@ impl Display {
         let font = FontId::proportional(theme::FONT_SIZE_TL);
         for (i, (lane, text)) in ClipLane::GUTTER.into_iter().enumerate() {
             let row = lane_label_row(gutter, i);
-            let color = toggle_icon_color(lane == self.render.clip_lane, hovered == Some(lane));
+            let color = toggle_icon_color(lane == self.shown_clip_lane(), hovered == Some(lane));
             let label = painter.text(
                 pos2(row.left() + Self::LANE_LABEL_INSET_X, row.center().y),
                 Align2::LEFT_CENTER,

@@ -478,10 +478,10 @@ const FIXED: &[FixedGroup] = &[
                 "On a knob or its label: select it and show its lane",
             ),
             (
-                "Double-click",
-                "On a label: assign the knob, then turn a control in the plugin",
+                "Right-click",
+                "On a knob: assign it, then turn a control in the plugin",
             ),
-            ("Delete", "While assigning: unassign the knob"),
+            ("Delete", "Remove the selected knob's mapping"),
             ("Esc", "Stop assigning, or give back the keyboard"),
         ],
     ),

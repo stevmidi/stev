@@ -139,6 +139,16 @@ pub(crate) enum InputEvent {
         /// Modifier state at the moment of the event.
         modifiers: KeyModifiers,
     },
+    /// Secondary-button press at `(x, y)` in screen space — a right-click,
+    /// or a two-finger tap on a trackpad. View-local: on a knob it arms the
+    /// knob (`400-parameter-knobs.md` decision 3); it never reaches
+    /// `EventHandlers`.
+    MouseRightClicked {
+        /// Pointer x in screen space.
+        x: f32,
+        /// Pointer y in screen space.
+        y: f32,
+    },
     /// Second press of a primary-button double-click at `(x, y)` in screen
     /// space — on the press, not egui's release-time `button_double_clicked`
     /// (`InputPoller`'s `DoubleClick`). Arrives right after that press's own
@@ -794,7 +804,7 @@ pub(crate) enum InputEvent {
     },
     /// An armed knob's assignment: knob `knob` of `track_idx` drives the
     /// plugin parameter the user turned in the plugin's editor, or none
-    /// (`Delete` while armed) — `SetKnobParamEdit`.
+    /// (`Delete` on the selected knob) — `SetKnobParamEdit`.
     SetKnobParam {
         /// The knob's track.
         track_idx: usize,
