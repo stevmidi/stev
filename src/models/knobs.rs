@@ -26,10 +26,19 @@ pub(crate) const UNASSIGNED_KNOBS: KnobParams = [None; KNOB_COUNT];
 /// (`400-parameter-knobs.md` decision 4). A knob's own parameter is no
 /// refusal.
 pub(crate) fn param_taken_by(knobs: &KnobParams, knob: usize, param: ParamId) -> Option<usize> {
-    knobs
-        .iter()
-        .enumerate()
-        .position(|(i, other)| i != knob && *other == Some(param))
+    knob_holding(knobs, param).filter(|&other| other != knob)
+}
+
+/// The knob of `knobs` that holds `param`, if any.
+pub(crate) fn knob_holding(knobs: &KnobParams, param: ParamId) -> Option<usize> {
+    knobs.iter().position(|&held| held == Some(param))
+}
+
+/// The footer's refusal when knob `other` (counted from 0) holds the
+/// parameter already: by `name` when it is known.
+pub(crate) fn param_taken_message(name: Option<&str>, other: usize) -> String {
+    let name = name.unwrap_or("That parameter");
+    format!("{name} is on knob {} already", other + 1)
 }
 
 /// The knobs a saved track names, or none assigned when it names a set no
@@ -60,6 +69,20 @@ mod tests {
         assert_eq!(param_taken_by(&knobs, 0, 7_000_000), Some(5));
         assert_eq!(param_taken_by(&knobs, 0, 714), None);
         assert_eq!(param_taken_by(&knobs, 3, 1), None);
+        assert_eq!(knob_holding(&knobs, 714), Some(0));
+        assert_eq!(knob_holding(&knobs, 1), None);
+    }
+
+    #[test]
+    fn the_taken_message_names_the_parameter_when_known() {
+        assert_eq!(
+            param_taken_message(Some("Cutoff"), 2),
+            "Cutoff is on knob 3 already"
+        );
+        assert_eq!(
+            param_taken_message(None, 0),
+            "That parameter is on knob 1 already"
+        );
     }
 
     #[test]

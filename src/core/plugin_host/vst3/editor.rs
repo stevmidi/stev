@@ -28,7 +28,6 @@ use std::rc::{Rc, Weak};
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use crossbeam_channel::Receiver;
 use log::{debug, warn};
 use objc2_foundation::NSPoint;
 use vst3::Steinberg::Vst::ViewType::kEditor;
@@ -132,14 +131,11 @@ pub(super) struct Vst3Editor {
     /// Every parameter's name and default, by id, read once at load
     /// (`component::parameter_infos`) — the knob panel's labels.
     parameters: HashMap<ParamId, ParameterInfo>,
-    /// What the plugin's editor turns, from its component handler — the knob
-    /// panel's assignments and hand turns.
-    gestures: Receiver<ParameterGesture>,
 }
 
 impl Vst3Editor {
     /// Wraps the main-thread half of a freshly loaded plugin, with its
-    /// `parameters` and the `gestures` its component handler reports. The
+    /// `parameters`. The
     /// editor itself is not created until the first
     /// [`show`](InstrumentEditor::show).
     pub(super) fn new(
@@ -147,7 +143,6 @@ impl Vst3Editor {
         plugin_name: &str,
         track: usize,
         parameters: HashMap<ParamId, ParameterInfo>,
-        gestures: Receiver<ParameterGesture>,
     ) -> Self {
         Self {
             plugin,
@@ -161,7 +156,6 @@ impl Vst3Editor {
             window_top_left: None,
             finished: false,
             parameters,
-            gestures,
         }
     }
 
@@ -382,7 +376,7 @@ impl InstrumentEditor for Vst3Editor {
     }
 
     fn take_parameter_gestures(&mut self) -> Vec<ParameterGesture> {
-        self.gestures.try_iter().collect()
+        self.plugin.host.handler.take_gestures()
     }
 }
 

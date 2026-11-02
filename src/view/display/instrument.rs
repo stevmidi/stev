@@ -278,6 +278,15 @@ impl Display {
         self.slot_instrument(self.track_slot(track_idx)?)
     }
 
+    /// The plugin loaded for the track at `track_idx`, if any, to change.
+    pub(super) fn track_instrument_mut(
+        &mut self,
+        track_idx: usize,
+    ) -> Option<&mut TrackInstrument> {
+        let slot = self.track_slot(track_idx)?;
+        self.instruments.track_instruments.get_mut(slot)?.as_mut()
+    }
+
     /// The plugin loaded in engine slot `slot`, if any.
     fn slot_instrument(&self, slot: usize) -> Option<&TrackInstrument> {
         self.instruments.track_instruments.get(slot)?.as_ref()
@@ -486,12 +495,8 @@ impl Display {
     /// Arranger). Closing destroys the plugin's GUI rather than hiding it — see
     /// [`InstrumentEditor::close`].
     pub(super) fn toggle_instrument_editor(&mut self, track_idx: usize) {
-        if let Some(TrackInstrument { editor, .. }) = self
-            .track_slot(track_idx)
-            .and_then(|slot| self.instruments.track_instruments.get_mut(slot))
-            .and_then(Option::as_mut)
-        {
-            editor.toggle();
+        if let Some(loaded) = self.track_instrument_mut(track_idx) {
+            loaded.editor.toggle();
         }
     }
 

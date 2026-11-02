@@ -474,7 +474,10 @@ impl Display {
     /// The knobs' layout this frame — `None` while the panel is hidden or
     /// shows its hint instead ([`knob_hint`](Self::knob_hint)).
     pub(super) fn knob_rects(&self) -> Option<[KnobRects; KNOB_COUNT]> {
-        if self.knob_hint().is_some() {
+        if self
+            .knobs_track()
+            .is_some_and(|track_idx| !self.knobs_drive_plugin(track_idx))
+        {
             return None;
         }
         self.knob_panel_rect().map(knob_layout)
@@ -522,7 +525,10 @@ impl Display {
     /// `None` with no such knob.
     pub(super) fn knob_shown(&self, knob: usize) -> Option<KnobShown> {
         let track_idx = self.knobs_track()?;
-        let param = *self.tracks[track_idx].knob_params.get(knob)?;
+        if knob >= KNOB_COUNT {
+            return None;
+        }
+        let param = self.knob_param(knob);
         let value = if let Some(drag) = self.knob_panel.drag
             && (drag.track_idx, drag.knob) == (track_idx, knob)
             && drag.param.is_some()
@@ -675,6 +681,13 @@ impl Display {
     /// for the unsaved prompt.
     fn send_knob_value(&mut self, track_idx: usize, knob: usize, param: ParamId, value: f64) {
         self.set_knob_param_value(track_idx, param, value);
+        self.count_knob_turn(track_idx, knob, value);
+    }
+
+    /// Tells the sequencer the hand turned knob `knob` of `track_idx` to
+    /// `value` — from the panel or the plugin's own editor — for the
+    /// unsaved prompt (`400-parameter-knobs.md` decision 9).
+    pub(super) fn count_knob_turn(&self, track_idx: usize, knob: usize, value: f64) {
         self.input_event_tx
             .send(InputEvent::SetKnobValue {
                 track_idx,

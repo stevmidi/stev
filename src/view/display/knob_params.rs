@@ -12,7 +12,7 @@ use crate::core::input_event::InputEvent;
 use crate::core::plugin_host::editor::ParameterGesture;
 use crate::models::knobs::ParamId;
 #[cfg(target_os = "macos")]
-use crate::models::knobs::param_taken_by;
+use crate::models::knobs::{knob_holding, param_taken_by, param_taken_message};
 
 use super::Display;
 #[cfg(target_os = "macos")]
@@ -47,6 +47,13 @@ impl Display {
         }
     }
 
+    /// Whether the knobs can drive the track at `track_idx`'s plugin — the
+    /// test [`knob_panel_hint`](Self::knob_panel_hint) words, without
+    /// building its line.
+    pub(super) fn knobs_drive_plugin(&self, track_idx: usize) -> bool {
+        self.knob_plugin(track_idx).is_some()
+    }
+
     /// Parameter `param`'s name on the track at `track_idx`'s plugin.
     pub(super) fn knob_param_name(&self, track_idx: usize, param: ParamId) -> Option<&str> {
         let info = self.knob_plugin(track_idx)?.editor.parameter_info(param)?;
@@ -67,10 +74,7 @@ impl Display {
     /// Sets parameter `param` of the track at `track_idx`'s plugin to
     /// `value` — the sound and the plugin's editor follow.
     pub(super) fn set_knob_param_value(&mut self, track_idx: usize, param: ParamId, value: f64) {
-        let Some(slot) = self.track_slot(track_idx) else {
-            return;
-        };
-        if let Some(Some(loaded)) = self.instruments.track_instruments.get_mut(slot) {
+        if let Some(loaded) = self.track_instrument_mut(track_idx) {
             loaded.editor.set_parameter(param, value);
         }
     }
@@ -113,15 +117,8 @@ impl Display {
                 }
             }
             ParameterGesture::Move(param, value) => {
-                let lane = &self.tracks[track_idx];
-                if let Some(knob) = lane.knob_params.iter().position(|&p| p == Some(param)) {
-                    self.input_event_tx
-                        .send(InputEvent::SetKnobValue {
-                            track_idx,
-                            knob,
-                            value,
-                        })
-                        .ok();
+                if let Some(knob) = knob_holding(&self.tracks[track_idx].knob_params, param) {
+                    self.count_knob_turn(track_idx, knob, value);
                 }
             }
         }
@@ -134,10 +131,7 @@ impl Display {
     fn assign_armed_knob(&mut self, track_idx: usize, knob: usize, param: ParamId) {
         self.disarm_knob();
         if let Some(other) = param_taken_by(&self.tracks[track_idx].knob_params, knob, param) {
-            let name = self
-                .knob_param_name(track_idx, param)
-                .unwrap_or("That parameter");
-            let message = format!("{name} is on knob {} already", other + 1);
+            let message = param_taken_message(self.knob_param_name(track_idx, param), other);
             self.render.status = Some(StatusMessage::new(message));
             return;
         }
@@ -156,6 +150,11 @@ impl Display {
     /// No plugins off macOS: every track's knobs show the no-plugin hint.
     pub(super) fn knob_panel_hint(&self, _track_idx: usize) -> Option<String> {
         Some(NO_PLUGIN_HINT.to_owned())
+    }
+
+    /// No plugins off macOS: the knobs drive nothing.
+    pub(super) fn knobs_drive_plugin(&self, _track_idx: usize) -> bool {
+        false
     }
 
     /// No plugins off macOS, so no parameter names.

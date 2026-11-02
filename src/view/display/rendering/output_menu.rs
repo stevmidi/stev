@@ -28,15 +28,22 @@ const CHANNEL_CELL_LABELS: [&str; 16] = [
 /// Paints `job` on one line left-aligned at `left_center`, cut to
 /// `max_width` with an ellipsis — plugin names run longer than a chip or a
 /// menu row, and track names than the header's name row.
-pub(super) fn draw_truncated(
+pub(super) fn draw_truncated(painter: &Painter, left_center: Pos2, job: LayoutJob, max_width: f32) {
+    draw_truncated_at(painter, left_center, Align2::LEFT_CENTER, job, max_width);
+}
+
+/// [`draw_truncated`], placed by `align` at `anchor` instead — centred
+/// under a knob, say.
+pub(super) fn draw_truncated_at(
     painter: &Painter,
-    left_center: Pos2,
+    anchor: Pos2,
+    align: Align2,
     mut job: LayoutJob,
     max_width: f32,
 ) {
     job.wrap = TextWrapping::truncate_at_width(max_width);
     let galley = painter.layout_job(job);
-    let top_left = pos2(left_center.x, left_center.y - galley.size().y * 0.5);
+    let top_left = align.anchor_size(anchor, galley.size()).min;
     painter.galley(top_left, galley, Color32::PLACEHOLDER);
 }
 

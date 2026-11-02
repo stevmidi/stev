@@ -18,8 +18,6 @@ use std::marker::PhantomData;
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
 
-use crossbeam_channel::Sender;
-
 use vst3::Steinberg::Vst::{
     BusDirections_::{kInput, kOutput},
     MediaTypes_::{kAudio, kEvent},
@@ -37,7 +35,7 @@ use vst3::Steinberg::{
 use vst3::{ComPtr, Interface};
 
 use crate::core::plugin_host::buffers::AudioIoLayout;
-use crate::core::plugin_host::editor::{ParameterGesture, ParameterInfo as KnobParameter};
+use crate::core::plugin_host::editor::ParameterInfo as KnobParameter;
 
 use super::discovery::uid_from_hex;
 use super::events::MidiMap;
@@ -104,19 +102,17 @@ pub(super) struct MainThreadHalf {
 }
 
 /// Instantiates `plugin_id` from `bundle_path`, wires it up and activates it.
-/// `gestures` and `repaint` go to its component handler: the knob panel's
-/// copy of what the plugin's editor turns, and the UI wake.
+/// `repaint` goes to its component handler, the UI wake for what the
+/// plugin's editor turns.
 ///
 /// Runs on the eframe main thread. Any failure is returned as `Err` and leaves
 /// nothing loaded.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn load(
     bundle_path: &Path,
     plugin_id: &str,
     sample_rate: f64,
     max_frames: u32,
     saved_state: Option<&[u8]>,
-    gestures: Sender<ParameterGesture>,
     repaint: Arc<OnceLock<egui::Context>>,
 ) -> Result<LoadedPlugin, String> {
     let cid = uid_from_hex(plugin_id)
@@ -126,7 +122,7 @@ pub(super) fn load(
     // unloads as soon as it has read the metadata. See `module.rs`.
     let module = cached_module(bundle_path)?;
     let (param_tx, param_rx) = bridge();
-    let hosts = HostObjects::new(param_tx, gestures, repaint);
+    let hosts = HostObjects::new(param_tx, repaint);
 
     // SAFETY: every call below is on a live COM object obtained from this
     // module's factory, in the order the VST3 lifecycle requires: create,

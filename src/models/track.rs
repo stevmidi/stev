@@ -83,6 +83,15 @@ impl TrackOutput {
             TrackOutput::MidiOut { .. } => None,
         }
     }
+
+    /// Whether `other` plays through the same plugin — both the same bundle
+    /// and plugin id (state and name aside), or neither a plugin.
+    pub(crate) fn same_plugin_as(&self, other: &TrackOutput) -> bool {
+        match (self.instrument(), other.instrument()) {
+            (Some(a), Some(b)) => a.bundle_path == b.bundle_path && a.plugin_id == b.plugin_id,
+            (a, b) => a.is_none() && b.is_none(),
+        }
+    }
 }
 
 /// A track inserted at, or removed from, a position — how every positional
@@ -940,6 +949,23 @@ mod tests {
             0,
         );
         assert_eq!(track.midi_channel(), 0);
+    }
+
+    #[test]
+    fn same_plugin_ignores_state_and_name_but_not_identity() {
+        let plugin = |id: &str, state: u8| {
+            TrackOutput::Instrument(InstrumentRef {
+                bundle_path: "/x.vst3".into(),
+                plugin_id: id.into(),
+                display_name: id.into(),
+                state: vec![state],
+            })
+        };
+        let midi = |channel| TrackOutput::MidiOut { channel };
+        assert!(plugin("a", 1).same_plugin_as(&plugin("a", 2)));
+        assert!(!plugin("a", 1).same_plugin_as(&plugin("b", 1)));
+        assert!(!plugin("a", 1).same_plugin_as(&midi(0)));
+        assert!(midi(0).same_plugin_as(&midi(3)));
     }
 
     #[test]

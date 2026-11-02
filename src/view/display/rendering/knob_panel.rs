@@ -11,9 +11,12 @@
 
 use std::f32::consts::TAU;
 
+use egui::text::LayoutJob;
 use egui::{Align2, CornerRadius, FontId, Painter, Pos2, Rect, Shape, Stroke, pos2, vec2};
 
+use super::output_menu::draw_truncated_at;
 use super::*;
+use crate::models::knobs::KNOB_COUNT;
 use crate::view::display::knob_panel::{ARC_W, KnobRects, LABEL_FONT_SIZE, SWEEP, knob_angle};
 
 /// The stroke width of a selected knob's corner brackets: a hairline, one
@@ -32,6 +35,10 @@ const ARC_SEGMENTS_PER_TURN: f32 = 48.0;
 /// What an armed knob's label reads while it waits for a control turned in
 /// the plugin.
 const ARMED_LABEL: &str = "Turn…";
+/// An unassigned knob's dim label, by knob (counted from 1).
+const PLACEHOLDER_LABELS: [&str; KNOB_COUNT] = [
+    "Knob 1", "Knob 2", "Knob 3", "Knob 4", "Knob 5", "Knob 6", "Knob 7", "Knob 8",
+];
 /// Points kept clear at each end of a label, so names in neighbouring
 /// columns never touch.
 const LABEL_INSET_X: f32 = 2.0;
@@ -94,20 +101,21 @@ impl Display {
                 switches && shown.param.is_some() && self.render.clip_lane == ClipLane::Knob(knob);
             let name_color = toggle_icon_color(lane_up, hovered == Some(knob));
             let (text, color) = if armed == Some(knob) {
-                (ARMED_LABEL.to_owned(), theme::accent())
+                (ARMED_LABEL, theme::accent())
             } else if shown.param.is_some() {
-                let name = self.knob_name(knob).unwrap_or("?");
-                let max_w = rects.label.width() - 2.0 * LABEL_INSET_X;
-                (fit_label(painter, name, &font, max_w), name_color)
+                (self.knob_name(knob).unwrap_or("?"), name_color)
             } else {
-                (format!("Knob {}", knob + 1), name_color)
+                (PLACEHOLDER_LABELS[knob], name_color)
             };
-            painter.text(
+            // Cut short with an ellipsis when it doesn't fit
+            // (`400-parameter-knobs.md` decision 5 — the footer shows the
+            // full name on hover).
+            draw_truncated_at(
+                painter,
                 rects.label.center(),
                 Align2::CENTER_CENTER,
-                text,
-                font.clone(),
-                color,
+                LayoutJob::simple_singleline(text.to_owned(), font.clone(), color),
+                rects.label.width() - 2.0 * LABEL_INSET_X,
             );
             // The selected knob, while the panel has the keyboard: quiet
             // corner brackets around its dial, neutral, since the focus edge
@@ -152,27 +160,6 @@ fn frame_brackets(frame: Rect) -> [[Pos2; 3]; 4] {
             pos2(min.x, max.y - arm),
         ],
     ]
-}
-
-/// `text` as it fits in `max_w` points of `font`: whole when it does, else
-/// cut short with an ellipsis (`400-parameter-knobs.md` decision 5 — the
-/// footer shows the full name on hover).
-fn fit_label(painter: &Painter, text: &str, font: &FontId, max_w: f32) -> String {
-    let width = |s: String| {
-        painter
-            .layout_no_wrap(s, font.clone(), Color32::WHITE)
-            .size()
-            .x
-    };
-    if width(text.to_owned()) <= max_w {
-        return text.to_owned();
-    }
-    let chars: Vec<char> = text.chars().collect();
-    (1..chars.len())
-        .rev()
-        .map(|n| format!("{}…", chars[..n].iter().collect::<String>().trim_end()))
-        .find(|cut| width(cut.clone()) <= max_w)
-        .unwrap_or_else(|| "…".to_owned())
 }
 
 /// One knob's dial: the trough, the value arc in `accent` and the pointer;

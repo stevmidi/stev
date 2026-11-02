@@ -23,7 +23,7 @@ use std::ffi::c_void;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 
-use crossbeam_channel::Sender;
+use crossbeam_channel::{Receiver, Sender, unbounded};
 use log::debug;
 use vst3::Steinberg::Vst::{Event, String128};
 use vst3::Steinberg::Vst::{
@@ -120,9 +120,9 @@ impl IHostApplicationTrait for Vst3Host {
 pub(super) struct ComponentHandler {
     /// Carries parameter changes to the audio thread.
     pub(super) params: ParamSender,
-    /// The knob panel's copy of every change the plugin reports, drained by
-    /// the editor (`Vst3Editor::take_parameter_gestures`).
-    gestures: Sender<ParameterGesture>,
+    /// The knob panel's copy of every change the plugin reports: sent here,
+    /// drained by the editor ([`take_gestures`](Self::take_gestures)).
+    gestures: (Sender<ParameterGesture>, Receiver<ParameterGesture>),
     /// Set while the host sets a parameter on the edit controller itself
     /// (`Vst3Editor::set_parameter`): a plugin that reports
     /// `setParamNormalized` back through `performEdit` must not have Stev's
@@ -138,16 +138,12 @@ impl Class for ComponentHandler {
 }
 
 impl ComponentHandler {
-    /// Wraps the sending half of the parameter bridge and the knob panel's
-    /// gesture feed.
-    fn new(
-        params: ParamSender,
-        gestures: Sender<ParameterGesture>,
-        repaint: Arc<OnceLock<egui::Context>>,
-    ) -> Self {
+    /// Wraps the sending half of the parameter bridge, with a fresh gesture
+    /// feed for the knob panel.
+    fn new(params: ParamSender, repaint: Arc<OnceLock<egui::Context>>) -> Self {
         Self {
             params,
-            gestures,
+            gestures: unbounded(),
             host_edit: AtomicBool::new(false),
             repaint,
         }
@@ -159,7 +155,17 @@ impl ComponentHandler {
         if self.host_edit.load(Ordering::Relaxed) {
             return;
         }
-        self.gestures.send(gesture).ok();
+        self.gestures.0.send(gesture).ok();
+        self.wake();
+    }
+
+    /// Everything the plugin reported since the last call, oldest first.
+    pub(super) fn take_gestures(&self) -> Vec<ParameterGesture> {
+        self.gestures.1.try_iter().collect()
+    }
+
+    /// Wakes the reactive UI, so the knob panel follows the plugin at once.
+    fn wake(&self) {
         if let Some(ctx) = self.repaint.get() {
             ctx.request_repaint();
         }
@@ -191,9 +197,7 @@ impl IComponentHandlerTrait for ComponentHandler {
     /// and rebuilding it mid-playback. The UI is woken, so a knob whose
     /// parameter a preset moved follows at once.
     unsafe fn restartComponent(&self, _flags: int32) -> tresult {
-        if let Some(ctx) = self.repaint.get() {
-            ctx.request_repaint();
-        }
+        self.wake();
         kResultOk
     }
 }
@@ -326,16 +330,12 @@ pub(super) struct HostObjects {
 impl HostObjects {
     /// Creates a fresh set. One per plugin instance — they are cheap, and
     /// sharing them across instances would only add lifetime questions.
-    /// `params` is the sending half of that instance's parameter bridge,
-    /// `gestures` the knob panel's feed and `repaint` the app's UI wake.
-    pub(super) fn new(
-        params: ParamSender,
-        gestures: Sender<ParameterGesture>,
-        repaint: Arc<OnceLock<egui::Context>>,
-    ) -> Self {
+    /// `params` is the sending half of that instance's parameter bridge and
+    /// `repaint` the app's UI wake.
+    pub(super) fn new(params: ParamSender, repaint: Arc<OnceLock<egui::Context>>) -> Self {
         Self {
             host: ComWrapper::new(Vst3Host),
-            handler: ComWrapper::new(ComponentHandler::new(params, gestures, repaint)),
+            handler: ComWrapper::new(ComponentHandler::new(params, repaint)),
         }
     }
 }

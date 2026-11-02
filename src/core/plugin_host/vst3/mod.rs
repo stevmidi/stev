@@ -30,7 +30,6 @@ mod voice;
 
 use std::sync::Arc;
 
-use crossbeam_channel::unbounded;
 use log::info;
 
 use crate::core::audio::MAX_FRAMES;
@@ -49,14 +48,12 @@ pub(super) fn load(
     entry: &PluginCatalogEntry,
     state: Option<&[u8]>,
 ) -> Result<LoadedInstrument, String> {
-    let (gesture_tx, gesture_rx) = unbounded();
     let loaded = component::load(
         &entry.bundle_path,
         &entry.plugin_id,
         handle.sample_rate,
         MAX_FRAMES as u32,
         state,
-        gesture_tx,
         Arc::clone(&handle.repaint),
     )?;
     // Which controllers reach the plugin at all: a VST3 plugin hears a CC only
@@ -81,7 +78,7 @@ pub(super) fn load(
         handle.sample_rate,
     )
     .staggered_for(track);
-    let editor = Vst3Editor::new(loaded.main, &entry.name, track, parameters, gesture_rx);
+    let editor = Vst3Editor::new(loaded.main, &entry.name, track, parameters);
     Ok((Box::new(voice), Box::new(editor)))
 }
 

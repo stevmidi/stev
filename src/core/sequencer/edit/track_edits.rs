@@ -335,12 +335,7 @@ impl SetTrackOutputEdit {
         output: TrackOutput,
     ) -> Option<Self> {
         let current = sequencer.tracks().get(track_idx)?.output();
-        let same_plugin = match (current.instrument(), output.instrument()) {
-            (Some(old), Some(new)) => {
-                old.bundle_path == new.bundle_path && old.plugin_id == new.plugin_id
-            }
-            (old, new) => old.is_none() && new.is_none(),
-        };
+        let same_plugin = current.same_plugin_as(&output);
         (*current != output).then_some(SetTrackOutputEdit {
             track_idx,
             other: output,

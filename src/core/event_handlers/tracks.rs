@@ -12,7 +12,7 @@ use crate::{
         config::MAX_TRACKS,
         sequencer::{AddTrackEdit, RemoveTrackEdit, SequencerEdit, SetKnobParamEdit},
     },
-    models::knobs::ParamId,
+    models::knobs::{ParamId, param_taken_message},
     models::track::{InstrumentRef, TrackOutput, TrackShift},
     view::display::{TrackLane, TrackRoute},
 };
@@ -87,8 +87,7 @@ impl EventHandlers {
             Ok(edit) => {
                 self.record_edit(sequencer, undo_record, edit);
             }
-            Err(other) => self
-                .send_status_ui_event(format!("That parameter is on knob {} already", other + 1)),
+            Err(other) => self.send_status_ui_event(param_taken_message(None, other)),
         }
     }
 
