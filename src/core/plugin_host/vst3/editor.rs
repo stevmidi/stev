@@ -144,9 +144,6 @@ impl Vst3Editor {
         track: usize,
         parameters: HashMap<ParamId, ParameterInfo>,
     ) -> Self {
-        // What restoring the state made the plugin report is the load, not a
-        // preset the user picked.
-        plugin.host.handler.take_gestures();
         Self {
             plugin,
             title: editor_title(plugin_name, track),

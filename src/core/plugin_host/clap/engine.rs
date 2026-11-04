@@ -183,10 +183,6 @@ pub(super) fn load(
         .activate(|_, _| (), configuration)
         .map_err(|e| format!("activate '{name}': {e}"))?;
 
-    // A rescan from restoring the state above is the load, not a preset the
-    // user picked: `params` has read those values already.
-    instance.access_handler(|mt| mt.take_values_rescan());
-
     Ok(LoadedPlugin {
         instance,
         processor,

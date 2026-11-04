@@ -25,14 +25,11 @@ use clack_host::utils::ClapId;
 use log::debug;
 use rtrb::{Consumer, Producer, RingBuffer};
 
+use crate::core::plugin_host::PARAM_RING_CAPACITY;
 use crate::core::plugin_host::editor::{ParameterGesture, ParameterInfo};
 use crate::core::plugin_host::ui_wake::UiWake;
 use crate::core::plugin_host::voice::EVENT_CAPACITY;
 use crate::models::knobs::ParamId;
-
-/// Capacity of each ring. A plugin loading a preset can report a parameter per
-/// control at once, so this is sized for a whole panel's worth.
-const PARAM_RING_CAPACITY: usize = 4096;
 
 /// How far apart two normalized values must be to count as a move: a plain
 /// value mapped there and back lands a rounding error off.
@@ -201,8 +198,8 @@ impl ParamValues {
                 recorded,
             } => {
                 let value = self.table.get(&id)?.range.normalized(plain);
-                let before = self.values.insert(id, value);
-                let moved = before.is_none_or(|before| (before - value).abs() >= SAME_VALUE);
+                let before = self.values.insert(id, value)?;
+                let moved = (before - value).abs() >= SAME_VALUE;
                 (moved && recorded).then_some(ParameterGesture::Move(id, value, at_ns))
             }
             ParamReport::End(id) => self
@@ -213,26 +210,13 @@ impl ParamValues {
     }
 
     /// Reads every value again after the plugin said they changed (a rescan:
-    /// a preset it loaded), with `read` giving a parameter's plain value. Each
-    /// one that moved is reported as a move outside any turn, as VST3's
-    /// `performEdit` reports a preset.
-    fn reread(
-        &mut self,
-        read: impl Fn(ParamId) -> Option<f64>,
-        at_ns: u64,
-    ) -> Vec<ParameterGesture> {
-        let table = Arc::clone(&self.table);
-        table
-            .keys()
-            .filter_map(|&id| {
-                self.gesture(ParamReport::Value {
-                    id,
-                    plain: read(id)?,
-                    at_ns,
-                    recorded: true,
-                })
-            })
-            .collect()
+    /// a preset it loaded), with `read` giving a parameter's plain value.
+    fn reread(&mut self, read: impl Fn(ParamId) -> Option<f64>) {
+        for (&id, param) in self.table.iter() {
+            if let Some(plain) = read(id) {
+                self.values.insert(id, param.range.normalized(plain));
+            }
+        }
     }
 }
 
@@ -276,8 +260,8 @@ impl EditorParams {
     /// on its sample and keeps its own editor up to date, so this is all a
     /// played move needs.
     pub(super) fn follow(&mut self, id: ParamId, value: f64) {
-        if self.values.table.contains_key(&id) {
-            self.values.values.insert(id, value.clamp(0.0, 1.0));
+        if let Some(kept) = self.values.values.get_mut(&id) {
+            *kept = value.clamp(0.0, 1.0);
         }
     }
 
@@ -291,12 +275,8 @@ impl EditorParams {
     }
 
     /// See [`ParamValues::reread`].
-    pub(super) fn reread(
-        &mut self,
-        read: impl Fn(ParamId) -> Option<f64>,
-        at_ns: u64,
-    ) -> Vec<ParameterGesture> {
-        self.values.reread(read, at_ns)
+    pub(super) fn reread(&mut self, read: impl Fn(ParamId) -> Option<f64>) {
+        self.values.reread(read);
     }
 }
 
@@ -438,6 +418,8 @@ pub(super) fn bridge(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::OnceLock;
+
     use clack_host::events::Event;
     use clack_host::events::event_types::{
         MidiEvent, ParamGestureBeginEvent, ParamGestureEndEvent,
@@ -648,15 +630,19 @@ mod tests {
     }
 
     #[test]
-    fn a_rescan_reports_the_values_that_moved_and_no_others() {
+    fn a_rescan_moves_the_values_it_can_read() {
         let mut values = values();
-        let moved = values.reread(|id| Some(if id == 7 { 20_000.0 } else { 0.0 }), 3);
-        assert_eq!(moved, vec![ParameterGesture::Move(7, 1.0, 3)]);
+        values.reread(|id| (id == 7).then_some(20_000.0));
         assert_eq!(values.values[&7], 1.0);
+        assert_eq!(values.values[&9], 0.0);
+    }
+
+    fn test_wake() -> Arc<UiWake> {
+        Arc::new(UiWake::new(Arc::new(OnceLock::new())))
     }
 
     fn sides() -> (EditorParams, VoiceParams) {
-        bridge(values(), 48_000.0, Arc::new(UiWake::default()))
+        bridge(values(), 48_000.0, test_wake())
     }
 
     fn sent(events: &EventBuffer) -> Vec<(u32, f64)> {
@@ -729,7 +715,7 @@ mod tests {
 
     #[test]
     fn a_reported_block_wakes_the_ui_and_a_silent_one_does_not() {
-        let wake = Arc::new(UiWake::default());
+        let wake = test_wake();
         let (mut editor, mut voice) = bridge(values(), 48_000.0, Arc::clone(&wake));
 
         voice.start_block(1_000);

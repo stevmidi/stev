@@ -39,10 +39,10 @@ impl Display {
     /// Why the knobs can't drive the track at `track_idx` — the line the
     /// panel shows instead of them — or `None` when they can: no plugin, or
     /// one with no parameters.
-    pub(super) fn knob_panel_hint(&self, track_idx: usize) -> Option<String> {
+    pub(super) fn knob_panel_hint(&self, track_idx: usize) -> Option<&'static str> {
         match self.track_instrument(track_idx) {
-            None => Some(NO_PLUGIN_HINT.to_owned()),
-            Some(loaded) if !loaded.editor.has_parameters() => Some(NO_PARAMETERS_HINT.to_owned()),
+            None => Some(NO_PLUGIN_HINT),
+            Some(loaded) if !loaded.editor.has_parameters() => Some(NO_PARAMETERS_HINT),
             Some(_) => None,
         }
     }
@@ -194,8 +194,8 @@ impl Display {
 #[cfg(not(target_os = "macos"))]
 impl Display {
     /// No plugins off macOS: every track's knobs show the no-plugin hint.
-    pub(super) fn knob_panel_hint(&self, _track_idx: usize) -> Option<String> {
-        Some(NO_PLUGIN_HINT.to_owned())
+    pub(super) fn knob_panel_hint(&self, _track_idx: usize) -> Option<&'static str> {
+        Some(NO_PLUGIN_HINT)
     }
 
     /// No plugins off macOS: the knobs drive nothing.

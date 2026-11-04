@@ -43,7 +43,7 @@ pub(crate) enum ParameterGesture {
     /// [`Move`](Self::Move) does.
     Begin(ParamId, Option<f64>, u64),
     /// The parameter moved to a normalized value (VST3 `performEdit`, a CLAP
-    /// value event or rescan), at
+    /// value event), at
     /// the given [`monotonic_nanos`](crate::core::time::monotonic_nanos):
     /// a gesture is handled a frame later, and a take wants when it came.
     Move(ParamId, f64, u64),
@@ -52,8 +52,7 @@ pub(crate) enum ParameterGesture {
     /// The plugin's values changed as a whole (VST3 `restartComponent` with
     /// `kParamValuesChanged`, a CLAP `rescan` of its values): a preset it
     /// loaded. A change to the project in its own right, with or without a
-    /// knob on anything it moved. What a load restores isn't one: each format
-    /// leaves that out.
+    /// knob on anything it moved.
     ValuesChanged,
 }
 

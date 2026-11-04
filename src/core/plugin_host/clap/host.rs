@@ -316,8 +316,9 @@ impl<'a> HostStateImpl for ClapHostMainThread<'a> {
     /// The plugin says its state changed since the last save/load. We capture
     /// the state fresh from the editor on every project save (see
     /// [`ClapEditor::save_state`](crate::core::plugin_host::InstrumentEditor::save_state)),
-    /// so there is nothing to track here — just log it. A future "unsaved
-    /// plugin changes" indicator would hook in here.
+    /// so there is nothing to track here — just log it. The unsaved prompt
+    /// doesn't use it either: it fires for any edit, and a preset is heard
+    /// through `rescan` (`060-persistence.md` § Unsaved changes).
     fn mark_dirty(&self) {
         debug!("clap host: plugin marked its state dirty");
     }

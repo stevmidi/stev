@@ -7,20 +7,30 @@
 //! host only through `process` (`400-parameter-knobs.md`), so without this the
 //! knob wouldn't follow while nothing else repaints.
 
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::thread::Thread;
 
 /// See the module docs.
-#[derive(Default)]
 pub(crate) struct UiWake {
     /// Raised by [`request`](Self::request), lowered by [`take`](Self::take).
     wanted: AtomicBool,
     /// The `"plugin-host"` thread, to unpark.
     thread: OnceLock<Thread>,
+    /// The app's egui context, once it exists.
+    repaint: Arc<OnceLock<egui::Context>>,
 }
 
 impl UiWake {
+    /// A wake for the UI of `repaint`.
+    pub(super) fn new(repaint: Arc<OnceLock<egui::Context>>) -> Self {
+        Self {
+            wanted: AtomicBool::new(false),
+            thread: OnceLock::new(),
+            repaint,
+        }
+    }
+
     /// (`"plugin-host"` thread) Registers itself for `unpark`.
     pub(super) fn register_thread(&self) {
         let _ = self.thread.set(std::thread::current());
@@ -36,8 +46,17 @@ impl UiWake {
         }
     }
 
-    /// (`"plugin-host"` thread) Clears and returns whether a repaint was
-    /// asked for since the last call.
+    /// (`"plugin-host"` thread) Makes the repaint, if one was asked for.
+    pub(super) fn service(&self) {
+        if self.take()
+            && let Some(ctx) = self.repaint.get()
+        {
+            ctx.request_repaint();
+        }
+    }
+
+    /// Clears and returns whether a repaint was asked for since the last
+    /// call.
     pub(super) fn take(&self) -> bool {
         self.wanted.swap(false, Ordering::AcqRel)
     }
@@ -49,7 +68,7 @@ mod tests {
 
     #[test]
     fn a_request_is_taken_exactly_once() {
-        let wake = UiWake::default();
+        let wake = UiWake::new(Arc::new(OnceLock::new()));
         assert!(!wake.take());
         wake.request();
         wake.request();

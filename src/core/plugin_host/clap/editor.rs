@@ -27,7 +27,6 @@ use super::host::StevClapHost;
 use super::params::EditorParams;
 use crate::core::plugin_host::editor::{InstrumentEditor, ParameterGesture, ParameterInfo};
 use crate::core::plugin_host::window::{FALLBACK_SIZE, PluginWindow, editor_level, editor_title};
-use crate::core::time::monotonic_nanos;
 use crate::models::knobs::ParamId;
 
 /// GUI config for a plugin-owned floating window.
@@ -255,7 +254,7 @@ impl InstrumentEditor for ClapEditor {
         self.params.follow(id, value);
     }
 
-    /// What `process` reported, then what a rescan changed. The rescan is read
+    /// What `process` reported, then that a rescan changed the values. It is read
     /// here because the plugin can't be called back from inside its own
     /// `rescan`, and this runs whether or not the editor is open.
     fn take_parameter_gestures(&mut self) -> Vec<ParameterGesture> {
@@ -264,10 +263,8 @@ impl InstrumentEditor for ClapEditor {
             && let Some(params) = self.instance.access_shared_handler(|s| s.plugin_params())
         {
             let plugin = self.instance.plugin_handle();
-            gestures.extend(self.params.reread(
-                |id| params.get_value(&plugin, ClapId::from_raw(id)?),
-                monotonic_nanos(),
-            ));
+            self.params
+                .reread(|id| params.get_value(&plugin, ClapId::from_raw(id)?));
             gestures.push(ParameterGesture::ValuesChanged);
         }
         gestures

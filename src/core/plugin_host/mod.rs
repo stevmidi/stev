@@ -140,6 +140,11 @@ pub(crate) struct PluginAudioHandle {
     ui_wake: Arc<UiWake>,
 }
 
+/// Capacity of a voice's parameter rings, in both formats. A preset change in
+/// a large synth can push a parameter per control at once, so this is sized
+/// for a whole panel's worth rather than for incremental knob turns.
+const PARAM_RING_CAPACITY: usize = 4096;
+
 /// Builds the instrument mixer, hands it to the running audio engine as a
 /// second source, and spawns the `"plugin-host"` thread that reclaims removed
 /// plugin voices off the audio thread and the `"audio-export"` thread. Call once from `main`; `clip_midi_rx` /
@@ -192,21 +197,12 @@ pub(crate) fn start_plugin_host(
     );
     engine.add_source(Box::new(mixer) as Box<dyn AudioSource>)?;
 
-    let ui_wake = Arc::new(UiWake::default());
+    let ui_wake = Arc::new(UiWake::new(Arc::clone(&repaint)));
     let reclaim_shutdown = Arc::clone(&shutdown);
     let reclaim_wake = Arc::clone(&ui_wake);
-    let reclaim_repaint = Arc::clone(&repaint);
     thread::Builder::new()
         .name("plugin-host".to_string())
-        .spawn(move || {
-            reclaim_voices(
-                dead_rx,
-                voice_dropped_tx,
-                reclaim_shutdown,
-                reclaim_wake,
-                reclaim_repaint,
-            );
-        })
+        .spawn(move || reclaim_voices(dead_rx, voice_dropped_tx, reclaim_shutdown, reclaim_wake))
         .expect("failed to spawn plugin-host thread");
 
     let writer = ExportWriter::new(
@@ -241,7 +237,6 @@ fn reclaim_voices(
     voice_dropped_tx: Sender<usize>,
     shutdown: Arc<HostShutdown>,
     ui_wake: Arc<UiWake>,
-    repaint: Arc<OnceLock<egui::Context>>,
 ) {
     let drain = |rx: &mut Consumer<(usize, Box<dyn InstrumentVoice>)>| {
         while let Ok((track, voice)) = rx.pop() {
@@ -254,11 +249,7 @@ fn reclaim_voices(
     ui_wake.register_thread();
     while !shutdown.is_requested() {
         drain(&mut dead_rx);
-        if ui_wake.take()
-            && let Some(ctx) = repaint.get()
-        {
-            ctx.request_repaint();
-        }
+        ui_wake.service();
         thread::park_timeout(Duration::from_millis(100));
     }
     drain(&mut dead_rx);

@@ -548,9 +548,10 @@ impl Display {
 
     /// Puts a loaded plugin's `editor`, from `entry`, into engine slot
     /// `slot`. Whatever its editor reported while it loaded — a plugin may
-    /// answer its own state restore with `performEdit`s — is dropped first:
-    /// it is no hand turn, and counted as one it would make a project just
-    /// opened ask to be saved (`400-parameter-knobs.md` decision 9).
+    /// answer its own state restore with `performEdit`s, a `rescan` or a
+    /// `restartComponent` — is dropped first: it is no hand turn and no
+    /// preset, and counted as one it would make a project just opened ask to
+    /// be saved (`400-parameter-knobs.md` decision 9).
     fn install_editor(
         &mut self,
         slot: usize,

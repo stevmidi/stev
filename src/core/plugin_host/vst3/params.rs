@@ -41,10 +41,7 @@ use vst3::Steinberg::Vst::{
 use vst3::Steinberg::{int32, kInvalidArgument, kNotImplemented, kResultOk, tresult};
 use vst3::{Class, ComWrapper};
 
-/// Capacity of the UI→audio parameter ring. A preset change in a large synth
-/// can push a parameter per control at once, so this is sized for a whole
-/// panel's worth rather than for incremental knob turns.
-const PARAM_RING_CAPACITY: usize = 4096;
+use crate::core::plugin_host::PARAM_RING_CAPACITY;
 
 /// Distinct parameters that can change in a single block. A block is ~5 ms; a
 /// human moving controls cannot exceed this. A preset loaded from the plugin's

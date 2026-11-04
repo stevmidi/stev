@@ -521,7 +521,7 @@ impl Display {
 
     /// The line the panel shows instead of knobs, when the selected track's
     /// knobs can't drive anything (`400-parameter-knobs.md` decision 2).
-    pub(super) fn knob_hint(&self) -> Option<String> {
+    pub(super) fn knob_hint(&self) -> Option<&'static str> {
         self.knob_panel_hint(self.knobs_track()?)
     }
 
