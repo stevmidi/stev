@@ -270,7 +270,7 @@ pub(crate) enum SequencerCommand {
     /// `Delete` in a controller lane: clears `controller` over the event-tick
     /// span `start..end` of the lead clip — a wheel back to rest, a knob's parameter
     /// held at the value before the span (`ClearControllerSpanEdit`, undoable
-    /// — see `380-wheel-lane.md` decision 18, `390-knob-panel.md` decision
+    /// — see `380-wheel-lane.md` decision 18, `archive/390-knob-panel.md` decision
     /// 13). Nothing is recorded when the span would change nothing.
     ClearControllerSpan {
         /// The controller the lane shows.
@@ -481,6 +481,13 @@ pub(crate) enum SequencerCommand {
         value: f64,
         /// The `clock_tick` it landed on.
         tick: i32,
+    },
+
+    /// The plugin on `track_idx` loaded a preset: a change for the unsaved
+    /// prompt (`060-persistence.md` § Unsaved changes).
+    PluginStateChanged {
+        /// The plugin's track.
+        track_idx: usize,
     },
 
     // --- Arranger performance lane ---

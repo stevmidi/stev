@@ -12,8 +12,7 @@
 //!
 //! The knob panel reaches a plugin's parameters through it too
 //! (`400-parameter-knobs.md`): their names, their values, setting one, and
-//! the gestures the plugin's own editor reports. A format without that yet
-//! (CLAP, until phase 3) keeps the defaults: no parameters.
+//! the gestures the plugin's own editor reports.
 
 use std::time::Duration;
 
@@ -37,18 +36,25 @@ pub(crate) struct ParameterInfo {
 /// turning one of its controls, or a preset it loaded.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum ParameterGesture {
-    /// A turn began (VST3 `beginEdit`): what assigns an armed knob, and
+    /// A turn began (VST3 `beginEdit`, a CLAP gesture-begin event): what assigns an armed knob, and
     /// what holds a knob's parameter. Carries where the parameter stood,
     /// normalized, read as the turn began — by the time the gesture is
     /// handled the turn has moved it — and when, as a
     /// [`Move`](Self::Move) does.
     Begin(ParamId, Option<f64>, u64),
-    /// The parameter moved to a normalized value (VST3 `performEdit`), at
+    /// The parameter moved to a normalized value (VST3 `performEdit`, a CLAP
+    /// value event or rescan), at
     /// the given [`monotonic_nanos`](crate::core::time::monotonic_nanos):
     /// a gesture is handled a frame later, and a take wants when it came.
     Move(ParamId, f64, u64),
     /// A turn ended (VST3 `endEdit`).
     End(ParamId),
+    /// The plugin's values changed as a whole (VST3 `restartComponent` with
+    /// `kParamValuesChanged`, a CLAP `rescan` of its values): a preset it
+    /// loaded. A change to the project in its own right, with or without a
+    /// knob on anything it moved. What a load restores isn't one: each format
+    /// leaves that out.
+    ValuesChanged,
 }
 
 /// One hosted plugin's main-thread half. See the module docs.
@@ -101,36 +107,28 @@ pub(crate) trait InstrumentEditor {
     fn pump(&mut self, yield_to_main: bool) -> Option<Duration>;
 
     /// Whether the knobs can drive this plugin's parameters.
-    fn has_parameters(&self) -> bool {
-        false
-    }
+    fn has_parameters(&self) -> bool;
 
     /// Parameter `id`'s name and default, if the plugin has such a
     /// parameter.
-    fn parameter_info(&self, _id: ParamId) -> Option<&ParameterInfo> {
-        None
-    }
+    fn parameter_info(&self, id: ParamId) -> Option<&ParameterInfo>;
 
     /// Parameter `id`'s value in force, normalized to `0.0..=1.0` — what its
     /// knob shows, wherever it came from.
-    fn parameter_value(&self, _id: ParamId) -> Option<f64> {
-        None
-    }
+    fn parameter_value(&self, id: ParamId) -> Option<f64>;
 
     /// Sets parameter `id` to `value` (normalized), for the sound and for
     /// the plugin's editor alike — a knob turned in Stev. Never reported
     /// back as a [`ParameterGesture`].
-    fn set_parameter(&mut self, _id: ParamId, _value: f64) {}
+    fn set_parameter(&mut self, id: ParamId, value: f64);
 
     /// Tells the plugin's editor that playback moved parameter `id` to
     /// `value` (normalized): the processor heard it already, on its sample
     /// (`InstrumentVoice::queue_param`), so this only moves what the editor
     /// shows. Never reported back as a [`ParameterGesture`].
-    fn follow_parameter(&mut self, _id: ParamId, _value: f64) {}
+    fn follow_parameter(&mut self, id: ParamId, value: f64);
 
     /// The gestures the plugin's editor has reported since the last call,
     /// oldest first.
-    fn take_parameter_gestures(&mut self) -> Vec<ParameterGesture> {
-        Vec::new()
-    }
+    fn take_parameter_gestures(&mut self) -> Vec<ParameterGesture>;
 }

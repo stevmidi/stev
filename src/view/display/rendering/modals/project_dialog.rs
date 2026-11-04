@@ -519,8 +519,8 @@ impl Display {
         );
 
         let question = match name {
-            Some(name) => format!("Save the changes to {name}?"),
-            None => "Save this new project?".to_owned(),
+            Some(name) => format!("Save changes to \"{name}\" before closing?"),
+            None => "Save this new project before closing?".to_owned(),
         };
         let galley = painter.layout(
             question,

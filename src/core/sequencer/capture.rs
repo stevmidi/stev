@@ -2121,7 +2121,7 @@ mod tests {
 
     /// A knob turned with notes lands by the wheels' latch rule, and the
     /// other knobs' curves and the wheels are left as they were
-    /// (`390-knob-panel.md` decision 9).
+    /// (`archive/390-knob-panel.md` decision 9).
     #[test]
     fn a_knob_take_with_notes_lands_and_leaves_the_other_controllers() {
         let curve = vec![
@@ -2199,7 +2199,7 @@ mod tests {
 
     /// A new clip from a pass where a knob was turned mid-way plays the
     /// value the turn started from before it, so the loop's wrap doesn't
-    /// leave the knob where the pass ended (`390-knob-panel.md` decision 9).
+    /// leave the knob where the pass ended (`archive/390-knob-panel.md` decision 9).
     #[test]
     fn a_new_clip_holds_where_a_knob_stood_before_its_turn() {
         let bar = Meter::FOUR_FOUR.bar_ticks();
@@ -2378,9 +2378,10 @@ mod tests {
     }
 
     /// A move outside a turn is a preset the plugin loaded, not the hand:
-    /// it counts for the unsaved prompt elsewhere, but no take keeps it.
+    /// it counts for the unsaved prompt, since the knob moved, but no take
+    /// keeps it.
     #[test]
-    fn a_move_with_no_turn_is_not_captured() {
+    fn a_move_with_no_turn_is_counted_but_not_captured() {
         let mut seq = sequencer_with_knob(1920);
         seq.turn_knob(0, 0, 0.5, 100);
         assert!(seq.capture_clip.events().is_empty());

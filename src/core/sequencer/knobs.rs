@@ -73,6 +73,14 @@ impl Sequencer {
         }
     }
 
+    /// The plugin on the track at `track_idx` loaded a preset. Out-of-range
+    /// indices are ignored.
+    pub(crate) fn count_plugin_change(&mut self, track_idx: usize) {
+        if let Some(track) = self.tracks.get_mut(track_idx) {
+            track.count_plugin_change();
+        }
+    }
+
     /// Puts knob `knob`'s parameter at `value` in the capture buffer, at
     /// `tick`. The buffer is the selected track's, as the live keyboard is:
     /// another track's turn is left out, its parameter meaningless to the

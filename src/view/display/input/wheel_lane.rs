@@ -6,7 +6,7 @@
 //! `Esc` drops the span and then the focus. A note command takes the
 //! keyboard back to the notes and acts there
 //! ([`Action::leaves_wheel_lane`]). See `380-wheel-lane.md` decisions 14–19
-//! and `390-knob-panel.md` decisions 11 and 13.
+//! and `archive/390-knob-panel.md` decisions 11 and 13.
 
 use egui::Key;
 

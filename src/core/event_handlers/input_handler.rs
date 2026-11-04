@@ -343,6 +343,12 @@ impl EventHandlers {
                 });
             }
 
+            InputEvent::PluginStateChanged { track_idx } => {
+                self.send_sequencer(SequencerCommand::PluginStateChanged {
+                    track_idx: *track_idx,
+                });
+            }
+
             InputEvent::ConfirmMidiPorts { in_port, out_port } => {
                 update_settings("MIDI ports", |settings| {
                     settings.midi_in_port = (!in_port.is_empty()).then(|| in_port.clone());

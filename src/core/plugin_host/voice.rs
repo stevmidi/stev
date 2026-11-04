@@ -82,9 +82,8 @@ pub(crate) trait InstrumentVoice: Send {
     /// Queues a move of parameter `id` to `value` (normalized) at sample
     /// `time` within the next processed block — a clip's recorded knob turn
     /// (`400-parameter-knobs.md`). Must clear [`VoiceMix::sleeping`], as
-    /// [`queue_midi`](Self::queue_midi) does. The default drops it: a format
-    /// with no parameters yet (CLAP, until phase 3).
-    fn queue_param(&mut self, _id: ParamId, _value: f64, _time: u32) {}
+    /// [`queue_midi`](Self::queue_midi) does.
+    fn queue_param(&mut self, id: ParamId, value: f64, time: u32);
 
     /// Runs one process block of `frames` samples, leaving the audio where
     /// [`sample`](Self::sample) can read it. `steady` is the absolute index of
@@ -107,8 +106,8 @@ pub(crate) trait InstrumentVoice: Send {
     fn clear_events(&mut self);
 
     /// Clears [`VoiceMix::sleeping`] if the plugin has work waiting that no
-    /// MIDI event will deliver: a CLAP `request_process`, VST3 UI parameter
-    /// changes still in the ring, or a VST3 voice's idle heartbeat. Called once
+    /// MIDI event will deliver: a CLAP `request_process` or `request_flush`, UI
+    /// parameter changes still in the ring, or a VST3 voice's idle heartbeat. Called once
     /// per block of `frames`, before the render pass decides which voices to
     /// call into. The default does nothing.
     fn wake_on_request(&mut self, _frames: usize) {}

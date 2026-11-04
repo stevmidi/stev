@@ -19,9 +19,11 @@ use crate::core::midi::message::Midi3;
 use crate::core::plugin_host::buffers::{AudioIoLayout, PortBuffers, channel_total};
 use crate::core::plugin_host::transport::BlockTransport;
 use crate::core::plugin_host::voice::{EVENT_CAPACITY, InstrumentVoice, VoiceMix};
-use crate::core::time::ticks_to_beats_f64;
+use crate::core::time::{monotonic_nanos, ticks_to_beats_f64};
+use crate::models::knobs::ParamId;
 
 use super::host::StevClapHost;
+use super::params::VoiceParams;
 
 /// One hosted instrument: its audio processor plus the reusable CLAP event /
 /// audio-port buffers. MIDI is pushed in by the mixer before each block.
@@ -43,6 +45,8 @@ pub(crate) struct ClapVoice {
     /// until the next event or variation in audio input" — plus the mixer's
     /// per-block render flag and gain ramp. See [`VoiceMix`].
     mix: VoiceMix,
+    /// The voice's end of the parameter bridge. See [`params`](super::params).
+    params: VoiceParams,
 }
 
 impl ClapVoice {
@@ -52,6 +56,7 @@ impl ClapVoice {
         processor: StoppedPluginAudioProcessor<StevClapHost>,
         max_frames: usize,
         io: &AudioIoLayout,
+        params: VoiceParams,
     ) -> Self {
         Self {
             processor: processor.into(),
@@ -60,6 +65,7 @@ impl ClapVoice {
             out_ports: AudioPorts::with_capacity(channel_total(&io.outputs), io.outputs.len()),
             bufs: PortBuffers::new(io, max_frames),
             mix: VoiceMix::default(),
+            params,
         }
     }
 }
@@ -70,6 +76,15 @@ impl InstrumentVoice for ClapVoice {
     fn queue_midi(&mut self, bytes: Midi3, time: u32) {
         if let Some(event) = midi_bytes_to_clap_event(bytes, time) {
             self.in_events.push(&event);
+            self.mix.sleeping = false;
+        }
+    }
+
+    /// Queues a move of parameter `id` to `value` (normalized) at sample
+    /// `time`: a parameter value event in the plugin's plain value. Wakes the
+    /// voice as [`queue_midi`](Self::queue_midi) does.
+    fn queue_param(&mut self, id: ParamId, value: f64, time: u32) {
+        if self.params.queue(&mut self.in_events, id, value, time) {
             self.mix.sleeping = false;
         }
     }
@@ -90,8 +105,10 @@ impl InstrumentVoice for ClapVoice {
             Err(_) => return false,
         };
 
+        self.params.drain_moves(&mut self.in_events);
+        self.params.start_block(monotonic_nanos());
         let input_events = InputEvents::from_buffer(&self.in_events);
-        let mut output_events = OutputEvents::void();
+        let mut output_events = OutputEvents::from_buffer(&mut self.params.feed);
 
         // The silent input channels stay at their full `max_frames` length; the
         // process call clamps to the shorter (output) frame count.
@@ -124,6 +141,7 @@ impl InstrumentVoice for ClapVoice {
             Some(steady),
             Some(&transport),
         );
+        self.params.finish_block();
 
         match status {
             Ok(status) => {
@@ -148,12 +166,14 @@ impl InstrumentVoice for ClapVoice {
         self.bufs.main_sample(channel, frame)
     }
 
-    /// Wakes the voice when the plugin called `request_process` — e.g. to
-    /// apply a knob turned in its own editor while it was asleep.
+    /// Wakes the voice when the plugin called `request_process` or
+    /// `request_flush` — e.g. to apply a knob turned in its own editor while
+    /// it was asleep — or when a knob turned in Stev waits in the ring.
     fn wake_on_request(&mut self, _frames: usize) {
         if self
             .processor
             .access_shared_handler(|shared| shared.take_process_request())
+            || self.params.moves_waiting()
         {
             self.mix.sleeping = false;
         }

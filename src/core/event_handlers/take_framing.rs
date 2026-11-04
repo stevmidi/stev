@@ -116,6 +116,7 @@ impl EventHandlers {
             | SequencerCommand::HoldKnob { .. }
             | SequencerCommand::ReleaseKnob { .. }
             | SequencerCommand::SetKnobValue { .. }
+            | SequencerCommand::PluginStateChanged { .. }
             // A running export's end, which the session can't hold up.
             | SequencerCommand::AudioExportWritten(_)
             // A save, which writes the target as it was before the session

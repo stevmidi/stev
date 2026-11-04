@@ -30,7 +30,7 @@ use vst3::Steinberg::Vst::{Event, String128};
 use vst3::Steinberg::Vst::{
     IAttributeList_iid, IComponentHandler, IComponentHandlerTrait, IEditController,
     IEditControllerTrait, IEventList, IEventListTrait, IHostApplication, IHostApplicationTrait,
-    IMessage_iid, ParamID, ParamValue,
+    IMessage_iid, ParamID, ParamValue, RestartFlags_,
 };
 use vst3::Steinberg::{
     FUnknown, TUID, int32, kInvalidArgument, kNoInterface, kNotImplemented, kResultOk, tresult,
@@ -234,9 +234,14 @@ impl IComponentHandlerTrait for ComponentHandler {
     /// its values did (a preset), or it wants its state reloaded. Accepted
     /// and otherwise ignored: acting on it would mean tearing the voice down
     /// and rebuilding it mid-playback. The UI is woken, so a knob whose
-    /// parameter a preset moved follows at once.
-    unsafe fn restartComponent(&self, _flags: int32) -> tresult {
-        self.wake();
+    /// parameter a preset moved follows at once, and new values are reported:
+    /// a preset is a change to the project.
+    unsafe fn restartComponent(&self, flags: int32) -> tresult {
+        if flags & RestartFlags_::kParamValuesChanged != 0 {
+            self.report(ParameterGesture::ValuesChanged);
+        } else {
+            self.wake();
+        }
         kResultOk
     }
 }

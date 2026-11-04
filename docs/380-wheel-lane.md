@@ -6,6 +6,10 @@
 
 Before wheel capture, recorded bends and mod moves only rode in with notes, so leaving them invisible was a fair trade (`090`, decided 2026-10-14: "if wheel data is ever shown, it is in an automation lane"). `370` changed that. A take now *replaces* a wheel's data from its first move to the window's end and writes the old value back there, and a mod wheel parked off its rest overwrites the clip's mod curve on every take into it. Those rules are deliberate, but with the data invisible the only checks are the ear and ⌘Z, so a take's effect can't be predicted or confirmed. This lane is the one view the 10-14 decision left room for.
 
+## The knob lanes
+
+Kept from `390` (`archive/390-knob-panel.md`, decisions 11–13) and `400` (decisions 12 and 14). Each knob with a parameter has a lane of its own here, picked only by a press on the knob: the gutter keeps `VEL`, `PB` and `MW`, `W` cycles those three, and from a knob's lane it goes to `VEL`. A turn never switches the lane. A knob's lane draws like the mod wheel, 0 at the bottom and 1 at the top, folded per pixel column, with two differences, both because a parameter has no rest. Its line starts at its first move where nothing is in force before the lane: a line from 0 would show a value it never had. And `Delete` over a span holds the value in force before the span instead of going back to rest, and writes the value at the span's end back there, so the curve after it is unchanged; `⌘A` then `Delete` clears the parameter from the clip, and it then stays where it was when playback reaches it. A stepped parameter holds each value to its next move. Moves no knob of the track holds have no lane and stay in the clip.
+
 ## Decisions (2026-10-30)
 
 1. **Pitch bend and the mod wheel only.** The two wheels the buffer records (then `Wheel` in `core/midi/message.rs`; since `390` phase 2 the `Controller` type, pitch bend or a CC by number). Other CCs wait for the CC-mapping follow-up `370` names, and would join as more lanes in the same switch.

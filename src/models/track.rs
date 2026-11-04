@@ -245,6 +245,10 @@ pub(crate) struct Track {
     /// never saved. `None` until the hand turns it after a load, so a knob
     /// moved only by playback or the plugin itself never asks to be saved.
     knobs_by_hand: [Option<f64>; KNOB_COUNT],
+    /// How many presets the plugin has loaded: what the unsaved check
+    /// compares, since a plugin's state blob can't be
+    /// (`060-persistence.md` § Unsaved changes). Never saved.
+    plugin_changes: u32,
 }
 
 impl Track {
@@ -269,6 +273,7 @@ impl Track {
             knobs: UNASSIGNED_KNOBS,
             held_knobs: [false; KNOB_COUNT],
             knobs_by_hand: [None; KNOB_COUNT],
+            plugin_changes: 0,
         }
     }
 
@@ -421,6 +426,16 @@ impl Track {
         };
         *slot = Some(value);
         true
+    }
+
+    /// How many presets the plugin has loaded — see the field.
+    pub(crate) fn plugin_changes(&self) -> u32 {
+        self.plugin_changes
+    }
+
+    /// The plugin loaded a preset.
+    pub(crate) fn count_plugin_change(&mut self) {
+        self.plugin_changes = self.plugin_changes.wrapping_add(1);
     }
 
     /// Chases `target` — the values in force where playback lands — on the

@@ -393,7 +393,7 @@ impl Display {
     /// The column the knob panel takes left of the clip view: the arranger's
     /// track-header column, so the panel lines up under the headers
     /// and the clip view's keys start where the arranger's grid does
-    /// (`390-knob-panel.md` decision 3). The panel's fill stops
+    /// (`archive/390-knob-panel.md` decision 3). The panel's fill stops
     /// `TRACK_COLUMN_GRID_GAP_X` short of it, as the header column's does.
     const KNOB_COLUMN_W: f32 = Self::TRACK_COLUMN_W;
     /// Right content padding, pixels.

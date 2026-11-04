@@ -2,6 +2,7 @@
 //! tests.
 
 use crate::core::midi::message::Midi3;
+use crate::models::knobs::ParamId;
 
 use super::transport::BlockTransport;
 use super::voice::{InstrumentVoice, VoiceMix};
@@ -27,6 +28,8 @@ impl ConstantVoice {
 
 impl InstrumentVoice for ConstantVoice {
     fn queue_midi(&mut self, _bytes: Midi3, _time: u32) {}
+
+    fn queue_param(&mut self, _id: ParamId, _value: f64, _time: u32) {}
 
     fn render_block(&mut self, _frames: usize, _steady: u64, _t: &BlockTransport) -> bool {
         true

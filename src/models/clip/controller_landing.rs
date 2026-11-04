@@ -20,7 +20,7 @@
 //! A lane's `Delete` is built on the same rule: a span of a wheel returned
 //! to rest, a span of a parameter held at the value before it
 //! ([`clear_controller_span`](Clip::clear_controller_span),
-//! `380-wheel-lane.md` decision 18, `390-knob-panel.md` decision 13).
+//! `380-wheel-lane.md` decision 18, `archive/390-knob-panel.md` decision 13).
 
 use std::ops::Range;
 
@@ -207,7 +207,7 @@ impl Clip {
     }
 
     /// Clears `controller` over event ticks `start..end` — a lane's `Delete`
-    /// (`380-wheel-lane.md` decision 18, `390-knob-panel.md` decision 13).
+    /// (`380-wheel-lane.md` decision 18, `archive/390-knob-panel.md` decision 13).
     /// Every move of `controller` inside the span goes, muted ones too. A
     /// wheel is returned to rest there, the same result as riding it at rest
     /// across the span under the landing rule: a rest move goes in at `start`

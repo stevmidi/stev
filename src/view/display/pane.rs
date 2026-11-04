@@ -114,7 +114,7 @@ pub(super) struct PaneRects {
     /// The clip view's rect, when shown.
     pub(super) clip: Option<Rect>,
     /// The knob panel's column, left of the clip view and as tall: shown
-    /// whenever the clip view is (`390-knob-panel.md` decision 3). Not a
+    /// whenever the clip view is (`archive/390-knob-panel.md` decision 3). Not a
     /// pane, but a focus of its own, as the track-header column is
     /// (`KeyFocus::KnobPanel`).
     pub(super) knobs: Option<Rect>,

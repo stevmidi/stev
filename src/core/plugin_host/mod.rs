@@ -61,6 +61,7 @@ mod shutdown;
 #[cfg(test)]
 mod test_voice;
 mod transport;
+mod ui_wake;
 mod voice;
 mod vst3;
 mod window;
@@ -78,6 +79,7 @@ use export::export_tap;
 use export_writer::{ExportWriter, start_export_writer};
 use mixer::InstrumentMixer;
 use transport::TransportState;
+use ui_wake::UiWake;
 use voice::{InstrumentVoice, note_reset_messages};
 
 use crate::core::audio::{AudioSource, EngineHandle};
@@ -133,6 +135,9 @@ pub(crate) struct PluginAudioHandle {
     /// Shared egui context slot, for a plugin to wake the reactive UI (CLAP's
     /// main-thread callback requests).
     repaint: Arc<OnceLock<egui::Context>>,
+    /// Wakes the same UI from the audio thread, through the `"plugin-host"`
+    /// thread.
+    ui_wake: Arc<UiWake>,
 }
 
 /// Builds the instrument mixer, hands it to the running audio engine as a
@@ -187,10 +192,21 @@ pub(crate) fn start_plugin_host(
     );
     engine.add_source(Box::new(mixer) as Box<dyn AudioSource>)?;
 
+    let ui_wake = Arc::new(UiWake::default());
     let reclaim_shutdown = Arc::clone(&shutdown);
+    let reclaim_wake = Arc::clone(&ui_wake);
+    let reclaim_repaint = Arc::clone(&repaint);
     thread::Builder::new()
         .name("plugin-host".to_string())
-        .spawn(move || reclaim_voices(dead_rx, voice_dropped_tx, reclaim_shutdown))
+        .spawn(move || {
+            reclaim_voices(
+                dead_rx,
+                voice_dropped_tx,
+                reclaim_shutdown,
+                reclaim_wake,
+                reclaim_repaint,
+            );
+        })
         .expect("failed to spawn plugin-host thread");
 
     let writer = ExportWriter::new(
@@ -210,6 +226,7 @@ pub(crate) fn start_plugin_host(
         shutdown,
         sample_rate: engine.sample_rate,
         repaint,
+        ui_wake,
     })
 }
 
@@ -217,11 +234,14 @@ pub(crate) fn start_plugin_host(
 /// teardown must not run in the audio callback) and acks the track back to the
 /// UI so it can drop the matching `!Send` instance. Voices still loaded at app
 /// exit are deliberately left to leak — dropping them races the plugin bundles'
-/// static destructors that `exit()` runs (see [`HostShutdown`]).
+/// static destructors that `exit()` runs (see [`HostShutdown`]). It also
+/// makes the UI wakes the audio thread can't ([`UiWake`]).
 fn reclaim_voices(
     mut dead_rx: Consumer<(usize, Box<dyn InstrumentVoice>)>,
     voice_dropped_tx: Sender<usize>,
     shutdown: Arc<HostShutdown>,
+    ui_wake: Arc<UiWake>,
+    repaint: Arc<OnceLock<egui::Context>>,
 ) {
     let drain = |rx: &mut Consumer<(usize, Box<dyn InstrumentVoice>)>| {
         while let Ok((track, voice)) = rx.pop() {
@@ -231,8 +251,14 @@ fn reclaim_voices(
     };
 
     shutdown.register_thread();
+    ui_wake.register_thread();
     while !shutdown.is_requested() {
         drain(&mut dead_rx);
+        if ui_wake.take()
+            && let Some(ctx) = repaint.get()
+        {
+            ctx.request_repaint();
+        }
         thread::park_timeout(Duration::from_millis(100));
     }
     drain(&mut dead_rx);

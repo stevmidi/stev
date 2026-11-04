@@ -6,6 +6,7 @@ use std::path::Path;
 use std::sync::{Arc, OnceLock};
 
 use clack_extensions::audio_ports::{AudioPortInfoBuffer, PluginAudioPorts};
+use clack_extensions::params::{ParamInfoBuffer, ParamInfoFlags};
 use clack_host::prelude::*;
 use log::{debug, warn};
 
@@ -14,6 +15,7 @@ use crate::core::plugin_host::catalog::available_bundles_hint;
 
 use super::discovery::{cached_entry, descriptor_name};
 use super::host::{ClapHostMainThread, ClapHostShared, StevClapHost};
+use super::params::{ClapParam, ParamValues};
 
 /// Queries a freshly instantiated plugin's audio-port layout via the
 /// `audio-ports` extension (both calls are `[main-thread]`). A plugin without
@@ -46,6 +48,34 @@ fn port_channel_counts(
     out
 }
 
+/// Reads every parameter and where it stands (both calls are `[main-thread]`).
+/// A plugin without the `params` extension has none, and the knobs can't drive
+/// it.
+fn read_parameters(instance: &mut PluginInstance<StevClapHost>) -> ParamValues {
+    let Some(params) = instance.access_shared_handler(|s| s.plugin_params()) else {
+        return ParamValues::default();
+    };
+    let plugin = instance.plugin_handle();
+    let mut buffer = ParamInfoBuffer::new();
+    let mut read = Vec::new();
+    for index in 0..params.count(&plugin) {
+        if let Some(info) = params.get_info(&plugin, index, &mut buffer) {
+            let plain = params
+                .get_value(&plugin, info.id)
+                .unwrap_or(info.default_value);
+            let param = ClapParam::new(
+                String::from_utf8_lossy(info.name).into_owned(),
+                info.min_value,
+                info.max_value,
+                info.default_value,
+                info.flags.contains(ParamInfoFlags::IS_STEPPED),
+            );
+            read.push((info.id.get(), param, plain));
+        }
+    }
+    ParamValues::new(read)
+}
+
 /// A loaded, activated CLAP instrument, ready to be handed to the audio thread.
 pub(super) struct LoadedPlugin {
     /// Session-lived. `PluginInstance` is `!Send` and must stay on the eframe
@@ -58,6 +88,8 @@ pub(super) struct LoadedPlugin {
     /// The plugin's declared audio-port layout, for [`ClapVoice`](super::ClapVoice)'s
     /// buffer allocation.
     pub(super) io: AudioIoLayout,
+    /// The plugin's parameters and where they stand, after any restored state.
+    pub(super) params: ParamValues,
     /// Display name, for the editor window title.
     pub(super) name: String,
 }
@@ -140,6 +172,7 @@ pub(super) fn load(
     // change its ports while deactivated, so this is the stable view the voice's
     // buffers must match.
     let io = query_audio_io(&mut instance);
+    let params = read_parameters(&mut instance);
 
     let configuration = PluginAudioConfiguration {
         sample_rate,
@@ -150,10 +183,15 @@ pub(super) fn load(
         .activate(|_, _| (), configuration)
         .map_err(|e| format!("activate '{name}': {e}"))?;
 
+    // A rescan from restoring the state above is the load, not a preset the
+    // user picked: `params` has read those values already.
+    instance.access_handler(|mt| mt.take_values_rescan());
+
     Ok(LoadedPlugin {
         instance,
         processor,
         io,
+        params,
         name,
     })
 }

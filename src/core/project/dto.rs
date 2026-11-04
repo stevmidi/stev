@@ -185,6 +185,11 @@ pub(crate) struct TrackData {
     /// decision 13).
     #[serde(default, skip_serializing_if = "no_knob_assigned")]
     pub(crate) knobs: Vec<KnobData>,
+    /// How many presets the plugin has loaded (`Track::plugin_changes`) —
+    /// what [`ProjectData::fingerprint`] hashes in place of the state blob.
+    /// Never written.
+    #[serde(skip)]
+    pub(crate) plugin_changes: u32,
     /// The track's clips.
     pub(crate) clips: Vec<ClipData>,
 }
@@ -308,6 +313,7 @@ impl Default for ProjectData {
                     color: Some(i),
                     name: None,
                     knobs: Vec::new(),
+                    plugin_changes: 0,
                     clips: Vec::new(),
                 })
                 .collect(),
@@ -326,7 +332,8 @@ impl ProjectData {
     /// recompresses it), so they would make such a project always look
     /// changed. Where the hand left each knob counts though it is never
     /// written (`KnobData::by_hand`): a hand turn changes the plugin's state,
-    /// which is saved, while playback's never asks to save. Takes the
+    /// which is saved, while playback's never asks to save. So does each
+    /// preset the plugin says it loaded (`TrackData::plugin_changes`). Takes the
     /// snapshot by value — every caller is done with it —
     /// and streams the JSON into the hasher, so nothing is copied or buffered.
     /// Stable within one run only — never persisted.
@@ -344,6 +351,9 @@ impl ProjectData {
             hasher
                 .0
                 .write_u64(knob.by_hand.map_or(u64::MAX, f64::to_bits));
+        }
+        for track in &self.tracks {
+            hasher.0.write_u32(track.plugin_changes);
         }
         hasher.0.finish()
     }
@@ -430,6 +440,7 @@ impl ProjectData {
                             by_hand,
                         })
                         .collect(),
+                    plugin_changes: track.plugin_changes(),
                     clips,
                 }
             })
@@ -849,6 +860,29 @@ mod tests {
         }
     }
 
+    /// A preset picked in the plugin is a change on its own, knob or no knob,
+    /// and saving settles it: the blob can't say, so the plugin's word counts.
+    #[test]
+    fn a_preset_the_plugin_loaded_changes_the_fingerprint_and_is_not_written() {
+        let mut sequencer = test_sequencer();
+        let saved = ProjectData::from_sequencer(&sequencer).fingerprint();
+        sequencer.count_plugin_change(0);
+        let changed = ProjectData::from_sequencer(&sequencer);
+        let json = serde_json::to_string(&changed).unwrap();
+        assert!(!json.contains("plugin_changes"), "{json}");
+        let changed = changed.fingerprint();
+        assert_ne!(changed, saved);
+        assert_eq!(
+            ProjectData::from_sequencer(&sequencer).fingerprint(),
+            changed
+        );
+        sequencer.count_plugin_change(0);
+        assert_ne!(
+            ProjectData::from_sequencer(&sequencer).fingerprint(),
+            changed
+        );
+    }
+
     /// A hand turn — Stev's knob or the parameter's control in the plugin's
     /// editor — is a change for the unsaved prompt, though only the plugin's
     /// state saves the value (`400-parameter-knobs.md` decision 9).
@@ -1064,6 +1098,7 @@ mod tests {
             color: None,
             name: None,
             knobs: Vec::new(),
+            plugin_changes: 0,
             clips: Vec::new(),
         };
         let json = serde_json::to_string(&track).unwrap();

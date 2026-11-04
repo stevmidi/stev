@@ -471,7 +471,7 @@ pub(crate) enum InputEvent {
         /// Identifies the drag so the undo stack coalesces its nudges into one step.
         drag_id: u64,
     },
-    /// A click selecting a knob (`390-knob-panel.md` decision 14) or a press
+    /// A click selecting a knob (`archive/390-knob-panel.md` decision 14) or a press
     /// in a controller lane (`380-wheel-lane.md` decision 16) drops the note
     /// selection, so the `Delete` that follows can't be mistaken for one on
     /// the notes. Maps 1:1 to
@@ -846,6 +846,12 @@ pub(crate) enum InputEvent {
         value: f64,
         /// The `clock_tick` it landed on.
         tick: i32,
+    },
+    /// The plugin on `track_idx` loaded a preset (`060-persistence.md`
+    /// § Unsaved changes). Not undoable.
+    PluginStateChanged {
+        /// The plugin's track.
+        track_idx: usize,
     },
     /// ⌘/Ctrl+C (optionally with Shift). egui-winit turns the copy chord into
     /// `egui::Event::Copy` regardless of Shift and swallows the raw `C` key

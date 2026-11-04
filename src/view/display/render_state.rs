@@ -36,7 +36,7 @@ pub(super) struct RenderState {
     /// The lane the piano roll shows under its notes. View state: not saved,
     /// kept when the lead clip changes, switched only by the gutter labels,
     /// the knob labels and `Action::CycleClipLane` (`380-wheel-lane.md`,
-    /// `390-knob-panel.md` decision 11).
+    /// `archive/390-knob-panel.md` decision 11).
     pub(super) clip_lane: ClipLane,
     /// Arranger horizontal scroll offset, in pixels. Written only by the
     /// arranger's scroll code (`sync_arranger_scroll`, `scroll_arranger_by`,

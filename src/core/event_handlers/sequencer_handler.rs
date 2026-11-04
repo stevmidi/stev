@@ -670,6 +670,10 @@ impl EventHandlers {
                 sequencer.turn_knob(*track_idx, *knob, *value, *tick);
             }
 
+            SequencerCommand::PluginStateChanged { track_idx } => {
+                sequencer.count_plugin_change(*track_idx);
+            }
+
             SequencerCommand::FitTempo => {
                 self.fit_first_clip_tempo_workflow(sequencer, undo_record);
             }

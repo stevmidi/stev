@@ -1,5 +1,5 @@
 //! The knob panel (`400-parameter-knobs.md`, the panel itself from
-//! `390-knob-panel.md`): eight virtual knobs in a column of their own left
+//! `archive/390-knob-panel.md`): eight virtual knobs in a column of their own left
 //! of the clip view, under the track headers, each driving one parameter of
 //! the selected track's plugin. Mouse only — a turn never takes the
 //! keyboard. A vertical drag on a dial turns it (⇧ for fine steps) once it
@@ -24,7 +24,7 @@
 //! the piano roll (`ClipLane::Knob`; `Display::select_knob`,
 //! `input/knob_focus.rs`). See `400-parameter-knobs.md` decisions 3 and 14
 //! for the whole grammar. A track whose knobs
-//! can't drive anything (no plugin, or a CLAP one for now) shows a one-line
+//! can't drive anything (no plugin, or one with no parameters) shows a one-line
 //! hint instead of knobs. A scroll anywhere else on the panel does nothing.
 //!
 //! The geometry is pure and unit-tested here; the drawing is

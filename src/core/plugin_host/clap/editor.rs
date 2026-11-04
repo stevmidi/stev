@@ -19,12 +19,16 @@ use std::time::{Duration, Instant};
 
 use clack_extensions::gui::{GuiApiType, GuiConfiguration, PluginGui, Window as ClapWindow};
 use clack_host::prelude::*;
+use clack_host::utils::ClapId;
 use log::{debug, error, warn};
 use objc2_foundation::NSPoint;
 
 use super::host::StevClapHost;
-use crate::core::plugin_host::editor::InstrumentEditor;
+use super::params::EditorParams;
+use crate::core::plugin_host::editor::{InstrumentEditor, ParameterGesture, ParameterInfo};
 use crate::core::plugin_host::window::{FALLBACK_SIZE, PluginWindow, editor_level, editor_title};
+use crate::core::time::monotonic_nanos;
+use crate::models::knobs::ParamId;
 
 /// GUI config for a plugin-owned floating window.
 const COCOA_FLOATING: GuiConfiguration<'static> = GuiConfiguration {
@@ -54,15 +58,18 @@ pub(crate) struct ClapEditor {
     /// the next open reopens it in place instead of re-centering. `None` until
     /// the window has been opened and closed once.
     window_top_left: Option<NSPoint>,
+    /// The editor's end of the parameter bridge. See [`params`](super::params).
+    params: EditorParams,
 }
 
 impl ClapEditor {
     /// Wraps an instance; the editor window is not created until
     /// [`show`](Self::show).
-    pub(crate) fn new(
+    pub(super) fn new(
         instance: PluginInstance<StevClapHost>,
         plugin_name: &str,
         track: usize,
+        params: EditorParams,
     ) -> Self {
         Self {
             instance,
@@ -71,6 +78,7 @@ impl ClapEditor {
             visible: false,
             window: None,
             window_top_left: None,
+            params,
         }
     }
 }
@@ -225,6 +233,44 @@ impl InstrumentEditor for ClapEditor {
         }
 
         self.instance.access_handler(|mt| mt.min_timer_period())
+    }
+
+    fn has_parameters(&self) -> bool {
+        !self.params.is_empty()
+    }
+
+    fn parameter_info(&self, id: ParamId) -> Option<&ParameterInfo> {
+        self.params.info(id)
+    }
+
+    fn parameter_value(&self, id: ParamId) -> Option<f64> {
+        self.params.value(id)
+    }
+
+    fn set_parameter(&mut self, id: ParamId, value: f64) {
+        self.params.send(id, value);
+    }
+
+    fn follow_parameter(&mut self, id: ParamId, value: f64) {
+        self.params.follow(id, value);
+    }
+
+    /// What `process` reported, then what a rescan changed. The rescan is read
+    /// here because the plugin can't be called back from inside its own
+    /// `rescan`, and this runs whether or not the editor is open.
+    fn take_parameter_gestures(&mut self) -> Vec<ParameterGesture> {
+        let mut gestures = self.params.take_gestures();
+        if self.instance.access_handler(|mt| mt.take_values_rescan())
+            && let Some(params) = self.instance.access_shared_handler(|s| s.plugin_params())
+        {
+            let plugin = self.instance.plugin_handle();
+            gestures.extend(self.params.reread(
+                |id| params.get_value(&plugin, ClapId::from_raw(id)?),
+                monotonic_nanos(),
+            ));
+            gestures.push(ParameterGesture::ValuesChanged);
+        }
+        gestures
     }
 }
 

@@ -175,10 +175,11 @@ methods take a track's position and look the slot up in its `tracks` mirror
   contribution to the mix is correctly zero without ever calling into the
   plugin. `queue_midi` clears `sleeping` on any new event (clip, live, or the
   note-reset burst), waking the voice again. A CLAP plugin can also wake
-  itself: `request_process` (e.g. after a knob turned in its own editor) sets
+  itself: `request_process` or `request_flush` (e.g. after a knob turned in its own editor) sets
   a flag on `ClapHostShared`, and the mixer calls
   `InstrumentVoice::wake_on_request` on every voice before the render pass,
-  which takes the flag and clears `sleeping`. VST3 has no such request; its
+  which takes the flag and clears `sleeping`. A knob's move waiting in its
+  ring wakes a CLAP voice the same way. VST3 has no such request; its
   `wake_on_request` wakes the voice while UI parameter changes wait in its
   ring (see `180` § The parameter bridge). `request_restart` is still ignored.
   So idle CPU no longer scales with the number of *loaded* synths, only with
@@ -217,9 +218,17 @@ methods take a track's position and look the slot up in its `tracks` mirror
   `Display::follow_played_knobs` calls `follow_parameter`, which moves what the
   editor shows without telling the processor a second time. So only a frame's
   last value reaches the editor, which is all it could show. A move on a MIDI
-  Out track goes nowhere. Every
-  method has a do-nothing default, so a format without parameters yet needs no
-  code. VST3's side is in `180` § Parameter knobs. A hardware controller's CC
+  Out track goes nowhere. VST3's side is in `180` § Parameter knobs. CLAP's is
+  `clap/params.rs`, and everything goes through `process`: a knob's move
+  crosses a ring to the voice and goes in as a parameter value event in the
+  plugin's plain value, and the plugin's gestures and value changes come out as
+  output events, read off its `try_push` by `ReportFeed` and crossing back on a
+  second ring. `flush` is never called: the engine's callback never stops, so
+  `request_flush` just wakes the voice. The editor keeps every value
+  (`ParamValues`) from those reports, Stev's own moves and a `rescan`, since a
+  turn's start has to be known once the turn has moved it. A voice with reports
+  to read wakes the UI through `UiWake`, by way of the `"plugin-host"` thread,
+  because `request_repaint` takes a lock. See `400` § Phase 3 as built. A hardware controller's CC
   still plays live to the selected track's plugin and MIDI Out and is never
   recorded (`090`).
 - **Clip playback → plugin.** `TrackOutput::Instrument(InstrumentRef)` (in
@@ -321,7 +330,7 @@ methods take a track's position and look the slot up in its `tracks` mirror
 
 | File | Responsibility |
 |---|---|
-| `mod.rs` | `start_plugin_host` (build `InstrumentMixer`, `EngineHandle::add_source` it into the audio engine, spawn the `"plugin-host"` reclaim thread), `start_plugin_catalog_scan` (spawns the `"plugin-catalog-scan"` thread), `load_instrument` (**the one place a format is chosen** - dispatches on `entry.format`, then `Insert`s the returned voice), `PluginAudioHandle` (`cmd_tx` / `voice_dropped_rx` / `shutdown` / `sample_rate` / `repaint` - the egui context slot `start_plugin_host` is handed once, so `load_instrument` takes no format-specific arguments), `LoadedInstrument`, `reclaim_voices` (the `"plugin-host"` thread loop). Voices are built for `core::audio::MAX_FRAMES`. |
+| `mod.rs` | `start_plugin_host` (build `InstrumentMixer`, `EngineHandle::add_source` it into the audio engine, spawn the `"plugin-host"` thread), `start_plugin_catalog_scan` (spawns the `"plugin-catalog-scan"` thread), `load_instrument` (**the one place a format is chosen** - dispatches on `entry.format`, then `Insert`s the returned voice), `PluginAudioHandle` (`cmd_tx` / `voice_dropped_rx` / `shutdown` / `sample_rate` / `repaint` - the egui context slot `start_plugin_host` is handed once, so `load_instrument` takes no format-specific arguments), `LoadedInstrument`, `reclaim_voices` (the `"plugin-host"` thread loop: drops removed voices, and makes the UI wakes `UiWake` asks for). Voices are built for `core::audio::MAX_FRAMES`. |
 | `voice.rs` | The `InstrumentVoice` trait and `VoiceMix` - the mixer-owned `sleeping` / `rendered` flags and gain-ramp endpoints every voice carries. Also `note_reset_messages`, the burst `load_instrument` queues into every new voice. They live on the voice rather than in a parallel array in the mixer because the render pass is the loop spread across worker threads, where each worker may only touch its own voice. |
 | `editor.rs` | The `InstrumentEditor` trait - the `!Send` main-thread half. `close` (= `teardown_gui`) and `toggle` (on `is_open`) are default methods, so a format supplies only `is_open`. |
 | `buffers.rs` | `AudioIoLayout` (a plugin's declared channels per input/output port or bus; `new` applies the one-stereo-output fallback) and `PortBuffers` - the `[port][channel]` buffer set every voice renders into: silent input feed, capacity-reserved outputs, `prepare_outputs(frames)`, `main_sample` (port-0-only, mono/empty/out-of-range-safe - what the mixer sums) and `main_output_silent`. Each format builds its own FFI view over it. Unit-tested. |
@@ -332,6 +341,7 @@ methods take a track's position and look the slot up in its `tracks` mirror
 | `catalog.rs` | `PluginFormat` (label - which is also its `Audio/Plug-Ins` subdirectory - and bundle extension), `ALL_FORMATS`, `PluginCatalogEntry { format, bundle_path, plugin_id, name }`, `installed_bundles` (the shared depth-capped bundle walk over the install roots - what each format's scan calls), `scan_catalog` (runs every format's scan and reports the merged, name-sorted list **once per format** — VST3 is slow enough that waiting for it would hide the CLAP plugins too; `merge_scans` takes the scans as functions so each only starts after the previous one's delivery), `available_bundles_hint`. Runs on the background `"plugin-catalog-scan"` thread, result held in `Display::plugin_catalog`. Unit-tested. |
 | `export.rs` | The audio export's tap (§ Audio export): `ExportTap` (the mixer's half: takes the sequencer's `ExportMark`s and resolves them with `scheduled_frame`, `begin_block` / `tap` (or `tap_silence`) / `end_block` push each exported slot's raw samples and the gained mix), `export_span` (the part of a block inside the export), `ExportShared` (the `ended` export id / silent-slots / overflow atomics the writer reads), `tap_missing` (silence for a slot with no voice, reported), `export_tap` (builds the tap and one ring per slot plus the mix, about a second of stereo each, at start-up). Unit-tested with a fake voice. |
 | `export_writer.rs` | The `"audio-export"` thread: `start_export_writer`, `ExportWriter::write` (one `WavWriter` per stem plus `Mix.wav`, drained from the rings until the mixer has ended that export's id, then `SequencerCommand::AudioExportWritten`), progress into `AudioExportAtomics::written_ms`, `stop_reason` (a stream error, or 3 s with nothing from the mixer). A failed file stops being written but its ring is still drained. It never removes files: a cancelled or stopped run's go in the handler (`event_handlers/audio_export.rs`). Unit-tested: draining across the ring's wrap, a failed write, a written export on disk, an abandoned export's leftovers, `stop_reason`. |
+| `ui_wake.rs` | `UiWake` - wakes the reactive UI from the audio thread, which can't take `request_repaint`'s lock: a flag and an `unpark` of the `"plugin-host"` thread, which makes the call. Unit-tested. |
 | `shutdown.rs` | `HostShutdown` - app-exit coordination (`requested` + `in_process`), one instance shared by the mixer and the reclaim thread. Unit-tested. |
 | `window.rs` | `PluginWindow` - a minimal native `NSWindow` parent for an embedded plugin GUI; `show` (`orderFront:`), `is_visible`, `frame_top_left` / a `top_left` argument to `new` (position carried across a close/reopen), `set_content_size` (anchored at the top-left corner), `take_closed` (the title-bar close button, refused by the `CloseInterceptor` delegate so the editor can tear down first, or the window off screen by any other route while Stev is not hidden); registers/deregisters itself with `key_guard` on construction/`Drop`. It is closed by `Drop`, not hidden - there is no `hide`. Format-agnostic. |
 | `key_guard.rs` | App-wide `NSEvent` local monitor reserving the keymap's bare play / stop, stop and editor keys (`Space`/`0`/`v` by default) even while an embedded editor window has OS keyboard focus - `install_key_guard`, `set_guarded_keys` (from `Display::guard_plugin_editor_keys`; every reserved key goes on as a raw `KeyPressed`, and the editor toggle is handled where `Display` drains the input channel), `register_window` / `unregister_window`. See the module doc and the caveat below. Format-agnostic. |
@@ -344,10 +354,11 @@ See also `180-vst3-host.md` for `vst3/`, the second format module.
 |---|---|
 | `mod.rs` | `scan_catalog()` and `load(handle, track, entry, state) -> LoadedInstrument` - CLAP's two entry points, the only items the core calls. The egui repaint slot the host needs comes from `handle.repaint`. |
 | `discovery.rs` | `scan_catalog()` -> `Vec<PluginCatalogEntry>` - walks the installed `.clap` bundles (via the shared `catalog::installed_bundles`), loads each bundle's factory, enumerates descriptors. Also owns `ENTRY_CACHE` / `cached_entry` - the process-wide `PluginEntry` cache shared with `engine::load` (see below). |
-| `engine.rs` | `load(bundle_path, plugin_id, sample_rate, max_frames, repaint, state)` - get the bundle's entry via `discovery::cached_entry`, pick the descriptor (display name via `discovery::descriptor_name`, shared with the catalog), instantiate, apply the persisted CLAP `state` blob, query the audio-port layout (`query_audio_io` -> `AudioIoLayout`, before activation), activate. Returns `LoadedPlugin { instance, processor, io, name }`. No hardcoded plugin consts. |
-| `host.rs` | `StevClapHost` (`HostHandlers`) + `ClapHostShared` / `ClapHostMainThread`; log + gui + timer + state + thread-check host extensions (thread-check: main = AppKit main thread, audio = threads marked by `core::audio::enter_render_thread` — the `cpal` callback and every `WorkerPool` worker); `Timers` helper (unit-tested). |
-| `editor.rs` | `ClapEditor` - owns one `!Send` `PluginInstance` and `impl InstrumentEditor`; `create` (lazy, on first show), `show` / `is_open`, per-frame `pump`, `save_state` (CLAP `state.save` for persistence), `teardown_gui` (GUI `destroy` + window drop + remember its position - used by both `close` and a per-track remove), `deactivate` (after the voice-dropped ack). |
-| `voice.rs` | `ClapVoice` - `impl InstrumentVoice`; per-plugin audio state, `new` takes the plugin's `AudioIoLayout` and builds a `PortBuffers` to match (sized with `buffers::channel_total`). Also the private `midi_bytes_to_clap_event` (takes a sample offset) and `transport_event` (`BlockTransport` -> CLAP `TransportEvent`). Unit-tested: the event translation (incl. the note-reset burst), the transport translation. |
+| `engine.rs` | `load(bundle_path, plugin_id, sample_rate, max_frames, repaint, state)` - get the bundle's entry via `discovery::cached_entry`, pick the descriptor (display name via `discovery::descriptor_name`, shared with the catalog), instantiate, apply the persisted CLAP `state` blob, query the audio-port layout (`query_audio_io` -> `AudioIoLayout`, before activation) and the parameters (`read_parameters` -> `ParamValues`), activate. Returns `LoadedPlugin { instance, processor, io, params, name }`. No hardcoded plugin consts. |
+| `host.rs` | `StevClapHost` (`HostHandlers`) + `ClapHostShared` / `ClapHostMainThread`; log + gui + timer + state + params + thread-check host extensions (params: `request_flush` wakes the voice, `rescan` marks the values to read again; thread-check: main = AppKit main thread, audio = threads marked by `core::audio::enter_render_thread` — the `cpal` callback and every `WorkerPool` worker); `Timers` helper (unit-tested). |
+| `editor.rs` | `ClapEditor` - owns one `!Send` `PluginInstance` and `impl InstrumentEditor`; `create` (lazy, on first show), `show` / `is_open`, per-frame `pump`, `save_state` (CLAP `state.save` for persistence), `teardown_gui` (GUI `destroy` + window drop + remember its position - used by both `close` and a per-track remove), `deactivate` (after the voice-dropped ack), and the knobs' parameter methods over `EditorParams`. |
+| `params.rs` | How the knobs reach a plugin's parameters (`400` § Phase 3 as built): `ParamRange` (plain <-> normalized), `ParamValues` (every value in force, reading `ParamReport`s as `ParameterGesture`s), `ReportFeed` (the `OutputEventBuffer` `process` writes to), `bridge` -> `EditorParams` / `VoiceParams`, the two rings' ends. Unit-tested: the mapping, the output-event parsing, the bridge. |
+| `voice.rs` | `ClapVoice` - `impl InstrumentVoice`; per-plugin audio state, `new` takes the plugin's `AudioIoLayout` and builds a `PortBuffers` to match (sized with `buffers::channel_total`). `queue_param` and the block's moves and reports go through `VoiceParams`. Also the private `midi_bytes_to_clap_event` (takes a sample offset) and `transport_event` (`BlockTransport` -> CLAP `TransportEvent`). Unit-tested: the event translation (incl. the note-reset burst), the transport translation. |
 
 ## Channels
 
@@ -800,7 +811,9 @@ positions), persisted base64-encoded in the `.stev` and re-applied on load:
   A corrupt / partial blob is logged and ignored — the plugin stays at its
   default, project load never fails.
 - `StevClapHost` declares the `state` host extension; its `mark_dirty` is a
-  log-only no-op (state is captured fresh on every save, not tracked).
+  log-only no-op (state is captured fresh on every save, not tracked). A preset
+  counts for the unsaved prompt through `rescan` instead (`060` § Unsaved
+  changes).
 - The restore path passes `picked: None` to `load_slot_instrument` so it
   does **not** re-emit `SetTrackOutput` — the sequencer already holds
   the right `TrackOutput` (with its state) from `apply_to_sequencer`, and

@@ -46,7 +46,7 @@ pub(crate) const PARAM_LANE_MAX: u16 = u16::MAX;
 /// The clip's unmuted controller moves — pitch bend, the mod wheel, any
 /// other CC — per controller, each list in tick order: what plays, so a
 /// muted move is left out (`ControllerValues::apply`). See
-/// `380-wheel-lane.md`, `390-knob-panel.md` decision 11.
+/// `380-wheel-lane.md`, `archive/390-knob-panel.md` decision 11.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ControllerMoves(Vec<(Controller, Vec<ControllerMove>)>);
 

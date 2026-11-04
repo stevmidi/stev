@@ -8,6 +8,11 @@
 //! - **timer** — the plugin registers periodic timers that the UI thread ticks
 //!   from [`ClapEditor::pump`](crate::core::plugin_host::InstrumentEditor::pump).
 //! - **state** — the plugin flags unsaved changes (`mark_dirty`).
+//! - **params** — `request_flush` is `request_process`: the engine's callback
+//!   never stops, so waking the voice gets the plugin its `process` call, which
+//!   does what a flush would, and `flush` itself is never called. `rescan` marks
+//!   the values for [`ClapEditor`](super::ClapEditor) to read again. See
+//!   [`params`](super::params).
 //! - **thread-check** — the plugin asks whether it is on the main or the audio
 //!   thread. Main = the AppKit main thread; audio = any thread marked by
 //!   [`enter_render_thread`](crate::core::audio::enter_render_thread) (the `cpal`
@@ -18,13 +23,17 @@
 //! only thread with an AppKit run loop). The audio processor keeps running on
 //! the audio-engine callback thread and never touches any of this.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use clack_extensions::gui::{GuiSize, HostGui, HostGuiImpl, PluginGui};
 use clack_extensions::log::{HostLog, HostLogImpl, LogSeverity};
+use clack_extensions::params::{
+    HostParams, HostParamsImplMainThread, HostParamsImplShared, ParamClearFlags, ParamRescanFlags,
+    PluginParams,
+};
 use clack_extensions::state::{HostState, HostStateImpl, PluginState};
 use clack_extensions::thread_check::{HostThreadCheck, HostThreadCheckImpl};
 use clack_extensions::timer::{HostTimer, HostTimerImpl, PluginTimer, TimerId};
@@ -48,6 +57,7 @@ impl HostHandlers for StevClapHost {
             .register::<HostGui>()
             .register::<HostTimer>()
             .register::<HostState>()
+            .register::<HostParams>()
             .register::<HostThreadCheck>();
     }
 }
@@ -83,6 +93,9 @@ pub(crate) struct ClapHostShared {
     /// The plugin's `state` extension, or `None` if it does not implement it —
     /// such a plugin simply has no persisted preset.
     state: OnceLock<Option<PluginState>>,
+    /// The plugin's `params` extension, or `None` if it does not implement it —
+    /// the knobs have nothing to drive then.
+    params: OnceLock<Option<PluginParams>>,
     /// The eframe UI context, once available (filled by `main`'s
     /// `run_native` closure). Lets the plugin wake the reactive UI to have its
     /// callback / close serviced, so `update` no longer polls at a fixed rate.
@@ -104,6 +117,7 @@ impl ClapHostShared {
             gui: OnceLock::new(),
             timer: OnceLock::new(),
             state: OnceLock::new(),
+            params: OnceLock::new(),
             repaint,
         }
     }
@@ -166,6 +180,11 @@ impl ClapHostShared {
     pub(crate) fn plugin_state(&self) -> Option<PluginState> {
         self.state.get().copied().flatten()
     }
+
+    /// The plugin's `params` extension, if it has one.
+    pub(crate) fn plugin_params(&self) -> Option<PluginParams> {
+        self.params.get().copied().flatten()
+    }
 }
 
 impl<'a> SharedHandler<'a> for ClapHostShared {
@@ -173,6 +192,7 @@ impl<'a> SharedHandler<'a> for ClapHostShared {
         let _ = self.gui.set(instance.get_extension());
         let _ = self.timer.set(instance.get_extension());
         let _ = self.state.set(instance.get_extension());
+        let _ = self.params.set(instance.get_extension());
     }
 
     // A restart request (deactivate + reactivate) is not acted on.
@@ -192,6 +212,13 @@ impl HostLogImpl for ClapHostShared {
             return;
         }
         debug!("clap plugin [{severity}]: {message}");
+    }
+}
+
+impl HostParamsImplShared for ClapHostShared {
+    /// The plugin has parameter changes for the host: see the module docs.
+    fn request_flush(&self) {
+        self.request_process();
     }
 }
 
@@ -236,9 +263,9 @@ impl HostGuiImpl for ClapHostShared {
     }
 }
 
-/// `[main-thread]` host state. Only the timer registry lives here; the `'a`
-/// borrow of [`ClapHostShared`] keeps the type tied to the instance lifetime
-/// (and satisfies the `MainThreadHandler<'a>` bound).
+/// `[main-thread]` host state: the timer registry and the rescan flag. The
+/// `'a` borrow of [`ClapHostShared`] keeps the type tied to the instance
+/// lifetime (and satisfies the `MainThreadHandler<'a>` bound).
 pub(crate) struct ClapHostMainThread<'a> {
     /// Borrow of the shared handler (ties the lifetime to the instance).
     shared: &'a ClapHostShared,
@@ -248,6 +275,11 @@ pub(crate) struct ClapHostMainThread<'a> {
     /// main-thread-only, so this never contends and is not a lock on any
     /// audio or render path.
     timers: RefCell<Timers>,
+    /// Set by `rescan` when the plugin's values changed without events (a
+    /// preset it loaded); drained by
+    /// [`take_values_rescan`](Self::take_values_rescan). The plugin is inside
+    /// a call of its own then, so it isn't read back from there.
+    values_rescan: Cell<bool>,
 }
 
 impl<'a> ClapHostMainThread<'a> {
@@ -256,6 +288,7 @@ impl<'a> ClapHostMainThread<'a> {
         Self {
             shared,
             timers: RefCell::new(Timers::default()),
+            values_rescan: Cell::new(false),
         }
     }
 
@@ -268,6 +301,12 @@ impl<'a> ClapHostMainThread<'a> {
     /// timers — the cadence the UI must repaint at to service the plugin editor.
     pub(crate) fn min_timer_period(&self) -> Option<Duration> {
         self.timers.borrow().entries.iter().map(|e| e.period).min()
+    }
+
+    /// Clears and returns whether the plugin asked for its values to be read
+    /// again since the last call.
+    pub(crate) fn take_values_rescan(&self) -> bool {
+        self.values_rescan.take()
     }
 }
 
@@ -282,6 +321,23 @@ impl<'a> HostStateImpl for ClapHostMainThread<'a> {
     fn mark_dirty(&self) {
         debug!("clap host: plugin marked its state dirty");
     }
+}
+
+impl<'a> HostParamsImplMainThread for ClapHostMainThread<'a> {
+    /// Marks the values to be read again, and wakes the UI so a knob whose
+    /// parameter a preset moved follows at once. A changed name or text is
+    /// left: names are read once at load, as VST3's are.
+    fn rescan(&self, flags: ParamRescanFlags) {
+        if flags.intersects(ParamRescanFlags::VALUES | ParamRescanFlags::ALL) {
+            self.values_rescan.set(true);
+            self.shared.wake_ui();
+        }
+    }
+
+    /// Stev holds a parameter's data as knobs and clip moves, which stay: a
+    /// parameter that's gone leaves its knob with no name, and the user
+    /// decides what to do with it.
+    fn clear(&self, _param_id: ClapId, _flags: ParamClearFlags) {}
 }
 
 impl<'a> HostTimerImpl for ClapHostMainThread<'a> {
@@ -364,6 +420,14 @@ impl Timers {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_flush_request_wakes_the_voice_as_a_process_request_does() {
+        let shared = ClapHostShared::new(Arc::new(OnceLock::new()));
+        shared.request_flush();
+        assert!(shared.take_process_request());
+        assert!(!shared.take_process_request());
+    }
 
     #[test]
     fn a_process_request_is_taken_exactly_once() {

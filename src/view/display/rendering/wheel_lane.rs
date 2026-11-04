@@ -9,7 +9,7 @@
 //! ([`fold_wheel_columns`]) so what is drawn follows the lane's width, not
 //! the event count. The knob lanes switch from the knobs' labels
 //! (`rendering/knob_panel.rs`). See `380-wheel-lane.md`,
-//! `390-knob-panel.md` decisions 11–13.
+//! `archive/390-knob-panel.md` decisions 11–13.
 
 use egui::{Align2, CornerRadius, FontId, Painter, Pos2, Rect, Shape, Stroke, pos2, vec2};
 

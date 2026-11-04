@@ -8,6 +8,8 @@
 //! - [`editor`] is the `!Send` main-thread half, with the plugin's own window.
 //! - [`host`] is the `clack-host` `HostHandlers` implementation the plugin
 //!   calls back into.
+//! - [`params`] is how the knobs reach the plugin's parameters: plain values
+//!   and the bridge between the two halves.
 //!
 //! See `130-plugin-host.md`.
 
@@ -15,6 +17,7 @@ mod discovery;
 mod editor;
 mod engine;
 mod host;
+mod params;
 mod voice;
 
 use std::sync::Arc;
@@ -51,7 +54,12 @@ pub(super) fn load(
         state,
     )?;
 
-    let voice = ClapVoice::new(loaded.processor, MAX_FRAMES, &loaded.io);
-    let editor = ClapEditor::new(loaded.instance, &loaded.name, track);
+    let (editor_params, voice_params) = params::bridge(
+        loaded.params,
+        handle.sample_rate,
+        Arc::clone(&handle.ui_wake),
+    );
+    let voice = ClapVoice::new(loaded.processor, MAX_FRAMES, &loaded.io, voice_params);
+    let editor = ClapEditor::new(loaded.instance, &loaded.name, track, editor_params);
     Ok((Box::new(voice), Box::new(editor)))
 }

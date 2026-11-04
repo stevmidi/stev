@@ -24,6 +24,10 @@ use super::status_message::StatusMessage;
 /// that isn't installed or failed to load): no parameters to drive.
 pub(super) const NO_PLUGIN_HINT: &str = "No plugin on this track";
 
+/// The panel's hint on a plugin that gives the knobs nothing to drive.
+#[cfg(target_os = "macos")]
+const NO_PARAMETERS_HINT: &str = "This plugin has no parameters";
+
 #[cfg(target_os = "macos")]
 impl Display {
     /// The plugin on the track at `track_idx`, when the knobs can drive it.
@@ -34,15 +38,11 @@ impl Display {
 
     /// Why the knobs can't drive the track at `track_idx` — the line the
     /// panel shows instead of them — or `None` when they can: no plugin, or
-    /// a format whose parameters aren't reached yet (CLAP, until
-    /// `400-parameter-knobs.md` phase 3).
+    /// one with no parameters.
     pub(super) fn knob_panel_hint(&self, track_idx: usize) -> Option<String> {
         match self.track_instrument(track_idx) {
             None => Some(NO_PLUGIN_HINT.to_owned()),
-            Some(loaded) if !loaded.editor.has_parameters() => Some(format!(
-                "No knobs for {} plugins yet",
-                loaded.entry.format.label()
-            )),
+            Some(loaded) if !loaded.editor.has_parameters() => Some(NO_PARAMETERS_HINT.to_owned()),
             Some(_) => None,
         }
     }
@@ -134,7 +134,8 @@ impl Display {
     /// (`400-parameter-knobs.md` decision 3). A turn of a parameter one of
     /// that track's knobs holds is the hand's, as a drag is: its start and
     /// end hold the knob against playback (decision 6), and its moves are
-    /// counted by the unsaved prompt and captured (decisions 9 and 10).
+    /// counted by the unsaved prompt and captured (decisions 9 and 10). New
+    /// values all at once are a preset, which the unsaved prompt counts too.
     /// Anything else is the plugin's own business.
     fn handle_parameter_gesture(&mut self, slot: usize, gesture: ParameterGesture) {
         let Some(track_idx) = self.tracks.iter().position(|lane| lane.slot == slot) else {
@@ -160,6 +161,11 @@ impl Display {
                 if let Some(knob) = knob_with_id(&self.tracks[track_idx].knob_params, param) {
                     self.release_knob(track_idx, knob);
                 }
+            }
+            ParameterGesture::ValuesChanged => {
+                self.input_event_tx
+                    .send(InputEvent::PluginStateChanged { track_idx })
+                    .ok();
             }
         }
     }

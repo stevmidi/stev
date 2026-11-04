@@ -87,7 +87,7 @@ impl Controller {
 
     /// Where the controller rests, if it has a rest: bend centred, mod wheel
     /// down. `None` for any other CC or a parameter — a filter cutoff "at
-    /// rest" at 0 would be wrong, so it is never reset (`390-knob-panel.md`
+    /// rest" at 0 would be wrong, so it is never reset (`archive/390-knob-panel.md`
     /// decision 8, `400-parameter-knobs.md` decision 9).
     pub(crate) const fn rest(self) -> Option<u16> {
         match self {
