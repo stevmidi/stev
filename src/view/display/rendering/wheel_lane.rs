@@ -126,7 +126,7 @@ impl Display {
     fn lane_holds_steps(&self, controller: Controller) -> bool {
         match (controller, self.knobs_track()) {
             (Controller::Param(param), Some(track_idx)) => {
-                self.knob_param_steps(track_idx, param) > 0
+                self.knob_param_steps(track_idx, param.id) > 0
             }
             _ => false,
         }
@@ -147,8 +147,8 @@ impl Display {
     /// move to move, a held value flat until a jump steps off it, dimmed
     /// outside the clip's window. A wheel's line runs from rest before its
     /// first move; a parameter has no rest, so its line starts at its first
-    /// move, and one that moves in steps holds each value up to the next
-    /// ([`stepped_moves`]). Pitch bend gets a faint centre
+    /// move, and one that moves in steps keeps [`wheel_path`]'s steps, each
+    /// value held up to the next. Pitch bend gets a faint centre
     /// line at rest; the span, if one is marked, a tint across the lane's
     /// height under the line, filled as the note marquee is. Nothing else
     /// with no moves.
@@ -181,13 +181,6 @@ impl Display {
         if moves.is_empty() {
             return;
         }
-        let held;
-        let moves = if self.lane_holds_steps(controller) {
-            held = stepped_moves(moves);
-            held.as_slice()
-        } else {
-            moves
-        };
 
         let ticks_per_col = self.ticks_per_pixel();
         let first_tick = (lane.left() - self.tick_to_x(0)) * ticks_per_col;
@@ -204,10 +197,12 @@ impl Display {
         };
         let to_screen = |&(x, value): &PathPoint| pos2(lane.left() + x, y_of(value));
         let line: Vec<Pos2> = path.line.iter().map(to_screen).collect();
-        let line = simplify(
-            &ease_steps(&line, Self::WHEEL_CORNER_PX),
-            Self::WHEEL_SIMPLIFY_PX,
-        );
+        let line = if self.lane_holds_steps(controller) {
+            line
+        } else {
+            ease_steps(&line, Self::WHEEL_CORNER_PX)
+        };
+        let line = simplify(&line, Self::WHEEL_SIMPLIFY_PX);
 
         let (window_start, window_end) = self.clip_window_for_render();
         let window_x = [self.tick_to_x(window_start), self.tick_to_x(window_end)];
@@ -271,22 +266,6 @@ fn wheel_fraction(wheel: Controller, value: u16) -> f32 {
         Controller::Cc(_) => f32::from(value.min(127)) / 127.0,
         Controller::Param(_) => f32::from(value) / f32::from(PARAM_LANE_MAX),
     }
-}
-
-/// `moves` with the value before each move held up to the tick before it, so
-/// the lane's line runs flat and steps at each move.
-fn stepped_moves(moves: &[ControllerMove]) -> Vec<ControllerMove> {
-    let mut held: Vec<ControllerMove> = Vec::with_capacity(moves.len() * 2);
-    for &(tick, value) in moves {
-        if let Some(&(last_tick, last)) = held.last()
-            && last != value
-            && last_tick < tick - 1
-        {
-            held.push((tick - 1, last));
-        }
-        held.push((tick, value));
-    }
-    held
 }
 
 /// A point the wheel's line passes through, in column units across the lane
@@ -532,11 +511,12 @@ fn split_at_x(points: &[Pos2], cuts: [f32; 2]) -> Vec<Vec<Pos2>> {
 
 #[cfg(test)]
 mod tests {
+    use crate::models::knobs::test_param;
     use egui::{Pos2, Rect, pos2, vec2};
 
     use super::{
         Knot, Segment, ease_steps, fold_wheel_columns, lane_label_in, simplify, split_at_x,
-        stepped_moves, wheel_fraction, wheel_path,
+        wheel_fraction, wheel_path,
     };
     use crate::core::midi::message::Controller;
     use crate::metadata::clip_view::PARAM_LANE_MAX;
@@ -577,20 +557,9 @@ mod tests {
         );
     }
 
-    /// A stepped parameter's line stays flat until the tick of its next
-    /// move; a repeat of the value needs no corner.
-    #[test]
-    fn a_stepped_lane_holds_each_value_up_to_the_next_move() {
-        assert_eq!(
-            stepped_moves(&[(0, 10), (100, 20), (200, 20), (201, 30)]),
-            vec![(0, 10), (99, 10), (100, 20), (200, 20), (201, 30)]
-        );
-        assert!(stepped_moves(&[]).is_empty());
-    }
-
     #[test]
     fn a_parameter_spans_the_lane() {
-        let param = Controller::Param(714);
+        let param = Controller::Param(test_param(714));
         assert_eq!(wheel_fraction(param, 0), 0.0);
         assert_eq!(wheel_fraction(param, PARAM_LANE_MAX), 1.0);
     }

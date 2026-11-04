@@ -679,6 +679,7 @@ impl EventHandlers {
 
 #[cfg(test)]
 mod tests {
+    use crate::models::knobs::test_param;
     use std::collections::HashSet;
     use std::sync::atomic::Ordering;
 
@@ -747,8 +748,6 @@ mod tests {
             .last()
     }
 
-    /// The header's BPM field sets the tempo as one undo step, and the
-    /// change counts as unsaved.
     /// Removing a mapping tells the view what went, for the footer, moves
     /// included; a knob with nothing recorded says so too, and an undo sends
     /// the lead clip back so its lane redraws.
@@ -757,8 +756,8 @@ mod tests {
         let mut h = harness();
         let mut record = Record::new();
         let mut knobs = UNASSIGNED_KNOBS;
-        knobs[0] = Some(714);
-        knobs[1] = Some(9);
+        knobs[0] = Some(test_param(714));
+        knobs[1] = Some(test_param(9));
         h.sequencer.set_track_knobs(0, knobs);
         let (clip_id, _) = add_clip(&mut h.sequencer, 0);
         h.sequencer
@@ -789,7 +788,10 @@ mod tests {
         while h.ui_events.try_recv().is_ok() {}
         run_command(&mut h, &mut record, SequencerCommand::Undo);
         run_command(&mut h, &mut record, SequencerCommand::Undo);
-        assert_eq!(h.sequencer.tracks()[0].knobs()[0], Some(714));
+        assert_eq!(
+            h.sequencer.tracks()[0].knobs()[0].map(|knob| knob.id),
+            Some(714)
+        );
         assert!(
             h.ui_events
                 .try_iter()

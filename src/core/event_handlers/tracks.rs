@@ -87,18 +87,19 @@ impl EventHandlers {
         let removed = sequencer
             .tracks()
             .get(track_idx)
-            .and_then(|track| (*track.knobs().get(knob)?).zip(Some(track)))
             .filter(|_| param.is_none())
-            .map(|(from, track)| {
-                let with_moves = !track
-                    .clips_with_param_moves(|param| param == from)
-                    .is_empty();
-                UiEvent::KnobMappingRemoved {
+            .and_then(|track| {
+                let from = (*track.knobs().get(knob)?)?;
+                let with_moves = track
+                    .clips()
+                    .iter()
+                    .any(|clip| clip.has_param_moves(|param| param == from));
+                Some(UiEvent::KnobMappingRemoved {
                     track_idx,
                     knob,
-                    param: from,
+                    param: from.id,
                     with_moves,
-                }
+                })
             });
         match SetKnobParamEdit::new(sequencer, track_idx, knob, param) {
             Ok(edit) => {

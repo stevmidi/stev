@@ -2,7 +2,7 @@
 //! route carries, note-edge and wheel parsing, which live input a take records,
 //! channel rewriting and channel-message validation.
 
-use crate::models::knobs::ParamId;
+use crate::models::knobs::PluginParam;
 
 /// A MIDI channel-voice message, fixed at 3 bytes: shorter messages (Program
 /// Change, Channel Pressure) are zero-padded, longer ones (SysEx — filtered out
@@ -62,7 +62,7 @@ pub(crate) enum Controller {
     /// (`400-parameter-knobs.md`). Not MIDI: no message carries it, so
     /// [`parse_controller`] never returns one. A clip holds its moves as
     /// [`ParamMove`](crate::models::event::ParamMove) events.
-    Param(ParamId),
+    Param(PluginParam),
 }
 
 impl Controller {
@@ -95,6 +95,11 @@ impl Controller {
             Controller::Cc(MOD_WHEEL_CC) => Some(0),
             Controller::Cc(_) | Controller::Param(_) => None,
         }
+    }
+
+    /// [`rest`](Self::rest) as the `f64` a value in force is.
+    pub(crate) fn rest_value(self) -> Option<f64> {
+        self.rest().map(f64::from)
     }
 
     /// The channel-0 message that puts the controller at `value` — the
@@ -186,6 +191,7 @@ mod tests {
         Controller, is_channel_message, is_recorded, parse_controller, parse_note, parse_wheel,
         pitch_bend_value,
     };
+    use crate::models::knobs::test_param;
 
     #[test]
     fn parse_note_reads_edges_and_treats_velocity_zero_as_off() {
@@ -284,7 +290,7 @@ mod tests {
             );
         }
         assert!(Controller::PitchBend < Controller::Cc(0));
-        assert!(Controller::Cc(127) < Controller::Param(0));
+        assert!(Controller::Cc(127) < Controller::Param(test_param(0)));
         for (i, wheel) in Controller::WHEELS.into_iter().enumerate() {
             assert_eq!(wheel.wheel_index(), Some(i));
         }

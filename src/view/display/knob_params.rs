@@ -12,7 +12,7 @@ use crate::core::input_event::InputEvent;
 use crate::core::plugin_host::editor::ParameterGesture;
 use crate::models::knobs::ParamId;
 #[cfg(target_os = "macos")]
-use crate::models::knobs::{knob_holding, param_taken_by, param_taken_message};
+use crate::models::knobs::{knob_with_id, param_taken_by, param_taken_message};
 
 use super::Display;
 #[cfg(target_os = "macos")]
@@ -103,7 +103,7 @@ impl Display {
                 };
                 if let (Some(param), Some(loaded)) = (*param, self.track_instrument_mut(track_idx))
                 {
-                    loaded.editor.follow_parameter(param, value);
+                    loaded.editor.follow_parameter(param.id, value);
                 }
             }
         }
@@ -146,18 +146,18 @@ impl Display {
                     && self.knobs_track() == Some(track_idx)
                 {
                     self.assign_armed_knob(track_idx, knob, param);
-                } else if let Some(knob) = knob_holding(&self.tracks[track_idx].knob_params, param)
+                } else if let Some(knob) = knob_with_id(&self.tracks[track_idx].knob_params, param)
                 {
                     self.hold_knob(track_idx, knob, start, at_ns);
                 }
             }
             ParameterGesture::Move(param, value, at_ns) => {
-                if let Some(knob) = knob_holding(&self.tracks[track_idx].knob_params, param) {
+                if let Some(knob) = knob_with_id(&self.tracks[track_idx].knob_params, param) {
                     self.count_knob_turn(track_idx, knob, value, at_ns);
                 }
             }
             ParameterGesture::End(param) => {
-                if let Some(knob) = knob_holding(&self.tracks[track_idx].knob_params, param) {
+                if let Some(knob) = knob_with_id(&self.tracks[track_idx].knob_params, param) {
                     self.release_knob(track_idx, knob);
                 }
             }

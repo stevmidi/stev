@@ -7,13 +7,16 @@
 
 use crate::models::clip::Clip;
 use crate::models::event::{Event, ParamMove};
-use crate::models::knobs::{KnobParams, knob_holding};
+#[cfg(test)]
+use crate::models::knobs::KnobParams;
+use crate::models::knobs::{UNASSIGNED_KNOBS, knob_holding};
 
 use super::Sequencer;
 
 impl Sequencer {
-    /// Gives the track at `track_idx` `knobs` (a project load). Out-of-range
-    /// indices are ignored.
+    /// Gives the track at `track_idx` `knobs`. Out-of-range indices are
+    /// ignored.
+    #[cfg(test)]
     pub(crate) fn set_track_knobs(&mut self, track_idx: usize, knobs: KnobParams) {
         if let Some(track) = self.tracks.get_mut(track_idx) {
             track.set_knobs(knobs);
@@ -87,18 +90,17 @@ impl Sequencer {
             value: value.clamp(0.0, 1.0),
         };
         // A turn is stamped when it happened but reaches the buffer a frame
-        // later, maybe behind a note played since, and the buffer is read in
-        // tick order.
-        let late = self
-            .capture_clip
-            .events()
-            .last()
-            .is_some_and(|event| event.tick() > tick);
+        // later, maybe behind a note played since.
         self.capture_clip
-            .add_event(Event::from_param_move(tick, param_move));
-        if late {
-            self.capture_clip.sort_events_by_tick();
-        }
+            .add_late_event(Event::from_param_move(tick, param_move));
+    }
+
+    /// The capture buffer as a running take reads it: a copy, holding only
+    /// what [`keep_knob_moves`](Self::keep_knob_moves) keeps.
+    pub(super) fn kept_capture(&self) -> Clip {
+        let mut capture = self.capture_clip.clone();
+        self.keep_knob_moves(&mut capture);
+        capture
     }
 
     /// Drops from `capture` — a copy of the capture buffer on its way to a
@@ -106,14 +108,9 @@ impl Sequencer {
     /// turned on a knob reassigned since, or before the track changed. They
     /// could only sit in the clip unheard.
     pub(super) fn keep_knob_moves(&self, capture: &mut Clip) {
-        let knobs = self.selected_track().map(|track| *track.knobs());
-        let foreign = |param| {
-            knobs
-                .as_ref()
-                .is_none_or(|knobs| knob_holding(knobs, param).is_none())
-        };
-        if capture.has_param_moves(foreign) {
-            capture.rewrite_param_moves(foreign, None);
-        }
+        let knobs = self
+            .selected_track()
+            .map_or(UNASSIGNED_KNOBS, |track| *track.knobs());
+        capture.rewrite_param_moves(|param| knob_holding(&knobs, param).is_none(), None);
     }
 }

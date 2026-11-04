@@ -396,7 +396,7 @@ impl AudioSource for InstrumentMixer {
                 match event.message {
                     VoiceMessage::Midi(bytes) => voice.queue_midi(bytes, within),
                     VoiceMessage::Param(moved) => {
-                        voice.queue_param(moved.param, moved.value, within);
+                        voice.queue_param(moved.param.id, moved.value, within);
                     }
                 }
             }

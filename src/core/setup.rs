@@ -179,6 +179,14 @@ pub(crate) fn setup_metronome(
     Metronome::new(shared_atomics.metronome_mute.clone(), metronome_click_tx)
 }
 
+/// The clock's atomics, for what stamps input with its `clock_tick`.
+fn input_clock(shared_atomics: &SharedAtomics) -> InputClock {
+    InputClock {
+        clock_tick: shared_atomics.clock_tick.clone(),
+        clock_tick_instant_nanos: shared_atomics.clock_tick_instant_nanos.clone(),
+        tempo: shared_atomics.tempo.clone(),
+    }
+}
 /// Builds the [`MidiInputForwarder`] wired to its output channels and the shared clock/tempo/arm atomics.
 pub(crate) fn setup_midi_input_forwarder(
     midi_in_tx: Sender<RecordedMidi>,
@@ -192,9 +200,7 @@ pub(crate) fn setup_midi_input_forwarder(
         midi_out_tx,
         note_logger_command_tx,
         instrument_midi_tx,
-        shared_atomics.clock_tick.clone(),
-        shared_atomics.clock_tick_instant_nanos.clone(),
-        shared_atomics.tempo.clone(),
+        input_clock(shared_atomics),
         shared_atomics.arm_channel.clone(),
         shared_atomics.performance_lane_armed.clone(),
         shared_atomics.live_instrument_target.clone(),
@@ -235,11 +241,7 @@ pub(crate) fn setup_display(
         midi_out_offset_ms,
         browser_width,
         keymap,
-        InputClock {
-            clock_tick: shared_atomics.clock_tick.clone(),
-            clock_tick_instant_nanos: shared_atomics.clock_tick_instant_nanos.clone(),
-            tempo: shared_atomics.tempo.clone(),
-        },
+        input_clock(shared_atomics),
         shared_atomics.tempo.clone(),
         shared_atomics.meter.clone(),
         shared_atomics.running.clone(),

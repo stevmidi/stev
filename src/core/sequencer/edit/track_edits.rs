@@ -24,7 +24,7 @@ use uuid::Uuid;
 
 use crate::core::config::{MAX_TRACKS, TRACK_COLOR_COUNT, TRACK_VOLUME_DB_DEFAULT};
 use crate::models::event::Event;
-use crate::models::knobs::{KnobParams, ParamId, UNASSIGNED_KNOBS, param_taken_by};
+use crate::models::knobs::{KnobParams, ParamId, PluginParam, UNASSIGNED_KNOBS, param_taken_by};
 use crate::models::track::{Track, TrackOutput};
 
 use super::{EditResult, Sequencer};
@@ -416,16 +416,16 @@ pub(crate) struct SetKnobParamEdit {
     /// Which knob.
     knob: usize,
     /// Its parameter before the edit.
-    from: Option<ParamId>,
+    from: Option<PluginParam>,
     /// Its parameter after.
-    to: Option<ParamId>,
+    to: Option<PluginParam>,
     /// The clips the edit rewrote, as they were.
     pre_events: ClipSnapshots,
 }
 
 impl SetKnobParamEdit {
-    /// Knob `knob` of the track at `track_idx` drives `param` instead (none
-    /// for `None`). `Err` with the other knob that holds `param` already
+    /// Knob `knob` of the track at `track_idx` drives parameter `param` of
+    /// the track's plugin instead (none for `None`). `Err` with the other knob that holds `param` already
     /// (decision 4); `Ok(None)` with no such track or knob, or when the knob
     /// holds `param` already — no undo step for a change that changes
     /// nothing.
@@ -444,11 +444,13 @@ impl SetKnobParamEdit {
         if let Some(other) = param.and_then(|param| param_taken_by(track.knobs(), knob, param)) {
             return Err(other);
         }
-        Ok((from != param).then_some(SetKnobParamEdit {
+        let plugin = track.output().plugin_tag();
+        let to = param.map(|id| PluginParam { plugin, id });
+        Ok((from != to).then_some(SetKnobParamEdit {
             track_idx,
             knob,
             from,
-            to: param,
+            to,
             pre_events: Vec::new(),
         }))
     }
@@ -476,7 +478,7 @@ impl Sequencer {
         &mut self,
         track_idx: usize,
         knob: usize,
-        param: Option<ParamId>,
+        param: Option<PluginParam>,
     ) -> EditResult {
         let is_set = self
             .tracks
@@ -495,8 +497,8 @@ impl Sequencer {
     fn rewrite_param_moves(
         &mut self,
         track_idx: usize,
-        matches: impl Fn(ParamId) -> bool,
-        to: Option<ParamId>,
+        matches: impl Fn(PluginParam) -> bool,
+        to: Option<PluginParam>,
     ) -> ClipSnapshots {
         let Some(track) = self.tracks.get(track_idx) else {
             return Vec::new();
@@ -550,7 +552,7 @@ mod tests {
     use crate::core::sequencer::{
         ClipInstrumentEvent, DeleteInRangeEdit, EditResult, Sequencer, SequencerEdit,
     };
-    use crate::models::knobs::UNASSIGNED_KNOBS;
+    use crate::models::knobs::{PluginParam, UNASSIGNED_KNOBS, test_param};
     use crate::models::track::{InstrumentRef, TrackOutput};
 
     use super::{
@@ -1062,13 +1064,19 @@ mod tests {
             .unwrap();
         let result = record.edit(&mut sequencer, SequencerEdit::from(edit));
         assert!(matches!(result, EditResult::KnobsChanged));
-        assert_eq!(sequencer.tracks()[1].knobs()[2], Some(714));
+        assert_eq!(
+            sequencer.tracks()[1].knobs()[2].map(|knob| knob.id),
+            Some(714)
+        );
         assert_eq!(*sequencer.tracks()[0].knobs(), UNASSIGNED_KNOBS);
 
         record.undo(&mut sequencer);
         assert_eq!(sequencer.tracks()[1].knobs()[2], None);
         record.redo(&mut sequencer);
-        assert_eq!(sequencer.tracks()[1].knobs()[2], Some(714));
+        assert_eq!(
+            sequencer.tracks()[1].knobs()[2].map(|knob| knob.id),
+            Some(714)
+        );
 
         let edit = SetKnobParamEdit::new(&sequencer, 1, 2, None)
             .unwrap()
@@ -1076,7 +1084,10 @@ mod tests {
         record.edit(&mut sequencer, SequencerEdit::from(edit));
         assert_eq!(sequencer.tracks()[1].knobs()[2], None);
         record.undo(&mut sequencer);
-        assert_eq!(sequencer.tracks()[1].knobs()[2], Some(714));
+        assert_eq!(
+            sequencer.tracks()[1].knobs()[2].map(|knob| knob.id),
+            Some(714)
+        );
     }
 
     /// A parameter another knob of the track holds is refused, naming that
@@ -1085,7 +1096,7 @@ mod tests {
     fn a_parameter_another_knob_holds_is_refused() {
         let mut sequencer = test_sequencer();
         let mut knobs = UNASSIGNED_KNOBS;
-        knobs[0] = Some(714);
+        knobs[0] = Some(test_param(714));
         sequencer.set_track_knobs(0, knobs);
         assert!(matches!(
             SetKnobParamEdit::new(&sequencer, 0, 3, Some(714)),
@@ -1101,7 +1112,8 @@ mod tests {
     fn an_assignment_that_changes_nothing_is_no_edit() {
         let mut sequencer = test_sequencer();
         let mut knobs = UNASSIGNED_KNOBS;
-        knobs[0] = Some(714);
+        let plugin = sequencer.tracks()[0].output().plugin_tag();
+        knobs[0] = Some(PluginParam { plugin, id: 714 });
         sequencer.set_track_knobs(0, knobs);
         assert!(matches!(
             SetKnobParamEdit::new(&sequencer, 0, 0, Some(714)),
@@ -1127,7 +1139,7 @@ mod tests {
         let mut sequencer = test_sequencer();
         sequencer.tracks_mut()[0].set_output(stub_instrument(Vec::new()));
         let mut knobs = UNASSIGNED_KNOBS;
-        knobs[0] = Some(714);
+        knobs[0] = Some(test_param(714));
         sequencer.set_track_knobs(0, knobs);
         for (start, events) in [
             (0, vec![note_on(0), param_at(10, 714, 0.25), note_off(100)]),
@@ -1171,7 +1183,10 @@ mod tests {
         );
         record.undo(&mut sequencer);
         assert_eq!(track_param_moves(&sequencer), before);
-        assert_eq!(sequencer.tracks()[0].knobs()[0], Some(714));
+        assert_eq!(
+            sequencer.tracks()[0].knobs()[0].map(|knob| knob.id),
+            Some(714)
+        );
         record.redo(&mut sequencer);
         assert_eq!(track_param_moves(&sequencer)[0], vec![(10, 77, 0.25)]);
     }
@@ -1233,8 +1248,8 @@ mod tests {
         let mut sequencer = test_sequencer();
         sequencer.tracks_mut()[0].set_output(stub_instrument(Vec::new()));
         let mut knobs = UNASSIGNED_KNOBS;
-        knobs[0] = Some(714);
-        knobs[4] = Some(9);
+        knobs[0] = Some(test_param(714));
+        knobs[4] = Some(test_param(9));
         sequencer.set_track_knobs(0, knobs);
         let mut record = Record::new();
 

@@ -24,7 +24,7 @@ use crate::{
     models::{
         clip::Clip,
         event::{Event, ParamMove},
-        knobs::{ParamId, knobs_from_saved},
+        knobs::{ParamId, PluginParam, PluginTag, knobs_from_saved},
         track::{InstrumentRef, TrackOutput, track_name_from_input},
     },
 };
@@ -33,8 +33,13 @@ use crate::{
 /// decision 11).
 #[derive(Serialize, Deserialize, Clone, Copy)]
 pub(crate) struct ParamMoveData {
-    /// The parameter's ID in the track's plugin.
+    /// The parameter's ID in its plugin.
     pub(crate) param: ParamId,
+    /// The plugin it was recorded on ([`plugin_tag`](crate::models::knobs::plugin_tag)),
+    /// which a clip moved to another track keeps. Absent means the track's
+    /// own plugin, as in a project saved before moves named one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) plugin: Option<PluginTag>,
     /// Its normalized value, `0.0..=1.0`.
     pub(crate) value: f64,
 }
@@ -380,7 +385,8 @@ impl ProjectData {
                                 length: event.end_tick() - event.tick(),
                                 midi_message: event.midi_message().to_vec(),
                                 param_move: event.param_move().map(|moved| ParamMoveData {
-                                    param: moved.param,
+                                    param: moved.param.id,
+                                    plugin: Some(moved.param.plugin),
                                     value: moved.value,
                                 }),
                                 muted: event.is_muted(),
@@ -419,7 +425,10 @@ impl ProjectData {
                         .knobs()
                         .iter()
                         .zip(track.knobs_by_hand())
-                        .map(|(&param, &by_hand)| KnobData { param, by_hand })
+                        .map(|(&param, &by_hand)| KnobData {
+                            param: param.map(|param| param.id),
+                            by_hand,
+                        })
                         .collect(),
                     clips,
                 }
@@ -469,15 +478,16 @@ impl ProjectData {
             sequencer.set_track_volume(track_idx, track_data.volume_db);
             sequencer.set_track_pan(track_idx, track_data.pan);
             sequencer.set_track_muted(track_idx, track_data.muted);
-            let knobs: Vec<Option<ParamId>> =
-                track_data.knobs.iter().map(|knob| knob.param).collect();
-            sequencer.set_track_knobs(track_idx, knobs_from_saved(&knobs));
             if let Some(track) = sequencer.tracks_mut().get_mut(track_idx) {
                 track.set_color_slot(track_data.color.unwrap_or(track_idx));
                 // Through the rename's own rules, so a hand-edited blank name
                 // shows the number.
                 track.set_name(track_data.name.as_deref().and_then(track_name_from_input));
                 track.set_output(track_data.output.into_output());
+                let own_plugin = track.output().plugin_tag();
+                let saved_knobs: Vec<Option<ParamId>> =
+                    track_data.knobs.iter().map(|knob| knob.param).collect();
+                track.set_knobs(knobs_from_saved(&saved_knobs, own_plugin));
 
                 for clip_data in track_data.clips {
                     let mut clip = Clip::new();
@@ -490,7 +500,15 @@ impl ProjectData {
                     // Add events (delta_ticks recalculated by add_event)
                     for event_data in clip_data.events {
                         let mut event = match event_data.param_move {
-                            Some(ParamMoveData { param, value }) => {
+                            Some(ParamMoveData {
+                                param,
+                                plugin,
+                                value,
+                            }) => {
+                                let param = PluginParam {
+                                    plugin: plugin.unwrap_or(own_plugin),
+                                    id: param,
+                                };
                                 Event::from_param_move(event_data.tick, ParamMove { param, value })
                             }
                             None => Event::new(
@@ -519,7 +537,7 @@ mod tests {
     use crate::core::sequencer::test_support::{
         clip_at, note_on, param_at, param_moves, test_sequencer, track_colors,
     };
-    use crate::models::knobs::UNASSIGNED_KNOBS;
+    use crate::models::knobs::{KnobParams, UNASSIGNED_KNOBS, test_param};
 
     /// A default project with `count` tracks.
     fn project_with_tracks(count: usize) -> ProjectData {
@@ -687,8 +705,8 @@ mod tests {
     fn knob_assignments_survive_a_save_and_load_and_a_new_project_resets_them() {
         let mut sequencer = test_sequencer();
         let mut knobs = UNASSIGNED_KNOBS;
-        knobs[2] = Some(714);
-        knobs[7] = Some(7_000_000);
+        knobs[2] = Some(test_param(714));
+        knobs[7] = Some(test_param(7_000_000));
         sequencer.set_track_knobs(1, knobs);
         let json = serde_json::to_string(&ProjectData::from_sequencer(&sequencer)).unwrap();
 
@@ -697,7 +715,8 @@ mod tests {
         let data: ProjectData = serde_json::from_str(&json).unwrap();
         data.apply_to_sequencer(&mut sequencer);
 
-        assert_eq!(*sequencer.tracks()[1].knobs(), knobs);
+        let ids = |knobs: &KnobParams| knobs.map(|knob| knob.map(|knob| knob.id));
+        assert_eq!(ids(sequencer.tracks()[1].knobs()), ids(&knobs));
         assert_eq!(*sequencer.tracks()[0].knobs(), UNASSIGNED_KNOBS);
     }
 
@@ -721,6 +740,33 @@ mod tests {
         assert_eq!(param_moves(events), vec![(10, 714, 0.25), (40, 714, 0.5)]);
         assert!(events[2].is_muted());
         assert_eq!(events[1].midi_message(), &[0x90, 60, 100]);
+    }
+
+    /// A move keeps the plugin it was recorded on through a save, on a track
+    /// with another; one saved naming none is the track's own plugin's.
+    #[test]
+    fn a_parameter_move_loads_with_its_plugin() {
+        let mut sequencer = test_sequencer();
+        let mut clip = clip_at(0, 1920);
+        clip.restore_events(vec![param_at(10, 714, 0.25)]);
+        sequencer.tracks_mut()[0].add_clip(&clip);
+        let plugin_after_load = |data: ProjectData| {
+            let mut loaded = test_sequencer();
+            data.apply_to_sequencer(&mut loaded);
+            let event = &loaded.tracks()[0].clips()[0].events()[0];
+            event.param_move().unwrap().param.plugin
+        };
+
+        let data = ProjectData::from_sequencer(&sequencer);
+        assert_eq!(plugin_after_load(data), test_param(714).plugin);
+
+        let mut unnamed = ProjectData::from_sequencer(&sequencer);
+        let event = &mut unnamed.tracks[0].clips[0].events[0];
+        event.param_move.as_mut().unwrap().plugin = None;
+        assert_eq!(
+            plugin_after_load(unnamed),
+            sequencer.tracks()[0].output().plugin_tag()
+        );
     }
 
     /// A MIDI event writes no `param_move`, so a project with none reads as
@@ -763,7 +809,7 @@ mod tests {
         let json = serde_json::to_string(&ProjectData::from_sequencer(&sequencer)).unwrap();
         assert!(!json.contains("knobs"), "{json}");
         let mut knobs = UNASSIGNED_KNOBS;
-        knobs[1] = Some(3);
+        knobs[1] = Some(test_param(3));
         sequencer.set_track_knobs(0, knobs);
         sequencer.turn_knob(0, 1, 0.5, 0);
         let json = serde_json::to_string(&ProjectData::from_sequencer(&sequencer)).unwrap();
@@ -796,7 +842,7 @@ mod tests {
             };
             let mut sequencer = test_sequencer();
             let mut knobs = UNASSIGNED_KNOBS;
-            knobs[0] = Some(1);
+            knobs[0] = Some(test_param(1));
             sequencer.set_track_knobs(0, knobs);
             data.apply_to_sequencer(&mut sequencer);
             assert_eq!(*sequencer.tracks()[0].knobs(), UNASSIGNED_KNOBS);

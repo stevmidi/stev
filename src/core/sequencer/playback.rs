@@ -15,6 +15,8 @@
 
 use std::time::{Duration, Instant};
 
+use rtrb::Producer;
+
 use crate::core::config::PITCH_PREVIEW_MS;
 use crate::core::midi::message::midi3;
 use crate::core::midi::message::rewrite_channel;
@@ -91,13 +93,12 @@ impl Sequencer {
                         ([0x90, note, velocity], EventTime::At(now)),
                         ([0x80, note, 0], EventTime::At(now + preview)),
                     ] {
-                        self.instrument_midi_tx
-                            .push(ClipInstrumentEvent {
-                                track: slot,
-                                message: VoiceMessage::Midi(midi3(&message)),
-                                when,
-                            })
-                            .ok();
+                        send_to_voice(
+                            &mut self.instrument_midi_tx,
+                            slot,
+                            VoiceMessage::Midi(midi3(&message)),
+                            when,
+                        );
                     }
                 }
             }
@@ -124,21 +125,18 @@ impl Sequencer {
                     continue;
                 }
                 // A parameter move: no note, so an unaudible track still
-                // sends it, like a wheel's. Only a plugin has parameters;
-                // `Track::tick` lets through only what a knob holds.
+                // sends it, like a wheel's. `Track::tick` lets through only
+                // what a knob of a plugin's track holds.
                 if let Some(param_move) = event.param_move() {
-                    if matches!(track.output(), TrackOutput::Instrument(_)) {
-                        self.instrument_midi_tx
-                            .push(ClipInstrumentEvent {
-                                track: track.slot(),
-                                message: VoiceMessage::Param(param_move),
-                                when: EventTime::At(at),
-                            })
-                            .ok();
-                        if let Some(knob) = knob_holding(track.knobs(), param_move.param) {
-                            self.track_mix
-                                .mark_knob_played(track.slot(), knob, param_move.value);
-                        }
+                    send_to_voice(
+                        &mut self.instrument_midi_tx,
+                        track.slot(),
+                        VoiceMessage::Param(param_move),
+                        EventTime::At(at),
+                    );
+                    if let Some(knob) = knob_holding(track.knobs(), param_move.param) {
+                        self.track_mix
+                            .mark_knob_played(track.slot(), knob, param_move.value);
                     }
                     continue;
                 }
@@ -173,13 +171,12 @@ impl Sequencer {
                         let mut msg = midi3(event.midi_message());
                         rewrite_channel(&mut msg, 0);
                         self.instrument_notes.observe_clip(track.slot(), &msg);
-                        self.instrument_midi_tx
-                            .push(ClipInstrumentEvent {
-                                track: track.slot(),
-                                message: VoiceMessage::Midi(msg),
-                                when: EventTime::At(at),
-                            })
-                            .ok();
+                        send_to_voice(
+                            &mut self.instrument_midi_tx,
+                            track.slot(),
+                            VoiceMessage::Midi(msg),
+                            EventTime::At(at),
+                        );
                     }
                 }
             }
@@ -220,13 +217,12 @@ impl Sequencer {
                         rewrite_channel(&mut msg, channel);
                         self.instrument_notes.observe_clip(track.slot(), &msg);
                         // A seek — no future position; sound at the next block.
-                        self.instrument_midi_tx
-                            .push(ClipInstrumentEvent {
-                                track: track.slot(),
-                                message: VoiceMessage::Midi(msg),
-                                when: EventTime::Immediate,
-                            })
-                            .ok();
+                        send_to_voice(
+                            &mut self.instrument_midi_tx,
+                            track.slot(),
+                            VoiceMessage::Midi(msg),
+                            EventTime::Immediate,
+                        );
                     } else {
                         // A seek, like the `EventTime::Immediate` above — there
                         // is no tick instant to offset from, so it goes now.
@@ -364,13 +360,12 @@ impl Sequencer {
     /// Pushes `msg` to engine slot `slot`'s plugin for the next block
     /// (`EventTime::Immediate`, behind anything already scheduled there).
     fn push_instrument_now(&mut self, slot: usize, msg: &[u8]) {
-        self.instrument_midi_tx
-            .push(ClipInstrumentEvent {
-                track: slot,
-                message: VoiceMessage::Midi(midi3(msg)),
-                when: EventTime::Immediate,
-            })
-            .ok();
+        send_to_voice(
+            &mut self.instrument_midi_tx,
+            slot,
+            VoiceMessage::Midi(midi3(msg)),
+            EventTime::Immediate,
+        );
     }
 
     /// Re-seeks every track to the current playback tick.
@@ -389,8 +384,25 @@ impl Sequencer {
     }
 }
 
+/// Queues `message` for engine slot `slot`'s plugin, `when` says for which
+/// sample. Free of `self`, for a caller walking the tracks.
+fn send_to_voice(
+    tx: &mut Producer<ClipInstrumentEvent>,
+    slot: usize,
+    message: VoiceMessage,
+    when: EventTime,
+) {
+    tx.push(ClipInstrumentEvent {
+        track: slot,
+        message,
+        when,
+    })
+    .ok();
+}
+
 #[cfg(test)]
 mod tests {
+    use crate::models::knobs::test_param;
     use std::time::{Duration, Instant};
 
     use crossbeam_channel::Receiver;
@@ -424,7 +436,7 @@ mod tests {
         let (mut sequencer, rx) = sequencer_and_plugin_rx(500_000);
         sequencer.tracks_mut()[0].set_output(stub_instrument(Vec::new()));
         let mut knobs = UNASSIGNED_KNOBS;
-        knobs[0] = Some(714);
+        knobs[0] = Some(test_param(714));
         sequencer.set_track_knobs(0, knobs);
         let mut clip = clip_at(0, 1920);
         clip.restore_events(vec![param_at(2, 714, 0.25), param_at(5, 714, 0.75)]);
@@ -436,7 +448,7 @@ mod tests {
     fn plugin_param_moves(rx: &mut Consumer<ClipInstrumentEvent>) -> Vec<(usize, u32, f64)> {
         std::iter::from_fn(|| rx.pop().ok())
             .filter_map(|e| match e.message {
-                VoiceMessage::Param(moved) => Some((e.track, moved.param, moved.value)),
+                VoiceMessage::Param(moved) => Some((e.track, moved.param.id, moved.value)),
                 VoiceMessage::Midi(_) => None,
             })
             .collect()
@@ -503,7 +515,7 @@ mod tests {
     fn midi_out_skips_a_parameter_move() {
         let (mut sequencer, midi_out_rx, _rx) = sequencer_with_outputs(true);
         let mut knobs = UNASSIGNED_KNOBS;
-        knobs[0] = Some(714);
+        knobs[0] = Some(test_param(714));
         sequencer.set_track_knobs(0, knobs);
         let mut clip = clip_at(0, 1920);
         clip.restore_events(vec![param_at(2, 714, 0.25)]);

@@ -39,6 +39,26 @@ impl Clip {
         self.events.push(event);
     }
 
+    /// [`add_event`](Self::add_event) for an event that may be stamped
+    /// behind the last ones: it goes in behind the last event at or before
+    /// its tick, and every other event stays where it is.
+    pub(crate) fn add_late_event(&mut self, mut event: Event) {
+        let tick = event.tick();
+        let at = self
+            .events
+            .iter()
+            .rposition(|existing| existing.tick() <= tick)
+            .map_or(0, |before| before + 1);
+        let prev_tick = at
+            .checked_sub(1)
+            .map_or(0, |before| self.events[before].tick());
+        event.set_delta_ticks(prev_tick);
+        self.events.insert(at, event);
+        if let Some(next) = self.events.get_mut(at + 1) {
+            next.set_delta_ticks(tick);
+        }
+    }
+
     /// Advances the clip by one tick. Returns the event at
     /// [`current_event_idx`](Self::current_event_idx) once
     /// [`elapsed_delta_ticks`](Self::elapsed_delta_ticks) has caught up to its
@@ -327,6 +347,22 @@ mod tests {
 
     fn off(tick: i32, note: u8) -> Event {
         Event::new(tick, 0, vec![0x80, note, 0])
+    }
+
+    /// A late event goes in by its tick, and the deltas stay true.
+    #[test]
+    fn a_late_event_slots_in_behind_the_tail() {
+        let mut clip = Clip::new();
+        for tick in [10, 30, 50] {
+            clip.add_event(on(tick, 60));
+        }
+        clip.add_late_event(on(20, 62));
+        clip.add_late_event(on(5, 64));
+        clip.add_late_event(on(60, 65));
+        let ticks: Vec<i32> = clip.events().iter().map(Event::tick).collect();
+        assert_eq!(ticks, vec![5, 10, 20, 30, 50, 60]);
+        let deltas: Vec<i32> = clip.events().iter().map(Event::delta_ticks).collect();
+        assert_eq!(deltas, vec![5, 5, 10, 10, 20, 10]);
     }
 
     fn clip_with_region(region_start: i32, region_end: i32) -> Clip {

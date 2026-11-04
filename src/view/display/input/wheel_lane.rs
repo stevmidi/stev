@@ -71,7 +71,7 @@ impl Display {
     /// on the selected track — `None` for velocity.
     pub(in crate::view::display) fn clip_lane_controller(&self) -> Option<Controller> {
         match self.shown_clip_lane() {
-            ClipLane::Knob(knob) => self.knob_param(knob).map(Controller::Param),
+            ClipLane::Knob(knob) => self.knob_controller(knob).map(Controller::Param),
             lane => lane.controller(),
         }
     }

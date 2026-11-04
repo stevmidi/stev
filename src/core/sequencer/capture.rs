@@ -328,7 +328,7 @@ impl Sequencer {
     ///
     /// [`InsertCaptureEdit`]: crate::core::sequencer::edit::InsertCaptureEdit
     pub(crate) fn build_running_capture_insert(&self) -> Option<CaptureInsert> {
-        if !RunningCaptureTarget::InsertFromArranger.lands(&self.capture_clip) {
+        if !RunningCaptureTarget::InsertFromArranger.lands(&self.kept_capture()) {
             return None;
         }
 
@@ -458,8 +458,7 @@ impl Sequencer {
         region_length: i32,
         target: RunningCaptureTarget,
     ) -> Option<Clip> {
-        let mut capture = self.capture_clip.clone();
-        self.keep_knob_moves(&mut capture);
+        let mut capture = self.kept_capture();
         let bar = self.meter().bar_ticks();
 
         let transport_loop = self
@@ -637,6 +636,7 @@ fn is_note_on(message: &[u8]) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use crate::models::knobs::test_param;
     use std::{path::PathBuf, sync::atomic::Ordering, time::Instant};
 
     use crossbeam_channel::Receiver;
@@ -2242,7 +2242,7 @@ mod tests {
     fn sequencer_with_knob(region_len: i32) -> Sequencer {
         let mut seq = make_sequencer(0, region_len);
         let mut knobs = UNASSIGNED_KNOBS;
-        knobs[0] = Some(CUTOFF);
+        knobs[0] = Some(test_param(CUTOFF));
         seq.set_track_knobs(0, knobs);
         seq
     }
@@ -2402,7 +2402,7 @@ mod tests {
     fn another_tracks_turn_stays_out_of_the_buffer() {
         let mut seq = sequencer_with_knob(1920);
         let mut knobs = UNASSIGNED_KNOBS;
-        knobs[0] = Some(CUTOFF);
+        knobs[0] = Some(test_param(CUTOFF));
         seq.set_track_knobs(1, knobs);
         seq.hold_knob(1, 0, Some(0.1), 100);
         seq.turn_knob(1, 0, 0.5, 110);

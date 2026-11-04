@@ -111,8 +111,8 @@ impl Display {
             // The gutter's data marker, for a clip with moves of the knob's
             // parameter (`400-parameter-knobs.md` decision 12).
             let marked = switches
-                && shown
-                    .param
+                && self
+                    .knob_controller(knob)
                     .is_some_and(|param| self.lead_clip_moves(Controller::Param(param)));
             // Cut short with an ellipsis when it doesn't fit
             // (`400-parameter-knobs.md` decision 5 — the footer shows the

@@ -13,25 +13,59 @@ pub(crate) const KNOB_COUNT: usize = 8;
 /// its parameter list.
 pub(crate) type ParamId = u32;
 
+/// Which plugin a [`PluginParam`] belongs to: [`plugin_tag`] of its id.
+pub(crate) type PluginTag = u32;
+
+/// One plugin's parameter. A [`ParamId`] means something only to its own
+/// plugin, and a clip can travel to a track with another one: the plugin goes
+/// with the ID, so a move only ever matches the knob of the plugin it was
+/// recorded on (`400-parameter-knobs.md` decision 8).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub(crate) struct PluginParam {
+    /// Its plugin.
+    pub(crate) plugin: PluginTag,
+    /// The ID that plugin gives it.
+    pub(crate) id: ParamId,
+}
+
+/// The tag of the plugin `plugin_id` (VST3's class ID, CLAP's id, each
+/// unique to a plugin wherever it is installed): its 32-bit FNV-1a hash,
+/// saved in the project, so it must never change.
+pub(crate) fn plugin_tag(plugin_id: &str) -> PluginTag {
+    plugin_id.bytes().fold(0x811C_9DC5, |hash, byte| {
+        (hash ^ PluginTag::from(byte)).wrapping_mul(0x0100_0193)
+    })
+}
+
 /// What each of a track's knobs drives, in reading order (the first column
-/// top to bottom, then the second): a parameter, or `None` while the knob is
-/// unassigned. No two knobs hold the same parameter ([`param_taken_by`]).
-pub(crate) type KnobParams = [Option<ParamId>; KNOB_COUNT];
+/// top to bottom, then the second): a parameter of the track's plugin, or
+/// `None` while the knob is unassigned. No two knobs hold the same parameter
+/// ([`param_taken_by`]).
+pub(crate) type KnobParams = [Option<PluginParam>; KNOB_COUNT];
 
 /// A fresh track's knobs: none assigned.
 pub(crate) const UNASSIGNED_KNOBS: KnobParams = [None; KNOB_COUNT];
 
-/// The other knob of `knobs` that holds `param` already, if any — knob
-/// `knob` can't take it then: both would claim the same data
+/// The other knob of `knobs` that holds parameter `id` already, if any —
+/// knob `knob` can't take it then: both would claim the same data
 /// (`400-parameter-knobs.md` decision 4). A knob's own parameter is no
 /// refusal.
-pub(crate) fn param_taken_by(knobs: &KnobParams, knob: usize, param: ParamId) -> Option<usize> {
-    knob_holding(knobs, param).filter(|&other| other != knob)
+pub(crate) fn param_taken_by(knobs: &KnobParams, knob: usize, id: ParamId) -> Option<usize> {
+    knob_with_id(knobs, id).filter(|&other| other != knob)
 }
 
-/// The knob of `knobs` that holds `param`, if any.
-pub(crate) fn knob_holding(knobs: &KnobParams, param: ParamId) -> Option<usize> {
+/// The knob of `knobs` that holds `param`, if any: none for a parameter of
+/// another plugin, whatever its ID.
+pub(crate) fn knob_holding(knobs: &KnobParams, param: PluginParam) -> Option<usize> {
     knobs.iter().position(|&held| held == Some(param))
+}
+
+/// The knob of `knobs` that holds parameter `id` of the track's own plugin,
+/// if any: what the plugin reports, in the only IDs it knows.
+pub(crate) fn knob_with_id(knobs: &KnobParams, id: ParamId) -> Option<usize> {
+    knobs
+        .iter()
+        .position(|held| held.is_some_and(|held| held.id == id))
 }
 
 /// The footer's refusal when knob `other` (counted from 0) holds the
@@ -41,18 +75,19 @@ pub(crate) fn param_taken_message(name: Option<&str>, other: usize) -> String {
     format!("{name} is on knob {} already", other + 1)
 }
 
-/// The knobs a saved track names, or none assigned when it names a set no
-/// track could have: the wrong count, or two knobs on one parameter. A
-/// project saved before parameter knobs (its CC knobs) reads as eight
+/// The knobs a saved track on `plugin` names, or none assigned when it names
+/// a set no track could have: the wrong count, or two knobs on one parameter.
+/// A project saved before parameter knobs (its CC knobs) reads as eight
 /// unassigned knobs, its entries naming no parameter.
-pub(crate) fn knobs_from_saved(saved: &[Option<ParamId>]) -> KnobParams {
-    let Ok(knobs) = KnobParams::try_from(saved) else {
+pub(crate) fn knobs_from_saved(saved: &[Option<ParamId>], plugin: PluginTag) -> KnobParams {
+    let Ok(ids) = <[Option<ParamId>; KNOB_COUNT]>::try_from(saved) else {
         return UNASSIGNED_KNOBS;
     };
+    let knobs = ids.map(|id| id.map(|id| PluginParam { plugin, id }));
     let duplicate = knobs
         .iter()
         .enumerate()
-        .any(|(i, param)| param.is_some_and(|param| param_taken_by(&knobs, i, param).is_some()));
+        .any(|(i, param)| param.is_some_and(|param| param_taken_by(&knobs, i, param.id).is_some()));
     if duplicate { UNASSIGNED_KNOBS } else { knobs }
 }
 
@@ -67,6 +102,12 @@ pub(crate) fn snap_to_steps(value: f64, steps: u32) -> f64 {
     }
     let steps = f64::from(steps);
     (value * (steps + 1.0)).floor().min(steps) / steps
+}
+
+/// Parameter `id` of one plugin, the same in every test.
+#[cfg(test)]
+pub(crate) const fn test_param(id: ParamId) -> PluginParam {
+    PluginParam { plugin: 1, id }
 }
 
 #[cfg(test)]
@@ -99,14 +140,32 @@ mod tests {
     #[test]
     fn a_parameter_another_knob_holds_is_taken_but_a_knobs_own_is_not() {
         let mut knobs = UNASSIGNED_KNOBS;
-        knobs[0] = Some(714);
-        knobs[5] = Some(7_000_000);
+        knobs[0] = Some(test_param(714));
+        knobs[5] = Some(test_param(7_000_000));
         assert_eq!(param_taken_by(&knobs, 3, 714), Some(0));
         assert_eq!(param_taken_by(&knobs, 0, 7_000_000), Some(5));
         assert_eq!(param_taken_by(&knobs, 0, 714), None);
         assert_eq!(param_taken_by(&knobs, 3, 1), None);
-        assert_eq!(knob_holding(&knobs, 714), Some(0));
-        assert_eq!(knob_holding(&knobs, 1), None);
+        assert_eq!(knob_with_id(&knobs, 714), Some(0));
+        assert_eq!(knob_with_id(&knobs, 1), None);
+    }
+
+    /// Plugins number their parameters as they like, so two can share an
+    /// ID: only the knob's own plugin's parameter is the knob's.
+    #[test]
+    fn a_parameter_of_another_plugin_is_no_knobs_whatever_its_id() {
+        let mut knobs = UNASSIGNED_KNOBS;
+        knobs[0] = Some(test_param(714));
+        assert_eq!(knob_holding(&knobs, test_param(714)), Some(0));
+        let foreign = PluginParam { plugin: 2, id: 714 };
+        assert_eq!(knob_holding(&knobs, foreign), None);
+    }
+
+    /// Saved in projects, so these never change.
+    #[test]
+    fn a_plugins_tag_is_its_ids_fnv_hash() {
+        assert_eq!(plugin_tag(""), 0x811C_9DC5);
+        assert_eq!(plugin_tag("a"), 0xE40C_292C);
     }
 
     #[test]
@@ -123,19 +182,22 @@ mod tests {
 
     #[test]
     fn a_saved_set_loads_as_saved() {
-        let mut saved = UNASSIGNED_KNOBS;
+        let mut saved = [None; KNOB_COUNT];
         saved[2] = Some(714);
         saved[7] = Some(0);
-        assert_eq!(knobs_from_saved(&saved), saved);
+        let mut knobs = UNASSIGNED_KNOBS;
+        knobs[2] = Some(test_param(714));
+        knobs[7] = Some(test_param(0));
+        assert_eq!(knobs_from_saved(&saved, 1), knobs);
     }
 
     #[test]
     fn a_set_no_track_could_have_loads_unassigned() {
-        assert_eq!(knobs_from_saved(&[]), UNASSIGNED_KNOBS);
-        assert_eq!(knobs_from_saved(&[Some(1); 7]), UNASSIGNED_KNOBS);
-        let mut duplicate = UNASSIGNED_KNOBS;
+        assert_eq!(knobs_from_saved(&[], 1), UNASSIGNED_KNOBS);
+        assert_eq!(knobs_from_saved(&[Some(1); 7], 1), UNASSIGNED_KNOBS);
+        let mut duplicate = [None; KNOB_COUNT];
         duplicate[1] = Some(714);
         duplicate[6] = Some(714);
-        assert_eq!(knobs_from_saved(&duplicate), UNASSIGNED_KNOBS);
+        assert_eq!(knobs_from_saved(&duplicate, 1), UNASSIGNED_KNOBS);
     }
 }

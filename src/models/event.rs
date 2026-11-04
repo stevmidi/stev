@@ -17,7 +17,7 @@
 use uuid::Uuid;
 
 use crate::core::midi::message::{Controller, parse_controller, rewrite_channel};
-use crate::models::knobs::ParamId;
+use crate::models::knobs::PluginParam;
 
 /// The two note edges the sequencer cares about. Derived from the MIDI status
 /// byte and velocity by [`Event::event_type`]; everything else (CC, sysex,
@@ -34,8 +34,8 @@ pub(crate) enum EventType {
 /// (`400-parameter-knobs.md` decision 11).
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub(crate) struct ParamMove {
-    /// The parameter, by the plugin's own ID.
-    pub(crate) param: ParamId,
+    /// The parameter, with the plugin it was recorded on.
+    pub(crate) param: PluginParam,
     /// Where it moved to, normalized to `0.0..=1.0`.
     pub(crate) value: f64,
 }
@@ -89,12 +89,17 @@ impl Event {
     /// and is filled in by the clip's sort pass; `length` is supplied by the
     /// caller (usually `0`, then filled in by the clip's length pass).
     pub(crate) fn new(tick: i32, length: i32, midi_message: Vec<u8>) -> Self {
+        Event::with_payload(tick, length, Payload::Midi(midi_message))
+    }
+
+    /// [`new`](Self::new), for either kind of payload.
+    fn with_payload(tick: i32, length: i32, payload: Payload) -> Self {
         Event {
             id: Uuid::new_v4(),
             tick,
             delta_ticks: 0,
             length,
-            payload: Payload::Midi(midi_message),
+            payload,
             muted: false,
         }
     }
@@ -120,9 +125,7 @@ impl Event {
 
     /// A parameter move at `tick`, with a real id.
     pub(crate) fn from_param_move(tick: i32, param_move: ParamMove) -> Self {
-        let mut event = Event::new(tick, 0, Vec::new());
-        event.payload = Payload::Param(param_move);
-        event
+        Event::with_payload(tick, 0, Payload::Param(param_move))
     }
 
     /// A move of `controller` to `value` at `tick`, on `channel` for one a
@@ -144,9 +147,7 @@ impl Event {
     /// The same payload as a new, unmuted event at `tick`, with no length:
     /// a move restamped, or a bake's copy.
     pub(crate) fn copy_at(&self, tick: i32) -> Self {
-        let mut event = Event::new(tick, 0, Vec::new());
-        event.payload = self.payload.clone();
-        event
+        Event::with_payload(tick, 0, self.payload.clone())
     }
 
     // --- Identity accessor ---
@@ -217,7 +218,7 @@ impl Event {
     }
 
     /// Puts a parameter move on `param` instead. No-op on a MIDI event.
-    pub(crate) fn set_param(&mut self, param: ParamId) {
+    pub(crate) fn set_param(&mut self, param: PluginParam) {
         if let Payload::Param(param_move) = &mut self.payload {
             param_move.param = param;
         }
@@ -316,6 +317,7 @@ impl Event {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::knobs::test_param;
 
     fn note_on(tick: i32, note: u8, vel: u8) -> Event {
         Event::new(tick, 0, vec![0x90, note, vel])
@@ -326,7 +328,7 @@ mod tests {
     #[test]
     fn a_parameter_move_is_nothing_to_a_midi_reader() {
         let param_move = ParamMove {
-            param: 714,
+            param: test_param(714),
             value: 0.25,
         };
         let mut event = Event::from_param_move(96, param_move);
@@ -347,8 +349,11 @@ mod tests {
             bend.controller_move(),
             Some((Controller::PitchBend, 8192.0))
         );
-        let param = Event::controller_move_at(10, Controller::Param(7), 0.5, 3);
-        assert_eq!(param.controller_move(), Some((Controller::Param(7), 0.5)));
+        let param = Event::controller_move_at(10, Controller::Param(test_param(7)), 0.5, 3);
+        assert_eq!(
+            param.controller_move(),
+            Some((Controller::Param(test_param(7)), 0.5))
+        );
         assert_eq!(note_on(0, 60, 100).controller_move(), None);
     }
 
@@ -365,7 +370,7 @@ mod tests {
         let mut event = Event::from_param_move(
             5,
             ParamMove {
-                param: 1,
+                param: test_param(1),
                 value: 0.75,
             },
         );
@@ -375,8 +380,11 @@ mod tests {
         assert_ne!(copy.id(), event.id());
         assert!(!copy.is_muted());
         assert_eq!(copy.param_move(), event.param_move());
-        event.set_param(2);
-        assert_eq!(event.param_move().map(|moved| moved.param), Some(2));
+        event.set_param(test_param(2));
+        assert_eq!(
+            event.param_move().map(|moved| moved.param),
+            Some(test_param(2))
+        );
     }
 
     #[test]

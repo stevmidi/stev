@@ -24,8 +24,9 @@ use crate::core::time::{self, PPQN};
 /// counter is stale too; cap rather than inject a wild offset.
 const MAX_INPUT_INTERP_NANOS: u64 = 2_000_000;
 
-/// The clock's atomics in one handle, for the view to stamp a hand turn with
-/// the `clock_tick` it landed on (`400-parameter-knobs.md` decision 10).
+/// The clock's atomics in one handle, for whatever stamps input with the
+/// `clock_tick` it landed on: the MIDI input, and the view a hand turn
+/// (`400-parameter-knobs.md` decision 10).
 #[derive(Clone)]
 pub(crate) struct InputClock {
     /// The free-running musical tick counter.
@@ -49,24 +50,23 @@ impl InputClock {
                 self.tempo.load(Ordering::Relaxed),
                 ago_ns,
             ),
-            _ => input_tick_at_arrival(
-                &self.clock_tick,
-                &self.clock_tick_instant_nanos,
-                &self.tempo,
-                arrival_ns,
-            ),
+            _ => input_tick_at_arrival(self, arrival_ns),
         }
     }
 }
 
 /// `base_tick` less `ago_ns` worth of ticks, rounded to the nearest.
 fn rewind_input_tick(base_tick: i32, tempo_us: i32, ago_ns: u64) -> i32 {
-    let ns_per_tick = tempo_us.max(0) as u64 * 1_000 / PPQN as u64;
-    if ns_per_tick == 0 {
-        return base_tick;
-    }
-    let ticks = (ago_ns + ns_per_tick / 2) / ns_per_tick;
-    base_tick.saturating_sub(i32::try_from(ticks).unwrap_or(i32::MAX))
+    ticks_in(ago_ns, tempo_us).map_or(base_tick, |ticks| {
+        base_tick.saturating_sub(i32::try_from(ticks).unwrap_or(i32::MAX))
+    })
+}
+
+/// `ns` of time in ticks at `tempo_us`, rounded to the nearest; `None` at a
+/// tempo with no length.
+fn ticks_in(ns: u64, tempo_us: i32) -> Option<u64> {
+    let ns_per_tick = u64::try_from(tempo_us).ok()? * 1_000 / PPQN as u64;
+    (ns_per_tick > 0).then(|| (ns + ns_per_tick / 2) / ns_per_tick)
 }
 
 /// Best estimate of the `clock_tick` a live-input message landed on — where in
@@ -80,9 +80,7 @@ fn rewind_input_tick(base_tick: i32, tempo_us: i32, ago_ns: u64) -> i32 {
 /// at its definition. When no usable stamp is available the callback's own
 /// monotonic time is used instead (loses only the sub-tick dispatch latency).
 pub(super) fn precise_input_tick(
-    clock_tick: &AtomicI32,
-    clock_tick_instant_nanos: &AtomicU64,
-    tempo: &AtomicI32,
+    clock: &InputClock,
     midir_ts_us: u64,
     min_offset_ns: &mut i64,
 ) -> i32 {
@@ -94,22 +92,17 @@ pub(super) fn precise_input_tick(
         calibrated_arrival_ns(now_ns, midir_ts_us as i64 * 1_000, min_offset_ns)
     };
 
-    input_tick_at_arrival(clock_tick, clock_tick_instant_nanos, tempo, arrival_ns)
+    input_tick_at_arrival(clock, arrival_ns)
 }
 
 /// The `clock_tick` of a message that arrived at `arrival_ns` on the
 /// [`time::monotonic_nanos`] timeline: [`precise_input_tick`] once it has
 /// placed a `midir` stamp there, or a source stamping its messages with that
 /// clock directly (the computer keyboard, `MidiInputForwarder::tick_at`).
-pub(super) fn input_tick_at_arrival(
-    clock_tick: &AtomicI32,
-    clock_tick_instant_nanos: &AtomicU64,
-    tempo: &AtomicI32,
-    arrival_ns: u64,
-) -> i32 {
-    let last_tick_ns = clock_tick_instant_nanos.load(Ordering::Relaxed);
-    let base = clock_tick.load(Ordering::Relaxed);
-    let tempo_us = tempo.load(Ordering::Relaxed);
+pub(super) fn input_tick_at_arrival(clock: &InputClock, arrival_ns: u64) -> i32 {
+    let last_tick_ns = clock.clock_tick_instant_nanos.load(Ordering::Relaxed);
+    let base = clock.clock_tick.load(Ordering::Relaxed);
+    let tempo_us = clock.tempo.load(Ordering::Relaxed);
 
     interpolate_input_tick(base, tempo_us, arrival_ns.saturating_sub(last_tick_ns))
 }
@@ -130,16 +123,9 @@ fn calibrated_arrival_ns(now_ns: u64, stamp_ns: i64, min_offset_ns: &mut i64) ->
 /// tick. The correction is capped at [`MAX_INPUT_INTERP_NANOS`] so a stalled
 /// clock thread (which also freezes `base_tick`) can't inject a wild offset.
 fn interpolate_input_tick(base_tick: i32, tempo_us: i32, elapsed_ns: u64) -> i32 {
-    if tempo_us <= 0 {
-        return base_tick;
-    }
-    let ns_per_tick = tempo_us as u64 * 1_000 / PPQN as u64;
-    if ns_per_tick == 0 {
-        return base_tick;
-    }
-    let elapsed_ns = elapsed_ns.min(MAX_INPUT_INTERP_NANOS);
-    let sub_ticks = ((elapsed_ns + ns_per_tick / 2) / ns_per_tick) as i32;
-    base_tick.saturating_add(sub_ticks)
+    ticks_in(elapsed_ns.min(MAX_INPUT_INTERP_NANOS), tempo_us).map_or(base_tick, |sub_ticks| {
+        base_tick.saturating_add(sub_ticks as i32)
+    })
 }
 
 #[cfg(test)]

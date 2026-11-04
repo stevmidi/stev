@@ -37,7 +37,7 @@ use egui::{Key, Pos2, Rect, TouchPhase, pos2, vec2};
 
 use crate::core::input_event::InputEvent;
 use crate::core::time::monotonic_nanos;
-use crate::models::knobs::{KNOB_COUNT, ParamId, snap_to_steps};
+use crate::models::knobs::{KNOB_COUNT, ParamId, PluginParam, snap_to_steps};
 
 use super::Display;
 use super::clip_lane::ClipLane;
@@ -340,14 +340,9 @@ struct KnobDrag {
     travel: f32,
     /// Whether ⇧ was down at the last step.
     fine: bool,
-    /// The steps its parameter moves in, 0 when it moves smoothly.
-    steps: u32,
-    /// Where the travel has reached, between a stepped parameter's positions
-    /// too, so a slow drag still gets to the next one.
-    raw: f64,
-    /// The value reached, shown in the dial while the drag runs (the hand
-    /// wins): `raw`, at a stepped parameter's position.
-    value: f64,
+    /// Where it has reached, shown in the dial while the drag runs (the hand
+    /// wins).
+    position: KnobPosition,
     /// Points travelled upward while still inside the drag threshold
     /// ([`Display::DRAG_THRESHOLD_PX`], every press's click-or-drag line);
     /// `None` once the drag has left it and turns the knob.
@@ -359,17 +354,15 @@ struct KnobDrag {
 
 impl KnobDrag {
     /// A drag of a knob standing at `value`, not yet out of the dead zone.
-    fn new(track_idx: usize, knob: usize, param: Option<ParamId>, steps: u32, value: f64) -> Self {
+    fn new(track_idx: usize, knob: usize, param: Option<ParamId>, position: KnobPosition) -> Self {
         Self {
             track_idx,
             knob,
             param,
-            anchor: value,
+            anchor: position.raw,
             travel: 0.0,
             fine: false,
-            steps,
-            raw: value,
-            value,
+            position,
             slop: Some(0.0),
             holding: false,
         }
@@ -394,7 +387,7 @@ impl KnobDrag {
         if fine != self.fine {
             self.fine = fine;
             self.travel = 0.0;
-            self.anchor = self.raw;
+            self.anchor = self.position.raw;
         }
         self.travel -= dy;
         let (raw, clamped) = turned_knob_value(self.anchor, self.travel, fine);
@@ -402,6 +395,34 @@ impl KnobDrag {
             self.travel = 0.0;
             self.anchor = raw;
         }
+        self.position.reach(raw)
+    }
+}
+
+/// Where a hand turning a knob has reached.
+#[derive(Clone, Copy, Debug)]
+struct KnobPosition {
+    /// The steps its parameter moves in, 0 when it moves smoothly.
+    steps: u32,
+    /// Where the turn has reached, between a stepped parameter's positions
+    /// too, so a slow turn still gets to the next one.
+    raw: f64,
+    /// The value that is: `raw`, at a stepped parameter's position.
+    value: f64,
+}
+
+impl KnobPosition {
+    /// A knob standing at `value`, on a parameter of `steps` steps.
+    fn new(steps: u32, value: f64) -> Self {
+        Self {
+            steps,
+            raw: value,
+            value,
+        }
+    }
+
+    /// The turn reached `raw`: the new value, when that changed it.
+    fn reach(&mut self, raw: f64) -> Option<f64> {
         self.raw = raw;
         let value = snap_to_steps(raw, self.steps);
         (value != self.value).then(|| {
@@ -421,13 +442,8 @@ struct WheelTurn {
     knob: usize,
     /// The parameter it drives.
     param: ParamId,
-    /// The steps that parameter moves in, 0 when it moves smoothly.
-    steps: u32,
-    /// Where the scrolling has reached, between a stepped parameter's
-    /// positions too.
-    raw: f64,
-    /// The value reached: `raw`, at a stepped parameter's position.
-    value: f64,
+    /// Where it has reached.
+    position: KnobPosition,
     /// When its last scroll event came.
     last: Instant,
 }
@@ -538,6 +554,11 @@ impl Display {
 
     /// The parameter knob `knob` of the selected track drives, if any.
     pub(super) fn knob_param(&self, knob: usize) -> Option<ParamId> {
+        self.knob_controller(knob).map(|param| param.id)
+    }
+
+    /// That parameter as clips know it, with its plugin.
+    pub(super) fn knob_controller(&self, knob: usize) -> Option<PluginParam> {
         *self.tracks[self.knobs_track()?].knob_params.get(knob)?
     }
 
@@ -553,11 +574,11 @@ impl Display {
             && (drag.track_idx, drag.knob) == (track_idx, knob)
             && drag.param.is_some()
         {
-            Some(drag.value)
+            Some(drag.position.value)
         } else if let Some(turn) = self.knob_panel.wheel_turn
             && turn.holds(track_idx, knob, Instant::now())
         {
-            Some(turn.value)
+            Some(turn.position.value)
         } else {
             param.and_then(|param| self.knob_param_value(track_idx, param))
         };
@@ -670,8 +691,7 @@ impl Display {
             track_idx,
             knob,
             shown.param,
-            steps,
-            shown.value.unwrap_or(0.0),
+            KnobPosition::new(steps, shown.value.unwrap_or(0.0)),
         ));
     }
 
@@ -683,7 +703,7 @@ impl Display {
             return;
         };
         // Where the turn starts: the knob, before this first step moves it.
-        let start = drag.value;
+        let start = drag.position.value;
         let changed = drag.extend(dy, fine);
         let begins = changed.is_some() && !std::mem::replace(&mut drag.holding, true);
         let KnobDrag {
@@ -819,25 +839,21 @@ impl Display {
                     return;
                 };
                 self.hold_knob(track_idx, knob, value, monotonic_nanos());
-                let value = value.unwrap_or(0.0);
+                let steps = self.knob_param_steps(track_idx, param);
                 WheelTurn {
                     track_idx,
                     knob,
                     param,
-                    steps: self.knob_param_steps(track_idx, param),
-                    raw: value,
-                    value,
+                    position: KnobPosition::new(steps, value.unwrap_or(0.0)),
                     last: now,
                 }
             }
         };
         turn.last = now;
-        (turn.raw, _) = turned_knob_value(turn.raw, -delta_y * scale, fine);
-        let value = snap_to_steps(turn.raw, turn.steps);
-        let changed = value != turn.value;
-        turn.value = value;
+        let (raw, _) = turned_knob_value(turn.position.raw, -delta_y * scale, fine);
+        let changed = turn.position.reach(raw);
         self.knob_panel.wheel_turn = Some(turn);
-        if changed {
+        if let Some(value) = changed {
             self.send_knob_value(track_idx, knob, turn.param, value);
         }
     }
@@ -935,8 +951,8 @@ mod tests {
 
     use super::{
         DIAL_MAX_D, DIAL_MIN_D, DRAG_PX_PER_RANGE, Display, FRAME_GAP, FRAME_LABEL_CLEAR, KnobDrag,
-        KnobHit, MOMENTUM_SCALE, ROWS, SWEEP, SWEEP_START, WheelLatch, dial_ink, knob_angle,
-        knob_hit_at, knob_layout, turned_knob_value, unassigned_turn_message,
+        KnobHit, KnobPosition, MOMENTUM_SCALE, ROWS, SWEEP, SWEEP_START, WheelLatch, dial_ink,
+        knob_angle, knob_hit_at, knob_layout, turned_knob_value, unassigned_turn_message,
     };
 
     fn panel(height: f32) -> Rect {
@@ -1052,19 +1068,19 @@ mod tests {
 
     #[test]
     fn a_press_that_wanders_inside_the_dead_zone_is_a_click_and_turns_nothing() {
-        let mut drag = KnobDrag::new(0, 3, Some(714), 0, 0.5);
+        let mut drag = KnobDrag::new(0, 3, Some(714), KnobPosition::new(0, 0.5));
         let jitter = Display::DRAG_THRESHOLD_PX * 0.6;
         // Up and back down: the travel is net, so it never leaves the zone.
         assert_eq!(drag.extend(-jitter, false), None);
         assert_eq!(drag.extend(jitter, false), None);
         assert_eq!(drag.extend(jitter, false), None);
         assert!(drag.slop.is_some());
-        assert_eq!(drag.value, 0.5);
+        assert_eq!(drag.position.value, 0.5);
     }
 
     #[test]
     fn a_drag_out_of_the_dead_zone_turns_from_its_edge_without_a_jump() {
-        let mut drag = KnobDrag::new(0, 0, Some(714), 0, 0.5);
+        let mut drag = KnobDrag::new(0, 0, Some(714), KnobPosition::new(0, 0.5));
         // Leaving the zone turns nothing yet, and the press is no click.
         assert_eq!(drag.extend(-Display::DRAG_THRESHOLD_PX, false), None);
         assert!(drag.slop.is_none());
@@ -1077,11 +1093,11 @@ mod tests {
     /// the travel between positions isn't lost.
     #[test]
     fn a_drag_on_a_switch_changes_it_once_at_the_middle() {
-        let mut drag = KnobDrag::new(0, 0, Some(714), 1, 0.0);
+        let mut drag = KnobDrag::new(0, 0, Some(714), KnobPosition::new(1, 0.0));
         drag.extend(-Display::DRAG_THRESHOLD_PX, false);
         let quarter = -DRAG_PX_PER_RANGE / 4.0;
         assert_eq!(drag.extend(quarter, false), None);
-        assert_eq!(drag.value, 0.0);
+        assert_eq!(drag.position.value, 0.0);
         assert_eq!(drag.extend(quarter, false), Some(1.0));
         assert_eq!(drag.extend(quarter, false), None);
         assert_eq!(drag.extend(-quarter, false), None);

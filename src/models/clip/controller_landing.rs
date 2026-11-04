@@ -26,7 +26,7 @@ use std::ops::Range;
 
 use crate::{
     core::midi::message::Controller,
-    models::{controllers::ControllerValues, event::Event, knobs::ParamId},
+    models::{controllers::ControllerValues, event::Event, knobs::PluginParam},
 };
 
 use super::Clip;
@@ -52,7 +52,7 @@ impl Clip {
             .into_iter()
             .filter_map(|wheel| {
                 let (event, value) = self.last_move_before(wheel, tick)?;
-                (Some(value) != wheel.rest().map(f64::from) && !self.has_move_at(wheel, tick))
+                (Some(value) != wheel.rest_value() && !self.has_move_at(wheel, tick))
                     .then(|| event.copy_at(tick))
             })
             .collect()
@@ -272,9 +272,7 @@ impl Clip {
     ) -> bool {
         let end = span.end;
         let old = self.last_move_before(controller, end);
-        let old_value = old
-            .map(|(_, value)| value)
-            .or(controller.rest().map(f64::from));
+        let old_value = old.map(|(_, value)| value).or(controller.rest_value());
         let channel = channel
             .or_else(|| old.and_then(|(event, _)| event.midi_channel()))
             .unwrap_or(0);
@@ -334,7 +332,7 @@ impl Clip {
 
     /// Whether the clip holds a move of a parameter `matches` accepts,
     /// muted or not.
-    pub(crate) fn has_param_moves(&self, matches: impl Fn(ParamId) -> bool) -> bool {
+    pub(crate) fn has_param_moves(&self, matches: impl Fn(PluginParam) -> bool) -> bool {
         self.events
             .iter()
             .filter_map(Event::param_move)
@@ -346,8 +344,8 @@ impl Clip {
     /// (`400-parameter-knobs.md` decisions 7, 8 and 14).
     pub(crate) fn rewrite_param_moves(
         &mut self,
-        matches: impl Fn(ParamId) -> bool,
-        to: Option<ParamId>,
+        matches: impl Fn(PluginParam) -> bool,
+        to: Option<PluginParam>,
     ) {
         let selected = |event: &Event| event.param_move().is_some_and(|moved| matches(moved.param));
         match to {
@@ -389,6 +387,7 @@ fn is_move_of(event: &Event, controller: Controller) -> bool {
 mod tests {
     use super::*;
     use crate::models::event::EventType;
+    use crate::models::knobs::{ParamId, test_param};
 
     const BAR: i32 = 1920;
 
@@ -427,7 +426,7 @@ mod tests {
 
     /// A move of parameter `param` to `value`.
     fn param(tick: i32, param: ParamId, value: f64) -> Event {
-        Event::controller_move_at(tick, Controller::Param(param), value, 0)
+        Event::controller_move_at(tick, Controller::Param(test_param(param)), value, 0)
     }
 
     /// The clip's parameter moves as `(tick, param, value)`.
@@ -436,7 +435,7 @@ mod tests {
             .iter()
             .filter_map(|event| {
                 let moved = event.param_move()?;
-                Some((event.tick(), moved.param, moved.value))
+                Some((event.tick(), moved.param.id, moved.value))
             })
             .collect()
     }
@@ -494,7 +493,7 @@ mod tests {
             param(500, 1, 0.6),
         ]);
 
-        assert!(clip.clear_controller_span(Controller::Param(1), 50, 300));
+        assert!(clip.clear_controller_span(Controller::Param(test_param(1)), 50, 300));
 
         assert_eq!(
             param_moves(&clip),
@@ -515,15 +514,25 @@ mod tests {
         let events = vec![param(0, 1, 0.2), param(10, 2, 0.4), modw(20, 50)];
 
         let mut renamed = clip_with(events.clone());
-        renamed.rewrite_param_moves(|param| param == 1, Some(7));
+        let foreign = PluginParam { plugin: 2, id: 1 };
+        let mut other_plugin = Clip::new();
+        other_plugin.add_event(Event::controller_move_at(
+            0,
+            Controller::Param(foreign),
+            0.5,
+            0,
+        ));
+        other_plugin.rewrite_param_moves(|param| param == test_param(1), None);
+        assert!(other_plugin.has_param_moves(|param| param == foreign));
+        renamed.rewrite_param_moves(|param| param.id == 1, Some(test_param(7)));
         assert_eq!(param_moves(&renamed), vec![(0, 7, 0.2), (10, 2, 0.4)]);
 
         let mut removed = clip_with(events);
-        removed.rewrite_param_moves(|param| param == 1, None);
+        removed.rewrite_param_moves(|param| param.id == 1, None);
         assert_eq!(param_moves(&removed), vec![(10, 2, 0.4)]);
         assert_eq!(removed.events().len(), 2);
-        assert!(removed.has_param_moves(|param| param == 2));
-        assert!(!removed.has_param_moves(|param| param == 1));
+        assert!(removed.has_param_moves(|param| param.id == 2));
+        assert!(!removed.has_param_moves(|param| param.id == 1));
         // The walk's cached gaps follow.
         assert_eq!(removed.events()[0].delta_ticks(), 10);
     }

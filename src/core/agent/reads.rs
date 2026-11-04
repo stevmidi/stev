@@ -92,7 +92,7 @@ impl WheelMove {
             Controller::MOD_WHEEL => format!("mod {at} {}", self.value),
             Controller::Cc(cc) => format!("cc{cc} {at} {}", self.value),
             // Nothing MIDI reads a parameter move (`400` decision 11).
-            Controller::Param(param) => format!("param{param} {at} {}", self.value),
+            Controller::Param(param) => format!("param{} {at} {}", param.id, self.value),
         }
     }
 }

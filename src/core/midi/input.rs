@@ -19,7 +19,7 @@ use std::{
     error::Error,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, AtomicI32, AtomicU8, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicI32, AtomicU8, Ordering},
     },
 };
 
@@ -31,7 +31,7 @@ use midir::os::unix::VirtualInput;
 use crate::core::midi::port::VIRTUAL_PORT_NAME;
 use crate::core::{
     midi::{
-        input_tick::{input_tick_at_arrival, precise_input_tick},
+        input_tick::{InputClock, input_tick_at_arrival, precise_input_tick},
         message::{Midi3, is_recorded, midi3, parse_note, rewrite_channel},
         out_queue::MidiOutMessage,
         port::pickable_port_names,
@@ -73,15 +73,10 @@ pub(crate) struct MidiInputForwarder {
     instrument_midi_tx: SharedInstrumentMidiProducer,
 
     // State
-    /// The free-running musical tick counter, read to stamp each message.
-    clock_tick: Arc<AtomicI32>,
-    /// `time::monotonic_nanos` at which `clock_tick` last advanced — read
-    /// alongside `clock_tick` to interpolate a fractional tick for a note that
-    /// arrives between clock firings. See [`precise_input_tick`] and the
+    /// The clock, read to stamp each message, a note arriving between clock
+    /// firings at a fractional tick. See [`precise_input_tick`] and the
     /// `input_tick` submodule.
-    clock_tick_instant_nanos: Arc<AtomicU64>,
-    /// Tempo (µs per quarter), for the ns→tick conversion in the same interpolation.
-    tempo: Arc<AtomicI32>,
+    clock: InputClock,
     /// MIDI channel (0–15) of the armed track.
     arm_channel: Arc<AtomicU8>,
     /// True while the arranger performance lane is armed — suppresses the
@@ -106,9 +101,7 @@ impl MidiInputForwarder {
         midi_out_tx: Sender<MidiOutMessage>,
         note_logger_command_tx: Sender<NoteLoggerCommand>,
         instrument_midi_tx: Producer<(usize, Midi3)>,
-        clock_tick: Arc<AtomicI32>,
-        clock_tick_instant_nanos: Arc<AtomicU64>,
-        tempo: Arc<AtomicI32>,
+        clock: InputClock,
         arm_channel: Arc<AtomicU8>,
         performance_lane_armed: Arc<AtomicBool>,
         live_instrument_target: Arc<AtomicI32>,
@@ -120,9 +113,7 @@ impl MidiInputForwarder {
             midi_out_tx,
             note_logger_command_tx,
             instrument_midi_tx: Arc::new(Mutex::new(instrument_midi_tx)),
-            clock_tick,
-            clock_tick_instant_nanos,
-            tempo,
+            clock,
             arm_channel,
             performance_lane_armed,
             live_instrument_target,
@@ -168,12 +159,7 @@ impl MidiInputForwarder {
     /// [`monotonic_nanos`](crate::core::time::monotonic_nanos) timeline — for
     /// a source with no `midir` stamp of its own (the computer keyboard).
     pub(crate) fn tick_at(&self, arrival_ns: u64) -> i32 {
-        input_tick_at_arrival(
-            &self.clock_tick,
-            &self.clock_tick_instant_nanos,
-            &self.tempo,
-            arrival_ns,
-        )
+        input_tick_at_arrival(&self.clock, arrival_ns)
     }
 
     /// Opens the input connection on the named port and starts forwarding —
@@ -187,9 +173,7 @@ impl MidiInputForwarder {
         midi_in.ignore(Ignore::None);
 
         let mut router = self.router();
-        let clock_tick = self.clock_tick.clone();
-        let clock_tick_instant_nanos = self.clock_tick_instant_nanos.clone();
-        let tempo = self.tempo.clone();
+        let clock = self.clock.clone();
 
         // Smallest `(callback monotonic time − midir stamp)` seen so far — the
         // running estimate of the fixed offset between midir's per-connection
@@ -201,13 +185,7 @@ impl MidiInputForwarder {
 
         let callback = move |midir_ts_us: u64, message: &[u8], _: &mut ()| {
             // Capture timing first, before any of the routing work.
-            let tick = precise_input_tick(
-                &clock_tick,
-                &clock_tick_instant_nanos,
-                &tempo,
-                midir_ts_us,
-                &mut min_ts_offset_ns,
-            );
+            let tick = precise_input_tick(&clock, midir_ts_us, &mut min_ts_offset_ns);
             router.route(message, tick);
         };
 

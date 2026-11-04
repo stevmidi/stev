@@ -31,7 +31,7 @@ capture covers it. Key files: `src/core/midi/input.rs`,
   The buffer is the selected track's, so another track's turn stays out, and a turn of a
   parameter no knob holds never reaches the sequencer. A commit drops any move no knob of
   the selected track holds any more (`Sequencer::keep_knob_moves`). A turn can reach the
-  buffer behind a note played since, so a late one re-sorts it.
+  buffer behind a note played since, so a late one slots in by its tick (`add_late_event`).
 - **Played back like any clip event, and kept honest at every discontinuity** — a
   controller has no release, so `Track`'s `ControllerTracker` chases the value in force on
   every seek, and a stop resets the wheels; a knob's parameter has no rest and stays where

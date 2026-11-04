@@ -19,7 +19,7 @@ use crate::core::{
 use crate::models::{
     clip::Clip,
     event::{Event, ParamMove},
-    knobs::ParamId,
+    knobs::{ParamId, test_param},
     track::{InstrumentRef, Track, TrackOutput},
 };
 
@@ -166,7 +166,13 @@ pub(crate) fn cc_at(tick: i32, cc: u8, value: u8) -> Event {
 
 /// A move of parameter `param` to `value` at `tick`.
 pub(crate) fn param_at(tick: i32, param: ParamId, value: f64) -> Event {
-    Event::from_param_move(tick, ParamMove { param, value })
+    Event::from_param_move(
+        tick,
+        ParamMove {
+            param: test_param(param),
+            value,
+        },
+    )
 }
 
 /// The parameter moves among `events` as `(tick, param, value)`.
@@ -175,7 +181,7 @@ pub(crate) fn param_moves(events: &[Event]) -> Vec<(i32, ParamId, f64)> {
         .iter()
         .filter_map(|event| {
             let moved = event.param_move()?;
-            Some((event.tick(), moved.param, moved.value))
+            Some((event.tick(), moved.param.id, moved.value))
         })
         .collect()
 }

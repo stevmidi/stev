@@ -307,6 +307,7 @@ fn write_vlq(out: &mut Vec<u8>, value: i32) {
 mod tests {
     use super::*;
     use crate::models::event::ParamMove;
+    use crate::models::knobs::test_param;
 
     fn vlq(value: i32) -> Vec<u8> {
         let mut out = Vec::new();
@@ -467,7 +468,7 @@ mod tests {
             Event::from_param_move(
                 PPQN,
                 ParamMove {
-                    param: 714,
+                    param: test_param(714),
                     value: 0.5,
                 },
             ),
