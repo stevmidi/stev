@@ -241,6 +241,7 @@ impl Vst3Editor {
         }
         self.finished = true;
         self.teardown_gui();
+        self.plugin.host.handler.forget_controller();
         // SAFETY: this is the main thread, which owns both objects; both are
         // live (nothing else terminates them) and this runs at most once. The
         // matching voice has already been dropped by the reclaim thread, so no
@@ -365,14 +366,18 @@ impl InstrumentEditor for Vst3Editor {
     /// Stev's own move as the user's turn.
     fn set_parameter(&mut self, id: ParamId, value: f64) {
         let value = value.clamp(0.0, 1.0);
+        self.follow_parameter(id, value);
+        self.plugin.host.handler.params.send(id, value);
+    }
+
+    fn follow_parameter(&mut self, id: ParamId, value: f64) {
         let handler = &self.plugin.host.handler;
         if let Some(controller) = &self.plugin.controller {
             handler.host_edit.store(true, Ordering::Relaxed);
             // SAFETY: the main thread, which owns the live controller.
-            unsafe { controller.setParamNormalized(id, value) };
+            unsafe { controller.setParamNormalized(id, value.clamp(0.0, 1.0)) };
             handler.host_edit.store(false, Ordering::Relaxed);
         }
-        handler.params.send(id, value);
     }
 
     fn take_parameter_gestures(&mut self) -> Vec<ParameterGesture> {

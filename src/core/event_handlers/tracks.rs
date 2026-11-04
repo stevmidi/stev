@@ -74,7 +74,8 @@ impl EventHandlers {
     /// `knob` of `track_idx` on `param`. Refused, with a footer message, on a
     /// parameter another knob of the track holds (`400-parameter-knobs.md`
     /// decision 4) — the view checks first and names it, so this is the
-    /// guard for a mirror that lagged.
+    /// guard for a mirror that lagged. Removing a mapping tells the view,
+    /// which says in the footer what went (decision 14).
     pub(super) fn set_knob_param_workflow(
         &self,
         sequencer: &mut Sequencer,
@@ -83,9 +84,28 @@ impl EventHandlers {
         knob: usize,
         param: Option<ParamId>,
     ) {
+        let removed = sequencer
+            .tracks()
+            .get(track_idx)
+            .and_then(|track| (*track.knobs().get(knob)?).zip(Some(track)))
+            .filter(|_| param.is_none())
+            .map(|(from, track)| {
+                let with_moves = !track
+                    .clips_with_param_moves(|param| param == from)
+                    .is_empty();
+                UiEvent::KnobMappingRemoved {
+                    track_idx,
+                    knob,
+                    param: from,
+                    with_moves,
+                }
+            });
         match SetKnobParamEdit::new(sequencer, track_idx, knob, param) {
             Ok(edit) => {
                 self.record_edit(sequencer, undo_record, edit);
+                if let Some(removed) = removed {
+                    self.ui_event_tx.send(removed).ok();
+                }
             }
             Err(other) => self.send_status_ui_event(param_taken_message(None, other)),
         }

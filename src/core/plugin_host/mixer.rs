@@ -61,7 +61,7 @@ use crate::core::audio::mix::{gains_for, track_is_audible};
 use crate::core::audio::{AudioSource, INSTRUMENTS_SOURCE, RenderCtx};
 use crate::core::config::MAX_TRACKS;
 use crate::core::midi::message::Midi3;
-use crate::core::sequencer::{ClipInstrumentEvent, EventTime};
+use crate::core::sequencer::{ClipInstrumentEvent, EventTime, VoiceMessage};
 use crate::core::shared_atomics::TrackMixAtomics;
 
 use super::export::ExportTap;
@@ -99,8 +99,8 @@ struct PendingEvent {
     target_frame: i64,
     /// Target instrument track.
     track: usize,
-    /// The MIDI message.
-    message: Midi3,
+    /// What it says.
+    message: VoiceMessage,
     /// Arrival order — the tie-break when several events share `target_frame`,
     /// so a non-stable sort can never put a note-off ahead of its note-on.
     seq: u64,
@@ -309,7 +309,7 @@ impl InstrumentMixer {
     }
 
     /// Appends an event to `pending`, assigning it the next arrival sequence.
-    fn push_pending(&mut self, target_frame: i64, track: usize, message: Midi3) {
+    fn push_pending(&mut self, target_frame: i64, track: usize, message: VoiceMessage) {
         if self.pending.len() >= self.pending.capacity() {
             debug!(
                 "plugin host: pending-event buffer at capacity ({}); audio callback may be starved",
@@ -381,7 +381,7 @@ impl AudioSource for InstrumentMixer {
         // Live keyboard events: no delay, head of the block. Same `pending`
         // path so note-on / note-off ordering against clip events is kept.
         while let Ok((track, bytes)) = self.live_midi_rx.pop() {
-            self.push_pending(block_start, track, bytes);
+            self.push_pending(block_start, track, VoiceMessage::Midi(bytes));
         }
 
         self.pending
@@ -393,7 +393,12 @@ impl AudioSource for InstrumentMixer {
         for event in self.pending.drain(..due) {
             if let Some(Some(voice)) = self.voices.get_mut(event.track) {
                 let within = within_block_offset(event.target_frame, block_start, frames);
-                voice.queue_midi(event.message, within);
+                match event.message {
+                    VoiceMessage::Midi(bytes) => voice.queue_midi(bytes, within),
+                    VoiceMessage::Param(moved) => {
+                        voice.queue_param(moved.param, moved.value, within);
+                    }
+                }
             }
         }
 
@@ -707,7 +712,7 @@ mod tests {
         PendingEvent {
             target_frame,
             track: 0,
-            message: msg,
+            message: VoiceMessage::Midi(msg),
             seq,
         }
     }
@@ -721,10 +726,7 @@ mod tests {
             pending(50, 9, [0x90, 62, 100]),
         ];
         evs.sort_unstable_by_key(|e| (e.target_frame, e.seq));
-        let order: Vec<[u8; 3]> = evs
-            .iter()
-            .map(|e| [e.message[0], e.message[1], e.message[2]])
-            .collect();
+        let order: Vec<[u8; 3]> = evs.iter().filter_map(|e| e.message.midi()).collect();
         assert_eq!(order, [[0x90, 62, 100], [0x90, 60, 100], [0x80, 60, 0]]);
     }
 
@@ -736,7 +738,7 @@ mod tests {
         assert_eq!(off_at, 1_256);
         evs.push(pending(off_at, 1, [0x80, 60, 0]));
         evs.sort_unstable_by_key(|e| (e.target_frame, e.seq));
-        assert_eq!(evs[1].message, [0x80, 60, 0]);
+        assert_eq!(evs[1].message.midi(), Some([0x80, 60, 0]));
     }
 
     #[test]

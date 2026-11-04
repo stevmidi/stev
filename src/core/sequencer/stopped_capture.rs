@@ -59,7 +59,7 @@ impl Sequencer {
         clip.align_window_start_to_bar(self.meter());
         clip.nudge_cursor_to_region_start();
         // The stretch before a knob's turn plays where the knob stood.
-        clip.hold_cc_start_values(clip.region().start());
+        clip.hold_start_values(clip.region().start());
 
         clip.sort_events_by_tick();
         clip.calculate_note_lengths();
@@ -103,6 +103,7 @@ impl Sequencer {
     pub(super) fn detection_capture_source(&self) -> Clip {
         let mut capture = Clip::new();
         capture.restore_events(self.capture_clip.events().to_vec());
+        self.keep_knob_moves(&mut capture);
         // Pairs the note lengths, over the trimmed buffer only.
         Self::trim_capture_source(&mut capture, self.meter());
         capture

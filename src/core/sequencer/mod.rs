@@ -81,6 +81,8 @@ pub(crate) use edit::{
 };
 pub(crate) use export::ExportRefusal;
 pub(crate) use instrument_event::ClipInstrumentEvent;
+#[cfg(target_os = "macos")]
+pub(crate) use instrument_event::VoiceMessage;
 // Only the plugin host's mixer (macOS) reads the timing from outside.
 #[cfg(target_os = "macos")]
 pub(crate) use instrument_event::EventTime;

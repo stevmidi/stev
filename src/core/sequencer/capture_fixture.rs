@@ -349,6 +349,7 @@ mod tests {
                     tick: map(tick),
                     length,
                     midi_message: vec![0x90, pitch, velocity],
+                    param_move: None,
                     muted: false,
                 })
                 .collect(),

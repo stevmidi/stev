@@ -105,7 +105,7 @@ impl Clip {
     /// per controller, the last unmuted move before it in event space —
     /// hidden material before the window included, as for
     /// [`chased_note_ons_at`](Self::chased_note_ons_at) — or with none a
-    /// wheel's rest, and nothing for another CC. An event exactly at the
+    /// wheel's rest, and nothing for anything else. An event exactly at the
     /// target is left to the walk, which plays it next.
     pub(crate) fn controllers_at(&self, playback_tick: i32) -> ControllerValues {
         self.controllers_before(self.event_tick_from_arrangement_tick(playback_tick))

@@ -56,9 +56,45 @@ pub(crate) fn knobs_from_saved(saved: &[Option<ParamId>]) -> KnobParams {
     if duplicate { UNASSIGNED_KNOBS } else { knobs }
 }
 
+/// `value` (normalized) at the nearest position a parameter of `steps` steps
+/// can stand, each position holding an equal share of the range as VST3 lays
+/// them out; `value` itself for a parameter with none (`steps` 0). A turned
+/// knob goes where the plugin will, so a take holds no value between two
+/// (`400-parameter-knobs.md` decision 12).
+pub(crate) fn snap_to_steps(value: f64, steps: u32) -> f64 {
+    if steps == 0 {
+        return value;
+    }
+    let steps = f64::from(steps);
+    (value * (steps + 1.0)).floor().min(steps) / steps
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A switch flips at the middle, and three positions split the range in
+    /// thirds, not at the points halfway between them.
+    #[test]
+    fn a_value_snaps_to_the_step_whose_share_of_the_range_holds_it() {
+        assert_eq!(snap_to_steps(0.49, 1), 0.0);
+        assert_eq!(snap_to_steps(0.5, 1), 1.0);
+        assert_eq!(snap_to_steps(0.3, 2), 0.0);
+        assert_eq!(snap_to_steps(0.4, 2), 0.5);
+        assert_eq!(snap_to_steps(0.7, 2), 1.0);
+        assert_eq!(snap_to_steps(1.0, 2), 1.0);
+    }
+
+    #[test]
+    fn a_snapped_value_stays_put_and_a_smooth_one_is_left_alone() {
+        for steps in 1..=128 {
+            for position in 0..=steps {
+                let value = f64::from(position) / f64::from(steps);
+                assert_eq!(snap_to_steps(value, steps), value, "{position}/{steps}");
+            }
+        }
+        assert_eq!(snap_to_steps(0.37, 0), 0.37);
+    }
 
     #[test]
     fn a_parameter_another_knob_holds_is_taken_but_a_knobs_own_is_not() {

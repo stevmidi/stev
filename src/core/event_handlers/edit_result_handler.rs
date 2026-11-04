@@ -396,8 +396,11 @@ impl EventHandlers {
             } => {
                 self.track_removed_workflow(sequencer, track_idx, track_id, slot);
             }
-            EditResult::TrackRenamed | EditResult::KnobsChanged => {
+            EditResult::TrackRenamed => self.emit_tracks(sequencer, None),
+            EditResult::KnobsChanged => {
                 self.emit_tracks(sequencer, None);
+                // The lead clip's moves may have changed with the knob.
+                self.sync_clip_post_edit_workflow(sequencer);
             }
             EditResult::TrackOutputChanged {
                 track_id,
@@ -405,6 +408,7 @@ impl EventHandlers {
                 instrument,
             } => {
                 self.emit_tracks(sequencer, None);
+                self.sync_clip_post_edit_workflow(sequencer);
                 self.send_slot_instrument(slot, track_id, instrument);
             }
             EditResult::TempoChanged | EditResult::MeterChanged => self.request_repaint(),

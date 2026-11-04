@@ -458,7 +458,7 @@ mod tests {
         sequencer.tick(Instant::now());
         let drain = |rx: &mut Consumer<ClipInstrumentEvent>| -> Vec<[u8; 3]> {
             std::iter::from_fn(|| rx.pop().ok())
-                .map(|e| e.message)
+                .filter_map(|e| e.message.midi())
                 .collect()
         };
         assert_eq!(drain(&mut plugin_rx), vec![[0x90, 60, 100]]);

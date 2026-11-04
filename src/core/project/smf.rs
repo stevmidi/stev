@@ -306,6 +306,7 @@ fn write_vlq(out: &mut Vec<u8>, value: i32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::event::ParamMove;
 
     fn vlq(value: i32) -> Vec<u8> {
         let mut out = Vec::new();
@@ -455,6 +456,28 @@ mod tests {
             .map(|e| (e.tick(), e.midi_message().to_vec()))
             .collect();
         (events, contents.end_tick)
+    }
+
+    /// A `.mid` has no place for a plugin parameter: its moves are left out
+    /// and the MIDI around them stays.
+    #[test]
+    fn the_writer_skips_a_parameter_move() {
+        let events = [
+            Event::new(0, 0, vec![0x90, 60, 100]),
+            Event::from_param_move(
+                PPQN,
+                ParamMove {
+                    param: 714,
+                    value: 0.5,
+                },
+            ),
+            Event::new(PPQN * 2, 0, vec![0x80, 60, 0]),
+        ];
+        let (read, _) = read_ticks(&write_smf(&events, PPQN * 4, 500_000, Meter::FOUR_FOUR));
+        assert_eq!(
+            read,
+            vec![(0, vec![0x90, 60, 100]), (PPQN * 2, vec![0x80, 60, 0])]
+        );
     }
 
     #[test]

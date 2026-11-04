@@ -12,6 +12,7 @@ use egui::Key;
 
 use crate::core::input_event::InputEvent;
 use crate::core::keymap::Action;
+use crate::models::knobs::ParamId;
 
 use super::super::status_message::StatusMessage;
 use super::*;
@@ -105,18 +106,15 @@ impl Display {
     }
 
     /// Removes knob `knob`'s mapping on the selected track
-    /// (`SetKnobParamEdit` to none, one undo step) and ends any arming,
-    /// the footer saying what went (`400-parameter-knobs.md` decision 14),
-    /// so a `Delete` meant as a reset shows what it did. The lane goes back
-    /// to velocity if it was this knob's: a lane belongs to a parameter.
-    /// Nothing for a knob with no mapping. The knob stays selected.
+    /// (`SetKnobParamEdit` to none, one undo step) and ends any arming. The
+    /// lane goes back to velocity if it was this knob's: a lane belongs to
+    /// a parameter. Nothing for a knob with no mapping. The knob stays
+    /// selected.
     fn unassign_knob(&mut self, knob: usize) {
         self.disarm_knob();
         let (Some(track_idx), Some(_)) = (self.knobs_track(), self.knob_param(knob)) else {
             return;
         };
-        let message = removed_mapping_message(self.knob_name(knob), knob);
-        self.render.status = Some(StatusMessage::new(message));
         if self.render.clip_lane == ClipLane::Knob(knob) {
             self.set_clip_lane(ClipLane::Velocity);
         }
@@ -128,17 +126,31 @@ impl Display {
             })
             .ok();
     }
+
+    /// The sequencer removed knob `knob`'s mapping of `param` on `track_idx`:
+    /// the footer says what went (`400-parameter-knobs.md` decision 14), so
+    /// a `Delete` meant as a reset shows what it did.
+    pub(in crate::view::display) fn show_knob_mapping_removed(
+        &mut self,
+        track_idx: usize,
+        knob: usize,
+        param: ParamId,
+        with_moves: bool,
+    ) {
+        let name = self.knob_param_name(track_idx, param);
+        let message = removed_mapping_message(name, knob, with_moves);
+        self.render.status = Some(StatusMessage::new(message));
+    }
 }
 
 /// The footer's line for a removed mapping: knob `knob`'s parameter by
-/// `name`, or "a parameter" when the plugin gave none. Knobs count from 1,
-/// as their placeholder labels do.
-fn removed_mapping_message(name: Option<&str>, knob: usize) -> String {
-    format!(
-        "Removed {} from knob {}",
-        name.unwrap_or("a parameter"),
-        knob + 1
-    )
+/// `name`, or "a parameter" when the plugin gave none, and its recorded
+/// moves when any went with it. Knobs count from 1, as their placeholder
+/// labels do.
+fn removed_mapping_message(name: Option<&str>, knob: usize, with_moves: bool) -> String {
+    let name = name.unwrap_or("a parameter");
+    let moves = if with_moves { " and its moves" } else { "" };
+    format!("Removed {name}{moves} from knob {}", knob + 1)
 }
 
 #[cfg(test)]
@@ -166,12 +178,16 @@ mod tests {
     #[test]
     fn the_removal_names_what_went() {
         assert_eq!(
-            removed_mapping_message(Some("Cutoff"), 2),
+            removed_mapping_message(Some("Cutoff"), 2, false),
             "Removed Cutoff from knob 3"
         );
         assert_eq!(
-            removed_mapping_message(None, 0),
+            removed_mapping_message(None, 0, false),
             "Removed a parameter from knob 1"
+        );
+        assert_eq!(
+            removed_mapping_message(Some("Cutoff"), 2, true),
+            "Removed Cutoff and its moves from knob 3"
         );
     }
 

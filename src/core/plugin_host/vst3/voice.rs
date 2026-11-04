@@ -33,6 +33,7 @@ use crate::core::plugin_host::buffers::{AudioIoLayout, PortBuffers, channel_tota
 use crate::core::plugin_host::transport::BlockTransport;
 use crate::core::plugin_host::voice::{EVENT_CAPACITY, InstrumentVoice, VoiceMix};
 use crate::core::time::ticks_to_beats_f64;
+use crate::models::knobs::ParamId;
 
 use super::events::{MidiMap, NoteIds, Translated, translate};
 use super::host::HostEventList;
@@ -171,9 +172,14 @@ impl InstrumentVoice for Vst3Voice {
             // A CC lands in this block's automation queue rather than its event
             // list — VST3 has no other way to carry one. `clear_events` empties
             // both at the end of the block.
-            Translated::Param(id, value) => self.params.push(id, value),
+            Translated::Param(id, value) => self.params.push(id, value, time),
             Translated::Nothing => return,
         }
+        self.wake();
+    }
+
+    fn queue_param(&mut self, id: ParamId, value: f64, time: u32) {
+        self.params.push(id, value, time);
         self.wake();
     }
 

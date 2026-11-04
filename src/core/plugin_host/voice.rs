@@ -13,6 +13,7 @@ use std::time::Duration;
 
 use super::transport::BlockTransport;
 use crate::core::midi::message::Midi3;
+use crate::models::knobs::ParamId;
 
 /// The mixer-owned state every voice carries, regardless of plugin format:
 /// the two per-block render flags and the gain-ramp endpoints.
@@ -77,6 +78,13 @@ pub(crate) trait InstrumentVoice: Send {
     /// Must clear [`VoiceMix::sleeping`] if the message was accepted — see the
     /// field doc. A message the format cannot express is dropped silently.
     fn queue_midi(&mut self, bytes: Midi3, time: u32);
+
+    /// Queues a move of parameter `id` to `value` (normalized) at sample
+    /// `time` within the next processed block — a clip's recorded knob turn
+    /// (`400-parameter-knobs.md`). Must clear [`VoiceMix::sleeping`], as
+    /// [`queue_midi`](Self::queue_midi) does. The default drops it: a format
+    /// with no parameters yet (CLAP, until phase 3).
+    fn queue_param(&mut self, _id: ParamId, _value: f64, _time: u32) {}
 
     /// Runs one process block of `frames` samples, leaving the audio where
     /// [`sample`](Self::sample) can read it. `steady` is the absolute index of

@@ -15,7 +15,6 @@
 //! `stopped_capture.rs` and `capture.rs` are the callers; the region/cursor
 //! mutators that consume the results live in `mod.rs`.
 
-use crate::core::midi::message::parse_controller;
 use crate::core::time::{self, Meter};
 use crate::models::clip::Clip;
 use crate::models::event::{Event, EventType};
@@ -84,9 +83,7 @@ impl Sequencer {
         let newest_first = || clip.events().iter().rev();
         newest_first()
             .find(|event| event.event_type() == Some(EventType::NoteOn))
-            .or_else(|| {
-                newest_first().find(|event| parse_controller(event.midi_message()).is_some())
-            })
+            .or_else(|| newest_first().find(|event| event.controller_move().is_some()))
             .map_or(0, Event::tick)
     }
 

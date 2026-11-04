@@ -478,7 +478,7 @@ pub(crate) enum InputEvent {
     /// take session, where that command cancels the take.
     ClearEventSelection,
     /// `Delete` in a controller lane with a span marked: return a wheel to
-    /// rest across it, hold a knob's CC at the value before it. Maps 1:1 to
+    /// rest across it, hold a knob's parameter at the value before it. Maps 1:1 to
     /// `SequencerCommand::ClearControllerSpan`.
     ClearControllerSpan {
         /// The controller the lane shows.
@@ -813,6 +813,26 @@ pub(crate) enum InputEvent {
         /// The parameter it is to drive.
         param: Option<ParamId>,
     },
+    /// The hand took hold of knob `knob` of `track_idx` — a turn beginning on
+    /// Stev's knob or the parameter's control in the plugin's editor:
+    /// playback lets go of it until [`ReleaseKnob`](Self::ReleaseKnob).
+    HoldKnob {
+        /// The knob's track.
+        track_idx: usize,
+        /// Which knob, `0..KNOB_COUNT`.
+        knob: usize,
+        /// Where the knob stood, normalized, if known.
+        start: Option<f64>,
+        /// The `clock_tick` the turn began on.
+        tick: i32,
+    },
+    /// The hand let go of knob `knob` of `track_idx`.
+    ReleaseKnob {
+        /// The knob's track.
+        track_idx: usize,
+        /// Which knob, `0..KNOB_COUNT`.
+        knob: usize,
+    },
     /// The hand turned knob `knob` of `track_idx` to `value`, from Stev's
     /// knob or the parameter's control in the plugin's editor; the view has
     /// set the parameter already. Not undoable, like volume and pan.
@@ -823,6 +843,8 @@ pub(crate) enum InputEvent {
         knob: usize,
         /// The parameter's normalized value, `0.0..=1.0`.
         value: f64,
+        /// The `clock_tick` it landed on.
+        tick: i32,
     },
     /// ⌘/Ctrl+C (optionally with Shift). egui-winit turns the copy chord into
     /// `egui::Event::Copy` regardless of Shift and swallows the raw `C` key

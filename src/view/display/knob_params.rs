@@ -1,10 +1,10 @@
 //! The knob panel's link to the selected track's plugin
 //! (`400-parameter-knobs.md`): the hint shown instead of knobs where they
 //! can't drive anything, a parameter's name, default and value, setting it,
-//! and what the plugin's own editor reports — a turn's start, which assigns
-//! an armed knob, and a move of a knob's parameter, a hand turn for the
-//! unsaved prompt. Plugins are hosted on macOS only; elsewhere every track
-//! reads as having none.
+//! what the plugin's own editor reports — a turn's start, which assigns an
+//! armed knob, and a turn of a knob's parameter, the hand's as a drag is —
+//! and playback's moves, which the editor is told. Plugins are hosted on
+//! macOS only; elsewhere every track reads as having none.
 
 #[cfg(target_os = "macos")]
 use crate::core::input_event::InputEvent;
@@ -66,6 +66,14 @@ impl Display {
         Some(info.default_value)
     }
 
+    /// How many steps parameter `param` moves in, 0 when it moves smoothly:
+    /// its knob stops at each position, and its lane holds each value.
+    pub(super) fn knob_param_steps(&self, track_idx: usize, param: ParamId) -> u32 {
+        self.knob_plugin(track_idx)
+            .and_then(|loaded| loaded.editor.parameter_info(param))
+            .map_or(0, |info| info.steps)
+    }
+
     /// Parameter `param`'s value in force, normalized: what its knob shows.
     pub(super) fn knob_param_value(&self, track_idx: usize, param: ParamId) -> Option<f64> {
         self.knob_plugin(track_idx)?.editor.parameter_value(param)
@@ -76,6 +84,28 @@ impl Display {
     pub(super) fn set_knob_param_value(&mut self, track_idx: usize, param: ParamId, value: f64) {
         if let Some(loaded) = self.track_instrument_mut(track_idx) {
             loaded.editor.set_parameter(param, value);
+        }
+    }
+
+    /// Per frame: tells each plugin's editor where playback put its knobs'
+    /// parameters, so the plugin and the knob show the value in force
+    /// (`400-parameter-knobs.md` decision 6). The processor heard each move
+    /// on its sample already.
+    pub(super) fn follow_played_knobs(&mut self) {
+        for track_idx in 0..self.tracks.len() {
+            let (slot, knobs) = (
+                self.tracks[track_idx].slot,
+                self.tracks[track_idx].knob_params,
+            );
+            for (knob, param) in knobs.iter().enumerate() {
+                let Some(value) = self.track_mix.take_knob_played(slot, knob) else {
+                    continue;
+                };
+                if let (Some(param), Some(loaded)) = (*param, self.track_instrument_mut(track_idx))
+                {
+                    loaded.editor.follow_parameter(param, value);
+                }
+            }
         }
     }
 
@@ -101,24 +131,34 @@ impl Display {
 
     /// One gesture from the editor of the plugin in engine slot `slot`. A
     /// turn's start assigns the armed knob, when that plugin is its track's
-    /// (`400-parameter-knobs.md` decision 3); a move of a parameter one of
-    /// that track's knobs holds is a hand turn, which the unsaved prompt
-    /// counts (decision 9). Anything else is the plugin's own business.
+    /// (`400-parameter-knobs.md` decision 3). A turn of a parameter one of
+    /// that track's knobs holds is the hand's, as a drag is: its start and
+    /// end hold the knob against playback (decision 6), and its moves are
+    /// counted by the unsaved prompt and captured (decisions 9 and 10).
+    /// Anything else is the plugin's own business.
     fn handle_parameter_gesture(&mut self, slot: usize, gesture: ParameterGesture) {
         let Some(track_idx) = self.tracks.iter().position(|lane| lane.slot == slot) else {
             return;
         };
         match gesture {
-            ParameterGesture::Begin(param) => {
+            ParameterGesture::Begin(param, start, at_ns) => {
                 if let Some(knob) = self.armed_knob()
                     && self.knobs_track() == Some(track_idx)
                 {
                     self.assign_armed_knob(track_idx, knob, param);
+                } else if let Some(knob) = knob_holding(&self.tracks[track_idx].knob_params, param)
+                {
+                    self.hold_knob(track_idx, knob, start, at_ns);
                 }
             }
-            ParameterGesture::Move(param, value) => {
+            ParameterGesture::Move(param, value, at_ns) => {
                 if let Some(knob) = knob_holding(&self.tracks[track_idx].knob_params, param) {
-                    self.count_knob_turn(track_idx, knob, value);
+                    self.count_knob_turn(track_idx, knob, value, at_ns);
+                }
+            }
+            ParameterGesture::End(param) => {
+                if let Some(knob) = knob_holding(&self.tracks[track_idx].knob_params, param) {
+                    self.release_knob(track_idx, knob);
                 }
             }
         }
@@ -165,6 +205,11 @@ impl Display {
     /// No plugins off macOS, so no defaults.
     pub(super) fn knob_param_default(&self, _track_idx: usize, _param: ParamId) -> Option<f64> {
         None
+    }
+
+    /// No plugins off macOS, so nothing stepped.
+    pub(super) fn knob_param_steps(&self, _track_idx: usize, _param: ParamId) -> u32 {
+        0
     }
 
     /// No plugins off macOS, so no values.

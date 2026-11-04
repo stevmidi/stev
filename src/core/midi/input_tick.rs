@@ -10,7 +10,10 @@
 //! [`precise_input_tick`] is the entry point, called once per message from the
 //! `midir` callback in `input.rs`; [`input_tick_at_arrival`] serves the
 //! computer keyboard, whose messages carry a `monotonic_nanos` stamp already.
+//! [`InputClock`] does the same for the knob panel's turns, which the view
+//! stamps itself.
 
+use std::sync::Arc;
 use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 
 use crate::core::time::{self, PPQN};
@@ -20,6 +23,51 @@ use crate::core::time::{self, PPQN};
 /// last stepped, so anything larger means the `"clock"` thread stalled and the
 /// counter is stale too; cap rather than inject a wild offset.
 const MAX_INPUT_INTERP_NANOS: u64 = 2_000_000;
+
+/// The clock's atomics in one handle, for the view to stamp a hand turn with
+/// the `clock_tick` it landed on (`400-parameter-knobs.md` decision 10).
+#[derive(Clone)]
+pub(crate) struct InputClock {
+    /// The free-running musical tick counter.
+    pub(crate) clock_tick: Arc<AtomicI32>,
+    /// `time::monotonic_nanos` at which `clock_tick` last advanced.
+    pub(crate) clock_tick_instant_nanos: Arc<AtomicU64>,
+    /// Tempo (µs per quarter).
+    pub(crate) tempo: Arc<AtomicI32>,
+}
+
+impl InputClock {
+    /// The `clock_tick` of a turn at `arrival_ns` on the
+    /// [`monotonic_nanos`](time::monotonic_nanos) timeline. It may lie well
+    /// before the clock's last step: a plugin's editor reports a turn as it
+    /// happens, and it is handled a frame later.
+    pub(crate) fn tick_at(&self, arrival_ns: u64) -> i32 {
+        let last_tick_ns = self.clock_tick_instant_nanos.load(Ordering::Relaxed);
+        match last_tick_ns.checked_sub(arrival_ns) {
+            Some(ago_ns) if ago_ns > 0 => rewind_input_tick(
+                self.clock_tick.load(Ordering::Relaxed),
+                self.tempo.load(Ordering::Relaxed),
+                ago_ns,
+            ),
+            _ => input_tick_at_arrival(
+                &self.clock_tick,
+                &self.clock_tick_instant_nanos,
+                &self.tempo,
+                arrival_ns,
+            ),
+        }
+    }
+}
+
+/// `base_tick` less `ago_ns` worth of ticks, rounded to the nearest.
+fn rewind_input_tick(base_tick: i32, tempo_us: i32, ago_ns: u64) -> i32 {
+    let ns_per_tick = tempo_us.max(0) as u64 * 1_000 / PPQN as u64;
+    if ns_per_tick == 0 {
+        return base_tick;
+    }
+    let ticks = (ago_ns + ns_per_tick / 2) / ns_per_tick;
+    base_tick.saturating_sub(i32::try_from(ticks).unwrap_or(i32::MAX))
+}
 
 /// Best estimate of the `clock_tick` a live-input message landed on — where in
 /// the arrangement it was played. The counter only steps on the ~1 ms
@@ -101,6 +149,29 @@ mod tests {
     // 120 BPM: 500_000 µs/quarter ⇒ ns_per_tick = 500_000 * 1000 / 960 = 520_833.
     const TEMPO_120: i32 = 500_000;
     const NS_PER_TICK_120: u64 = 520_833;
+
+    #[test]
+    fn rewinding_counts_back_whole_ticks() {
+        assert_eq!(
+            rewind_input_tick(1000, TEMPO_120, NS_PER_TICK_120 * 30),
+            970
+        );
+        assert_eq!(rewind_input_tick(1000, 0, NS_PER_TICK_120), 1000);
+    }
+
+    /// A turn from before the clock's last step counts back from it, one
+    /// from after it counts on, as any input does.
+    #[test]
+    fn the_input_clock_stamps_either_side_of_the_last_step() {
+        let clock = InputClock {
+            clock_tick: Arc::new(AtomicI32::new(1000)),
+            clock_tick_instant_nanos: Arc::new(AtomicU64::new(NS_PER_TICK_120 * 100)),
+            tempo: Arc::new(AtomicI32::new(TEMPO_120)),
+        };
+        assert_eq!(clock.tick_at(NS_PER_TICK_120 * 70), 970);
+        assert_eq!(clock.tick_at(NS_PER_TICK_120 * 100), 1000);
+        assert_eq!(clock.tick_at(NS_PER_TICK_120 * 102), 1002);
+    }
 
     #[test]
     fn interpolate_input_tick_no_elapsed_returns_base() {

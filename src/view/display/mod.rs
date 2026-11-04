@@ -122,6 +122,7 @@ use uuid::Uuid;
 
 use crate::core::audio::AudioLoad;
 use crate::core::keymap::Keymap;
+use crate::core::midi::input_tick::InputClock;
 use crate::core::midi::message::Midi3;
 #[cfg(target_os = "macos")]
 use crate::core::plugin_host::PluginAudioHandle;
@@ -332,6 +333,8 @@ pub(crate) struct Display {
     /// `monotonic_nanos` the frame read it at, to the `"computerkeys"`
     /// thread, which routes them as a MIDI port's input.
     computer_keys_tx: Sender<(Midi3, u64)>,
+    /// Stamps a hand turn of a knob with the `clock_tick` it landed on.
+    input_clock: InputClock,
 
     // --- macOS instrument plugin host ---
     /// All plugin-host state — audio-thread handle, per-track editors, pending
@@ -433,6 +436,7 @@ impl Display {
         midi_out_offset_ms: i32,
         browser_width: f32,
         keymap: Keymap,
+        input_clock: InputClock,
         tempo: Arc<AtomicI32>,
         meter: Arc<AtomicU16>,
         running: Arc<AtomicBool>,
@@ -497,6 +501,7 @@ impl Display {
             keymap,
             computer_keyboard: ComputerKeyboard::default(),
             computer_keys_tx,
+            input_clock,
             #[cfg(target_os = "macos")]
             instruments: InstrumentHost::new(),
             #[cfg(target_os = "macos")]

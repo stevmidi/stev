@@ -22,11 +22,12 @@ use crate::core::midi::out_queue::MidiOutMessage;
 use crate::core::time::monotonic_nanos_at;
 use crate::models::{
     event::EventType,
+    knobs::knob_holding,
     track::{Track, TrackOutput},
 };
 
 use super::Sequencer;
-use super::instrument_event::{ClipInstrumentEvent, EventTime};
+use super::instrument_event::{ClipInstrumentEvent, EventTime, VoiceMessage};
 
 impl Sequencer {
     /// Auditions `note` at `velocity` on the selected track's channel, like
@@ -93,7 +94,7 @@ impl Sequencer {
                         self.instrument_midi_tx
                             .push(ClipInstrumentEvent {
                                 track: slot,
-                                message: midi3(&message),
+                                message: VoiceMessage::Midi(midi3(&message)),
                                 when,
                             })
                             .ok();
@@ -120,6 +121,25 @@ impl Sequencer {
                 // paired `NoteOff` carry the flag (`Clip::toggle_muted_for_selected_events`),
                 // so neither one goes out and nothing needs releasing later.
                 if event.is_muted() {
+                    continue;
+                }
+                // A parameter move: no note, so an unaudible track still
+                // sends it, like a wheel's. Only a plugin has parameters;
+                // `Track::tick` lets through only what a knob holds.
+                if let Some(param_move) = event.param_move() {
+                    if matches!(track.output(), TrackOutput::Instrument(_)) {
+                        self.instrument_midi_tx
+                            .push(ClipInstrumentEvent {
+                                track: track.slot(),
+                                message: VoiceMessage::Param(param_move),
+                                when: EventTime::At(at),
+                            })
+                            .ok();
+                        if let Some(knob) = knob_holding(track.knobs(), param_move.param) {
+                            self.track_mix
+                                .mark_knob_played(track.slot(), knob, param_move.value);
+                        }
+                    }
                     continue;
                 }
                 // A muted / non-soloed track drops its note-ons but still emits
@@ -156,7 +176,7 @@ impl Sequencer {
                         self.instrument_midi_tx
                             .push(ClipInstrumentEvent {
                                 track: track.slot(),
-                                message: msg,
+                                message: VoiceMessage::Midi(msg),
                                 when: EventTime::At(at),
                             })
                             .ok();
@@ -203,7 +223,7 @@ impl Sequencer {
                         self.instrument_midi_tx
                             .push(ClipInstrumentEvent {
                                 track: track.slot(),
-                                message: msg,
+                                message: VoiceMessage::Midi(msg),
                                 when: EventTime::Immediate,
                             })
                             .ok();
@@ -285,8 +305,8 @@ impl Sequencer {
     /// transport stop, where no [`tick`](Self::tick) runs to send a chase. A
     /// wheel the player moved last on the armed track is left where it is
     /// (`Track::hand_controller_to_player`), as a live-held note is, and a
-    /// knob's CC has no rest: it stays where it was (`390-knob-panel.md`
-    /// decision 8).
+    /// knob's parameter has no rest: it stays where it was
+    /// (`400-parameter-knobs.md` decision 9).
     pub(crate) fn reset_wheels(&mut self) {
         for track_idx in 0..self.tracks.len() {
             self.send_wheel_resets(track_idx);
@@ -347,7 +367,7 @@ impl Sequencer {
         self.instrument_midi_tx
             .push(ClipInstrumentEvent {
                 track: slot,
-                message: midi3(msg),
+                message: VoiceMessage::Midi(midi3(msg)),
                 when: EventTime::Immediate,
             })
             .ok();
@@ -379,19 +399,133 @@ mod tests {
     use crate::core::config;
     use crate::core::midi::out_queue::MidiOutMessage;
     use crate::core::sequencer::ClipInstrumentEvent;
-    use crate::core::sequencer::instrument_event::EventTime;
-    use crate::core::sequencer::test_support::{clip_at, instrument_track_0, sequencer_at_tempo};
+    use crate::core::sequencer::instrument_event::{EventTime, VoiceMessage};
+    use crate::core::sequencer::test_support::{
+        clip_at, instrument_track_0, param_at, sequencer_at_tempo, sequencer_with_outputs,
+        stub_instrument,
+    };
     use crate::core::time::monotonic_nanos_at;
     use crate::models::clip::Clip;
     use crate::models::event::Event;
+    use crate::models::knobs::UNASSIGNED_KNOBS;
     use crate::models::track::TrackOutput;
 
     use super::Sequencer;
 
     fn drain_plugin_events(rx: &mut Consumer<ClipInstrumentEvent>) -> Vec<(usize, [u8; 3])> {
         std::iter::from_fn(|| rx.pop().ok())
-            .map(|e| (e.track, e.message))
+            .filter_map(|e| Some((e.track, e.message.midi()?)))
             .collect()
+    }
+
+    /// Track 0 on a plugin with knob 0 on parameter 714, playing a clip that
+    /// moves it at ticks 2 and 5.
+    fn plugin_track_with_moves() -> (Sequencer, Consumer<ClipInstrumentEvent>) {
+        let (mut sequencer, rx) = sequencer_and_plugin_rx(500_000);
+        sequencer.tracks_mut()[0].set_output(stub_instrument(Vec::new()));
+        let mut knobs = UNASSIGNED_KNOBS;
+        knobs[0] = Some(714);
+        sequencer.set_track_knobs(0, knobs);
+        let mut clip = clip_at(0, 1920);
+        clip.restore_events(vec![param_at(2, 714, 0.25), param_at(5, 714, 0.75)]);
+        sequencer.tracks_mut()[0].add_clip(&clip);
+        (sequencer, rx)
+    }
+
+    /// The parameter moves on the plugin ring, by slot.
+    fn plugin_param_moves(rx: &mut Consumer<ClipInstrumentEvent>) -> Vec<(usize, u32, f64)> {
+        std::iter::from_fn(|| rx.pop().ok())
+            .filter_map(|e| match e.message {
+                VoiceMessage::Param(moved) => Some((e.track, moved.param, moved.value)),
+                VoiceMessage::Midi(_) => None,
+            })
+            .collect()
+    }
+
+    /// A recorded move reaches the plugin on its tick's instant, and the
+    /// view is left the last value for the plugin's editor.
+    #[test]
+    fn a_clip_plays_its_parameter_moves_to_the_plugin() {
+        let (mut sequencer, mut rx) = plugin_track_with_moves();
+        sequencer.reset_to_tick(0);
+        for _ in 0..8 {
+            sequencer.tick(Instant::now());
+        }
+        assert_eq!(
+            plugin_param_moves(&mut rx),
+            vec![(0, 714, 0.25), (0, 714, 0.75)]
+        );
+        assert_eq!(sequencer.track_mix.take_knob_played(0, 0), Some(0.75));
+        assert_eq!(sequencer.track_mix.take_knob_played(0, 0), None);
+    }
+
+    /// The hand wins: a held knob's moves don't go out, and the plugin stays
+    /// where the hand has it.
+    #[test]
+    fn a_held_knob_drops_the_clips_moves_until_it_lets_go() {
+        let (mut sequencer, mut rx) = plugin_track_with_moves();
+        sequencer.reset_to_tick(0);
+        sequencer.hold_knob(0, 0, None, 0);
+        for _ in 0..4 {
+            sequencer.tick(Instant::now());
+        }
+        sequencer.release_knob(0, 0);
+        for _ in 0..4 {
+            sequencer.tick(Instant::now());
+        }
+        assert_eq!(plugin_param_moves(&mut rx), vec![(0, 714, 0.75)]);
+    }
+
+    /// A seek chases the value in force there, for the plugin as for a
+    /// wheel.
+    #[test]
+    fn a_seek_chases_a_parameter() {
+        let (mut sequencer, mut rx) = plugin_track_with_moves();
+        sequencer.reset_to_tick(100);
+        sequencer.tick(Instant::now());
+        assert_eq!(plugin_param_moves(&mut rx), vec![(0, 714, 0.75)]);
+    }
+
+    /// Playback never moves what the unsaved check reads, so listening to a
+    /// project never asks to save (decision 9).
+    #[test]
+    fn playback_leaves_the_hands_value_alone() {
+        let (mut sequencer, _rx) = plugin_track_with_moves();
+        sequencer.reset_to_tick(0);
+        for _ in 0..8 {
+            sequencer.tick(Instant::now());
+        }
+        assert_eq!(sequencer.tracks()[0].knobs_by_hand()[0], None);
+    }
+
+    /// MIDI Out has no parameters: a move in a clip sends it nothing.
+    #[test]
+    fn midi_out_skips_a_parameter_move() {
+        let (mut sequencer, midi_out_rx, _rx) = sequencer_with_outputs(true);
+        let mut knobs = UNASSIGNED_KNOBS;
+        knobs[0] = Some(714);
+        sequencer.set_track_knobs(0, knobs);
+        let mut clip = clip_at(0, 1920);
+        clip.restore_events(vec![param_at(2, 714, 0.25)]);
+        sequencer.tracks_mut()[0].add_clip(&clip);
+        sequencer.reset_to_tick(0);
+        for _ in 0..4 {
+            sequencer.tick(Instant::now());
+        }
+        assert!(midi_out_rx.try_iter().all(|msg| !msg.bytes.is_empty()));
+    }
+
+    /// A move no knob of the track holds — pasted from a track with another
+    /// plugin — means nothing here, so it stays silent.
+    #[test]
+    fn a_parameter_no_knob_holds_is_not_played() {
+        let (mut sequencer, mut rx) = plugin_track_with_moves();
+        sequencer.set_track_knobs(0, UNASSIGNED_KNOBS);
+        sequencer.reset_to_tick(0);
+        for _ in 0..8 {
+            sequencer.tick(Instant::now());
+        }
+        assert!(plugin_param_moves(&mut rx).is_empty());
     }
 
     fn sequencer_and_plugin_rx(tempo_us: i32) -> (Sequencer, Consumer<ClipInstrumentEvent>) {
@@ -710,7 +844,10 @@ mod tests {
         sequencer.reset_wheels();
 
         let event = rx.pop().expect("the reset");
-        assert_eq!((event.track, event.message), (0, [0xE0, 0x00, 0x40]));
+        assert_eq!(
+            (event.track, event.message.midi()),
+            (0, Some([0xE0, 0x00, 0x40]))
+        );
         assert!(matches!(event.when, EventTime::Immediate));
     }
 

@@ -33,18 +33,19 @@ pub(super) fn draw_truncated(painter: &Painter, left_center: Pos2, job: LayoutJo
 }
 
 /// [`draw_truncated`], placed by `align` at `anchor` instead — centred
-/// under a knob, say.
+/// under a knob, say. Returns where the text went.
 pub(super) fn draw_truncated_at(
     painter: &Painter,
     anchor: Pos2,
     align: Align2,
     mut job: LayoutJob,
     max_width: f32,
-) {
+) -> Rect {
     job.wrap = TextWrapping::truncate_at_width(max_width);
     let galley = painter.layout_job(job);
-    let top_left = align.anchor_size(anchor, galley.size()).min;
-    painter.galley(top_left, galley, Color32::PLACEHOLDER);
+    let rect = align.anchor_size(anchor, galley.size());
+    painter.galley(rect.min, galley, Color32::PLACEHOLDER);
+    rect
 }
 
 /// Washes `rect` (a menu item, or the arranger's `+` row, under the

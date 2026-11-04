@@ -7,6 +7,7 @@
 use std::time::Instant;
 
 use crate::core::midi::message::Midi3;
+use crate::models::event::ParamMove;
 
 /// When a clip event should sound, relative to when the CLAP host receives it.
 #[derive(Debug, Clone, Copy)]
@@ -25,8 +26,31 @@ pub(crate) enum EventTime {
     At(Instant),
 }
 
+/// What a voice is told: a MIDI message, or a parameter move. `Copy`, so
+/// nothing crossing the `rtrb` ring to the audio thread carries a heap
+/// payload.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) enum VoiceMessage {
+    /// A MIDI message.
+    Midi(Midi3),
+    /// A plugin parameter's move (`400-parameter-knobs.md`).
+    Param(ParamMove),
+}
+
+#[cfg(test)]
+impl VoiceMessage {
+    /// The MIDI message, if it is one.
+    pub(crate) fn midi(self) -> Option<Midi3> {
+        match self {
+            VoiceMessage::Midi(bytes) => Some(bytes),
+            VoiceMessage::Param(_) => None,
+        }
+    }
+}
+
 /// A `TrackOutput::Instrument` track's clip event on its way to the hosted
-/// CLAP plugin: the MIDI bytes, the target track, and when it should sound.
+/// plugin: what it says, the target track, and when it should sound.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) struct ClipInstrumentEvent {
     /// Target instrument track's engine slot ([`Track::slot`]) — the
@@ -35,9 +59,8 @@ pub(crate) struct ClipInstrumentEvent {
     ///
     /// [`Track::slot`]: crate::models::track::Track::slot
     pub(crate) track: usize,
-    /// The MIDI message, as a fixed `[u8; 3]` so nothing crossing the `rtrb`
-    /// ring to the audio thread carries a heap payload.
-    pub(crate) message: Midi3,
+    /// What it says.
+    pub(crate) message: VoiceMessage,
     /// When the plugin should play it.
     pub(crate) when: EventTime,
 }

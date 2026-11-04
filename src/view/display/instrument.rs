@@ -239,8 +239,10 @@ impl Display {
         }
 
         // What the editors turned: an armed knob's assignment, a knob's
-        // parameter turned by hand (`knob_params.rs`).
+        // parameter turned by hand; and what they are to show of playback
+        // (`knob_params.rs`).
         self.handle_parameter_gestures();
+        self.follow_played_knobs();
 
         // An open project dialog must not sit behind a floating editor.
         let yield_to_main = self.project_dialog.is_some();

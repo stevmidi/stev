@@ -458,6 +458,7 @@ impl Display {
             self.key_focus = KeyFocus::Pane;
         }
         self.drop_stale_wheel_span();
+        self.end_finished_wheel_turn();
         self.input_was_clip_view = in_clip_view;
         let mut events = self.input_poller.take_input_events();
         // Nothing acts while a project being opened loads its plugins — not

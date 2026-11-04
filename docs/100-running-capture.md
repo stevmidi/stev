@@ -217,7 +217,7 @@ pass alone — same "last pass only" rule, no exception for the cursor.
 - `clip_offset = anchor - clip.start_tick()` shifts crop-relative ticks into
   clip-local space
 - What lands: every note whose onset fits the room left in the clip, and every
-  controller move (pitch bend, mod wheel, a knob's CC — `090`) in it, the one after the last note-off included — a
+  controller move (pitch bend, mod wheel, a knob's parameter — `090`) in it, the one after the last note-off included — a
   bend easing back to centre must come along or the clip is left bent
   (`Clip::cloned_events_in_range`). The notes are added; the wheels **replace** the
   clip's own over the span played (`Clip::land_take`, `370-wheel-capture.md`): per wheel

@@ -20,6 +20,11 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ## [Unreleased]
 
+### Added
+
+- The knobs record. Turn a knob beside the clip view, or the same control in the plugin's own window, press `/`, and the movement lands in the clip like a wheel's: over the stretch you touched, with notes or on its own over a playing loop. It plays back to the plugin on its sample, the plugin's window and the knob follow, and turning the knob by hand during playback takes over until you let go. Each knob's lane draws what it recorded. Giving a knob another parameter takes its recorded moves along; removing a mapping or swapping the plugin deletes them, and Undo brings them back. A `.mid` export leaves them out. VST3 plugins for now.
+- A knob on a stepped parameter, such as a switch or a mode selector, turns in the plugin's steps, so a take and its lane hold what you heard rather than the values in between.
+
 ### Changed
 
 - **Breaking**: the eight knobs beside the clip view now drive a parameter of the selected track's plugin instead of sending a MIDI CC. To pick one, right-click a knob (or tap it with two fingers) and turn the control you want in the plugin's own window; the label then shows the parameter's name (hover it for the full name). `Esc` stops assigning. Click a knob to select it, then press `Delete` to remove its mapping; Undo takes either back. Clearing what a knob recorded is the lane's: `⌘A`, then `Delete`. A knob shows where its parameter stands, also when you turn it in the plugin or load a preset there, and ⌘-click puts it back to the parameter's default. This works with VST3 plugins for now: a CLAP track's panel says so, and a MIDI Out track's says it has no plugin. Swapping a track's plugin clears its knobs (Undo brings them back). The CC knobs are gone: a project saved with them opens with its knobs unassigned, and the CC moves already recorded in its clips keep playing as plain MIDI, with no lane. A plugin that learned those CCs, as Serum 2 can, still follows them; to drive a parameter from a knob again, assign the knob.

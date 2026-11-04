@@ -648,12 +648,26 @@ impl EventHandlers {
                 self.set_knob_param_workflow(sequencer, undo_record, *track_idx, *knob, *param);
             }
 
+            SequencerCommand::HoldKnob {
+                track_idx,
+                knob,
+                start,
+                tick,
+            } => {
+                sequencer.hold_knob(*track_idx, *knob, *start, *tick);
+            }
+
+            SequencerCommand::ReleaseKnob { track_idx, knob } => {
+                sequencer.release_knob(*track_idx, *knob);
+            }
+
             SequencerCommand::SetKnobValue {
                 track_idx,
                 knob,
                 value,
+                tick,
             } => {
-                sequencer.set_knob_value(*track_idx, *knob, *value);
+                sequencer.turn_knob(*track_idx, *knob, *value, *tick);
             }
 
             SequencerCommand::FitTempo => {
@@ -677,13 +691,14 @@ mod tests {
     use crate::core::event_handlers::test_harness::{Harness, add_clip, harness, run_command};
     use crate::core::midi::message::Controller;
     use crate::core::project::{ProjectAction, ProjectData};
-    use crate::core::sequencer::test_support::{rect, stub_instrument};
+    use crate::core::sequencer::test_support::{param_at, rect, stub_instrument};
     use crate::core::sequencer::{SequencerCommand, SequencerEdit};
     use crate::core::time::Meter;
     use crate::core::view_state::ViewState;
     use crate::models::{
         clip::NoteDrag::{self, Move, ResizeEnd, ResizeStart},
         event::{Event, EventType},
+        knobs::UNASSIGNED_KNOBS,
         track::{InstrumentRef, TrackOutput},
     };
     use crate::view::display::{TrackLane, TrackRoute, UiEvent};
@@ -734,6 +749,54 @@ mod tests {
 
     /// The header's BPM field sets the tempo as one undo step, and the
     /// change counts as unsaved.
+    /// Removing a mapping tells the view what went, for the footer, moves
+    /// included; a knob with nothing recorded says so too, and an undo sends
+    /// the lead clip back so its lane redraws.
+    #[test]
+    fn a_removed_mapping_reports_whether_moves_went_with_it() {
+        let mut h = harness();
+        let mut record = Record::new();
+        let mut knobs = UNASSIGNED_KNOBS;
+        knobs[0] = Some(714);
+        knobs[1] = Some(9);
+        h.sequencer.set_track_knobs(0, knobs);
+        let (clip_id, _) = add_clip(&mut h.sequencer, 0);
+        h.sequencer
+            .clip_on_mut(0, clip_id)
+            .unwrap()
+            .restore_events(vec![param_at(10, 714, 0.5)]);
+        h.handlers
+            .sync_clip_selection_to_cursor_workflow(&mut h.sequencer);
+
+        for (knob, expected) in [(0, true), (1, false)] {
+            while h.ui_events.try_recv().is_ok() {}
+            run_command(
+                &mut h,
+                &mut record,
+                SequencerCommand::SetKnobParam {
+                    track_idx: 0,
+                    knob,
+                    param: None,
+                },
+            );
+            assert!(h.ui_events.try_iter().any(|event| matches!(
+                event,
+                UiEvent::KnobMappingRemoved { knob: k, with_moves, .. }
+                    if k == knob && with_moves == expected
+            )));
+        }
+
+        while h.ui_events.try_recv().is_ok() {}
+        run_command(&mut h, &mut record, SequencerCommand::Undo);
+        run_command(&mut h, &mut record, SequencerCommand::Undo);
+        assert_eq!(h.sequencer.tracks()[0].knobs()[0], Some(714));
+        assert!(
+            h.ui_events
+                .try_iter()
+                .any(|event| matches!(event, UiEvent::EventsUpdated { .. }))
+        );
+    }
+
     #[test]
     fn set_tempo_is_undoable_and_unsaved() {
         let mut h = harness();

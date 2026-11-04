@@ -23,22 +23,37 @@ use crate::{
     metadata::clip_metadata::ClipMetadata,
     models::{
         clip::Clip,
-        event::Event,
+        event::{Event, ParamMove},
         knobs::{ParamId, knobs_from_saved},
         track::{InstrumentRef, TrackOutput, track_name_from_input},
     },
 };
 
-/// One MIDI event, on disk. `tick` is an event-tick position; `length` an
-/// amount (ticks to the paired `NoteOff`).
+/// A plugin parameter's recorded move, on disk (`400-parameter-knobs.md`
+/// decision 11).
+#[derive(Serialize, Deserialize, Clone, Copy)]
+pub(crate) struct ParamMoveData {
+    /// The parameter's ID in the track's plugin.
+    pub(crate) param: ParamId,
+    /// Its normalized value, `0.0..=1.0`.
+    pub(crate) value: f64,
+}
+
+/// One event, on disk: MIDI, or a parameter move. `tick` is an event-tick
+/// position; `length` an amount (ticks to the paired `NoteOff`).
 #[derive(Serialize, Deserialize, Clone)]
 pub(crate) struct EventData {
     /// Event-tick position within the clip.
     pub(crate) tick: i32,
     /// Note length in ticks (`NoteOn` only; `0` otherwise).
     pub(crate) length: i32,
-    /// Raw MIDI bytes.
+    /// Raw MIDI bytes; none for a parameter move.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) midi_message: Vec<u8>,
+    /// The parameter move this event is. Absent on every MIDI event, and so
+    /// in every project saved before parameter moves.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) param_move: Option<ParamMoveData>,
     /// Whether the event is muted. Absent in projects saved before per-event
     /// mute existed — `#[serde(default)]` gives them the unmuted default.
     #[serde(default)]
@@ -364,6 +379,10 @@ impl ProjectData {
                                 tick: event.tick(),
                                 length: event.end_tick() - event.tick(),
                                 midi_message: event.midi_message().to_vec(),
+                                param_move: event.param_move().map(|moved| ParamMoveData {
+                                    param: moved.param,
+                                    value: moved.value,
+                                }),
                                 muted: event.is_muted(),
                             })
                             .collect::<Vec<_>>();
@@ -470,8 +489,16 @@ impl ProjectData {
 
                     // Add events (delta_ticks recalculated by add_event)
                     for event_data in clip_data.events {
-                        let mut event =
-                            Event::new(event_data.tick, event_data.length, event_data.midi_message);
+                        let mut event = match event_data.param_move {
+                            Some(ParamMoveData { param, value }) => {
+                                Event::from_param_move(event_data.tick, ParamMove { param, value })
+                            }
+                            None => Event::new(
+                                event_data.tick,
+                                event_data.length,
+                                event_data.midi_message,
+                            ),
+                        };
                         event.set_muted(event_data.muted);
                         clip.add_event(event);
                     }
@@ -489,7 +516,9 @@ impl ProjectData {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::sequencer::test_support::{test_sequencer, track_colors};
+    use crate::core::sequencer::test_support::{
+        clip_at, note_on, param_at, param_moves, test_sequencer, track_colors,
+    };
     use crate::models::knobs::UNASSIGNED_KNOBS;
 
     /// A default project with `count` tracks.
@@ -672,18 +701,71 @@ mod tests {
         assert_eq!(*sequencer.tracks()[0].knobs(), UNASSIGNED_KNOBS);
     }
 
+    /// A clip's parameter moves survive a save and a load, muted ones too;
+    /// the notes beside them keep their bytes.
+    #[test]
+    fn a_parameter_move_round_trips() {
+        let mut sequencer = test_sequencer();
+        let mut clip = clip_at(0, 1920);
+        let mut muted = param_at(40, 714, 0.5);
+        muted.set_muted(true);
+        clip.restore_events(vec![param_at(10, 714, 0.25), muted, note_on(20)]);
+        sequencer.tracks_mut()[0].add_clip(&clip);
+
+        let json = serde_json::to_string(&ProjectData::from_sequencer(&sequencer)).unwrap();
+        let data: ProjectData = serde_json::from_str(&json).unwrap();
+        let mut loaded = test_sequencer();
+        data.apply_to_sequencer(&mut loaded);
+
+        let events = loaded.tracks()[0].clips()[0].events();
+        assert_eq!(param_moves(events), vec![(10, 714, 0.25), (40, 714, 0.5)]);
+        assert!(events[2].is_muted());
+        assert_eq!(events[1].midi_message(), &[0x90, 60, 100]);
+    }
+
+    /// A MIDI event writes no `param_move`, so a project with none reads as
+    /// it always did.
+    #[test]
+    fn a_midi_event_writes_no_param_move() {
+        let event: EventData =
+            serde_json::from_str(r#"{"tick":0,"length":240,"midi_message":[144,60,100]}"#).unwrap();
+        assert!(event.param_move.is_none());
+        assert!(
+            !serde_json::to_string(&event)
+                .unwrap()
+                .contains("param_move")
+        );
+    }
+
+    /// A turn counts for the unsaved prompt; a recorded move changes the
+    /// project as any event does.
+    #[test]
+    fn a_recorded_move_changes_the_fingerprint() {
+        let mut sequencer = test_sequencer();
+        let mut clip = clip_at(0, 1920);
+        clip.restore_events(vec![param_at(10, 714, 0.25)]);
+        sequencer.tracks_mut()[0].add_clip(&clip);
+        let saved = ProjectData::from_sequencer(&sequencer).fingerprint();
+        let id = sequencer.tracks()[0].clips()[0].id();
+        sequencer.tracks_mut()[0]
+            .get_clip_by_id_mut(id)
+            .unwrap()
+            .restore_events(vec![param_at(10, 714, 0.75)]);
+        assert_ne!(ProjectData::from_sequencer(&sequencer).fingerprint(), saved);
+    }
+
     /// A track with no knob assigned writes no knob list, and the hand's
     /// values are never written.
     #[test]
     fn unassigned_knobs_and_hand_values_are_not_written() {
         let mut sequencer = test_sequencer();
-        sequencer.set_knob_value(0, 0, 0.5);
+        sequencer.turn_knob(0, 0, 0.5, 0);
         let json = serde_json::to_string(&ProjectData::from_sequencer(&sequencer)).unwrap();
         assert!(!json.contains("knobs"), "{json}");
         let mut knobs = UNASSIGNED_KNOBS;
         knobs[1] = Some(3);
         sequencer.set_track_knobs(0, knobs);
-        sequencer.set_knob_value(0, 1, 0.5);
+        sequencer.turn_knob(0, 1, 0.5, 0);
         let json = serde_json::to_string(&ProjectData::from_sequencer(&sequencer)).unwrap();
         assert!(
             json.contains(r#""knobs":[{},{"param":3},{},{},{},{},{},{}]"#),
@@ -728,10 +810,10 @@ mod tests {
     fn a_hand_turn_changes_the_fingerprint() {
         let mut sequencer = test_sequencer();
         let saved = ProjectData::from_sequencer(&sequencer).fingerprint();
-        sequencer.set_knob_value(0, 0, 0.25);
+        sequencer.turn_knob(0, 0, 0.25, 0);
         let turned = ProjectData::from_sequencer(&sequencer).fingerprint();
         assert_ne!(turned, saved);
-        sequencer.set_knob_value(0, 0, 0.75);
+        sequencer.turn_knob(0, 0, 0.75, 0);
         assert_ne!(
             ProjectData::from_sequencer(&sequencer).fingerprint(),
             turned
@@ -1003,6 +1085,7 @@ mod tests {
                 tick: 480,
                 length: 240,
                 midi_message: vec![0x90, 60, 100],
+                param_move: None,
                 muted: false,
             }],
         };
@@ -1037,6 +1120,7 @@ mod tests {
             tick: 0,
             length: 240,
             midi_message: vec![0x90, 60, 100],
+            param_move: None,
             muted: true,
         };
         let json = serde_json::to_string(&event).unwrap();

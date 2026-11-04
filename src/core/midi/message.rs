@@ -2,6 +2,8 @@
 //! route carries, note-edge and wheel parsing, which live input a take records,
 //! channel rewriting and channel-message validation.
 
+use crate::models::knobs::ParamId;
+
 /// A MIDI channel-voice message, fixed at 3 bytes: shorter messages (Program
 /// Change, Channel Pressure) are zero-padded, longer ones (SysEx — filtered out
 /// upstream anyway) keep only their first 3 bytes. Inline, so an event crossing
@@ -43,18 +45,24 @@ pub(crate) fn parse_note(msg: &[u8]) -> Option<(usize, bool)> {
 }
 
 /// A performance controller a take records beside its notes
-/// (`090-recording-midi-input.md`): pitch bend, or a Control Change by
-/// number — the mod wheel (CC1) among them, and any other CC a clip holds
-/// (pasted, imported, an older project's CC knobs). The two wheels have a
-/// rest a stop returns them to; any other CC has none and stays where it
-/// was.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+/// (`090-recording-midi-input.md`): pitch bend, a Control Change by number —
+/// the mod wheel (CC1) among them, and any other CC a clip holds (pasted,
+/// imported, an older project's CC knobs) — or a plugin parameter a knob
+/// drives. The two wheels have a rest a stop returns them to; anything else
+/// has none and stays where it was. Ordered pitch bend, CCs by number,
+/// parameters by ID: the order a track chases and a clip lists them in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) enum Controller {
     /// Pitch bend (`0xEn`), a 14-bit value centred on `0x2000`.
     PitchBend,
     /// Control Change `n` (`0xBn n`), `0`–`127` — never a channel mode
     /// message (120–127), which [`parse_controller`] doesn't read as one.
     Cc(u8),
+    /// A parameter of the track's plugin, by ID, normalized to `0.0..=1.0`
+    /// (`400-parameter-knobs.md`). Not MIDI: no message carries it, so
+    /// [`parse_controller`] never returns one. A clip holds its moves as
+    /// [`ParamMove`](crate::models::event::ParamMove) events.
+    Param(ParamId),
 }
 
 impl Controller {
@@ -64,28 +72,6 @@ impl Controller {
     /// The two wheels, in the order the wheel lanes list them
     /// ([`wheel_index`](Self::wheel_index)).
     pub(crate) const WHEELS: [Controller; 2] = [Controller::PitchBend, Controller::MOD_WHEEL];
-
-    /// How many controllers there are — pitch bend and a CC per number, the
-    /// channel mode numbers included so [`index`](Self::index) stays a plain
-    /// offset — for per-controller arrays.
-    pub(crate) const COUNT: usize = 1 + 128;
-
-    /// The controller's slot in a per-controller array of
-    /// [`COUNT`](Self::COUNT).
-    pub(crate) const fn index(self) -> usize {
-        match self {
-            Controller::PitchBend => 0,
-            Controller::Cc(cc) => 1 + (cc & 0x7F) as usize,
-        }
-    }
-
-    /// The controller at slot `index` — the inverse of [`index`](Self::index).
-    pub(crate) const fn from_index(index: usize) -> Controller {
-        match index {
-            0 => Controller::PitchBend,
-            _ => Controller::Cc((index - 1) as u8 & 0x7F),
-        }
-    }
 
     /// Whether the controller is one of the two wheels — the ones with a
     /// [`rest`](Self::rest).
@@ -100,24 +86,29 @@ impl Controller {
     }
 
     /// Where the controller rests, if it has a rest: bend centred, mod wheel
-    /// down. `None` for any other CC — a filter cutoff "at rest" at 0 would
-    /// be wrong, so it is never reset (`390-knob-panel.md` decision 8).
+    /// down. `None` for any other CC or a parameter — a filter cutoff "at
+    /// rest" at 0 would be wrong, so it is never reset (`390-knob-panel.md`
+    /// decision 8, `400-parameter-knobs.md` decision 9).
     pub(crate) const fn rest(self) -> Option<u16> {
         match self {
             Controller::PitchBend => Some(PITCH_BEND_CENTRE),
             Controller::Cc(MOD_WHEEL_CC) => Some(0),
-            Controller::Cc(_) => None,
+            Controller::Cc(_) | Controller::Param(_) => None,
         }
     }
 
     /// The channel-0 message that puts the controller at `value` — the
     /// caller rewrites the channel for its output, as for any clip event.
+    /// Empty for a parameter, which no MIDI message moves:
+    /// [`Event::controller_move_at`](crate::models::event::Event::controller_move_at)
+    /// builds a move of any controller.
     pub(crate) fn message(self, value: u16) -> Vec<u8> {
         match self {
             Controller::PitchBend => {
                 vec![0xE0, (value & 0x7F) as u8, ((value >> 7) & 0x7F) as u8]
             }
             Controller::Cc(cc) => control_change(cc, value as u8).to_vec(),
+            Controller::Param(_) => Vec::new(),
         }
     }
 }
@@ -292,9 +283,8 @@ mod tests {
                 Some((controller, value))
             );
         }
-        for index in 0..Controller::COUNT {
-            assert_eq!(Controller::from_index(index).index(), index);
-        }
+        assert!(Controller::PitchBend < Controller::Cc(0));
+        assert!(Controller::Cc(127) < Controller::Param(0));
         for (i, wheel) in Controller::WHEELS.into_iter().enumerate() {
             assert_eq!(wheel.wheel_index(), Some(i));
         }

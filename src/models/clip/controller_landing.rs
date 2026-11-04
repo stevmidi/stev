@@ -1,7 +1,7 @@
 //! Landing a captured take's controller moves in a clip — pitch bend, the
-//! mod wheel and the knobs' CCs — by the latch rule of `370-wheel-capture.md`
-//! § Decisions 5–7, which `390-knob-panel.md` decision 9 applies per
-//! controller.
+//! mod wheel and the knobs' parameters — by the latch rule of
+//! `370-wheel-capture.md` § Decisions 5–7, which `400-parameter-knobs.md`
+//! decision 10 applies per parameter.
 //!
 //! A take's notes are added to the clip. Its controllers *replace*: for each
 //! controller the take moved, the clip's own data for it goes from the take's
@@ -9,24 +9,24 @@
 //! at the window's end the value the clip's old curve had there is written
 //! back, if it differs from the take's last. A controller the take didn't
 //! move is left alone. A wheel off its rest where a take starts counts as a
-//! move there ([`carry_wheels_onto`](Clip::carry_wheels_onto)); a knob's CC
+//! move there ([`carry_wheels_onto`](Clip::carry_wheels_onto)); a parameter
 //! has no rest, so it never does. Instead, where a clip has no earlier data
-//! for a knob's CC, the value the knob stood at when the take turned it —
-//! sent just ahead of the turn's first move (`knob_panel.rs`) — is written at
-//! the window's start, so a loop wrap chases it as it chases a wheel's rest
-//! ([`hold_cc_start_values`](Clip::hold_cc_start_values),
-//! `390-knob-panel.md` decision 9).
+//! for a parameter, the value it stood at when the take turned it — recorded
+//! just ahead of the turn's first move (`Sequencer::hold_knob`) — is written
+//! at the window's start, so a loop wrap chases it as it chases a wheel's
+//! rest ([`hold_start_values`](Clip::hold_start_values),
+//! `400-parameter-knobs.md` decision 10).
 //!
 //! A lane's `Delete` is built on the same rule: a span of a wheel returned
-//! to rest, a span of a knob's CC held at the value before it
+//! to rest, a span of a parameter held at the value before it
 //! ([`clear_controller_span`](Clip::clear_controller_span),
 //! `380-wheel-lane.md` decision 18, `390-knob-panel.md` decision 13).
 
 use std::ops::Range;
 
 use crate::{
-    core::midi::message::{Controller, parse_controller, rewrite_channel},
-    models::{controllers::ControllerValues, event::Event},
+    core::midi::message::Controller,
+    models::{controllers::ControllerValues, event::Event, knobs::ParamId},
 };
 
 use super::Clip;
@@ -52,8 +52,8 @@ impl Clip {
             .into_iter()
             .filter_map(|wheel| {
                 let (event, value) = self.last_move_before(wheel, tick)?;
-                (Some(value) != wheel.rest() && !self.has_move_at(wheel, tick))
-                    .then(|| Event::from_midi_with_tick(event.midi_message(), tick))
+                (Some(value) != wheel.rest().map(f64::from) && !self.has_move_at(wheel, tick))
+                    .then(|| event.copy_at(tick))
             })
             .collect()
     }
@@ -72,27 +72,28 @@ impl Clip {
         self.sort_events_by_tick();
     }
 
-    /// For each CC with no rest (a knob's) that the clip moves after event
-    /// tick `tick` but not at or before it: its first move after `tick` is
-    /// copied to `tick` — where the knob stood when the turn began — so the
+    /// For each controller with no rest (a knob's parameter) that the clip
+    /// moves after event tick `tick` but not at or before it: its first move
+    /// after `tick` is copied to `tick` — where the knob stood when the turn
+    /// began — so the
     /// stretch before the turn plays that value, not whatever the end of the
     /// last pass left. Then the turn's start value, sent on the same tick as
     /// its first move, goes from there
     /// ([`drop_superseded_controller_moves`](Self::drop_superseded_controller_moves)).
     /// A new clip's counterpart of [`carry_wheels_onto`](Self::carry_wheels_onto),
     /// called with the start of what the clip keeps.
-    pub(crate) fn hold_cc_start_values(&mut self, tick: i32) {
+    pub(crate) fn hold_start_values(&mut self, tick: i32) {
         self.hold_start_values_of(tick, |_| true);
     }
 
-    /// [`hold_cc_start_values`](Self::hold_cc_start_values) for the CCs
+    /// [`hold_start_values`](Self::hold_start_values) for the controllers
     /// `holds` accepts only — a landing's, the ones its take moved into a
     /// stretch the clip had no data for.
     fn hold_start_values_of(&mut self, tick: i32, holds: impl Fn(Controller) -> bool) {
         let mut seen: Vec<Controller> = Vec::new();
         let mut starts = Vec::new();
         for event in self.events.iter().filter(|event| !event.is_muted()) {
-            let Some((controller, _)) = parse_controller(event.midi_message()) else {
+            let Some((controller, _)) = event.controller_move() else {
                 continue;
             };
             if controller.is_wheel() || !holds(controller) || seen.contains(&controller) {
@@ -100,7 +101,7 @@ impl Clip {
             }
             seen.push(controller);
             if event.tick() > tick {
-                starts.push(Event::from_midi_with_tick(event.midi_message(), tick));
+                starts.push(event.copy_at(tick));
             }
         }
         if !starts.is_empty() {
@@ -123,7 +124,7 @@ impl Clip {
             .iter()
             .enumerate()
             .map(|(i, event)| {
-                let Some((controller, _)) = parse_controller(event.midi_message()) else {
+                let Some((controller, _)) = event.controller_move() else {
                     return false;
                 };
                 self.events[i + 1..]
@@ -148,10 +149,10 @@ impl Clip {
     /// `wheel_end` is written back there when the clip has one, it differs
     /// from the take's last and the clip doesn't move that controller exactly
     /// there anyway — unless `wheel_end` is the window's end, where the clip
-    /// loops and the chase at the wrap hands back. A CC with no rest the take
-    /// moves, which the clip has no move of before the take's first, is then
-    /// held from the window's start at the value the turn started from
-    /// ([`hold_cc_start_values`](Self::hold_cc_start_values)).
+    /// loops and the chase at the wrap hands back. A controller with no rest
+    /// the take moves, which the clip has no move of before the take's first,
+    /// is then held from the window's start at the value the turn started
+    /// from ([`hold_start_values`](Self::hold_start_values)).
     /// Take moves at or past `wheel_end` are dropped. Re-sorted and note
     /// lengths recomputed.
     pub(crate) fn land_take(&mut self, take: &[Event], wheel_end: i32) {
@@ -160,17 +161,17 @@ impl Clip {
 
         let mut controllers: Vec<Controller> = take
             .iter()
-            .filter_map(|event| parse_controller(event.midi_message()))
+            .filter_map(Event::controller_move)
             .map(|(controller, _)| controller)
             .collect();
-        controllers.sort_by_key(|controller| controller.index());
+        controllers.sort();
         controllers.dedup();
-        // The CCs the clip has no data for before the take moves them: their
+        // The controllers the clip has no data for before the take moves them: their
         // stretch before the turn is held at its start value.
         let mut unheld = Vec::new();
 
         for controller in controllers {
-            let moves: Vec<(&Event, u16)> = take
+            let moves: Vec<(&Event, f64)> = take
                 .iter()
                 .filter(|event| event.tick() < wheel_end)
                 .filter_map(|event| Some((event, move_value(event, controller)?)))
@@ -210,7 +211,7 @@ impl Clip {
     /// Every move of `controller` inside the span goes, muted ones too. A
     /// wheel is returned to rest there, the same result as riding it at rest
     /// across the span under the landing rule: a rest move goes in at `start`
-    /// unless the wheel is at rest there already. A knob's CC has no rest, so
+    /// unless the wheel is at rest there already. A parameter has no rest, so
     /// the value in force just before the span holds across it instead. Either
     /// way the value in force at `end` is written back there, so the curve
     /// after the span is unchanged — unless it is what the span holds, the
@@ -227,13 +228,16 @@ impl Clip {
         if start >= end {
             return false;
         }
-        // What the span holds: a wheel's rest, a CC's value before it. Set
-        // at the start when the value in force there differs — never for a
-        // CC, which holds that very value.
+        // What the span holds: a wheel's rest, anything else's value before
+        // it. Set at the start when the value in force there differs — never
+        // for a controller with no rest, which holds that very value.
         let before = self
             .last_move_before(controller, start)
             .map(|(event, value)| (event.midi_channel().unwrap_or(0), value));
-        let held = controller.rest().or(before.map(|(_, value)| value));
+        let held = controller
+            .rest()
+            .map(f64::from)
+            .or(before.map(|(_, value)| value));
         let set_at_start = before.zip(held).filter(|&((_, value), held)| value != held);
         let extent_end = self.event_extent().1;
         let mut changed =
@@ -251,9 +255,9 @@ impl Clip {
     /// The landing rule's step for one controller, shared by a take and a
     /// rest: the clip's moves of `controller` in `span` go, muted ones too,
     /// and the value the old curve had at the span's end — a wheel's rest
-    /// where nothing moved it, nothing for a CC nothing moved — is written
-    /// back there when it differs from `span_last` (what the span ends on,
-    /// `None` for a CC the span leaves with no value in force)
+    /// where nothing moved it, nothing for anything else nothing moved — is
+    /// written back there when it differs from `span_last` (what the span
+    /// ends on, `None` when the span leaves no value in force)
     /// and the clip doesn't move the controller exactly there — unless the
     /// end is at or past `hand_back_before`, where nothing follows to hand
     /// back to. The write-back goes on `channel`, or the old value's own.
@@ -262,13 +266,15 @@ impl Clip {
         &mut self,
         controller: Controller,
         span: Range<i32>,
-        span_last: Option<u16>,
+        span_last: Option<f64>,
         channel: Option<u8>,
         hand_back_before: i32,
     ) -> bool {
         let end = span.end;
         let old = self.last_move_before(controller, end);
-        let old_value = old.map(|(_, value)| value).or(controller.rest());
+        let old_value = old
+            .map(|(_, value)| value)
+            .or(controller.rest().map(f64::from));
         let channel = channel
             .or_else(|| old.and_then(|(event, _)| event.midi_channel()))
             .unwrap_or(0);
@@ -288,10 +294,8 @@ impl Clip {
 
     /// Adds a move of `controller` to `value` on `channel` at event tick
     /// `tick`, unsorted.
-    fn add_controller_move(&mut self, controller: Controller, value: u16, channel: u8, tick: i32) {
-        let mut message = controller.message(value);
-        rewrite_channel(&mut message, channel);
-        self.add_event(Event::from_midi_with_tick(&message, tick));
+    fn add_controller_move(&mut self, controller: Controller, value: f64, channel: u8, tick: i32) {
+        self.add_event(Event::controller_move_at(tick, controller, value, channel));
     }
 
     /// The clip's whole extent in event ticks, `(start, end)`: from tick 0,
@@ -312,7 +316,7 @@ impl Clip {
 
     /// `controller`'s last unmuted move before event tick `tick` and the
     /// value it moved to — the value in force there, with its channel.
-    fn last_move_before(&self, controller: Controller, tick: i32) -> Option<(&Event, u16)> {
+    fn last_move_before(&self, controller: Controller, tick: i32) -> Option<(&Event, f64)> {
         self.events
             .iter()
             .take_while(|event| event.tick() < tick)
@@ -325,7 +329,38 @@ impl Clip {
     pub(crate) fn has_controller_moves(&self) -> bool {
         self.events
             .iter()
-            .any(|event| parse_controller(event.midi_message()).is_some())
+            .any(|event| event.controller_move().is_some())
+    }
+
+    /// Whether the clip holds a move of a parameter `matches` accepts,
+    /// muted or not.
+    pub(crate) fn has_param_moves(&self, matches: impl Fn(ParamId) -> bool) -> bool {
+        self.events
+            .iter()
+            .filter_map(Event::param_move)
+            .any(|moved| matches(moved.param))
+    }
+
+    /// Rewrites every move of a parameter `matches` accepts, muted ones
+    /// too: onto parameter `to`, or gone with `None`
+    /// (`400-parameter-knobs.md` decisions 7, 8 and 14).
+    pub(crate) fn rewrite_param_moves(
+        &mut self,
+        matches: impl Fn(ParamId) -> bool,
+        to: Option<ParamId>,
+    ) {
+        let selected = |event: &Event| event.param_move().is_some_and(|moved| matches(moved.param));
+        match to {
+            Some(to) => self
+                .events
+                .iter_mut()
+                .filter(|event| selected(event))
+                .for_each(|event| event.set_param(to)),
+            None => {
+                self.events.retain(|event| !selected(event));
+                self.update_delta_ticks();
+            }
+        }
     }
 
     /// Whether the clip has a move of `controller` exactly at event tick
@@ -339,8 +374,9 @@ impl Clip {
 
 /// The value `event` moves `controller` to, muted or not; `None` when it
 /// moves something else.
-fn move_value(event: &Event, controller: Controller) -> Option<u16> {
-    parse_controller(event.midi_message())
+fn move_value(event: &Event, controller: Controller) -> Option<f64> {
+    event
+        .controller_move()
         .and_then(|(moved, value)| (moved == controller).then_some(value))
 }
 
@@ -387,6 +423,129 @@ mod tests {
                 .map(|bar| modw(bar * BAR, 20 + bar as u8 * 20))
                 .collect(),
         )
+    }
+
+    /// A move of parameter `param` to `value`.
+    fn param(tick: i32, param: ParamId, value: f64) -> Event {
+        Event::controller_move_at(tick, Controller::Param(param), value, 0)
+    }
+
+    /// The clip's parameter moves as `(tick, param, value)`.
+    fn param_moves(clip: &Clip) -> Vec<(i32, ParamId, f64)> {
+        clip.events()
+            .iter()
+            .filter_map(|event| {
+                let moved = event.param_move()?;
+                Some((event.tick(), moved.param, moved.value))
+            })
+            .collect()
+    }
+
+    /// Mid-clip the old curve's value comes back after the take, as for a
+    /// wheel, and the parameter next to it is left alone.
+    #[test]
+    fn a_parameter_span_writes_the_old_curve_back_at_its_end() {
+        let mut clip = clip_with(vec![param(0, 1, 0.2), param(0, 2, 0.4), param(BAR, 1, 0.3)]);
+
+        clip.land_take(&[param(100, 1, 0.8), param(200, 1, 0.9)], BAR * 2);
+
+        assert_eq!(
+            param_moves(&clip),
+            vec![
+                (0, 1, 0.2),
+                (0, 2, 0.4),
+                (100, 1, 0.8),
+                (200, 1, 0.9),
+                (BAR * 2, 1, 0.3),
+            ]
+        );
+    }
+
+    /// With no earlier data the value the turn started from is written at
+    /// the window's start; the start value and the first move on one tick
+    /// leave only the move there.
+    #[test]
+    fn a_parameter_with_no_earlier_data_holds_its_start_value() {
+        let mut clip = clip_with(vec![]);
+
+        clip.land_take(
+            &[
+                param(BAR, 1, 0.2),
+                param(BAR, 1, 0.3),
+                param(BAR + 10, 1, 0.5),
+            ],
+            BAR * 4,
+        );
+
+        assert_eq!(
+            param_moves(&clip),
+            vec![(0, 1, 0.2), (BAR, 1, 0.3), (BAR + 10, 1, 0.5)]
+        );
+    }
+
+    /// A parameter has no rest: a span holds the value before it, and the
+    /// value after is written back.
+    #[test]
+    fn clearing_a_parameter_span_holds_the_value_before_it() {
+        let mut clip = clip_with(vec![
+            param(0, 1, 0.2),
+            param(100, 1, 0.5),
+            param(200, 1, 0.8),
+            param(500, 1, 0.6),
+        ]);
+
+        assert!(clip.clear_controller_span(Controller::Param(1), 50, 300));
+
+        assert_eq!(
+            param_moves(&clip),
+            vec![(0, 1, 0.2), (300, 1, 0.8), (500, 1, 0.6)]
+        );
+    }
+
+    #[test]
+    fn a_wheel_off_rest_is_carried_but_a_parameter_never_is() {
+        let clip = clip_with(vec![param(100, 1, 0.9), modw(200, 50)]);
+        let carried = clip.carried_wheel_moves(BAR);
+        assert_eq!(carried.len(), 1);
+        assert_eq!(carried[0].midi_message(), &[0xB0, 0x01, 50]);
+    }
+
+    #[test]
+    fn rewriting_moves_renames_or_removes_only_what_matches() {
+        let events = vec![param(0, 1, 0.2), param(10, 2, 0.4), modw(20, 50)];
+
+        let mut renamed = clip_with(events.clone());
+        renamed.rewrite_param_moves(|param| param == 1, Some(7));
+        assert_eq!(param_moves(&renamed), vec![(0, 7, 0.2), (10, 2, 0.4)]);
+
+        let mut removed = clip_with(events);
+        removed.rewrite_param_moves(|param| param == 1, None);
+        assert_eq!(param_moves(&removed), vec![(10, 2, 0.4)]);
+        assert_eq!(removed.events().len(), 2);
+        assert!(removed.has_param_moves(|param| param == 2));
+        assert!(!removed.has_param_moves(|param| param == 1));
+        // The walk's cached gaps follow.
+        assert_eq!(removed.events()[0].delta_ticks(), 10);
+    }
+
+    /// A clip edit carries parameter moves with no code of its own: a crop
+    /// and a fold keep them on the timeline, and a bake keeps their payload.
+    #[test]
+    fn clip_edits_carry_parameter_moves() {
+        let mut cropped = clip_with(vec![param(100, 1, 0.2), param(BAR * 3, 1, 0.4)]);
+        cropped.region_mut().set_region(Some(0), Some(BAR));
+        cropped.crop(BAR);
+        assert_eq!(param_moves(&cropped), vec![(100, 1, 0.2)]);
+
+        let mut folded = clip_with(vec![param(BAR + 100, 1, 0.2)]);
+        folded.fold_into_loop(BAR, BAR * 2, 0, BAR);
+        assert_eq!(param_moves(&folded), vec![(100, 1, 0.2)]);
+
+        let baked = clip_with(vec![param(100, 1, 0.2)]).played_events();
+        assert_eq!(
+            baked.iter().find_map(Event::param_move).map(|m| m.value),
+            Some(0.2)
+        );
     }
 
     /// The walkthrough: a move halfway through bar 3 replaces the sweep from
@@ -750,7 +909,7 @@ mod tests {
             knob(500, 15, 60),
         ]);
 
-        clip.hold_cc_start_values(0);
+        clip.hold_start_values(0);
 
         assert_eq!(
             wheel_moves(&clip),
@@ -794,9 +953,11 @@ mod tests {
             bend(500, 0x60),
             knob(BAR + 100, 15, 60),
         ]);
-        assert!(clip.carried_wheel_moves(BAR).iter().all(|event| {
-            parse_controller(event.midi_message()).is_some_and(|(c, _)| c.is_wheel())
-        }));
+        assert!(
+            clip.carried_wheel_moves(BAR)
+                .iter()
+                .all(|event| { event.controller_move().is_some_and(|(c, _)| c.is_wheel()) })
+        );
 
         clip.land_take(&[knob(600, 14, 90)], BAR * 2);
 

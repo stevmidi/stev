@@ -507,7 +507,7 @@ impl DragNotesEdit {
 /// A controller lane's `Delete` (`380-wheel-lane.md` decision 18,
 /// `390-knob-panel.md` decision 13): `controller` cleared over the
 /// event-tick span `start..end` of the lead clip — a wheel back to rest, a
-/// knob's CC held at the value before the span
+/// knob's parameter held at the value before the span
 /// ([`Clip::clear_controller_span`]). `undo()` restores the clip's events
 /// from before, as the controller takes' undo does. The note selection is
 /// kept.

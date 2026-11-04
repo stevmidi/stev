@@ -128,6 +128,14 @@ impl Display {
                 UiEvent::ClipRemoved { clip } => {
                     self.remove_clip_shape(clip.track_idx, clip.clip_id);
                 }
+                UiEvent::KnobMappingRemoved {
+                    track_idx,
+                    knob,
+                    param,
+                    with_moves,
+                } => {
+                    self.show_knob_mapping_removed(track_idx, knob, param, with_moves);
+                }
                 UiEvent::EventSelected { event_id } => {
                     self.set_event_shape_selected(event_id, true);
                 }

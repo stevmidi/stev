@@ -14,7 +14,7 @@ use std::sync::{Arc, atomic::AtomicI32};
 
 use uuid::Uuid;
 
-use crate::core::midi::message::{Controller, parse_controller};
+use crate::core::midi::message::Controller;
 use crate::models::{clip::Clip, event::EventType};
 
 /// One `NoteOn` as the piano roll draws it.
@@ -34,8 +34,14 @@ pub(crate) struct EventMetadata {
     pub(crate) muted: bool,
 }
 
-/// One controller move as a lane draws it: `(tick, value)`, event ticks.
+/// One controller move as a lane draws it: `(tick, value)`, event ticks. A
+/// MIDI controller's value is its own; a parameter's normalized value is
+/// scaled to [`PARAM_LANE_MAX`].
 pub(crate) type ControllerMove = (i32, u16);
+
+/// A parameter at `1.0` in a [`ControllerMove`]: 16 bits, more than any lane
+/// has pixels.
+pub(crate) const PARAM_LANE_MAX: u16 = u16::MAX;
 
 /// The clip's unmuted controller moves — pitch bend, the mod wheel, any
 /// other CC — per controller, each list in tick order: what plays, so a
@@ -104,8 +110,8 @@ impl ClipView {
 
         let mut controller_moves = ControllerMoves::default();
         for event in clip.events().iter().filter(|event| !event.is_muted()) {
-            if let Some((controller, value)) = parse_controller(event.midi_message()) {
-                controller_moves.push(controller, event.tick(), value);
+            if let Some((controller, value)) = event.controller_move() {
+                controller_moves.push(controller, event.tick(), lane_value(controller, value));
             }
         }
 
@@ -119,5 +125,12 @@ impl ClipView {
             clip_id: clip.id(),
             selected_event_ids: clip.selected_event_ids(),
         }
+    }
+}
+/// `value`, as `controller` moves, in [`ControllerMove`]'s units.
+fn lane_value(controller: Controller, value: f64) -> u16 {
+    match controller {
+        Controller::Param(_) => (value.clamp(0.0, 1.0) * f64::from(PARAM_LANE_MAX)).round() as u16,
+        Controller::PitchBend | Controller::Cc(_) => value as u16,
     }
 }

@@ -18,8 +18,7 @@ pub(super) enum ClipLane {
     Modulation,
     /// Knob `n`'s lane (`0..KNOB_COUNT`, the knobs' reading order): by
     /// position, so the lane stays up across a change of track and shows
-    /// that track's knob there. Empty until a clip can hold a parameter's
-    /// moves (`400-parameter-knobs.md` phase 2).
+    /// that track's knob there (`Display::clip_lane_controller`).
     Knob(usize),
 }
 
@@ -44,8 +43,8 @@ impl ClipLane {
         }
     }
 
-    /// The controller the lane draws: `None` for velocity, and for a knob's
-    /// lane, which has no data to draw yet.
+    /// The wheel the lane draws: `None` for velocity, and for a knob's lane,
+    /// whose parameter is the selected track's to say.
     pub(super) fn controller(self) -> Option<Controller> {
         match self {
             ClipLane::Velocity | ClipLane::Knob(_) => None,

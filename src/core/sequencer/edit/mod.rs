@@ -512,7 +512,8 @@ pub(crate) enum EditResult {
     TrackRenamed,
     /// A knob's parameter changed (`SetKnobParamEdit`'s edit and undo). The
     /// handler re-sends the view its track list, which carries what the
-    /// knobs drive (`TracksChanged`, no shift).
+    /// knobs drive (`TracksChanged`, no shift), and the lead clip, whose
+    /// moves may have changed with the knob.
     KnobsChanged,
     /// A track's output changed (`SetTrackOutputEdit`'s edit and undo). The
     /// handler re-sends the view its track list and has `Display` bring the

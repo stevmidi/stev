@@ -113,6 +113,8 @@ impl EventHandlers {
             | SequencerCommand::ToggleTrackSolo { .. }
             | SequencerCommand::SetTrackOutput { .. }
             | SequencerCommand::SetTrackInstrumentState { .. }
+            | SequencerCommand::HoldKnob { .. }
+            | SequencerCommand::ReleaseKnob { .. }
             | SequencerCommand::SetKnobValue { .. }
             // A running export's end, which the session can't hold up.
             | SequencerCommand::AudioExportWritten(_)
@@ -277,6 +279,37 @@ mod tests {
 
         run_command(&mut h, &mut record, SequencerCommand::Undo);
         assert_eq!(lead_events(&h), before);
+    }
+
+    /// A knob's hold and release go through a session, as its turn does: a
+    /// release swallowed here would leave the knob held for good.
+    #[test]
+    fn a_knob_turn_goes_through_a_session() {
+        let mut h = harness();
+        let mut record = Record::new();
+        played_into_a_lead_clip(&mut h);
+        run_command(&mut h, &mut record, SequencerCommand::Commit);
+        assert!(h.sequencer.is_framing_take());
+
+        let (track_idx, knob) = (0, 0);
+        run_command(
+            &mut h,
+            &mut record,
+            SequencerCommand::HoldKnob {
+                track_idx,
+                knob,
+                start: None,
+                tick: 0,
+            },
+        );
+        assert!(h.sequencer.tracks()[0].is_knob_held(0));
+        run_command(
+            &mut h,
+            &mut record,
+            SequencerCommand::ReleaseKnob { track_idx, knob },
+        );
+        assert!(!h.sequencer.tracks()[0].is_knob_held(0));
+        assert!(h.sequencer.is_framing_take());
     }
 
     /// `]` with the cursor between the two notes frames just the first; Esc

@@ -153,6 +153,8 @@ impl EventHandlers {
                     | SequencerCommand::ExitClip
                     | SequencerCommand::FocusPane(_)
                     | SequencerCommand::SetTrackInstrumentState { .. }
+                    // A turn begun before the run must still end.
+                    | SequencerCommand::ReleaseKnob { .. }
             ),
         )
     }
@@ -385,6 +387,26 @@ mod tests {
         h.handlers
             .export_audio_workflow(&mut h.sequencer, Some(rect(0, BAR, 0, 0)), "Sketch");
         assert_eq!(statuses(&h), [NEEDS_PLUGIN_HOST]);
+    }
+
+    /// A turn begun before the run still ends: a release held back would
+    /// leave the knob held against playback for good.
+    #[test]
+    fn a_knobs_release_goes_through_a_running_export() {
+        let mut h = harness();
+        let mut record = Record::new();
+        h.sequencer.hold_knob(0, 0, None, 0);
+        running(&mut h, plan(&[(0, "01 Synth.wav")], Vec::new()));
+        run_command(
+            &mut h,
+            &mut record,
+            SequencerCommand::ReleaseKnob {
+                track_idx: 0,
+                knob: 0,
+            },
+        );
+        assert!(!h.sequencer.tracks()[0].is_knob_held(0));
+        assert!(statuses(&h).is_empty());
     }
 
     #[test]

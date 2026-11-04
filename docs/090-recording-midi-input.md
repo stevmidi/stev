@@ -11,26 +11,37 @@ capture covers it. Key files: `src/core/midi/input.rs`,
 - **Note edges and two wheels — pitch bend and the mod wheel (CC1).** A
   `LiveInputRouter` forwards a message to the sequencer only when
   `message::is_recorded` says so: a note edge or a wheel move (`parse_note`,
-  `parse_wheel`), from a port or the computer keyboard alike. The knob panel no longer
-  sends CCs (`400-parameter-knobs.md`), so nothing records a knob until `400` phase 2
-  makes its parameter moves an event kind of their own; the rules below that name a
-  knob's CC are the CC machinery that phase reuses. Everything else on the input —
-  sustain, a hardware controller's other CCs, aftertouch, program change — is played live
-  (thru and the plugin tap) and never recorded. The `NoteLogger` still gets only note
-  edges. The capture buffer behind `/` stores a controller move like a note, at its own
-  tick; the clip thumbnail ignores it. One type names what is recorded besides notes:
-  `Controller` (`core/midi/message.rs`), pitch bend or a CC by number; only the two
-  wheels have a rest (`Controller::rest`).
+  `parse_wheel`), from a port or the computer keyboard alike. Everything else on the
+  input — sustain, a hardware controller's other CCs, aftertouch, program change — is
+  played live (thru and the plugin tap) and never recorded. The `NoteLogger` still gets
+  only note edges. The capture buffer behind `/` stores a controller move like a note, at
+  its own tick; the clip thumbnail ignores it. One type names what is recorded besides
+  notes: `Controller` (`core/midi/message.rs`), pitch bend, a CC by number or a plugin
+  parameter by ID; only the two wheels have a rest (`Controller::rest`).
+- **A knob's parameter, turned by hand** (`400-parameter-knobs.md` decision 10). A turn is
+  not MIDI, so it doesn't come through the router: `Display` sends `HoldKnob` at the
+  turn's start, `SetKnobValue` per move and `ReleaseKnob` at its end, whether the turn is
+  a drag on Stev's knob or the control in the plugin's editor (`knob_panel.rs`,
+  `knob_params.rs`), each stamped with the `clock_tick` it happened at (`InputClock`,
+  `core/midi/input_tick.rs`: a plugin's editor stamps a move as it reports it, and the
+  frame handles it later, so the stamp can lie before the clock's last step).
+  `Sequencer::hold_knob` puts the value the knob stood at in the buffer ahead of the
+  turn, `turn_knob` each move, as a `ParamMove` event (`models/event.rs`). Only a held
+  knob's moves are recorded: a move with no turn around it is a preset the plugin loaded.
+  The buffer is the selected track's, so another track's turn stays out, and a turn of a
+  parameter no knob holds never reaches the sequencer. A commit drops any move no knob of
+  the selected track holds any more (`Sequencer::keep_knob_moves`). A turn can reach the
+  buffer behind a note played since, so a late one re-sorts it.
 - **Played back like any clip event, and kept honest at every discontinuity** — a
   controller has no release, so `Track`'s `ControllerTracker` chases the value in force on
-  every seek, and a stop resets the wheels; a knob's CC has no rest and stays where it
-  was (`050-undo-redo.md` § Invariants). Sustain is deliberately not a recorded
+  every seek, and a stop resets the wheels; a knob's parameter has no rest and stays where
+  it was (`050-undo-redo.md` § Invariants). Sustain is deliberately not a recorded
   controller, and a clip's sustain moves (imported) are never chased: a sustain stuck on
   holds every note, so it would need the note-release machinery rather than this chase.
 - **Shown in the piano roll's controller lanes** (`380-wheel-lane.md`, `390-knob-panel.md`):
-  the lane under the notes switches to pitch bend, the mod wheel or a knob's CC and draws
+  the lane under the notes switches to pitch bend, the mod wheel or a knob's parameter and draws
   the lead clip's moves as a line (move to move as a DAW draws it, a held value and its jump stepped). The one edit there clears
-  a span (a wheel back to rest, a CC held at the value before it), or with `⌘A` the whole
+  a span (a wheel back to rest, a parameter held at the value before it), or with `⌘A` the whole
   controller (`Clip::clear_controller_span`); nothing draws values (`280` § Not planned). No lighter hint
   on the clip (a badge or a strip, decided 2026-10-14) and nothing in the arranger
   thumbnails; note edits, quantize and transpose leave it where it was recorded
@@ -42,11 +53,12 @@ capture covers it. Key files: `src/core/midi/input.rs`,
   off, so where it stands is never carried in.
 - **A take into a clip replaces that clip's controller data over the span played**
   (`370-wheel-capture.md`, `Clip::land_take`): its notes are added, but for each controller
-  the take moved — a wheel or a knob's CC — the clip's own moves of it go from the take's
-  first move to the end of the take's window, the take's come in, and the old curve's
-  value at the window end is written back (for a CC, only where the clip had one). A CC
-  the clip has no earlier data for gets the value the knob turned from at the window's
-  start, as its stand-in for a rest (`Clip::hold_cc_start_values`, `390`). A
+  the take moved — a wheel or a knob's parameter — the clip's own moves of it go from the
+  take's first move to the end of the take's window, the take's come in, and the old
+  curve's value at the window end is written back (for a parameter, only where the clip
+  had one). A parameter the clip has no earlier data for gets the value the knob turned
+  from at the window's start, as its stand-in for a rest (`Clip::hold_start_values`,
+  `400` decision 10). A
   controller the take didn't move is left alone; a wheel off its rest where the take's
   window starts counts as a move there (`Clip::carry_wheels_onto`), for new clips too.
 - **Ride a wheel or turn a knob alone over a playing loop and `/` keeps it in the lead

@@ -30,6 +30,7 @@ use crate::{
         metronome::Metronome,
         midi::{
             input::{MidiInputForwarder, RecordedMidi},
+            input_tick::InputClock,
             message::Midi3,
             out_queue::MidiOutMessage,
             output::MidiOutputConnection,
@@ -234,6 +235,11 @@ pub(crate) fn setup_display(
         midi_out_offset_ms,
         browser_width,
         keymap,
+        InputClock {
+            clock_tick: shared_atomics.clock_tick.clone(),
+            clock_tick_instant_nanos: shared_atomics.clock_tick_instant_nanos.clone(),
+            tempo: shared_atomics.tempo.clone(),
+        },
         shared_atomics.tempo.clone(),
         shared_atomics.meter.clone(),
         shared_atomics.running.clone(),

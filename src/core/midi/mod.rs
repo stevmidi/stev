@@ -2,7 +2,7 @@
 //! port-name helpers they both rely on.
 
 pub(crate) mod input;
-mod input_tick;
+pub(crate) mod input_tick;
 pub(crate) mod message;
 pub(crate) mod out_queue;
 pub(crate) mod output;

@@ -18,7 +18,8 @@ use crate::core::{
 };
 use crate::models::{
     clip::Clip,
-    event::Event,
+    event::{Event, ParamMove},
+    knobs::ParamId,
     track::{InstrumentRef, Track, TrackOutput},
 };
 
@@ -84,7 +85,7 @@ pub(super) fn sequencer_with(loop_enabled: bool) -> (Sequencer, Consumer<ClipIns
 /// consumer end [`sequencer_with`] hands back.
 pub(super) fn drain(rx: &mut Consumer<ClipInstrumentEvent>) -> Vec<[u8; 3]> {
     std::iter::from_fn(|| rx.pop().ok())
-        .map(|e| e.message)
+        .filter_map(|e| e.message.midi())
         .collect()
 }
 
@@ -163,6 +164,22 @@ pub(crate) fn cc_at(tick: i32, cc: u8, value: u8) -> Event {
     Event::new(tick, 0, vec![0xB0, cc, value])
 }
 
+/// A move of parameter `param` to `value` at `tick`.
+pub(crate) fn param_at(tick: i32, param: ParamId, value: f64) -> Event {
+    Event::from_param_move(tick, ParamMove { param, value })
+}
+
+/// The parameter moves among `events` as `(tick, param, value)`.
+pub(crate) fn param_moves(events: &[Event]) -> Vec<(i32, ParamId, f64)> {
+    events
+        .iter()
+        .filter_map(|event| {
+            let moved = event.param_move()?;
+            Some((event.tick(), moved.param, moved.value))
+        })
+        .collect()
+}
+
 /// The wheel moves among `events` as `(tick, message)`.
 pub(crate) fn wheel_moves(events: &[Event]) -> Vec<(i32, Vec<u8>)> {
     events
@@ -197,12 +214,15 @@ pub(super) fn tick_and_collect_messages(
     for _ in 0..ticks {
         seq.tick(at);
         while let Ok(ev) = rx.pop() {
-            let status = match ev.message[0] & 0xf0 {
-                0x90 if ev.message[2] == 0 => 0x80,
+            let Some(message) = ev.message.midi() else {
+                continue;
+            };
+            let status = match message[0] & 0xf0 {
+                0x90 if message[2] == 0 => 0x80,
                 status @ (0x80 | 0x90) => status,
                 _ => continue,
             };
-            messages.push((status, ev.message[1]));
+            messages.push((status, message[1]));
         }
     }
     messages

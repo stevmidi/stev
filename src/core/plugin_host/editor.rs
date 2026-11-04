@@ -26,16 +26,29 @@ pub(crate) struct ParameterInfo {
     pub(crate) name: String,
     /// Its default, normalized — where a ⌘-click on its knob puts it.
     pub(crate) default_value: f64,
+    /// How many steps it moves in, one fewer than its positions, or 0 when
+    /// it moves smoothly. A stepped parameter's knob stops at each position
+    /// and its lane holds each value until the next
+    /// (`400-parameter-knobs.md` decision 12).
+    pub(crate) steps: u32,
 }
 
 /// A parameter change the plugin reported from its own editor — the user
 /// turning one of its controls, or a preset it loaded.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum ParameterGesture {
-    /// A turn began (VST3 `beginEdit`): what assigns an armed knob.
-    Begin(ParamId),
-    /// The parameter moved to a normalized value (VST3 `performEdit`).
-    Move(ParamId, f64),
+    /// A turn began (VST3 `beginEdit`): what assigns an armed knob, and
+    /// what holds a knob's parameter. Carries where the parameter stood,
+    /// normalized, read as the turn began — by the time the gesture is
+    /// handled the turn has moved it — and when, as a
+    /// [`Move`](Self::Move) does.
+    Begin(ParamId, Option<f64>, u64),
+    /// The parameter moved to a normalized value (VST3 `performEdit`), at
+    /// the given [`monotonic_nanos`](crate::core::time::monotonic_nanos):
+    /// a gesture is handled a frame later, and a take wants when it came.
+    Move(ParamId, f64, u64),
+    /// A turn ended (VST3 `endEdit`).
+    End(ParamId),
 }
 
 /// One hosted plugin's main-thread half. See the module docs.
@@ -108,6 +121,12 @@ pub(crate) trait InstrumentEditor {
     /// the plugin's editor alike — a knob turned in Stev. Never reported
     /// back as a [`ParameterGesture`].
     fn set_parameter(&mut self, _id: ParamId, _value: f64) {}
+
+    /// Tells the plugin's editor that playback moved parameter `id` to
+    /// `value` (normalized): the processor heard it already, on its sample
+    /// (`InstrumentVoice::queue_param`), so this only moves what the editor
+    /// shows. Never reported back as a [`ParameterGesture`].
+    fn follow_parameter(&mut self, _id: ParamId, _value: f64) {}
 
     /// The gestures the plugin's editor has reported since the last call,
     /// oldest first.

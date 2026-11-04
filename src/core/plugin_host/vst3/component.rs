@@ -151,6 +151,7 @@ pub(super) fn load(
             connect(&component, controller);
             if let Some(handler) = hosts.handler.to_com_ptr() {
                 controller.setComponentHandler(handler.as_ptr());
+                hosts.handler.remember_controller(controller);
             }
         }
 
@@ -418,6 +419,7 @@ pub(super) fn parameter_infos(
                         KnobParameter {
                             name: string128_text(&info.title),
                             default_value: info.defaultNormalizedValue.clamp(0.0, 1.0),
+                            steps: u32::try_from(info.stepCount).unwrap_or(0),
                         },
                     )
                 })

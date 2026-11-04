@@ -204,9 +204,20 @@ methods take a track's position and look the slot up in its `tracks` mirror
   draws), `set_parameter` (a knob turned in Stev — the sound and the plugin's
   editor follow, and it is never reported back as the user's turn) and
   `take_parameter_gestures` (what the plugin's own editor reported:
-  `ParameterGesture::Begin` assigns an armed knob, `Move` of a knob's parameter
-  is a hand turn for the unsaved prompt). `Display` drains the gestures once a
-  frame from `pump_instrument_editors` (`view/display/knob_params.rs`). Every
+  `ParameterGesture::Begin` assigns an armed knob or holds a knob's parameter,
+  `Move` of one is a hand turn for the unsaved prompt and a take, and `End`
+  lets go). `Display` drains the gestures once a frame from
+  `pump_instrument_editors` (`view/display/knob_params.rs`). **A clip's recorded
+  moves are the exception that does cross a ring**: they play on their sample,
+  as clip notes do. `Sequencer::tick` pushes them on the same clip ring
+  (`ClipInstrumentEvent::message` is a `VoiceMessage`, `Midi` or `Param`, `Copy`
+  so nothing on the ring carries a heap payload), and the mixer hands them to
+  `InstrumentVoice::queue_param`. The plugin's editor hears of them separately:
+  `tick` leaves the value in `TrackMixAtomics::knob_played`, and once a frame
+  `Display::follow_played_knobs` calls `follow_parameter`, which moves what the
+  editor shows without telling the processor a second time. So only a frame's
+  last value reaches the editor, which is all it could show. A move on a MIDI
+  Out track goes nowhere. Every
   method has a do-nothing default, so a format without parameters yet needs no
   code. VST3's side is in `180` § Parameter knobs. A hardware controller's CC
   still plays live to the selected track's plugin and MIDI Out and is never

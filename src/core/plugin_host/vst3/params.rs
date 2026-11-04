@@ -15,8 +15,10 @@
 //! ```
 //!
 //! The same [`HostParameterChanges`] carries **MIDI CCs**, which VST3 has no
-//! other way to express — see [`events`](super::events). Those are pushed
-//! straight in on the audio thread rather than crossing the ring.
+//! other way to express — see [`events`](super::events) — and a clip's
+//! recorded knob turns (`400-parameter-knobs.md`). Those are pushed straight
+//! in on the audio thread rather than crossing the ring, placed on their
+//! sample as clip events are.
 //!
 //! Without it such a plugin looks entirely healthy — editor opens, preset
 //! browser works, every control in the UI moves — and its sound never changes.
@@ -97,11 +99,12 @@ impl ParamReceiver {
         self.changes.reset();
     }
 
-    /// Records one change directly — the path a MIDI CC takes, having been
-    /// mapped to a parameter id by [`MidiMap`](super::events::MidiMap). A CC
-    /// that finds the block full is dropped: it has no ring to wait in.
-    pub(super) fn push(&mut self, id: ParamID, value: ParamValue) {
-        if !self.changes.push(id, value) {
+    /// Records one change directly, at sample `time` of the block — the path
+    /// a clip's parameter move takes, and a MIDI CC, mapped to a parameter id
+    /// by [`MidiMap`](super::events::MidiMap). A change that finds the block
+    /// full is dropped: it has no ring to wait in.
+    pub(super) fn push(&mut self, id: ParamID, value: ParamValue, time: u32) {
+        if !self.changes.push(id, value, time as int32) {
             debug!("vst3: more than {MAX_PARAMS_PER_BLOCK} parameters in one block");
         }
     }
@@ -115,7 +118,7 @@ impl ParamReceiver {
     /// honest placement is "as early in this block as possible".
     pub(super) fn drain_ui(&mut self) {
         while let Ok(&(id, value)) = self.rx.peek() {
-            if !self.changes.push(id, value) {
+            if !self.changes.push(id, value, 0) {
                 break;
             }
             let _ = self.rx.pop();
@@ -147,11 +150,13 @@ pub(super) fn bridge() -> (ParamSender, ParamReceiver) {
 }
 
 /// One parameter's changes within a block. VST3 models this as a queue of
-/// (sample offset, value) points; Stev only ever produces one, at offset 0.
+/// (sample offset, value) points; Stev only ever produces one: where the
+/// parameter stands at the end of the block's changes.
 struct HostParamValueQueue {
-    /// The parameter this queue is for, and its value. Behind an `UnsafeCell`
-    /// for the same reason `HostEventList`'s events are — see the `Sync` impl.
-    state: UnsafeCell<(ParamID, ParamValue)>,
+    /// The parameter this queue is for, its value, and the sample offset it
+    /// reaches that value at. Behind an `UnsafeCell` for the same reason
+    /// `HostEventList`'s events are — see the `Sync` impl.
+    state: UnsafeCell<(ParamID, ParamValue, int32)>,
 }
 
 // SAFETY: identical invariant to `HostEventList`. One queue belongs to one
@@ -189,8 +194,9 @@ impl IParamValueQueueTrait for HostParamValueQueue {
         // SAFETY: see the `Sync` impl for the read; both out-parameters are
         // caller-owned locals of the matching type.
         unsafe {
-            *sample_offset = 0;
-            *value = (*self.state.get()).1;
+            let (_, point_value, point_offset) = *self.state.get();
+            *sample_offset = point_offset;
+            *value = point_value;
         }
         kResultOk
     }
@@ -227,7 +233,7 @@ impl HostParameterChanges {
             queues: (0..MAX_PARAMS_PER_BLOCK)
                 .map(|_| {
                     ComWrapper::new(HostParamValueQueue {
-                        state: UnsafeCell::new((0, 0.0)),
+                        state: UnsafeCell::new((0, 0.0, 0)),
                     })
                 })
                 .collect(),
@@ -240,18 +246,19 @@ impl HostParameterChanges {
         self.used.set(0);
     }
 
-    /// Records a change, reusing this block's queue for a parameter that has
-    /// already changed — a knob dragged across a block boundary produces
-    /// several `performEdit`s, and the plugin should see the latest value once,
-    /// not a queue per event. Returns `false`, recording nothing, when `id` is
-    /// new and every queue is taken.
-    fn push(&self, id: ParamID, value: ParamValue) -> bool {
+    /// Records a change at sample `offset`, reusing this block's queue for a
+    /// parameter that has already changed — a knob dragged across a block
+    /// boundary produces several `performEdit`s, and the plugin should see
+    /// the latest value once, not a queue per event. Returns `false`,
+    /// recording nothing, when `id` is new and every queue is taken.
+    fn push(&self, id: ParamID, value: ParamValue, offset: int32) -> bool {
         let used = self.used.get();
         for queue in self.queues.iter().take(used) {
             // SAFETY: see the `Sync` impl.
             let state = unsafe { &mut *queue.state.get() };
             if state.0 == id {
                 state.1 = value;
+                state.2 = offset;
                 return true;
             }
         }
@@ -259,7 +266,7 @@ impl HostParameterChanges {
             return false;
         };
         // SAFETY: see the `Sync` impl.
-        unsafe { *queue.state.get() = (id, value) };
+        unsafe { *queue.state.get() = (id, value, offset) };
         self.used.set(used + 1);
         true
     }
@@ -299,7 +306,8 @@ mod tests {
     /// The value a queue currently holds.
     fn point(changes: &HostParameterChanges, index: usize) -> (ParamID, ParamValue) {
         // SAFETY: single-threaded test, same access pattern as the audio thread.
-        unsafe { *changes.queues[index].state.get() }
+        let (id, value, _) = unsafe { *changes.queues[index].state.get() };
+        (id, value)
     }
 
     /// Drains the UI ring and returns the resulting queue — the shape the old
@@ -380,6 +388,26 @@ mod tests {
     }
 
     #[test]
+    fn a_clip_move_lands_on_its_sample() {
+        let (_tx, mut rx) = bridge();
+        rx.push(9, 0.25, 40);
+        rx.push(9, 0.75, 96);
+        let changes = rx.changes();
+        // SAFETY: single-threaded test with valid out-parameters.
+        unsafe {
+            assert_eq!(changes.getParameterCount(), 1);
+            let mut offset = -1i32;
+            let mut value = 0.0f64;
+            assert_eq!(
+                changes.queues[0].getPoint(0, &mut offset, &mut value),
+                kResultOk
+            );
+            assert_eq!(offset, 96);
+            assert!((value - 0.75).abs() < 1e-12);
+        }
+    }
+
+    #[test]
     fn an_out_of_range_queue_index_yields_null_not_a_stale_queue() {
         let (tx, mut rx) = bridge();
         tx.send(1, 0.5);
@@ -453,7 +481,7 @@ mod tests {
     fn a_cc_that_finds_the_block_full_is_dropped() {
         let (_tx, mut rx) = bridge();
         for id in 0..(MAX_PARAMS_PER_BLOCK as u32 + 1) {
-            rx.push(id, 0.5);
+            rx.push(id, 0.5, 0);
         }
         // SAFETY: single-threaded test.
         unsafe {

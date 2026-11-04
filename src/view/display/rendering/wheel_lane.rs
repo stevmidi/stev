@@ -1,7 +1,7 @@
 //! The piano roll's lower lane when it shows a controller, and the gutter
 //! switch that picks the lane (`ClipLane`): the `VEL` / `PB` / `MW` labels
 //! left of the lane, and the lead clip's pitch bend, mod wheel or a knob's
-//! CC drawn as a line: built as playback holds it, each value flat until the
+//! parameter drawn as a line: built as playback holds it, each value flat until the
 //! next move steps off it ([`wheel_path`]), then drawn as a DAW draws
 //! automation — a straight line from move to move, a held value and the jump
 //! off it still a step ([`ease_steps`]) — and thinned ([`simplify`]), under
@@ -16,7 +16,7 @@ use egui::{Align2, CornerRadius, FontId, Painter, Pos2, Rect, Shape, Stroke, pos
 use super::piano_keys::NoteAreaGeom;
 use super::*;
 use crate::core::midi::message::{Controller, PITCH_BEND_CENTRE};
-use crate::metadata::clip_view::ControllerMove;
+use crate::metadata::clip_view::{ControllerMove, PARAM_LANE_MAX};
 
 impl Display {
     /// Space above and below a wheel's curve inside the lane, so its
@@ -40,6 +40,8 @@ impl Display {
     const LANE_MARKER_R: f32 = 2.0;
     /// Gap between a gutter label and its data marker's centre.
     const LANE_MARKER_GAP: f32 = 6.0;
+    /// How far a data marker reaches past the end of its label.
+    pub(super) const LANE_MARKER_REACH: f32 = Self::LANE_MARKER_GAP + Self::LANE_MARKER_R;
 
     /// The gutter left of the lower lane, under the octave legend and the
     /// keys, holding the lane switch.
@@ -118,6 +120,18 @@ impl Display {
         !self.render.controller_moves.of(controller).is_empty()
     }
 
+    /// Whether `controller`'s lane holds each value up to the next: a
+    /// stepped parameter of the selected track's plugin
+    /// (`400-parameter-knobs.md` decision 12).
+    fn lane_holds_steps(&self, controller: Controller) -> bool {
+        match (controller, self.knobs_track()) {
+            (Controller::Param(param), Some(track_idx)) => {
+                self.knob_param_steps(track_idx, param) > 0
+            }
+            _ => false,
+        }
+    }
+
     /// The data marker beside the lane label drawn at `label`, in its
     /// colour.
     pub(super) fn draw_lane_marker(&self, painter: &Painter, label: Rect, color: Color32) {
@@ -132,8 +146,9 @@ impl Display {
     /// ([`wheel_path`], [`ease_steps`], [`simplify`]): a straight line from
     /// move to move, a held value flat until a jump steps off it, dimmed
     /// outside the clip's window. A wheel's line runs from rest before its
-    /// first move; a knob's CC has no rest, so its line starts at its first
-    /// move. Pitch bend gets a faint centre
+    /// first move; a parameter has no rest, so its line starts at its first
+    /// move, and one that moves in steps holds each value up to the next
+    /// ([`stepped_moves`]). Pitch bend gets a faint centre
     /// line at rest; the span, if one is marked, a tint across the lane's
     /// height under the line, filled as the note marquee is. Nothing else
     /// with no moves.
@@ -166,6 +181,13 @@ impl Display {
         if moves.is_empty() {
             return;
         }
+        let held;
+        let moves = if self.lane_holds_steps(controller) {
+            held = stepped_moves(moves);
+            held.as_slice()
+        } else {
+            moves
+        };
 
         let ticks_per_col = self.ticks_per_pixel();
         let first_tick = (lane.left() - self.tick_to_x(0)) * ticks_per_col;
@@ -239,7 +261,7 @@ fn lane_label_in(gutter: Rect, pos: Pos2) -> Option<ClipLane> {
 
 /// Where `value` sits in the lane, `0.0` at the bottom to `1.0` at the top:
 /// pitch bend centred, its rest (`0x2000`) exactly halfway; the mod wheel,
-/// as any CC, from 0 to 127.
+/// as any CC, from 0 to 127; a parameter across its range.
 fn wheel_fraction(wheel: Controller, value: u16) -> f32 {
     match wheel {
         Controller::PitchBend => {
@@ -247,7 +269,24 @@ fn wheel_fraction(wheel: Controller, value: u16) -> f32 {
             0.5 + (f32::from(value) - centre) / (2.0 * centre)
         }
         Controller::Cc(_) => f32::from(value.min(127)) / 127.0,
+        Controller::Param(_) => f32::from(value) / f32::from(PARAM_LANE_MAX),
     }
+}
+
+/// `moves` with the value before each move held up to the tick before it, so
+/// the lane's line runs flat and steps at each move.
+fn stepped_moves(moves: &[ControllerMove]) -> Vec<ControllerMove> {
+    let mut held: Vec<ControllerMove> = Vec::with_capacity(moves.len() * 2);
+    for &(tick, value) in moves {
+        if let Some(&(last_tick, last)) = held.last()
+            && last != value
+            && last_tick < tick - 1
+        {
+            held.push((tick - 1, last));
+        }
+        held.push((tick, value));
+    }
+    held
 }
 
 /// A point the wheel's line passes through, in column units across the lane
@@ -497,9 +536,10 @@ mod tests {
 
     use super::{
         Knot, Segment, ease_steps, fold_wheel_columns, lane_label_in, simplify, split_at_x,
-        wheel_fraction, wheel_path,
+        stepped_moves, wheel_fraction, wheel_path,
     };
     use crate::core::midi::message::Controller;
+    use crate::metadata::clip_view::PARAM_LANE_MAX;
     use crate::view::display::clip_lane::ClipLane;
 
     #[test]
@@ -535,6 +575,24 @@ mod tests {
             knots[0].x, 10.0,
             "the first move past the edge, at its own x"
         );
+    }
+
+    /// A stepped parameter's line stays flat until the tick of its next
+    /// move; a repeat of the value needs no corner.
+    #[test]
+    fn a_stepped_lane_holds_each_value_up_to_the_next_move() {
+        assert_eq!(
+            stepped_moves(&[(0, 10), (100, 20), (200, 20), (201, 30)]),
+            vec![(0, 10), (99, 10), (100, 20), (200, 20), (201, 30)]
+        );
+        assert!(stepped_moves(&[]).is_empty());
+    }
+
+    #[test]
+    fn a_parameter_spans_the_lane() {
+        let param = Controller::Param(714);
+        assert_eq!(wheel_fraction(param, 0), 0.0);
+        assert_eq!(wheel_fraction(param, PARAM_LANE_MAX), 1.0);
     }
 
     /// A knob's CC has no rest: with nothing in force before the lane, the

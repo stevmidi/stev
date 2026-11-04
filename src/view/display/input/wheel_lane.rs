@@ -2,7 +2,7 @@
 //! span: a press in the PB, MW or a knob's lane gives it the keyboard, a
 //! press-drag there marks a span of the shown controller, `⌘A` marks the
 //! whole curve, `Delete` clears the span — a wheel back to rest, a knob's
-//! CC held at the value before it (`InputEvent::ClearControllerSpan`) —
+//! parameter held at the value before it (`InputEvent::ClearControllerSpan`) —
 //! `Esc` drops the span and then the focus. A note command takes the
 //! keyboard back to the notes and acts there
 //! ([`Action::leaves_wheel_lane`]). See `380-wheel-lane.md` decisions 14–19
@@ -67,10 +67,13 @@ impl Display {
         self.key_owner() == KeyFocus::WheelLane
     }
 
-    /// The controller the lower lane shows — `None` for velocity and a
-    /// knob's lane.
+    /// The controller the lower lane shows: a wheel, or a knob's parameter
+    /// on the selected track — `None` for velocity.
     pub(in crate::view::display) fn clip_lane_controller(&self) -> Option<Controller> {
-        self.shown_clip_lane().controller()
+        match self.shown_clip_lane() {
+            ClipLane::Knob(knob) => self.knob_param(knob).map(Controller::Param),
+            lane => lane.controller(),
+        }
     }
 
     /// The lane under the piano roll as it shows: the chosen one
@@ -163,7 +166,7 @@ impl Display {
 
     /// Clears the shown controller from `start` to `end` in the lead clip
     /// (`InputEvent::ClearControllerSpan`, one undo step): a wheel back to
-    /// rest, a knob's CC held at the value before the span.
+    /// rest, a knob's parameter held at the value before the span.
     pub(super) fn send_clear_controller_span(&self, start: i32, end: i32) {
         if let Some(controller) = self.clip_lane_controller() {
             self.input_event_tx

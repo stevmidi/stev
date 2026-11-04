@@ -16,6 +16,7 @@ use egui::{Align2, CornerRadius, FontId, Painter, Pos2, Rect, Shape, Stroke, pos
 
 use super::output_menu::draw_truncated_at;
 use super::*;
+use crate::core::midi::message::Controller;
 use crate::models::knobs::KNOB_COUNT;
 use crate::view::display::knob_panel::{ARC_W, KnobRects, LABEL_FONT_SIZE, SWEEP, knob_angle};
 
@@ -107,16 +108,25 @@ impl Display {
             } else {
                 (PLACEHOLDER_LABELS[knob], name_color)
             };
+            // The gutter's data marker, for a clip with moves of the knob's
+            // parameter (`400-parameter-knobs.md` decision 12).
+            let marked = switches
+                && shown
+                    .param
+                    .is_some_and(|param| self.lead_clip_moves(Controller::Param(param)));
             // Cut short with an ellipsis when it doesn't fit
             // (`400-parameter-knobs.md` decision 5 — the footer shows the
             // full name on hover).
-            draw_truncated_at(
+            let name = draw_truncated_at(
                 painter,
                 rects.label.center(),
                 Align2::CENTER_CENTER,
                 LayoutJob::simple_singleline(text.to_owned(), font.clone(), color),
-                rects.label.width() - 2.0 * LABEL_INSET_X,
+                label_width(rects.label.width(), marked),
             );
+            if marked {
+                self.draw_lane_marker(painter, name, name_color);
+            }
             // The selected knob, while the panel has the keyboard: quiet
             // corner brackets around its dial, neutral, since the focus edge
             // already says the panel has the keyboard and the label may be
@@ -160,6 +170,18 @@ fn frame_brackets(frame: Rect) -> [[Pos2; 3]; 4] {
             pos2(min.x, max.y - arm),
         ],
     ]
+}
+
+/// The room a knob's name has in a label `cell_w` wide. A marked name, being
+/// centred, gives up the marker's reach on both sides, so the dot beside it
+/// stays in the knob's own cell.
+fn label_width(cell_w: f32, marked: bool) -> f32 {
+    let marker = if marked {
+        2.0 * Display::LANE_MARKER_REACH
+    } else {
+        0.0
+    };
+    cell_w - 2.0 * LABEL_INSET_X - marker
 }
 
 /// One knob's dial: the trough, the value arc in `accent` and the pointer;
@@ -207,7 +229,7 @@ fn arc(center: Pos2, r: f32, from: f32, to: f32, color: Color32) -> Shape {
 mod tests {
     use egui::{Rect, pos2};
 
-    use super::{FRAME_ARM, frame_brackets};
+    use super::{Display, FRAME_ARM, LABEL_INSET_X, frame_brackets, label_width};
 
     /// Each bracket turns at its own corner of the frame, its two arms a
     /// quarter of the shorter side long, along the frame's edges.
@@ -230,5 +252,16 @@ mod tests {
                 assert!(frame.contains(end));
             }
         }
+    }
+
+    /// A name as wide as its room, centred in its cell, leaves the marker
+    /// inside the cell: it used to land in the next column, beside the
+    /// neighbouring knob's name.
+    #[test]
+    fn a_marked_label_keeps_its_dot_in_the_cell() {
+        let cell_w = 60.0;
+        let name_end = cell_w / 2.0 + label_width(cell_w, true) / 2.0;
+        assert!(name_end + Display::LANE_MARKER_REACH <= cell_w);
+        assert_eq!(label_width(cell_w, false), cell_w - 2.0 * LABEL_INSET_X);
     }
 }

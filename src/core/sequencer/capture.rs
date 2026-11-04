@@ -168,6 +168,23 @@ impl Sequencer {
             track.hand_controller_to_player(message);
         }
 
+        self.mark_capture_clock(tick);
+        if is_note_on(message) {
+            self.capture_last_note_at = Some(Instant::now());
+        }
+        if let Some((wheel, value)) = parse_controller(message)
+            && let Some(i) = wheel.wheel_index()
+        {
+            self.live_wheels[i] = (Some(value) != wheel.rest()).then(|| midi3(message));
+        }
+
+        self.add_midi_event_to_capture(message, tick);
+        self.kick_live_meter(message)
+    }
+
+    /// Input of any kind reached the capture buffer at `tick`, its
+    /// `clock_tick`.
+    pub(super) fn mark_capture_clock(&mut self, tick: i32) {
         // Remember how far the capture clock's numbering sits from playback's,
         // so a commit can move the cursor into it (`capture_anchor_tick`). The
         // clock only matches playback's *phase* — it may be whole loops ahead —
@@ -188,17 +205,6 @@ impl Sequencer {
             // and were released anyway.
             self.capture_clip = Clip::new();
         }
-        if is_note_on(message) {
-            self.capture_last_note_at = Some(Instant::now());
-        }
-        if let Some((wheel, value)) = parse_controller(message)
-            && let Some(i) = wheel.wheel_index()
-        {
-            self.live_wheels[i] = (Some(value) != wheel.rest()).then(|| midi3(message));
-        }
-
-        self.add_midi_event_to_capture(message, tick);
-        self.kick_live_meter(message)
     }
 
     /// Starts the capture of a running take from `start_tick`, where playback
@@ -433,7 +439,7 @@ impl Sequencer {
     /// starts onto its start ([`Clip::carry_wheels_onto`]): a wheel set in an
     /// earlier pass, or before the transport started, and held, is part of
     /// the take (`370-wheel-capture.md` § Decisions 7). A new clip also holds
-    /// each knob's start value there ([`Clip::hold_cc_start_values`]), so the
+    /// each knob's start value there ([`Clip::hold_start_values`]), so the
     /// stretch before a turn plays where the knob stood; an insert leaves
     /// that to [`Clip::land_take`], which knows the clip's own data.
     ///
@@ -453,6 +459,7 @@ impl Sequencer {
         target: RunningCaptureTarget,
     ) -> Option<Clip> {
         let mut capture = self.capture_clip.clone();
+        self.keep_knob_moves(&mut capture);
         let bar = self.meter().bar_ticks();
 
         let transport_loop = self
@@ -480,7 +487,7 @@ impl Sequencer {
                 let (pass_start, pass_end) = (pass_start + tolerance, pass_end + tolerance);
                 capture.relocate_late_notes_to_region_start(pass_start, pass_end, tolerance);
                 capture.carry_wheels_onto(pass_start);
-                capture.hold_cc_start_values(pass_start);
+                capture.hold_start_values(pass_start);
                 capture.fold_into_loop(pass_start, pass_end, self.region_start(), loop_len);
 
                 let phase = (anchor_tick - self.region_start()).rem_euclid(loop_len);
@@ -497,7 +504,7 @@ impl Sequencer {
                 let retained_start = anchor_tick - pre_roll;
                 let retained_end = anchor_tick + self.linear_content_length(anchor_tick);
                 capture.carry_wheels_onto(retained_start);
-                capture.hold_cc_start_values(retained_start);
+                capture.hold_start_values(retained_start);
 
                 capture
                     .region_mut()
@@ -643,8 +650,8 @@ mod tests {
                 CommitClipEdit, EditResult, InsertCaptureEdit, ResizeClipEdit, SequencerEdit,
             },
             sequencer::test_support::{
-                bend_at, cc_at, clip_at, instrument_track_0, mod_at, note_off, note_on, rect,
-                sequencer_with_outputs, test_sequencer, wheel_moves,
+                bend_at, cc_at, clip_at, instrument_track_0, mod_at, note_off, note_on, param_at,
+                param_moves, rect, sequencer_with_outputs, test_sequencer, wheel_moves,
             },
             time::{self, Meter},
             view_state::ViewState,
@@ -653,6 +660,7 @@ mod tests {
         models::{
             clip::{Clip, ClipBounds},
             event::Event,
+            knobs::UNASSIGNED_KNOBS,
         },
     };
     use undo::{Edit, Record};
@@ -2223,6 +2231,208 @@ mod tests {
     #[test]
     fn a_turned_knob_is_not_carried_into_the_take() {
         assert!(take_after_wheel(&[[0xB0, 14, 64]]).is_empty());
+    }
+
+    // --- Parameter knobs (`400-parameter-knobs.md` decision 10) ---
+
+    /// The parameter on knob 0 of the selected track.
+    const CUTOFF: u32 = 714;
+
+    /// [`make_sequencer`] with knob 0 of track 0 on [`CUTOFF`].
+    fn sequencer_with_knob(region_len: i32) -> Sequencer {
+        let mut seq = make_sequencer(0, region_len);
+        let mut knobs = UNASSIGNED_KNOBS;
+        knobs[0] = Some(CUTOFF);
+        seq.set_track_knobs(0, knobs);
+        seq
+    }
+
+    /// A turn of knob 0 from `start`, through `moves` as `(tick, value)`.
+    fn turn(seq: &mut Sequencer, start: f64, moves: &[(i32, f64)]) {
+        seq.hold_knob(0, 0, Some(start), moves[0].0);
+        for &(tick, value) in moves {
+            seq.turn_knob(0, 0, value, tick);
+        }
+        seq.release_knob(0, 0);
+    }
+
+    /// A turn over a clip's curve with notes lands by the latch rule, the
+    /// wheels and the other parameters left as they were, and undoes.
+    #[test]
+    fn a_parameter_take_with_notes_lands_by_the_latch_rule() {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        let mut seq = sequencer_with_knob(bar * 2);
+        add_and_select_clip(&mut seq, 0, bar * 2);
+        let curve = vec![
+            param_at(0, CUTOFF, 0.1),
+            param_at(0, 9, 0.4),
+            mod_at(200, 50),
+            param_at(1000, CUTOFF, 0.6),
+        ];
+        seq.selected_clip_mut()
+            .unwrap()
+            .restore_events(curve.clone());
+        seq.capture_clip.add_event(note_on(100));
+        seq.capture_clip.add_event(note_off(300));
+        turn(&mut seq, 0.1, &[(400, 0.9), (800, 1.0)]);
+        let mut record = Record::new();
+
+        let edit = InsertCaptureEdit::from_running_capture(&seq).unwrap();
+        record.edit(&mut seq, SequencerEdit::InsertCapture(edit));
+
+        assert_eq!(selected_clip_note_on_ticks(&seq), vec![100]);
+        let events = seq.selected_clip().unwrap().events();
+        assert_eq!(
+            param_moves(events),
+            vec![
+                (0, CUTOFF, 0.1),
+                (0, 9, 0.4),
+                (400, CUTOFF, 0.9),
+                (800, CUTOFF, 1.0)
+            ]
+        );
+        assert_eq!(
+            wheel_moves(events)
+                .into_iter()
+                .filter(|(_, message)| !message.is_empty())
+                .collect::<Vec<_>>(),
+            vec![(200, vec![0xB0, 0x01, 50])]
+        );
+
+        record.undo(&mut seq);
+        assert_eq!(
+            param_moves(seq.selected_clip().unwrap().events()),
+            param_moves(&curve)
+        );
+    }
+
+    /// Running with a lead clip, a turn alone lands in it like a wheel-only
+    /// take.
+    #[test]
+    fn a_running_take_of_a_parameter_alone_lands_in_the_lead_clip() {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        let mut seq = sequencer_with_knob(bar * 2);
+        add_and_select_clip(&mut seq, 0, bar * 2);
+        seq.selected_clip_mut()
+            .unwrap()
+            .restore_events(vec![param_at(0, CUTOFF, 0.2)]);
+        turn(&mut seq, 0.2, &[(400, 0.9), (700, 1.0)]);
+
+        seq.insert_running_capture().unwrap();
+
+        assert_eq!(
+            param_moves(seq.selected_clip().unwrap().events()),
+            vec![(0, CUTOFF, 0.2), (400, CUTOFF, 0.9), (700, CUTOFF, 1.0)]
+        );
+    }
+
+    /// A turn with nothing played commits nothing stopped.
+    #[test]
+    fn a_stopped_take_of_a_parameter_alone_commits_nothing() {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        let mut seq = sequencer_with_knob(bar * 2);
+        turn(&mut seq, 0.2, &[(100, 0.4), (400, 0.9)]);
+
+        assert!(seq.build_committed_capture_clip().is_none());
+        assert!(seq.build_stopped_capture_clip().is_none());
+        add_and_select_clip(&mut seq, 0, bar * 2);
+        assert!(!seq.open_take_framing(ViewState::Clip));
+    }
+
+    /// A new clip plays the value the turn started from before the turn, so
+    /// a loop's wrap doesn't leave the parameter where the pass ended.
+    #[test]
+    fn a_new_clip_holds_where_a_parameter_stood_before_its_turn() {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        let mut seq = sequencer_with_knob(bar * 2);
+        seq.capture_clip.add_event(note_on(100));
+        seq.capture_clip.add_event(note_off(300));
+        turn(&mut seq, 0.2, &[(bar, 0.3), (bar + 400, 0.9)]);
+
+        let (_, clip) = seq.build_committed_capture_clip().unwrap();
+
+        assert_eq!(
+            param_moves(clip.events()),
+            vec![
+                (0, CUTOFF, 0.2),
+                (bar, CUTOFF, 0.3),
+                (bar + 400, CUTOFF, 0.9)
+            ]
+        );
+    }
+
+    /// The stopped `/` keeps the turn along with the phrase.
+    #[test]
+    fn a_stopped_take_with_notes_keeps_the_parameter_moves() {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        let mut seq = sequencer_with_knob(bar * 2);
+        for tick in [0, bar / 2, bar, bar + bar / 2] {
+            seq.capture_clip.add_event(note_on(tick));
+            seq.capture_clip.add_event(note_off(tick + 200));
+        }
+        turn(&mut seq, 0.2, &[(bar / 4, 0.5)]);
+
+        let (_, clip) = seq.build_stopped_capture_clip().unwrap();
+
+        assert!(!param_moves(clip.events()).is_empty());
+    }
+
+    /// A move outside a turn is a preset the plugin loaded, not the hand:
+    /// it counts for the unsaved prompt elsewhere, but no take keeps it.
+    #[test]
+    fn a_move_with_no_turn_is_not_captured() {
+        let mut seq = sequencer_with_knob(1920);
+        seq.turn_knob(0, 0, 0.5, 100);
+        assert!(seq.capture_clip.events().is_empty());
+        assert_eq!(seq.tracks()[0].knobs_by_hand()[0], Some(0.5));
+    }
+
+    /// A parameter with no knob reaches nothing to record: the view only
+    /// sends a knob's turns, and a knob with no parameter records none.
+    #[test]
+    fn a_knob_with_no_parameter_records_nothing() {
+        let mut seq = sequencer_with_knob(1920);
+        seq.hold_knob(0, 3, Some(0.1), 100);
+        seq.turn_knob(0, 3, 0.5, 110);
+        assert!(seq.capture_clip.events().is_empty());
+    }
+
+    /// The buffer is the selected track's: another track's knob is left out.
+    #[test]
+    fn another_tracks_turn_stays_out_of_the_buffer() {
+        let mut seq = sequencer_with_knob(1920);
+        let mut knobs = UNASSIGNED_KNOBS;
+        knobs[0] = Some(CUTOFF);
+        seq.set_track_knobs(1, knobs);
+        seq.hold_knob(1, 0, Some(0.1), 100);
+        seq.turn_knob(1, 0, 0.5, 110);
+        assert!(seq.capture_clip.events().is_empty());
+    }
+
+    /// A turn is stamped when it happened and handled a frame later, behind
+    /// a note played since: the buffer stays in tick order.
+    #[test]
+    fn a_turn_that_arrives_late_keeps_the_buffer_in_order() {
+        let mut seq = sequencer_with_knob(1920);
+        seq.capture_clip.add_event(note_on(500));
+        turn(&mut seq, 0.1, &[(480, 0.5)]);
+        let ticks: Vec<i32> = seq.capture_clip.events().iter().map(Event::tick).collect();
+        assert_eq!(ticks, vec![480, 480, 500]);
+    }
+
+    /// A knob reassigned since the turn: its old parameter lands nowhere.
+    #[test]
+    fn a_turn_of_a_parameter_no_knob_holds_now_is_dropped_on_commit() {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        let mut seq = sequencer_with_knob(bar * 2);
+        seq.capture_clip.add_event(note_on(100));
+        seq.capture_clip.add_event(note_off(300));
+        turn(&mut seq, 0.2, &[(400, 0.9)]);
+        seq.set_track_knobs(0, UNASSIGNED_KNOBS);
+
+        let (_, clip) = seq.build_committed_capture_clip().unwrap();
+
+        assert!(param_moves(clip.events()).is_empty());
     }
 
     /// The capture buffer takes a wheel move off the input like a note.

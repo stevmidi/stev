@@ -20,24 +20,27 @@
 
 use std::cell::UnsafeCell;
 use std::ffi::c_void;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::ptr::null_mut;
+use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use log::debug;
 use vst3::Steinberg::Vst::{Event, String128};
 use vst3::Steinberg::Vst::{
-    IAttributeList_iid, IComponentHandler, IComponentHandlerTrait, IEventList, IEventListTrait,
-    IHostApplication, IHostApplicationTrait, IMessage_iid, ParamID, ParamValue,
+    IAttributeList_iid, IComponentHandler, IComponentHandlerTrait, IEditController,
+    IEditControllerTrait, IEventList, IEventListTrait, IHostApplication, IHostApplicationTrait,
+    IMessage_iid, ParamID, ParamValue,
 };
 use vst3::Steinberg::{
     FUnknown, TUID, int32, kInvalidArgument, kNoInterface, kNotImplemented, kResultOk, tresult,
 };
-use vst3::{Class, ComPtr, ComWrapper};
+use vst3::{Class, ComPtr, ComRef, ComWrapper};
 
 use super::message::{HostAttributeList, HostMessage};
 use super::params::ParamSender;
 use crate::core::plugin_host::editor::ParameterGesture;
+use crate::core::time::monotonic_nanos;
 
 /// The host application object, handed to every plugin's `initialize`.
 ///
@@ -115,8 +118,9 @@ impl IHostApplicationTrait for Vst3Host {
 /// [`ParamSender`] does. See [`params`](super::params).
 ///
 /// Either way a copy goes to the knob panel ([`ParameterGesture`]): a turn's
-/// start assigns an armed knob, and a move of a knob's parameter is a hand
-/// turn (`400-parameter-knobs.md` decisions 3 and 9).
+/// start assigns an armed knob, and a turn of a knob's parameter is a hand
+/// turn, which holds off playback and goes into a take
+/// (`400-parameter-knobs.md` decisions 3, 6, 9 and 10).
 pub(super) struct ComponentHandler {
     /// Carries parameter changes to the audio thread.
     pub(super) params: ParamSender,
@@ -128,6 +132,11 @@ pub(super) struct ComponentHandler {
     /// `setParamNormalized` back through `performEdit` must not have Stev's
     /// own move read as the user's turn.
     pub(super) host_edit: AtomicBool,
+    /// The plugin's edit controller while it lives
+    /// ([`remember_controller`](Self::remember_controller)), not counted:
+    /// the controller holds this handler, so a counted reference would be a
+    /// cycle. Read to learn where a parameter stands as a turn begins.
+    controller: AtomicPtr<IEditController>,
     /// The app's egui context, so a change in the plugin's editor wakes the
     /// reactive UI and the knob follows at once.
     repaint: Arc<OnceLock<egui::Context>>,
@@ -145,8 +154,34 @@ impl ComponentHandler {
             params,
             gestures: unbounded(),
             host_edit: AtomicBool::new(false),
+            controller: AtomicPtr::new(null_mut()),
             repaint,
         }
+    }
+
+    /// Keeps a reference to `controller`, uncounted, for
+    /// [`beginEdit`](IComponentHandlerTrait::beginEdit) to read. Must be
+    /// [forgotten](Self::forget_controller) before the controller is
+    /// terminated.
+    pub(super) fn remember_controller(&self, controller: &ComPtr<IEditController>) {
+        self.controller
+            .store(controller.as_ptr(), Ordering::Release);
+    }
+
+    /// The controller is about to go.
+    pub(super) fn forget_controller(&self) {
+        self.controller.store(null_mut(), Ordering::Release);
+    }
+
+    /// Where parameter `id` stands now, normalized, if the controller lives.
+    fn parameter_value(&self, id: ParamID) -> Option<f64> {
+        let controller = self.controller.load(Ordering::Acquire);
+        // SAFETY: stored from a live `ComPtr` and cleared before the
+        // controller is terminated, and this runs inside a call the
+        // controller itself made, so it is alive for the read.
+        let controller = unsafe { ComRef::from_raw(controller) }?;
+        // SAFETY: as above; a plain read of the controller's parameter model.
+        Some(unsafe { controller.getParamNormalized(id) }.clamp(0.0, 1.0))
     }
 
     /// Hands `gesture` to the knob panel, unless the host itself is setting
@@ -173,21 +208,25 @@ impl ComponentHandler {
 }
 
 impl IComponentHandlerTrait for ComponentHandler {
-    /// A UI gesture started: the knob panel's cue to assign an armed knob.
+    /// A UI gesture started: the knob panel's cue to assign an armed knob,
+    /// or to hold a knob's parameter. Reads where the parameter stands now:
+    /// its first `performEdit` moves it before the panel hears of this.
     /// Deliberately *not* an error return either way: a plugin that gets
     /// `kNotImplemented` here may refuse to let its UI move at all.
     unsafe fn beginEdit(&self, id: ParamID) -> tresult {
-        self.report(ParameterGesture::Begin(id));
+        let start = self.parameter_value(id);
+        self.report(ParameterGesture::Begin(id, start, monotonic_nanos()));
         kResultOk
     }
 
     unsafe fn performEdit(&self, id: ParamID, value: ParamValue) -> tresult {
         self.params.send(id, value);
-        self.report(ParameterGesture::Move(id, value));
+        self.report(ParameterGesture::Move(id, value, monotonic_nanos()));
         kResultOk
     }
 
-    unsafe fn endEdit(&self, _id: ParamID) -> tresult {
+    unsafe fn endEdit(&self, id: ParamID) -> tresult {
+        self.report(ParameterGesture::End(id));
         kResultOk
     }
 

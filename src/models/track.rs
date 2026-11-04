@@ -11,10 +11,10 @@
 //! re-triggers a note that is already sounding when playback arrives at a
 //! clip's start — the counterpart case, where the `NoteOn` is hidden just
 //! *before* the region. Its [`ControllerTracker`] does the same for the
-//! pitch bend and mod wheels, which have no release: every
-//! [`seek`](Track::seek) and clip-start arrival chases the value in force
-//! where playback lands (a wheel's rest in a gap), so a clip end, a loop
-//! wrap or a jump never leaves the synth bent. Clips are kept sorted
+//! pitch bend and mod wheels, which have no release, and the parameters its
+//! knobs drive: every [`seek`](Track::seek) and clip-start arrival chases the
+//! value in force where playback lands (a wheel's rest in a gap), so a clip
+//! end, a loop wrap or a jump never leaves the synth bent. Clips are kept sorted
 //! by start tick and rejected on overlap. Pure data — the sequencer drives it
 //! one [`tick`](Track::tick) at a time.
 //!
@@ -32,12 +32,12 @@ use std::path::PathBuf;
 use uuid::Uuid;
 
 use crate::core::config::TRACK_NAME_MAX_CHARS;
-use crate::core::midi::message::{Controller, parse_controller};
+use crate::core::midi::message::Controller;
 use crate::models::{
     clip::{Clip, ClipBounds, EventSpaceRetime},
     controllers::{ControllerTracker, ControllerValues},
     event::Event,
-    knobs::{KNOB_COUNT, KnobParams, ParamId, UNASSIGNED_KNOBS},
+    knobs::{KNOB_COUNT, KnobParams, ParamId, UNASSIGNED_KNOBS, knob_holding},
 };
 
 /// Identifies a CLAP instrument plugin for a track: the `.clap` bundle on disk
@@ -226,6 +226,15 @@ pub(crate) struct Track {
     /// a parameter of its plugin each, or none — persisted
     /// (`TrackData::knobs`). See `models::knobs`.
     knobs: KnobParams,
+    /// Per knob, whether the hand holds it — a drag, or its parameter's
+    /// control turned in the plugin's editor: the hand wins, and playback
+    /// drops the parameter's moves until the turn ends
+    /// (`400-parameter-knobs.md` decision 6). Never saved.
+    held_knobs: [bool; KNOB_COUNT],
+    /// The controllers a chase visits: the two wheels and the parameters
+    /// [`knobs`](Self::knobs) hold. Kept beside them because a seek runs
+    /// every tick once playback is past the last clip.
+    followed: Vec<Controller>,
     /// Where the hand last put each knob, as a normalized parameter value:
     /// what the unsaved check compares (`400-parameter-knobs.md` decision 9),
     /// never saved. `None` until the hand turns it after a load, so a knob
@@ -253,6 +262,8 @@ impl Track {
             current_tick: 0,
             output,
             knobs: UNASSIGNED_KNOBS,
+            held_knobs: [false; KNOB_COUNT],
+            followed: Controller::WHEELS.to_vec(),
             knobs_by_hand: [None; KNOB_COUNT],
         }
     }
@@ -325,11 +336,80 @@ impl Track {
     pub(crate) fn set_knobs(&mut self, knobs: KnobParams) {
         self.knobs = knobs;
         self.knobs_by_hand = [None; KNOB_COUNT];
+        self.held_knobs = [false; KNOB_COUNT];
+        self.refresh_followed();
     }
 
-    /// Mutable access to knob `knob`'s assignment, if there is such a knob.
-    pub(crate) fn knob_mut(&mut self, knob: usize) -> Option<&mut Option<ParamId>> {
-        self.knobs.get_mut(knob)
+    /// Puts knob `knob` on `param`. Returns whether there is such a knob.
+    pub(crate) fn set_knob(&mut self, knob: usize, param: Option<ParamId>) -> bool {
+        let Some(slot) = self.knobs.get_mut(knob) else {
+            return false;
+        };
+        *slot = param;
+        self.held_knobs[knob] = false;
+        self.refresh_followed();
+        true
+    }
+
+    /// Rebuilds [`followed`](Self::followed) from the knobs.
+    fn refresh_followed(&mut self) {
+        let params = self.knobs.iter().flatten().copied();
+        self.followed = Controller::WHEELS
+            .into_iter()
+            .chain(params.map(Controller::Param))
+            .collect();
+    }
+
+    /// The hand takes hold of knob `knob`: until
+    /// [`release_knob`](Self::release_knob) playback drops its parameter's
+    /// moves, and from here on the plugin is where the hand put it, so a
+    /// stop or a seek treats it as the player's
+    /// ([`ControllerTracker::hand_over`]).
+    pub(crate) fn hold_knob(&mut self, knob: usize) {
+        if let Some(held) = self.held_knobs.get_mut(knob) {
+            *held = true;
+        }
+        if let Some(&Some(param)) = self.knobs.get(knob) {
+            self.controllers.hand_over(Controller::Param(param));
+        }
+    }
+
+    /// The hand let go of knob `knob`: playback has its parameter back from
+    /// the clip's next move or chase.
+    pub(crate) fn release_knob(&mut self, knob: usize) {
+        if let Some(held) = self.held_knobs.get_mut(knob) {
+            *held = false;
+        }
+    }
+
+    /// Whether the hand holds knob `knob`.
+    pub(crate) fn is_knob_held(&self, knob: usize) -> bool {
+        self.held_knobs.get(knob).copied().unwrap_or(false)
+    }
+
+    /// Whether playback sends `controller` on this track. Anything MIDI
+    /// does. A parameter takes a knob: one no knob of this track holds —
+    /// pasted from a track with another plugin — means nothing to this
+    /// track's plugin, and one the hand holds is the hand's.
+    fn plays(&self, controller: Controller) -> bool {
+        let Controller::Param(param) = controller else {
+            return true;
+        };
+        knob_holding(&self.knobs, param).is_some_and(|knob| !self.held_knobs[knob])
+    }
+
+    /// The ids and event lists of the clips holding a move of a parameter
+    /// `matches` accepts — what an edit that rewrites those moves keeps for
+    /// its undo.
+    pub(crate) fn clips_with_param_moves(
+        &self,
+        matches: impl Fn(ParamId) -> bool,
+    ) -> Vec<(Uuid, Vec<Event>)> {
+        self.clips
+            .iter()
+            .filter(|clip| clip.has_param_moves(&matches))
+            .map(|clip| (clip.id(), clip.events().to_vec()))
+            .collect()
     }
 
     /// Where the hand last put each knob — see the field.
@@ -349,12 +429,13 @@ impl Track {
     }
 
     /// Chases `target` — the values in force where playback lands — on the
-    /// controllers this track follows: the two wheels. A CC in a clip
+    /// controllers this track follows: the two wheels and its knobs'
+    /// parameters. A CC in a clip
     /// (pasted, imported, a CC knob's from an older project) plays as it
     /// comes and is never chased: a sustain pedal chased down by a seek would
     /// hold every note past the stop that releases it.
     fn chase_controllers(&mut self, target: &ControllerValues) {
-        self.controllers.chase(target, &Controller::WHEELS);
+        self.controllers.chase(target, &self.followed);
     }
 
     /// Returns the MIDI channel for this track. Instrument tracks play into the
@@ -577,11 +658,15 @@ impl Track {
                 if let Some(event) = self.drain_pending() {
                     return Some(event);
                 }
-                // Play clip (MIDI events).
-                if let Some(event) = self.clips.get_mut(clip_idx).and_then(Clip::tick) {
+                // Play clip (its events). A parameter move playback doesn't
+                // send is dropped here, the next event on the tick after it.
+                while let Some(event) = self.clips.get_mut(clip_idx).and_then(Clip::tick) {
                     if !event.is_muted()
-                        && let Some((controller, value)) = parse_controller(event.midi_message())
+                        && let Some((controller, value)) = event.controller_move()
                     {
+                        if !self.plays(controller) {
+                            continue;
+                        }
                         self.controllers.observe(controller, value);
                     }
                     return Some(event);
@@ -609,7 +694,7 @@ impl Track {
 
     /// Pops one staged event: note-offs queued from a clip that was muted,
     /// removed, or reached its own region end mid-playback go first, then
-    /// the due controller values (a seek's chase),
+    /// the due controller values (a seek's chase; not a knob the hand holds),
     /// then the chased note-ons queued when playback arrived at a clip whose
     /// content has a note already "in flight" at its start. `None` once
     /// nothing is staged.
@@ -617,9 +702,12 @@ impl Track {
         if let Some(off) = self.pending_note_offs.pop() {
             return Some(off);
         }
-        if let Some((controller, value)) = self.controllers.next_due() {
+        while let Some((controller, value)) = self.controllers.next_due() {
+            if !self.plays(controller) {
+                continue;
+            }
             self.controllers.observe(controller, value);
-            return Some(Event::from_midi(&controller.message(value)));
+            return Some(Event::controller_move_at(0, controller, value, 0));
         }
         self.pending_note_ons.pop()
     }
@@ -1931,6 +2019,115 @@ mod tests {
             wheel_moves_until(&mut track, 400),
             vec![(300, BEND_UP.to_vec())]
         );
+    }
+
+    /// A `NoteOn` at `tick`.
+    fn note_on_at(tick: i32) -> Event {
+        Event::new(tick, 0, vec![0x90, 60, 100])
+    }
+
+    /// A track with knob 0 on parameter 714 and `events` in a clip from
+    /// tick 0.
+    fn track_with_knob_clip(events: Vec<Event>) -> Track {
+        let mut track = Track::new(TrackOutput::MidiOut { channel: 0 }, 0, 0);
+        let mut knobs = UNASSIGNED_KNOBS;
+        knobs[0] = Some(714);
+        track.set_knobs(knobs);
+        let mut clip = clip_at(0, 1000);
+        clip.restore_events(events);
+        track.add_clip(&clip);
+        track.seek(0);
+        track
+    }
+
+    /// A move of parameter 714 to `value` at `tick`.
+    fn cutoff(tick: i32, value: f64) -> Event {
+        Event::controller_move_at(tick, Controller::Param(714), value, 0)
+    }
+
+    /// The parameter values played by tick `until`.
+    fn params_until(track: &mut Track, until: i32) -> Vec<f64> {
+        let mut played = Vec::new();
+        while track.current_tick < until {
+            if let Some(event) = track.tick() {
+                played.extend(event.param_move().map(|moved| moved.value));
+            }
+        }
+        played
+    }
+
+    #[test]
+    fn a_loop_wrap_chases_a_parameter_back_to_the_value_in_force() {
+        let mut track = track_with_knob_clip(vec![cutoff(0, 0.2), cutoff(300, 0.8)]);
+        assert_eq!(params_until(&mut track, 400), vec![0.2, 0.8]);
+        track.seek(100);
+        assert_eq!(params_until(&mut track, 200), vec![0.2]);
+    }
+
+    /// In a gap a parameter stays where it was: it has no rest to go to.
+    #[test]
+    fn a_seek_into_a_gap_leaves_a_parameter_where_it_was() {
+        let mut track = track_with_knob_clip(vec![cutoff(0, 0.2)]);
+        params_until(&mut track, 10);
+        track.seek(5000);
+        assert!(params_until(&mut track, 5010).is_empty());
+    }
+
+    /// The hand wins from the hold to the release, chase and clip alike,
+    /// and the clip has the parameter back after it.
+    #[test]
+    fn a_held_knob_drops_its_moves_and_chases_until_released() {
+        let mut track = track_with_knob_clip(vec![cutoff(0, 0.2), cutoff(300, 0.8)]);
+        track.hold_knob(0);
+        assert!(track.is_knob_held(0));
+        assert!(params_until(&mut track, 400).is_empty());
+        track.seek(100);
+        assert!(params_until(&mut track, 200).is_empty());
+
+        track.release_knob(0);
+        assert_eq!(params_until(&mut track, 400), vec![0.8]);
+        track.seek(100);
+        assert_eq!(params_until(&mut track, 200), vec![0.2]);
+    }
+
+    /// A move on a held knob doesn't swallow the note on its tick.
+    #[test]
+    fn a_dropped_move_lets_the_next_event_on_its_tick_play() {
+        let mut track = track_with_knob_clip(vec![cutoff(5, 0.2), note_on_at(5)]);
+        track.hold_knob(0);
+        let mut played = Vec::new();
+        while track.current_tick < 10 {
+            played.extend(track.tick());
+        }
+        assert_eq!(played.len(), 1);
+        assert!(played[0].is_note_edge());
+    }
+
+    /// A parameter no knob holds is neither played nor chased.
+    #[test]
+    fn a_parameter_no_knob_holds_stays_silent() {
+        let mut track = track_with_knob_clip(vec![
+            Event::controller_move_at(0, Controller::Param(1), 0.5, 0),
+            Event::controller_move_at(5, Controller::Param(1), 0.6, 0),
+        ]);
+        assert!(params_until(&mut track, 10).is_empty());
+        track.seek(8);
+        assert!(params_until(&mut track, 12).is_empty());
+    }
+
+    /// A knob put on another parameter follows it, and lets go of the hold.
+    #[test]
+    fn reassigning_a_knob_follows_the_new_parameter() {
+        let mut track = track_with_knob_clip(vec![
+            Event::controller_move_at(0, Controller::Param(1), 0.5, 0),
+            cutoff(0, 0.2),
+        ]);
+        track.hold_knob(0);
+        assert!(track.set_knob(0, Some(1)));
+        assert!(!track.is_knob_held(0));
+        assert!(!track.set_knob(KNOB_COUNT, Some(1)));
+        track.seek(100);
+        assert_eq!(params_until(&mut track, 110), vec![0.5]);
     }
 
     /// The hand's knob values are what the unsaved check reads; a load or a

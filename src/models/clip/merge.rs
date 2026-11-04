@@ -125,7 +125,7 @@ impl Clip {
         // window's own events on that tick, as playback sends its chase.
         out.extend(edges.into_iter().chain(kept).map(|event| {
             let muted = event.is_muted() || self.muted;
-            let mut copy = Event::new(event.tick(), 0, event.into_midi_message());
+            let mut copy = event.copy_at(event.tick());
             copy.set_muted(muted);
             copy
         }));
@@ -136,26 +136,27 @@ impl Clip {
     /// no event in it holds, so a bake sounds as the clip did: at
     /// `start_tick` the value of a controller held from hidden material
     /// before the window (the track's arrival chase, `Track::tick`) — a wheel
-    /// off its rest, any other CC moved there — and at `end_tick` the rest of
+    /// off its rest, anything else moved there — and at `end_tick` the rest of
     /// a wheel the window leaves off it (the chase when playback moves on,
     /// `Track::seek`); a CC with no rest stays where it is. `kept` is the
     /// window's events ([`windowed_events`](Self::windowed_events)); muted
     /// ones never sound, so they move nothing.
     fn wheel_edges(&self, kept: &[Event], start_tick: i32, end_tick: i32) -> Vec<Event> {
         let held = self.controllers_at(self.start_tick);
-        let mut at_end = held;
+        let mut at_end = held.clone();
         for event in kept {
             at_end.apply(event);
         }
 
         let mut edges: Vec<Event> = held
             .moved()
-            .filter(|&(controller, value)| controller.rest() != Some(value))
-            .map(|(controller, value)| Event::new(start_tick, 0, controller.message(value)))
+            .filter(|&(controller, value)| controller.rest().map(f64::from) != Some(value))
+            .map(|(controller, value)| Event::controller_move_at(start_tick, controller, value, 0))
             .collect();
         edges.extend(Controller::WHEELS.into_iter().filter_map(|wheel| {
             let rest = wheel.rest()?;
-            (at_end.get(wheel) != Some(rest)).then(|| Event::new(end_tick, 0, wheel.message(rest)))
+            (at_end.get(wheel) != Some(f64::from(rest)))
+                .then(|| Event::new(end_tick, 0, wheel.message(rest)))
         }));
         edges
     }

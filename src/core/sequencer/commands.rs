@@ -268,7 +268,7 @@ pub(crate) enum SequencerCommand {
     /// quantize.
     QuantizeEvents,
     /// `Delete` in a controller lane: clears `controller` over the event-tick
-    /// span `start..end` of the lead clip — a wheel back to rest, a knob's CC
+    /// span `start..end` of the lead clip — a wheel back to rest, a knob's parameter
     /// held at the value before the span (`ClearControllerSpanEdit`, undoable
     /// — see `380-wheel-lane.md` decision 18, `390-knob-panel.md` decision
     /// 13). Nothing is recorded when the span would change nothing.
@@ -445,11 +445,33 @@ pub(crate) enum SequencerCommand {
         /// The parameter it is to drive.
         param: Option<ParamId>,
     },
+    /// The hand took hold of knob `knob` of `track_idx`: playback lets go of
+    /// its parameter until [`ReleaseKnob`](Self::ReleaseKnob)
+    /// (`400-parameter-knobs.md` decision 6), and where it stood goes ahead
+    /// of the turn in the capture buffer (decision 10).
+    HoldKnob {
+        /// The knob's track.
+        track_idx: usize,
+        /// Which knob, `0..KNOB_COUNT`.
+        knob: usize,
+        /// Where the knob stood, normalized, if known.
+        start: Option<f64>,
+        /// The `clock_tick` the turn began on.
+        tick: i32,
+    },
+    /// The hand let go of knob `knob` of `track_idx`.
+    ReleaseKnob {
+        /// The knob's track.
+        track_idx: usize,
+        /// Which knob, `0..KNOB_COUNT`.
+        knob: usize,
+    },
     /// The hand turned knob `knob` of `track_idx` to `value` — a drag in the
     /// knob panel, or the parameter's control in the plugin's editor; the
     /// view has set the parameter already. Not undoable, like volume and
     /// pan, but a change for the unsaved prompt (`400-parameter-knobs.md`
-    /// decision 9).
+    /// decision 9), and in a turn, a move for the capture buffer (decision
+    /// 10).
     SetKnobValue {
         /// The knob's track.
         track_idx: usize,
@@ -457,6 +479,8 @@ pub(crate) enum SequencerCommand {
         knob: usize,
         /// The parameter's normalized value, `0.0..=1.0`.
         value: f64,
+        /// The `clock_tick` it landed on.
+        tick: i32,
     },
 
     // --- Arranger performance lane ---

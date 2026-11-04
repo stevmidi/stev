@@ -14,7 +14,7 @@ use crate::{
     metadata::clip_metadata::ClipMetadata,
     metadata::clip_view::ClipView,
     models::clip::EventSpaceRetime,
-    models::knobs::{KnobParams, UNASSIGNED_KNOBS},
+    models::knobs::{KnobParams, ParamId, UNASSIGNED_KNOBS},
     models::track::{InstrumentRef, TrackShift},
 };
 
@@ -111,6 +111,18 @@ pub(crate) enum UiEvent {
         clip_id: Uuid,
         /// How its event ticks moved.
         retime: EventSpaceRetime,
+    },
+    /// A knob's mapping went (`SetKnobParamEdit` to none): the footer says
+    /// what went (`400-parameter-knobs.md` decision 14).
+    KnobMappingRemoved {
+        /// The knob's track.
+        track_idx: usize,
+        /// Which knob.
+        knob: usize,
+        /// The parameter it drove.
+        param: ParamId,
+        /// Whether the parameter's recorded moves went with it.
+        with_moves: bool,
     },
     /// A clip was deleted.
     ClipRemoved {

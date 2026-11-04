@@ -308,15 +308,38 @@ impl EventHandlers {
                 });
             }
 
+            InputEvent::HoldKnob {
+                track_idx,
+                knob,
+                start,
+                tick,
+            } => {
+                self.send_sequencer(SequencerCommand::HoldKnob {
+                    track_idx: *track_idx,
+                    knob: *knob,
+                    start: *start,
+                    tick: *tick,
+                });
+            }
+
+            InputEvent::ReleaseKnob { track_idx, knob } => {
+                self.send_sequencer(SequencerCommand::ReleaseKnob {
+                    track_idx: *track_idx,
+                    knob: *knob,
+                });
+            }
+
             InputEvent::SetKnobValue {
                 track_idx,
                 knob,
                 value,
+                tick,
             } => {
                 self.send_sequencer(SequencerCommand::SetKnobValue {
                     track_idx: *track_idx,
                     knob: *knob,
                     value: *value,
+                    tick: *tick,
                 });
             }
 

@@ -22,6 +22,7 @@ use egui::Context;
 
 use crate::core::audio::meter::ChannelLevel;
 use crate::core::config::{MAX_TRACKS, TRACK_VOLUME_DB_DEFAULT};
+use crate::models::knobs::KNOB_COUNT;
 
 /// Per-track mixer state — volume, stereo balance, mute and solo — plus what
 /// each track's meter reads: its last note-on (`note_on`) and its audio level
@@ -73,7 +74,20 @@ pub(crate) struct TrackMixAtomics {
     /// by the sequencer thread (`Sequencer::reset_slot_mix`), read once per
     /// block by the mixer.
     pub(crate) meter_resets: [AtomicU32; MAX_TRACKS],
+    /// Per slot and knob, the value playback last sent its parameter and the
+    /// plugin's editor hasn't been told, as an `f64` bit pattern;
+    /// [`NO_KNOB_VALUE`] when there is none. How a played value crosses to
+    /// the render thread, which alone may touch the edit controller
+    /// (`400-parameter-knobs.md` decision 6). Written by the sequencer
+    /// thread ([`mark_knob_played`](Self::mark_knob_played)), taken once per
+    /// frame ([`take_knob_played`](Self::take_knob_played)): only the last
+    /// value of a frame reaches the editor, which is all it can show.
+    pub(crate) knob_played: [[AtomicU64; KNOB_COUNT]; MAX_TRACKS],
 }
+
+/// [`TrackMixAtomics::knob_played`]'s "nothing new": a NaN, which no
+/// normalized value is.
+const NO_KNOB_VALUE: u64 = u64::MAX;
 
 /// One channel of [`TrackMixAtomics::audio_level`]: a [`ChannelLevel`]'s
 /// linear amplitudes as `f32` bit patterns, so the all-zero default is
@@ -120,6 +134,9 @@ impl TrackMixAtomics {
             note_on: std::array::from_fn(|_| AtomicU64::new(0)),
             audio_level: std::array::from_fn(|_| Default::default()),
             meter_resets: std::array::from_fn(|_| AtomicU32::new(0)),
+            knob_played: std::array::from_fn(|_| {
+                std::array::from_fn(|_| AtomicU64::new(NO_KNOB_VALUE))
+            }),
         }
     }
 
@@ -150,6 +167,23 @@ impl TrackMixAtomics {
         self.solo
             .get(track_idx)
             .is_some_and(|s| s.load(Ordering::Relaxed))
+    }
+
+    /// Playback sent knob `knob` of `slot` to `value`. Out-of-range indices
+    /// are ignored.
+    pub(crate) fn mark_knob_played(&self, slot: usize, knob: usize, value: f64) {
+        if let Some(played) = self.knob_played.get(slot).and_then(|slot| slot.get(knob)) {
+            played.store(value.to_bits(), Ordering::Relaxed);
+        }
+    }
+
+    /// The value playback last sent knob `knob` of `slot`, if it hasn't been
+    /// taken yet. Out-of-range indices have none.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pub(crate) fn take_knob_played(&self, slot: usize, knob: usize) -> Option<f64> {
+        let played = self.knob_played.get(slot)?.get(knob)?;
+        let bits = played.swap(NO_KNOB_VALUE, Ordering::Relaxed);
+        (bits != NO_KNOB_VALUE).then(|| f64::from_bits(bits))
     }
 
     /// Records a note-on of `velocity` from `track_idx` at `at_ns`: the time

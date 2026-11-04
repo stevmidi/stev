@@ -20,7 +20,10 @@
 //! state by track id), and a restore reloads it the way a project load does.
 //! See `050-undo-redo.md` § Track add / remove.
 
+use uuid::Uuid;
+
 use crate::core::config::{MAX_TRACKS, TRACK_COLOR_COUNT, TRACK_VOLUME_DB_DEFAULT};
+use crate::models::event::Event;
 use crate::models::knobs::{KnobParams, ParamId, UNASSIGNED_KNOBS, param_taken_by};
 use crate::models::track::{Track, TrackOutput};
 
@@ -308,10 +311,10 @@ impl Sequencer {
 /// has already swapped the plugin by the time the edit is made; undo and redo
 /// have it swap back, from the live state it kept when the plugin went out
 /// (`EditResult::TrackOutputChanged`). A change of plugin — another one, or
-/// none — takes the knobs' assignments with it, since a parameter ID only
-/// means something to the plugin it came from (`400-parameter-knobs.md`
-/// decision 8): undo brings them back. See `050-undo-redo.md` § Track
-/// output.
+/// none — takes the knobs' assignments and every parameter move in the
+/// track's clips with it, since a parameter ID only means something to the
+/// plugin it came from (`400-parameter-knobs.md` decision 8): undo brings
+/// them back. See `050-undo-redo.md` § Track output.
 pub(crate) struct SetTrackOutputEdit {
     /// The track's position.
     track_idx: usize,
@@ -324,6 +327,9 @@ pub(crate) struct SetTrackOutputEdit {
     /// changes the plugin: none before the edit, the old plugin's after it.
     /// `None` when the plugin stays (a MIDI channel change).
     other_knobs: Option<KnobParams>,
+    /// The clips a plugin change took parameter moves from, as they were,
+    /// for the undo.
+    pre_events: ClipSnapshots,
 }
 
 impl SetTrackOutputEdit {
@@ -340,16 +346,21 @@ impl SetTrackOutputEdit {
             track_idx,
             other: output,
             other_knobs: (!same_plugin).then_some(UNASSIGNED_KNOBS),
+            pre_events: Vec::new(),
         })
     }
 
     /// Routes the track to its new output.
     pub(crate) fn edit(&mut self, sequencer: &mut Sequencer) -> EditResult {
+        if self.other_knobs.is_some() {
+            self.pre_events = sequencer.rewrite_param_moves(self.track_idx, |_| true, None);
+        }
         self.swap(sequencer)
     }
 
     /// Routes it back.
     pub(crate) fn undo(&mut self, sequencer: &mut Sequencer) -> EditResult {
+        sequencer.restore_clip_events(self.track_idx, std::mem::take(&mut self.pre_events));
         self.swap(sequencer)
     }
 
@@ -390,9 +401,15 @@ impl Sequencer {
     }
 }
 
+/// Clips by id with their event lists as they were before an edit rewrote
+/// their parameter moves — the edit's undo.
+type ClipSnapshots = Vec<(Uuid, Vec<Event>)>;
+
 /// A knob assigned to a parameter of the track's plugin — the control the
 /// user turned in the plugin's editor while the knob was armed — or
-/// unassigned (`400-parameter-knobs.md` decision 3).
+/// unassigned (`400-parameter-knobs.md` decision 3). The knob owns its data:
+/// its recorded moves follow it to the new parameter, or go with the mapping
+/// (decisions 7 and 14), in all of the track's clips.
 pub(crate) struct SetKnobParamEdit {
     /// The track's position.
     track_idx: usize,
@@ -402,6 +419,8 @@ pub(crate) struct SetKnobParamEdit {
     from: Option<ParamId>,
     /// Its parameter after.
     to: Option<ParamId>,
+    /// The clips the edit rewrote, as they were.
+    pre_events: ClipSnapshots,
 }
 
 impl SetKnobParamEdit {
@@ -430,16 +449,22 @@ impl SetKnobParamEdit {
             knob,
             from,
             to: param,
+            pre_events: Vec::new(),
         }))
     }
 
-    /// Gives the knob its new parameter.
+    /// Gives the knob its new parameter, its moves with it.
     pub(crate) fn edit(&mut self, sequencer: &mut Sequencer) -> EditResult {
+        if let Some(from) = self.from {
+            self.pre_events =
+                sequencer.rewrite_param_moves(self.track_idx, |param| param == from, self.to);
+        }
         sequencer.set_knob_param(self.track_idx, self.knob, self.to)
     }
 
-    /// Gives it back its old one.
+    /// Gives it back its old one, and the clips as they were.
     pub(crate) fn undo(&mut self, sequencer: &mut Sequencer) -> EditResult {
+        sequencer.restore_clip_events(self.track_idx, std::mem::take(&mut self.pre_events));
         sequencer.set_knob_param(self.track_idx, self.knob, self.from)
     }
 }
@@ -453,15 +478,43 @@ impl Sequencer {
         knob: usize,
         param: Option<ParamId>,
     ) -> EditResult {
-        let Some(slot) = self
+        let is_set = self
             .tracks
             .get_mut(track_idx)
-            .and_then(|track| track.knob_mut(knob))
-        else {
-            return EditResult::NoOp;
+            .is_some_and(|track| track.set_knob(knob, param));
+        if is_set {
+            EditResult::KnobsChanged
+        } else {
+            EditResult::NoOp
+        }
+    }
+
+    /// Rewrites the moves of the parameters `matches` accepts in the clips
+    /// of the track at `track_idx` — onto `to`, or gone with `None` — and
+    /// returns those clips as they were.
+    fn rewrite_param_moves(
+        &mut self,
+        track_idx: usize,
+        matches: impl Fn(ParamId) -> bool,
+        to: Option<ParamId>,
+    ) -> ClipSnapshots {
+        let Some(track) = self.tracks.get(track_idx) else {
+            return Vec::new();
         };
-        *slot = param;
-        EditResult::KnobsChanged
+        let snapshots = track.clips_with_param_moves(&matches);
+        for (clip_id, _) in &snapshots {
+            self.edit_clip_events(track_idx, *clip_id, |clip| {
+                clip.rewrite_param_moves(&matches, to);
+            });
+        }
+        snapshots
+    }
+
+    /// Puts `snapshots` back in the clips of the track at `track_idx`.
+    fn restore_clip_events(&mut self, track_idx: usize, snapshots: ClipSnapshots) {
+        for (clip_id, events) in snapshots {
+            self.edit_clip_events(track_idx, clip_id, |clip| clip.restore_events(events));
+        }
     }
 }
 
@@ -485,14 +538,14 @@ mod tests {
 
     use crossbeam_channel::Receiver;
     use rtrb::Consumer;
-    use undo::Record;
+    use undo::{Edit, Record};
     use uuid::Uuid;
 
     use crate::core::config::{MAX_TRACKS, TRACK_COLOR_COUNT, TRACK_VOLUME_DB_DEFAULT};
     use crate::core::midi::out_queue::MidiOutMessage;
     use crate::core::sequencer::test_support::{
-        clip_at, note_off, note_on, sequencer_with_outputs, stub_instrument, test_sequencer,
-        track_colors,
+        clip_at, note_off, note_on, param_at, param_moves, sequencer_with_outputs, stub_instrument,
+        test_sequencer, track_colors,
     };
     use crate::core::sequencer::{
         ClipInstrumentEvent, DeleteInRangeEdit, EditResult, Sequencer, SequencerEdit,
@@ -553,7 +606,7 @@ mod tests {
     /// Every plugin-bound event, as `(slot, message)`.
     fn plugin_events(rx: &mut Consumer<ClipInstrumentEvent>) -> Vec<(usize, [u8; 3])> {
         std::iter::from_fn(|| rx.pop().ok())
-            .map(|e| (e.track, e.message))
+            .filter_map(|e| Some((e.track, e.message.midi()?)))
             .collect()
     }
 
@@ -1066,6 +1119,110 @@ mod tests {
             SetKnobParamEdit::new(&sequencer, 99, 0, Some(1)),
             Ok(None)
         ));
+    }
+
+    /// Track 0 on a plugin, knob 0 on parameter 714, with two clips holding
+    /// its moves and a note, and one holding only a note.
+    fn track_with_recorded_knob() -> Sequencer {
+        let mut sequencer = test_sequencer();
+        sequencer.tracks_mut()[0].set_output(stub_instrument(Vec::new()));
+        let mut knobs = UNASSIGNED_KNOBS;
+        knobs[0] = Some(714);
+        sequencer.set_track_knobs(0, knobs);
+        for (start, events) in [
+            (0, vec![note_on(0), param_at(10, 714, 0.25), note_off(100)]),
+            (1920, vec![param_at(20, 714, 0.5), param_at(30, 9, 0.75)]),
+            (3840, vec![note_on(0), note_off(100)]),
+        ] {
+            let mut clip = clip_at(start, 1920);
+            clip.restore_events(events);
+            sequencer.tracks_mut()[0].add_clip(&clip);
+        }
+        sequencer
+    }
+
+    /// Every parameter move on track 0, clip by clip.
+    fn track_param_moves(sequencer: &Sequencer) -> Vec<Vec<(i32, u32, f64)>> {
+        sequencer.tracks()[0]
+            .clips()
+            .iter()
+            .map(|clip| param_moves(clip.events()))
+            .collect()
+    }
+
+    /// A reassigned knob takes its data along, in all of the track's clips,
+    /// as one undo step (decision 7).
+    #[test]
+    fn a_reassignment_rewrites_the_knobs_moves_and_undo_puts_them_back() {
+        let mut sequencer = track_with_recorded_knob();
+        let before = track_param_moves(&sequencer);
+        let mut record = Record::new();
+
+        let edit = SetKnobParamEdit::new(&sequencer, 0, 0, Some(77)).unwrap();
+        record.edit(&mut sequencer, SequencerEdit::from(edit.unwrap()));
+
+        assert_eq!(
+            track_param_moves(&sequencer),
+            vec![
+                vec![(10, 77, 0.25)],
+                vec![(20, 77, 0.5), (30, 9, 0.75)],
+                vec![]
+            ]
+        );
+        record.undo(&mut sequencer);
+        assert_eq!(track_param_moves(&sequencer), before);
+        assert_eq!(sequencer.tracks()[0].knobs()[0], Some(714));
+        record.redo(&mut sequencer);
+        assert_eq!(track_param_moves(&sequencer)[0], vec![(10, 77, 0.25)]);
+    }
+
+    /// Removing a mapping takes its moves, and only its, and leaves the
+    /// notes; undo brings them back (decision 14).
+    #[test]
+    fn a_removed_mapping_takes_its_moves_and_undo_restores_them() {
+        let mut sequencer = track_with_recorded_knob();
+        let before = track_param_moves(&sequencer);
+        let mut record = Record::new();
+
+        let edit = SetKnobParamEdit::new(&sequencer, 0, 0, None).unwrap();
+        record.edit(&mut sequencer, SequencerEdit::from(edit.unwrap()));
+
+        assert_eq!(
+            track_param_moves(&sequencer),
+            vec![vec![], vec![(30, 9, 0.75)], vec![]]
+        );
+        assert!(sequencer.tracks()[0].clips()[0].has_notes());
+        record.undo(&mut sequencer);
+        assert_eq!(track_param_moves(&sequencer), before);
+    }
+
+    /// A plugin swap drops every parameter move on the track, knobbed or
+    /// not; undo restores them. A channel change on MIDI Out touches none
+    /// (decision 8).
+    #[test]
+    fn a_plugin_swap_clears_the_moves_and_undo_restores_them() {
+        let mut sequencer = track_with_recorded_knob();
+        let before = track_param_moves(&sequencer);
+        let mut record = Record::new();
+
+        let other = TrackOutput::MidiOut { channel: 3 };
+        let edit = SetTrackOutputEdit::new(&sequencer, 0, other).unwrap();
+        record.edit(&mut sequencer, SequencerEdit::from(edit));
+        assert_eq!(track_param_moves(&sequencer), vec![vec![], vec![], vec![]]);
+
+        record.undo(&mut sequencer);
+        assert_eq!(track_param_moves(&sequencer), before);
+        record.redo(&mut sequencer);
+        assert_eq!(track_param_moves(&sequencer), vec![vec![], vec![], vec![]]);
+    }
+
+    #[test]
+    fn a_state_change_on_the_same_plugin_keeps_the_moves() {
+        let mut sequencer = track_with_recorded_knob();
+        let before = track_param_moves(&sequencer);
+        let edit = SetTrackOutputEdit::new(&sequencer, 0, stub_instrument(vec![1, 2, 3])).unwrap();
+        SequencerEdit::from(edit).edit(&mut sequencer);
+        assert_eq!(track_param_moves(&sequencer), before);
     }
 
     /// Swapping a track's plugin — for another, or for MIDI Out — clears its
