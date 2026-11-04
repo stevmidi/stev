@@ -72,12 +72,7 @@ impl Display {
         if !self.view_state().is_clip_view() {
             self.focus_pane(Pane::Clip);
         }
-        self.gesture.duplicate_span = None;
-        if self.has_event_selection() {
-            self.input_event_tx
-                .send(InputEvent::ClearEventSelection)
-                .ok();
-        }
+        self.drop_note_selection();
     }
 
     /// The knob panel's keys while it has the keyboard, knob `knob`

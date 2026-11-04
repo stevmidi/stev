@@ -471,9 +471,10 @@ pub(crate) enum InputEvent {
         /// Identifies the drag so the undo stack coalesces its nudges into one step.
         drag_id: u64,
     },
-    /// A click selecting a knob (`390-knob-panel.md` decision 14)
-    /// drops the note selection, so the `Delete` that follows can't be
-    /// mistaken for one on the notes. Maps 1:1 to
+    /// A click selecting a knob (`390-knob-panel.md` decision 14) or a press
+    /// in a controller lane (`380-wheel-lane.md` decision 16) drops the note
+    /// selection, so the `Delete` that follows can't be mistaken for one on
+    /// the notes. Maps 1:1 to
     /// `SequencerCommand::ClearEventSelection`; the view never sends it in a
     /// take session, where that command cancels the take.
     ClearEventSelection,

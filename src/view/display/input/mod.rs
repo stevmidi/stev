@@ -124,10 +124,27 @@ impl Display {
         if key == Key::ArrowLeft { -1 } else { 1 }
     }
 
+    /// Places the active pane's cursor at the snapped tick under `x`
+    /// (`SetCursorTick`) and nothing else, so the note selection stays. A
+    /// no-op off the content. Where the cursor line shows, a click puts the
+    /// cursor on it.
+    fn place_cursor_at(&mut self, x: f32) {
+        if !self.content_x_on_screen(x) {
+            return;
+        }
+        let pane = self.active_pane();
+        let tick = self.snapped_tick_at(x);
+        self.gesture.hover_cursor = Some((tick, pane));
+        self.input_event_tx
+            .send(InputEvent::SetCursorTick { pane, tick })
+            .ok();
+    }
+
     /// A press in the active pane (`forward_input_event` scopes it with
     /// `in_pane`): on the timeline strip, cursor placement alone
-    /// (`SetCursorTick`); in the lanes, the arranger's header buttons, mix bars, Shift+click
-    /// extend, clip edge / band drags; the clip view's ⌘-click velocity drag;
+    /// (`SetCursorTick`), and in a controller lane the same with the lane's
+    /// focus and span; in the lanes, the arranger's header buttons, mix bars, Shift+click extend,
+    /// clip edge / band drags; the clip view's ⌘-click velocity drag;
     /// then, in either, cursor placement plus the time-selection or event
     /// marquee anchor, sent on as `MouseClickedTicks`.
     fn handle_mouse_click(&mut self, x: f32, y: f32, modifiers: KeyModifiers) -> bool {
@@ -155,17 +172,9 @@ impl Display {
         }
 
         // The timeline strip places the pane's cursor and nothing else: no
-        // track, clip or note selection, no marquee, no drag. Where the
-        // cursor line shows, a click puts the cursor on it.
+        // track, clip or note selection, no marquee, no drag.
         if self.is_mouse_on_timeline_strip(x, y) {
-            let pane = self.active_pane();
-            if self.content_x_on_screen(x) {
-                let tick = self.snapped_tick_at(x);
-                self.gesture.hover_cursor = Some((tick, pane));
-                self.input_event_tx
-                    .send(InputEvent::SetCursorTick { pane, tick })
-                    .ok();
-            }
+            self.place_cursor_at(x);
             return true;
         }
 
@@ -301,14 +310,16 @@ impl Display {
             self.set_clip_lane(lane);
             return true;
         }
-        // A press in a controller lane gives it the keyboard and starts a
-        // span drag (`380-wheel-lane.md` decisions 14–16); nothing else. Not
-        // in a take session, whose clip is framed, never edited. A knob's
-        // lane has nothing to mark yet.
+        // A press in a controller lane places the clip cursor, as anywhere
+        // in the pane, drops the note selection, gives the lane the keyboard
+        // and starts a span drag (`380-wheel-lane.md` decisions 14–16). Only
+        // the cursor in a take session, whose clip is framed, never edited.
+        // A knob's lane has nothing to mark yet.
         if is_clip_events_view
             && self.shown_clip_lane() != ClipLane::Velocity
             && self.is_in_lower_lane(x, y)
         {
+            self.place_cursor_at(x);
             if self.take_session.is_none() && self.clip_lane_controller().is_some() {
                 self.begin_wheel_span(x);
             }

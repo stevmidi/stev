@@ -45,6 +45,7 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ### Fixed
 
+- A click in the pitch-bend, mod-wheel or a knob's lane now moves the clip's cursor, as a click in the notes does, so `⌥Space` plays from there. It also drops the note selection, as clicking a knob does.
 - After framing a take with `]` and fitting the tempo with Enter, the clip's cursor could be left just inside the clip's end instead of on it, so `⌥Space` played the last few ticks of the clip instead of from its start.
 
 ## [0.12.0] - 2026-10-30

@@ -1,7 +1,7 @@
 //! The controller lanes' keyboard focus (`KeyFocus::WheelLane`) and its
-//! span: a press in the PB, MW or a knob's lane gives it the keyboard, a
-//! press-drag there marks a span of the shown controller, `⌘A` marks the
-//! whole curve, `Delete` clears the span — a wheel back to rest, a knob's
+//! span: a press in the PB, MW or a knob's lane places the clip cursor,
+//! drops the note selection and gives the lane the keyboard, a press-drag
+//! there marks a span of the shown controller, `⌘A` marks the whole curve, `Delete` clears the span — a wheel back to rest, a knob's
 //! parameter held at the value before it (`InputEvent::ClearControllerSpan`) —
 //! `Esc` drops the span and then the focus. A note command takes the
 //! keyboard back to the notes and acts there
@@ -106,11 +106,26 @@ impl Display {
         }
     }
 
-    /// A press in a wheel lane at `x`: the lane takes the keyboard and the
-    /// span is dropped, anchored at the snapped tick for a drag to mark one
+    /// Drops the note selection and the duplicate span the marquee left: a
+    /// press on a surface beside the notes (a controller lane, a knob), so
+    /// the `Delete` that follows can't be mistaken for one on the notes. Not
+    /// in a take session, where the command behind it cancels the take.
+    pub(super) fn drop_note_selection(&mut self) {
+        self.gesture.duplicate_span = None;
+        if self.has_event_selection() {
+            self.input_event_tx
+                .send(InputEvent::ClearEventSelection)
+                .ok();
+        }
+    }
+
+    /// A press in a wheel lane at `x`: the lane takes the keyboard, the note
+    /// selection goes, and the span is dropped, anchored at the snapped tick
+    /// for a drag to mark one
     /// ([`extend_wheel_span`](Self::extend_wheel_span)). Clip pane only.
     pub(super) fn begin_wheel_span(&mut self, x: f32) {
         self.key_focus = KeyFocus::WheelLane;
+        self.drop_note_selection();
         self.gesture.wheel_span = None;
         self.gesture.wheel_span_anchor = Some(self.snapped_tick_at(x));
     }
