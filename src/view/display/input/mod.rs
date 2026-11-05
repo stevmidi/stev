@@ -11,6 +11,8 @@ use egui::Key;
 use crate::core::config::{TRACK_VOLUME_DB_DEFAULT, ZOOM_KEY_STEP};
 use crate::core::input_event::{KeyModifiers, is_pane_focus_key};
 use crate::core::keymap::{Action, Chord, NEW_PROJECT, SAVE, SAVE_AS};
+#[cfg(target_os = "macos")]
+use crate::core::plugin_host::take_editor_keys;
 use crate::core::project::{ProjectAction, clip_path};
 use crate::core::time::PPQN;
 
@@ -472,6 +474,13 @@ impl Display {
         self.end_finished_wheel_turn();
         self.input_was_clip_view = in_clip_view;
         let mut events = self.input_poller.take_input_events();
+        // Keys from a plugin editor take the same chain as this window's.
+        #[cfg(target_os = "macos")]
+        events.extend(
+            take_editor_keys()
+                .into_iter()
+                .filter(|event| !self.is_computer_note_key(event)),
+        );
         // Nothing acts while a project being opened loads its plugins — not
         // even the project chords ahead of the overlay below: the open
         // project must stay exactly as it is.
@@ -617,23 +626,12 @@ impl Display {
     fn handle_overlay_input_event(&mut self, event: &InputEvent) -> bool {
         match self.overlay {
             Some(Overlay::Settings) => self.handle_settings_input_event(event),
-            // Nothing to do but wait for the last plugin (keys from a
-            // plugin window, `try_consume_as_modal`).
+            // Nothing to do but wait for the last plugin.
             #[cfg(target_os = "macos")]
             Some(Overlay::RestoringInstruments) => {}
             None => return false,
         }
         true
-    }
-
-    /// If a modal overlay is up and `event` is a key press, routes it to a
-    /// recording shortcut row or the overlay's keymap and returns `true` —
-    /// used by the CLAP key guard to feed modal keys from a plugin-focused
-    /// window.
-    pub(crate) fn try_consume_as_modal(&mut self, event: &InputEvent) -> bool {
-        matches!(event, InputEvent::KeyPressed { .. })
-            && (self.handle_shortcut_recorder_input_event(event)
-                || self.handle_overlay_input_event(event))
     }
 
     /// Whether a key press is taken before the keymap sees it, acting on it

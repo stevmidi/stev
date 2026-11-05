@@ -105,6 +105,12 @@ pub(crate) fn takes_key_event(
     (!pressed || plays_with(KeyModifiers::from(modifiers))).then_some(key)
 }
 
+/// Whether a press of `key` with `modifiers` is one the keyboard would take.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) fn is_note_key_press(key: Key, modifiers: KeyModifiers) -> bool {
+    key_role(key).is_some() && plays_with(modifiers)
+}
+
 /// Whether a press of a layout key with `modifiers` plays: plain or with
 /// Shift; with ⌘/Ctrl, ⌃ or ⌥ it stays a chord.
 fn plays_with(modifiers: KeyModifiers) -> bool {
@@ -232,6 +238,23 @@ mod tests {
         let mut keyboard = ComputerKeyboard::default();
         keyboard.toggle();
         keyboard
+    }
+
+    /// What a plugin editor's forwarded keys are checked against: a layout
+    /// key plain or with Shift, not a chord and not a key off the layout.
+    #[test]
+    fn a_note_key_press_is_a_layout_key_without_a_chord_modifier() {
+        let plain = KeyModifiers::default();
+        let with = |shift, command| KeyModifiers {
+            shift,
+            command,
+            ..plain
+        };
+        assert!(is_note_key_press(Key::A, plain));
+        assert!(is_note_key_press(Key::A, with(true, false)));
+        assert!(is_note_key_press(Key::Z, plain));
+        assert!(!is_note_key_press(Key::Z, with(false, true)));
+        assert!(!is_note_key_press(Key::Space, plain));
     }
 
     #[test]

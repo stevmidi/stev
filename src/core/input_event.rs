@@ -902,13 +902,13 @@ pub(crate) struct KeyModifiers {
     /// Option on macOS, Alt on Windows/Linux. Bound by `⌥←`/`⌥→` (jump to
     /// the next clip edge in the arranger, `⇧⌥←/→` for the marquee edge) and
     /// `⌥=`/`⌥-` (stretch the clip in `Clip`); see `010-keybindings.md`. The
-    /// parked keypad controller thread and the plugin-editor key guard have
-    /// no alt key of their own and always report `false`.
+    /// parked keypad controller thread has no alt key of its own and always
+    /// reports `false`.
     pub(crate) alt: bool,
     /// The Control key on every platform — on Windows/Linux the same key as
     /// `command`, on macOS a key of its own (⌃): for a chord that is Control
-    /// everywhere, such as `Ctrl+Tab`. The keypad controller thread and the
-    /// plugin-editor key guard always report `false`.
+    /// everywhere, such as `Ctrl+Tab`. The keypad controller thread always
+    /// reports `false`.
     pub(crate) ctrl: bool,
 }
 

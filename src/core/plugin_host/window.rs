@@ -37,8 +37,8 @@ use objc2::rc::Retained;
 use objc2::runtime::{NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{
-    NSApplication, NSBackingStoreType, NSFloatingWindowLevel, NSNormalWindowLevel, NSWindow,
-    NSWindowDelegate, NSWindowStyleMask,
+    NSApplication, NSBackingStoreType, NSEvent, NSFloatingWindowLevel, NSNormalWindowLevel,
+    NSWindow, NSWindowDelegate, NSWindowStyleMask,
 };
 use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
 
@@ -136,6 +136,31 @@ impl CloseInterceptor {
     }
 }
 
+define_class!(
+    /// The editor window: a plain `NSWindow` that is also the end of the
+    /// responder chain for the plugin's views, so a key the plugin didn't use
+    /// goes to Stev instead of the system beep (`key_guard`).
+    // SAFETY: `NSWindow` has no subclassing requirements beyond those
+    // `PluginWindow::new` meets (`setReleasedWhenClosed(false)`), and this
+    // class implements no `Drop`.
+    #[unsafe(super(NSWindow))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "StevPluginEditorWindow"]
+    struct EditorWindow;
+
+    impl EditorWindow {
+        /// Hands on a key no view in the window consumed.
+        #[unsafe(method(keyDown:))]
+        fn key_down(&self, event: &NSEvent) {
+            if !key_guard::forward_unused_key(event) {
+                // SAFETY: `NSResponder`'s `keyDown:`, with the event we were
+                // given.
+                unsafe { msg_send![super(self), keyDown: event] }
+            }
+        }
+    }
+);
+
 /// Owns a native window for the plugin's embedded editor view.
 pub(super) struct PluginWindow {
     /// The native window the plugin view is parented into.
@@ -170,15 +195,16 @@ impl PluginWindow {
 
         // SAFETY: standard NSWindow designated initializer, valid args, on the
         // main thread (proven by `mtm`).
-        let window = unsafe {
-            NSWindow::initWithContentRect_styleMask_backing_defer(
-                mtm.alloc(),
-                content_rect,
-                style,
-                NSBackingStoreType::Buffered,
-                false,
-            )
+        let window: Retained<EditorWindow> = unsafe {
+            msg_send![
+                super(EditorWindow::alloc(mtm).set_ivars(())),
+                initWithContentRect: content_rect,
+                styleMask: style,
+                backing: NSBackingStoreType::Buffered,
+                defer: false,
+            ]
         };
+        let window = Retained::into_super(window);
 
         window.setTitle(&NSString::from_str(title));
         match top_left {
@@ -191,9 +217,9 @@ impl PluginWindow {
         let close_interceptor = CloseInterceptor::new(mtm);
         window.setDelegate(Some(ProtocolObject::from_ref(&*close_interceptor)));
 
-        // Registers this window with the Space/`v` key guard (see
-        // `key_guard`) so those keys stay reserved for the app even once the
-        // user clicks into this window and it takes OS keyboard focus.
+        // Registers this window with the key guard (see `key_guard`), so the
+        // project chords stay the app's even once the user clicks into this
+        // window and it takes OS keyboard focus.
         key_guard::register_window(Retained::as_ptr(&window) as usize);
 
         Some(Self {

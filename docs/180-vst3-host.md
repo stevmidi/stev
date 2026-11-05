@@ -371,7 +371,7 @@ A VST3 editor is an `IPlugView` the **edit controller** creates on demand. The
 window it lives in is the same
 [`PluginWindow`](crate::core::plugin_host::window) the CLAP host embeds into, so
 both formats share the window plumbing, the remembered position, and the
-app-wide key guard (`Space`/`0`/`v` by default) — `PluginWindow::new` registers itself,
+key forwarding (`key_guard.rs`) — `PluginWindow::new` registers itself,
 so that came for free.
 
 The open sequence, in the order the spec requires:

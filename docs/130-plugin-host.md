@@ -344,7 +344,7 @@ methods take a track's position and look the slot up in its `tracks` mirror
 | `ui_wake.rs` | `UiWake` - wakes the reactive UI from the audio thread, which can't take `request_repaint`'s lock: a flag and an `unpark` of the `"plugin-host"` thread, which makes the call. Unit-tested. |
 | `shutdown.rs` | `HostShutdown` - app-exit coordination (`requested` + `in_process`), one instance shared by the mixer and the reclaim thread. Unit-tested. |
 | `window.rs` | `PluginWindow` - a minimal native `NSWindow` parent for an embedded plugin GUI; `show` (`orderFront:`), `is_visible`, `frame_top_left` / a `top_left` argument to `new` (position carried across a close/reopen), `set_content_size` (anchored at the top-left corner), `take_closed` (the title-bar close button, refused by the `CloseInterceptor` delegate so the editor can tear down first, or the window off screen by any other route while Stev is not hidden); registers/deregisters itself with `key_guard` on construction/`Drop`. It is closed by `Drop`, not hidden - there is no `hide`. Format-agnostic. |
-| `key_guard.rs` | App-wide `NSEvent` local monitor reserving the keymap's bare play / stop, stop and editor keys (`Space`/`0`/`v` by default) even while an embedded editor window has OS keyboard focus - `install_key_guard`, `set_guarded_keys` (from `Display::guard_plugin_editor_keys`; every reserved key goes on as a raw `KeyPressed`, and the editor toggle is handled where `Display` drains the input channel), `register_window` / `unregister_window`. See the module doc and the caveat below. Format-agnostic. |
+| `key_guard.rs` | How keys get from an embedded editor to Stev: `forward_unused_key` (from `window.rs`'s `keyDown:`) and an app-wide `NSEvent` local monitor for the project chords both queue a raw `KeyPressed`, read by `take_editor_keys`; `install_key_guard`, `register_window` / `unregister_window`. See the module doc and the caveat below. Format-agnostic. |
 
 ### `clap/` - the CLAP format
 
@@ -783,11 +783,9 @@ then filling in plugin by plugin:
   opened right after launch doesn't lose plugins the scan hasn't reached.
   Once the scan is done a missing plugin is skipped as not installed.
 - **Nothing reaches the old project while it waits**: `handle_input_events`
-  drops every event while the overlay is up — before the project chords and
-  the other handlers ahead of the overlay — and the overlay arm of
-  `handle_overlay_input_event` swallows keys from a plugin window
-  (`try_consume_as_modal`). So no play, edit, save, new project or plugin
-  pick lands mid-load. Quitting still works: `on_exit` leaks the prepared
+  drops every event while the overlay is up — keys from a plugin window
+  included, before the project chords and the other handlers ahead of the
+  overlay. So no play, edit, save, new project or plugin pick lands mid-load. Quitting still works: `on_exit` leaks the prepared
   plugins (`ProjectStaging::leak`) like the loaded ones.
 - **⌘N and a project without plugins** take the direct path: their
   `ProjectLoaded` finds nothing staged and no plugin to load.
@@ -843,24 +841,38 @@ positions), persisted base64-encoded in the `.stev` and re-applied on load:
   imperceptible; if the app is fully idle (visible editor, plugin requesting no
   timer) the drop-to-normal on switching *away* can also lag a frame. Not worth
   a continuous repaint or an activation observer to close.
-- **The bare play / stop, stop and editor keys are reserved even while an
-  embedded editor has OS keyboard focus** (`key_guard.rs`) — an app-wide
-  `NSEvent` local monitor intercepts them before AppKit routes them to
-  whichever window is key, but only while the focused window is one of our
-  own tracked embedded editor windows, never the main app window, so in-focus
-  behavior is untouched. Which keys follows the keymap (`core/keymap.rs`):
-  `Display::guard_plugin_editor_keys` hands over the bare chords of
-  `TogglePlayback`, `Stop` and `TogglePluginEditor` (`Space`, `0`, `v` by
-  default), and the transport keys go on as raw `KeyPressed`, resolved like
-  any other. The monitor deliberately does **not** treat `NumericPad` as a
-  blocking modifier, or the guard would silently never fire from the numpad's
-  `0`. The unavoidable tradeoff: while an
-  editor window is focused, none of these keys can be typed as a literal
-  character into anything inside the plugin's own UI (a preset-name field,
-  say) — every other key, and any modified chord (⌘V, Shift+V, …), still
-  reaches the plugin normally. Does **not** apply to a floating plugin GUI
-  (rare — most plugins don't support it): it owns its own native window,
-  invisible to this registry.
+- **Keys reach Stev from an embedded editor by two routes** (`key_guard.rs`),
+  because the main window hears nothing once an editor has OS keyboard focus.
+  This is what Ableton does, seen from outside: it keeps its menu chords, and
+  a key mapped to a command fires from a plugin unless a text field there is
+  taking it.
+  - **Typed keys go to the plugin first.** What it doesn't use passes up the
+    responder chain to `EditorWindow`'s `keyDown:` and on to Stev with its real
+    modifiers. A plugin's text field keeps what's typed into it, so every
+    binding works from the editor with no list of keys, and no key is lost to
+    the plugin. Checked by hand, with a logging probe (2026-11-05): in Serum 2,
+    Spire, Omnisphere and FM8 a focused knob passed up `Space`, `0`, `v`, `/`
+    and `r`, and a focused text field kept them; the finished keys were then tried in
+    Serum 2, Omnisphere and Kontakt 8. Don't test for a text field
+    by the first responder instead: Serum 2, Spire and Omnisphere show an
+    `NSTextView` there, but FM8's field is its own `NICocoaView` throughout. A
+    plugin that swallows keys it doesn't use (forum reports name web-view
+    editors) would keep those keys from Stev, the same as any host.
+  - **The project chords go ahead of the plugin.** `⌘S`, `⇧⌘S` and `⌘N`
+    (`PROJECT_CHORDS`) are Stev's whatever has focus, as a DAW's menu shortcuts
+    are. Stev has no File menu, so an app-wide `NSEvent` local monitor takes
+    them before AppKit routes them, only while the key window is one of our
+    own tracked editor windows.
+
+  Either way the key joins the frame's events in
+  `Display::handle_input_events`, so dialogs, text fields, overlays and the
+  keymap treat it as one typed in the main window. Three exceptions: an OS
+  repeat is dropped, `⌘←`/`→` is dropped (the nudge ends on ⌘'s release, which
+  the main window can't see), and a note key of the computer keyboard while
+  it's on is dropped (it plays from the main window only, and must not fire
+  the command under it). Does **not** apply to a floating plugin GUI (rare —
+  most plugins don't support it): it owns its own native window, invisible to
+  this registry.
 - **Clip event latency is a constant one buffer** (`SCHEDULE_DELAY_FRAMES` in
   `core/audio/mod.rs` = 256 frames ≈ 5.3 ms at 48 kHz, matching the engine's requested
   `DESIRED_BUFFER_FRAMES`). Clip
@@ -1029,16 +1041,15 @@ Manual smoke test (`cargo run --release --package stev --bin stev`):
    feature still works). Then play/arrange again on each — sound resumes
    immediately, confirming `queue_midi` wakes a sleeping voice.
 10. Click into an open plugin editor window (so it visibly takes OS keyboard
-    focus, e.g. click a knob) — bare Space should still start/stop the
-    transport (both directions — starting again after a stop, not just
-    stopping), numpad `0` should stop the same way, and
-    bare `v` should still close the editor, with no click back to the main
-    window needed first and no stray mouse movement needed to "unstick" it
-    either. Try a modified chord too (⌘V, Shift+V) — it should reach the
-    plugin normally, not get swallowed. With Caps Lock toggled on, the four
-    reserved keys should still work identically. Then repeat with the main
-    app window focused (editor not open, or not clicked into) — behavior
-    should be identical to before this change.
+    focus, e.g. click a knob). Space should start and stop the transport, numpad
+    `0` should stop, `/` should commit a take and bare `v` should close the
+    editor, with no click back to the main window needed first and no stray
+    mouse movement needed to "unstick" it either. `⌘S` should save and `⌘N` ask
+    for a new project. Then click into a text field in the plugin: `/`, Space
+    and `v` should be typed there and do nothing in Stev. With Caps Lock on, the
+    keys should work the same. With a Save As or a rename field open, keys from
+    the editor should not act on the project under it. Then repeat with the
+    main app window focused: behavior should be identical to before this change.
 11. Open the browser immediately after launch, before the background scan is
     likely to have finished (with enough installed bundles that a synchronous
     scan would be noticeably slow) — it should open instantly (no UI freeze)

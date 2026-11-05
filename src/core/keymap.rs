@@ -260,13 +260,6 @@ impl Chord {
     pub(crate) fn opens_keyboard_tab(self) -> bool {
         self.key == Key::Questionmark && !self.command && !self.alt
     }
-
-    /// Whether no modifier is held — the chords the plugin-editor key guard
-    /// can reserve (`plugin_host/key_guard.rs`).
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-    pub(crate) fn is_bare(self) -> bool {
-        !self.command && !self.alt && !self.shift && !self.ctrl
-    }
 }
 
 /// `⌘/Ctrl+S`: save. Fixed, like the other project chords — never an
@@ -277,6 +270,9 @@ pub(crate) const SAVE: Chord = Chord::cmd(Key::S);
 pub(crate) const SAVE_AS: Chord = Chord::cmd(Key::S).shift();
 /// `⌘/Ctrl+N`: a new project. Fixed, like [`SAVE`].
 pub(crate) const NEW_PROJECT: Chord = Chord::cmd(Key::N);
+/// The fixed project chords, which also go ahead of a plugin editor
+/// (`plugin_host/key_guard.rs`).
+pub(crate) const PROJECT_CHORDS: [Chord; 3] = [SAVE, SAVE_AS, NEW_PROJECT];
 
 /// Whether `key` is a punctuation key, whose logical identity already
 /// reflects Shift (see [`Chord::normalized`]).
@@ -363,7 +359,7 @@ pub(crate) fn refusal(chord: Chord) -> Option<&'static str> {
     if chord.opens_keyboard_tab() {
         return Some("opens this tab");
     }
-    if [SAVE, SAVE_AS, NEW_PROJECT].contains(&chord) {
+    if PROJECT_CHORDS.contains(&chord) {
         return Some("is fixed: save, save as and new project");
     }
     if !chord.command {
@@ -1112,20 +1108,6 @@ impl Keymap {
     ) -> Option<Action> {
         self.resolve(Chord::from_press(key, modifiers), pane)
     }
-
-    /// The keys `action` is bound to with no modifier — what the
-    /// plugin-editor key guard reserves for it.
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-    pub(crate) fn bare_keys(&self, action: Action) -> Vec<Key> {
-        let mut keys: Vec<Key> = self
-            .chords(action)
-            .iter()
-            .filter(|chord| chord.is_bare())
-            .map(|chord| chord.key)
-            .collect();
-        keys.sort_unstable();
-        keys
-    }
 }
 
 #[cfg(test)]
@@ -1442,15 +1424,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn bare_keys_are_the_unmodified_chords() {
-        let keymap = Keymap::default();
-        assert_eq!(keymap.bare_keys(Action::TogglePlayback), vec![Key::Space]);
-        assert_eq!(keymap.bare_keys(Action::Stop), vec![Key::Num0]);
-        assert_eq!(keymap.bare_keys(Action::TogglePluginEditor), vec![Key::V]);
-        assert!(keymap.bare_keys(Action::Undo).is_empty());
-    }
-
     /// `V` shows the plugin from either pane: the knobs drive that plugin
     /// from the clip view, so it must open from there too. It leaves a
     /// wheel lane or the knob panel with the keyboard.
@@ -1699,15 +1672,6 @@ mod tests {
         assert_eq!(keymap.chords(Action::Split), &[Chord::cmd(Key::E)]);
         assert!(keymap.chords(Action::Merge).is_empty());
         assert!(conflict_free(&keymap));
-    }
-
-    #[test]
-    fn bare_keys_follow_a_rebinding() {
-        let mut keymap = Keymap::default();
-        keymap.bind(Action::TogglePlayback, Chord::plain(Key::P));
-        assert_eq!(keymap.bare_keys(Action::TogglePlayback), vec![Key::P]);
-        keymap.bind(Action::Stop, Chord::cmd(Key::P));
-        assert!(keymap.bare_keys(Action::Stop).is_empty());
     }
 
     /// Every stored chord unusable (a lone modifier here, as an early

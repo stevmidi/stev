@@ -1,52 +1,40 @@
-//! App-wide reservation of a few bare keys — the keymap's bare chords for
-//! play / stop, stop and the plugin editor (`Space`, `0` and `v` by default)
-//! — for transport control and editor visibility, even while a hosted
-//! plugin's **embedded** editor window has macOS keyboard focus.
+//! How keys get from a hosted plugin's **embedded** editor window to Stev.
 //!
 //! Once the user clicks into an embedded plugin editor, AppKit gives that
 //! window key focus and the eframe window stops receiving keyboard events
-//! entirely — `egui`'s own input polling (`InputPoller`) has no way to see
-//! these keys at that point, since winit never delivers them to a window
-//! that isn't key. The only fix is intercepting the keystroke *before*
-//! AppKit routes it to whichever window is currently key: a local
-//! [`NSEvent`] monitor observes every key-down in this app and can swallow
-//! the ones it wants, regardless of which of our windows they were headed
-//! for.
+//! entirely, so `egui`'s input polling (`InputPoller`) can't see them. Two
+//! routes bring them back, the same split a DAW has:
 //!
-//! This only intercepts while the focused window is one of our own tracked
-//! plugin editor windows ([`register_window`] / [`unregister_window`],
-//! called by [`super::window::PluginWindow`]'s constructor/`Drop`) —
-//! never the main app window, so normal in-focus behavior (the existing
-//! egui-based bindings) is completely untouched. It only ever intercepts the
-//! bare key (no Shift/Control/Option/Command), so it never eats a modified
-//! chord a plugin's own UI might use. `NumericPad` and `CapsLock` are
-//! deliberately *not* treated as blocking modifiers — see the comment at the
-//! check itself for why (numpad `0` is the whole point of this feature; Caps
-//! Lock being toggled on would otherwise defeat it entirely).
+//! - **The plugin goes first for typed keys.** AppKit hands a key to the
+//!   plugin's view, and what the plugin doesn't use passes up the responder
+//!   chain to the editor window, whose `keyDown:` lands in
+//!   [`forward_unused_key`] (`window::EditorWindow`). A plugin's text field
+//!   keeps what is typed into it and the host never sees it, so the host needs
+//!   no list of keys and no knowledge of the plugin's focused control. Checked
+//!   by hand in Serum 2, Spire, Omnisphere, FM8 and Kontakt 8 (`130-plugin-host.md`).
+//! - **The project chords don't wait for the plugin.** `⌘S`, `⇧⌘S` and `⌘N`
+//!   are Stev's whatever has focus, as a DAW's menu shortcuts are. Stev has no
+//!   File menu, so a local [`NSEvent`] monitor takes them before AppKit routes
+//!   them ([`handle_key_event`]), and only while the key window is one of our
+//!   own editor windows ([`register_window`] / [`unregister_window`], called
+//!   by [`super::window::PluginWindow`]'s constructor/`Drop`) — never the main
+//!   window, which reads them through egui as usual.
 //!
-//! Which keys it reserves follows the keymap (`core/keymap.rs`): `Display`
-//! hands over the bare chords of `TogglePlayback`, `Stop` and
-//! `TogglePluginEditor` ([`set_guarded_keys`]), so a moved Play key keeps
-//! working inside a plugin window and the old one isn't eaten for nothing.
-//! Each goes on as a raw `KeyPressed`, resolved through the keymap like any
-//! other where `Display` drains the input channel.
-//!
-//! **Tradeoff, unavoidable without introspecting the plugin's own focused
-//! control (which this host has no access to):** while an editor window is
-//! focused, none of these keys can be typed as a literal character into
-//! anything inside the plugin's own UI (e.g. a preset-name field) — every
-//! other key still reaches the plugin normally.
+//! Either way the key is queued here as a raw `KeyPressed` with its real
+//! modifiers, and `Display::handle_input_events` adds [`take_editor_keys`] to
+//! the frame's events, so a key from an editor goes through the same chain as
+//! one typed in the main window: dialogs and text fields first, then the
+//! project chords, the overlays and the keymap.
 //!
 //! **Only covers embedded editors.** A floating CLAP GUI (rare — see
 //! `130-plugin-host.md`; most plugins don't support it) owns its own native
-//! window, invisible to this registry, so this fix does not apply to it.
+//! window, invisible to this registry, so neither route reaches it.
 
 use std::cell::RefCell;
 use std::ptr::NonNull;
 use std::sync::{Arc, OnceLock};
 
 use block2::RcBlock;
-use crossbeam_channel::Sender;
 use egui::Key;
 use log::warn;
 use objc2::MainThreadMarker;
@@ -55,6 +43,7 @@ use objc2::runtime::AnyObject;
 use objc2_app_kit::{NSEvent, NSEventMask, NSEventModifierFlags};
 
 use crate::core::input_event::{InputEvent, KeyModifiers};
+use crate::core::keymap::{Chord, PROJECT_CHORDS};
 
 thread_local! {
     /// Raw `NSWindow*` pointers (as `usize`) of every currently-open embedded
@@ -62,26 +51,15 @@ thread_local! {
     /// currently owns — main-thread-only, like everything else here, so a
     /// plain `RefCell` (no `Send`/`Sync` needed) is enough.
     static EDITOR_WINDOWS: RefCell<Vec<usize>> = const { RefCell::new(Vec::new()) };
-    /// The keys the monitor reserves; empty until [`set_guarded_keys`] runs.
-    static GUARDED_KEYS: RefCell<Vec<Key>> = const { RefCell::new(Vec::new()) };
-    /// Where an intercepted key is forwarded — the same channel the normal
-    /// egui-driven binding already sends through. `None` until
-    /// [`install_key_guard`] runs.
-    static INPUT_EVENT_TX: RefCell<Option<Sender<InputEvent>>> = const { RefCell::new(None) };
-    /// Wakes the eframe render loop after we act on an intercepted key — see
-    /// the note in [`handle_key_event`] on why this is required, not optional.
+    /// Key presses from editor windows, waiting for [`take_editor_keys`].
+    static EDITOR_KEYS: RefCell<Vec<InputEvent>> = const { RefCell::new(Vec::new()) };
+    /// Wakes the eframe render loop after a key is queued — see the note in
+    /// [`queue_key`] on why this is required, not optional.
     static REPAINT_CTX: RefCell<Option<Arc<OnceLock<egui::Context>>>> =
         const { RefCell::new(None) };
     /// Keeps the block and the monitor token alive for the app's lifetime —
     /// dropping either would tear the monitor down.
     static MONITOR: RefCell<Option<MonitorHandle>> = const { RefCell::new(None) };
-}
-
-/// Sets the bare keys the monitor reserves while an editor window is
-/// focused, from the keymap. Main thread only; call again when the keymap
-/// changes.
-pub(crate) fn set_guarded_keys(keys: Vec<Key>) {
-    GUARDED_KEYS.with(|guarded| *guarded.borrow_mut() = keys);
 }
 
 /// Keeps the local-event-monitor token and its block alive; dropping either
@@ -109,28 +87,115 @@ fn is_editor_window(window: usize) -> bool {
     EDITOR_WINDOWS.with(|w| w.borrow().contains(&window))
 }
 
-/// Forwards a bare key press into the same channel a normal in-focus
-/// keypress goes through, to be resolved through the keymap and dispatched
-/// by `EventHandlers::handle_input_event`.
-fn send_key_pressed(key: Key) {
-    INPUT_EVENT_TX.with(|tx| {
-        if let Some(tx) = tx.borrow().as_ref() {
-            tx.send(InputEvent::KeyPressed {
-                key,
-                modifiers: KeyModifiers::default(),
-            })
-            .ok();
-        }
+/// Queues a key press for the next frame's input events.
+fn queue_key(key: Key, modifiers: KeyModifiers) {
+    EDITOR_KEYS.with(|keys| {
+        keys.borrow_mut()
+            .push(InputEvent::KeyPressed { key, modifiers });
     });
+    // Queueing only stores the key: it's read on `Display`'s next frame, which
+    // eframe only runs in response to a window or repaint event. Unlike a
+    // normal keypress (which arrives *as* such an event), ours came from
+    // outside eframe's own input pipeline, so nothing wakes it: with the app
+    // idle, the key would sit untouched until something else, a stray mouse
+    // move over the main window, say, happened to trigger a frame.
+    wake_ui();
+}
+
+/// The key presses queued since the last call, for the frame's input events.
+/// Main thread only, like the queue.
+pub(crate) fn take_editor_keys() -> Vec<InputEvent> {
+    EDITOR_KEYS.with(|keys| std::mem::take(&mut *keys.borrow_mut()))
+}
+
+/// The key a keyboard's named key is, by `NSEvent` key code: the ones whose
+/// characters are control codes or private-use function-key values, which
+/// [`Key::from_name`] can't read.
+fn named_key(key_code: u16) -> Option<Key> {
+    Some(match key_code {
+        36 | 76 => Key::Enter,
+        48 => Key::Tab,
+        51 => Key::Backspace,
+        53 => Key::Escape,
+        96 => Key::F5,
+        97 => Key::F6,
+        98 => Key::F7,
+        99 => Key::F3,
+        100 => Key::F8,
+        101 => Key::F9,
+        103 => Key::F11,
+        109 => Key::F10,
+        111 => Key::F12,
+        115 => Key::Home,
+        116 => Key::PageUp,
+        117 => Key::Delete,
+        118 => Key::F4,
+        119 => Key::End,
+        120 => Key::F2,
+        121 => Key::PageDown,
+        122 => Key::F1,
+        123 => Key::ArrowLeft,
+        124 => Key::ArrowRight,
+        125 => Key::ArrowDown,
+        126 => Key::ArrowUp,
+        _ => return None,
+    })
+}
+
+/// The key a press is: a named key by its code, else what was typed, else the
+/// key under it. What was typed comes first because `⌥` makes the character
+/// on some layouts (`[` is `⌥8` on Nordic ones, where the character ignoring
+/// modifiers is `8`); it says nothing for `⌥S` on a US layout (`ß`) or with
+/// Control held (a control code), and the character ignoring modifiers does.
+fn key_of_press(key_code: u16, typed: Option<&str>, unmodified: Option<&str>) -> Option<Key> {
+    named_key(key_code)
+        .or_else(|| typed.and_then(Key::from_name))
+        .or_else(|| unmodified.and_then(Key::from_name))
+}
+
+/// The key and modifiers of a key press. Only the four modifiers that change
+/// a key's meaning: `NumericPad` and `CapsLock` are flags too, but numpad `0`
+/// is `0`, and Caps Lock is set on every press while it's on.
+fn press_of(event: &NSEvent) -> Option<(Key, KeyModifiers)> {
+    let typed = event.characters().map(|chars| chars.to_string());
+    let unmodified = event
+        .charactersIgnoringModifiers()
+        .map(|chars| chars.to_string());
+    let key = key_of_press(event.keyCode(), typed.as_deref(), unmodified.as_deref())?;
+    let flags = event.modifierFlags();
+    let modifiers = KeyModifiers {
+        shift: flags.contains(NSEventModifierFlags::Shift),
+        command: flags.contains(NSEventModifierFlags::Command),
+        alt: flags.contains(NSEventModifierFlags::Option),
+        ctrl: flags.contains(NSEventModifierFlags::Control),
+    };
+    Some((key, modifiers))
+}
+
+/// Whether a press would arm the `⌘/Ctrl+←`/`→` marquee nudge. It ends when
+/// ⌘ is released, which the main window can't see while an editor has the
+/// keyboard, so it must not start from one.
+fn arms_marquee_nudge(key: Key, modifiers: KeyModifiers) -> bool {
+    modifiers.command && matches!(key, Key::ArrowLeft | Key::ArrowRight)
+}
+
+/// Takes a key the plugin passed up the responder chain, from the editor
+/// window's `keyDown:`. Returns `false` for a key Stev can't name, to go on
+/// to `NSWindow`. An OS repeat is taken and dropped: nothing in an editor
+/// window auto-repeats, as the poller's arrows do from the main window.
+pub(super) fn forward_unused_key(event: &NSEvent) -> bool {
+    let Some((key, modifiers)) = press_of(event) else {
+        return false;
+    };
+    if !event.isARepeat() && !arms_marquee_nudge(key, modifiers) {
+        queue_key(key, modifiers);
+    }
+    true
 }
 
 /// Installs the app-wide key guard. Call once, from the `eframe::run_native`
 /// creation closure (after AppKit/`NSApplication` is up) — never before.
-pub(crate) fn install_key_guard(
-    input_event_tx: Sender<InputEvent>,
-    repaint_ctx: Arc<OnceLock<egui::Context>>,
-) {
-    INPUT_EVENT_TX.with(|tx| *tx.borrow_mut() = Some(input_event_tx));
+pub(crate) fn install_key_guard(repaint_ctx: Arc<OnceLock<egui::Context>>) {
     REPAINT_CTX.with(|ctx| *ctx.borrow_mut() = Some(repaint_ctx));
 
     let block = RcBlock::new(handle_key_event);
@@ -153,33 +218,14 @@ pub(crate) fn install_key_guard(
     }
 }
 
-/// The monitor's handler: returns the event unchanged to let it through
-/// normally, or `null` to swallow it.
+/// The monitor's handler: swallows a project chord headed for an editor
+/// window by returning `null`, and returns anything else unchanged.
 fn handle_key_event(event: NonNull<NSEvent>) -> *mut NSEvent {
     let raw = event.as_ptr();
     // SAFETY: AppKit guarantees a valid event for the duration of this call.
     let event = unsafe { event.as_ref() };
 
     if event.isARepeat() {
-        return raw;
-    }
-    // Only the modifiers that actually change what a bare keypress means —
-    // deliberately *not* `DeviceIndependentFlagsMask` (Apple's usual
-    // "any meaningful modifier" pattern), which also bundles in `NumericPad`
-    // and `CapsLock`. `NumericPad` matters here specifically: the numpad
-    // transport key this guards (`0`, Stop) always carries that flag, and `CapsLock` reflects the toggle's current
-    // state on *every* keypress, not just while physically held — either one
-    // in the reject set would have silently defeated the guard for anyone
-    // using the numpad or with Caps Lock on.
-    const RELEVANT_MODIFIERS: NSEventModifierFlags = NSEventModifierFlags::Shift
-        .union(NSEventModifierFlags::Control)
-        .union(NSEventModifierFlags::Option)
-        .union(NSEventModifierFlags::Command);
-    if !event
-        .modifierFlags()
-        .intersection(RELEVANT_MODIFIERS)
-        .is_empty()
-    {
         return raw;
     }
     let Some(mtm) = MainThreadMarker::new() else {
@@ -191,31 +237,13 @@ fn handle_key_event(event: NonNull<NSEvent>) -> *mut NSEvent {
     if !is_editor_window(Retained::as_ptr(&window) as usize) {
         return raw;
     }
-    // `charactersIgnoringModifiers` (not `keyCode`, which is a US-layout
-    // virtual key code) so this respects the user's actual keyboard layout.
-    let Some(key) = event
-        .charactersIgnoringModifiers()
-        .and_then(|chars| Key::from_name(&chars.to_string()))
-    else {
+    let Some((key, modifiers)) = press_of(event) else {
         return raw;
     };
-
-    if !GUARDED_KEYS.with(|guarded| guarded.borrow().contains(&key)) {
+    if !PROJECT_CHORDS.contains(&Chord::from_press(key, modifiers)) {
         return raw;
     }
-    send_key_pressed(key);
-
-    // Pushing onto `input_event_tx` only queues the work — it's drained on `Display`'s next `update()` call, which
-    // eframe only runs in response to an actual window/repaint event. Unlike
-    // a normal keypress (which arrives *as* such an event), ours came from
-    // outside eframe's own input pipeline entirely, so nothing wakes it: if
-    // the app happens to be idle right now (nothing animating, unfocused),
-    // the queued action sits untouched until something else — a stray mouse
-    // move over the main window, say — happens to trigger a frame. Request
-    // one explicitly instead of leaving that to chance; this is exactly what
-    // `repaint_ctx` exists for (see `EventHandlers::request_repaint`).
-    wake_ui();
-
+    queue_key(key, modifiers);
     std::ptr::null_mut()
 }
 
@@ -229,4 +257,89 @@ pub(super) fn wake_ui() {
             ctx.request_repaint();
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_named_key_is_read_by_its_code() {
+        // Arrow keys type private-use characters, Enter a control code.
+        assert_eq!(
+            key_of_press(123, Some("\u{f702}"), Some("\u{f702}")),
+            Some(Key::ArrowLeft)
+        );
+        assert_eq!(key_of_press(36, Some("\r"), Some("\r")), Some(Key::Enter));
+        assert_eq!(key_of_press(76, Some("\u{3}"), None), Some(Key::Enter));
+    }
+
+    /// Numpad `0` has a key code of its own and must still be `0`.
+    #[test]
+    fn a_typed_key_is_read_by_its_character() {
+        assert_eq!(key_of_press(82, Some("0"), Some("0")), Some(Key::Num0));
+        assert_eq!(key_of_press(49, Some(" "), Some(" ")), Some(Key::Space));
+    }
+
+    /// `/` is Shift+7 on Nordic layouts, and both characters keep Shift.
+    #[test]
+    fn shift_typed_punctuation_is_the_punctuation() {
+        assert_eq!(key_of_press(26, Some("/"), Some("/")), Some(Key::Slash));
+    }
+
+    /// `⌥8` types `[` on Nordic layouts: the character ignoring modifiers
+    /// drops ⌥ and would say `8`.
+    #[test]
+    fn what_option_typed_comes_before_the_key_under_it() {
+        assert_eq!(
+            key_of_press(28, Some("["), Some("8")),
+            Some(Key::OpenBracket)
+        );
+    }
+
+    /// `⌥S` types `ß` on a US layout, and Control a control code.
+    #[test]
+    fn a_character_with_no_key_falls_back_to_the_key_under_it() {
+        assert_eq!(key_of_press(1, Some("ß"), Some("s")), Some(Key::S));
+        assert_eq!(key_of_press(1, Some("\u{13}"), Some("s")), Some(Key::S));
+    }
+
+    #[test]
+    fn a_press_with_no_readable_character_has_no_key() {
+        assert_eq!(key_of_press(50, Some("§"), Some("§")), None);
+        assert_eq!(key_of_press(50, None, None), None);
+    }
+
+    #[test]
+    fn only_the_command_arrows_arm_the_marquee_nudge() {
+        let command = KeyModifiers {
+            command: true,
+            ..KeyModifiers::default()
+        };
+        assert!(arms_marquee_nudge(Key::ArrowLeft, command));
+        assert!(arms_marquee_nudge(Key::ArrowRight, command));
+        assert!(!arms_marquee_nudge(Key::ArrowUp, command));
+        assert!(!arms_marquee_nudge(Key::ArrowLeft, KeyModifiers::default()));
+    }
+
+    /// Shift+V and a bare `s` belong to the plugin: only the project chords
+    /// go ahead of it.
+    #[test]
+    fn the_monitor_takes_only_the_project_chords() {
+        let press = |key, shift, command| {
+            Chord::from_press(
+                key,
+                KeyModifiers {
+                    shift,
+                    command,
+                    ..KeyModifiers::default()
+                },
+            )
+        };
+        assert!(PROJECT_CHORDS.contains(&press(Key::S, false, true)));
+        assert!(PROJECT_CHORDS.contains(&press(Key::S, true, true)));
+        assert!(PROJECT_CHORDS.contains(&press(Key::N, false, true)));
+        assert!(!PROJECT_CHORDS.contains(&press(Key::S, false, false)));
+        assert!(!PROJECT_CHORDS.contains(&press(Key::V, true, false)));
+    }
 }

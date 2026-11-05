@@ -711,9 +711,8 @@ impl Display {
         self.apply_tab_key(result)
     }
 
-    /// Acts on what the Keyboard tab did: a changed keymap is saved and
-    /// handed to the plugin-editor key guard; a refusal shows in the
-    /// footer. Returns whether the tab took the event.
+    /// Acts on what the Keyboard tab did: a changed keymap is saved; a
+    /// refusal shows in the footer. Returns whether the tab took the event.
     pub(super) fn apply_tab_key(&mut self, result: TabKey) -> bool {
         match result {
             TabKey::Left => return false,
@@ -725,15 +724,12 @@ impl Display {
     }
 
     /// After a rebinding: saves the user's changes to `settings.json` (only
-    /// the differences from the defaults, `Keymap::overrides`) and, on
-    /// macOS, moves the plugin-editor key guard to the new bare keys.
+    /// the differences from the defaults, `Keymap::overrides`).
     fn keymap_changed(&mut self) {
         let overrides = self.keymap.overrides();
         update_settings("keyboard shortcuts", |settings| {
             settings.keymap = overrides;
         });
-        #[cfg(target_os = "macos")]
-        self.guard_plugin_editor_keys();
     }
 }
 

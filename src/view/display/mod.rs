@@ -351,9 +351,9 @@ pub(crate) struct Display {
     // --- Communication ---
     /// The stateless bridge to the `"sequencer"` thread.
     event_handlers: Arc<EventHandlers>,
-    /// Resolved input events from `InputPoller` / the plugin key guard.
+    /// Input events from everything but the keyboard's own poll.
     input_event_rx: Receiver<InputEvent>,
-    /// Producer end, cloned to `InputPoller` and the key guard.
+    /// Producer end of [`input_event_rx`](Self::input_event_rx).
     input_event_tx: Sender<InputEvent>,
     /// Change notifications from the sequencer.
     ui_event_rx: Receiver<UiEvent>,
