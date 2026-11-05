@@ -20,6 +20,8 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-11-05
+
 ### Added
 
 - The knobs record. Turn a knob beside the clip view, or the same control in the plugin's own window, press `/`, and the movement lands in the clip like a wheel's: over the stretch you touched, with notes or on its own over a playing loop. It plays back to the plugin on its sample, the plugin's window and the knob follow, and turning the knob by hand during playback takes over until you let go. Each knob's lane draws what it recorded. Giving a knob another parameter takes its recorded moves along; removing a mapping or swapping the plugin deletes them, and Undo brings them back. A `.mid` export leaves them out.

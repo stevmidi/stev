@@ -18,7 +18,7 @@ Website: [stevmidi.com](https://stevmidi.com)
 
 ![Stev: tracks of captured clips in the arranger, with the clip panel open on a synth part and its mod wheel curve](docs/images/arranger.png)
 
-> **Status:** 0.13.0. Developed and tested on macOS, with a prebuilt app from
+> **Status:** 0.14.0. Developed and tested on macOS, with a prebuilt app from
 > 0.6.0 on ([Download](#download)). Linux and Windows build in CI and may work
 > (MIDI Out only, no plugin host), but are untested; ports welcome.
 
