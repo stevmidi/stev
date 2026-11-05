@@ -17,13 +17,14 @@ It's a one-person project, so replies can take a while.
   smoother edge case, a faster path.
 - Timing and correctness work: notes landing late, hanging, or out of sync.
 - Fixes to the docs, including the agent-oriented ones under `docs/`.
-- Linux and Windows fixes. They build in CI but are untested (see below).
+- Small Linux and Windows fixes. They build in CI but are untested (see below).
 
 **Open an issue first:**
 
 - A new feature, a new key binding, or a change to how an existing one behaves.
 - A new dependency.
 - Anything that touches the project file format (`.stev`).
+- A port, or a step of one, to Linux or Windows (see below).
 
 A feature is judged by whether it serves the capture workflow, not by whether
 it would be useful to someone. Some will be declined for that reason alone,
@@ -88,18 +89,27 @@ rebased or squashed when it's merged.
 
 ### Linux and Windows
 
-macOS is the supported platform. Linux and Windows build and pass the tests in
-CI, but nobody has checked that they play correctly, and the plugin host is
-macOS-only, so there a track can only send MIDI Out. Ports are welcome.
+macOS is the supported platform, and the only one the author works on.
+Linux and Windows build and pass the tests in CI, but nobody has checked that
+they play correctly, and the plugin host is macOS-only, so there a track can
+only send MIDI Out.
 
-The most urgent need is **MIDI Out timing**: with no plugin host, it's the only
-way Stev makes a sound off macOS. The clock loop there is less precise than
-the macOS one, and on Windows the MIDI output wait follows the 15.6 ms system
-timer tick, which could mean up to ~15 ms of jitter per note.
-[`docs/260-porting.md`](docs/260-porting.md) lists everything that's macOS-only
-today, the priorities, how to measure timing before and after a fix, and a
-smoke test. Keep platform code behind `cfg(target_os = …)` and out of the
-shared code, so a port stays a port.
+Supporting them is not planned: the author would rather make music with Stev
+and improve it on macOS. A real port takes someone who wants it and will use
+it, and that someone is very welcome. It comes with two terms:
+
+- **Open an issue first**, saying which platform and step you're taking on.
+- **Stay to maintain it.** The author can't reproduce bugs on a platform they
+  don't use, so a platform without a maintainer stays untested, however much
+  of a port has landed.
+
+The first job is **measuring MIDI Out timing**
+([#6](https://github.com/stevmidi/stev/issues/6)): with no plugin host, it's the
+only way Stev makes a sound off macOS, and the timing work has only been
+measured on macOS. [`docs/260-porting.md`](docs/260-porting.md) lists
+everything that's macOS-only today, the priorities, how to measure timing, a
+smoke test and a suggested path in stages. Keep platform code behind
+`cfg(target_os = …)` and out of the shared code, so a port stays a port.
 
 ## Licensing
 

@@ -20,6 +20,10 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ## [Unreleased]
 
+### Changed
+
+- Linux and Windows support is off the roadmap. They still build in CI, and a port from someone who will use and maintain it is welcome (`CONTRIBUTING.md`, `docs/260-porting.md`).
+
 ## [0.14.0] - 2026-11-05
 
 ### Added

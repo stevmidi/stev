@@ -1,6 +1,6 @@
 # Porting to Linux and Windows
 
-macOS is the supported platform (`280` § Platforms). Linux and Windows build and pass the tests in CI on every push to `main`, but nobody has checked that they *play* correctly, and Stev is a timing-critical app. This file is for anyone who wants to change that: what is macOS-only today, what matters most off macOS, and how to measure it. Ports are welcome (`CONTRIBUTING.md`). The roadmap carries full support as a staged candidate (`280` § Linux and Windows support, staged); its stages follow § What matters most below.
+macOS is the supported platform (`280` § Platforms). Linux and Windows build and pass the tests in CI on every push to `main`, but nobody has checked that they *play* correctly, and Stev is a timing-critical app. The author doesn't plan to support them (`280` § Platforms), but ports are welcome (`CONTRIBUTING.md`). This file is for anyone who wants to take one on: what is macOS-only today, what matters most off macOS, how to measure it, a suggested path, and the terms (§ Rules for a port).
 
 ## What differs off macOS today
 
@@ -25,6 +25,15 @@ Everything not in the table is shared code and behaves the same everywhere: the 
 2. **A smoke test** (§ Smoke test), to find out what else is broken. It has never been run.
 3. **Plugin hosting.** The host's core is format-agnostic (`InstrumentMixer`, `InstrumentVoice`, the merged catalog; `130`). What's macOS-only is the platform glue: where plugins are found (CLAP's search paths differ per OS; VST3 bundles are macOS-shaped, `180`), how an editor window is parented (CLAP's GUI extension has X11 and Win32 APIs alongside Cocoa), and the audio-thread work (`170`). This is the large one: open an issue before starting.
 4. **The rest of the table**, as the smoke test finds them.
+
+## A suggested path
+
+Everything macOS has today, on Linux and Windows too, in stages that each stand on their own. It's a second and third platform, not a feature, and the ongoing cost matters more than the code. So a stage is promised to users only once it's done, and stopping after any stage leaves an honest state.
+
+1. **Timing: measure the fixes.** The timing probe, the precise `"midiout"` deadline wait, the absolute-deadline clock timer and best-effort thread priority are built and were measured on macOS (2026-10-14). What's left is § What's left to measure, and fixing what it shows ([issue #6](https://github.com/stevmidi/stev/issues/6)).
+2. **MIDI Out parity on Windows 11 and Ubuntu 24.04.** Run the smoke test (§ Smoke test) and fix what it finds: no virtual MIDI port on Windows (midir can't create one; at least document loopMIDI or Windows MIDI Services), quit with unsaved changes, `.mid` file drag, MIDI hot-plug, and the library and log folders. When this lands, Stev is a MIDI Out sequencer on all three, with plugins on macOS only, and the README and `280` § Platforms and § Not planned say so.
+3. **The plugin host, Windows first.** Windows has far more musicians and VST3 plugins. The host core is format-agnostic (`130`); what's needed is the platform glue: plugin search paths per OS, VST3 bundle layout (`180`), editor windows parented to Win32 (and X11 later), MMCSS as the workgroup join's counterpart (`170`), and expect another round of the GL-context clash with plugins that bring their own GL (NI, Qt). Linux CLAP/VST3 follows Windows; its plugin ecosystem is thin.
+4. **Packaging per OS** (an installer or archive per platform, as `archive/330-macos-app.md` does for macOS), only once stage 3 is solid.
 
 ## Timing
 
@@ -71,9 +80,22 @@ In this order, each measured with the probe:
   | time-constraint | 1000.1 µs / 1.005–1.017 ms | 4–7 / 11–18 µs | 62 / 107 µs |
 
   Idle, the clock gap is now p99 / max 1014 / 1038 µs (from 1186 / 1727), and recorder lateness p99 / max 27 / 31 µs. The audio-overrun run that ruled the policy out for the workers (`170` § Audio workgroup, the Serum 2 reference project under twelve `yes` processes) was rerun with it on and came out the same, so two more real-time threads, one spinning 10% of a core, don't compete with the audio callback measurably.
-- **Same change**: `000` (the clock and `"midiout"` rows of the thread table), `160`'s jitter claim, and this file. All three fixes are in; what's left of stage 1 is measuring Linux and Windows (`280` § MIDI Out timing has the machines and the baseline table).
+- **Same change**: `000` (the clock and `"midiout"` rows of the thread table), `160`'s jitter claim, and this file. All three fixes are in; what's left of stage 1 is measuring Linux and Windows (§ What's left to measure).
 
 **Out of scope**: driver-timestamped MIDI output (CoreMIDI timestamps, Windows MIDI Services, ALSA sequencer queues). That's a per-platform rewrite of the output path, and belongs with external sync, which isn't planned (`280` § Not planned).
+
+### What's left to measure
+
+- **The machines:** Windows 11 natively and Ubuntu 24.04 from a live USB stick on the same machine, so the two are compared on the same hardware. An old low-power laptop makes a good worst case: run it plugged in, on the *High performance* power plan, cooled between loaded runs; a first release build may need `-j 2` on 4 GB of RAM. On the live stick nothing persists across a reboot: `apt install build-essential pkg-config libasound2-dev git`, install rustup (the pinned toolchain installs itself), and clone the repo.
+- **Loopback hardware:** a USB MIDI interface with its Out plugged into its own In, on every machine.
+- **The baseline**, filled in from the runs:
+
+  | Machine | Load | Clock mean / p99 / max | `midiout` recorder p99 / max | Loopback p99 / max |
+  |---|---|---|---|---|
+  | Intel Mac (reference) | idle / loaded | measured, § The fixes | measured, § The fixes | virtual port only, § The fixes |
+  | Windows 11 | idle / loaded | | | |
+  | Ubuntu 24.04 (same machine) | idle / loaded | | | |
+  | Old laptop, Windows | idle / loaded | | | |
 
 ## Smoke test
 
@@ -90,6 +112,8 @@ An Ubuntu 24.04 live USB stick on a Windows machine covers both platforms on the
 
 ## Rules for a port
 
+- **Open an issue first**, and say which platform and stage you're taking on. The plugin host above all needs agreeing before work starts.
+- **Stay to maintain it.** A port needs someone who uses that platform, since the author doesn't and can't reproduce its bugs. A platform without a maintainer stays untested, however much of a port has landed.
 - **Keep the `cfg` boundary clean**: platform code lives behind `cfg(target_os = …)` in the platform modules, with no new platform assumptions in shared code, so a port stays a port and not an untangling job. CI on all three platforms enforces the compiling half.
 - **Check the other platforms before pushing**: `check`, `clippy --all-targets` and `doc` take `--target` (`080` § Agentic Editing has the commands, including the Linux-from-macOS pkg-config stub). Removing a caller can leave items dead on one platform only.
 - **Run the full build gate natively** on the platform you're porting to, tests included.

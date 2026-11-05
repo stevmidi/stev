@@ -20,7 +20,8 @@ Website: [stevmidi.com](https://stevmidi.com)
 
 > **Status:** 0.14.0. Developed and tested on macOS, with a prebuilt app from
 > 0.6.0 on ([Download](#download)). Linux and Windows build in CI and may work
-> (MIDI Out only, no plugin host), but are untested; ports welcome.
+> (MIDI Out only, no plugin host), but are untested. Supporting them is not
+> planned, but [ports are welcome](CONTRIBUTING.md#linux-and-windows).
 
 ## Download
 
@@ -201,6 +202,8 @@ the [roadmap](docs/280-roadmap.md):
   velocity
 - more than 16 tracks, track reordering, track groups
 - control-surface or DAW sync (Mackie Control and the like)
+- Linux and Windows support, unless someone takes on a
+  [port](CONTRIBUTING.md#linux-and-windows)
 - VST2, ever: only VST3 and newer formats
 
 Forks that take it somewhere else are welcome.
