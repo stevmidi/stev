@@ -19,9 +19,15 @@ What Stev may do next, and what it won't. It picks up where the release plan (`a
 
 Listed in priority order, highest first. The order is a priority, not a schedule; reorder it as priorities change.
 
+Day-to-day priorities don't come from this list. They come from using the app and from the [issues](https://github.com/stevmidi/stev/issues), bugs that get in the way of making music first. These candidates are the larger things for when that leaves room, and none of them outranks a bug that costs a take or loses work.
+
+### Apple Silicon, played by hand
+
+The macOS app ships a universal build, but the Apple Silicon slice has never been played by hand: the author's one machine is an Intel Mac, and CI (`macos-26`, Apple Silicon) only proves compile, lint, docs and unit tests. Real-time audio, plugin loading and editors, and the worker pool's core choice (`170`) are all unchecked there, and most Mac musicians are on Apple Silicon. With macOS the one supported platform, this is its largest blind spot. An hour on a borrowed machine, or a report from someone who has one, would settle most of it ([issue #5](https://github.com/stevmidi/stev/issues/5)). Do it before anything that puts Stev in front of a wider audience (§ A signed macOS app).
+
 ### A signed macOS app
 
-Level 1, an unsigned universal `Stev.app` in a zip attached to each release by CI, is built (`archive/330-macos-app.md`, 2026-10-25). Its first launch needs Gatekeeper's *Open Anyway* (README § Download), once per version: the approval belongs to one ad-hoc-signed build, so every update asks again (seen 0.6.0 → 0.7.0, 2026-10-26). The README gives `xattr -dr com.apple.quarantine` as the Terminal shortcut. The Apple Silicon slice is untested: the author's one machine is an Intel Mac, so an Apple Silicon bug report is the first signal to act on. The levels left build on it:
+Level 1, an unsigned universal `Stev.app` in a zip attached to each release by CI, is built (`archive/330-macos-app.md`, 2026-10-25). Its first launch needs Gatekeeper's *Open Anyway* (README § Download), once per version: the approval belongs to one ad-hoc-signed build, so every update asks again (seen 0.6.0 → 0.7.0, 2026-10-26). The README gives `xattr -dr com.apple.quarantine` as the Terminal shortcut. The levels left build on it:
 
 2. **A signed and notarized `.app` / `.dmg`.** Opens without a warning. Needs the Apple Developer Program ($99/year) and signing + notarization secrets in the release workflow. Notarization requires the hardened runtime, which refuses to load code signed by anyone else. The app therefore needs the `com.apple.security.cs.disable-library-validation` entitlement, or no CLAP/VST3 plugin will load (every DAW ships with it).
 
@@ -63,7 +69,7 @@ Mirrored in the README's *Not planned* list, so nobody expects these. Some may c
 - detecting the meter from a take: Enter fits the tempo in the project's meter and the meter chip sets it. Probed 2026-10-27 over the pinned takes and dropped. A free noodle doesn't reveal its meter: its phrase ends on a rest of unknown length, so 10–12 played eighths fit two bars of 3/4 as well as two of 4/4, and the accents were at noise level. A cleanly repeating riff does (one 3/4 test take repeated its rhythm exactly every three beats), but its whole-bar length fits 4/4 just as well, and a three-beat riff can be meant over 4/4. Too narrow and too subjective to save one click on the chip; Ableton's Capture doesn't detect the meter either
 - audio tracks and audio recording
 - a built-in sampler or other built-in instrument: sampler and instrument plugins cover it, loaded through the plugin host (`130`)
-- track automation lanes and drawing controller data: the piano roll shows the clip's pitch bend, mod wheel and knob CCs in a lane (`380`, `390`) that only clears a span or the whole controller; no lane draws values and no automation lives on the arranger's tracks
+- track automation lanes and drawing controller data: the piano roll shows the clip's pitch bend, mod wheel and parameter moves in a lane (`380`, `400`) that only clears a span or the whole lane; no lane draws values and no automation lives on the arranger's tracks
 - mixing: built-in EQ, compression or other effects, effect plugins, sends, a mixer panel (Stev arranges, a DAW mixes: § Principle; the hand-off is a stem export)
 - MIDI clock / Ableton Link / external sync
 - notation
