@@ -849,6 +849,7 @@ pub(crate) enum InputEvent {
     },
     /// The plugin on `track_idx` loaded a preset (`060-persistence.md`
     /// § Unsaved changes). Not undoable.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     PluginStateChanged {
         /// The plugin's track.
         track_idx: usize,
