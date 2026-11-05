@@ -16,7 +16,7 @@ anywhere, it can drive a DAW or external gear over MIDI.
 
 Website: [stevmidi.com](https://stevmidi.com)
 
-![Stev: six tracks of captured clips in the arranger, with the clip panel open on a mallet part](docs/images/arranger.png)
+![Stev: tracks of captured clips in the arranger, with the clip panel open on a synth part and its mod wheel curve](docs/images/arranger.png)
 
 > **Status:** 0.13.0. Developed and tested on macOS, with a prebuilt app from
 > 0.6.0 on ([Download](#download)). Linux and Windows build in CI and may work

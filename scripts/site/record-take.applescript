@@ -20,7 +20,7 @@
 # @raycast.description Places the stev window and records it for 30 s, for the website's capture loops.
 
 # The window's frame in points, fixed so every take records the same pixels.
-# Smaller than the screenshot's 1900×1050 on purpose: the app draws its UI at
+# Smaller than the screenshot's 1900×1260 on purpose: the app draws its UI at
 # a fixed size, so a smaller window keeps the text readable in a ~600 px
 # table cell. Record with the browser panel closed.
 property winX : 100
