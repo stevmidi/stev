@@ -10,7 +10,7 @@ receivers dropped.
 
 The module is split so that **nothing above the format submodule names a plugin
 format**. The core owns the audio path, the scheduler, the transport, the
-catalog, the editor window and the key guard; a format supplies two traits and
+catalog, the editor window and its key forwarding; a format supplies two traits and
 one `load` function.
 
 | Trait | Thread | Implemented by |
@@ -33,7 +33,7 @@ walk needs.
 
 Both `clap/` and `vst3/` are fully hosted; see `180-vst3-host.md` for what VST3
 does differently. Neither format required a change
-to the mixer, and the VST3 editor reuses `window.rs` and `key_guard.rs`
+to the mixer, and the VST3 editor reuses `window.rs` and `editor_keys.rs`
 unchanged — everything in this file's layer has held across both formats.
 
 **Design note - one mixer, not one per format.** A second `AudioSource` per
@@ -343,8 +343,8 @@ methods take a track's position and look the slot up in its `tracks` mirror
 | `export_writer.rs` | The `"audio-export"` thread: `start_export_writer`, `ExportWriter::write` (one `WavWriter` per stem plus `Mix.wav`, drained from the rings until the mixer has ended that export's id, then `SequencerCommand::AudioExportWritten`), progress into `AudioExportAtomics::written_ms`, `stop_reason` (a stream error, or 3 s with nothing from the mixer). A failed file stops being written but its ring is still drained. It never removes files: a cancelled or stopped run's go in the handler (`event_handlers/audio_export.rs`). Unit-tested: draining across the ring's wrap, a failed write, a written export on disk, an abandoned export's leftovers, `stop_reason`. |
 | `ui_wake.rs` | `UiWake` - wakes the reactive UI from the audio thread, which can't take `request_repaint`'s lock: a flag and an `unpark` of the `"plugin-host"` thread, which makes the call. Unit-tested. |
 | `shutdown.rs` | `HostShutdown` - app-exit coordination (`requested` + `in_process`), one instance shared by the mixer and the reclaim thread. Unit-tested. |
-| `window.rs` | `PluginWindow` - a minimal native `NSWindow` parent for an embedded plugin GUI; `show` (`orderFront:`), `is_visible`, `frame_top_left` / a `top_left` argument to `new` (position carried across a close/reopen), `set_content_size` (anchored at the top-left corner), `take_closed` (the title-bar close button, refused by the `CloseInterceptor` delegate so the editor can tear down first, or the window off screen by any other route while Stev is not hidden); registers/deregisters itself with `key_guard` on construction/`Drop`. It is closed by `Drop`, not hidden - there is no `hide`. Format-agnostic. |
-| `key_guard.rs` | How keys get from an embedded editor to Stev: `forward_unused_key` (from `window.rs`'s `keyDown:`) and an app-wide `NSEvent` local monitor for the project chords both queue a raw `KeyPressed`, read by `take_editor_keys`; `install_key_guard`, `register_window` / `unregister_window`. See the module doc and the caveat below. Format-agnostic. |
+| `window.rs` | `PluginWindow` - a minimal native `NSWindow` parent for an embedded plugin GUI; `show` (`orderFront:`), `is_visible`, `frame_top_left` / a `top_left` argument to `new` (position carried across a close/reopen), `set_content_size` (anchored at the top-left corner), `take_closed` (the title-bar close button, refused by the `CloseInterceptor` delegate so the editor can tear down first, or the window off screen by any other route while Stev is not hidden); an `EditorWindow`, whose `keyDown:` hands on what the plugin didn't use (`editor_keys`). It is closed by `Drop`, not hidden - there is no `hide`. Format-agnostic. |
+| `editor_keys.rs` | How keys get from an embedded editor to Stev: `forward_unused_key` (from `window.rs`'s `keyDown:`) and an app-wide `NSEvent` local monitor for the project chords both queue a raw `KeyPressed`, read by `take_editor_keys`; `install_editor_keys`. See the module doc and the caveat below. Format-agnostic. |
 
 ### `clap/` - the CLAP format
 
@@ -841,7 +841,7 @@ positions), persisted base64-encoded in the `.stev` and re-applied on load:
   imperceptible; if the app is fully idle (visible editor, plugin requesting no
   timer) the drop-to-normal on switching *away* can also lag a frame. Not worth
   a continuous repaint or an activation observer to close.
-- **Keys reach Stev from an embedded editor by two routes** (`key_guard.rs`),
+- **Keys reach Stev from an embedded editor by two routes** (`editor_keys.rs`),
   because the main window hears nothing once an editor has OS keyboard focus.
   This is what Ableton does, seen from outside: it keeps its menu chords, and
   a key mapped to a command fires from a plugin unless a text field there is
@@ -861,18 +861,18 @@ positions), persisted base64-encoded in the `.stev` and re-applied on load:
   - **The project chords go ahead of the plugin.** `⌘S`, `⇧⌘S` and `⌘N`
     (`PROJECT_CHORDS`) are Stev's whatever has focus, as a DAW's menu shortcuts
     are. Stev has no File menu, so an app-wide `NSEvent` local monitor takes
-    them before AppKit routes them, only while the key window is one of our
-    own tracked editor windows.
+    them before AppKit routes them, only while the key window is an
+    `EditorWindow`.
 
   Either way the key joins the frame's events in
   `Display::handle_input_events`, so dialogs, text fields, overlays and the
   keymap treat it as one typed in the main window. Three exceptions: an OS
-  repeat is dropped, `⌘←`/`→` is dropped (the nudge ends on ⌘'s release, which
-  the main window can't see), and a note key of the computer keyboard while
-  it's on is dropped (it plays from the main window only, and must not fire
-  the command under it). Does **not** apply to a floating plugin GUI (rare —
-  most plugins don't support it): it owns its own native window, invisible to
-  this registry.
+  repeat is dropped, the arranger's `⌘←`/`→` is dropped (the marquee nudge ends
+  on ⌘'s release, which the main window can't see), and a note key of the
+  computer keyboard while it's on is dropped (it plays from the main window
+  only, and must not fire the command under it; `Display::drops_editor_key`).
+  Does **not** apply to a floating plugin GUI (rare — most plugins don't
+  support it): it owns its own native window, not an `EditorWindow`.
 - **Clip event latency is a constant one buffer** (`SCHEDULE_DELAY_FRAMES` in
   `core/audio/mod.rs` = 256 frames ≈ 5.3 ms at 48 kHz, matching the engine's requested
   `DESIRED_BUFFER_FRAMES`). Clip

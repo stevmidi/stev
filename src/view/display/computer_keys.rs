@@ -8,12 +8,8 @@
 
 use egui::Context;
 
-#[cfg(target_os = "macos")]
-use crate::core::input_event::InputEvent;
 use crate::core::midi::message::Midi3;
 use crate::core::time::monotonic_nanos;
-#[cfg(target_os = "macos")]
-use crate::view::computer_keyboard::is_note_key_press;
 
 use super::Display;
 
@@ -33,17 +29,6 @@ impl Display {
     /// every key (`keyboard_taken`).
     pub(super) fn computer_keys_live(&self, ctx: &Context) -> bool {
         self.computer_keyboard.enabled() && !self.keyboard_taken() && ctx.input(|i| i.focused)
-    }
-
-    /// Whether `event` is a note key of the computer keyboard while it's on.
-    /// One pressed in a plugin editor plays nothing — the keyboard plays from
-    /// the main window — but must not fire the command under it either.
-    #[cfg(target_os = "macos")]
-    pub(super) fn is_computer_note_key(&self, event: &InputEvent) -> bool {
-        let InputEvent::KeyPressed { key, modifiers } = *event else {
-            return false;
-        };
-        self.computer_keyboard.enabled() && is_note_key_press(key, modifiers)
     }
 
     /// Ends every note the keys hold — they stopped playing (turned off, or a

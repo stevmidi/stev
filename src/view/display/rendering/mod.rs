@@ -34,7 +34,6 @@ use crate::core::agent::remove_socket;
 use crate::core::audio::meter::{ChannelLevel, amplitude_db};
 use crate::core::config::MAX_TRACKS;
 #[cfg(target_os = "macos")]
-#[cfg(target_os = "macos")]
 use crate::core::plugin_host::exit_without_destructors;
 use crate::core::time::monotonic_nanos;
 
@@ -1284,12 +1283,9 @@ impl eframe::App for Display {
         let ctx = &ctx;
         self.measure_settings_tabs(ctx);
 
-        // A raw key press from outside the poller (the parked controller
-        // thread) is resolved through the keymap here, as the poller's are in
-        // `forward_input_event`. What that forwarded is already resolved: a
-        // `KeyPressed` it sent on is one the keymap doesn't bind.
+        // Already resolved by `forward_input_event`: a `KeyPressed` here is
+        // one the keymap doesn't bind.
         while let Ok(event) = self.input_event_rx.try_recv() {
-            let event = self.resolve_action(event);
             self.event_handlers.handle_input_event(&event);
         }
 

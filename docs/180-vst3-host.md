@@ -4,7 +4,7 @@
 one of the two formats behind the shared `InstrumentVoice` / `InstrumentEditor`
 traits described in `130-plugin-host.md`. **Read `130` first**: everything about
 the audio path, the event scheduler, the mixer, the transport snapshot, the
-editor window and the key guard is shared and lives there. This file is only
+editor window and its key forwarding are shared and lives there. This file is only
 about what VST3 does differently.
 
 **VST3 and newer only — never VST2.** The VST2 SDK is no longer licensed by Steinberg and can't be redistributed under the project's `MIT OR Apache-2.0`, so no VST2 (or older) hosting, headers or bindings enter the repo. Using the "VST" name follows Steinberg's trademark guidelines; see `080` § Licensing.
@@ -371,7 +371,7 @@ A VST3 editor is an `IPlugView` the **edit controller** creates on demand. The
 window it lives in is the same
 [`PluginWindow`](crate::core::plugin_host::window) the CLAP host embeds into, so
 both formats share the window plumbing, the remembered position, and the
-key forwarding (`key_guard.rs`) — `PluginWindow::new` registers itself,
+key forwarding (`editor_keys.rs`) — `PluginWindow::new` registers itself,
 so that came for free.
 
 The open sequence, in the order the spec requires:

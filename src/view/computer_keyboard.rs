@@ -106,7 +106,6 @@ pub(crate) fn takes_key_event(
 }
 
 /// Whether a press of `key` with `modifiers` is one the keyboard would take.
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) fn is_note_key_press(key: Key, modifiers: KeyModifiers) -> bool {
     key_role(key).is_some() && plays_with(modifiers)
 }
@@ -130,7 +129,7 @@ pub(crate) fn shadows(chord: Chord) -> bool {
         shift: chord.shift,
         ctrl: chord.ctrl,
     };
-    key_role(chord.key).is_some() && plays_with(modifiers)
+    is_note_key_press(chord.key, modifiers)
 }
 
 /// The keyboard's state: on or off, where it sits, how hard it plays, and

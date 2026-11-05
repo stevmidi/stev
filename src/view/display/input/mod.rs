@@ -9,12 +9,14 @@
 use egui::Key;
 
 use crate::core::config::{TRACK_VOLUME_DB_DEFAULT, ZOOM_KEY_STEP};
-use crate::core::input_event::{KeyModifiers, is_pane_focus_key};
+use crate::core::input_event::{KeyModifiers, is_marquee_nudge_key, is_pane_focus_key};
 use crate::core::keymap::{Action, Chord, NEW_PROJECT, SAVE, SAVE_AS};
 #[cfg(target_os = "macos")]
 use crate::core::plugin_host::take_editor_keys;
 use crate::core::project::{ProjectAction, clip_path};
 use crate::core::time::PPQN;
+#[cfg(target_os = "macos")]
+use crate::view::computer_keyboard::is_note_key_press;
 
 mod gestures;
 mod knob_focus;
@@ -479,7 +481,7 @@ impl Display {
         events.extend(
             take_editor_keys()
                 .into_iter()
-                .filter(|event| !self.is_computer_note_key(event)),
+                .filter(|event| !self.drops_editor_key(event)),
         );
         // Nothing acts while a project being opened loads its plugins — not
         // even the project chords ahead of the overlay below: the open
@@ -536,6 +538,23 @@ impl Display {
             || self.tempo_chip.editing()
             || self.meter_chip.editing()
             || self.overlay.is_some()
+    }
+
+    /// Whether a key from a plugin editor stops here, the two that need what
+    /// the editor can't give, unless something ahead of the main dispatch
+    /// takes every key: the arranger's marquee nudge ends on ⌘'s release,
+    /// which this window can't see, and a note key of the computer keyboard
+    /// while it's on plays from this window only, and must not fire the
+    /// command under it.
+    #[cfg(target_os = "macos")]
+    fn drops_editor_key(&self, event: &InputEvent) -> bool {
+        let InputEvent::KeyPressed { key, modifiers } = *event else {
+            return false;
+        };
+        !self.keyboard_taken()
+            && ((self.computer_keyboard.enabled() && is_note_key_press(key, modifiers))
+                || (is_marquee_nudge_key(key, modifiers)
+                    && self.view_state() == ViewState::Arranger))
     }
 
     /// Whether a modal — an overlay or a project dialog — is up. It takes
@@ -1156,13 +1175,9 @@ impl Display {
             // modifier and is reserved for cursor navigation. Only the exact
             // chord arms a drag — a stray ⇧ or ⌥ on top refuses rather than
             // starting a destructive gesture by accident.
-            InputEvent::KeyPressed {
-                key: key @ (Key::ArrowLeft | Key::ArrowRight),
-                modifiers,
-            } if modifiers.command
-                && !modifiers.shift
-                && !modifiers.alt
-                && self.view_state() == ViewState::Arranger =>
+            InputEvent::KeyPressed { key, modifiers }
+                if is_marquee_nudge_key(key, modifiers)
+                    && self.view_state() == ViewState::Arranger =>
             {
                 self.nudge_clip_move_drag(Self::horizontal_direction(key));
                 true

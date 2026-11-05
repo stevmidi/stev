@@ -34,7 +34,7 @@ use crate::core::{
 use crate::core::midi::port::anchor_coremidi_to_main_thread;
 #[cfg(target_os = "macos")]
 use crate::core::plugin_host::{
-    install_key_guard, run_if_scan_child, start_plugin_catalog_scan, start_plugin_host,
+    install_editor_keys, run_if_scan_child, start_plugin_catalog_scan, start_plugin_host,
 };
 
 #[cfg(target_os = "macos")]
@@ -342,9 +342,9 @@ fn main() {
             display.attach_main_gl_context();
             // Must run after AppKit/NSApplication is up, which this creation
             // closure guarantees — installing it any earlier is unsafe. See
-            // `core::plugin_host::key_guard`.
+            // `core::plugin_host::editor_keys`.
             #[cfg(target_os = "macos")]
-            install_key_guard(repaint_ctx.clone());
+            install_editor_keys(repaint_ctx.clone());
             // ⌘Q closes the window rather than terminating, so quitting goes
             // through the unsaved-changes check, and About opens the About
             // tab (`view::appkit`).

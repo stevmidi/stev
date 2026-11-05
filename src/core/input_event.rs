@@ -932,11 +932,40 @@ pub(crate) fn is_pane_focus_key(key: Key, modifiers: KeyModifiers) -> bool {
     key == Key::Tab && !modifiers.shift && !modifiers.command && !modifiers.alt && !modifiers.ctrl
 }
 
+/// `⌘/Ctrl+←`/`→` exactly: the arranger's marquee nudge. A stray ⇧ or ⌥ on
+/// top refuses, rather than starting a destructive gesture by accident.
+pub(crate) fn is_marquee_nudge_key(key: Key, modifiers: KeyModifiers) -> bool {
+    matches!(key, Key::ArrowLeft | Key::ArrowRight)
+        && modifiers.command
+        && !modifiers.shift
+        && !modifiers.alt
+}
+
 #[cfg(test)]
 mod tests {
     use egui::Key;
 
-    use super::{KeyModifiers, TimeSelectionRect, is_pane_focus_key};
+    use super::{KeyModifiers, TimeSelectionRect, is_marquee_nudge_key, is_pane_focus_key};
+
+    #[test]
+    fn only_the_exact_chord_is_the_marquee_nudge() {
+        let command = KeyModifiers {
+            command: true,
+            ..KeyModifiers::default()
+        };
+        assert!(is_marquee_nudge_key(Key::ArrowLeft, command));
+        assert!(is_marquee_nudge_key(Key::ArrowRight, command));
+        assert!(!is_marquee_nudge_key(Key::ArrowUp, command));
+        assert!(!is_marquee_nudge_key(
+            Key::ArrowLeft,
+            KeyModifiers::default()
+        ));
+        let shifted = KeyModifiers {
+            shift: true,
+            ..command
+        };
+        assert!(!is_marquee_nudge_key(Key::ArrowLeft, shifted));
+    }
 
     fn rect(start: i32, end: i32) -> TimeSelectionRect {
         TimeSelectionRect {

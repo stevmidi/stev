@@ -17,8 +17,8 @@
 //! - [`transport`] — the transport atomics and the per-block snapshot voices
 //!   are handed.
 //! - [`catalog`] — the merged installed-plugin list the Track modal offers.
-//! - [`window`] / [`key_guard`] — the native editor window and the app-wide key
-//!   reservation that survives a plugin taking OS keyboard focus.
+//! - [`window`] / [`editor_keys`] — the native editor window and how keys reach
+//!   Stev while a plugin has OS keyboard focus.
 //!
 //! [`clap`] and [`vst3`] are the formats implemented today. VST3 additionally
 //! needs [`run_if_scan_child`] called at the very top of `main` — its catalog
@@ -52,9 +52,9 @@ mod buffers;
 pub(crate) mod catalog;
 mod clap;
 pub(crate) mod editor;
+mod editor_keys;
 mod export;
 mod export_writer;
-mod key_guard;
 mod meter;
 mod mixer;
 mod shutdown;
@@ -90,7 +90,7 @@ use crate::core::shared_atomics::SharedAtomics;
 
 pub(crate) use catalog::scan_catalog;
 pub(crate) use editor::InstrumentEditor;
-pub(crate) use key_guard::{install_key_guard, take_editor_keys};
+pub(crate) use editor_keys::{install_editor_keys, take_editor_keys};
 pub(crate) use mixer::PluginHostCommand;
 pub(crate) use shutdown::{HostShutdown, exit_without_destructors};
 pub(crate) use vst3::child::run_if_scan_child;

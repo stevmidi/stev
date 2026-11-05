@@ -271,7 +271,7 @@ pub(crate) const SAVE_AS: Chord = Chord::cmd(Key::S).shift();
 /// `⌘/Ctrl+N`: a new project. Fixed, like [`SAVE`].
 pub(crate) const NEW_PROJECT: Chord = Chord::cmd(Key::N);
 /// The fixed project chords, which also go ahead of a plugin editor
-/// (`plugin_host/key_guard.rs`).
+/// (`plugin_host/editor_keys.rs`).
 pub(crate) const PROJECT_CHORDS: [Chord; 3] = [SAVE, SAVE_AS, NEW_PROJECT];
 
 /// Whether `key` is a punctuation key, whose logical identity already

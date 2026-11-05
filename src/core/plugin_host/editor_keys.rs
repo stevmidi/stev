@@ -15,10 +15,9 @@
 //! - **The project chords don't wait for the plugin.** `⌘S`, `⇧⌘S` and `⌘N`
 //!   are Stev's whatever has focus, as a DAW's menu shortcuts are. Stev has no
 //!   File menu, so a local [`NSEvent`] monitor takes them before AppKit routes
-//!   them ([`handle_key_event`]), and only while the key window is one of our
-//!   own editor windows ([`register_window`] / [`unregister_window`], called
-//!   by [`super::window::PluginWindow`]'s constructor/`Drop`) — never the main
-//!   window, which reads them through egui as usual.
+//!   them ([`handle_key_event`]), and only while the key window is an
+//!   [`EditorWindow`] — never the main window, which reads them through egui
+//!   as usual.
 //!
 //! Either way the key is queued here as a raw `KeyPressed` with its real
 //! modifiers, and `Display::handle_input_events` adds [`take_editor_keys`] to
@@ -28,7 +27,7 @@
 //!
 //! **Only covers embedded editors.** A floating CLAP GUI (rare — see
 //! `130-plugin-host.md`; most plugins don't support it) owns its own native
-//! window, invisible to this registry, so neither route reaches it.
+//! window, not an [`EditorWindow`], so neither route reaches it.
 
 use std::cell::RefCell;
 use std::ptr::NonNull;
@@ -37,20 +36,17 @@ use std::sync::{Arc, OnceLock};
 use block2::RcBlock;
 use egui::Key;
 use log::warn;
-use objc2::MainThreadMarker;
 use objc2::rc::Retained;
-use objc2::runtime::AnyObject;
+use objc2::runtime::{AnyObject, NSObjectProtocol};
+use objc2::{ClassType, MainThreadMarker};
 use objc2_app_kit::{NSEvent, NSEventMask, NSEventModifierFlags};
 
 use crate::core::input_event::{InputEvent, KeyModifiers};
 use crate::core::keymap::{Chord, PROJECT_CHORDS};
 
+use super::window::EditorWindow;
+
 thread_local! {
-    /// Raw `NSWindow*` pointers (as `usize`) of every currently-open embedded
-    /// plugin editor window. Always reflects exactly the windows the app
-    /// currently owns — main-thread-only, like everything else here, so a
-    /// plain `RefCell` (no `Send`/`Sync` needed) is enough.
-    static EDITOR_WINDOWS: RefCell<Vec<usize>> = const { RefCell::new(Vec::new()) };
     /// Key presses from editor windows, waiting for [`take_editor_keys`].
     static EDITOR_KEYS: RefCell<Vec<InputEvent>> = const { RefCell::new(Vec::new()) };
     /// Wakes the eframe render loop after a key is queued — see the note in
@@ -69,22 +65,6 @@ struct MonitorHandle {
     _token: Retained<AnyObject>,
     /// The monitor's handler block.
     _block: RcBlock<dyn Fn(NonNull<NSEvent>) -> *mut NSEvent>,
-}
-
-/// Registers `window` (an `NSWindow*` as `usize`) as one of our own embedded
-/// plugin editor windows.
-pub(super) fn register_window(window: usize) {
-    EDITOR_WINDOWS.with(|w| w.borrow_mut().push(window));
-}
-
-/// Reverses [`register_window`].
-pub(super) fn unregister_window(window: usize) {
-    EDITOR_WINDOWS.with(|w| w.borrow_mut().retain(|&p| p != window));
-}
-
-/// Whether `window` is one of our registered embedded editor windows.
-fn is_editor_window(window: usize) -> bool {
-    EDITOR_WINDOWS.with(|w| w.borrow().contains(&window))
 }
 
 /// Queues a key press for the next frame's input events.
@@ -172,13 +152,6 @@ fn press_of(event: &NSEvent) -> Option<(Key, KeyModifiers)> {
     Some((key, modifiers))
 }
 
-/// Whether a press would arm the `⌘/Ctrl+←`/`→` marquee nudge. It ends when
-/// ⌘ is released, which the main window can't see while an editor has the
-/// keyboard, so it must not start from one.
-fn arms_marquee_nudge(key: Key, modifiers: KeyModifiers) -> bool {
-    modifiers.command && matches!(key, Key::ArrowLeft | Key::ArrowRight)
-}
-
 /// Takes a key the plugin passed up the responder chain, from the editor
 /// window's `keyDown:`. Returns `false` for a key Stev can't name, to go on
 /// to `NSWindow`. An OS repeat is taken and dropped: nothing in an editor
@@ -187,15 +160,15 @@ pub(super) fn forward_unused_key(event: &NSEvent) -> bool {
     let Some((key, modifiers)) = press_of(event) else {
         return false;
     };
-    if !event.isARepeat() && !arms_marquee_nudge(key, modifiers) {
+    if !event.isARepeat() {
         queue_key(key, modifiers);
     }
     true
 }
 
-/// Installs the app-wide key guard. Call once, from the `eframe::run_native`
+/// Installs the app-wide project-chord monitor. Call once, from the `eframe::run_native`
 /// creation closure (after AppKit/`NSApplication` is up) — never before.
-pub(crate) fn install_key_guard(repaint_ctx: Arc<OnceLock<egui::Context>>) {
+pub(crate) fn install_editor_keys(repaint_ctx: Arc<OnceLock<egui::Context>>) {
     REPAINT_CTX.with(|ctx| *ctx.borrow_mut() = Some(repaint_ctx));
 
     let block = RcBlock::new(handle_key_event);
@@ -214,8 +187,24 @@ pub(crate) fn install_key_guard(repaint_ctx: Arc<OnceLock<egui::Context>>) {
                 _block: block,
             })
         }),
-        None => warn!("plugin host: failed to install the key guard monitor"),
+        None => warn!("plugin host: failed to install the project-chord monitor"),
     }
+}
+
+/// The key and modifiers of `event` if it's a project chord headed for an
+/// editor window.
+fn project_chord_in_editor(event: &NSEvent) -> Option<(Key, KeyModifiers)> {
+    if event.isARepeat() {
+        return None;
+    }
+    let window = event.window(MainThreadMarker::new()?)?;
+    if !window.isKindOfClass(EditorWindow::class()) {
+        return None;
+    }
+    let (key, modifiers) = press_of(event)?;
+    PROJECT_CHORDS
+        .contains(&Chord::from_press(key, modifiers))
+        .then_some((key, modifiers))
 }
 
 /// The monitor's handler: swallows a project chord headed for an editor
@@ -223,34 +212,19 @@ pub(crate) fn install_key_guard(repaint_ctx: Arc<OnceLock<egui::Context>>) {
 fn handle_key_event(event: NonNull<NSEvent>) -> *mut NSEvent {
     let raw = event.as_ptr();
     // SAFETY: AppKit guarantees a valid event for the duration of this call.
-    let event = unsafe { event.as_ref() };
-
-    if event.isARepeat() {
-        return raw;
+    match project_chord_in_editor(unsafe { event.as_ref() }) {
+        Some((key, modifiers)) => {
+            queue_key(key, modifiers);
+            std::ptr::null_mut()
+        }
+        None => raw,
     }
-    let Some(mtm) = MainThreadMarker::new() else {
-        return raw;
-    };
-    let Some(window) = event.window(mtm) else {
-        return raw;
-    };
-    if !is_editor_window(Retained::as_ptr(&window) as usize) {
-        return raw;
-    }
-    let Some((key, modifiers)) = press_of(event) else {
-        return raw;
-    };
-    if !PROJECT_CHORDS.contains(&Chord::from_press(key, modifiers)) {
-        return raw;
-    }
-    queue_key(key, modifiers);
-    std::ptr::null_mut()
 }
 
 /// Requests a frame from the eframe render loop, for work queued from outside
 /// its own input pipeline — an intercepted key here, a close-button click on
 /// an editor window (`window::CloseInterceptor`). A no-op until
-/// [`install_key_guard`] runs.
+/// [`install_editor_keys`] runs.
 pub(super) fn wake_ui() {
     REPAINT_CTX.with(|ctx| {
         if let Some(ctx) = ctx.borrow().as_ref().and_then(|c| c.get()) {
@@ -310,22 +284,10 @@ mod tests {
         assert_eq!(key_of_press(50, None, None), None);
     }
 
-    #[test]
-    fn only_the_command_arrows_arm_the_marquee_nudge() {
-        let command = KeyModifiers {
-            command: true,
-            ..KeyModifiers::default()
-        };
-        assert!(arms_marquee_nudge(Key::ArrowLeft, command));
-        assert!(arms_marquee_nudge(Key::ArrowRight, command));
-        assert!(!arms_marquee_nudge(Key::ArrowUp, command));
-        assert!(!arms_marquee_nudge(Key::ArrowLeft, KeyModifiers::default()));
-    }
-
     /// Shift+V and a bare `s` belong to the plugin: only the project chords
     /// go ahead of it.
     #[test]
-    fn the_monitor_takes_only_the_project_chords() {
+    fn shift_v_and_a_bare_s_are_not_project_chords() {
         let press = |key, shift, command| {
             Chord::from_press(
                 key,

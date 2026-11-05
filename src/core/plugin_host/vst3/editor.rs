@@ -7,7 +7,7 @@
 //! again on close. The window itself is the same
 //! [`PluginWindow`](crate::core::plugin_host::window) the CLAP host embeds
 //! into, so the two formats share the window plumbing, the remembered position
-//! and the app-wide key guard.
+//! and the key forwarding.
 //!
 //! The shapes differ where the APIs do:
 //!

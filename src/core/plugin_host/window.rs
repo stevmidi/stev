@@ -42,7 +42,7 @@ use objc2_app_kit::{
 };
 use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
 
-use super::key_guard;
+use super::editor_keys;
 
 /// Editor content size for a plugin that does not report one — the same for
 /// every format, so an unreporting plugin opens the same size whichever it is.
@@ -121,7 +121,7 @@ define_class!(
             self.ivars().set(true);
             // The click arrived in the editor window, which eframe never
             // hears about, so nothing else would run the pump that acts on it.
-            key_guard::wake_ui();
+            editor_keys::wake_ui();
             false
         }
     }
@@ -139,20 +139,20 @@ impl CloseInterceptor {
 define_class!(
     /// The editor window: a plain `NSWindow` that is also the end of the
     /// responder chain for the plugin's views, so a key the plugin didn't use
-    /// goes to Stev instead of the system beep (`key_guard`).
+    /// goes to Stev instead of the system beep (`editor_keys`).
     // SAFETY: `NSWindow` has no subclassing requirements beyond those
     // `PluginWindow::new` meets (`setReleasedWhenClosed(false)`), and this
     // class implements no `Drop`.
     #[unsafe(super(NSWindow))]
     #[thread_kind = MainThreadOnly]
     #[name = "StevPluginEditorWindow"]
-    struct EditorWindow;
+    pub(super) struct EditorWindow;
 
     impl EditorWindow {
         /// Hands on a key no view in the window consumed.
         #[unsafe(method(keyDown:))]
         fn key_down(&self, event: &NSEvent) {
-            if !key_guard::forward_unused_key(event) {
+            if !editor_keys::forward_unused_key(event) {
                 // SAFETY: `NSResponder`'s `keyDown:`, with the event we were
                 // given.
                 unsafe { msg_send![super(self), keyDown: event] }
@@ -216,11 +216,6 @@ impl PluginWindow {
         unsafe { window.setReleasedWhenClosed(false) };
         let close_interceptor = CloseInterceptor::new(mtm);
         window.setDelegate(Some(ProtocolObject::from_ref(&*close_interceptor)));
-
-        // Registers this window with the key guard (see `key_guard`), so the
-        // project chords stay the app's even once the user clicks into this
-        // window and it takes OS keyboard focus.
-        key_guard::register_window(Retained::as_ptr(&window) as usize);
 
         Some(Self {
             window,
@@ -311,7 +306,6 @@ impl PluginWindow {
 
 impl Drop for PluginWindow {
     fn drop(&mut self) {
-        key_guard::unregister_window(Retained::as_ptr(&self.window) as usize);
         self.window.setDelegate(None);
         self.window.close();
     }
