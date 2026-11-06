@@ -6,9 +6,10 @@ use std::path::Path;
 use std::sync::{Arc, OnceLock};
 
 use clack_extensions::audio_ports::{AudioPortInfoBuffer, PluginAudioPorts};
+use clack_extensions::note_ports::{NoteDialect, NotePortInfoBuffer, PluginNotePorts};
 use clack_extensions::params::{ParamInfoBuffer, ParamInfoFlags};
 use clack_host::prelude::*;
-use log::{debug, warn};
+use log::{debug, info, warn};
 
 use crate::core::plugin_host::buffers::AudioIoLayout;
 use crate::core::plugin_host::catalog::available_bundles_hint;
@@ -46,6 +47,33 @@ fn port_channel_counts(
         }
     }
     out
+}
+
+/// Whether the plugin takes native note events on its first note input, the
+/// port Stev plays into. Logs the dialects every input declares (both calls are
+/// `[main-thread]`). A plugin without the `note-ports` extension gets raw MIDI.
+fn accepts_note_events(instance: &mut PluginInstance<StevClapHost>, name: &str) -> bool {
+    let plugin = instance.plugin_handle();
+    let Some(ports) = plugin.get_extension::<PluginNotePorts>() else {
+        info!("plugin host: CLAP '{name}' has no note-ports extension");
+        return false;
+    };
+    let count = ports.count(&plugin, true);
+    info!("plugin host: CLAP '{name}' has {count} note inputs");
+    let mut buffer = NotePortInfoBuffer::new();
+    let mut accepts = false;
+    for i in 0..count {
+        if let Some(port) = ports.get(&plugin, i, true, &mut buffer) {
+            info!(
+                "plugin host: CLAP '{name}' note input {i} '{}': {:?}, prefers {:?}",
+                String::from_utf8_lossy(port.name),
+                port.supported_dialects,
+                port.preferred_dialect
+            );
+            accepts |= i == 0 && port.supported_dialects.supports(NoteDialect::Clap);
+        }
+    }
+    accepts
 }
 
 /// Reads every parameter and where it stands (both calls are `[main-thread]`).
@@ -90,6 +118,9 @@ pub(super) struct LoadedPlugin {
     pub(super) io: AudioIoLayout,
     /// The plugin's parameters and where they stand, after any restored state.
     pub(super) params: ParamValues,
+    /// Whether notes go to the plugin as native events, with ids, rather than
+    /// raw MIDI.
+    pub(super) note_events: bool,
     /// Display name, for the editor window title.
     pub(super) name: String,
 }
@@ -173,6 +204,7 @@ pub(super) fn load(
     // buffers must match.
     let io = query_audio_io(&mut instance);
     let params = read_parameters(&mut instance);
+    let note_events = accepts_note_events(&mut instance, &name);
 
     let configuration = PluginAudioConfiguration {
         sample_rate,
@@ -188,6 +220,7 @@ pub(super) fn load(
         processor,
         io,
         params,
+        note_events,
         name,
     })
 }

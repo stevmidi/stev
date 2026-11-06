@@ -24,6 +24,7 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 - Keys work from a plugin editor the way they do in a DAW: the plugin gets a key first, and what it doesn't use comes to Stev, so `/` captures and every other command works without clicking back. `⌘S`, `⇧⌘S` and `⌘N` always go to Stev. A plugin's text field keeps what's typed into it, now including Space, `0` and `v`.
 - On a VST3 track, a live key and a clip note of the same pitch now double up where the plugin allows it, as in a DAW: neither cuts the other.
+- CLAP plugins that accept native note events (Surge XT, Repro-5 and Repro-1 among them) now get them, with note ids, so clip and live notes of the same pitch can stay apart there too. Plugins that only take MIDI, such as Vital and the TAL synths, are unchanged.
 - A transport stop, a jump or a loop wrap always ends the clip's sounding notes on plugin tracks, even a pitch you are holding on the keyboard. Your own note plays on if the plugin keeps the two apart, and ends with the clip's if not. Other live notes are untouched, as before.
 - Linux and Windows support is off the roadmap. They still build in CI, and a port from someone who will use and maintain it is welcome (`CONTRIBUTING.md`, `docs/260-porting.md`).
 

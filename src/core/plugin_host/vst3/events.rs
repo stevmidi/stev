@@ -1,8 +1,9 @@
 //! Turning Stev's raw MIDI into VST3 events.
 //!
 //! **This is the biggest structural difference between the two hosted formats.**
-//! CLAP takes MIDI 1.0 bytes verbatim — `clap::voice`'s translation is one
-//! `match` that copies three bytes into a `MidiEvent`. VST3 has no general MIDI
+//! CLAP takes MIDI 1.0 bytes verbatim — `clap::voice`'s translation copies three
+//! bytes into a `MidiEvent`, with only the notes of a plugin that accepts them
+//! becoming native events. VST3 has no general MIDI
 //! input at all, and splits one MIDI stream three ways:
 //!
 //! | MIDI | Becomes |
@@ -25,12 +26,9 @@
 //! note sounding forever if the off arrives with a mismatched or absent id.
 //! [`NoteIds`] is the per-voice table that keeps them paired.
 //!
-//! Each [`NoteSource`] holds its own notes. A live key over a clip's note of
-//! the same pitch is two notes with two ids, each ended only by its own off, so
-//! a plugin keying voices by id plays both, and neither cuts the other. One
-//! source holds one note per key: a second on from it takes the key over, and
-//! the old note gets its off first ([`displaced_note_off`]), so no id is ever
-//! left without one and a source's single off closes its key.
+//! Each [`NoteSource`] holds its own notes, so a live key over a clip's note of
+//! the same pitch is two notes with two ids; `note_ids` has the rules. A stray
+//! off has no id, and here that's `-1`, VST3's "no id".
 //!
 //! See `docs/180-vst3-host.md`.
 
@@ -45,10 +43,9 @@ use vst3::Steinberg::Vst::{
 use vst3::Steinberg::kResultOk;
 
 use crate::core::midi::message::{Midi3, parse_note, pitch_bend_value};
+use crate::core::plugin_host::note_ids::{CHANNELS, NoteIds};
 use crate::core::sequencer::NoteSource;
 
-/// MIDI status nibble for note-off.
-const NOTE_OFF: u8 = 0x80;
 /// MIDI status nibble for note-on.
 const NOTE_ON: u8 = 0x90;
 /// MIDI status nibble for polyphonic key pressure.
@@ -67,66 +64,13 @@ const MIDI_7BIT_MAX: f64 = 127.0;
 /// Largest value a 14-bit MIDI pair can hold — pitch bend's range.
 const MIDI_14BIT_MAX: f64 = 16383.0;
 
+/// VST3's "no id": what a note-off carries with no matching on outstanding (a
+/// note that was already released), and poly pressure on a key not sounding.
+const NO_NOTE_ID: i32 = -1;
+
 /// Entries in a [`MidiMap`]'s per-channel row: the 128 controllers plus VST3's
 /// two synthetic ones (`kAfterTouch`, `kPitchBend`).
 const CONTROLLERS: usize = kCountCtrlNumber as usize;
-
-/// MIDI channels, and keys per channel — the shape of the note-id table.
-const CHANNELS: usize = 16;
-/// Keys per MIDI channel.
-const KEYS: usize = 128;
-/// [`NoteSource`]s, the last one's index plus one.
-const SOURCES: usize = NoteSource::Audition as usize + 1;
-
-/// Pairs each sounding note-on with the `noteId` its note-off must repeat.
-///
-/// A fresh id is minted per note-on and remembered until the matching off from
-/// the same source. One id per source and key: a second on from it with no off
-/// in between first releases the note it displaces ([`displaced_note_off`]).
-pub(super) struct NoteIds {
-    /// `active[source][channel][key]` is the id of the note-on still awaiting
-    /// its off. Boxed because it is ~48 KB and only read through a reference.
-    active: Box<[[[Option<i32>; KEYS]; CHANNELS]; SOURCES]>,
-    /// Next id to hand out. Wraps rather than overflowing; ids only have to be
-    /// unique among *simultaneously sounding* notes, and `i32::MAX` of them is
-    /// not a situation that arises.
-    next: i32,
-}
-
-impl Default for NoteIds {
-    fn default() -> Self {
-        Self {
-            active: Box::new([[[None; KEYS]; CHANNELS]; SOURCES]),
-            next: 0,
-        }
-    }
-}
-
-impl NoteIds {
-    /// Mints and stores the id for a note-on.
-    fn begin(&mut self, source: NoteSource, channel: usize, key: usize) -> i32 {
-        let id = self.next;
-        self.next = self.next.wrapping_add(1).max(0);
-        self.active[source as usize][channel][key] = Some(id);
-        id
-    }
-
-    /// Takes the id a note-off should carry. `-1` — VST3's "no id" — when no
-    /// matching on is outstanding, which is the right answer for a stray off
-    /// (a panic burst, or a note that was already released).
-    fn end(&mut self, source: NoteSource, channel: usize, key: usize) -> i32 {
-        self.active[source as usize][channel][key]
-            .take()
-            .unwrap_or(-1)
-    }
-
-    /// The id of the note currently sounding on a key, *without* releasing it —
-    /// what a poly-pressure message needs so the plugin knows which voice it
-    /// refers to.
-    fn current(&self, source: NoteSource, channel: usize, key: usize) -> i32 {
-        self.active[source as usize][channel][key].unwrap_or(-1)
-    }
-}
 
 /// Which parameter, if any, a plugin wants each MIDI controller to drive.
 ///
@@ -244,27 +188,16 @@ pub(super) enum Translated {
     Nothing,
 }
 
-/// The note-off for the note `bytes` is about to displace, if `bytes` is a
-/// note-on over a key its `source` still has sounding: two overlapping notes of
-/// one pitch in a clip, or two quick auditions. Queue it ahead of the note-on.
-///
-/// Overwriting the id instead would leave the old note with no off at all, and
-/// a plugin keying voices by id would hold it forever. Another source's note on
-/// the key is left alone.
+/// The note-off for the note `bytes` is about to displace, if any
+/// ([`NoteIds::displaced_note_off`]). Queue it ahead of the note-on.
 pub(super) fn displaced_note_off(
     bytes: Midi3,
     source: NoteSource,
     time: u32,
     ids: &mut NoteIds,
 ) -> Option<Event> {
-    let Some((key, true)) = parse_note(&bytes) else {
-        return None;
-    };
-    let channel = bytes[0] & 0x0F;
-    if ids.current(source, usize::from(channel), key) == -1 {
-        return None;
-    }
-    midi_to_event([NOTE_OFF | channel, bytes[1], 0], source, time, ids)
+    let off = ids.displaced_note_off(bytes, source)?;
+    midi_to_event(off, source, time, ids)
 }
 
 /// Translates one MIDI message for a plugin at sample offset `time`.
@@ -332,7 +265,7 @@ fn midi_to_event(bytes: Midi3, source: NoteSource, time: u32, ids: &mut NoteIds)
                     channel: channel as i16,
                     pitch: key as i16,
                     velocity,
-                    noteId: ids.end(source, channel, key),
+                    noteId: ids.end(source, channel, key).unwrap_or(NO_NOTE_ID),
                     tuning: 0.0,
                 },
             },
@@ -346,7 +279,7 @@ fn midi_to_event(bytes: Midi3, source: NoteSource, time: u32, ids: &mut NoteIds)
                     pitch: key as i16,
                     pressure: f32::from(bytes[2] & 0x7F) / MIDI_7BIT_MAX as f32,
                     // The note this applies to, when it is still sounding.
-                    noteId: ids.current(source, channel, key),
+                    noteId: ids.current(source, channel, key).unwrap_or(NO_NOTE_ID),
                 },
             },
         )
@@ -674,7 +607,7 @@ mod tests {
         assert!(!displaced([0x80, 60, 0], &mut ids));
         assert!(!displaced([0x90, 60, 0], &mut ids));
         assert!(!displaced([0xA0, 60, 64], &mut ids));
-        assert_ne!(ids.current(NoteSource::Clip, 0, 60), -1);
+        assert!(ids.current(NoteSource::Clip, 0, 60).is_some());
     }
 
     #[test]

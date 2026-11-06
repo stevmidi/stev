@@ -59,7 +59,13 @@ pub(super) fn load(
         handle.sample_rate,
         Arc::clone(&handle.ui_wake),
     );
-    let voice = ClapVoice::new(loaded.processor, MAX_FRAMES, &loaded.io, voice_params);
+    let voice = ClapVoice::new(
+        loaded.processor,
+        MAX_FRAMES,
+        &loaded.io,
+        voice_params,
+        loaded.note_events,
+    );
     let editor = ClapEditor::new(loaded.instance, &loaded.name, track, editor_params);
     Ok((Box::new(voice), Box::new(editor)))
 }

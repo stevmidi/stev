@@ -10,15 +10,20 @@
 //! [`render_block`](InstrumentVoice::render_block) — once per engine sub-block
 //! on the `"audio-engine"` callback thread. See `130-plugin-host.md`.
 
-use clack_host::events::event_types::{MidiEvent, TransportEvent, TransportFlags};
-use clack_host::events::{EventFlags, EventHeader};
+use clack_host::events::event_types::{
+    MidiEvent, NoteOffEvent, NoteOnEvent, TransportEvent, TransportFlags,
+};
+use clack_host::events::{EventFlags, EventHeader, Pckn};
 use clack_host::prelude::*;
 use clack_host::utils::{BeatTime, SecondsTime};
 
-use crate::core::midi::message::Midi3;
+use crate::core::midi::message::{Midi3, parse_note};
 use crate::core::plugin_host::buffers::{AudioIoLayout, PortBuffers, channel_total};
+use crate::core::plugin_host::note_ids::NoteIds;
 use crate::core::plugin_host::transport::BlockTransport;
-use crate::core::plugin_host::voice::{EVENT_CAPACITY, InstrumentVoice, VoiceMix};
+use crate::core::plugin_host::voice::{
+    EVENT_CAPACITY, InstrumentVoice, VoiceMix, note_reset_messages,
+};
 use crate::core::sequencer::NoteSource;
 use crate::core::time::{monotonic_nanos, ticks_to_beats_f64};
 use crate::models::knobs::ParamId;
@@ -48,6 +53,9 @@ pub(crate) struct ClapVoice {
     mix: VoiceMix,
     /// The voice's end of the parameter bridge. See [`params`](super::params).
     params: VoiceParams,
+    /// The ids of the notes sounding, on a plugin that takes native note
+    /// events. `None` sends its notes as raw MIDI, with no ids.
+    note_ids: Option<NoteIds>,
 }
 
 impl ClapVoice {
@@ -58,6 +66,7 @@ impl ClapVoice {
         max_frames: usize,
         io: &AudioIoLayout,
         params: VoiceParams,
+        note_events: bool,
     ) -> Self {
         Self {
             processor: processor.into(),
@@ -67,17 +76,49 @@ impl ClapVoice {
             bufs: PortBuffers::new(io, max_frames),
             mix: VoiceMix::default(),
             params,
+            note_ids: note_events.then(NoteIds::default),
+        }
+    }
+
+    /// Queues `bytes` as raw MIDI, if it's a message CLAP carries.
+    fn queue_raw_midi(&mut self, bytes: Midi3, time: u32) {
+        if let Some(event) = midi_bytes_to_clap_event(bytes, time) {
+            self.in_events.push(&event);
+            self.mix.sleeping = false;
         }
     }
 }
 
 impl InstrumentVoice for ClapVoice {
     /// Queues a MIDI message at sample `time` within the next processed block.
-    /// Wakes the voice if it was sleeping — see the `sleeping` field doc.
-    fn queue_midi(&mut self, bytes: Midi3, _source: NoteSource, time: u32) {
-        if let Some(event) = midi_bytes_to_clap_event(bytes, time) {
-            self.in_events.push(&event);
+    /// Wakes the voice if it was sleeping — see the `sleeping` field doc. On a
+    /// plugin that takes them, notes become native events with ids; all else
+    /// stays MIDI.
+    fn queue_midi(&mut self, bytes: Midi3, source: NoteSource, time: u32) {
+        let Some(ids) = self
+            .note_ids
+            .as_mut()
+            .filter(|_| parse_note(&bytes).is_some())
+        else {
+            self.queue_raw_midi(bytes, time);
+            return;
+        };
+        let displaced = ids.displaced_note_off(bytes, source);
+        for message in displaced.into_iter().chain(std::iter::once(bytes)) {
+            match note_event(message, source, time, ids) {
+                Some(NoteEvent::On(event)) => self.in_events.push(&event),
+                Some(NoteEvent::Off(event)) => self.in_events.push(&event),
+                None => continue,
+            }
             self.mix.sleeping = false;
+        }
+    }
+
+    /// Queues the reset as raw MIDI, whatever the plugin's notes travel as: it
+    /// is all stray offs, which [`note_event`] drops.
+    fn queue_note_reset(&mut self) {
+        for msg in note_reset_messages() {
+            self.queue_raw_midi(msg, 0);
         }
     }
 
@@ -237,10 +278,41 @@ fn midi_bytes_to_clap_event(bytes: Midi3, time: u32) -> Option<MidiEvent> {
     Some(MidiEvent::new(time, 0, bytes))
 }
 
+/// A MIDI note as a native CLAP event.
+enum NoteEvent {
+    /// A note-on, with a fresh id.
+    On(NoteOnEvent),
+    /// A note-off, carrying its note-on's id.
+    Off(NoteOffEvent),
+}
+
+/// Translates a MIDI note edge from `source` into a native event at sample
+/// `time`, on the first note port.
+///
+/// An off with no note outstanding from `source` is dropped: its note has
+/// already ended, and an off with no id is a wildcard in CLAP that would end
+/// another source's note on the key. `None` too for anything but a note.
+fn note_event(bytes: Midi3, source: NoteSource, time: u32, ids: &mut NoteIds) -> Option<NoteEvent> {
+    let (key, on) = parse_note(&bytes)?;
+    let channel = bytes[0] & 0x0F;
+    let slot = usize::from(channel);
+    let velocity = f64::from(bytes[2] & 0x7F) / 127.0;
+    // `NoteIds` never mints a negative id.
+    let target = |id: i32| Pckn::new(0u8, channel, key as u16, id as u32);
+    Some(if on {
+        let id = ids.begin(source, slot, key);
+        NoteEvent::On(NoteOnEvent::new(time, target(id), velocity))
+    } else {
+        let id = ids.end(source, slot, key)?;
+        NoteEvent::Off(NoteOffEvent::new(time, target(id), velocity))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::plugin_host::voice::note_reset_messages;
+    use clack_host::events::Match;
+
     use crate::core::time::{Meter, PPQN};
 
     fn transport(running: bool, looping: bool, tick: i32) -> BlockTransport {
@@ -334,6 +406,64 @@ mod tests {
     #[test]
     fn the_note_reset_burst_survives_translation_to_clap_events() {
         assert!(note_reset_messages().all(|m| midi_bytes_to_clap_event(m, 0).is_some()));
+    }
+
+    /// A note's event, unwrapped: `(is_on, pckn, velocity)`.
+    fn note(bytes: Midi3, source: NoteSource, ids: &mut NoteIds) -> (bool, Pckn, f64) {
+        match note_event(bytes, source, 0, ids).expect("a note event") {
+            NoteEvent::On(e) => (true, e.pckn(), e.velocity()),
+            NoteEvent::Off(e) => (false, e.pckn(), e.velocity()),
+        }
+    }
+
+    #[test]
+    fn a_note_off_repeats_its_note_ons_id_channel_and_key() {
+        let mut ids = NoteIds::default();
+        let (on, started, velocity) = note([0x93, 60, 127], NoteSource::Clip, &mut ids);
+        assert!(on);
+        assert_eq!(velocity, 1.0);
+        assert_eq!(started.port_index, Match::Specific(0));
+        assert_eq!(started.channel, Match::Specific(3));
+        assert_eq!(started.key, Match::Specific(60));
+        let (on, ended, _) = note([0x83, 60, 0], NoteSource::Clip, &mut ids);
+        assert!(!on);
+        assert_eq!(ended, started);
+    }
+
+    #[test]
+    fn a_note_on_at_velocity_zero_is_a_note_off() {
+        let mut ids = NoteIds::default();
+        let (_, started, _) = note([0x90, 60, 100], NoteSource::Clip, &mut ids);
+        let (on, ended, _) = note([0x90, 60, 0], NoteSource::Clip, &mut ids);
+        assert!(!on);
+        assert_eq!(ended, started);
+    }
+
+    #[test]
+    fn a_clip_note_and_a_live_key_of_one_pitch_are_two_notes() {
+        let mut ids = NoteIds::default();
+        let (_, clip, _) = note([0x90, 60, 100], NoteSource::Clip, &mut ids);
+        let (_, live, _) = note([0x90, 60, 100], NoteSource::Live, &mut ids);
+        assert_ne!(clip.note_id, live.note_id);
+        assert_eq!(note([0x80, 60, 0], NoteSource::Clip, &mut ids).1, clip);
+        assert_eq!(note([0x80, 60, 0], NoteSource::Live, &mut ids).1, live);
+    }
+
+    #[test]
+    fn a_stray_note_off_is_dropped_rather_than_sent_as_a_wildcard() {
+        // The second off after a retrigger: -1 would end a held live key.
+        let mut ids = NoteIds::default();
+        note([0x90, 60, 100], NoteSource::Live, &mut ids);
+        assert!(note_event([0x80, 60, 0], NoteSource::Clip, 0, &mut ids).is_none());
+        assert!(ids.current(NoteSource::Live, 0, 60).is_some());
+    }
+
+    #[test]
+    fn only_notes_become_note_events() {
+        let mut ids = NoteIds::default();
+        for bytes in [[0xE0, 0, 64], [0xB0, 1, 64], [0xA0, 60, 64], [0xD0, 90, 0]] {
+            assert!(note_event(bytes, NoteSource::Clip, 0, &mut ids).is_none());
+        }
     }
 
     #[test]

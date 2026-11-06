@@ -59,7 +59,7 @@ obligation. Most advice online predates this and should be disregarded.
 | `message.rs` | `HostMessage` (`IMessage`) and `HostAttributeList` (`IAttributeList`) — the objects a plugin asks the host to create so its two halves can exchange messages. |
 | `voice.rs` | `Vst3Voice` — `impl InstrumentVoice`; the `ProcessData` assembly over the shared `PortBuffers` (`../buffers.rs`), the `ProcessContext` translation (tempo, positions in quarter notes, the cycle, and the project's meter as `timeSigNumerator`/`Denominator` with `barPositionMusic` from `BlockTransport`), and the observed-silence idle rule. |
 | `editor.rs` | `Vst3Editor` — `impl InstrumentEditor`; the `IPlugView` lifecycle, `HostPlugFrame` (the `IPlugFrame` a view resizes itself through), the `!Send` half's ownership and teardown ordering. |
-| `events.rs` | MIDI → VST3: `translate` (the three-way split), `NoteIds` (note-on ↔ note-off id pairing), `MidiMap` (the `IMidiMapping` table). |
+| `events.rs` | MIDI → VST3: `translate` (the three-way split), `NoteIds` pairing from `../note_ids.rs` (note-on ↔ note-off; a stray off becomes `-1`), `MidiMap` (the `IMidiMapping` table). |
 | `state.rs` | Preset capture and restore: the two-half container format, `capture`, `apply`. |
 | `stream.rs` | `MemoryStream` — the in-memory `IBStream` a plugin reads and writes its state through. |
 
@@ -576,7 +576,9 @@ plugin at all.
 
 ## MIDI, and the three ways VST3 splits one stream
 
-CLAP takes MIDI 1.0 bytes verbatim. VST3 has no general MIDI input at all, and
+CLAP takes MIDI 1.0 bytes verbatim (only notes become native events, and only
+on a plugin that accepts them, `130` § Native CLAP notes). VST3 has no general
+MIDI input at all, and
 one incoming stream fans out three ways:
 
 | MIDI | Becomes |

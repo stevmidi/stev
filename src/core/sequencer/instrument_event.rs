@@ -28,7 +28,7 @@ pub(crate) enum EventTime {
 
 /// Who played a note. A plugin that keys its voices by note id can then hold
 /// a clip's note and a live key of the same pitch side by side, each ended only
-/// by its own off (`vst3::events::NoteIds`; the raw-MIDI CLAP route ignores
+/// by its own off (`plugin_host::note_ids`; a CLAP plugin on raw MIDI ignores
 /// this).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
@@ -39,7 +39,7 @@ pub(crate) enum NoteSource {
     /// The player's keyboard.
     Live,
     /// A selected note's audition (`Sequencer::preview_notes`). Stays last:
-    /// the VST3 note-id table is sized from it.
+    /// the note-id table is sized from it.
     Audition,
 }
 

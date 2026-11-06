@@ -331,11 +331,12 @@ methods take a track's position and look the slot up in its `tracks` mirror
 | File | Responsibility |
 |---|---|
 | `mod.rs` | `start_plugin_host` (build `InstrumentMixer`, `EngineHandle::add_source` it into the audio engine, spawn the `"plugin-host"` thread), `start_plugin_catalog_scan` (spawns the `"plugin-catalog-scan"` thread), `load_instrument` (**the one place a format is chosen** - dispatches on `entry.format`, then `Insert`s the returned voice), `PluginAudioHandle` (`cmd_tx` / `voice_dropped_rx` / `shutdown` / `sample_rate` / `repaint` - the egui context slot `start_plugin_host` is handed once, so `load_instrument` takes no format-specific arguments), `LoadedInstrument`, `reclaim_voices` (the `"plugin-host"` thread loop: drops removed voices, and makes the UI wakes `UiWake` asks for). Voices are built for `core::audio::MAX_FRAMES`. |
-| `voice.rs` | The `InstrumentVoice` trait and `VoiceMix` - the mixer-owned `sleeping` / `rendered` flags and gain-ramp endpoints every voice carries. Also `note_reset_messages`, the burst `load_instrument` queues into every new voice. They live on the voice rather than in a parallel array in the mixer because the render pass is the loop spread across worker threads, where each worker may only touch its own voice. |
+| `voice.rs` | The `InstrumentVoice` trait and `VoiceMix` - the mixer-owned `sleeping` / `rendered` flags and gain-ramp endpoints every voice carries. Also `note_reset_messages`, the burst `queue_note_reset` queues into every new voice. They live on the voice rather than in a parallel array in the mixer because the render pass is the loop spread across worker threads, where each worker may only touch its own voice. |
 | `editor.rs` | The `InstrumentEditor` trait - the `!Send` main-thread half. `close` (= `teardown_gui`) and `toggle` (on `is_open`) are default methods, so a format supplies only `is_open`. |
 | `buffers.rs` | `AudioIoLayout` (a plugin's declared channels per input/output port or bus; `new` applies the one-stereo-output fallback) and `PortBuffers` - the `[port][channel]` buffer set every voice renders into: silent input feed, capacity-reserved outputs, `prepare_outputs(frames)`, `main_sample` (port-0-only, mono/empty/out-of-range-safe - what the mixer sums) and `main_output_silent`. Each format builds its own FFI view over it. Unit-tested. |
 | `mixer.rs` | `InstrumentMixer` (`impl AudioSource` - the audio-callback state: `[Option<Box<dyn InstrumentVoice>>; MAX_TRACKS]`, the `pending` scheduling buffer and per-block dispatch, the render/sum two-pass split, the per-track gain ramp, summed into the engine's `mix`, the audio export's tap fed from the summing pass, and the track meters' `MeterBallistics` per slot and channel), `PluginHostCommand`, `within_block_offset`. `AudioClock` lives in `core::audio`. Unit-tested: the pending sort's note-off/note-on ordering, `within_block_offset` clamping, the partition-point sub-block selection, and (with `test_voice::ConstantVoice`) the meter reading after the fader and balance and falling for a muted or sleeping voice. |
 | `meter.rs` | `MeterBallistics` / `BlockDecay`: the track meters' peak, RMS and peak-hold ballistics, stepped once per block per slot and channel by the mixer's summing pass and published as `core::audio::meter::ChannelLevel`s (`archive/310-audio-meters.md`). Unit-tested: instant attack, the 20 dB/s fall at any block size, RMS settling on a sine and a square, the hold's 1.5 s then fall, a higher peak's jump, silence ending at zero. |
+| `note_ids.rs` | `NoteIds`, the format-agnostic table pairing each sounding note-on with the id its off repeats, per `NoteSource`, and `displaced_note_off` for a retrigger. "No note" is `None`: VST3 turns it into `-1`, and CLAP drops the off (§ Native CLAP notes). |
 | `test_voice.rs` | `#[cfg(test)]` `ConstantVoice`, a format-free `InstrumentVoice` playing a constant, shared by the mixer's and the export tap's tests. |
 | `transport.rs` | `TransportState` (the shared atomics) and `BlockTransport` (the plain `Copy` snapshot taken once per block and handed to every voice, in app-native units - ticks and microseconds-per-quarter - plus `bpm()`, `bar_number()` and `bar_start_beats()` - the bar maths in the project's `Meter`, carried in the snapshot from the `SharedAtomics.meter` atomic, floored for a pre-roll playhead; `bar_start_beats` is in quarter notes). Each format converts it in its own `render_block`; that conversion is a handful of float ops, so doing it per voice rather than once per block costs nothing and keeps every plugin type out of the mixer. Unit-tested. |
 | `catalog.rs` | `PluginFormat` (label - which is also its `Audio/Plug-Ins` subdirectory - and bundle extension), `ALL_FORMATS`, `PluginCatalogEntry { format, bundle_path, plugin_id, name }`, `installed_bundles` (the shared depth-capped bundle walk over the install roots - what each format's scan calls), `scan_catalog` (runs every format's scan and reports the merged, name-sorted list **once per format** — VST3 is slow enough that waiting for it would hide the CLAP plugins too; `merge_scans` takes the scans as functions so each only starts after the previous one's delivery), `available_bundles_hint`. Runs on the background `"plugin-catalog-scan"` thread, result held in `Display::plugin_catalog`. Unit-tested. |
@@ -358,7 +359,7 @@ See also `180-vst3-host.md` for `vst3/`, the second format module.
 | `host.rs` | `StevClapHost` (`HostHandlers`) + `ClapHostShared` / `ClapHostMainThread`; log + gui + timer + state + params + thread-check host extensions (params: `request_flush` wakes the voice, `rescan` marks the values to read again; thread-check: main = AppKit main thread, audio = threads marked by `core::audio::enter_render_thread` — the `cpal` callback and every `WorkerPool` worker); `Timers` helper (unit-tested). |
 | `editor.rs` | `ClapEditor` - owns one `!Send` `PluginInstance` and `impl InstrumentEditor`; `create` (lazy, on first show), `show` / `is_open`, per-frame `pump`, `save_state` (CLAP `state.save` for persistence), `teardown_gui` (GUI `destroy` + window drop + remember its position - used by both `close` and a per-track remove), `deactivate` (after the voice-dropped ack), and the knobs' parameter methods over `EditorParams`. |
 | `params.rs` | How the knobs reach a plugin's parameters (`400` § Phase 3 as built): `ParamRange` (plain <-> normalized), `ParamValues` (every value in force, reading `ParamReport`s as `ParameterGesture`s), `ReportFeed` (the `OutputEventBuffer` `process` writes to), `bridge` -> `EditorParams` / `VoiceParams`, the two rings' ends. Unit-tested: the mapping, the output-event parsing, the bridge. |
-| `voice.rs` | `ClapVoice` - `impl InstrumentVoice`; per-plugin audio state, `new` takes the plugin's `AudioIoLayout` and builds a `PortBuffers` to match (sized with `buffers::channel_total`). `queue_param` and the block's moves and reports go through `VoiceParams`. Also the private `midi_bytes_to_clap_event` (takes a sample offset) and `transport_event` (`BlockTransport` -> CLAP `TransportEvent`). Unit-tested: the event translation (incl. the note-reset burst), the transport translation. |
+| `voice.rs` | `ClapVoice` - `impl InstrumentVoice`; per-plugin audio state, `new` takes the plugin's `AudioIoLayout` and builds a `PortBuffers` to match (sized with `buffers::channel_total`). `queue_param` and the block's moves and reports go through `VoiceParams`. Also the private `midi_bytes_to_clap_event` (takes a sample offset), `note_event` (a MIDI note -> a native event with an id, § Native CLAP notes) and `transport_event` (`BlockTransport` -> CLAP `TransportEvent`). Unit-tested: the event translation (incl. the note-reset burst), the note translation, the transport translation. |
 
 ## Channels
 
@@ -821,12 +822,31 @@ positions), persisted base64-encoded in the `.stev` and re-applied on load:
   prompt on their own: many plugins write a different state blob for the
   same preset every time, so the check leaves state out (`060` § Unsaved
   changes).
+- **Native CLAP notes (#21).** Each load logs the dialects of every note input.
+  If the first one accepts `CLAP`, `ClapVoice` holds a `NoteIds` and sends notes
+  as `NoteOnEvent` / `NoteOffEvent` with ids, on port 0; pitch bend, CCs and
+  everything else stay MIDI. Otherwise `note_ids` is `None` and notes are raw
+  MIDI, as is a plugin without the `note-ports` extension. Measured 2026-11-06:
+  Surge XT, Repro-5 and Repro-1 accept `CLAP` and prefer it; Vital and the TAL
+  plugins take only MIDI. Ids are optional in CLAP, so a plugin tracking voices
+  by key behaves as it does on MIDI. Hand-tested the same day: Surge XT keeps a
+  clip note and a live key apart in every #20 case. So does Repro-5, with two
+  exceptions: it cuts a held key when the transport starts, which it does in
+  Ableton too, and a key held through a start inside a clip note of that pitch
+  ends with the clip's note (cause not established, and no worse than raw MIDI).
+  An off with no note outstanding from its source
+  is dropped, never sent with id `-1`: in CLAP that's a wildcard matching every
+  note on the key, which would end a held live key. That makes an on and its off
+  sharing a `NoteSource` load-bearing here, where VST3 would forgive a mismatch
+  with a `-1` off: a mismatch sticks the note.
 - **Note-reset on instantiation.** Restored state can carry held-note state
   (u-he Repro's on-screen keyboard came back showing stuck keys over CLAP —
   cosmetic, no audio). `load_instrument` therefore queues All Sound Off + All
   Notes Off + Reset All Controllers + an explicit Note Off for every key into
   every new voice, whatever its format, for its first processed block
-  (`voice::note_reset_messages`), so a restored plugin always starts silent.
+  (`InstrumentVoice::queue_note_reset`, `voice::note_reset_messages`), so a
+  restored plugin always starts silent. On CLAP it stays raw MIDI even where
+  notes are native: the offs are all stray, and a native voice drops those.
   Queued on the main thread before `Insert`, so it is off the audio path. VST3
   only sees the three CCs if its `IMidiMapping` maps them; the per-key Note
   Offs (id −1, VST3's "no id") always arrive, and the 256-event list keeps
@@ -939,7 +959,9 @@ positions), persisted base64-encoded in the `.stev` and re-applied on load:
   note would have nothing else to end it. Every plugin-bound note is tagged with
   its `NoteSource`, so in a VST3 that keys voices by id the off ends only the
   clip's note and the live key plays on (`180` § gotchas); a plugin keying by
-  pitch, and any CLAP (raw MIDI, no ids), ends both, as in a DAW. A live key of
+  pitch, and a CLAP on raw MIDI (no ids), ends both, as in a DAW. A CLAP plugin
+  gets ids where its first note input accepts the `CLAP` dialect (§ Native CLAP
+  notes). A live key of
   another pitch is never touched. Removing, shrinking, or shifting a clip
   while it is playing is a separate path with no transport-stop equivalent to
   fall back on: `DeleteInRangeEdit`, `SplitClipsEdit`,
