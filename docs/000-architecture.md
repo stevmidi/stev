@@ -134,6 +134,8 @@ Tests cover pure and pure-logic functions in `src/models/`, `src/core/time.rs`, 
 
 **Timing probe** (`src/core/timing_probe.rs`): an ignored release test that measures the `"clock"` timer's jitter and how late the real `"midiout"` loop writes clip messages, idle or under load, into a recorder or through a MIDI loopback. `cargo test --release timing_probe -- --ignored --nocapture`; settings and design in `260-porting.md` § Timing.
 
+**Recovery timing** (`src/core/project/recovery_timing.rs`): an ignored release test that times the crash recovery check and write on synthetic projects of growing size. `cargo test --release recovery_timing -- --ignored --nocapture`; the design and the numbers are in `410-crash-recovery.md` § Measurements.
+
 **Test authoring policy**: when adding or changing logic in a testable layer, write or update `mod tests` in the same file as part of the same change. Bug fixes should include a regression test that would have caught the bug. Do not add tests for trivial accessors or for code in the untestable layers listed above.
 
 ## Integration Points

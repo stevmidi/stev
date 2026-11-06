@@ -187,7 +187,7 @@ fn write_project_in(dir: &Path, data: &ProjectData, name: &str) -> io::Result<()
 /// the next save replaces it. Nothing is synced to disk: a project saves on
 /// the `"sequencer"` thread, where a full sync (20-25 ms on an SSD) would
 /// stall the ticks of a playing loop.
-fn replace_file(path: &Path, contents: &str) -> io::Result<()> {
+pub(super) fn replace_file(path: &Path, contents: &str) -> io::Result<()> {
     let temp = path.with_added_extension(TEMP_EXTENSION);
     let written = fs::write(&temp, contents).and_then(|()| fs::rename(&temp, path));
     if written.is_err() {

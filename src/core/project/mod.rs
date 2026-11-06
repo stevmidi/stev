@@ -7,6 +7,8 @@
 mod action;
 mod dto;
 mod recent;
+#[cfg(test)]
+mod recovery_timing;
 mod smf;
 mod staged;
 mod storage;
