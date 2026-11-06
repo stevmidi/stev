@@ -6,14 +6,9 @@
 //! JSON: on a real project that is 0.06 ms against 1.65.
 
 use std::hash::{DefaultHasher, Hash, Hasher};
-#[cfg(test)]
-use std::io::{self, Write};
 
 use crate::core::sequencer::Sequencer;
 use crate::models::track::TrackOutput;
-
-#[cfg(test)]
-use super::dto::{ProjectData, TrackOutputData};
 
 /// A hash of everything `sequencer`'s project would write to disk but the
 /// plugins' state blobs: two projects with the same fingerprint save the same
@@ -82,58 +77,22 @@ pub(crate) fn fingerprint(sequencer: &Sequencer) -> u64 {
                     event.end_tick(),
                     event.midi_message(),
                     event.is_muted(),
+                    event
+                        .param_move()
+                        .map(|moved| (moved.param, moved.value.to_bits())),
                 )
                     .hash(&mut hasher);
-                if let Some(moved) = event.param_move() {
-                    (moved.param, moved.value.to_bits()).hash(&mut hasher);
-                }
             }
         }
     }
     hasher.finish()
 }
 
-/// An [`io::Write`] that feeds everything written into a hasher.
-#[cfg(test)]
-struct HashWriter(DefaultHasher);
-
-#[cfg(test)]
-impl Write for HashWriter {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.0.write(buf);
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
-/// The fingerprint as it was before [`fingerprint`] replaced it: the
-/// snapshot's JSON, streamed into a hasher. Kept as what the direct hash is
-/// tested against, and for `recovery_timing` to compare with.
-#[cfg(test)]
-pub(super) fn json_fingerprint(sequencer: &Sequencer, mut data: ProjectData) -> u64 {
-    for track in &mut data.tracks {
-        if let TrackOutputData::Instrument { state, .. } = &mut track.output {
-            state.clear();
-        }
-    }
-    let mut hasher = HashWriter(DefaultHasher::new());
-    serde_json::to_writer(&mut hasher, &data).ok();
-    for track in sequencer.tracks() {
-        for by_hand in track.knobs_by_hand() {
-            hasher.0.write_u64(by_hand.map_or(u64::MAX, f64::to_bits));
-        }
-        hasher.0.write_u32(track.plugin_changes());
-    }
-    hasher.0.finish()
-}
-
 #[cfg(test)]
 mod tests {
     use crate::core::project::dto::{
-        ClipData, EventData, KnobData, MeterData, ParamMoveData, TrackData,
+        ClipData, EventData, KnobData, MeterData, ParamMoveData, ProjectData, TrackData,
+        TrackOutputData,
     };
     use crate::core::sequencer::test_support::{
         clip_at, note_off, note_on, param_at, stub_instrument, test_sequencer,
@@ -145,6 +104,27 @@ mod tests {
     use crate::models::track::InstrumentRef;
 
     use super::*;
+
+    /// The fingerprint as it was before [`fingerprint`] replaced it: the
+    /// snapshot's JSON, blobs left out, then what the JSON never holds. What
+    /// the direct hash is tested against.
+    fn json_hash(sequencer: &Sequencer) -> u64 {
+        let mut data = ProjectData::from_sequencer(sequencer);
+        for track in &mut data.tracks {
+            if let TrackOutputData::Instrument { state, .. } = &mut track.output {
+                state.clear();
+            }
+        }
+        let mut hasher = DefaultHasher::new();
+        hasher.write(serde_json::to_string(&data).unwrap().as_bytes());
+        for track in sequencer.tracks() {
+            for by_hand in track.knobs_by_hand() {
+                hasher.write_u64(by_hand.map_or(u64::MAX, f64::to_bits));
+            }
+            hasher.write_u32(track.plugin_changes());
+        }
+        hasher.finish()
+    }
 
     /// The events [`project`]'s clip starts with.
     fn events() -> Vec<Event> {
@@ -165,19 +145,17 @@ mod tests {
         sequencer
     }
 
-    /// Replaces the events of [`project`]'s clip.
-    fn set_events(sequencer: &mut Sequencer, events: Vec<Event>) {
-        let id = sequencer.tracks()[0].clips()[0].id();
-        sequencer.tracks_mut()[0]
-            .get_clip_by_id_mut(id)
-            .unwrap()
-            .restore_events(events);
-    }
-
     /// Runs `edit` on [`project`]'s clip.
     fn edit_clip(sequencer: &mut Sequencer, edit: impl FnOnce(&mut Clip)) {
         let id = sequencer.tracks()[0].clips()[0].id();
         edit(sequencer.tracks_mut()[0].get_clip_by_id_mut(id).unwrap());
+    }
+
+    /// Gives [`project`]'s clip its [`events`] with `edit` made to them.
+    fn edit_events(sequencer: &mut Sequencer, edit: impl FnOnce(&mut Vec<Event>)) {
+        let mut list = events();
+        edit(&mut list);
+        edit_clip(sequencer, |clip| clip.restore_events(list));
     }
 
     /// Replaces the plugin on [`project`]'s track 1 with `edit` of it.
@@ -188,11 +166,6 @@ mod tests {
             edit(instrument);
         }
         track.set_output(output);
-    }
-
-    /// [`json_fingerprint`] of `sequencer`.
-    fn json(sequencer: &Sequencer) -> u64 {
-        json_fingerprint(sequencer, ProjectData::from_sequencer(sequencer))
     }
 
     /// One edit of [`project`], named for the failure message.
@@ -250,36 +223,25 @@ mod tests {
         }),
         ("clip mute", |s| edit_clip(s, |c| c.set_muted(true))),
         ("swing", |s| edit_clip(s, |c| c.set_swing_pct(60))),
-        ("event tick", |s| {
-            set_events(s, vec![note_on(5), note_off(240), param_at(10, 714, 0.25)]);
-        }),
-        ("note length", |s| {
-            let mut note = note_on(0);
-            note.set_length(120);
-            set_events(s, vec![note, note_off(240), param_at(10, 714, 0.25)]);
-        }),
+        ("event tick", |s| edit_events(s, |e| e[0] = note_on(5))),
+        ("note length", |s| edit_events(s, |e| e[0].set_length(120))),
         ("event bytes", |s| {
-            let note = Event::new(0, 0, vec![0x90, 61, 100]);
-            set_events(s, vec![note, note_off(240), param_at(10, 714, 0.25)]);
+            edit_events(s, |e| e[0] = Event::new(0, 0, vec![0x90, 61, 100]));
         }),
-        ("event mute", |s| {
-            let mut note = note_on(0);
-            note.set_muted(true);
-            set_events(s, vec![note, note_off(240), param_at(10, 714, 0.25)]);
-        }),
+        ("event mute", |s| edit_events(s, |e| e[0].set_muted(true))),
         ("move value", |s| {
-            set_events(s, vec![note_on(0), note_off(240), param_at(10, 714, 0.75)]);
+            edit_events(s, |e| e[2] = param_at(10, 714, 0.75));
         }),
         ("move parameter", |s| {
-            set_events(s, vec![note_on(0), note_off(240), param_at(10, 715, 0.25)]);
+            edit_events(s, |e| e[2] = param_at(10, 715, 0.25));
         }),
         ("move plugin", |s| {
-            let mut moved = param_at(10, 714, 0.25);
-            moved.set_param(PluginParam { plugin: 2, id: 714 });
-            set_events(s, vec![note_on(0), note_off(240), moved]);
+            edit_events(s, |e| e[2].set_param(PluginParam { plugin: 2, id: 714 }));
         }),
         ("one event fewer", |s| {
-            set_events(s, vec![note_on(0), note_off(240)]);
+            edit_events(s, |e| {
+                e.pop();
+            });
         }),
     ];
 
@@ -301,12 +263,12 @@ mod tests {
     #[test]
     fn the_direct_hash_sees_every_change_the_json_does() {
         let direct = fingerprint(&project());
-        let json = json(&project());
+        let json = json_hash(&project());
         for (name, change) in SAVED_CHANGES {
             let mut sequencer = project();
             change(&mut sequencer);
             assert_ne!(fingerprint(&sequencer), direct, "direct: {name}");
-            assert_ne!(self::json(&sequencer), json, "json: {name}");
+            assert_ne!(json_hash(&sequencer), json, "json: {name}");
         }
     }
 
@@ -316,12 +278,12 @@ mod tests {
     #[test]
     fn neither_hash_sees_what_a_save_leaves_out() {
         let direct = fingerprint(&project());
-        let json = json(&project());
+        let json = json_hash(&project());
         for (name, change) in UNSAVED_CHANGES {
             let mut sequencer = project();
             change(&mut sequencer);
             assert_eq!(fingerprint(&sequencer), direct, "direct: {name}");
-            assert_eq!(self::json(&sequencer), json, "json: {name}");
+            assert_eq!(json_hash(&sequencer), json, "json: {name}");
         }
     }
 

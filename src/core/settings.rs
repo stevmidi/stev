@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use super::config::{BROWSER_W_DEFAULT, MIDI_OUT_OFFSET_DEFAULT_MS, MIDI_OUT_OFFSET_MAX_MS};
 use super::keymap::ChordDto;
 use super::paths::{SETTINGS_FILE_NAME, config_dir};
-use super::project::RecentProject;
+use super::project::ProjectOrigin;
 
 /// The on-disk `settings.json` shape.
 #[derive(Debug, Serialize, Deserialize)]
@@ -57,7 +57,7 @@ pub(crate) struct SettingsData {
     /// `config::RECENT_PROJECTS_MAX`: the browser's Recent category
     /// (`core/project/recent.rs`). Absent before the list existed: empty.
     #[serde(default)]
-    pub(crate) recent_projects: Vec<RecentProject>,
+    pub(crate) recent_projects: Vec<ProjectOrigin>,
     /// *Allow AI agents*: whether the agent bridge's socket is open
     /// (`360-mcp-server.md` decision 4). Off until the user turns it on, and
     /// absent before the bridge existed: off.
@@ -146,8 +146,8 @@ mod tests {
 
         let settings = SettingsData {
             recent_projects: vec![
-                RecentProject::new(Some("Jams"), "riff"),
-                RecentProject::new(None, "loose"),
+                ProjectOrigin::new(Some("Jams"), "riff"),
+                ProjectOrigin::new(None, "loose"),
             ],
             ..SettingsData::default()
         };

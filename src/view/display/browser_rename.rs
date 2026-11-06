@@ -18,7 +18,7 @@ use egui::{FontId, Id, Rect, Ui, UiBuilder, pos2, vec2};
 use crate::core::config::PROJECT_NAME_MAX_CHARS;
 use crate::core::input_event::InputEvent;
 use crate::core::project::{
-    RecentProject, create_project_folder, project_name_from_input, rename_clip, rename_project,
+    ProjectOrigin, create_project_folder, project_name_from_input, rename_clip, rename_project,
     rename_project_folder, rename_recent, rename_recent_folder, rename_template,
 };
 
@@ -194,7 +194,7 @@ impl Display {
         match item {
             BrowserItem::Project { folder, name } | BrowserItem::Recent { folder, name } => {
                 update_recent(|list| {
-                    rename_recent(list, &RecentProject::new(folder.as_deref(), name), new);
+                    rename_recent(list, &ProjectOrigin::new(folder.as_deref(), name), new);
                 });
                 if *folder == self.project.project_current_folder
                     && self.project.project_current_name.as_ref() == Some(name)

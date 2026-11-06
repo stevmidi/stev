@@ -43,6 +43,16 @@ pub(crate) const AGENT_SOCKET_FILE_NAME: &str = "agent.sock";
 #[cfg(target_os = "macos")]
 pub(crate) const VST3_CACHE_FILE_NAME: &str = "vst3-catalog-cache.json";
 
+/// A fresh folder for a test, emptied of anything an earlier run left. `tag`
+/// keeps it apart from other tests', which run at the same time.
+#[cfg(test)]
+pub(crate) fn scratch_dir(tag: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("stev-test-{}-{tag}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
 /// `dir`, created if absent (best effort — a failure surfaces on first use).
 fn ensured(dir: PathBuf) -> PathBuf {
     let _ = fs::create_dir_all(&dir);

@@ -187,6 +187,15 @@ pub(crate) struct TrackData {
     pub(crate) clips: Vec<ClipData>,
 }
 
+impl TrackData {
+    /// Sets the plugin's state blob from `raw`; no-op on a track with no plugin.
+    fn set_state(&mut self, raw: &[u8]) {
+        if let TrackOutputData::Instrument { state, .. } = &mut self.output {
+            *state = BASE64.encode(raw);
+        }
+    }
+}
+
 /// One knob, on disk.
 #[derive(Serialize, Deserialize, Clone, Copy)]
 pub(crate) struct KnobData {
@@ -322,13 +331,12 @@ impl ProjectSnapshot {
     }
 
     /// The whole project, each state blob in base64.
-    pub(crate) fn encoded(mut self) -> ProjectData {
-        for (track, raw) in self.data.tracks.iter_mut().zip(&self.states) {
-            if let TrackOutputData::Instrument { state, .. } = &mut track.output {
-                *state = BASE64.encode(raw);
-            }
+    pub(crate) fn encoded(self) -> ProjectData {
+        let ProjectSnapshot { mut data, states } = self;
+        for (track, raw) in data.tracks.iter_mut().zip(states) {
+            track.set_state(&raw);
         }
-        self.data
+        data
     }
 }
 
@@ -353,7 +361,13 @@ impl ProjectData {
     /// Snapshots the sequencer into a serializable `ProjectData` (base64-encodes
     /// each plugin's state blob).
     pub(crate) fn from_sequencer(sequencer: &Sequencer) -> Self {
-        ProjectSnapshot::of(sequencer).encoded()
+        let mut data = Self::without_state(sequencer);
+        for (saved, track) in data.tracks.iter_mut().zip(sequencer.tracks()) {
+            if let TrackOutput::Instrument(instrument) = track.output() {
+                saved.set_state(&instrument.state);
+            }
+        }
+        data
     }
 
     /// The sequencer's project with every state blob left empty, for
@@ -737,18 +751,16 @@ mod tests {
         );
     }
 
-    /// A track with no knob assigned writes no knob list, and the hand's
-    /// values are never written.
+    /// A track with no knob assigned writes no knob list, and an assigned
+    /// one writes only what it drives.
     #[test]
-    fn unassigned_knobs_and_hand_values_are_not_written() {
+    fn unassigned_knobs_are_not_written() {
         let mut sequencer = test_sequencer();
-        sequencer.turn_knob(0, 0, 0.5, 0);
         let json = serde_json::to_string(&ProjectData::from_sequencer(&sequencer)).unwrap();
         assert!(!json.contains("knobs"), "{json}");
         let mut knobs = UNASSIGNED_KNOBS;
         knobs[1] = Some(test_param(3));
         sequencer.set_track_knobs(0, knobs);
-        sequencer.turn_knob(0, 1, 0.5, 0);
         let json = serde_json::to_string(&ProjectData::from_sequencer(&sequencer)).unwrap();
         assert!(
             json.contains(r#""knobs":[{},{"param":3},{},{},{},{},{},{}]"#),

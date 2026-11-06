@@ -15,17 +15,7 @@ use serde::{Deserialize, Serialize};
 use crate::core::paths::{RECOVERY_FILE_NAME, RECOVERY_LOCK_FILE_NAME, config_dir};
 
 use super::dto::{ProjectData, ProjectSnapshot};
-use super::storage::replace_file;
-
-/// Where a project lives in the library: what a save was given, and what a
-/// reopened copy saves back to (`410-crash-recovery.md` decision 10).
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
-pub(crate) struct ProjectOrigin {
-    /// Project folder, or the projects root when `None`.
-    pub(crate) folder: Option<String>,
-    /// Project file name, without extension.
-    pub(crate) name: String,
-}
+use super::storage::{ProjectOrigin, replace_file};
 
 /// The copy, on disk.
 #[derive(Serialize, Deserialize)]
@@ -68,6 +58,7 @@ fn write_copy(
         project: snapshot.encoded(),
     };
     let json = serde_json::to_string(&copy).map_err(io::Error::other)?;
+    drop(copy);
     replace_file(path, &json)
 }
 
@@ -79,17 +70,20 @@ fn delete_copy(path: &Path) -> io::Result<()> {
     }
 }
 
-/// Runs each job on the copy at `path`, in order, until every sender is gone.
-/// A write that fails warns and sets `write_failed`, which the next check
-/// reads to write again. The `"recovery"` thread's whole loop, apart from the
-/// thread so tests needn't wait on one.
+/// Runs the jobs on the copy at `path`, in order, until every sender is gone.
+/// Only the last of those waiting runs: with one slot it decides what is left,
+/// so a stalled disk comes back to one write, not a backlog, and a quit
+/// doesn't wait on writes it is about to delete. A write that fails warns and
+/// sets `write_failed`, which the next check reads to write again. The
+/// `"recovery"` thread's whole loop, apart from the thread so tests needn't
+/// wait on one.
 pub(crate) fn run_recovery_jobs(
     jobs: Receiver<RecoveryJob>,
     path: &Path,
     write_failed: &AtomicBool,
 ) {
-    for job in jobs {
-        match job {
+    while let Ok(next) = jobs.recv() {
+        match jobs.try_iter().last().unwrap_or(next) {
             RecoveryJob::Write { snapshot, origin } => {
                 if let Err(e) = write_copy(path, snapshot, origin) {
                     warn!("Could not write the recovery copy: {e}");
@@ -144,25 +138,13 @@ pub(crate) fn take_recovery_lock() -> Option<File> {
 
 #[cfg(test)]
 mod tests {
-    use std::env::temp_dir;
-    use std::process;
-    use std::sync::atomic::AtomicUsize;
-
     use crossbeam_channel::unbounded;
 
+    use crate::core::paths::scratch_dir;
     use crate::core::sequencer::test_support::{stub_instrument, test_sequencer};
     use crate::models::track::TrackOutput;
 
     use super::*;
-
-    /// A fresh folder for one test, so tests don't share a copy.
-    fn test_dir() -> PathBuf {
-        static NEXT: AtomicUsize = AtomicUsize::new(0);
-        let n = NEXT.fetch_add(1, Ordering::Relaxed);
-        let dir = temp_dir().join(format!("stev-recovery-{}-{n}", process::id()));
-        fs::create_dir_all(&dir).unwrap();
-        dir
-    }
 
     /// A write of a project at `tempo_us`, from `origin`.
     fn write(tempo_us: i32, origin: Option<ProjectOrigin>) -> RecoveryJob {
@@ -194,12 +176,9 @@ mod tests {
     /// The copy reads back as the project it was, with where it came from.
     #[test]
     fn a_copy_holds_the_project_and_its_origin() {
-        let dir = test_dir();
+        let dir = scratch_dir("recovery-a_copy_holds_the_project_and_its_origin");
         let path = dir.join(RECOVERY_FILE_NAME);
-        let origin = ProjectOrigin {
-            folder: Some("Songs".to_owned()),
-            name: "Song".to_owned(),
-        };
+        let origin = ProjectOrigin::new(Some("Songs"), "Song");
         assert!(!run(vec![write(400_000, Some(origin.clone()))], &path));
         let copy = read_copy(&path);
         assert_eq!(copy.origin, Some(origin));
@@ -210,7 +189,7 @@ mod tests {
     /// A project never saved has no origin to record.
     #[test]
     fn a_copy_of_a_project_never_saved_has_no_origin() {
-        let dir = test_dir();
+        let dir = scratch_dir("recovery-a_copy_of_a_project_never_saved_has_no_origin");
         let path = dir.join(RECOVERY_FILE_NAME);
         run(vec![write(400_000, None)], &path);
         assert_eq!(read_copy(&path).origin, None);
@@ -220,7 +199,7 @@ mod tests {
     /// The blobs reach the copy encoded as a save encodes them.
     #[test]
     fn a_copy_encodes_the_plugin_state_as_a_save_does() {
-        let dir = test_dir();
+        let dir = scratch_dir("recovery-a_copy_encodes_the_plugin_state_as_a_save_does");
         let path = dir.join(RECOVERY_FILE_NAME);
         let mut sequencer = test_sequencer();
         sequencer.tracks_mut()[1].set_output(stub_instrument(vec![1, 2, 3]));
@@ -238,11 +217,11 @@ mod tests {
         fs::remove_dir_all(dir).unwrap();
     }
 
-    /// Jobs run in the order they were sent, so a delete queued behind a
-    /// write leaves no copy, and a write behind a delete leaves one.
+    /// The last job sent decides, so a delete queued behind a write leaves
+    /// no copy, and a write behind a delete leaves one.
     #[test]
     fn writes_and_deletes_run_in_order() {
-        let dir = test_dir();
+        let dir = scratch_dir("recovery-writes_and_deletes_run_in_order");
         let path = dir.join(RECOVERY_FILE_NAME);
         run(vec![write(400_000, None), RecoveryJob::Delete], &path);
         assert!(!path.exists());
@@ -261,7 +240,7 @@ mod tests {
     /// A later write replaces the copy.
     #[test]
     fn the_last_write_is_the_copy() {
-        let dir = test_dir();
+        let dir = scratch_dir("recovery-the_last_write_is_the_copy");
         let path = dir.join(RECOVERY_FILE_NAME);
         run(vec![write(400_000, None), write(300_000, None)], &path);
         assert_eq!(read_copy(&path).project.tempo_us, 300_000);
@@ -271,7 +250,7 @@ mod tests {
     /// Deleting when there is no copy is no failure.
     #[test]
     fn deleting_no_copy_does_nothing() {
-        let dir = test_dir();
+        let dir = scratch_dir("recovery-deleting_no_copy_does_nothing");
         let path = dir.join(RECOVERY_FILE_NAME);
         assert!(!run(vec![RecoveryJob::Delete], &path));
         fs::remove_dir_all(dir).unwrap();
@@ -280,7 +259,7 @@ mod tests {
     /// A write that fails sets the flag the next check reads.
     #[test]
     fn a_failed_write_sets_the_flag() {
-        let dir = test_dir();
+        let dir = scratch_dir("recovery-a_failed_write_sets_the_flag");
         let path = dir.join("missing").join(RECOVERY_FILE_NAME);
         assert!(run(vec![write(400_000, None)], &path));
         fs::remove_dir_all(dir).unwrap();
@@ -289,7 +268,7 @@ mod tests {
     /// Only one holder at a time, and the lock goes with its holder.
     #[test]
     fn the_lock_has_one_holder() {
-        let dir = test_dir();
+        let dir = scratch_dir("recovery-the_lock_has_one_holder");
         let path = dir.join(RECOVERY_LOCK_FILE_NAME);
         let held = lock_at(&path);
         assert!(held.is_some());

@@ -42,10 +42,9 @@ impl EventHandlers {
 
         let saved_tracks = data.tracks.len();
         let clips = data.apply_to_sequencer(sequencer);
-        let origin = filename.clone().map(|name| ProjectOrigin {
-            folder: folder.clone(),
-            name,
-        });
+        let origin = filename
+            .as_deref()
+            .map(|name| ProjectOrigin::new(folder.as_deref(), name));
         *saved = SavedProject::of(sequencer, origin);
         let instruments = sequencer
             .tracks()
@@ -326,10 +325,7 @@ impl EventHandlers {
         folder: Option<&str>,
         filename: &str,
     ) {
-        let origin = ProjectOrigin {
-            folder: folder.map(str::to_owned),
-            name: filename.to_owned(),
-        };
+        let origin = ProjectOrigin::new(folder, filename);
         *saved = SavedProject::of(sequencer, Some(origin));
         recovery.delete();
         self.ui_event_tx

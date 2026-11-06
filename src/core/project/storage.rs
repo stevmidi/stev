@@ -15,6 +15,8 @@ use std::{
     time::SystemTime,
 };
 
+use serde::{Deserialize, Serialize};
+
 use crate::{
     core::{
         config::PROJECT_NAME_MAX_CHARS,
@@ -41,6 +43,27 @@ const TEMP_EXTENSION: &str = "tmp";
 /// The name a project copied into the library takes when its file name is no
 /// project name ([`project_name_from_input`]).
 const COPIED_PROJECT_FALLBACK_NAME: &str = "Untitled";
+
+/// Where a project lives in the library, named as the browser names it: an
+/// entry in the recent list, the open project, what a recovery copy saves
+/// back to.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct ProjectOrigin {
+    /// Its folder, `None` at the projects root.
+    pub(crate) folder: Option<String>,
+    /// The project name (file stem).
+    pub(crate) name: String,
+}
+
+impl ProjectOrigin {
+    /// `name` in `folder` (`None`: the projects root).
+    pub(crate) fn new(folder: Option<&str>, name: &str) -> Self {
+        Self {
+            folder: folder.map(str::to_owned),
+            name: name.to_owned(),
+        }
+    }
+}
 
 /// `folder: None` resolves to `project_dir()` itself — the fallback used when
 /// saving a brand-new project before any project folder has been selected
@@ -652,6 +675,7 @@ fn clip_export_name(
 
 #[cfg(test)]
 mod tests {
+    use crate::core::paths::scratch_dir;
     use crate::core::time::{bpm_tenths_to_tempo_us, bpm_to_tempo_us};
 
     use super::*;
@@ -677,14 +701,6 @@ mod tests {
         }
         let longest = "a".repeat(PROJECT_NAME_MAX_CHARS);
         assert_eq!(project_name_from_input(&longest), Some(longest.clone()));
-    }
-
-    /// A fresh, empty scratch folder for one test.
-    fn scratch_dir(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("stev-rename-{}-{tag}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        dir
     }
 
     /// The file names in `dir`, sorted.

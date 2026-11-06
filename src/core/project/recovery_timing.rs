@@ -1,15 +1,15 @@
 //! The recovery timing: an ignored release test that times the crash
-//! recovery check and write on synthetic projects of growing size, to settle
-//! `410-crash-recovery.md` decisions 3 to 5. It never ships and never runs in
+//! recovery check and write on synthetic projects of growing size, as
+//! `410-crash-recovery.md` decisions 3 to 5 weighed them. It never ships and never runs in
 //! CI, but `clippy --all-targets` compiles it, so it can't rot.
 //!
 //! Run with `cargo test --release recovery_timing -- --ignored --nocapture`.
 //!
 //! Every project is the 16-track maximum with [`EVENT_COUNTS`] events and
-//! [`BLOB_MEGABYTES`] of plugin state in total. The check is the snapshot and
-//! the JSON hash, as the check stood before decision 4; the direct column is
-//! the [`fingerprint`] that replaced it. The write is the snapshot, the
-//! pretty JSON and `replace_file`, as a save does them.
+//! [`BLOB_MEGABYTES`] of plugin state in total. The check is the
+//! [`fingerprint`] and the snapshot is [`ProjectSnapshot::of`], the two that
+//! run on the `"sequencer"` thread. The write adds what the `"recovery"`
+//! thread does: the encoding, the JSON and `replace_file`.
 //!
 //! The rounds run back to back, so the caches are warm and no audio is
 //! playing, which a check every 5 s in the running app can't count on: read
@@ -17,22 +17,21 @@
 //! figures are in that doc's § Measurements).
 
 use std::env::consts::{ARCH, OS};
-use std::env::temp_dir;
 use std::fs;
 use std::hint::black_box;
 use std::path::Path;
-use std::process;
 use std::time::{Duration, Instant};
 
 use crate::core::config::MAX_TRACKS;
+use crate::core::paths::scratch_dir;
 use crate::core::sequencer::Sequencer;
 use crate::core::sequencer::test_support::{bend_at, clip_at, param_at, test_sequencer};
 use crate::core::xorshift::XorShift;
 use crate::models::event::Event;
 use crate::models::track::{InstrumentRef, TrackOutput};
 
-use super::dto::ProjectData;
-use super::fingerprint::{fingerprint, json_fingerprint};
+use super::dto::{ProjectData, ProjectSnapshot};
+use super::fingerprint::fingerprint;
 use super::storage::replace_file;
 
 /// Total events in a project, across all its clips. Each divides evenly into
@@ -130,19 +129,17 @@ fn max_ms(times: &[Duration]) -> f64 {
 /// One project's timings over [`ROUNDS`], each stage kept per round.
 #[derive(Default)]
 struct Timings {
-    /// `ProjectData::from_sequencer`.
-    snapshot: Vec<Duration>,
-    /// [`json_fingerprint`].
-    hash: Vec<Duration>,
-    /// The snapshot and the fingerprint.
-    check: Vec<Duration>,
     /// [`fingerprint`].
-    direct: Vec<Duration>,
-    /// The pretty JSON.
+    check: Vec<Duration>,
+    /// [`ProjectSnapshot::of`].
+    snapshot: Vec<Duration>,
+    /// [`ProjectSnapshot::encoded`].
+    encode: Vec<Duration>,
+    /// The JSON.
     json: Vec<Duration>,
     /// `replace_file`.
     disk: Vec<Duration>,
-    /// The snapshot, the JSON and the disk.
+    /// The snapshot, the encoding, the JSON and the disk.
     write: Vec<Duration>,
     /// How long the last JSON was, in bytes.
     file_bytes: usize,
@@ -153,22 +150,20 @@ impl Timings {
     fn measure(sequencer: &Sequencer, path: &Path) -> Timings {
         let mut timings = Timings::default();
         for _ in 0..ROUNDS {
-            let (snapshot, data) = timed(|| ProjectData::from_sequencer(sequencer));
-            let (json, text) = timed(|| serde_json::to_string_pretty(&data).unwrap());
+            let (check, hash) = timed(|| fingerprint(sequencer));
+            black_box(hash);
+            let (snapshot, raw) = timed(|| ProjectSnapshot::of(sequencer));
+            let (encode, data) = timed(|| raw.encoded());
+            let (json, text) = timed(|| serde_json::to_string(&data).unwrap());
             let (disk, written) = timed(|| replace_file(path, &text));
             written.unwrap();
-            let (hash, json_hash) = timed(|| json_fingerprint(sequencer, data));
-            black_box(json_hash);
-            let (direct, direct_hash) = timed(|| fingerprint(sequencer));
-            black_box(direct_hash);
             timings.file_bytes = text.len();
+            timings.check.push(check);
             timings.snapshot.push(snapshot);
-            timings.hash.push(hash);
-            timings.check.push(snapshot + hash);
-            timings.direct.push(direct);
+            timings.encode.push(encode);
             timings.json.push(json);
             timings.disk.push(disk);
-            timings.write.push(snapshot + json + disk);
+            timings.write.push(snapshot + encode + json + disk);
         }
         timings
     }
@@ -176,13 +171,13 @@ impl Timings {
     /// This project's row of the report.
     fn row(&mut self, events: usize, blob_megabytes: usize) -> String {
         format!(
-            "{events:>7} {blob_megabytes:>5} {:>6.1} {:>9.2} {:>8.2} {:>8.2} {:>9.2} {:>8.2} {:>8.2} {:>8.2} {:>8.2} {:>9.2}",
+            "{events:>7} {blob_megabytes:>6} {:>6.1} {:>8.2} {:>9.2} {:>8.2} {:>9.2} {:>8.2} {:>8.2} {:>8.2} {:>8.2} {:>9.2}",
             self.file_bytes as f64 / MEGABYTE as f64,
-            median_ms(&mut self.snapshot),
-            median_ms(&mut self.hash),
             median_ms(&mut self.check),
             max_ms(&self.check),
-            median_ms(&mut self.direct),
+            median_ms(&mut self.snapshot),
+            max_ms(&self.snapshot),
+            median_ms(&mut self.encode),
             median_ms(&mut self.json),
             median_ms(&mut self.disk),
             median_ms(&mut self.write),
@@ -212,8 +207,7 @@ fn a_timing_project_holds_its_events_and_blobs() {
 #[test]
 #[ignore = "a measurement, not a check: run it by hand, in release"]
 fn recovery_timing() {
-    let dir = temp_dir().join(format!("stev-recovery-timing-{}", process::id()));
-    fs::create_dir_all(&dir).unwrap();
+    let dir = scratch_dir("recovery-timing");
     let path = dir.join("copy.json");
 
     // `println!`, not the log: this is a test, which installs no logger, and
@@ -221,15 +215,15 @@ fn recovery_timing() {
     println!();
     println!("recovery timing: {OS} {ARCH}, {MAX_TRACKS} tracks, {ROUNDS} rounds, medians in ms");
     println!(
-        "{:>7} {:>5} {:>6} {:>9} {:>8} {:>8} {:>9} {:>8} {:>8} {:>8} {:>8} {:>9}",
+        "{:>7} {:>6} {:>6} {:>8} {:>9} {:>8} {:>9} {:>8} {:>8} {:>8} {:>8} {:>9}",
         "events",
         "blobMB",
         "fileMB",
-        "snapshot",
-        "hash",
         "CHECK",
         "check max",
-        "direct",
+        "snapshot",
+        "snap max",
+        "encode",
         "json",
         "disk",
         "WRITE",

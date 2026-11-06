@@ -19,7 +19,7 @@ use crate::core::{
     event_handlers::RecoveryKeeper,
     keymap::Keymap,
     logging,
-    project::take_recovery_lock,
+    project::{recovery_path, take_recovery_lock},
     settings::{clamp_midi_out_offset_ms, load_settings},
     setup::{
         setup_clock, setup_display, setup_event_handlers, setup_metronome,
@@ -28,7 +28,8 @@ use crate::core::{
     },
     threads::{
         start_audio_engine, start_clock_thread, start_computer_keys_thread,
-        start_midi_output_thread, start_midi_watcher_thread, start_sequencer_thread,
+        start_midi_output_thread, start_midi_watcher_thread, start_recovery_thread,
+        start_sequencer_thread,
     },
 };
 
@@ -290,12 +291,23 @@ fn main() {
 
     // Here on the app's own startup path, so a `stev --mcp` never takes the
     // lock (`410-crash-recovery.md` decision 16).
-    let recovery = RecoveryKeeper::start(
-        take_recovery_lock(),
-        shared_channels.recovery_job_tx,
-        shared_channels.recovery_job_rx,
-        shared_atomics.recovery_write_failed.clone(),
-    );
+    let write_failed = shared_atomics.recovery_write_failed.clone();
+    let recovery = match take_recovery_lock() {
+        Some(lock) => {
+            let worker = start_recovery_thread(
+                lock,
+                recovery_path(),
+                shared_channels.recovery_job_rx,
+                write_failed.clone(),
+            );
+            RecoveryKeeper::new(
+                Some(shared_channels.recovery_job_tx),
+                Some(worker),
+                write_failed,
+            )
+        }
+        None => RecoveryKeeper::new(None, None, write_failed),
+    };
 
     start_sequencer_thread(
         sequencer,

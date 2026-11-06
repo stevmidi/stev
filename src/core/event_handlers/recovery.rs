@@ -2,17 +2,15 @@
 //! copy: when one should exist, and what it should hold. The writing itself
 //! is the `"recovery"` thread's. See `410-crash-recovery.md`.
 
-use std::fs::File;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use crossbeam_channel::{Receiver, Sender};
+use crossbeam_channel::Sender;
 
-use crate::core::project::{self, ProjectSnapshot, RecoveryJob, recovery_path};
+use crate::core::project::{self, ProjectSnapshot, RecoveryJob};
 use crate::core::sequencer::Sequencer;
-use crate::core::threads::start_recovery_thread;
 
 use super::SavedProject;
 
@@ -41,8 +39,10 @@ pub(crate) struct RecoveryKeeper {
 }
 
 impl RecoveryKeeper {
-    /// A keeper sending to `jobs`, with `worker` to wait on at the end.
-    pub(super) fn new(
+    /// A keeper sending to `jobs`, with `worker` to wait on at the end. With
+    /// no `jobs` another instance has the copy, and this keeper does nothing
+    /// (`410-crash-recovery.md` decision 16).
+    pub(crate) fn new(
         jobs: Option<Sender<RecoveryJob>>,
         worker: Option<JoinHandle<()>>,
         write_failed: Arc<AtomicBool>,
@@ -53,25 +53,6 @@ impl RecoveryKeeper {
             write_failed,
             next_check: Instant::now(),
             copied: None,
-        }
-    }
-
-    /// Starts the `"recovery"` thread if this instance holds `lock`. Without
-    /// it another instance has the copy: this one's keeper does nothing
-    /// (`410-crash-recovery.md` decision 16).
-    pub(crate) fn start(
-        lock: Option<File>,
-        jobs_tx: Sender<RecoveryJob>,
-        jobs_rx: Receiver<RecoveryJob>,
-        write_failed: Arc<AtomicBool>,
-    ) -> Self {
-        match lock {
-            Some(lock) => {
-                let worker =
-                    start_recovery_thread(lock, recovery_path(), jobs_rx, write_failed.clone());
-                RecoveryKeeper::new(Some(jobs_tx), Some(worker), write_failed)
-            }
-            None => RecoveryKeeper::new(None, None, write_failed),
         }
     }
 
@@ -135,16 +116,16 @@ impl RecoveryKeeper {
 
 #[cfg(test)]
 mod tests {
-    use std::env::temp_dir;
-    use std::fs;
-    use std::process;
+    use std::fs::{self, File};
 
     use crossbeam_channel::unbounded;
     use undo::Record;
 
     use crate::core::event_handlers::test_harness::{Harness, add_clip, harness, run_command};
+    use crate::core::paths::scratch_dir;
     use crate::core::project::{ProjectAction, ProjectOrigin};
     use crate::core::sequencer::{SequencerCommand, SequencerEdit};
+    use crate::core::threads::start_recovery_thread;
 
     use super::*;
 
@@ -173,6 +154,16 @@ mod tests {
     /// Runs one check.
     fn check(h: &mut Harness) {
         h.recovery.check(&h.sequencer, &h.saved);
+    }
+
+    /// Asks to quit, past the prompt when `discard_changes`.
+    fn quit(h: &mut Harness, discard_changes: bool) {
+        let mut record: Record<SequencerEdit> = Record::new();
+        let cmd = SequencerCommand::ProjectAction {
+            action: ProjectAction::Quit,
+            discard_changes,
+        };
+        run_command(h, &mut record, cmd);
     }
 
     /// A project with no changes has no copy.
@@ -225,10 +216,7 @@ mod tests {
     #[test]
     fn a_copy_names_the_saved_project() {
         let mut h = harness();
-        let origin = ProjectOrigin {
-            folder: Some("Songs".to_owned()),
-            name: "Song".to_owned(),
-        };
+        let origin = ProjectOrigin::new(Some("Songs"), "Song");
         h.saved = SavedProject::of(&h.sequencer, Some(origin.clone()));
         h.sequencer.set_tempo(400_000);
         check(&mut h);
@@ -294,10 +282,7 @@ mod tests {
 
         h.sequencer.set_tempo(300_000);
         check(&mut h);
-        let origin = ProjectOrigin {
-            folder: None,
-            name: "Song".to_owned(),
-        };
+        let origin = ProjectOrigin::new(None, "Song");
         assert_eq!(jobs(&h), [Job::Write(300_000, Some(origin))]);
     }
 
@@ -306,17 +291,9 @@ mod tests {
     #[test]
     fn a_clean_quit_deletes_the_copy_and_ends_the_keeper() {
         let mut h = harness();
-        let mut record: Record<SequencerEdit> = Record::new();
         h.sequencer.set_tempo(400_000);
         check(&mut h);
-        run_command(
-            &mut h,
-            &mut record,
-            SequencerCommand::ProjectAction {
-                action: ProjectAction::Quit,
-                discard_changes: true,
-            },
-        );
+        quit(&mut h, true);
         assert_eq!(jobs(&h), [Job::Write(400_000, None), Job::Delete]);
 
         h.sequencer.set_tempo(300_000);
@@ -345,16 +322,8 @@ mod tests {
     #[test]
     fn a_quit_waiting_on_the_prompt_keeps_the_copy() {
         let mut h = harness();
-        let mut record: Record<SequencerEdit> = Record::new();
         add_clip(&mut h.sequencer, 0);
-        run_command(
-            &mut h,
-            &mut record,
-            SequencerCommand::ProjectAction {
-                action: ProjectAction::Quit,
-                discard_changes: false,
-            },
-        );
+        quit(&mut h, false);
         assert_eq!(jobs(&h), []);
     }
 
@@ -363,8 +332,7 @@ mod tests {
     #[test]
     fn finish_waits_for_the_thread_to_delete_the_copy() {
         let h = harness();
-        let dir = temp_dir().join(format!("stev-recovery-finish-{}", process::id()));
-        fs::create_dir_all(&dir).unwrap();
+        let dir = scratch_dir("recovery-finish");
         let path = dir.join("copy.json");
         let lock = File::create(dir.join("lock")).unwrap();
         let (jobs_tx, jobs_rx) = unbounded();
@@ -381,18 +349,16 @@ mod tests {
         fs::remove_dir_all(dir).unwrap();
     }
 
-    /// Without the lock this instance neither writes nor deletes, at any
-    /// point (`410-crash-recovery.md` decision 16).
+    /// Without the lock this instance has nowhere to send a job, so nothing
+    /// is recorded as copied and quitting has nothing to wait for
+    /// (`410-crash-recovery.md` decision 16).
     #[test]
     fn an_instance_without_the_lock_stays_out() {
         let h = harness();
-        let (jobs_tx, jobs_rx) = unbounded();
-        let write_failed = Arc::new(AtomicBool::new(false));
-        let mut keeper = RecoveryKeeper::start(None, jobs_tx, jobs_rx.clone(), write_failed);
+        let mut keeper = RecoveryKeeper::new(None, None, Arc::new(AtomicBool::new(false)));
         h.sequencer.set_tempo(400_000);
         keeper.check(&h.sequencer, &h.saved);
-        keeper.delete();
+        assert_eq!(keeper.copied, None);
         keeper.finish();
-        assert_eq!(jobs_rx.try_iter().count(), 0);
     }
 }

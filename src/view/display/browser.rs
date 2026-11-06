@@ -37,7 +37,7 @@ use crate::core::{
     input_event::is_pane_focus_key,
     keymap::Action,
     project::{
-        ProjectAction, RecentProject, clip_path, delete_clip, delete_project,
+        ProjectAction, ProjectOrigin, clip_path, delete_clip, delete_project,
         delete_project_folder, delete_template, list_clips, list_project_folders, list_projects,
         list_templates, note_recent, project_exists, remove_recent, template_path,
     },
@@ -146,7 +146,7 @@ pub(super) fn category_plus_rect(row: Rect) -> Rect {
 /// The Recent list from `settings.json`, less the projects whose file is
 /// gone (deleted or moved, in the browser or in Finder), which are pruned
 /// from it for good.
-fn recent_projects() -> Vec<RecentProject> {
+fn recent_projects() -> Vec<ProjectOrigin> {
     let mut recent = load_settings().recent_projects;
     let listed = recent.len();
     recent.retain(|project| project_exists(project.folder.as_deref(), &project.name));
@@ -157,7 +157,7 @@ fn recent_projects() -> Vec<RecentProject> {
 }
 
 /// Applies `change` to the Recent list in `settings.json`.
-pub(super) fn update_recent(change: impl FnOnce(&mut Vec<RecentProject>)) {
+pub(super) fn update_recent(change: impl FnOnce(&mut Vec<ProjectOrigin>)) {
     update_settings("recent projects", |settings| {
         change(&mut settings.recent_projects);
     });
@@ -413,7 +413,7 @@ pub(super) enum BrowserAction {
     /// projects (the confirmed second Enter).
     Delete(BrowserItem),
     /// Take this project off the Recent list, leaving its file.
-    RemoveRecent(RecentProject),
+    RemoveRecent(ProjectOrigin),
 }
 
 /// What [`BrowserTree::reload`] lists from disk.
@@ -428,7 +428,7 @@ pub(super) struct DiskListing {
     /// The clips in the `Clips` folder, alphabetical.
     pub(super) clips: Vec<String>,
     /// The projects opened or saved most recently, newest first.
-    pub(super) recent: Vec<RecentProject>,
+    pub(super) recent: Vec<ProjectOrigin>,
 }
 
 impl DiskListing {
@@ -767,9 +767,9 @@ impl BrowserTree {
         }
         let recent = match current_name {
             None => self.disk.recent.first().cloned(),
-            Some(name) => Some(RecentProject::new(current_folder, name)),
+            Some(name) => Some(ProjectOrigin::new(current_folder, name)),
         }
-        .map(|RecentProject { folder, name }| BrowserItem::Recent { folder, name })
+        .map(|ProjectOrigin { folder, name }| BrowserItem::Recent { folder, name })
         .filter(|item| self.is_listed(item));
         if let Some(item) = recent {
             self.selected = Some(item);
@@ -874,7 +874,7 @@ impl BrowserTree {
     /// else arms the delete confirm ([`arm_delete`](Self::arm_delete)).
     pub(super) fn delete_key(&mut self) -> Option<BrowserAction> {
         if let Some(BrowserItem::Recent { folder, name }) = &self.selected {
-            return Some(BrowserAction::RemoveRecent(RecentProject::new(
+            return Some(BrowserAction::RemoveRecent(ProjectOrigin::new(
                 folder.as_deref(),
                 name,
             )));
@@ -1426,7 +1426,7 @@ impl Display {
     /// ⌘S saves to, its folder current, and first in the Recent list. The
     /// caller re-lists a shown panel (a save's `ProjectFilesChanged` does).
     pub(super) fn adopt_project(&mut self, folder: Option<String>, name: String) {
-        update_recent(|list| note_recent(list, RecentProject::new(folder.as_deref(), &name)));
+        update_recent(|list| note_recent(list, ProjectOrigin::new(folder.as_deref(), &name)));
         self.project.project_current_name = Some(name);
         self.set_current_project_folder(folder);
     }
@@ -1606,8 +1606,8 @@ mod tests {
         let mut tree = BrowserTree::default();
         tree.reload(DiskListing {
             recent: vec![
-                RecentProject::new(Some("a"), "a1"),
-                RecentProject::new(None, "loose"),
+                ProjectOrigin::new(Some("a"), "a1"),
+                ProjectOrigin::new(None, "loose"),
             ],
             ..disk(&[("a", &["a2", "a1"]), ("b", &[])], &["loose"], &[])
         });
@@ -2126,7 +2126,7 @@ mod tests {
         tree.select(recent(Some("a"), "a1"));
         assert_eq!(
             tree.delete_key(),
-            Some(BrowserAction::RemoveRecent(RecentProject::new(
+            Some(BrowserAction::RemoveRecent(ProjectOrigin::new(
                 Some("a"),
                 "a1"
             )))
@@ -2150,7 +2150,7 @@ mod tests {
         // Removed, the selection hands over to the next recent row.
         tree.select(recent(Some("a"), "a1"));
         tree.reload(DiskListing {
-            recent: vec![RecentProject::new(None, "loose")],
+            recent: vec![ProjectOrigin::new(None, "loose")],
             ..disk(&[("a", &["a2", "a1"]), ("b", &[])], &["loose"], &[])
         });
         assert_eq!(tree.selected(), Some(&recent(None, "loose")));

@@ -111,15 +111,9 @@ fn install_panic_hook() {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::core::paths::scratch_dir;
 
-    /// A fresh, empty scratch folder for one test.
-    fn scratch_dir(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("stev-log-{}-{tag}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        dir
-    }
+    use super::*;
 
     #[test]
     fn launches_keep_exactly_the_previous_run() {
