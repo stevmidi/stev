@@ -249,7 +249,9 @@ impl Clip {
 
     /// Clones the `NoteOff`s for notes that have started but not ended at the
     /// current playback index — the offs a track must emit to silence this clip
-    /// cleanly when it is muted or removed mid-playback.
+    /// cleanly when it is muted or removed mid-playback. A muted note is left
+    /// out: it can't be sounding, so muting one that is reads as the note
+    /// stopping (`Track::edit_clip_events`), which releases it.
     pub(crate) fn pending_note_offs(&self) -> Vec<Event> {
         // Nothing walked yet, so nothing started: skip the pairing (this runs
         // on the sequencer thread at every clip exit).
@@ -261,7 +263,9 @@ impl Clip {
             .on_to_off
             .iter()
             .filter(|&(&on_idx, &off_idx)| {
-                on_idx < self.current_event_idx && off_idx >= self.current_event_idx
+                on_idx < self.current_event_idx
+                    && off_idx >= self.current_event_idx
+                    && !self.events[on_idx].is_muted()
             })
             .filter_map(|(_, &off_idx)| self.events.get(off_idx).cloned())
             .collect()
@@ -702,5 +706,23 @@ mod tests {
         clip.region_mut().set_region(Some(0), Some(960));
 
         assert!(clip.chased_note_ons_at(clip.start_tick()).is_empty());
+    }
+
+    #[test]
+    fn pending_note_offs_skip_a_muted_note() {
+        let mut clip = Clip::new();
+        clip.add_event(Event::new(0, 0, vec![0x90, 60, 100]));
+        clip.add_event(Event::new(0, 0, vec![0x90, 64, 100]));
+        clip.add_event(Event::new(480, 0, vec![0x80, 60, 0]));
+        clip.add_event(Event::new(480, 0, vec![0x80, 64, 0]));
+        clip.select_event(Some(clip.events()[0].id()));
+        clip.toggle_muted_for_selected_events();
+        clip.current_event_idx = 2;
+
+        let offs = clip.pending_note_offs();
+
+        // Only the other note can be sounding.
+        assert_eq!(offs.len(), 1);
+        assert_ne!(offs[0].note_number(), clip.events()[0].note_number());
     }
 }

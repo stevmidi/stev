@@ -25,6 +25,11 @@ Breaking entries are marked **Breaking** and say what to do about them.
 - Keys work from a plugin editor the way they do in a DAW: the plugin gets a key first, and what it doesn't use comes to Stev, so `/` captures and every other command works without clicking back. `⌘S`, `⇧⌘S` and `⌘N` always go to Stev. A plugin's text field keeps what's typed into it, now including Space, `0` and `v`.
 - Linux and Windows support is off the roadmap. They still build in CI, and a port from someone who will use and maintain it is welcome (`CONTRIBUTING.md`, `docs/260-porting.md`).
 
+### Fixed
+
+- Muting a clip with the arranger marquee while it plays releases its sounding notes. They used to hang until the loop wrapped or the transport stopped.
+- Muting a note with `M` in the clip view while it sounds releases it. It used to hang until the loop wrapped or the transport stopped.
+
 ## [0.14.0] - 2026-11-05
 
 ### Added

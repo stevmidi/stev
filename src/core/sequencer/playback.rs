@@ -120,7 +120,8 @@ impl Sequencer {
             while let Some(event) = track.tick() {
                 // A muted event never sounds at all — both its `NoteOn` and
                 // paired `NoteOff` carry the flag (`Clip::toggle_muted_for_selected_events`),
-                // so neither one goes out and nothing needs releasing later.
+                // so neither one goes out. A note muted while it sounds was
+                // released by the mute itself (`Track::edit_clip_events`).
                 if event.is_muted() {
                     continue;
                 }

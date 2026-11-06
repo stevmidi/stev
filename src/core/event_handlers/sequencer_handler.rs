@@ -1484,6 +1484,10 @@ mod tests {
         for _ in 0..ticks {
             let tick = h.playback_tick.load(Ordering::Relaxed);
             while let Some(event) = h.sequencer.tracks_mut()[0].tick() {
+                // Dropped here as `Sequencer::tick` drops it.
+                if event.is_muted() {
+                    continue;
+                }
                 let is_on = match event.event_type() {
                     Some(EventType::NoteOn) => true,
                     Some(EventType::NoteOff) => false,
@@ -1558,6 +1562,63 @@ mod tests {
             assert_eq!(edges[1], (120, 60, false), "{case}: released at once");
             assert_no_hung_or_doubled_notes(&edges, case);
         }
+    }
+
+    /// Issue #19: muting a note while it sounds releases it. The mute flag
+    /// goes on its `NoteOff` too, so the off the walk would have met is
+    /// dropped: without its own release the note hung until the wrap. A redo
+    /// releases it the same way; the undo between them only brings the note
+    /// back for the next pass.
+    #[test]
+    fn muting_a_sounding_note_releases_it_and_redo_does_too() {
+        let selected_mid_note = || {
+            let (mut h, note_id) = harness_mid_note();
+            let clip_id = h.sequencer.selected_clip_id().unwrap();
+            h.sequencer
+                .clip_on_mut(0, clip_id)
+                .unwrap()
+                .select_event(Some(note_id));
+            h
+        };
+
+        let mut h = selected_mid_note();
+        let mut record = Record::new();
+        run_command(&mut h, &mut record, SequencerCommand::MuteSelectedEvents);
+        assert_eq!(play(&mut h, 1800), vec![(120, 60, false)]);
+
+        let mut h = selected_mid_note();
+        let mut record = Record::new();
+        run_command(&mut h, &mut record, SequencerCommand::MuteSelectedEvents);
+        assert_eq!(play(&mut h, 2), vec![(120, 60, false)]);
+        run_command(&mut h, &mut record, SequencerCommand::Undo);
+        run_command(&mut h, &mut record, SequencerCommand::Redo);
+        assert_eq!(play(&mut h, 2), vec![(122, 60, false)]);
+    }
+
+    /// Issue #19: `M` on a marquee holding the whole clip splits nothing, so
+    /// the mute itself has to release what sounds. The workflow's `reset`
+    /// seeks off the muted clip before the next tick, so `Track::tick` can't
+    /// find its notes any more. Undoing an unmute mutes the clip the same way.
+    #[test]
+    fn muting_a_sounding_clip_with_the_marquee_releases_its_notes() {
+        let mute = || SequencerCommand::MuteClipsInRange {
+            rect: rect(0, 1920, 0, 0),
+        };
+
+        let (mut h, _) = harness_mid_note();
+        run_command(&mut h, &mut Record::new(), mute());
+        assert_eq!(play(&mut h, 1800), vec![(120, 60, false)]);
+
+        // Muted before playback, then unmuted and re-muted by undo mid-note.
+        let (mut h, _, _) = harness_with_clip();
+        let mut record = Record::new();
+        run_command(&mut h, &mut record, mute());
+        run_command(&mut h, &mut record, mute());
+        h.running.store(true, Ordering::Relaxed);
+        h.sequencer.reset_to_tick(0);
+        assert_eq!(play(&mut h, 120), vec![(0, 60, true)]);
+        run_command(&mut h, &mut record, SequencerCommand::Undo);
+        assert_eq!(play(&mut h, 1800), vec![(120, 60, false)]);
     }
 
     /// Stretching a sounding note keeps it sounding to its new end — no

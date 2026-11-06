@@ -107,9 +107,7 @@ impl MuteInRangeEdit {
         //    unmuted, otherwise unmute all.
         let target_muted = mute_targets.iter().any(|&(_, _, was_muted)| !was_muted);
         for &(track_idx, id, _) in mute_targets.iter() {
-            if let Some(clip) = sequencer.clip_on_mut(track_idx, id) {
-                clip.set_muted(target_muted);
-            }
+            set_clip_muted(sequencer, track_idx, id, target_muted);
         }
 
         // 4. UI buckets — `added` is every split-created piece (whether or
@@ -146,9 +144,7 @@ impl MuteInRangeEdit {
 
         // 1. Restore each clip's exact prior mute state.
         for &(track_idx, id, was_muted) in mute_targets {
-            if let Some(clip) = sequencer.clip_on_mut(track_idx, id) {
-                clip.set_muted(was_muted);
-            }
+            set_clip_muted(sequencer, track_idx, id, was_muted);
         }
 
         // 2. Undo both splits, mirroring `DeleteInRangeEdit::undo`.
@@ -176,6 +172,23 @@ impl MuteInRangeEdit {
             selected_track_idx,
             selected_clip_id,
         }
+    }
+}
+
+/// Sets a clip's mute flag, first releasing what it has sounding if this
+/// silences it under a running transport. `Track::tick` can't do that later:
+/// the workflow's `reset` seeks the track off the muted clip before the next
+/// tick, and a whole clip inside the range has no split to release it.
+fn set_clip_muted(sequencer: &mut Sequencer, track_idx: usize, id: Uuid, muted: bool) {
+    let running = sequencer.is_running();
+    let Some(track) = sequencer.tracks.get_mut(track_idx) else {
+        return;
+    };
+    if muted && running {
+        track.release_sounding_notes_for_clip(id);
+    }
+    if let Some(clip) = track.get_clip_by_id_mut(id) {
+        clip.set_muted(muted);
     }
 }
 

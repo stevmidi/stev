@@ -807,7 +807,7 @@ impl Track {
     /// Runs `edit` on the events of `clip_id` (`None` if the track has no
     /// such clip), first noting which of its notes sound at the playhead. A
     /// note the edit stops sounding there — moved away in time or pitch,
-    /// deleted, or ended behind the playhead — gets its `NoteOff` queued
+    /// deleted, muted, or ended behind the playhead — gets its `NoteOff` queued
     /// into [`pending_note_offs`](Self::pending_note_offs): its old `NoteOff`
     /// is gone from where the walk would meet it, so it would otherwise hang,
     /// or sound a second time if its new start is still ahead. A note still
