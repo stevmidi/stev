@@ -29,7 +29,7 @@ use crate::models::{
 };
 
 use super::Sequencer;
-use super::instrument_event::{ClipInstrumentEvent, EventTime, VoiceMessage};
+use super::instrument_event::{ClipInstrumentEvent, EventTime, NoteSource, VoiceMessage};
 
 impl Sequencer {
     /// Auditions `note` at `velocity` on the selected track's channel, like
@@ -96,7 +96,7 @@ impl Sequencer {
                         send_to_voice(
                             &mut self.instrument_midi_tx,
                             slot,
-                            VoiceMessage::Midi(midi3(&message)),
+                            VoiceMessage::Midi(midi3(&message), NoteSource::Audition),
                             when,
                         );
                     }
@@ -175,7 +175,7 @@ impl Sequencer {
                         send_to_voice(
                             &mut self.instrument_midi_tx,
                             track.slot(),
-                            VoiceMessage::Midi(msg),
+                            VoiceMessage::Midi(msg, NoteSource::Clip),
                             EventTime::At(at),
                         );
                     }
@@ -221,7 +221,7 @@ impl Sequencer {
                         send_to_voice(
                             &mut self.instrument_midi_tx,
                             track.slot(),
-                            VoiceMessage::Midi(msg),
+                            VoiceMessage::Midi(msg, NoteSource::Clip),
                             EventTime::Immediate,
                         );
                     } else {
@@ -246,17 +246,18 @@ impl Sequencer {
     }
 
     /// Releases the clip-driven notes every `Instrument` track's plugin
-    /// currently has sounding. Clip events sent via `instrument_midi_tx` bypass
+    /// currently has sounding: on a stop, a jump and a loop wrap. Clip events sent via `instrument_midi_tx` bypass
     /// the `NoteLogger` note-off safety net on the `"midiout"` thread, so
     /// transport stop / seek would otherwise leave a plugin ringing — and, for
     /// plugins whose on-screen keyboard only clears on a matching note-off (u-he
     /// Repro), showing stuck keys.
     ///
     /// Sends an explicit Note Off (channel 0) for exactly the notes
-    /// [`instrument_notes`](Self::instrument_notes) recorded as held from clips —
-    /// never a blanket All Notes Off, and never a note the player is currently
-    /// holding on the physical keyboard for that track (stopping the transport
-    /// mid-improvisation must not cut it). Release tails still ring.
+    /// [`instrument_notes`](Self::instrument_notes) recorded as held from clips,
+    /// never a blanket All Notes Off, so a live key of another pitch plays on.
+    /// One of the same pitch does too in a plugin that keys voices by id; in
+    /// one keying by pitch it ends with the clip's note, as in a DAW. Release
+    /// tails still ring.
     pub(crate) fn release_instrument_notes(&mut self) {
         for track_idx in 0..self.tracks.len() {
             if matches!(self.tracks[track_idx].output(), TrackOutput::Instrument(_)) {
@@ -266,8 +267,8 @@ impl Sequencer {
     }
 
     /// Sends a Note Off for every clip note engine slot `slot`'s plugin has
-    /// sounding (minus a live-held one — see
-    /// [`release_instrument_notes`](Self::release_instrument_notes)).
+    /// sounding — see
+    /// [`release_instrument_notes`](Self::release_instrument_notes).
     fn release_slot_instrument_notes(&mut self, slot: usize) {
         for note in self.instrument_notes.release_for(slot) {
             self.push_instrument_now(slot, &[0x80, note, 0x00]);
@@ -301,8 +302,8 @@ impl Sequencer {
     /// Puts back to its rest every wheel a track's clips moved — on a
     /// transport stop, where no [`tick`](Self::tick) runs to send a chase. A
     /// wheel the player moved last on the armed track is left where it is
-    /// (`Track::hand_controller_to_player`), as a live-held note is, and a
-    /// knob's parameter has no rest: it stays where it was
+    /// (`Track::hand_controller_to_player`), and a knob's parameter has no
+    /// rest: it stays where it was
     /// (`400-parameter-knobs.md` decision 9).
     pub(crate) fn reset_wheels(&mut self) {
         for track_idx in 0..self.tracks.len() {
@@ -364,7 +365,7 @@ impl Sequencer {
         send_to_voice(
             &mut self.instrument_midi_tx,
             slot,
-            VoiceMessage::Midi(midi3(msg)),
+            VoiceMessage::Midi(midi3(msg), NoteSource::Clip),
             EventTime::Immediate,
         );
     }
@@ -450,7 +451,7 @@ mod tests {
         std::iter::from_fn(|| rx.pop().ok())
             .filter_map(|e| match e.message {
                 VoiceMessage::Param(moved) => Some((e.track, moved.param.id, moved.value)),
-                VoiceMessage::Midi(_) => None,
+                VoiceMessage::Midi(..) => None,
             })
             .collect()
     }
@@ -576,23 +577,21 @@ mod tests {
     }
 
     #[test]
-    fn release_instrument_notes_spares_a_note_held_live_on_the_armed_track() {
+    fn release_instrument_notes_releases_a_clip_note_the_player_also_holds() {
         let (mut sequencer, mut rx) = sequencer_and_plugin_rx(config::TEMPO_US_DEFAULT);
         instrument_track_0(&mut sequencer);
         let track0 = sequencer.track_id_by_index(0);
         sequencer.select_track(track0);
 
-        // A clip note and a live-improvised note, same track, both C4-ish.
-        sequencer.instrument_notes.observe_clip(0, &[0x90, 60, 100]);
-        sequencer.handle_midi_input(&[0x90, 64, 100], 0); // live E4
-
-        // Also a clip note on E4 — must be spared because E4 is held live.
+        // E4 held live over the clip's own E4. The off is the clip's: nothing
+        // else would ever release its note, and the live key's id is its own.
+        sequencer.handle_midi_input(&[0x90, 64, 100], 0);
         sequencer.instrument_notes.observe_clip(0, &[0x90, 64, 100]);
 
         sequencer.release_instrument_notes();
 
         let msgs = drain_plugin_events(&mut rx);
-        assert_eq!(msgs, vec![(0, [0x80, 60, 0x00])]);
+        assert_eq!(msgs, vec![(0, [0x80, 64, 0x00])]);
     }
 
     /// Builds a sequencer whose track 0 is an instrument holding two adjacent

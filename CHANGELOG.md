@@ -23,10 +23,13 @@ Breaking entries are marked **Breaking** and say what to do about them.
 ### Changed
 
 - Keys work from a plugin editor the way they do in a DAW: the plugin gets a key first, and what it doesn't use comes to Stev, so `/` captures and every other command works without clicking back. `⌘S`, `⇧⌘S` and `⌘N` always go to Stev. A plugin's text field keeps what's typed into it, now including Space, `0` and `v`.
+- On a VST3 track, a live key and a clip note of the same pitch now double up where the plugin allows it, as in a DAW: neither cuts the other.
+- A transport stop, a jump or a loop wrap always ends the clip's sounding notes on plugin tracks, even a pitch you are holding on the keyboard. Your own note plays on if the plugin keeps the two apart, and ends with the clip's if not. Other live notes are untouched, as before.
 - Linux and Windows support is off the roadmap. They still build in CI, and a port from someone who will use and maintain it is welcome (`CONTRIBUTING.md`, `docs/260-porting.md`).
 
 ### Fixed
 
+- Selecting a note while the clip plays that pitch no longer leaves notes stuck in VST3 plugins. Serum 2 held such a note until the transport stopped, and Kontakt 8 until muted in its own window.
 - Muting a clip with the arranger marquee while it plays releases its sounding notes. They used to hang until the loop wrapped or the transport stopped.
 - Muting a note with `M` in the clip view while it sounds releases it. It used to hang until the loop wrapped or the transport stopped.
 

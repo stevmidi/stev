@@ -158,12 +158,8 @@ impl Sequencer {
     /// whether a note-on kicked the selected track's meter
     /// ([`kick_live_meter`](Self::kick_live_meter)).
     pub(crate) fn handle_midi_input(&mut self, message: &[u8], tick: i32) -> bool {
-        // Track which live keys are down so a transport stop does not release a
-        // note the player is holding on an instrument track. See `130-plugin-host.md`.
-        let live_target = self.live_instrument_target();
-        self.instrument_notes.observe_live(live_target, message);
-        // Likewise a wheel or a knob the player moves: the armed track's
-        // synth is now where the player put it, not where a clip did.
+        // A wheel or a knob the player moves: the armed track's synth is now
+        // where the player put it, not where a clip did.
         if let Some(track) = self.selected_track_mut() {
             track.hand_controller_to_player(message);
         }

@@ -19,6 +19,7 @@ use crate::core::midi::message::Midi3;
 use crate::core::plugin_host::buffers::{AudioIoLayout, PortBuffers, channel_total};
 use crate::core::plugin_host::transport::BlockTransport;
 use crate::core::plugin_host::voice::{EVENT_CAPACITY, InstrumentVoice, VoiceMix};
+use crate::core::sequencer::NoteSource;
 use crate::core::time::{monotonic_nanos, ticks_to_beats_f64};
 use crate::models::knobs::ParamId;
 
@@ -73,7 +74,7 @@ impl ClapVoice {
 impl InstrumentVoice for ClapVoice {
     /// Queues a MIDI message at sample `time` within the next processed block.
     /// Wakes the voice if it was sleeping — see the `sleeping` field doc.
-    fn queue_midi(&mut self, bytes: Midi3, time: u32) {
+    fn queue_midi(&mut self, bytes: Midi3, _source: NoteSource, time: u32) {
         if let Some(event) = midi_bytes_to_clap_event(bytes, time) {
             self.in_events.push(&event);
             self.mix.sleeping = false;

@@ -25,6 +25,13 @@
 //! note sounding forever if the off arrives with a mismatched or absent id.
 //! [`NoteIds`] is the per-voice table that keeps them paired.
 //!
+//! Each [`NoteSource`] holds its own notes. A live key over a clip's note of
+//! the same pitch is two notes with two ids, each ended only by its own off, so
+//! a plugin keying voices by id plays both, and neither cuts the other. One
+//! source holds one note per key: a second on from it takes the key over, and
+//! the old note gets its off first ([`displaced_note_off`]), so no id is ever
+//! left without one and a source's single off closes its key.
+//!
 //! See `docs/180-vst3-host.md`.
 
 use vst3::ComPtr;
@@ -37,7 +44,8 @@ use vst3::Steinberg::Vst::{
 };
 use vst3::Steinberg::kResultOk;
 
-use crate::core::midi::message::{Midi3, pitch_bend_value};
+use crate::core::midi::message::{Midi3, parse_note, pitch_bend_value};
+use crate::core::sequencer::NoteSource;
 
 /// MIDI status nibble for note-off.
 const NOTE_OFF: u8 = 0x80;
@@ -67,16 +75,18 @@ const CONTROLLERS: usize = kCountCtrlNumber as usize;
 const CHANNELS: usize = 16;
 /// Keys per MIDI channel.
 const KEYS: usize = 128;
+/// [`NoteSource`]s, the last one's index plus one.
+const SOURCES: usize = NoteSource::Audition as usize + 1;
 
 /// Pairs each sounding note-on with the `noteId` its note-off must repeat.
 ///
-/// A fresh id is minted per note-on and remembered until the matching off. A
-/// re-triggered key (a second on with no off in between, which a legato clip
-/// can easily produce) overwrites the stored id, so the *next* off releases the
-/// most recent on — the same choice a pitch-keyed plugin would make anyway.
+/// A fresh id is minted per note-on and remembered until the matching off from
+/// the same source. One id per source and key: a second on from it with no off
+/// in between first releases the note it displaces ([`displaced_note_off`]).
 pub(super) struct NoteIds {
-    /// `active[channel][key]` is the id of the note-on still awaiting its off.
-    active: [[Option<i32>; KEYS]; CHANNELS],
+    /// `active[source][channel][key]` is the id of the note-on still awaiting
+    /// its off. Boxed because it is ~48 KB and only read through a reference.
+    active: Box<[[[Option<i32>; KEYS]; CHANNELS]; SOURCES]>,
     /// Next id to hand out. Wraps rather than overflowing; ids only have to be
     /// unique among *simultaneously sounding* notes, and `i32::MAX` of them is
     /// not a situation that arises.
@@ -86,7 +96,7 @@ pub(super) struct NoteIds {
 impl Default for NoteIds {
     fn default() -> Self {
         Self {
-            active: [[None; KEYS]; CHANNELS],
+            active: Box::new([[[None; KEYS]; CHANNELS]; SOURCES]),
             next: 0,
         }
     }
@@ -94,25 +104,27 @@ impl Default for NoteIds {
 
 impl NoteIds {
     /// Mints and stores the id for a note-on.
-    fn begin(&mut self, channel: usize, key: usize) -> i32 {
+    fn begin(&mut self, source: NoteSource, channel: usize, key: usize) -> i32 {
         let id = self.next;
         self.next = self.next.wrapping_add(1).max(0);
-        self.active[channel][key] = Some(id);
+        self.active[source as usize][channel][key] = Some(id);
         id
     }
 
     /// Takes the id a note-off should carry. `-1` — VST3's "no id" — when no
     /// matching on is outstanding, which is the right answer for a stray off
     /// (a panic burst, or a note that was already released).
-    fn end(&mut self, channel: usize, key: usize) -> i32 {
-        self.active[channel][key].take().unwrap_or(-1)
+    fn end(&mut self, source: NoteSource, channel: usize, key: usize) -> i32 {
+        self.active[source as usize][channel][key]
+            .take()
+            .unwrap_or(-1)
     }
 
     /// The id of the note currently sounding on a key, *without* releasing it —
     /// what a poly-pressure message needs so the plugin knows which voice it
     /// refers to.
-    fn current(&self, channel: usize, key: usize) -> i32 {
-        self.active[channel][key].unwrap_or(-1)
+    fn current(&self, source: NoteSource, channel: usize, key: usize) -> i32 {
+        self.active[source as usize][channel][key].unwrap_or(-1)
     }
 }
 
@@ -232,8 +244,37 @@ pub(super) enum Translated {
     Nothing,
 }
 
+/// The note-off for the note `bytes` is about to displace, if `bytes` is a
+/// note-on over a key its `source` still has sounding: two overlapping notes of
+/// one pitch in a clip, or two quick auditions. Queue it ahead of the note-on.
+///
+/// Overwriting the id instead would leave the old note with no off at all, and
+/// a plugin keying voices by id would hold it forever. Another source's note on
+/// the key is left alone.
+pub(super) fn displaced_note_off(
+    bytes: Midi3,
+    source: NoteSource,
+    time: u32,
+    ids: &mut NoteIds,
+) -> Option<Event> {
+    let Some((key, true)) = parse_note(&bytes) else {
+        return None;
+    };
+    let channel = bytes[0] & 0x0F;
+    if ids.current(source, usize::from(channel), key) == -1 {
+        return None;
+    }
+    midi_to_event([NOTE_OFF | channel, bytes[1], 0], source, time, ids)
+}
+
 /// Translates one MIDI message for a plugin at sample offset `time`.
-pub(super) fn translate(bytes: Midi3, time: u32, ids: &mut NoteIds, map: &MidiMap) -> Translated {
+pub(super) fn translate(
+    bytes: Midi3,
+    source: NoteSource,
+    time: u32,
+    ids: &mut NoteIds,
+    map: &MidiMap,
+) -> Translated {
     let status = bytes[0] & 0xF0;
     let channel = usize::from(bytes[0] & 0x0F);
 
@@ -262,7 +303,7 @@ pub(super) fn translate(bytes: Midi3, time: u32, ids: &mut NoteIds, map: &MidiMa
         };
     }
 
-    match midi_to_event(bytes, time, ids) {
+    match midi_to_event(bytes, source, time, ids) {
         Some(event) => Translated::Event(event),
         None => Translated::Nothing,
     }
@@ -272,7 +313,7 @@ pub(super) fn translate(bytes: Midi3, time: u32, ids: &mut NoteIds, map: &MidiMa
 ///
 /// `None` for anything VST3 has no event for — the controller-shaped messages
 /// [`translate`] has already handled, and everything else.
-fn midi_to_event(bytes: Midi3, time: u32, ids: &mut NoteIds) -> Option<Event> {
+fn midi_to_event(bytes: Midi3, source: NoteSource, time: u32, ids: &mut NoteIds) -> Option<Event> {
     let status = bytes[0] & 0xF0;
     let channel = usize::from(bytes[0] & 0x0F);
     let key = usize::from(bytes[1] & 0x7F);
@@ -281,7 +322,7 @@ fn midi_to_event(bytes: Midi3, time: u32, ids: &mut NoteIds) -> Option<Event> {
     // A note-on at velocity 0 is a note-off — the running-status convention
     // that virtually every keyboard and sequencer emits. Missing this leaves
     // notes hanging on any device that uses it.
-    let is_note_off = status == NOTE_OFF || (status == NOTE_ON && (bytes[2] & 0x7F) == 0);
+    let is_note_off = matches!(parse_note(&bytes), Some((_, false)));
 
     let (event_type, payload) = if is_note_off {
         (
@@ -291,7 +332,7 @@ fn midi_to_event(bytes: Midi3, time: u32, ids: &mut NoteIds) -> Option<Event> {
                     channel: channel as i16,
                     pitch: key as i16,
                     velocity,
-                    noteId: ids.end(channel, key),
+                    noteId: ids.end(source, channel, key),
                     tuning: 0.0,
                 },
             },
@@ -305,7 +346,7 @@ fn midi_to_event(bytes: Midi3, time: u32, ids: &mut NoteIds) -> Option<Event> {
                     pitch: key as i16,
                     pressure: f32::from(bytes[2] & 0x7F) / MIDI_7BIT_MAX as f32,
                     // The note this applies to, when it is still sounding.
-                    noteId: ids.current(channel, key),
+                    noteId: ids.current(source, channel, key),
                 },
             },
         )
@@ -321,7 +362,7 @@ fn midi_to_event(bytes: Midi3, time: u32, ids: &mut NoteIds) -> Option<Event> {
                     // 0 = "not known" — Stev streams notes rather than
                     // scheduling them with a duration up front.
                     length: 0,
-                    noteId: ids.begin(channel, key),
+                    noteId: ids.begin(source, channel, key),
                 },
             },
         )
@@ -343,8 +384,14 @@ fn midi_to_event(bytes: Midi3, time: u32, ids: &mut NoteIds) -> Option<Event> {
 mod tests {
     use super::*;
 
+    /// `bytes` as a clip's event.
     fn ev(bytes: Midi3, ids: &mut NoteIds) -> Event {
-        midi_to_event(bytes, 0, ids).expect("should translate")
+        from(NoteSource::Clip, bytes, ids)
+    }
+
+    /// `bytes` as `source`'s event.
+    fn from(source: NoteSource, bytes: Midi3, ids: &mut NoteIds) -> Event {
+        midi_to_event(bytes, source, 0, ids).expect("should translate")
     }
 
     /// A map where every channel routes `controller` to `id`.
@@ -354,7 +401,7 @@ mod tests {
 
     /// The parameter a message maps to, if any.
     fn param(bytes: Midi3, map: &MidiMap) -> Option<(ParamID, ParamValue)> {
-        match translate(bytes, 0, &mut NoteIds::default(), map) {
+        match translate(bytes, NoteSource::Clip, 0, &mut NoteIds::default(), map) {
             Translated::Param(id, v) => Some((id, v)),
             _ => None,
         }
@@ -457,7 +504,9 @@ mod tests {
         let mut ids = NoteIds::default();
         let map = MidiMap::empty();
         let on = ev([0x90, 60, 100], &mut ids);
-        let Translated::Event(pressure) = translate([0xA0, 60, 64], 0, &mut ids, &map) else {
+        let Translated::Event(pressure) =
+            translate([0xA0, 60, 64], NoteSource::Clip, 0, &mut ids, &map)
+        else {
             panic!("poly pressure should be an event");
         };
         assert_eq!(pressure.r#type, kPolyPressureEvent as u16);
@@ -471,8 +520,7 @@ mod tests {
         }
         // The note is still sounding, so its off still pairs correctly.
         let off = ev([0x80, 60, 0], &mut ids);
-        // SAFETY: as above.
-        unsafe { assert_eq!(off.__field0.noteOff.noteId, on.__field0.noteOn.noteId) };
+        pairs(&on, &off);
     }
 
     #[test]
@@ -480,11 +528,11 @@ mod tests {
         let map = map_of(1, 42);
         let mut ids = NoteIds::default();
         assert!(matches!(
-            translate([0x90, 60, 100], 0, &mut ids, &map),
+            translate([0x90, 60, 100], NoteSource::Clip, 0, &mut ids, &map),
             Translated::Event(_)
         ));
         assert!(matches!(
-            translate([0x80, 60, 0], 0, &mut ids, &map),
+            translate([0x80, 60, 0], NoteSource::Clip, 0, &mut ids, &map),
             Translated::Nothing | Translated::Event(_)
         ));
     }
@@ -494,7 +542,13 @@ mod tests {
         // VST3 routes programs through a unit/program-list model, not this one.
         let map = map_of(1, 42);
         assert!(matches!(
-            translate([0xC0, 3, 0], 0, &mut NoteIds::default(), &map),
+            translate(
+                [0xC0, 3, 0],
+                NoteSource::Clip,
+                0,
+                &mut NoteIds::default(),
+                &map
+            ),
             Translated::Nothing
         ));
     }
@@ -524,11 +578,9 @@ mod tests {
         let mut ids = NoteIds::default();
         let on = ev([0x91, 64, 100], &mut ids);
         let off = ev([0x81, 64, 0], &mut ids);
-        // SAFETY: the type tags say which union members are live.
-        unsafe {
-            assert_eq!(on.__field0.noteOn.noteId, off.__field0.noteOff.noteId);
-            assert_ne!(off.__field0.noteOff.noteId, -1);
-        }
+        pairs(&on, &off);
+        // SAFETY: it is a note-off.
+        unsafe { assert_ne!(off.__field0.noteOff.noteId, -1) };
     }
 
     #[test]
@@ -540,14 +592,89 @@ mod tests {
         unsafe { assert_ne!(a.__field0.noteOn.noteId, b.__field0.noteOn.noteId) };
     }
 
+    /// Asserts `off` repeats `on`'s id.
+    fn pairs(on: &Event, off: &Event) {
+        // SAFETY: callers pass a note-on and a note-off.
+        unsafe { assert_eq!(off.__field0.noteOff.noteId, on.__field0.noteOn.noteId) };
+    }
+
+    /// Regression (#20): an audition over a clip's note put two ons on one
+    /// key. The second overwrote the first's id, so the two offs carried the
+    /// second id and `-1`, and a plugin keying voices by id held the first
+    /// note forever.
     #[test]
-    fn a_retriggered_key_releases_the_most_recent_on() {
+    fn an_audition_over_a_clips_note_leaves_each_its_own_off() {
         let mut ids = NoteIds::default();
-        let _first = ev([0x90, 60, 100], &mut ids);
+        let clip = from(NoteSource::Clip, [0x90, 60, 100], &mut ids);
+        assert!(displaced_note_off([0x90, 60, 100], NoteSource::Audition, 0, &mut ids).is_none());
+        let audition = from(NoteSource::Audition, [0x90, 60, 100], &mut ids);
+        pairs(
+            &audition,
+            &from(NoteSource::Audition, [0x80, 60, 0], &mut ids),
+        );
+        pairs(&clip, &from(NoteSource::Clip, [0x80, 60, 0], &mut ids));
+    }
+
+    /// A clip's off must never end a key the player holds, whichever came
+    /// first, and a live key going up and down leaves the clip's note alone.
+    #[test]
+    fn live_and_clip_notes_of_one_pitch_never_end_each_other() {
+        let mut ids = NoteIds::default();
+        let clip = from(NoteSource::Clip, [0x90, 60, 100], &mut ids);
+        let live = from(NoteSource::Live, [0x90, 60, 100], &mut ids);
+        pairs(&live, &from(NoteSource::Live, [0x80, 60, 0], &mut ids));
+        let live = from(NoteSource::Live, [0x90, 60, 100], &mut ids);
+        pairs(&clip, &from(NoteSource::Clip, [0x80, 60, 0], &mut ids));
+        pairs(&live, &from(NoteSource::Live, [0x80, 60, 0], &mut ids));
+    }
+
+    #[test]
+    fn sources_never_share_an_id() {
+        let mut ids = NoteIds::default();
+        let clip = from(NoteSource::Clip, [0x90, 60, 100], &mut ids);
+        let live = from(NoteSource::Live, [0x90, 60, 100], &mut ids);
+        let audition = from(NoteSource::Audition, [0x90, 60, 100], &mut ids);
+        // SAFETY: all three are note-ons.
+        let [clip, live, audition] =
+            unsafe { [clip, live, audition].map(|on| on.__field0.noteOn.noteId) };
+        assert_ne!(clip, live);
+        assert_ne!(live, audition);
+        assert_ne!(clip, audition);
+    }
+
+    #[test]
+    fn a_retrigger_from_one_source_releases_the_note_it_displaces_first() {
+        let mut ids = NoteIds::default();
+        let first = ev([0x90, 60, 100], &mut ids);
+        let displaced = displaced_note_off([0x90, 60, 100], NoteSource::Clip, 7, &mut ids)
+            .expect("key is sounding");
         let second = ev([0x90, 60, 100], &mut ids);
-        let off = ev([0x80, 60, 0], &mut ids);
-        // SAFETY: the type tags say which union members are live.
-        unsafe { assert_eq!(off.__field0.noteOff.noteId, second.__field0.noteOn.noteId) };
+        assert_eq!(displaced.r#type, kNoteOffEvent as u16);
+        assert_eq!(displaced.sampleOffset, 7);
+        pairs(&first, &displaced);
+        // One off closes the key: the second on's.
+        pairs(&second, &ev([0x80, 60, 0], &mut ids));
+        let stray = ev([0x80, 60, 0], &mut ids);
+        // SAFETY: it is a note-off.
+        unsafe { assert_eq!(stray.__field0.noteOff.noteId, -1) };
+    }
+
+    #[test]
+    fn only_a_note_on_over_a_sounding_key_displaces_anything() {
+        let displaced = |bytes, ids: &mut NoteIds| {
+            displaced_note_off(bytes, NoteSource::Clip, 0, ids).is_some()
+        };
+        let mut ids = NoteIds::default();
+        // A free key, and a key sounding on another channel.
+        assert!(!displaced([0x90, 60, 100], &mut ids));
+        ev([0x90, 60, 100], &mut ids);
+        assert!(!displaced([0x91, 60, 100], &mut ids));
+        assert!(!displaced([0x90, 64, 100], &mut ids));
+        // Offs, in either form, and anything else leave the note to its own off.
+        assert!(!displaced([0x80, 60, 0], &mut ids));
+        assert!(!displaced([0x90, 60, 0], &mut ids));
+        assert!(!displaced([0xA0, 60, 64], &mut ids));
+        assert_ne!(ids.current(NoteSource::Clip, 0, 60), -1);
     }
 
     #[test]
@@ -566,14 +693,13 @@ mod tests {
         let on = ev([0x90, 60, 100], &mut ids);
         let off = ev([0x90, 60, 0], &mut ids);
         assert_eq!(off.r#type, kNoteOffEvent as u16);
-        // SAFETY: the type tags say which union members are live.
-        unsafe { assert_eq!(off.__field0.noteOff.noteId, on.__field0.noteOn.noteId) };
+        pairs(&on, &off);
     }
 
     #[test]
     fn the_sample_offset_is_carried_into_the_event() {
         let mut ids = NoteIds::default();
-        let e = midi_to_event([0x90, 60, 100], 123, &mut ids).unwrap();
+        let e = midi_to_event([0x90, 60, 100], NoteSource::Clip, 123, &mut ids).unwrap();
         assert_eq!(e.sampleOffset, 123);
     }
 
@@ -583,9 +709,9 @@ mod tests {
         // must not invent events for them.
         let mut ids = NoteIds::default();
         for status in [0xB0, 0xC0, 0xD0, 0xE0] {
-            assert!(midi_to_event([status, 1, 64], 0, &mut ids).is_none());
+            assert!(midi_to_event([status, 1, 64], NoteSource::Clip, 0, &mut ids).is_none());
         }
-        assert!(midi_to_event([0xA0, 60, 64], 0, &mut ids).is_some());
+        assert!(midi_to_event([0xA0, 60, 64], NoteSource::Clip, 0, &mut ids).is_some());
     }
 
     #[test]
@@ -603,10 +729,7 @@ mod tests {
         let b = ev([0x91, 60, 100], &mut ids);
         let off_b = ev([0x81, 60, 0], &mut ids);
         let off_a = ev([0x80, 60, 0], &mut ids);
-        // SAFETY: the type tags say which union members are live.
-        unsafe {
-            assert_eq!(off_a.__field0.noteOff.noteId, a.__field0.noteOn.noteId);
-            assert_eq!(off_b.__field0.noteOff.noteId, b.__field0.noteOn.noteId);
-        }
+        pairs(&a, &off_a);
+        pairs(&b, &off_b);
     }
 }

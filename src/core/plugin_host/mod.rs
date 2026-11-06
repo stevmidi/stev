@@ -85,7 +85,9 @@ use voice::{InstrumentVoice, note_reset_messages};
 use crate::core::audio::{AudioSource, EngineHandle};
 use crate::core::config::MAX_TRACKS;
 use crate::core::midi::message::Midi3;
-use crate::core::sequencer::{AudioExportJob, ClipInstrumentEvent, ExportMark, SequencerCommand};
+use crate::core::sequencer::{
+    AudioExportJob, ClipInstrumentEvent, ExportMark, NoteSource, SequencerCommand,
+};
 use crate::core::shared_atomics::SharedAtomics;
 
 pub(crate) use catalog::scan_catalog;
@@ -353,7 +355,7 @@ pub(crate) fn prepare_instrument(
     // Every format starts from silence, whatever its restored state believes
     // is held. Queued here, on the main thread, before `Insert`.
     for msg in note_reset_messages() {
-        voice.queue_midi(msg, 0);
+        voice.queue_midi(msg, NoteSource::Clip, 0);
     }
     info!(
         "plugin host: loaded {} '{}' on track {}",

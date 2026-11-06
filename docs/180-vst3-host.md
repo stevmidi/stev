@@ -656,8 +656,16 @@ The rest map the full set.
   pinned by a test, because getting it backwards still yields plausible numbers.
 - **Note-offs must carry their note-on's `noteId`.** Handled by `NoteIds`, but
   it is the sort of invariant that is easy to break: a plugin that keys voices
-  by id leaves the note sounding forever if they disagree. A note-on at velocity
-  0 counts as a note-off, per the running-status convention.
+  by id leaves the note sounding forever if they disagree. The table is per
+  `NoteSource` (clip, live, audition), a tag `VoiceMessage::Midi` carries from
+  the feeds to `queue_midi`: a live key over a clip's note of the same pitch is
+  two notes, each ended only by its own off, so a plugin keying voices by id
+  doubles them, as a DAW does, and neither cuts the other. A plugin keying by
+  pitch lets one off end both, and that's the plugin's choice. Within one source
+  a note-on over a key still sounding releases the old note first
+  (`displaced_note_off`), so a source's single off closes the key, which is all
+  `InstrumentNotes` sends on a stop. A note-on at velocity 0 counts as a
+  note-off, per the running-status convention.
 - **A plugin with no edit controller gets no editor**, and one whose view
   declines `NSView` gets none either. Both are logged and leave the instrument
   playing; neither is an error the user sees. Measured across the installed

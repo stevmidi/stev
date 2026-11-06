@@ -330,16 +330,6 @@ impl Sequencer {
         self.capture_last_note_at = None;
     }
 
-    /// The engine slot of the instrument track the live keyboard is currently
-    /// routed to (the armed track, if it hosts a plugin) — used to protect
-    /// live-held notes from
-    /// [`release_instrument_notes`](Self::release_instrument_notes) (in
-    /// `playback.rs`).
-    pub(super) fn live_instrument_target(&self) -> Option<usize> {
-        let track = self.tracks.get(self.selected_track_index()?)?;
-        matches!(track.output(), TrackOutput::Instrument(_)).then_some(track.slot())
-    }
-
     // --- Project accessors ---
     /// Tempo in µs per quarter note.
     pub(crate) fn tempo_us(&self) -> i32 {

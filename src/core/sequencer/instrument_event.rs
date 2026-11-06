@@ -26,14 +26,31 @@ pub(crate) enum EventTime {
     At(Instant),
 }
 
+/// Who played a note. A plugin that keys its voices by note id can then hold
+/// a clip's note and a live key of the same pitch side by side, each ended only
+/// by its own off (`vst3::events::NoteIds`; the raw-MIDI CLAP route ignores
+/// this).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) enum NoteSource {
+    /// Clip playback, with its chases and the note-offs of a stop or a seek,
+    /// and anything else no one played (a load's reset, a wheel's rest).
+    Clip,
+    /// The player's keyboard.
+    Live,
+    /// A selected note's audition (`Sequencer::preview_notes`). Stays last:
+    /// the VST3 note-id table is sized from it.
+    Audition,
+}
+
 /// What a voice is told: a MIDI message, or a parameter move. `Copy`, so
 /// nothing crossing the `rtrb` ring to the audio thread carries a heap
 /// payload.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) enum VoiceMessage {
-    /// A MIDI message.
-    Midi(Midi3),
+    /// A MIDI message, and who played it.
+    Midi(Midi3, NoteSource),
     /// A plugin parameter's move (`400-parameter-knobs.md`).
     Param(ParamMove),
 }
@@ -43,7 +60,7 @@ impl VoiceMessage {
     /// The MIDI message, if it is one.
     pub(crate) fn midi(self) -> Option<Midi3> {
         match self {
-            VoiceMessage::Midi(bytes) => Some(bytes),
+            VoiceMessage::Midi(bytes, _) => Some(bytes),
             VoiceMessage::Param(_) => None,
         }
     }

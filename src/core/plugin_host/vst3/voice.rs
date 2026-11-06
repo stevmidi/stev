@@ -32,10 +32,11 @@ use crate::core::midi::message::Midi3;
 use crate::core::plugin_host::buffers::{AudioIoLayout, PortBuffers, channel_total};
 use crate::core::plugin_host::transport::BlockTransport;
 use crate::core::plugin_host::voice::{EVENT_CAPACITY, InstrumentVoice, VoiceMix};
+use crate::core::sequencer::NoteSource;
 use crate::core::time::ticks_to_beats_f64;
 use crate::models::knobs::ParamId;
 
-use super::events::{MidiMap, NoteIds, Translated, translate};
+use super::events::{MidiMap, NoteIds, Translated, displaced_note_off, translate};
 use super::host::HostEventList;
 use super::params::ParamReceiver;
 
@@ -166,8 +167,11 @@ impl Vst3Voice {
 }
 
 impl InstrumentVoice for Vst3Voice {
-    fn queue_midi(&mut self, bytes: Midi3, time: u32) {
-        match translate(bytes, time, &mut self.note_ids, &self.midi_map) {
+    fn queue_midi(&mut self, bytes: Midi3, source: NoteSource, time: u32) {
+        if let Some(off) = displaced_note_off(bytes, source, time, &mut self.note_ids) {
+            self.events.push(off);
+        }
+        match translate(bytes, source, time, &mut self.note_ids, &self.midi_map) {
             Translated::Event(event) => self.events.push(event),
             // A CC lands in this block's automation queue rather than its event
             // list — VST3 has no other way to carry one. `clear_events` empties

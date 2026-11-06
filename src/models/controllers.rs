@@ -165,8 +165,7 @@ impl ControllerTracker {
 
     /// The player moved `controller` on this track: the synth now sits where
     /// the player put it, not where a clip did, so a stop leaves that wheel
-    /// alone (as it spares a live-held note) and a seek only moves it to a
-    /// clip value.
+    /// alone and a seek only moves it to a clip value.
     pub(crate) fn hand_over(&mut self, controller: Controller) {
         self.sent.remove(controller);
     }

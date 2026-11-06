@@ -932,12 +932,15 @@ positions), persisted base64-encoded in the `.stev` and re-applied on load:
   what clear a Repro-style on-screen keyboard, which ignores CC 123 for its
   display; release tails still ring. Held notes are tracked per track in
   `sequencer/instrument_notes.rs` (`InstrumentNotes`, unit-tested), fed from
-  `Sequencer::tick` / `chase_notes` (clip route) and `handle_midi_input`
-  (live route), since the plugin MIDI path never passes through the `"midiout"`
-  thread's `NoteLogger`. This mirrors the `NoteLogger` rule: a note the player is
-  **holding live on the armed instrument track is never released** by a stop, so
-  start/stop mid-improvisation doesn't cut it — it stays recorded and a later
-  stop (after key-up) catches it. Removing, shrinking, or shifting a clip
+  `Sequencer::tick` / `chase_notes`, since the plugin MIDI path never passes
+  through the `"midiout"` thread's `NoteLogger`. Unlike the `NoteLogger`, a stop,
+  a jump or a loop wrap releases a clip note even when the player holds the same
+  pitch: the clip's
+  note would have nothing else to end it. Every plugin-bound note is tagged with
+  its `NoteSource`, so in a VST3 that keys voices by id the off ends only the
+  clip's note and the live key plays on (`180` § gotchas); a plugin keying by
+  pitch, and any CLAP (raw MIDI, no ids), ends both, as in a DAW. A live key of
+  another pitch is never touched. Removing, shrinking, or shifting a clip
   while it is playing is a separate path with no transport-stop equivalent to
   fall back on: `DeleteInRangeEdit`, `SplitClipsEdit`,
   `InsertSilenceEdit` and `PasteClipsEdit::undo` all
@@ -945,8 +948,8 @@ positions), persisted base64-encoded in the `.stev` and re-applied on load:
   queuing its open notes' offs through `Track::pending_note_offs` so `tick()`
   still emits them (the clip is gone, shrunk, or moved before it otherwise
   could, and the CLAP route has no `NoteLogger`-equivalent safety net of its
-  own). The note would otherwise ring indefinitely — unlike the live-hold case
-  above, there is no later transport stop that would catch it. Notes a plugin generates entirely on its own
+  own). The note would otherwise ring indefinitely: there is no later transport
+  stop that would catch it. Notes a plugin generates entirely on its own
   (a free-running arpeggiator not tied to a held note) are not covered; releasing
   the source note stops a normal arp.
 - **Loop wrap must not leak the next clip's notes.** A loop wrap re-anchors the
@@ -1003,7 +1006,7 @@ Build gate only, no app launch — the full list is the ground rule in
 `AGENTS.md`. `cargo test` here covers (`midi_bytes_to_clap_event` +
 `within_block_offset` + the `AudioClock` filter + the pending-sort note ordering,
 the `Timers` helper, `note_reset_messages`, `pick_buffer_size`, `InstrumentNotes`
-(held-note tracking incl. live-overlap), the `TrackOutputData::Instrument` JSON
+(held-note tracking), the `TrackOutputData::Instrument` JSON
 round-trip + back-compat, the base64 plugin-state blob round-trip incl. non-UTF-8
 bytes, `mix::gains_for` + the fader taper round-trip/monotonicity, the
 `Sequencer::set_track_*` clamp/reset, the `TrackData` volume/pan/mute round-trip +

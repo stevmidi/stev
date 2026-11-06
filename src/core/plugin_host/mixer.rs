@@ -61,7 +61,7 @@ use crate::core::audio::mix::{gains_for, track_is_audible};
 use crate::core::audio::{AudioSource, INSTRUMENTS_SOURCE, RenderCtx};
 use crate::core::config::MAX_TRACKS;
 use crate::core::midi::message::Midi3;
-use crate::core::sequencer::{ClipInstrumentEvent, EventTime, VoiceMessage};
+use crate::core::sequencer::{ClipInstrumentEvent, EventTime, NoteSource, VoiceMessage};
 use crate::core::shared_atomics::TrackMixAtomics;
 
 use super::export::ExportTap;
@@ -379,9 +379,14 @@ impl AudioSource for InstrumentMixer {
         self.export.take_marks(|at| ctx.scheduled_frame(at));
 
         // Live keyboard events: no delay, head of the block. Same `pending`
-        // path so note-on / note-off ordering against clip events is kept.
+        // path so note-on / note-off ordering against clip events is kept;
+        // the tag keeps them apart from here on.
         while let Ok((track, bytes)) = self.live_midi_rx.pop() {
-            self.push_pending(block_start, track, VoiceMessage::Midi(bytes));
+            self.push_pending(
+                block_start,
+                track,
+                VoiceMessage::Midi(bytes, NoteSource::Live),
+            );
         }
 
         self.pending
@@ -394,7 +399,7 @@ impl AudioSource for InstrumentMixer {
             if let Some(Some(voice)) = self.voices.get_mut(event.track) {
                 let within = within_block_offset(event.target_frame, block_start, frames);
                 match event.message {
-                    VoiceMessage::Midi(bytes) => voice.queue_midi(bytes, within),
+                    VoiceMessage::Midi(bytes, source) => voice.queue_midi(bytes, source, within),
                     VoiceMessage::Param(moved) => {
                         voice.queue_param(moved.param.id, moved.value, within);
                     }
@@ -712,7 +717,7 @@ mod tests {
         PendingEvent {
             target_frame,
             track: 0,
-            message: VoiceMessage::Midi(msg),
+            message: VoiceMessage::Midi(msg, NoteSource::Clip),
             seq,
         }
     }

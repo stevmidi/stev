@@ -13,6 +13,7 @@ use std::time::Duration;
 
 use super::transport::BlockTransport;
 use crate::core::midi::message::Midi3;
+use crate::core::sequencer::NoteSource;
 use crate::models::knobs::ParamId;
 
 /// The mixer-owned state every voice carries, regardless of plugin format:
@@ -77,7 +78,8 @@ pub(crate) trait InstrumentVoice: Send {
     /// Queues a MIDI message at sample `time` within the next processed block.
     /// Must clear [`VoiceMix::sleeping`] if the message was accepted — see the
     /// field doc. A message the format cannot express is dropped silently.
-    fn queue_midi(&mut self, bytes: Midi3, time: u32);
+    /// `source` says who played it, for a format whose notes carry ids.
+    fn queue_midi(&mut self, bytes: Midi3, source: NoteSource, time: u32);
 
     /// Queues a move of parameter `id` to `value` (normalized) at sample
     /// `time` within the next processed block — a clip's recorded knob turn
