@@ -33,6 +33,7 @@ Breaking entries are marked **Breaking** and say what to do about them.
 - Selecting a note while the clip plays that pitch no longer leaves notes stuck in VST3 plugins. Serum 2 held such a note until the transport stopped, and Kontakt 8 until muted in its own window.
 - Muting a clip with the arranger marquee while it plays releases its sounding notes. They used to hang until the loop wrapped or the transport stopped.
 - Muting a note with `M` in the clip view while it sounds releases it. It used to hang until the loop wrapped or the transport stopped.
+- A CLAP plugin calling back to Stev from its audio thread can no longer make the audio wait on the UI, which could have caused a dropout.
 
 ## [0.14.0] - 2026-11-05
 

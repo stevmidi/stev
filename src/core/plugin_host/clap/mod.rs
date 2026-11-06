@@ -50,7 +50,7 @@ pub(super) fn load(
         &entry.plugin_id,
         handle.sample_rate,
         MAX_FRAMES as u32,
-        Arc::clone(&handle.repaint),
+        Arc::clone(&handle.ui_wake),
         state,
     )?;
 

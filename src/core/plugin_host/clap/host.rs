@@ -42,6 +42,7 @@ use log::debug;
 use objc2::MainThreadMarker;
 
 use crate::core::audio::is_audio_thread;
+use crate::core::plugin_host::ui_wake::UiWake;
 
 /// The `HostHandlers` implementation for the hosted CLAP instrument.
 pub(crate) struct StevClapHost;
@@ -96,16 +97,17 @@ pub(crate) struct ClapHostShared {
     /// The plugin's `params` extension, or `None` if it does not implement it —
     /// the knobs have nothing to drive then.
     params: OnceLock<Option<PluginParams>>,
-    /// The eframe UI context, once available (filled by `main`'s
-    /// `run_native` closure). Lets the plugin wake the reactive UI to have its
-    /// callback / close serviced, so `update` no longer polls at a fixed rate.
-    repaint: Arc<OnceLock<egui::Context>>,
+    /// Lets the plugin wake the reactive UI to have its callback / close
+    /// serviced, so `update` no longer polls at a fixed rate. Never the egui
+    /// context directly: `request_callback`, `request_resize` and `closed` may
+    /// come from any thread, the audio thread included.
+    wake: Arc<UiWake>,
 }
 
 impl ClapHostShared {
     /// A fresh shared handler; the extension `OnceLock`s fill in at plugin
     /// init.
-    pub(crate) fn new(repaint: Arc<OnceLock<egui::Context>>) -> Self {
+    pub(crate) fn new(wake: Arc<UiWake>) -> Self {
         Self {
             callback_requested: AtomicBool::new(false),
             process_requested: AtomicBool::new(false),
@@ -118,15 +120,14 @@ impl ClapHostShared {
             timer: OnceLock::new(),
             state: OnceLock::new(),
             params: OnceLock::new(),
-            repaint,
+            wake,
         }
     }
 
-    /// Wakes the eframe UI so `ClapEditor::pump` runs on the next frame.
-    pub(crate) fn wake_ui(&self) {
-        if let Some(ctx) = self.repaint.get() {
-            ctx.request_repaint();
-        }
+    /// Wakes the eframe UI so `ClapEditor::pump` runs on the next frame. Never
+    /// blocks, so any host callback may call it.
+    fn wake_ui(&self) {
+        self.wake.request();
     }
 
     /// Atomically clears and returns the "plugin asked for a main-thread
@@ -422,9 +423,44 @@ impl Timers {
 mod tests {
     use super::*;
 
+    /// A shared handler and the wake it raises.
+    fn shared_and_wake() -> (ClapHostShared, Arc<UiWake>) {
+        let wake = Arc::new(UiWake::new(Arc::new(OnceLock::new())));
+        (ClapHostShared::new(Arc::clone(&wake)), wake)
+    }
+
+    #[test]
+    fn a_callback_request_raises_the_ui_wake() {
+        let (shared, wake) = shared_and_wake();
+        shared.request_callback();
+        assert!(wake.take());
+        assert!(shared.take_callback_request());
+    }
+
+    #[test]
+    fn a_resize_request_raises_the_ui_wake() {
+        let (shared, wake) = shared_and_wake();
+        shared
+            .request_resize(GuiSize {
+                width: 640,
+                height: 480,
+            })
+            .unwrap();
+        assert!(wake.take());
+        assert_eq!(shared.take_resize_request(), Some((640, 480)));
+    }
+
+    #[test]
+    fn a_closed_gui_raises_the_ui_wake() {
+        let (shared, wake) = shared_and_wake();
+        shared.closed(true);
+        assert!(wake.take());
+        assert_eq!(shared.take_gui_closed(), Some(true));
+    }
+
     #[test]
     fn a_flush_request_wakes_the_voice_as_a_process_request_does() {
-        let shared = ClapHostShared::new(Arc::new(OnceLock::new()));
+        let (shared, _wake) = shared_and_wake();
         shared.request_flush();
         assert!(shared.take_process_request());
         assert!(!shared.take_process_request());
@@ -432,7 +468,7 @@ mod tests {
 
     #[test]
     fn a_process_request_is_taken_exactly_once() {
-        let shared = ClapHostShared::new(Arc::new(OnceLock::new()));
+        let (shared, _wake) = shared_and_wake();
         assert!(!shared.take_process_request());
         shared.request_process();
         assert!(shared.take_process_request());

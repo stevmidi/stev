@@ -3,7 +3,7 @@
 
 use std::io::Cursor;
 use std::path::Path;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use clack_extensions::audio_ports::{AudioPortInfoBuffer, PluginAudioPorts};
 use clack_extensions::note_ports::{NoteDialect, NotePortInfoBuffer, PluginNotePorts};
@@ -13,6 +13,7 @@ use log::{debug, info, warn};
 
 use crate::core::plugin_host::buffers::AudioIoLayout;
 use crate::core::plugin_host::catalog::available_bundles_hint;
+use crate::core::plugin_host::ui_wake::UiWake;
 
 use super::discovery::{cached_entry, descriptor_name};
 use super::host::{ClapHostMainThread, ClapHostShared, StevClapHost};
@@ -136,7 +137,7 @@ pub(super) fn load(
     plugin_id: &str,
     sample_rate: f64,
     max_frames: u32,
-    repaint: Arc<OnceLock<egui::Context>>,
+    wake: Arc<UiWake>,
     state: Option<&[u8]>,
 ) -> Result<LoadedPlugin, String> {
     let path_str = bundle_path.display();
@@ -173,7 +174,7 @@ pub(super) fn load(
     .map_err(|e| format!("host info: {e}"))?;
 
     let mut instance = PluginInstance::<StevClapHost>::new(
-        |_| ClapHostShared::new(Arc::clone(&repaint)),
+        |_| ClapHostShared::new(Arc::clone(&wake)),
         |shared| ClapHostMainThread::new(shared),
         &entry,
         &id,
