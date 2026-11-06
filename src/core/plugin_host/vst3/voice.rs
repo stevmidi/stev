@@ -32,7 +32,9 @@ use crate::core::midi::message::Midi3;
 use crate::core::plugin_host::buffers::{AudioIoLayout, PortBuffers, channel_total};
 use crate::core::plugin_host::note_ids::NoteIds;
 use crate::core::plugin_host::transport::BlockTransport;
-use crate::core::plugin_host::voice::{EVENT_CAPACITY, InstrumentVoice, VoiceMix};
+use crate::core::plugin_host::voice::{
+    EVENT_CAPACITY, InstrumentVoice, VoiceMix, note_reset_messages,
+};
 use crate::core::sequencer::NoteSource;
 use crate::core::time::ticks_to_beats_f64;
 use crate::models::knobs::ParamId;
@@ -181,6 +183,12 @@ impl InstrumentVoice for Vst3Voice {
             Translated::Nothing => return,
         }
         self.wake();
+    }
+
+    fn queue_note_reset(&mut self) {
+        for msg in note_reset_messages() {
+            self.queue_midi(msg, NoteSource::Clip, 0);
+        }
     }
 
     fn queue_param(&mut self, id: ParamId, value: f64, time: u32) {

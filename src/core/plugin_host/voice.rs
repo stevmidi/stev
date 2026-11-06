@@ -82,13 +82,9 @@ pub(crate) trait InstrumentVoice: Send {
     fn queue_midi(&mut self, bytes: Midi3, source: NoteSource, time: u32);
 
     /// Queues [`note_reset_messages`] at the head of the next processed block.
-    /// A format that drops a note-off with no note outstanding must override
-    /// this: the reset is nothing but such offs.
-    fn queue_note_reset(&mut self) {
-        for msg in note_reset_messages() {
-            self.queue_midi(msg, NoteSource::Clip, 0);
-        }
-    }
+    /// Every off in it is stray, so it has to reach the plugin even where
+    /// [`queue_midi`](Self::queue_midi) would drop one.
+    fn queue_note_reset(&mut self);
 
     /// Queues a move of parameter `id` to `value` (normalized) at sample
     /// `time` within the next processed block — a clip's recorded knob turn

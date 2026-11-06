@@ -61,7 +61,6 @@ fn accepts_note_events(instance: &mut PluginInstance<StevClapHost>, name: &str) 
     let count = ports.count(&plugin, true);
     info!("plugin host: CLAP '{name}' has {count} note inputs");
     let mut buffer = NotePortInfoBuffer::new();
-    let mut accepts = false;
     for i in 0..count {
         if let Some(port) = ports.get(&plugin, i, true, &mut buffer) {
             info!(
@@ -70,10 +69,11 @@ fn accepts_note_events(instance: &mut PluginInstance<StevClapHost>, name: &str) 
                 port.supported_dialects,
                 port.preferred_dialect
             );
-            accepts |= i == 0 && port.supported_dialects.supports(NoteDialect::Clap);
         }
     }
-    accepts
+    ports
+        .get(&plugin, 0, true, &mut buffer)
+        .is_some_and(|port| port.supported_dialects.supports(NoteDialect::Clap))
 }
 
 /// Reads every parameter and where it stands (both calls are `[main-thread]`).

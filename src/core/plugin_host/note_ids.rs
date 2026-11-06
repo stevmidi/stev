@@ -4,20 +4,17 @@
 //! Each [`NoteSource`] holds its own notes. A live key over a clip's note of
 //! the same pitch is two notes with two ids, each ended only by its own off, so
 //! a plugin keying voices by id plays both, and neither cuts the other. One
-//! source holds one note per key: a second on from it takes the key over, and
-//! the old note gets its off first ([`displaced_note_off`](NoteIds::displaced_note_off)),
-//! so no id is ever left without one and a source's single off closes its key.
+//! source holds one note per key: before a second on from it, the format ends
+//! the note it displaces, so no id is ever left without an off and a source's
+//! single off closes its key.
 //!
 //! "No note here" is `None`, and each format decides what that means: `-1` is
 //! VST3's "no id", but in CLAP it's a wildcard matching every note on the key.
 //!
 //! See `130-plugin-host.md` and `docs/180-vst3-host.md`.
 
-use crate::core::midi::message::{Midi3, parse_note};
 use crate::core::sequencer::NoteSource;
 
-/// MIDI status nibble for note-off.
-const NOTE_OFF: u8 = 0x80;
 /// MIDI channels, and keys per channel — the shape of the note-id table.
 pub(super) const CHANNELS: usize = 16;
 /// Keys per MIDI channel.
@@ -25,12 +22,8 @@ const KEYS: usize = 128;
 /// [`NoteSource`]s, the last one's index plus one.
 const SOURCES: usize = NoteSource::Audition as usize + 1;
 
-/// Pairs each sounding note-on with the id its note-off must repeat.
-///
-/// A fresh id is minted per note-on and remembered until the matching off from
-/// the same source. One id per source and key: a second on from it with no off
-/// in between first releases the note it displaces
-/// ([`displaced_note_off`](Self::displaced_note_off)).
+/// Pairs each sounding note-on with the id its note-off must repeat. See the
+/// module docs.
 pub(super) struct NoteIds {
     /// `active[source][channel][key]` is the id of the note-on still awaiting
     /// its off. Boxed because it is ~48 KB and only read through a reference.
@@ -71,23 +64,6 @@ impl NoteIds {
     pub(super) fn current(&self, source: NoteSource, channel: usize, key: usize) -> Option<i32> {
         self.active[source as usize][channel][key]
     }
-
-    /// The note-off for the note `bytes` is about to displace, if `bytes` is a
-    /// note-on over a key its `source` still has sounding: two overlapping
-    /// notes of one pitch in a clip, or two quick auditions. Send it ahead of
-    /// the note-on.
-    ///
-    /// Overwriting the id instead would leave the old note with no off at all,
-    /// and a plugin keying voices by id would hold it forever. Another source's
-    /// note on the key is left alone.
-    pub(super) fn displaced_note_off(&self, bytes: Midi3, source: NoteSource) -> Option<Midi3> {
-        let Some((key, true)) = parse_note(&bytes) else {
-            return None;
-        };
-        let channel = bytes[0] & 0x0F;
-        self.current(source, usize::from(channel), key)?;
-        Some([NOTE_OFF | channel, bytes[1], 0])
-    }
 }
 
 #[cfg(test)]
@@ -124,28 +100,19 @@ mod tests {
     }
 
     #[test]
-    fn a_note_on_displaces_only_its_own_sources_note() {
+    fn simultaneous_notes_get_distinct_ids() {
         let mut ids = NoteIds::default();
-        ids.begin(NoteSource::Clip, 2, 60);
-        let on = [0x92, 60, 100];
-        assert_eq!(
-            ids.displaced_note_off(on, NoteSource::Clip),
-            Some([0x82, 60, 0])
-        );
-        assert_eq!(ids.displaced_note_off(on, NoteSource::Live), None);
+        let a = ids.begin(NoteSource::Clip, 0, 60);
+        let b = ids.begin(NoteSource::Clip, 0, 64);
+        assert_ne!(a, b);
     }
 
     #[test]
-    fn only_a_note_on_displaces() {
+    fn channels_hold_a_key_apart() {
         let mut ids = NoteIds::default();
-        ids.begin(NoteSource::Clip, 0, 60);
-        assert_eq!(
-            ids.displaced_note_off([0x80, 60, 0], NoteSource::Clip),
-            None
-        );
-        assert_eq!(
-            ids.displaced_note_off([0x90, 60, 0], NoteSource::Clip),
-            None
-        );
+        let a = ids.begin(NoteSource::Clip, 0, 60);
+        let b = ids.begin(NoteSource::Clip, 1, 60);
+        assert_eq!(ids.end(NoteSource::Clip, 1, 60), Some(b));
+        assert_eq!(ids.end(NoteSource::Clip, 0, 60), Some(a));
     }
 }

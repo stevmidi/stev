@@ -147,6 +147,12 @@ pub(crate) fn parse_wheel(msg: &[u8]) -> Option<(Controller, u16)> {
     parse_controller(msg).filter(|(controller, _)| controller.is_wheel())
 }
 
+/// A 7-bit MIDI data byte as `0.0..=1.0`, the form plugin formats take.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) fn unit_7bit(byte: u8) -> f64 {
+    f64::from(byte & 0x7F) / 127.0
+}
+
 /// Reassembles pitch bend's 14-bit value from its LSB-then-MSB pair.
 pub(crate) fn pitch_bend_value(bytes: Midi3) -> u16 {
     u16::from(bytes[1] & 0x7F) | (u16::from(bytes[2] & 0x7F) << 7)
@@ -189,9 +195,16 @@ pub(crate) fn rewrite_channel(msg: &mut [u8], midi_channel: u8) {
 mod tests {
     use super::{
         Controller, is_channel_message, is_recorded, parse_controller, parse_note, parse_wheel,
-        pitch_bend_value,
+        pitch_bend_value, unit_7bit,
     };
     use crate::models::knobs::test_param;
+
+    #[test]
+    fn unit_7bit_spans_zero_to_one_and_ignores_the_top_bit() {
+        assert_eq!(unit_7bit(0), 0.0);
+        assert_eq!(unit_7bit(127), 1.0);
+        assert_eq!(unit_7bit(0x80), 0.0);
+    }
 
     #[test]
     fn parse_note_reads_edges_and_treats_velocity_zero_as_off() {
