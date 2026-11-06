@@ -35,6 +35,9 @@ const MIDI_EXTENSION: &str = "mid";
 /// The extension of a project file.
 const PROJECT_EXTENSION: &str = "stev";
 
+/// Added to a project file's name while it is being written.
+const TEMP_EXTENSION: &str = "tmp";
+
 /// The name a project copied into the library takes when its file name is no
 /// project name ([`project_name_from_input`]).
 const COPIED_PROJECT_FALLBACK_NAME: &str = "Untitled";
@@ -174,7 +177,23 @@ pub(crate) fn save_template(data: &ProjectData, name: &str) -> io::Result<()> {
 fn write_project_in(dir: &Path, data: &ProjectData, name: &str) -> io::Result<()> {
     fs::create_dir_all(dir)?;
     let json = serde_json::to_string_pretty(data).map_err(io::Error::other)?;
-    fs::write(stev_path(dir, name), json)
+    replace_file(&stev_path(dir, name), &json)
+}
+
+/// Writes `contents` to `path` through a temp file beside it, renamed over
+/// `path` once it is whole, so a crash or a failed write leaves the file
+/// that was there as it was (`060-persistence.md`). A temp file a crash
+/// left behind has no project extension, so the browser never lists it, and
+/// the next save replaces it. Nothing is synced to disk: a project saves on
+/// the `"sequencer"` thread, where a full sync (20-25 ms on an SSD) would
+/// stall the ticks of a playing loop.
+fn replace_file(path: &Path, contents: &str) -> io::Result<()> {
+    let temp = path.with_added_extension(TEMP_EXTENSION);
+    let written = fs::write(&temp, contents).and_then(|()| fs::rename(&temp, path));
+    if written.is_err() {
+        let _ = fs::remove_file(&temp);
+    }
+    written
 }
 
 /// Reads and deserializes `folder/name.stev` (`None`: the projects root).
@@ -758,6 +777,61 @@ mod tests {
         ] {
             assert_eq!(place(outside), None, "{outside}");
         }
+    }
+
+    #[test]
+    fn a_save_replaces_the_project_and_leaves_no_temp_file() {
+        let dir = scratch_dir("save-replace");
+        let path = stev_path(&dir, "Song");
+        replace_file(&path, "first").unwrap();
+        replace_file(&path, "second").unwrap();
+
+        assert_eq!(fs::read_to_string(&path).unwrap(), "second");
+        assert_eq!(names_in(&dir), ["Song.stev"]);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The temp file can't be written (a folder sits on its name), as when
+    /// the disk fills: the save fails and the last one stays whole.
+    #[test]
+    fn a_save_that_cant_write_leaves_the_project_as_it_was() {
+        let dir = scratch_dir("save-unwritable");
+        let path = stev_path(&dir, "Song");
+        fs::write(&path, "saved").unwrap();
+        fs::create_dir(path.with_added_extension(TEMP_EXTENSION)).unwrap();
+
+        assert!(replace_file(&path, "new").is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), "saved");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The rename fails (a folder sits on the project's name): no temp file
+    /// stays behind.
+    #[test]
+    fn a_save_that_cant_replace_cleans_up_its_temp_file() {
+        let dir = scratch_dir("save-unrenamable");
+        fs::create_dir(stev_path(&dir, "Song")).unwrap();
+
+        assert!(replace_file(&stev_path(&dir, "Song"), "new").is_err());
+        assert_eq!(names_in(&dir), ["Song.stev"]);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// What a crash during a save leaves: the browser lists the project,
+    /// never the temp file.
+    #[test]
+    fn a_leftover_temp_file_is_no_project() {
+        let dir = scratch_dir("save-leftover");
+        let path = stev_path(&dir, "Song");
+        fs::write(&path, "saved").unwrap();
+        fs::write(path.with_added_extension(TEMP_EXTENSION), "half").unwrap();
+
+        let listed: Vec<String> = list_stev_names(&dir)
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
+        assert_eq!(listed, ["Song"]);
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
