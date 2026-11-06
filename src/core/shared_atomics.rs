@@ -407,6 +407,11 @@ pub(crate) struct SharedAtomics {
     /// The notes the live keyboard is holding — see [`LiveNotes`]. Written by
     /// the input threads, read by the render thread.
     pub(crate) live_notes: Arc<LiveNotes>,
+    /// A write of the crash recovery copy failed, so the next check writes
+    /// again whether or not the project changed. Set by the `"recovery"`
+    /// thread, taken by the `"sequencer"` thread's check
+    /// (`410-crash-recovery.md` decision 5).
+    pub(crate) recovery_write_failed: Arc<AtomicBool>,
 }
 
 #[cfg(test)]

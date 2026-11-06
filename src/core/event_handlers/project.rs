@@ -10,7 +10,7 @@ use crate::{
     core::{
         config::MAX_TRACKS,
         input_event::TimeSelectionRect,
-        project::{self, ProjectAction, ProjectData, StagedProject},
+        project::{self, ProjectAction, ProjectData, ProjectOrigin, StagedProject},
         sequencer::{ExportRefusal, PasteClipsEdit, SequencerEdit},
     },
     models::{clip::Clip, track::TrackOutput},
@@ -42,7 +42,11 @@ impl EventHandlers {
 
         let saved_tracks = data.tracks.len();
         let clips = data.apply_to_sequencer(sequencer);
-        *saved = SavedProject::of(sequencer, filename.clone());
+        let origin = filename.clone().map(|name| ProjectOrigin {
+            folder: folder.clone(),
+            name,
+        });
+        *saved = SavedProject::of(sequencer, origin);
         let instruments = sequencer
             .tracks()
             .iter()
@@ -230,15 +234,18 @@ impl EventHandlers {
     /// changed since `saved`: then the view is asked to prompt
     /// (`UiEvent::UnsavedChanges`) and nothing else happens. A new project or
     /// a load becomes the new `saved`; quitting tells the view to close the
-    /// window (`UiEvent::QuitApproved`). Both replies wake the view, which
-    /// may be waiting on no input of its own (a window close). An open with
-    /// plugins is held in `staged` until the view has loaded them.
+    /// window (`UiEvent::QuitApproved`), once `recovery` has deleted the copy
+    /// and finished, since the process ends soon after. Both replies wake the
+    /// view, which may be waiting on no input of its own (a window close). An
+    /// open with plugins is held in `staged` until the view has loaded them.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn project_action_workflow(
         &self,
         sequencer: &mut Sequencer,
         undo_record: &mut Record<SequencerEdit>,
         saved: &mut SavedProject,
         staged: &mut Option<StagedProject>,
+        recovery: &mut RecoveryKeeper,
         action: &ProjectAction,
         discard_changes: bool,
     ) {
@@ -279,42 +286,59 @@ impl EventHandlers {
                 self.new_from_template_workflow(sequencer, undo_record, saved, staged, path);
             }
             ProjectAction::Quit => {
+                recovery.finish();
                 self.ui_event_tx.send(UiEvent::QuitApproved).ok();
                 self.request_repaint();
             }
         }
     }
 
-    /// Writes the project to `folder/filename.stev`, which on success becomes
-    /// `saved`, tells the view it is the open project (`UiEvent::ProjectSaved`)
-    /// and has the browser re-read the tree, and says how it went in the
-    /// footer.
+    /// Writes the project to `folder/filename.stev` (see
+    /// [`project_saved`](Self::project_saved) for what success does), and
+    /// says how it went in the footer.
     pub(super) fn save_project_workflow(
         &self,
         sequencer: &Sequencer,
         saved: &mut SavedProject,
+        recovery: &mut RecoveryKeeper,
         folder: Option<&str>,
         filename: &str,
     ) {
         let data = ProjectData::from_sequencer(sequencer);
         let message = match project::save_project(&data, folder, filename) {
             Ok(()) => {
-                *saved = SavedProject {
-                    fingerprint: data.fingerprint(),
-                    name: Some(filename.to_owned()),
-                };
-                self.ui_event_tx
-                    .send(UiEvent::ProjectSaved {
-                        name: filename.to_owned(),
-                        folder: folder.map(str::to_owned),
-                    })
-                    .ok();
-                self.ui_event_tx.send(UiEvent::ProjectFilesChanged).ok();
+                self.project_saved(sequencer, saved, recovery, folder, filename);
                 format!("Saved {filename}")
             }
             Err(e) => format!("Could not save {filename}: {e}"),
         };
         self.send_status_ui_event(message);
+    }
+
+    /// The project now on disk as `folder/filename.stev` becomes `saved`,
+    /// which leaves nothing to recover, tells the view it is the open project
+    /// (`UiEvent::ProjectSaved`) and has the browser re-read the tree.
+    pub(super) fn project_saved(
+        &self,
+        sequencer: &Sequencer,
+        saved: &mut SavedProject,
+        recovery: &mut RecoveryKeeper,
+        folder: Option<&str>,
+        filename: &str,
+    ) {
+        let origin = ProjectOrigin {
+            folder: folder.map(str::to_owned),
+            name: filename.to_owned(),
+        };
+        *saved = SavedProject::of(sequencer, Some(origin));
+        recovery.delete();
+        self.ui_event_tx
+            .send(UiEvent::ProjectSaved {
+                name: filename.to_owned(),
+                folder: folder.map(str::to_owned),
+            })
+            .ok();
+        self.ui_event_tx.send(UiEvent::ProjectFilesChanged).ok();
     }
 
     /// Writes the project as the template `name`, stripped
@@ -404,9 +428,10 @@ impl EventHandlers {
 }
 
 /// The project as it was last saved or loaded, as a
-/// [`ProjectData::fingerprint`] — the `"sequencer"` thread keeps one beside
-/// the undo record, and the unsaved-changes check compares the live project
-/// against it. Comparing what would be written, not counting edits, makes
+/// [`fingerprint`](project::fingerprint) — the `"sequencer"` thread keeps one
+/// beside the undo record, and the unsaved-changes check and the crash
+/// recovery check compare the live project against it. Comparing what would
+/// be written, not counting edits, makes
 /// every change count (volume, the loop region, a track's plugin — not just
 /// undoable edits; plugin presets aside, which `fingerprint` leaves out) and
 /// undoing back to the saved state count as no change.
@@ -414,30 +439,40 @@ impl EventHandlers {
 pub(crate) struct SavedProject {
     /// The saved project's fingerprint.
     fingerprint: u64,
-    /// The project's file name, without extension; `None` for a project
-    /// never saved (a new one, a template opened). The agent bridge's
-    /// `get_project` names it.
-    name: Option<String>,
+    /// Where it is on disk; `None` for a project never saved (a new one, a
+    /// template opened). The agent bridge's `get_project` names it, and the
+    /// recovery copy records it.
+    origin: Option<ProjectOrigin>,
 }
 
 impl SavedProject {
-    /// `sequencer`'s project as it stands, named `name`, taken as saved —
-    /// after a load, a new project, and at startup.
-    pub(crate) fn of(sequencer: &Sequencer, name: Option<String>) -> Self {
+    /// `sequencer`'s project as it stands, at `origin`, taken as saved —
+    /// after a save, a load, a new project, and at startup.
+    pub(crate) fn of(sequencer: &Sequencer, origin: Option<ProjectOrigin>) -> Self {
         SavedProject {
-            fingerprint: ProjectData::from_sequencer(sequencer).fingerprint(),
-            name,
+            fingerprint: project::fingerprint(sequencer),
+            origin,
         }
     }
 
     /// The project's file name, `None` before it is first saved.
     pub(crate) fn name(&self) -> Option<&str> {
-        self.name.as_deref()
+        self.origin.as_ref().map(|origin| origin.name.as_str())
+    }
+
+    /// Where the project is on disk, `None` before it is first saved.
+    pub(super) fn origin(&self) -> Option<&ProjectOrigin> {
+        self.origin.as_ref()
+    }
+
+    /// Whether a project with `fingerprint` would save as this one did.
+    pub(super) fn is_fingerprint(&self, fingerprint: u64) -> bool {
+        fingerprint == self.fingerprint
     }
 
     /// Whether `sequencer`'s project would save differently from this one.
     fn has_changes(&self, sequencer: &Sequencer) -> bool {
-        ProjectData::from_sequencer(sequencer).fingerprint() != self.fingerprint
+        !self.is_fingerprint(project::fingerprint(sequencer))
     }
 }
 

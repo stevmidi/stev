@@ -36,6 +36,7 @@ use crate::{
             output::MidiOutputConnection,
         },
         note_logger::NoteLoggerCommand,
+        project::RecoveryJob,
         sequencer::{AudioExportJob, ClipInstrumentEvent, ExportMark, Sequencer, SequencerCommand},
         shared_atomics::SharedAtomics,
         shared_channels::SharedChannels,
@@ -67,6 +68,7 @@ pub(crate) fn setup_shared_atomics(repaint_ctx: Arc<OnceLock<Context>>) -> Share
         track_mix: Arc::new(TrackMixAtomics::new()),
         audio_export: Arc::new(AudioExportAtomics::default()),
         live_notes: Arc::new(LiveNotes::new(repaint_ctx)),
+        recovery_write_failed: Arc::new(AtomicBool::new(false)),
     }
 }
 
@@ -94,6 +96,7 @@ pub(crate) fn setup_shared_channels() -> SharedChannels {
     let (computer_keys_tx, computer_keys_rx) = unbounded::<(Midi3, u64)>();
     let (midi_out_connection_tx, midi_out_connection_rx) = unbounded::<MidiOutputConnection>();
     let (agent_bridge_tx, agent_bridge_rx) = unbounded::<bool>();
+    let (recovery_job_tx, recovery_job_rx) = unbounded::<RecoveryJob>();
 
     SharedChannels {
         tick_tx,
@@ -122,6 +125,8 @@ pub(crate) fn setup_shared_channels() -> SharedChannels {
         export_mark_rx,
         audio_export_job_tx,
         audio_export_job_rx,
+        recovery_job_tx,
+        recovery_job_rx,
         input_event_tx,
         input_event_rx,
         ui_event_tx,

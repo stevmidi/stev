@@ -1,6 +1,6 @@
 //! Where the app keeps things on disk: the user's library under Documents
 //! (`Stev/`, holding only user content — `Projects/`, `Templates/` and the
-//! audio export's `Exports/` today, sibling root folders for forks), app settings (and, on Unix, the agent bridge's socket) in the platform config directory,
+//! audio export's `Exports/` today, sibling root folders for forks), app settings and the crash recovery copy (and, on Unix, the agent bridge's socket) in the platform config directory,
 //! rebuildable caches in the platform cache directory, and logs in the
 //! platform's logs folder. See `060-persistence.md`.
 
@@ -24,6 +24,15 @@ pub(crate) const TEMPLATES_DIR_NAME: &str = "Templates";
 
 /// File name of the app settings.
 pub(crate) const SETTINGS_FILE_NAME: &str = "settings.json";
+
+/// File name of the crash recovery copy, in the config directory
+/// (`410-crash-recovery.md` decision 2). Not a `.stev`: it is no project the
+/// browser could list, and only ever read back at launch.
+pub(crate) const RECOVERY_FILE_NAME: &str = "recovery.json";
+
+/// File name of the lock beside the recovery copy, which only the instance
+/// that may keep the copy holds (`410-crash-recovery.md` decision 16).
+pub(crate) const RECOVERY_LOCK_FILE_NAME: &str = "recovery.lock";
 
 /// File name of the agent bridge's socket, in the config directory
 /// (`360-mcp-server.md` decision 5).

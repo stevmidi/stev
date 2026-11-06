@@ -564,7 +564,7 @@ impl Display {
     /// Asks the sequencer to run `action`, which it does at once unless the
     /// project has unsaved changes (then it asks for the prompt). Ignored
     /// while a project dialog is open. Plugin presets aren't captured first:
-    /// the check leaves them out (`ProjectData::fingerprint`).
+    /// the check leaves them out (`project::fingerprint`).
     pub(super) fn request_project_action(&mut self, action: ProjectAction) {
         if self.project_dialog.is_some() {
             return;

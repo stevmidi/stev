@@ -1,12 +1,16 @@
 //! Project persistence: serializable DTOs (`dto`), `.stev` filesystem layout
 //! (`storage`), the `.mid` reader / writer of the MIDI clip import and
 //! export (`smf`), the recent projects list (`recent`), the [`ProjectAction`]s the unsaved-changes prompt
-//! guards (`action`), and the [`StagedProject`] an open with plugins hands
-//! the view first (`staged`). See `060-persistence.md`.
+//! guards (`action`), the [`StagedProject`] an open with plugins hands
+//! the view first (`staged`), the [`fingerprint()`] that says what counts as a
+//! change (`fingerprint`), and the crash recovery copy on disk (`recovery`).
+//! See `060-persistence.md` and `410-crash-recovery.md`.
 
 mod action;
 mod dto;
+mod fingerprint;
 mod recent;
+mod recovery;
 #[cfg(test)]
 mod recovery_timing;
 mod smf;
@@ -14,13 +18,17 @@ mod staged;
 mod storage;
 
 pub(crate) use action::ProjectAction;
-pub(crate) use dto::ProjectData;
 #[cfg(test)]
 pub(crate) use dto::TrackOutputData;
 #[cfg(all(test, debug_assertions))]
 pub(crate) use dto::{ClipData, EventData};
+pub(crate) use dto::{ProjectData, ProjectSnapshot};
+pub(crate) use fingerprint::fingerprint;
 pub(crate) use recent::{
     RecentProject, note_recent, remove_recent, rename_recent, rename_recent_folder,
+};
+pub(crate) use recovery::{
+    ProjectOrigin, RecoveryJob, recovery_path, run_recovery_jobs, take_recovery_lock,
 };
 pub(crate) use smf::write_smf;
 pub(crate) use staged::StagedProject;

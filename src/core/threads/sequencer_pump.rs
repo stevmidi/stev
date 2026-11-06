@@ -7,8 +7,10 @@
 //! through `EventHandlers` against the thread-local `Sequencer` / `Transport` /
 //! `Metronome`. It also owns the `Record<SequencerEdit>` undo stack
 //! (`050-undo-redo.md`), the [`SavedProject`] the unsaved-changes check
-//! compares against (`060-persistence.md`), and a project read from disk
-//! while the view loads its plugins (`130-plugin-host.md`).
+//! compares against (`060-persistence.md`), a project read from disk
+//! while the view loads its plugins (`130-plugin-host.md`), and the
+//! [`RecoveryKeeper`] whose check the tick arm runs
+//! (`410-crash-recovery.md`).
 
 use crossbeam_channel::{Receiver, select};
 use undo::Record;
@@ -18,7 +20,7 @@ use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 
 use crate::core::clock::ClockTick;
-use crate::core::event_handlers::{EventHandlers, SavedProject};
+use crate::core::event_handlers::{EventHandlers, RecoveryKeeper, SavedProject};
 use crate::core::metronome::Metronome;
 use crate::core::midi::input::RecordedMidi;
 use crate::core::project::ProjectData;
@@ -41,6 +43,7 @@ pub(crate) fn start_sequencer_thread(
     transport_event_rx: Receiver<TransportEvent>,
     sequencer_command_rx: Receiver<SequencerCommand>,
     transport_command_rx: Receiver<TransportCommand>,
+    mut recovery: RecoveryKeeper,
 ) -> JoinHandle<()> {
     thread::Builder::new()
         .name("sequencer".to_string())
@@ -64,6 +67,7 @@ pub(crate) fn start_sequencer_thread(
                 select! {
                     recv(tick_rx) -> tick => {
                         let Ok(first) = tick else { break };
+                        let at = first.at;
                         // This tick, then any extra ticks that arrived while
                         // processing, each run to completion before the next is
                         // taken off the channel.
@@ -100,6 +104,7 @@ pub(crate) fn start_sequencer_thread(
                             }
                             metronome.on_tick(tick.at, click_tick, sequencer.meter(), running);
                         }
+                        recovery.tick(at, &sequencer, &saved);
                     }
 
                     recv(midi_in_rx) -> midi_message => {
@@ -127,7 +132,7 @@ pub(crate) fn start_sequencer_thread(
 
                     recv(sequencer_command_rx) -> command => {
                         if let Ok(cmd) = command {
-                            event_handlers.handle_sequencer_command(&cmd, &mut sequencer, &mut undo_record, &mut tap_tempo, &mut saved, &mut staged);
+                            event_handlers.handle_sequencer_command(&cmd, &mut sequencer, &mut undo_record, &mut tap_tempo, &mut saved, &mut staged, &mut recovery);
                         }
                     }
 

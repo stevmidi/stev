@@ -310,7 +310,7 @@ mod tests {
 
     use super::*;
     use crate::core::{
-        project::ProjectData,
+        project::fingerprint,
         sequencer::{
             ClipInstrumentEvent, EditResult, InsertCaptureEdit, SequencerEdit,
             test_support::{
@@ -581,11 +581,11 @@ mod tests {
     fn a_save_leaves_the_take_out() {
         let notes = [(0, 240, 60), (960, 1200, 62)];
         let (mut seq, _) = session_seq(BAR * 4, BAR, &notes);
-        let before = ProjectData::from_sequencer(&seq).fingerprint();
+        let before = fingerprint(&seq);
 
         assert!(seq.open_take_framing(ViewState::Clip));
         assert_eq!(lead_notes(&seq).len(), 2, "the take is heard in place");
-        assert_eq!(ProjectData::from_sequencer(&seq).fingerprint(), before);
+        assert_eq!(fingerprint(&seq), before);
     }
 
     /// Enter is one undo step whose undo is the clip from before the

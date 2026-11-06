@@ -14,6 +14,7 @@ use rtrb::RingBuffer;
 use undo::Record;
 use uuid::Uuid;
 
+use crate::core::project::RecoveryJob;
 use crate::core::sequencer::test_support::{clip_at, note_off, note_on};
 use crate::core::sequencer::{Sequencer, SequencerCommand, SequencerEdit};
 use crate::core::shared_atomics::{AudioExportAtomics, TrackMixAtomics};
@@ -21,7 +22,7 @@ use crate::core::time::{Meter, TapTempo};
 use crate::core::transport::TransportCommand;
 use crate::view::display::UiEvent;
 
-use super::{EventHandlers, SavedProject};
+use super::{EventHandlers, RecoveryKeeper, SavedProject};
 
 /// The handlers plus what a test inspects or sets up: the `UiEvent` and
 /// transport-command streams they send, the published selection mirror, and
@@ -54,6 +55,12 @@ pub(crate) struct Harness {
     /// The project as last saved or loaded — the sequencer's empty one to
     /// start with.
     pub(crate) saved: SavedProject,
+    /// The crash recovery check, with no `"recovery"` thread behind it.
+    pub(crate) recovery: RecoveryKeeper,
+    /// Everything `recovery` sent, in order.
+    pub(crate) recovery_jobs: Receiver<RecoveryJob>,
+    /// The flag a failed write sets, for a test to set.
+    pub(crate) recovery_write_failed: Arc<AtomicBool>,
 }
 
 /// Handlers over unbounded channels (every receiver but the `UiEvent`,
@@ -105,6 +112,9 @@ pub(crate) fn harness() -> Harness {
     sequencer.select_track(Some(track_id));
 
     let saved = SavedProject::of(&sequencer, None);
+    let (recovery_job_tx, recovery_jobs) = unbounded();
+    let recovery_write_failed = Arc::new(AtomicBool::new(false));
+    let recovery = RecoveryKeeper::new(Some(recovery_job_tx), None, recovery_write_failed.clone());
     Harness {
         handlers,
         ui_events,
@@ -118,6 +128,9 @@ pub(crate) fn harness() -> Harness {
         region,
         sequencer,
         saved,
+        recovery,
+        recovery_jobs,
+        recovery_write_failed,
     }
 }
 
@@ -148,5 +161,6 @@ pub(crate) fn run_command(
         &mut TapTempo::default(),
         &mut h.saved,
         &mut None,
+        &mut h.recovery,
     );
 }

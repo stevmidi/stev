@@ -7,7 +7,7 @@
 //! matches every command; anything that grows past a line or is shared between
 //! arms is extracted to a per-concern file here — `selection.rs`,
 //! `clip_edges.rs`, `clip_lifecycle.rs`, `clip_range_edits.rs`, `clip_view.rs`,
-//! `project.rs`, `tracks.rs`,
+//! `project.rs`, `recovery.rs`, `tracks.rs`,
 //! `command_helpers.rs`, `edit_result_handler.rs`, … There is no single
 //! `workflows.rs`; this per-concern split *is* the DRY mechanism.
 //!
@@ -46,6 +46,7 @@ mod edit_result_handler;
 mod input_handler;
 mod performance_lane_handler;
 mod project;
+mod recovery;
 mod selection;
 mod sequencer_handler;
 mod take_framing;
@@ -56,6 +57,7 @@ mod transport_handler;
 mod ui_helpers;
 
 pub(crate) use project::SavedProject;
+pub(crate) use recovery::RecoveryKeeper;
 
 /// Stateless senders + `Arc` refs, moved into the `"sequencer"` thread at
 /// startup. See the module docs.

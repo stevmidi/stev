@@ -24,6 +24,7 @@ use crate::{
             output::MidiOutputConnection,
         },
         note_logger::NoteLoggerCommand,
+        project::RecoveryJob,
         sequencer::{AudioExportJob, ClipInstrumentEvent, ExportMark, SequencerCommand},
         transport::{TransportCommand, TransportEvent},
     },
@@ -118,6 +119,12 @@ pub(crate) struct SharedChannels {
     pub(crate) audio_export_job_tx: Sender<AudioExportJob>,
     /// Receiving half of the pair documented above.
     pub(crate) audio_export_job_rx: Receiver<AudioExportJob>,
+    /// `"sequencer"` thread's `RecoveryKeeper` → `"recovery"` thread: every
+    /// write and delete of the crash recovery copy, in order
+    /// (`410-crash-recovery.md` decision 5).
+    pub(crate) recovery_job_tx: Sender<RecoveryJob>,
+    /// Receiving half of the pair documented above.
+    pub(crate) recovery_job_rx: Receiver<RecoveryJob>,
     /// `InputPoller` (render thread) → `"main"` dispatch loop: keyboard/mouse
     /// [`InputEvent`]s, drained each frame and handed to `EventHandlers`.
     pub(crate) input_event_tx: Sender<InputEvent>,

@@ -1,6 +1,6 @@
 # Crash Recovery
 
-**Status: design agreed 2026-11-06, measured, not built. Issue: #12.** If Stev crashes or is force-quit, the next launch offers to bring back what wasn't saved. While a project has unsaved changes, Stev keeps a recovery copy of it in its own support folder, never in the project file.
+**Status: design agreed 2026-11-06, measured, phase 1 built. Issue: #12.** If Stev crashes or is force-quit, the next launch offers to bring back what wasn't saved. While a project has unsaved changes, Stev keeps a recovery copy of it in its own support folder, never in the project file.
 
 ## Background
 
@@ -31,8 +31,8 @@ Nothing can run at the moment of a crash. The crash that prompted this, showing 
 
 ## Phases
 
-1. **Measure, then the copy.** The measuring is done (§ Measurements) and settled decisions 3 to 5. Build the direct fingerprint, the check, the `"recovery"` thread with its write and deletes, the wait on quit and the lock. The ordering is tested apart from the thread, so tests needn't wait on it.
-2. **The offer.** The dialog, Reopen with its name, the footer line, the always-changed baseline.
+1. **Measure, then the copy.** Built. The measuring (§ Measurements) settled decisions 3 to 5. `project::fingerprint` (`core/project/fingerprint.rs`) is the direct hash, tested against the old JSON one, which stays for tests alone; `RecoveryKeeper` (`core/event_handlers/recovery.rs`) is the check, on the `"sequencer"` thread; `core/project/recovery.rs` holds the copy, `recovery.json`, its jobs and the lock, `recovery.lock`, and `core/threads/recovery.rs` the `"recovery"` thread. The jobs run apart from the thread in tests, so they needn't wait on it. Nothing reads the copy yet: until phase 2 a crash leaves it in place for the next clean quit to delete, or the first change after the launch to replace, so decision 14 waits for the offer.
+2. **The offer.** The dialog, Reopen with its name, the footer line, the always-changed baseline. First, the sequencer has to follow a browser rename of the open project or of its folder: only the view does today (`follow_browser_rename`), so `SavedProject`'s origin goes stale, the copy records a file that no longer exists, and Reopen would come back untitled (decision 10). A small command from the view fixes it, and the agent bridge's `get_project`, which shows the same stale name.
 3. **Plugin state on events.** The captures of decision 6, and decision 7.
 
 ## Measurements
@@ -62,6 +62,8 @@ The real-project half came from a temporary timing log in the tick arm of the `"
 | Trial write | 5.40 | 8.65 |
 
 Stopped or playing made little difference. The 50 MB blob guess was about 60 times this project's, and 100,000 events about 27 times.
+
+The built fingerprint covers every field, not only the events, and hashes each event's length as well. Rerun on the same machine and the same synthetic projects, it took 0.25 ms at 10,000 events, 2.5 at 100,000 and 4.9 at 200,000, with or without blobs: about 1.7 times the events-only column above, so about 0.1 ms on the biggest real project. That is synthetic and not yet measured during playback.
 
 ## Testing
 

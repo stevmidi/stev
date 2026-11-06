@@ -15,6 +15,8 @@
 //!   keyboard's notes as live input.
 //! - `sequencer_pump.rs` — the `"sequencer"` thread, the hub: the tick pump
 //!   plus every command dispatch (`150-clock-position-sync.md`).
+//! - `recovery.rs` — the `"recovery"` thread, which writes and deletes the
+//!   crash recovery copy (`410-crash-recovery.md`).
 //! - `controller.rs` — the parked MIDI-CC controller route, `#[allow(dead_code)]`
 //!   and never called; kept on purpose (`000-architecture.md`).
 //! - `agent_bridge.rs` (Unix) — the `"agent-bridge"` thread, the app's end of
@@ -26,6 +28,7 @@ mod computer_keys;
 mod controller;
 mod midi_output;
 mod midi_watcher;
+mod recovery;
 mod sequencer_pump;
 
 #[cfg(unix)]
@@ -35,6 +38,7 @@ pub(crate) use midi_output::start_midi_output_thread;
 #[cfg(test)]
 pub(crate) use midi_output::{MidiSink, run_midi_output_loop};
 pub(crate) use midi_watcher::start_midi_watcher_thread;
+pub(crate) use recovery::start_recovery_thread;
 pub(crate) use sequencer_pump::start_sequencer_thread;
 
 use crossbeam_channel::Sender;

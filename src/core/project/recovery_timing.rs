@@ -7,11 +7,9 @@
 //!
 //! Every project is the 16-track maximum with [`EVENT_COUNTS`] events and
 //! [`BLOB_MEGABYTES`] of plugin state in total. The check is the snapshot and
-//! the fingerprint, as `SavedProject::has_changes` does them; a row with no
-//! blobs is the check the design asks for, which skips them. The write is the
-//! snapshot, the pretty JSON and `replace_file`, as a save does them. The
-//! direct column is the candidate decision 4 names: [`hash_events`], walking
-//! the events with no snapshot and no JSON.
+//! the JSON hash, as the check stood before decision 4; the direct column is
+//! the [`fingerprint`] that replaced it. The write is the snapshot, the
+//! pretty JSON and `replace_file`, as a save does them.
 //!
 //! The rounds run back to back, so the caches are warm and no audio is
 //! playing, which a check every 5 s in the running app can't count on: read
@@ -21,7 +19,6 @@
 use std::env::consts::{ARCH, OS};
 use std::env::temp_dir;
 use std::fs;
-use std::hash::{DefaultHasher, Hasher};
 use std::hint::black_box;
 use std::path::Path;
 use std::process;
@@ -35,6 +32,7 @@ use crate::models::event::Event;
 use crate::models::track::{InstrumentRef, TrackOutput};
 
 use super::dto::ProjectData;
+use super::fingerprint::{fingerprint, json_fingerprint};
 use super::storage::replace_file;
 
 /// Total events in a project, across all its clips. Each divides evenly into
@@ -111,27 +109,6 @@ fn project(events: usize, blob_bytes: usize) -> Sequencer {
     sequencer
 }
 
-/// A hash of every saved event in `sequencer`, straight from the clips. Only
-/// a measurement of what the fingerprint would cost this way: the events are
-/// nearly all of it, so the few fields around them are left out.
-fn hash_events(sequencer: &Sequencer) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    for track in sequencer.tracks() {
-        for clip in track.clips() {
-            for event in sequencer.saved_events(clip) {
-                hasher.write_i32(event.tick());
-                hasher.write_i32(event.end_tick());
-                hasher.write(event.midi_message());
-                if let Some(moved) = event.param_move() {
-                    hasher.write_u64(moved.value.to_bits());
-                }
-                hasher.write_u8(event.is_muted() as u8);
-            }
-        }
-    }
-    hasher.finish()
-}
-
 /// How long `work` took, and what it returned.
 fn timed<T>(work: impl FnOnce() -> T) -> (Duration, T) {
     let start = Instant::now();
@@ -155,11 +132,11 @@ fn max_ms(times: &[Duration]) -> f64 {
 struct Timings {
     /// `ProjectData::from_sequencer`.
     snapshot: Vec<Duration>,
-    /// `ProjectData::fingerprint`.
+    /// [`json_fingerprint`].
     hash: Vec<Duration>,
     /// The snapshot and the fingerprint.
     check: Vec<Duration>,
-    /// [`hash_events`].
+    /// [`fingerprint`].
     direct: Vec<Duration>,
     /// The pretty JSON.
     json: Vec<Duration>,
@@ -180,10 +157,10 @@ impl Timings {
             let (json, text) = timed(|| serde_json::to_string_pretty(&data).unwrap());
             let (disk, written) = timed(|| replace_file(path, &text));
             written.unwrap();
-            let (hash, fingerprint) = timed(|| data.fingerprint());
-            black_box(fingerprint);
-            let (direct, events_hash) = timed(|| hash_events(sequencer));
-            black_box(events_hash);
+            let (hash, json_hash) = timed(|| json_fingerprint(sequencer, data));
+            black_box(json_hash);
+            let (direct, direct_hash) = timed(|| fingerprint(sequencer));
+            black_box(direct_hash);
             timings.file_bytes = text.len();
             timings.snapshot.push(snapshot);
             timings.hash.push(hash);

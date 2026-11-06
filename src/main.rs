@@ -16,8 +16,10 @@ use crate::core::agent::{MCP_FLAG, run_mcp_server};
 #[cfg(unix)]
 use crate::core::threads::start_agent_bridge_thread;
 use crate::core::{
+    event_handlers::RecoveryKeeper,
     keymap::Keymap,
     logging,
+    project::take_recovery_lock,
     settings::{clamp_midi_out_offset_ms, load_settings},
     setup::{
         setup_clock, setup_display, setup_event_handlers, setup_metronome,
@@ -286,6 +288,15 @@ fn main() {
         shared_atomics.midi_out_offset_ms.clone(),
     );
 
+    // Here on the app's own startup path, so a `stev --mcp` never takes the
+    // lock (`410-crash-recovery.md` decision 16).
+    let recovery = RecoveryKeeper::start(
+        take_recovery_lock(),
+        shared_channels.recovery_job_tx,
+        shared_channels.recovery_job_rx,
+        shared_atomics.recovery_write_failed.clone(),
+    );
+
     start_sequencer_thread(
         sequencer,
         transport,
@@ -296,6 +307,7 @@ fn main() {
         shared_channels.transport_event_rx,
         shared_channels.sequencer_command_rx,
         shared_channels.transport_command_rx,
+        recovery,
     );
 
     // The app's end of the MCP server; it holds the socket only while

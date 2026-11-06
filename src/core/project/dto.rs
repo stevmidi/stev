@@ -9,8 +9,6 @@
 //! The `tick`/`ticks` naming rule applies here too, but changing a name is a
 //! file-format change, not a rename.
 
-use std::hash::{DefaultHasher, Hasher};
-use std::io::{self, Write};
 use std::path::PathBuf;
 
 use base64::Engine;
@@ -185,11 +183,6 @@ pub(crate) struct TrackData {
     /// decision 13).
     #[serde(default, skip_serializing_if = "no_knob_assigned")]
     pub(crate) knobs: Vec<KnobData>,
-    /// How many presets the plugin has loaded (`Track::plugin_changes`) —
-    /// what [`ProjectData::fingerprint`] hashes in place of the state blob.
-    /// Never written.
-    #[serde(skip)]
-    pub(crate) plugin_changes: u32,
     /// The track's clips.
     pub(crate) clips: Vec<ClipData>,
 }
@@ -200,32 +193,11 @@ pub(crate) struct KnobData {
     /// The plugin parameter it drives, by ID; absent while unassigned.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) param: Option<ParamId>,
-    /// Where the hand last put it (`Track::knobs_by_hand`), as a normalized
-    /// value — what [`ProjectData::fingerprint`] hashes, so a hand turn asks
-    /// to be saved though the value itself is the plugin's to save. Never
-    /// written.
-    #[serde(skip)]
-    pub(crate) by_hand: Option<f64>,
 }
 
 /// Whether no knob in `knobs` is assigned — the list isn't written then.
 fn no_knob_assigned(knobs: &[KnobData]) -> bool {
     knobs.iter().all(|knob| knob.param.is_none())
-}
-
-/// An [`io::Write`] that feeds everything written into a hasher — what
-/// [`ProjectData::fingerprint`] serializes into.
-struct HashWriter(DefaultHasher);
-
-impl Write for HashWriter {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.0.write(buf);
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
 }
 
 /// One time-signature entry, on disk: `numerator` / `denominator` from the
@@ -313,7 +285,6 @@ impl Default for ProjectData {
                     color: Some(i),
                     name: None,
                     knobs: Vec::new(),
-                    plugin_changes: 0,
                     clips: Vec::new(),
                 })
                 .collect(),
@@ -321,43 +292,47 @@ impl Default for ProjectData {
     }
 }
 
-impl ProjectData {
-    /// A hash of everything this project would write to disk but the
-    /// plugins' state blobs: two snapshots with the same fingerprint save the
-    /// same file, presets aside. The unsaved-changes check compares the live
-    /// project's against the last save or load's
-    /// (`EventHandlers::project_action_workflow`, `060-persistence.md`).
-    /// The blobs are left out because plenty of plugins write a different one
-    /// on every save of an unchanged preset (Nexus encrypts it afresh, DUNE
-    /// recompresses it), so they would make such a project always look
-    /// changed. Where the hand left each knob counts though it is never
-    /// written (`KnobData::by_hand`): a hand turn changes the plugin's state,
-    /// which is saved, while playback's never asks to save. So does each
-    /// preset the plugin says it loaded (`TrackData::plugin_changes`). Takes the
-    /// snapshot by value — every caller is done with it —
-    /// and streams the JSON into the hasher, so nothing is copied or buffered.
-    /// Stable within one run only — never persisted.
-    pub(crate) fn fingerprint(mut self) -> u64 {
-        for track in &mut self.tracks {
-            if let TrackOutputData::Instrument { state, .. } = &mut track.output {
-                state.clear();
-            }
+/// A project taken off the sequencer with its plugin state still raw: what
+/// [`ProjectData::from_sequencer`] makes, short of the base64, which is nearly
+/// all of its cost on a project with big blobs. So the `"sequencer"` thread
+/// takes this and the `"recovery"` thread does the encoding
+/// (`410-crash-recovery.md` decision 5).
+pub(crate) struct ProjectSnapshot {
+    /// The project, every state blob empty.
+    data: ProjectData,
+    /// Each track's raw plugin state, in track order; empty on a track with
+    /// no plugin.
+    states: Vec<Vec<u8>>,
+}
+
+impl ProjectSnapshot {
+    /// `sequencer`'s project as it stands.
+    pub(crate) fn of(sequencer: &Sequencer) -> Self {
+        ProjectSnapshot {
+            data: ProjectData::without_state(sequencer),
+            states: sequencer
+                .tracks()
+                .iter()
+                .map(|track| match track.output() {
+                    TrackOutput::Instrument(instrument) => instrument.state.clone(),
+                    TrackOutput::MidiOut { .. } => Vec::new(),
+                })
+                .collect(),
         }
-        let mut hasher = HashWriter(DefaultHasher::new());
-        // Writing into a hasher can't fail; a serialization error would hash
-        // a prefix, which still differs from any complete project.
-        serde_json::to_writer(&mut hasher, &self).ok();
-        for knob in self.tracks.iter().flat_map(|track| &track.knobs) {
-            hasher
-                .0
-                .write_u64(knob.by_hand.map_or(u64::MAX, f64::to_bits));
-        }
-        for track in &self.tracks {
-            hasher.0.write_u32(track.plugin_changes);
-        }
-        hasher.0.finish()
     }
 
+    /// The whole project, each state blob in base64.
+    pub(crate) fn encoded(mut self) -> ProjectData {
+        for (track, raw) in self.data.tracks.iter_mut().zip(&self.states) {
+            if let TrackOutputData::Instrument { state, .. } = &mut track.output {
+                *state = BASE64.encode(raw);
+            }
+        }
+        self.data
+    }
+}
+
+impl ProjectData {
     /// This project as a template: what describes the instruments kept (each
     /// track's output and plugin state, name, colour, volume and pan; the
     /// track count, meter and tempo), what describes a performance or a
@@ -378,6 +353,12 @@ impl ProjectData {
     /// Snapshots the sequencer into a serializable `ProjectData` (base64-encodes
     /// each plugin's state blob).
     pub(crate) fn from_sequencer(sequencer: &Sequencer) -> Self {
+        ProjectSnapshot::of(sequencer).encoded()
+    }
+
+    /// The sequencer's project with every state blob left empty, for
+    /// [`ProjectSnapshot`] to fill in.
+    fn without_state(sequencer: &Sequencer) -> Self {
         let tracks = sequencer
             .tracks()
             .iter()
@@ -423,7 +404,7 @@ impl ProjectData {
                             bundle_path: inst.bundle_path.to_string_lossy().into_owned(),
                             plugin_id: inst.plugin_id.clone(),
                             display_name: inst.display_name.clone(),
-                            state: BASE64.encode(&inst.state),
+                            state: String::new(),
                         },
                     },
                     volume_db: sequencer.track_volume_db(track_idx),
@@ -434,13 +415,10 @@ impl ProjectData {
                     knobs: track
                         .knobs()
                         .iter()
-                        .zip(track.knobs_by_hand())
-                        .map(|(&param, &by_hand)| KnobData {
+                        .map(|param| KnobData {
                             param: param.map(|param| param.id),
-                            by_hand,
                         })
                         .collect(),
-                    plugin_changes: track.plugin_changes(),
                     clips,
                 }
             })
@@ -556,41 +534,6 @@ mod tests {
         let track = data.tracks[0].clone();
         data.tracks = vec![track; count];
         data
-    }
-
-    /// The same project fingerprints the same; any saved field changing —
-    /// here the tempo, a track's name — changes it.
-    #[test]
-    fn a_fingerprint_changes_with_any_saved_field() {
-        let saved = ProjectData::default().fingerprint();
-        assert_eq!(ProjectData::default().fingerprint(), saved);
-
-        let mut data = ProjectData::default();
-        data.tempo_us += 1;
-        assert_ne!(data.fingerprint(), saved);
-
-        let mut data = ProjectData::default();
-        data.tracks[1].name = Some("Bass".to_owned());
-        assert_ne!(data.fingerprint(), saved);
-    }
-
-    /// A plugin's state blob is left out: a plugin that writes a different
-    /// blob for the same preset on every save must not make the project look
-    /// changed. Which plugin a track holds still counts.
-    #[test]
-    fn a_fingerprint_ignores_plugin_state_but_not_the_plugin() {
-        let with_plugin = |plugin_id: &str, state: &str| {
-            let mut data = ProjectData::default();
-            data.tracks[0].output = TrackOutputData::Instrument {
-                bundle_path: "/Synth.vst3".to_owned(),
-                plugin_id: plugin_id.to_owned(),
-                display_name: "Synth".to_owned(),
-                state: state.to_owned(),
-            };
-            data.fingerprint()
-        };
-        assert_eq!(with_plugin("a", "AAAA"), with_plugin("a", "BBBB"));
-        assert_ne!(with_plugin("a", "AAAA"), with_plugin("b", "AAAA"));
     }
 
     /// A template keeps the instruments and their mix, and drops the
@@ -794,23 +737,6 @@ mod tests {
         );
     }
 
-    /// A turn counts for the unsaved prompt; a recorded move changes the
-    /// project as any event does.
-    #[test]
-    fn a_recorded_move_changes_the_fingerprint() {
-        let mut sequencer = test_sequencer();
-        let mut clip = clip_at(0, 1920);
-        clip.restore_events(vec![param_at(10, 714, 0.25)]);
-        sequencer.tracks_mut()[0].add_clip(&clip);
-        let saved = ProjectData::from_sequencer(&sequencer).fingerprint();
-        let id = sequencer.tracks()[0].clips()[0].id();
-        sequencer.tracks_mut()[0]
-            .get_clip_by_id_mut(id)
-            .unwrap()
-            .restore_events(vec![param_at(10, 714, 0.75)]);
-        assert_ne!(ProjectData::from_sequencer(&sequencer).fingerprint(), saved);
-    }
-
     /// A track with no knob assigned writes no knob list, and the hand's
     /// values are never written.
     #[test]
@@ -858,46 +784,6 @@ mod tests {
             data.apply_to_sequencer(&mut sequencer);
             assert_eq!(*sequencer.tracks()[0].knobs(), UNASSIGNED_KNOBS);
         }
-    }
-
-    /// A preset picked in the plugin is a change on its own, knob or no knob,
-    /// and saving settles it: the blob can't say, so the plugin's word counts.
-    #[test]
-    fn a_preset_the_plugin_loaded_changes_the_fingerprint_and_is_not_written() {
-        let mut sequencer = test_sequencer();
-        let saved = ProjectData::from_sequencer(&sequencer).fingerprint();
-        sequencer.count_plugin_change(0);
-        let changed = ProjectData::from_sequencer(&sequencer);
-        let json = serde_json::to_string(&changed).unwrap();
-        assert!(!json.contains("plugin_changes"), "{json}");
-        let changed = changed.fingerprint();
-        assert_ne!(changed, saved);
-        assert_eq!(
-            ProjectData::from_sequencer(&sequencer).fingerprint(),
-            changed
-        );
-        sequencer.count_plugin_change(0);
-        assert_ne!(
-            ProjectData::from_sequencer(&sequencer).fingerprint(),
-            changed
-        );
-    }
-
-    /// A hand turn — Stev's knob or the parameter's control in the plugin's
-    /// editor — is a change for the unsaved prompt, though only the plugin's
-    /// state saves the value (`400-parameter-knobs.md` decision 9).
-    #[test]
-    fn a_hand_turn_changes_the_fingerprint() {
-        let mut sequencer = test_sequencer();
-        let saved = ProjectData::from_sequencer(&sequencer).fingerprint();
-        sequencer.turn_knob(0, 0, 0.25, 0);
-        let turned = ProjectData::from_sequencer(&sequencer).fingerprint();
-        assert_ne!(turned, saved);
-        sequencer.turn_knob(0, 0, 0.75, 0);
-        assert_ne!(
-            ProjectData::from_sequencer(&sequencer).fingerprint(),
-            turned
-        );
     }
 
     #[test]
@@ -951,15 +837,6 @@ mod tests {
             meter_from_list(&[entry(6, 8), entry(4, 4)]),
             Meter::new(6, 8).unwrap()
         );
-    }
-
-    #[test]
-    fn a_fingerprint_changes_with_the_meter() {
-        let data = ProjectData {
-            meter: MeterData::list_for(Meter::new(3, 4).unwrap()),
-            ..ProjectData::default()
-        };
-        assert_ne!(data.fingerprint(), ProjectData::default().fingerprint());
     }
 
     #[test]
@@ -1098,7 +975,6 @@ mod tests {
             color: None,
             name: None,
             knobs: Vec::new(),
-            plugin_changes: 0,
             clips: Vec::new(),
         };
         let json = serde_json::to_string(&track).unwrap();

@@ -27,9 +27,11 @@ use super::*;
 impl EventHandlers {
     /// Applies one [`SequencerCommand`]
     /// against `sequencer`, recording undoable ones on `undo_record`, keeping
-    /// `tap_tempo` for tap-tempo, `saved` for the unsaved-changes check and
-    /// `staged` for a project waiting on the view to load its plugins. Called
+    /// `tap_tempo` for tap-tempo, `saved` for the unsaved-changes check,
+    /// `staged` for a project waiting on the view to load its plugins and
+    /// `recovery` for the crash recovery copy a save or a quit deletes. Called
     /// from the `"sequencer"` thread's `select!` loop.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn handle_sequencer_command(
         &self,
         cmd: &SequencerCommand,
@@ -38,6 +40,7 @@ impl EventHandlers {
         tap_tempo: &mut TapTempo,
         saved: &mut SavedProject,
         staged: &mut Option<StagedProject>,
+        recovery: &mut RecoveryKeeper,
     ) {
         // The agent bridge's marquee mirror and calls go ahead of every
         // hold: none applies to them, and a write that can't run now says
@@ -527,6 +530,7 @@ impl EventHandlers {
                     undo_record,
                     saved,
                     staged,
+                    recovery,
                     action,
                     *discard_changes,
                 );
@@ -537,7 +541,7 @@ impl EventHandlers {
             }
 
             SequencerCommand::SaveProject { filename, folder } => {
-                self.save_project_workflow(sequencer, saved, folder.as_deref(), filename);
+                self.save_project_workflow(sequencer, saved, recovery, folder.as_deref(), filename);
             }
 
             SequencerCommand::SaveTemplate { name } => {
