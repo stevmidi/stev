@@ -9,7 +9,6 @@ use std::time::Instant;
 use undo::Record;
 
 use crate::core::agent::{AgentAnswer, AgentReply, answer};
-use crate::core::project::StagedProject;
 use crate::core::sequencer::{
     ClearControllerSpanEdit, CommitClipEdit, DeleteSelectedEventsEdit, DeleteTimeEdit,
     DragEventsVelocityEdit, DragNotesEdit, DuplicateClipsEdit, DuplicateTimeEdit,
@@ -27,20 +26,17 @@ use super::*;
 impl EventHandlers {
     /// Applies one [`SequencerCommand`]
     /// against `sequencer`, recording undoable ones on `undo_record`, keeping
-    /// `tap_tempo` for tap-tempo, `saved` for the unsaved-changes check,
-    /// `staged` for a project waiting on the view to load its plugins and
-    /// `recovery` for the crash recovery copy a save or a quit deletes. Called
-    /// from the `"sequencer"` thread's `select!` loop.
-    #[allow(clippy::too_many_arguments)]
+    /// `tap_tempo` for tap-tempo and `open` for what it means to the project
+    /// as a file: the unsaved-changes check, a project waiting on the view to
+    /// load its plugins, the crash recovery copy. Called from the
+    /// `"sequencer"` thread's `select!` loop.
     pub(crate) fn handle_sequencer_command(
         &self,
         cmd: &SequencerCommand,
         sequencer: &mut Sequencer,
         undo_record: &mut Record<SequencerEdit>,
         tap_tempo: &mut TapTempo,
-        saved: &mut SavedProject,
-        staged: &mut Option<StagedProject>,
-        recovery: &mut RecoveryKeeper,
+        open: &mut OpenProject,
     ) {
         // The agent bridge's marquee mirror and calls go ahead of every
         // hold: none applies to them, and a write that can't run now says
@@ -49,7 +45,7 @@ impl EventHandlers {
             SequencerCommand::SetMarquee(marquee) => return sequencer.set_marquee(*marquee),
             SequencerCommand::SetModalOpen(open) => return sequencer.set_modal_open(*open),
             SequencerCommand::Agent { request, reply } => {
-                let answer = match answer(request, sequencer, saved.name()) {
+                let answer = match answer(request, sequencer, open.saved.name()) {
                     AgentAnswer::Reply(answer) => answer,
                     AgentAnswer::Write(write) => {
                         self.record_edit(sequencer, undo_record, Some(write.edit));
@@ -59,6 +55,14 @@ impl EventHandlers {
                 };
                 reply.send(answer).ok();
                 return;
+            }
+            // Done on disk already: the origin has to follow, whatever the
+            // project is in the middle of.
+            SequencerCommand::ProjectRenamed { old, new } => {
+                return open.saved.follow_rename(old, new);
+            }
+            SequencerCommand::ProjectFolderRenamed { old, new } => {
+                return open.saved.follow_folder_rename(old, new);
             }
             _ => {}
         }
@@ -528,20 +532,22 @@ impl EventHandlers {
                 self.project_action_workflow(
                     sequencer,
                     undo_record,
-                    saved,
-                    staged,
-                    recovery,
+                    open,
                     action,
                     *discard_changes,
                 );
             }
 
             SequencerCommand::ApplyStagedProject => {
-                self.apply_staged_project_workflow(sequencer, undo_record, saved, staged);
+                self.apply_staged_project_workflow(sequencer, undo_record, open);
+            }
+
+            SequencerCommand::AnswerRecovery { reopen } => {
+                self.answer_recovery_workflow(sequencer, undo_record, open, *reopen);
             }
 
             SequencerCommand::SaveProject { filename, folder } => {
-                self.save_project_workflow(sequencer, saved, recovery, folder.as_deref(), filename);
+                self.save_project_workflow(sequencer, open, folder.as_deref(), filename);
             }
 
             SequencerCommand::SaveTemplate { name } => {
@@ -601,6 +607,8 @@ impl EventHandlers {
             // Answered above, ahead of the holds.
             SequencerCommand::SetMarquee(_)
             | SequencerCommand::SetModalOpen(_)
+            | SequencerCommand::ProjectRenamed { .. }
+            | SequencerCommand::ProjectFolderRenamed { .. }
             | SequencerCommand::Agent { .. } => {}
 
             SequencerCommand::SetTrackOutput { track, output } => {

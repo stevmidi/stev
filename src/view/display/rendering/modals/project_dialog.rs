@@ -1,9 +1,10 @@
 //! Draws the project dialogs (`project_dialog.rs`): Save As's name field,
 //! folder dropdown and new-folder field (Save as template's fixed
-//! `Templates` in their place), and the unsaved-changes prompt, each a modal
-//! frame centred on the canvas. The
-//! prompt's button layout is shared with its click test
-//! ([`unsaved_button_at`](Display::unsaved_button_at)).
+//! `Templates` in their place), the unsaved-changes prompt and the recovery
+//! question, each a modal frame centred on the canvas. The
+//! buttons' layout is shared with their click tests
+//! ([`unsaved_button_at`](Display::unsaved_button_at),
+//! [`recovery_button_at`](Display::recovery_button_at)).
 
 use egui::{
     Align2, CornerRadius, FontId, Id, Painter, Pos2, Rect, Shape, Stroke, StrokeKind, Ui, pos2,
@@ -16,7 +17,7 @@ use crate::core::paths::TEMPLATES_DIR_NAME;
 use crate::core::project::{project_exists, project_name_from_input, template_exists};
 use crate::view::display::keyboard_tab::chords_label;
 use crate::view::display::project_dialog::{
-    ProjectDialog, SaveAs, SaveAsFocus, SaveAsHit, UnsavedButton,
+    ProjectDialog, RecoveryButton, SaveAs, SaveAsFocus, SaveAsHit, UnsavedButton,
 };
 use crate::view::display::project_state::ProjectViewState;
 use crate::view::display::text_field::{FieldStyle, MODAL_MARGIN};
@@ -38,8 +39,17 @@ struct DialogLayout {
     new_folder: Rect,
     /// The line under it: Save As's note, the prompt's key hints.
     note: Rect,
-    /// The prompt's buttons, left to right as in [`UnsavedButton::ALL`].
+    /// The prompt's buttons, left to right as in [`UnsavedButton::ALL`]. The
+    /// recovery question's two take the right-hand pair.
     buttons: [Rect; 3],
+}
+
+impl DialogLayout {
+    /// The recovery question's buttons, left to right as in
+    /// [`RecoveryButton::ALL`].
+    fn recovery_buttons(&self) -> [Rect; 2] {
+        [self.buttons[1], self.buttons[2]]
+    }
 }
 
 impl Display {
@@ -218,6 +228,7 @@ impl Display {
                 }
             }
             Some(ProjectDialog::Unsaved { .. }) => self.unsaved_button_at(pointer).is_some(),
+            Some(ProjectDialog::Recovery { .. }) => self.recovery_button_at(pointer).is_some(),
             None => false,
         }
     }
@@ -228,6 +239,15 @@ impl Display {
         UnsavedButton::ALL
             .into_iter()
             .zip(layout.buttons)
+            .find_map(|(button, rect)| rect.contains(pos).then_some(button))
+    }
+
+    /// The recovery question's button under canvas point `pos`, if any.
+    pub(in crate::view::display) fn recovery_button_at(&self, pos: Pos2) -> Option<RecoveryButton> {
+        let layout = Self::dialog_layout(self.render.canvas_rect, true);
+        RecoveryButton::ALL
+            .into_iter()
+            .zip(layout.recovery_buttons())
             .find_map(|(button, rect)| rect.contains(pos).then_some(button))
     }
 
@@ -245,6 +265,9 @@ impl Display {
                 *selected,
                 self.project.project_current_name.as_deref(),
             ),
+            Some(ProjectDialog::Recovery { name, selected }) => {
+                Self::draw_recovery_question(ui.painter(), rect, *selected, name.as_deref())
+            }
             None => {}
         }
     }
@@ -522,8 +545,54 @@ impl Display {
             Some(name) => format!("Save changes to \"{name}\" before closing?"),
             None => "Save this new project before closing?".to_owned(),
         };
+        Self::draw_dialog_question(painter, &layout, question);
+
+        for (button, button_rect) in UnsavedButton::ALL.into_iter().zip(layout.buttons) {
+            let is_selected = button == selected;
+            let color = accent_if(is_selected, theme::fg());
+            Self::draw_modal_button(painter, button_rect, button.label(), is_selected, color);
+        }
+    }
+
+    /// The recovery question: what happened, what to do about it, and the two
+    /// buttons, the `selected` one (Enter's) in the accent colour. `name` is
+    /// the copy's project, `None` for one never saved.
+    fn draw_recovery_question(
+        painter: &Painter,
+        rect: Rect,
+        selected: RecoveryButton,
+        name: Option<&str>,
+    ) {
+        let layout = Self::dialog_layout(rect, true);
+        Self::draw_modal_frame(
+            painter,
+            rect,
+            layout.panel.width(),
+            layout.panel.height(),
+            "RECOVERY",
+        );
+
+        let question = match name {
+            Some(name) => format!("Reopen your unsaved changes to \"{name}\"?"),
+            None => "Reopen your unsaved new project?".to_owned(),
+        };
+        let text = format!("Stev didn't close properly.\n{question}");
+        Self::draw_dialog_question(painter, &layout, text);
+
+        let buttons = RecoveryButton::ALL
+            .into_iter()
+            .zip(layout.recovery_buttons());
+        for (button, button_rect) in buttons {
+            let is_selected = button == selected;
+            let color = accent_if(is_selected, theme::fg());
+            Self::draw_modal_button(painter, button_rect, button.label(), is_selected, color);
+        }
+    }
+
+    /// A dialog's `text`, wrapped and centred down the body.
+    fn draw_dialog_question(painter: &Painter, layout: &DialogLayout, text: String) {
         let galley = painter.layout(
-            question,
+            text,
             FontId::proportional(Self::FONT_LIST),
             theme::fg(),
             layout.body.width(),
@@ -533,11 +602,5 @@ impl Display {
             layout.body.center().y - galley.size().y * 0.5,
         );
         painter.galley(text_pos, galley, theme::fg());
-
-        for (button, button_rect) in UnsavedButton::ALL.into_iter().zip(layout.buttons) {
-            let is_selected = button == selected;
-            let color = accent_if(is_selected, theme::fg());
-            Self::draw_modal_button(painter, button_rect, button.label(), is_selected, color);
-        }
     }
 }

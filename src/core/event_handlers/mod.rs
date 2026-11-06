@@ -56,7 +56,7 @@ mod tracks;
 mod transport_handler;
 mod ui_helpers;
 
-pub(crate) use project::SavedProject;
+pub(crate) use project::{OpenProject, SavedProject};
 pub(crate) use recovery::RecoveryKeeper;
 
 /// Stateless senders + `Arc` refs, moved into the `"sequencer"` thread at

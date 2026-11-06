@@ -41,7 +41,7 @@ impl EventHandlers {
     }
 
     /// Sends a passing footer message ([`UiEvent::Status`]).
-    pub(super) fn send_status_ui_event(&self, message: String) {
+    pub(crate) fn send_status_ui_event(&self, message: String) {
         self.ui_event_tx.send(UiEvent::Status { message }).ok();
     }
 

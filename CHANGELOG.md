@@ -20,6 +20,10 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ## [Unreleased]
 
+### Added
+
+- Crash recovery: if Stev crashes or is force-quit with unsaved changes, the next launch offers to reopen them, with at most about 5 seconds lost. The project keeps its name, and the file on disk stays untouched until you save. A plugin's sound comes back as of the last save for now, and a plugin added since then comes back on its init patch.
+
 ### Changed
 
 - Keys work from a plugin editor the way they do in a DAW: the plugin gets a key first, and what it doesn't use comes to Stev, so `/` captures and every other command works without clicking back. `⌘S`, `⇧⌘S` and `⌘N` always go to Stev. A plugin's text field keeps what's typed into it, now including Space, `0` and `v`.

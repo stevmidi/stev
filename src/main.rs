@@ -10,6 +10,7 @@ use eframe::NativeOptions;
 use egui::{Context, IconData, ViewportBuilder};
 #[cfg(target_os = "macos")]
 use log::error;
+use log::warn;
 
 #[cfg(unix)]
 use crate::core::agent::{MCP_FLAG, run_mcp_server};
@@ -19,7 +20,7 @@ use crate::core::{
     event_handlers::RecoveryKeeper,
     keymap::Keymap,
     logging,
-    project::{recovery_path, take_recovery_lock},
+    project::{read_recovery_copy, recovery_path, take_recovery_lock},
     settings::{clamp_midi_out_offset_ms, load_settings},
     setup::{
         setup_clock, setup_display, setup_event_handlers, setup_metronome,
@@ -294,6 +295,19 @@ fn main() {
     let write_failed = shared_atomics.recovery_write_failed.clone();
     let recovery = match take_recovery_lock() {
         Some(lock) => {
+            // With the lock held, a copy here means a crash. The offer has to
+            // be up by the first frame (`410-crash-recovery.md` decision 9);
+            // a copy that won't load stays for the next clean quit to delete
+            // (decision 15).
+            let offer = read_recovery_copy(&recovery_path()).unwrap_or_else(|e| {
+                warn!("Could not read the recovery copy: {e}");
+                event_handlers
+                    .send_status_ui_event(format!("Could not reopen your unsaved changes: {e}"));
+                None
+            });
+            if let Some(copy) = &offer {
+                display.offer_recovery(copy.name().map(str::to_owned));
+            }
             let worker = start_recovery_thread(
                 lock,
                 recovery_path(),
@@ -304,9 +318,10 @@ fn main() {
                 Some(shared_channels.recovery_job_tx),
                 Some(worker),
                 write_failed,
+                offer,
             )
         }
-        None => RecoveryKeeper::new(None, None, write_failed),
+        None => RecoveryKeeper::new(None, None, write_failed, None),
     };
 
     start_sequencer_thread(

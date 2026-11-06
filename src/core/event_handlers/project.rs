@@ -83,8 +83,7 @@ impl EventHandlers {
         &self,
         sequencer: &mut Sequencer,
         undo_record: &mut Record<SequencerEdit>,
-        saved: &mut SavedProject,
-        staged: &mut Option<StagedProject>,
+        open: &mut OpenProject,
         folder: Option<&str>,
         filename: &str,
     ) {
@@ -95,8 +94,9 @@ impl EventHandlers {
                     data,
                     title: filename.to_owned(),
                     file: Some((folder.map(str::to_owned), filename.to_owned())),
+                    recovered: None,
                 };
-                self.open_read_project_workflow(sequencer, undo_record, saved, staged, project);
+                self.open_read_project_workflow(sequencer, undo_record, open, project);
             }
         }
     }
@@ -111,23 +111,15 @@ impl EventHandlers {
         &self,
         sequencer: &mut Sequencer,
         undo_record: &mut Record<SequencerEdit>,
-        saved: &mut SavedProject,
-        staged: &mut Option<StagedProject>,
+        open: &mut OpenProject,
         path: &Path,
     ) {
         if project::is_template_file(path) {
-            self.new_from_template_workflow(sequencer, undo_record, saved, staged, path);
+            self.new_from_template_workflow(sequencer, undo_record, open, path);
             return;
         }
         if let Some((folder, filename)) = project::library_project(path) {
-            self.open_project_workflow(
-                sequencer,
-                undo_record,
-                saved,
-                staged,
-                folder.as_deref(),
-                &filename,
-            );
+            self.open_project_workflow(sequencer, undo_record, open, folder.as_deref(), &filename);
             return;
         }
         match project::copy_project_in(path) {
@@ -135,7 +127,7 @@ impl EventHandlers {
             Ok(filename) => {
                 self.ui_event_tx.send(UiEvent::ProjectFilesChanged).ok();
                 self.send_status_ui_event(format!("Copied {filename} into Projects"));
-                self.open_project_workflow(sequencer, undo_record, saved, staged, None, &filename);
+                self.open_project_workflow(sequencer, undo_record, open, None, &filename);
             }
         }
     }
@@ -150,8 +142,7 @@ impl EventHandlers {
         &self,
         sequencer: &mut Sequencer,
         undo_record: &mut Record<SequencerEdit>,
-        saved: &mut SavedProject,
-        staged: &mut Option<StagedProject>,
+        open: &mut OpenProject,
         path: &Path,
     ) {
         let name = project::file_stem(path);
@@ -162,8 +153,9 @@ impl EventHandlers {
                     data: data.into_template(),
                     title: name,
                     file: None,
+                    recovered: None,
                 };
-                self.open_read_project_workflow(sequencer, undo_record, saved, staged, project);
+                self.open_read_project_workflow(sequencer, undo_record, open, project);
             }
         }
     }
@@ -176,7 +168,7 @@ impl EventHandlers {
     }
 
     /// A project just read from disk: without plugins, applies it at once.
-    /// With, stops the transport, keeps it in `staged` and asks the view to
+    /// With, stops the transport, keeps it in `open.staged` and asks the view to
     /// load its plugins (`UiEvent::StageProject`) while the open project
     /// stays as it is; the view's `ApplyStagedProject` then applies it
     /// (`apply_staged_project_workflow`).
@@ -184,14 +176,13 @@ impl EventHandlers {
         &self,
         sequencer: &mut Sequencer,
         undo_record: &mut Record<SequencerEdit>,
-        saved: &mut SavedProject,
-        staged: &mut Option<StagedProject>,
+        open: &mut OpenProject,
         project: StagedProject,
     ) {
         let specs = project.data.instrument_specs();
         if specs.is_empty() {
-            *staged = Some(project);
-            self.apply_staged_project_workflow(sequencer, undo_record, saved, staged);
+            open.staged = Some(project);
+            self.apply_staged_project_workflow(sequencer, undo_record, open);
             return;
         }
         self.send_transport(TransportCommand::Stop);
@@ -201,31 +192,63 @@ impl EventHandlers {
                 specs,
             })
             .ok();
-        *staged = Some(project);
+        open.staged = Some(project);
         self.request_repaint();
     }
 
-    /// Applies the project in `staged`, if any — at once, or once the view
+    /// Applies the project in `open.staged`, if any — at once, or once the view
     /// has loaded its plugins (`open_read_project_workflow`). No
     /// unsaved-changes check: it ran before the project was read, and the
-    /// view takes no input while a staged one loads.
+    /// view takes no input while a staged one loads. A project reopened from
+    /// the recovery copy takes no baseline (`SavedProject::clear_baseline`),
+    /// ends `recovery`'s hold on the copy and says so in the footer.
     pub(super) fn apply_staged_project_workflow(
         &self,
         sequencer: &mut Sequencer,
         undo_record: &mut Record<SequencerEdit>,
-        saved: &mut SavedProject,
-        staged: &mut Option<StagedProject>,
+        open: &mut OpenProject,
     ) {
-        if let Some(StagedProject { data, file, .. }) = staged.take() {
-            let (folder, filename) = file.unzip();
-            self.load_project_workflow(
-                sequencer,
-                undo_record,
-                saved,
-                data,
-                filename,
-                folder.flatten(),
-            );
+        let Some(StagedProject {
+            data,
+            file,
+            recovered,
+            ..
+        }) = open.staged.take()
+        else {
+            return;
+        };
+        let (folder, filename) = file.unzip();
+        self.load_project_workflow(
+            sequencer,
+            undo_record,
+            &mut open.saved,
+            data,
+            filename,
+            folder.flatten(),
+        );
+        if let Some(message) = recovered {
+            open.saved.clear_baseline();
+            open.recovery.reopened(sequencer, &open.saved);
+            self.send_status_ui_event(message);
+        }
+    }
+
+    /// The launch dialog's answer: Reopen stages the recovery copy like any
+    /// project read from disk, and the copy stays until the project is saved
+    /// (`410-crash-recovery.md` decision 13); Discard deletes it.
+    pub(super) fn answer_recovery_workflow(
+        &self,
+        sequencer: &mut Sequencer,
+        undo_record: &mut Record<SequencerEdit>,
+        open: &mut OpenProject,
+        reopen: bool,
+    ) {
+        match open.recovery.take_offer() {
+            Some(copy) if reopen => {
+                self.open_read_project_workflow(sequencer, undo_record, open, copy.into_staged());
+            }
+            Some(_) => open.recovery.discard(),
+            None => {}
         }
     }
 
@@ -233,22 +256,20 @@ impl EventHandlers {
     /// changed since `saved`: then the view is asked to prompt
     /// (`UiEvent::UnsavedChanges`) and nothing else happens. A new project or
     /// a load becomes the new `saved`; quitting tells the view to close the
-    /// window (`UiEvent::QuitApproved`), once `recovery` has deleted the copy
-    /// and finished, since the process ends soon after. Both replies wake the
+    /// window (`UiEvent::QuitApproved`), once `open.recovery` has deleted the
+    /// copy and finished, since the process ends soon after. Both replies wake the
     /// view, which may be waiting on no input of its own (a window close). An
-    /// open with plugins is held in `staged` until the view has loaded them.
-    #[allow(clippy::too_many_arguments)]
+    /// open with plugins is held in `open.staged` until the view has loaded
+    /// them.
     pub(super) fn project_action_workflow(
         &self,
         sequencer: &mut Sequencer,
         undo_record: &mut Record<SequencerEdit>,
-        saved: &mut SavedProject,
-        staged: &mut Option<StagedProject>,
-        recovery: &mut RecoveryKeeper,
+        open: &mut OpenProject,
         action: &ProjectAction,
         discard_changes: bool,
     ) {
-        if !discard_changes && saved.has_changes(sequencer) {
+        if !discard_changes && open.saved.has_changes(sequencer) {
             self.ui_event_tx
                 .send(UiEvent::UnsavedChanges {
                     action: action.clone(),
@@ -262,7 +283,7 @@ impl EventHandlers {
                 self.load_project_workflow(
                     sequencer,
                     undo_record,
-                    saved,
+                    &mut open.saved,
                     ProjectData::default(),
                     None,
                     None,
@@ -272,20 +293,19 @@ impl EventHandlers {
                 self.open_project_workflow(
                     sequencer,
                     undo_record,
-                    saved,
-                    staged,
+                    open,
                     folder.as_deref(),
                     filename,
                 );
             }
             ProjectAction::OpenFile { path } => {
-                self.open_file_workflow(sequencer, undo_record, saved, staged, path);
+                self.open_file_workflow(sequencer, undo_record, open, path);
             }
             ProjectAction::NewFromTemplate { path } => {
-                self.new_from_template_workflow(sequencer, undo_record, saved, staged, path);
+                self.new_from_template_workflow(sequencer, undo_record, open, path);
             }
             ProjectAction::Quit => {
-                recovery.finish();
+                open.recovery.finish();
                 self.ui_event_tx.send(UiEvent::QuitApproved).ok();
                 self.request_repaint();
             }
@@ -298,15 +318,14 @@ impl EventHandlers {
     pub(super) fn save_project_workflow(
         &self,
         sequencer: &Sequencer,
-        saved: &mut SavedProject,
-        recovery: &mut RecoveryKeeper,
+        open: &mut OpenProject,
         folder: Option<&str>,
         filename: &str,
     ) {
         let data = ProjectData::from_sequencer(sequencer);
         let message = match project::save_project(&data, folder, filename) {
             Ok(()) => {
-                self.project_saved(sequencer, saved, recovery, folder, filename);
+                self.project_saved(sequencer, open, folder, filename);
                 format!("Saved {filename}")
             }
             Err(e) => format!("Could not save {filename}: {e}"),
@@ -320,14 +339,13 @@ impl EventHandlers {
     pub(super) fn project_saved(
         &self,
         sequencer: &Sequencer,
-        saved: &mut SavedProject,
-        recovery: &mut RecoveryKeeper,
+        open: &mut OpenProject,
         folder: Option<&str>,
         filename: &str,
     ) {
         let origin = ProjectOrigin::new(folder, filename);
-        *saved = SavedProject::of(sequencer, Some(origin));
-        recovery.delete();
+        open.saved = SavedProject::of(sequencer, Some(origin));
+        open.recovery.delete();
         self.ui_event_tx
             .send(UiEvent::ProjectSaved {
                 name: filename.to_owned(),
@@ -423,6 +441,19 @@ impl EventHandlers {
     }
 }
 
+/// What the `"sequencer"` thread keeps about the open project as a file,
+/// beside the sequencer and the undo record: what it was last saved as, what
+/// is on its way in, and its crash recovery copy.
+pub(crate) struct OpenProject {
+    /// What the unsaved-changes check compares against.
+    pub(crate) saved: SavedProject,
+    /// A project read from disk, waiting on the view to load its plugins
+    /// (`130-plugin-host.md` § Project persistence).
+    pub(crate) staged: Option<StagedProject>,
+    /// The crash recovery copy.
+    pub(crate) recovery: RecoveryKeeper,
+}
+
 /// The project as it was last saved or loaded, as a
 /// [`fingerprint`](project::fingerprint) — the `"sequencer"` thread keeps one
 /// beside the undo record, and the unsaved-changes check and the crash
@@ -433,8 +464,9 @@ impl EventHandlers {
 /// undoing back to the saved state count as no change.
 /// See `060-persistence.md` § Unsaved changes.
 pub(crate) struct SavedProject {
-    /// The saved project's fingerprint.
-    fingerprint: u64,
+    /// The saved project's fingerprint; `None` for a project reopened from
+    /// the crash recovery copy, which matches nothing until it is saved.
+    fingerprint: Option<u64>,
     /// Where it is on disk; `None` for a project never saved (a new one, a
     /// template opened). The agent bridge's `get_project` names it, and the
     /// recovery copy records it.
@@ -446,8 +478,33 @@ impl SavedProject {
     /// after a save, a load, a new project, and at startup.
     pub(crate) fn of(sequencer: &Sequencer, origin: Option<ProjectOrigin>) -> Self {
         SavedProject {
-            fingerprint: project::fingerprint(sequencer),
+            fingerprint: Some(project::fingerprint(sequencer)),
             origin,
+        }
+    }
+
+    /// Drops the baseline of a project just reopened from the recovery copy:
+    /// it counts as changed until it is saved, so the quit prompt asks.
+    /// Comparing with the file on disk wouldn't do: a copy that differs only
+    /// in a plugin blob has the same fingerprint, and the next check would
+    /// delete it (`410-crash-recovery.md` decision 11).
+    fn clear_baseline(&mut self) {
+        self.fingerprint = None;
+    }
+
+    /// Follows a browser rename of the project `old` to `new`, if it is this
+    /// one: the view has renamed the file, and the origin has to name it.
+    pub(super) fn follow_rename(&mut self, old: &ProjectOrigin, new: &str) {
+        if let Some(origin) = &mut self.origin {
+            origin.follow_rename(old, new);
+        }
+    }
+
+    /// Follows a browser rename of the project folder `old` to `new`, if this
+    /// project is in it.
+    pub(super) fn follow_folder_rename(&mut self, old: &str, new: &str) {
+        if let Some(origin) = &mut self.origin {
+            origin.follow_folder_rename(old, new);
         }
     }
 
@@ -463,7 +520,7 @@ impl SavedProject {
 
     /// Whether a project with `fingerprint` would save as this one did.
     pub(super) fn is_fingerprint(&self, fingerprint: u64) -> bool {
-        fingerprint == self.fingerprint
+        self.fingerprint == Some(fingerprint)
     }
 
     /// Whether `sequencer`'s project would save differently from this one.
@@ -513,6 +570,7 @@ mod tests {
             data,
             title: "Song".to_owned(),
             file: Some((None, "Song".to_owned())),
+            recovered: None,
         }
     }
 
@@ -523,19 +581,17 @@ mod tests {
     fn a_project_with_plugins_is_staged_before_it_is_applied() {
         let mut h = harness();
         let mut record: Record<SequencerEdit> = Record::new();
-        let mut staged = None;
         let tempo = h.sequencer.tempo_us();
 
         h.handlers.open_read_project_workflow(
             &mut h.sequencer,
             &mut record,
-            &mut h.saved,
-            &mut staged,
+            &mut h.open,
             project(true),
         );
         assert_eq!(h.sequencer.tempo_us(), tempo);
         assert_eq!(h.sequencer.tracks().len(), 4);
-        assert!(staged.is_some());
+        assert!(h.open.staged.is_some());
         assert!(
             h.transport_commands
                 .try_iter()
@@ -547,13 +603,9 @@ mod tests {
         });
         assert_eq!(asked, Some(("Song".to_owned(), vec![(1, synth())])));
 
-        h.handlers.apply_staged_project_workflow(
-            &mut h.sequencer,
-            &mut record,
-            &mut h.saved,
-            &mut staged,
-        );
-        assert!(staged.is_none());
+        h.handlers
+            .apply_staged_project_workflow(&mut h.sequencer, &mut record, &mut h.open);
+        assert!(h.open.staged.is_none());
         assert_eq!(h.sequencer.tempo_us(), 666_667);
         assert_eq!(h.sequencer.tracks().len(), 2);
         let loaded = h.ui_events.try_iter().find_map(|event| match event {
@@ -572,16 +624,14 @@ mod tests {
     fn a_project_without_plugins_is_applied_at_once() {
         let mut h = harness();
         let mut record: Record<SequencerEdit> = Record::new();
-        let mut staged = None;
 
         h.handlers.open_read_project_workflow(
             &mut h.sequencer,
             &mut record,
-            &mut h.saved,
-            &mut staged,
+            &mut h.open,
             project(false),
         );
-        assert!(staged.is_none());
+        assert!(h.open.staged.is_none());
         assert_eq!(h.sequencer.tempo_us(), 666_667);
         assert!(
             !h.ui_events

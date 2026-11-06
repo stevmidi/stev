@@ -1,4 +1,4 @@
-//! The two project dialogs, each centred over the canvas and holding the
+//! The project dialogs, each centred over the canvas and holding the
 //! keyboard while open — every key, nothing falls through:
 //!
 //! - **Save As** (⌘/Ctrl+⇧+S, and ⌘/Ctrl+S on a project never saved): a name
@@ -29,12 +29,18 @@
 //!   waiting on it). `D` (or ⌘/Ctrl+D) goes on without saving and Esc
 //!   cancels, whatever is selected; each is also a button.
 //!
+//! - **Crash recovery**: up from the first frame of a launch that found a
+//!   recovery copy ([`offer_recovery`](Display::offer_recovery)). ←/→ move the
+//!   selection between Discard and Reopen (Reopen to start with) and Enter
+//!   presses the selected one. It has no Cancel, so Esc does nothing: the
+//!   question has to be answered (`410-crash-recovery.md` decision 9).
+//!
 //! Quitting goes through the same check: a window close is held
 //! ([`sync_window_close`](Display::sync_window_close)) until the sequencer
 //! approves it.
 //!
 //! This module decides what the keys and buttons do (Save As's are the text
-//! fields' [`field_key`]; [`unsaved_key`], unit-tested);
+//! fields' [`field_key`]; [`unsaved_key`] and [`recovery_key`], unit-tested);
 //! `rendering/modals/project_dialog.rs` draws the dialogs and lays out their
 //! buttons. See `060-persistence.md` § Unsaved changes.
 
@@ -71,6 +77,13 @@ pub(super) enum ProjectDialog {
         action: ProjectAction,
         /// The button Enter presses, moved with ←/→.
         selected: UnsavedButton,
+    },
+    /// The Discard / Reopen question a crash left.
+    Recovery {
+        /// The project the recovery copy holds, `None` for one never saved.
+        name: Option<String>,
+        /// The button Enter presses, moved with ←/→.
+        selected: RecoveryButton,
     },
 }
 
@@ -479,13 +492,16 @@ enum DialogKey {
     /// folder list scrolls.
     Scroll(f32),
     /// Save As: save under the typed name. The prompt: save, then go on.
+    /// The recovery question: reopen.
     Confirm,
-    /// The prompt: go on without saving.
+    /// The prompt: go on without saving. The recovery question: discard.
     Discard,
     /// Close the dialog, doing nothing.
     Cancel,
     /// The prompt: select this button.
     Select(UnsavedButton),
+    /// The recovery question: select this button.
+    SelectRecovery(RecoveryButton),
     /// Typing, or a key with no meaning here: nothing else gets it.
     Swallow,
 }
@@ -560,6 +576,48 @@ fn unsaved_key(key: Key, selected: UnsavedButton) -> DialogKey {
     }
 }
 
+/// One of the recovery question's two buttons, left to right.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum RecoveryButton {
+    /// Delete the recovery copy.
+    Discard,
+    /// Open it.
+    Reopen,
+}
+
+impl RecoveryButton {
+    /// Both buttons, in the order they sit left to right.
+    pub(super) const ALL: [RecoveryButton; 2] = [RecoveryButton::Discard, RecoveryButton::Reopen];
+
+    /// The button's label.
+    pub(super) fn label(self) -> &'static str {
+        match self {
+            RecoveryButton::Discard => "Discard",
+            RecoveryButton::Reopen => "Reopen",
+        }
+    }
+
+    /// What clicking it does — the same as its key.
+    fn key(self) -> DialogKey {
+        match self {
+            RecoveryButton::Discard => DialogKey::Discard,
+            RecoveryButton::Reopen => DialogKey::Confirm,
+        }
+    }
+}
+
+/// The recovery question's keymap with `selected` the selected button: ←/→
+/// select the one on that side, Enter presses it; nothing else does anything,
+/// Esc included.
+fn recovery_key(key: Key, selected: RecoveryButton) -> DialogKey {
+    match key {
+        Key::ArrowLeft => DialogKey::SelectRecovery(RecoveryButton::Discard),
+        Key::ArrowRight => DialogKey::SelectRecovery(RecoveryButton::Reopen),
+        Key::Enter => selected.key(),
+        _ => DialogKey::Swallow,
+    }
+}
+
 impl Display {
     /// Asks the sequencer to run `action`, which it does at once unless the
     /// project has unsaved changes (then it asks for the prompt). Ignored
@@ -601,10 +659,13 @@ impl Display {
     /// like the browser's Enter. It waits while a project dialog, a field or
     /// the plugin restore has the keyboard; Settings stays up over the
     /// opened project, as for the app menu's items. At launch it waits for
-    /// the first frame, and replaces the empty startup project.
+    /// the first frame, and replaces the empty startup project. It waits
+    /// behind the recovery question too, and on after Reopen until that
+    /// project is in, so it gets the usual prompt rather than replacing it
+    /// (`410-crash-recovery.md` decision 9).
     #[cfg(target_os = "macos")]
     pub(super) fn sync_open_document(&mut self) {
-        if self.keyboard_taken() && self.overlay != Some(Overlay::Settings) {
+        if self.reopening || (self.keyboard_taken() && self.overlay != Some(Overlay::Settings)) {
             return;
         }
         if let Some(path) = take_open_document() {
@@ -684,6 +745,17 @@ impl Display {
         }
     }
 
+    /// Opens the recovery question about the project `name` (`None`: one
+    /// never saved). For startup, ahead of the first frame: a file opened
+    /// from Finder at launch would replace the startup project on it
+    /// (`410-crash-recovery.md` decision 9).
+    pub(crate) fn offer_recovery(&mut self, name: Option<String>) {
+        self.project_dialog = Some(ProjectDialog::Recovery {
+            name,
+            selected: RecoveryButton::Reopen,
+        });
+    }
+
     /// Saves the project under `name` in `folder`, then asks for `then`.
     /// `name` becomes the open project and `folder` the current one only
     /// once the file is written (`UiEvent::ProjectSaved`): a failed save
@@ -757,9 +829,15 @@ impl Display {
             (&InputEvent::KeyPressed { key, .. }, &ProjectDialog::Unsaved { selected, .. }) => {
                 unsaved_key(key, selected)
             }
+            (&InputEvent::KeyPressed { key, .. }, &ProjectDialog::Recovery { selected, .. }) => {
+                recovery_key(key, selected)
+            }
             (&InputEvent::MouseClicked { x, y, .. }, ProjectDialog::Unsaved { .. }) => self
                 .unsaved_button_at(pos2(x, y))
                 .map_or(DialogKey::Swallow, UnsavedButton::key),
+            (&InputEvent::MouseClicked { x, y, .. }, ProjectDialog::Recovery { .. }) => self
+                .recovery_button_at(pos2(x, y))
+                .map_or(DialogKey::Swallow, RecoveryButton::key),
             (&InputEvent::MouseClicked { x, y, .. }, ProjectDialog::SaveAs(_)) => {
                 DialogKey::Click(pos2(x, y))
             }
@@ -821,6 +899,11 @@ impl Display {
                     *selected = button;
                 }
             }
+            DialogKey::SelectRecovery(button) => {
+                if let Some(ProjectDialog::Recovery { selected, .. }) = &mut self.project_dialog {
+                    *selected = button;
+                }
+            }
             DialogKey::Swallow => {}
         }
         true
@@ -838,7 +921,7 @@ impl Display {
     /// stays open (its hint says why); with one, it saves and asks for the
     /// action waiting on it, if any — or, as Save as template, writes the
     /// template. The prompt saves and asks for its action again — through
-    /// Save As for a project never saved.
+    /// Save As for a project never saved. The recovery question reopens.
     fn confirm_project_dialog(&mut self) {
         match self.project_dialog.take() {
             Some(ProjectDialog::SaveAs(save_as)) => {
@@ -852,20 +935,31 @@ impl Display {
                 }
             }
             Some(ProjectDialog::Unsaved { action, .. }) => self.save_project(Some(action)),
+            Some(ProjectDialog::Recovery { .. }) => {
+                self.reopening = true;
+                self.input_event_tx
+                    .send(InputEvent::AnswerRecovery { reopen: true })
+                    .ok();
+            }
             None => {}
         }
     }
 
-    /// The prompt's Don't Save: runs its action, changes and all.
+    /// The prompt's Don't Save: runs its action, changes and all. The
+    /// recovery question's Discard: the copy goes.
     fn discard_project_changes(&mut self) {
-        if let Some(ProjectDialog::Unsaved { action, .. }) = self.project_dialog.take() {
-            self.input_event_tx
-                .send(InputEvent::ProjectAction {
-                    action,
-                    discard_changes: true,
-                })
-                .ok();
-        }
+        let event = match self.project_dialog.take() {
+            Some(ProjectDialog::Unsaved { action, .. }) => InputEvent::ProjectAction {
+                action,
+                discard_changes: true,
+            },
+            Some(ProjectDialog::Recovery { .. }) => InputEvent::AnswerRecovery { reopen: false },
+            other => {
+                self.project_dialog = other;
+                return;
+            }
+        };
+        self.input_event_tx.send(event).ok();
     }
 }
 
@@ -878,9 +972,32 @@ mod tests {
     use crate::view::display::text_field::TextField;
 
     use super::{
-        DialogKey, LIST_MAX_ROWS, SaveAs, SaveAsFocus, SaveAsHit, UnsavedButton, field_key,
-        save_as_key, save_folder_default, unsaved_key,
+        DialogKey, LIST_MAX_ROWS, RecoveryButton, SaveAs, SaveAsFocus, SaveAsHit, UnsavedButton,
+        field_key, recovery_key, save_as_key, save_folder_default, unsaved_key,
     };
+
+    /// ←/→ pick a side and stay there, Enter presses the selected button,
+    /// and Esc is no answer: the question has no Cancel.
+    #[test]
+    fn the_recovery_question_has_to_be_answered() {
+        use RecoveryButton::{Discard, Reopen};
+        assert_eq!(
+            recovery_key(Key::ArrowLeft, Reopen),
+            DialogKey::SelectRecovery(Discard)
+        );
+        assert_eq!(
+            recovery_key(Key::ArrowLeft, Discard),
+            DialogKey::SelectRecovery(Discard)
+        );
+        assert_eq!(
+            recovery_key(Key::ArrowRight, Discard),
+            DialogKey::SelectRecovery(Reopen)
+        );
+        assert_eq!(recovery_key(Key::Enter, Reopen), DialogKey::Confirm);
+        assert_eq!(recovery_key(Key::Enter, Discard), DialogKey::Discard);
+        assert_eq!(recovery_key(Key::Escape, Reopen), DialogKey::Swallow);
+        assert_eq!(recovery_key(Key::D, Reopen), DialogKey::Swallow);
+    }
 
     /// A Save As over the root and folders `a`, `b`, `c`, starting at `idx`.
     fn save_as(idx: usize) -> SaveAs {

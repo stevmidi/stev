@@ -23,17 +23,15 @@ pub(crate) fn remove_recent(list: &mut Vec<ProjectOrigin>, project: &ProjectOrig
 /// Follows a rename of the project `old` to `new` (its name), keeping its
 /// place in the list.
 pub(crate) fn rename_recent(list: &mut [ProjectOrigin], old: &ProjectOrigin, new: &str) {
-    for entry in list.iter_mut().filter(|entry| *entry == old) {
-        entry.name = new.to_owned();
+    for entry in list {
+        entry.follow_rename(old, new);
     }
 }
 
 /// Follows a rename of the project folder `old` to `new`.
 pub(crate) fn rename_recent_folder(list: &mut [ProjectOrigin], old: &str, new: &str) {
     for entry in list {
-        if entry.folder.as_deref() == Some(old) {
-            entry.folder = Some(new.to_owned());
-        }
+        entry.follow_folder_rename(old, new);
     }
 }
 

@@ -22,7 +22,7 @@ use crate::core::time::{Meter, TapTempo};
 use crate::core::transport::TransportCommand;
 use crate::view::display::UiEvent;
 
-use super::{EventHandlers, RecoveryKeeper, SavedProject};
+use super::{EventHandlers, OpenProject, RecoveryKeeper, SavedProject};
 
 /// The handlers plus what a test inspects or sets up: the `UiEvent` and
 /// transport-command streams they send, the published selection mirror, and
@@ -52,12 +52,11 @@ pub(crate) struct Harness {
     pub(crate) region: (Arc<AtomicI32>, Arc<AtomicI32>),
     /// A sequencer with track 0 selected.
     pub(crate) sequencer: Sequencer,
-    /// The project as last saved or loaded — the sequencer's empty one to
-    /// start with.
-    pub(crate) saved: SavedProject,
-    /// The crash recovery check, with no `"recovery"` thread behind it.
-    pub(crate) recovery: RecoveryKeeper,
-    /// Everything `recovery` sent, in order.
+    /// The project as a file: as last saved or loaded (the sequencer's empty
+    /// one to start with), and the crash recovery check, with no `"recovery"`
+    /// thread behind it.
+    pub(crate) open: OpenProject,
+    /// Everything `open.recovery` sent, in order.
     pub(crate) recovery_jobs: Receiver<RecoveryJob>,
     /// The flag a failed write sets, for a test to set.
     pub(crate) recovery_write_failed: Arc<AtomicBool>,
@@ -114,7 +113,12 @@ pub(crate) fn harness() -> Harness {
     let saved = SavedProject::of(&sequencer, None);
     let (recovery_job_tx, recovery_jobs) = unbounded();
     let recovery_write_failed = Arc::new(AtomicBool::new(false));
-    let recovery = RecoveryKeeper::new(Some(recovery_job_tx), None, recovery_write_failed.clone());
+    let recovery = RecoveryKeeper::new(
+        Some(recovery_job_tx),
+        None,
+        recovery_write_failed.clone(),
+        None,
+    );
     Harness {
         handlers,
         ui_events,
@@ -127,8 +131,11 @@ pub(crate) fn harness() -> Harness {
         running,
         region,
         sequencer,
-        saved,
-        recovery,
+        open: OpenProject {
+            saved,
+            staged: None,
+            recovery,
+        },
         recovery_jobs,
         recovery_write_failed,
     }
@@ -159,8 +166,6 @@ pub(crate) fn run_command(
         &mut h.sequencer,
         record,
         &mut TapTempo::default(),
-        &mut h.saved,
-        &mut None,
-        &mut h.recovery,
+        &mut h.open,
     );
 }

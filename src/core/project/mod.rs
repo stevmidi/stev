@@ -25,7 +25,10 @@ pub(crate) use dto::{ClipData, EventData};
 pub(crate) use dto::{ProjectData, ProjectSnapshot};
 pub(crate) use fingerprint::fingerprint;
 pub(crate) use recent::{note_recent, remove_recent, rename_recent, rename_recent_folder};
-pub(crate) use recovery::{RecoveryJob, recovery_path, run_recovery_jobs, take_recovery_lock};
+pub(crate) use recovery::{
+    RecoveryCopy, RecoveryJob, read_recovery_copy, recovery_path, run_recovery_jobs,
+    take_recovery_lock,
+};
 pub(crate) use smf::write_smf;
 pub(crate) use staged::StagedProject;
 #[cfg(target_os = "macos")]

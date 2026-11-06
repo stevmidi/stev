@@ -28,7 +28,10 @@ use uuid::Uuid;
 
 use crate::{
     core::{
-        keymap::Action, midi::message::Controller, project::ProjectAction, time::Meter,
+        keymap::Action,
+        midi::message::Controller,
+        project::{ProjectAction, ProjectOrigin},
+        time::Meter,
         view_state::Pane,
     },
     models::{
@@ -734,6 +737,28 @@ pub(crate) enum InputEvent {
     /// the sequencer applies it now, with no unsaved-changes check — that ran
     /// before it was staged. See `130-plugin-host.md` § Project persistence.
     ApplyStagedProject,
+    /// The launch dialog's answer: reopen the crash recovery copy, or discard
+    /// it. See `410-crash-recovery.md`.
+    AnswerRecovery {
+        /// Reopen, not Discard.
+        reopen: bool,
+    },
+    /// The browser renamed the project `old` on disk: the sequencer's record
+    /// of the open project follows, if that is the one.
+    ProjectRenamed {
+        /// The project as it was.
+        old: ProjectOrigin,
+        /// Its new name.
+        new: String,
+    },
+    /// The browser renamed the project folder `old` on disk: the sequencer's
+    /// record of the open project follows, if it is in there.
+    ProjectFolderRenamed {
+        /// The folder's name as it was.
+        old: String,
+        /// Its new name.
+        new: String,
+    },
     /// The settings modal's MIDI tab connected a port: save both connected
     /// ports (empty: none).
     ConfirmMidiPorts {

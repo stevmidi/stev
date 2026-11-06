@@ -186,16 +186,22 @@ impl Display {
     }
 
     /// After `item` was renamed to `new` on disk (or the new folder made):
-    /// the Recent list follows a renamed project or folder; the open
-    /// project, renamed, is what ⌘S saves to; the current folder,
+    /// the Recent list and the sequencer's record of the open project
+    /// (`InputEvent::ProjectRenamed`) follow a renamed project or folder; the
+    /// open project, renamed, is what ⌘S saves to; the current folder,
     /// renamed, stays current; a renamed folder stays expanded. Then
     /// re-lists the tree and selects the row under its new name.
     fn follow_browser_rename(&mut self, item: &BrowserItem, new: &str) {
         match item {
             BrowserItem::Project { folder, name } | BrowserItem::Recent { folder, name } => {
-                update_recent(|list| {
-                    rename_recent(list, &ProjectOrigin::new(folder.as_deref(), name), new);
-                });
+                let old = ProjectOrigin::new(folder.as_deref(), name);
+                update_recent(|list| rename_recent(list, &old, new));
+                self.input_event_tx
+                    .send(InputEvent::ProjectRenamed {
+                        old,
+                        new: new.to_owned(),
+                    })
+                    .ok();
                 if *folder == self.project.project_current_folder
                     && self.project.project_current_name.as_ref() == Some(name)
                 {
@@ -204,6 +210,12 @@ impl Display {
             }
             BrowserItem::Folder(old) => {
                 update_recent(|list| rename_recent_folder(list, old, new));
+                self.input_event_tx
+                    .send(InputEvent::ProjectFolderRenamed {
+                        old: old.clone(),
+                        new: new.to_owned(),
+                    })
+                    .ok();
                 if self.project.project_current_folder.as_ref() == Some(old) {
                     self.set_current_project_folder(Some(new.to_owned()));
                 }

@@ -283,6 +283,10 @@ pub(crate) struct Display {
     /// said Don't Save): the window's next close request goes through
     /// instead of being held for the check. See `project_dialog.rs`.
     quit_approved: bool,
+    /// The recovery question was answered Reopen and the project isn't in
+    /// yet: a file opened from Finder waits (`sync_open_document`).
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    reopening: bool,
     /// Whether the last frame's input ran in the clip view, so the header
     /// focus drops on the frame the arranger loses the keyboard (an edge, not
     /// a level: a header click from the clip pane is in `Clip` until its
@@ -484,6 +488,7 @@ impl Display {
             project_dialog_shown: false,
             raise_main_window: false,
             quit_approved: false,
+            reopening: false,
             input_was_clip_view: false,
             performance_lane_selected: false,
             overlay: None,

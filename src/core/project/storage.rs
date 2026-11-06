@@ -63,6 +63,22 @@ impl ProjectOrigin {
             name: name.to_owned(),
         }
     }
+
+    /// Follows a rename of the project `old` to `new` (its name), if this is
+    /// that project.
+    pub(crate) fn follow_rename(&mut self, old: &ProjectOrigin, new: &str) {
+        if self == old {
+            self.name = new.to_owned();
+        }
+    }
+
+    /// Follows a rename of the project folder `old` to `new`, if this project
+    /// is in it.
+    pub(crate) fn follow_folder_rename(&mut self, old: &str, new: &str) {
+        if self.folder.as_deref() == Some(old) {
+            self.folder = Some(new.to_owned());
+        }
+    }
 }
 
 /// `folder: None` resolves to `project_dir()` itself — the fallback used when

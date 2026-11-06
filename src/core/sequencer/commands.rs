@@ -8,7 +8,7 @@ use uuid::Uuid;
 use crate::core::agent::{AgentReply, AgentRequest};
 use crate::core::input_event::TimeSelectionRect;
 use crate::core::midi::message::Controller;
-use crate::core::project::ProjectAction;
+use crate::core::project::{ProjectAction, ProjectOrigin};
 use crate::core::sequencer::{AudioExportOutcome, TempoGesture};
 use crate::core::time::Meter;
 use crate::core::view_state::Pane;
@@ -588,6 +588,28 @@ pub(crate) enum SequencerCommand {
     /// Apply the staged project: the view has loaded its plugins
     /// (`InputEvent::ApplyStagedProject`).
     ApplyStagedProject,
+    /// The launch dialog's answer (`InputEvent::AnswerRecovery`): stage the
+    /// crash recovery copy, or delete it. See `410-crash-recovery.md`.
+    AnswerRecovery {
+        /// Reopen, not Discard.
+        reopen: bool,
+    },
+    /// The browser renamed the project `old` on disk: if it is the open one,
+    /// its origin follows, for the recovery copy and the agent bridge.
+    ProjectRenamed {
+        /// The project as it was.
+        old: ProjectOrigin,
+        /// Its new name.
+        new: String,
+    },
+    /// The browser renamed the project folder `old` on disk: the origin of an
+    /// open project in it follows.
+    ProjectFolderRenamed {
+        /// The folder's name as it was.
+        old: String,
+        /// Its new name.
+        new: String,
+    },
     /// Write the current project to `folder/filename.stev` and say so in the
     /// footer (`UiEvent::Status`) — the save or why it failed.
     SaveProject {

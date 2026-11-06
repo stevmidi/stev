@@ -263,6 +263,24 @@ impl EventHandlers {
                 self.send_sequencer(SequencerCommand::ApplyStagedProject);
             }
 
+            InputEvent::AnswerRecovery { reopen } => {
+                self.send_sequencer(SequencerCommand::AnswerRecovery { reopen: *reopen });
+            }
+
+            InputEvent::ProjectRenamed { old, new } => {
+                self.send_sequencer(SequencerCommand::ProjectRenamed {
+                    old: old.clone(),
+                    new: new.clone(),
+                });
+            }
+
+            InputEvent::ProjectFolderRenamed { old, new } => {
+                self.send_sequencer(SequencerCommand::ProjectFolderRenamed {
+                    old: old.clone(),
+                    new: new.clone(),
+                });
+            }
+
             InputEvent::SetTrackOutput { track, output } => {
                 self.send_sequencer(SequencerCommand::SetTrackOutput {
                     track: *track,
