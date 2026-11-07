@@ -804,6 +804,14 @@ positions), persisted base64-encoded in the `.stev` and re-applied on load:
   `ConfirmFilename` → `SaveProject` on the same channel, so `from_sequencer`
   serializes the fresh blob. A plugin with no `state` extension, or a failed
   save, is skipped (the last good blob is kept).
+- **For the crash recovery copy** (`410-crash-recovery.md` decisions 6 and 7),
+  the same capture, one slot at a time (`Display::capture_slot_instrument_state`),
+  runs when a plugin reports a preset (`ParameterGesture::ValuesChanged`) and the
+  frame its editor closes, by whatever route (`TrackInstrument::editor_was_open`,
+  compared after each `pump`). `set_slot_instrument_state` says whether the blob
+  differs, and one that does makes the next recovery check rewrite the copy; it
+  never makes the project count as changed. A sound changed with the editor
+  still open is not caught.
 - **Load.** `sync_instruments_to_tracks` passes `InstrumentRef.state` into
   `load_instrument` → `engine::load` calls CLAP `state.load` **after instantiate,
   before activate** (a fresh instance is expected to receive its preset there).

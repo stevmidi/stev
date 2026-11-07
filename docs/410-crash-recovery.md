@@ -1,6 +1,6 @@
 # Crash Recovery
 
-**Status: design agreed 2026-11-06, measured, phases 1 and 2 built. Issue: #12.** If Stev crashes or is force-quit, the next launch offers to bring back what wasn't saved. While a project has unsaved changes, Stev keeps a recovery copy of it in its own support folder, never in the project file.
+**Status: design agreed 2026-11-06, measured, all three phases built. Issue: #12.** If Stev crashes or is force-quit, the next launch offers to bring back what wasn't saved. While a project has unsaved changes, Stev keeps a recovery copy of it in its own support folder, never in the project file.
 
 ## Background
 
@@ -35,7 +35,7 @@ Nothing can run at the moment of a crash. The crash that prompted this, showing 
 2. **The offer.** Built. `main` reads the copy once it holds the lock (`read_recovery_copy`), opens `ProjectDialog::Recovery` and hands the copy to `RecoveryKeeper`, whose `Hold` is decision 14: it stops every job at the one place they leave. `SequencerCommand::AnswerRecovery` either deletes it or turns it into a `StagedProject` with `recovered` set, and applying that drops `SavedProject`'s baseline. The sequencer follows a browser rename of the open project or its folder (`SequencerCommand::ProjectRenamed`, `ProjectFolderRenamed`), ahead of the take session and export holds since the rename is already done on disk, so the copy and the agent bridge's `get_project` name the file that exists. `OpenProject` groups `SavedProject`, the staged project and the keeper on the `"sequencer"` thread. Restore writes the copy again at once, since a project whose file has gone comes back untitled, and a copy left naming that file would attach to whatever took the name next.
 
    **Left as it is:** the open project's identity lives in two places, the view's `ProjectViewState` and the sequencer's `SavedProject` origin, kept in step by `ProjectLoaded`, `ProjectSaved` and the rename commands. Anything new that changes which file the project is (a move between folders, a Duplicate) has to tell both, or the copy and `get_project` go stale again. Making the sequencer's origin the only source, with the view reading it, would remove that; it reaches well past this feature, so it waits for a change that needs it (code review, 2026-11-07).
-3. **Plugin state on events.** The captures of decision 6, and decision 7.
+3. **Plugin state on events.** Built. `Display::capture_slot_instrument_state` sends one plugin's state as `InputEvent::CaptureTrackInstrumentState`, the ⌘S capture's own route, when its editor reports `ParameterGesture::ValuesChanged` (`knob_params.rs`) and the frame its editor closes: `TrackInstrument::editor_was_open` is compared after each `pump`, so every route to a close counts (`v`, the title-bar button, a plugin closing its own floating window). A VST3 editor also goes off screen when Stev is hidden, which captures once more, harmlessly. `Sequencer::set_slot_instrument_state` returns whether the blob differs, and if it does `RecoveryKeeper::state_captured` sets the flag the next check reads: decision 7's count, a flag since one capture or ten rewrite the copy the same once. The handover clears it.
 
 ## Measurements
 

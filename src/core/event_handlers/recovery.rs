@@ -50,6 +50,10 @@ pub(crate) struct RecoveryKeeper {
     /// copy; `None` while there should be no copy. The origin counts: a
     /// rename has to reach the copy, or Restore looks for a file that has gone.
     copied: Option<(u64, Option<ProjectOrigin>)>,
+    /// Whether a plugin's state was captured since the last copy was handed
+    /// over. Blobs stay out of the fingerprint, so this is how a new preset
+    /// reaches the copy (`410-crash-recovery.md` decision 7).
+    captured: bool,
     /// Whether a crash's copy keeps the jobs back.
     hold: Hold,
 }
@@ -71,6 +75,7 @@ impl RecoveryKeeper {
             write_failed,
             next_check: Instant::now(),
             copied: None,
+            captured: false,
             hold: offer.map_or(Hold::Free, Hold::Offered),
         }
     }
@@ -85,8 +90,9 @@ impl RecoveryKeeper {
     }
 
     /// Brings the copy in line with the project: gone if the project has no
-    /// changes, rewritten if it changed since the last copy or the last write
-    /// failed or its origin moved. The fingerprint is recorded at the
+    /// changes, rewritten if it changed since the last copy, a plugin's state
+    /// was captured, the last write failed or its origin moved. A capture
+    /// alone never makes a copy: a project with no changes has none. The fingerprint is recorded at the
     /// handover, so an unchanged project isn't written twice while a write is
     /// on its way.
     fn check(&mut self, sequencer: &Sequencer, saved: &SavedProject) {
@@ -99,7 +105,7 @@ impl RecoveryKeeper {
             if self.copied.is_some() {
                 self.delete();
             }
-        } else if retry || !self.is_copied(fingerprint, saved.origin()) {
+        } else if retry || self.captured || !self.is_copied(fingerprint, saved.origin()) {
             self.write(sequencer, saved, fingerprint);
         }
     }
@@ -108,10 +114,17 @@ impl RecoveryKeeper {
     fn write(&mut self, sequencer: &Sequencer, saved: &SavedProject, fingerprint: u64) {
         let origin = saved.origin().cloned();
         self.copied = Some((fingerprint, origin.clone()));
+        self.captured = false;
         self.send(RecoveryJob::Write {
             snapshot: ProjectSnapshot::of(sequencer),
             origin,
         });
+    }
+
+    /// A plugin's state, newly captured, now differs from the one the
+    /// project held: the next check rewrites the copy, if there is to be one.
+    pub(super) fn state_captured(&mut self) {
+        self.captured = true;
     }
 
     /// Whether the last copy handed over is of this project, from `origin`.
@@ -201,6 +214,7 @@ mod tests {
     use crate::core::event_handlers::test_harness::{Harness, add_clip, harness, run_command};
     use crate::core::paths::scratch_dir;
     use crate::core::project::{ProjectAction, ProjectData, TrackOutputData};
+    use crate::core::sequencer::test_support::stub_instrument;
     use crate::core::sequencer::{SequencerCommand, SequencerEdit};
     use crate::core::threads::start_recovery_thread;
     use crate::view::display::UiEvent;
@@ -469,6 +483,66 @@ mod tests {
         h.sequencer.set_tempo(400_000);
         check(h);
         jobs(h);
+    }
+
+    /// A saved project with a plugin on its first track, its state `[1]`.
+    fn saved_with_plugin(h: &mut Harness) {
+        h.sequencer.tracks_mut()[0].set_output(stub_instrument(vec![1]));
+        h.open.saved = SavedProject::of(&h.sequencer, None);
+    }
+
+    /// The view captures the first track's plugin state as `state`.
+    fn capture(h: &mut Harness, state: Vec<u8>) {
+        let slot = h.sequencer.tracks()[0].slot();
+        run(h, SequencerCommand::SetTrackInstrumentState { slot, state });
+    }
+
+    /// A new preset reaches the copy: blobs stay out of the fingerprint, so
+    /// the capture itself has to count, once (`410-crash-recovery.md`
+    /// decision 7).
+    #[test]
+    fn a_captured_state_rewrites_the_copy() {
+        let mut h = harness();
+        saved_with_plugin(&mut h);
+        h.sequencer.set_tempo(400_000);
+        check(&mut h);
+        capture(&mut h, vec![2]);
+        check(&mut h);
+        check(&mut h);
+        assert_eq!(
+            jobs(&h),
+            [Job::Write(400_000, None), Job::Write(400_000, None)]
+        );
+    }
+
+    /// A capture that brings back the state the project already holds
+    /// changes nothing, so it writes nothing.
+    #[test]
+    fn an_unchanged_state_rewrites_nothing() {
+        let mut h = harness();
+        saved_with_plugin(&mut h);
+        h.sequencer.set_tempo(400_000);
+        check(&mut h);
+        jobs(&h);
+        capture(&mut h, vec![1]);
+        check(&mut h);
+        assert_eq!(jobs(&h), []);
+    }
+
+    /// A sound tweaked in a project with no changes makes no copy, as the
+    /// quit prompt doesn't ask either. A later change writes once.
+    #[test]
+    fn a_capture_alone_makes_no_copy() {
+        let mut h = harness();
+        saved_with_plugin(&mut h);
+        capture(&mut h, vec![2]);
+        check(&mut h);
+        assert_eq!(jobs(&h), []);
+
+        h.sequencer.set_tempo(400_000);
+        check(&mut h);
+        check(&mut h);
+        assert_eq!(jobs(&h), [Job::Write(400_000, None)]);
     }
 
     /// The browser renaming the open project reaches the copy at the next

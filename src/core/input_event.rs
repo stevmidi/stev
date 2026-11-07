@@ -800,7 +800,9 @@ pub(crate) enum InputEvent {
     /// Fresh plugin state captured from the live plugin in engine slot
     /// `slot`, to be stored on the track in that slot so the next project save
     /// persists the current preset. Sent by the macOS plugin host from the ⌘S
-    /// handler, just before `ConfirmFilename`.
+    /// handler, just before `ConfirmFilename`, and for the crash recovery copy
+    /// when the plugin loads a preset or its editor closes
+    /// (`410-crash-recovery.md` decision 6).
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     CaptureTrackInstrumentState {
         /// The plugin's engine slot (`Track::slot`).

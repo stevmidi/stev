@@ -68,15 +68,21 @@ impl Sequencer {
     /// Stores the latest plugin-state blob on the instrument of the track in
     /// engine slot `slot` so the next project save persists the active preset.
     /// No-op if no track holds the slot or it is not routed to an instrument.
-    /// macOS plugin host — see `130-plugin-host.md`.
-    pub(crate) fn set_slot_instrument_state(&mut self, slot: usize, state: Vec<u8>) {
-        if let Some(TrackOutput::Instrument(r)) = self
+    /// Returns whether the stored blob changed, for the crash recovery copy
+    /// (`410-crash-recovery.md` decision 7). macOS plugin host — see
+    /// `130-plugin-host.md`.
+    pub(crate) fn set_slot_instrument_state(&mut self, slot: usize, state: Vec<u8>) -> bool {
+        match self
             .tracks
             .iter_mut()
             .find(|t| t.slot() == slot)
             .map(|t| t.output_mut())
         {
-            r.state = state;
+            Some(TrackOutput::Instrument(r)) if r.state != state => {
+                r.state = state;
+                true
+            }
+            _ => false,
         }
     }
 

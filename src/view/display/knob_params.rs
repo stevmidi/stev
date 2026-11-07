@@ -135,8 +135,9 @@ impl Display {
     /// that track's knobs holds is the hand's, as a drag is: its start and
     /// end hold the knob against playback (decision 6), and its moves are
     /// counted by the unsaved prompt and captured (decisions 9 and 10). New
-    /// values all at once are a preset, which the unsaved prompt counts too.
-    /// Anything else is the plugin's own business.
+    /// values all at once are a preset, which the unsaved prompt counts too,
+    /// and whose state goes to the crash recovery copy
+    /// (`410-crash-recovery.md` decision 6). Anything else is the plugin's own business.
     fn handle_parameter_gesture(&mut self, slot: usize, gesture: ParameterGesture) {
         let Some(track_idx) = self.tracks.iter().position(|lane| lane.slot == slot) else {
             return;
@@ -166,6 +167,7 @@ impl Display {
                 self.input_event_tx
                     .send(InputEvent::PluginStateChanged { track_idx })
                     .ok();
+                self.capture_slot_instrument_state(slot);
             }
         }
     }

@@ -150,6 +150,10 @@ pub(super) struct TrackInstrument {
     /// What it was loaded from — what the browser compares a pick against,
     /// and names when it replaces it.
     pub(super) entry: PluginCatalogEntry,
+    /// Whether its editor was open at the end of the last frame, so the
+    /// frame it closes, by whatever route, captures its state
+    /// (`410-crash-recovery.md` decision 6).
+    editor_was_open: bool,
 }
 
 impl InstrumentHost {
@@ -228,15 +232,28 @@ impl Display {
         // An open project dialog must not sit behind a floating editor.
         let yield_to_main = self.project_dialog.is_some();
         let mut next: Option<Duration> = None;
-        for slot in &mut self.instruments.track_instruments {
-            if let Some(TrackInstrument { editor, .. }) = slot
-                && let Some(interval) = editor.pump(yield_to_main)
-            {
+        let mut closed = Vec::new();
+        for (slot, loaded) in self.instruments.track_instruments.iter_mut().enumerate() {
+            let Some(loaded) = loaded else {
+                continue;
+            };
+            if let Some(interval) = loaded.editor.pump(yield_to_main) {
                 next = Some(next.map_or(interval, |n| n.min(interval)));
             }
+            let open = loaded.editor.is_open();
+            if loaded.editor_was_open && !open {
+                closed.push(slot);
+            }
+            loaded.editor_was_open = open;
         }
         if let Some(interval) = next {
             ctx.request_repaint_after(interval);
+        }
+        // A sound changed in an editor reaches the recovery copy when the
+        // editor closes. A VST3 editor also goes off screen when Stev is
+        // hidden (⌘H), which counts as a close here: one capture too many.
+        for slot in closed {
+            self.capture_slot_instrument_state(slot);
         }
     }
 
@@ -375,11 +392,17 @@ impl Display {
     /// save on the same channel.
     pub(super) fn capture_instrument_states(&mut self) {
         for slot in 0..self.instruments.track_instruments.len() {
-            // Skip a plugin with no `state` extension or a failed save — better
-            // to keep the last good blob than overwrite it with nothing.
-            let Some(state) = self.save_slot_instrument_state(slot) else {
-                continue;
-            };
+            self.capture_slot_instrument_state(slot);
+        }
+    }
+
+    /// Captures the current preset of the plugin in `slot` and hands it to
+    /// the sequencer: for a save, and for the crash recovery copy when the
+    /// plugin loads a preset or its editor closes (`410-crash-recovery.md`
+    /// decision 6). Skips a plugin with no `state` extension or a failed
+    /// save: better to keep the last good blob than overwrite it with nothing.
+    pub(super) fn capture_slot_instrument_state(&mut self, slot: usize) {
+        if let Some(state) = self.save_slot_instrument_state(slot) {
             self.input_event_tx
                 .send(InputEvent::CaptureTrackInstrumentState { slot, state })
                 .ok();
@@ -540,7 +563,12 @@ impl Display {
         entry: PluginCatalogEntry,
     ) {
         editor.take_parameter_gestures();
-        self.instruments.track_instruments[slot] = Some(TrackInstrument { editor, entry });
+        let editor_was_open = editor.is_open();
+        self.instruments.track_instruments[slot] = Some(TrackInstrument {
+            editor,
+            entry,
+            editor_was_open,
+        });
     }
 
     /// Puts a staged plugin into its slot: its voice to the mixer, its editor

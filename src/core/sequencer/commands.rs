@@ -403,8 +403,9 @@ pub(crate) enum SequencerCommand {
     },
     /// Stores a fresh plugin-state blob on the instrument of the track in
     /// engine slot `slot` so the next project save persists it. No-op if no
-    /// track holds the slot or it is not routed to an instrument. See
-    /// `130-plugin-host.md`.
+    /// track holds the slot or it is not routed to an instrument. A blob that
+    /// differs rewrites the crash recovery copy (`410-crash-recovery.md`
+    /// decision 7). See `130-plugin-host.md`.
     SetTrackInstrumentState {
         /// The track's engine slot (`Track::slot`).
         slot: usize,
