@@ -567,7 +567,7 @@ mod tests {
             bundle_path: "/Synth.clap".into(),
             plugin_id: "synth".to_owned(),
             display_name: "Synth".to_owned(),
-            state: Vec::new(),
+            state: Vec::new().into(),
         }
     }
 

@@ -28,6 +28,7 @@
 //! `050-undo-redo.md` § Track add / remove.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use uuid::Uuid;
 
@@ -59,8 +60,10 @@ pub(crate) struct InstrumentRef {
     pub(crate) plugin_id: String,
     /// Cached human-readable name, so the UI needn't re-scan the catalog.
     pub(crate) display_name: String,
-    /// Last-persisted CLAP `state` blob; empty = none captured yet.
-    pub(crate) state: Vec<u8>,
+    /// Last-persisted CLAP `state` blob; empty = none captured yet. Shared,
+    /// so a snapshot or a command carries the blob without copying it
+    /// (`420-large-projects.md` decision 7).
+    pub(crate) state: Arc<[u8]>,
 }
 
 /// How a track's events are sent to an output.
@@ -1046,7 +1049,7 @@ mod tests {
                 bundle_path: "/x.clap".into(),
                 plugin_id: "com.example.synth".into(),
                 display_name: "Synth".into(),
-                state: Vec::new(),
+                state: Vec::new().into(),
             }),
             0,
             0,
@@ -1061,7 +1064,7 @@ mod tests {
                 bundle_path: "/x.vst3".into(),
                 plugin_id: id.into(),
                 display_name: id.into(),
-                state: vec![state],
+                state: [state].into(),
             })
         };
         let midi = |channel| TrackOutput::MidiOut { channel };
@@ -2048,7 +2051,7 @@ mod tests {
             bundle_path: "/x.vst3".into(),
             plugin_id: "com.example.synth".into(),
             display_name: "Synth".into(),
-            state: Vec::new(),
+            state: Vec::new().into(),
         });
         let mut track = Track::new(plugin, 0, 0);
         let mut knobs = UNASSIGNED_KNOBS;

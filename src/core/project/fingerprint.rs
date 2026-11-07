@@ -249,7 +249,9 @@ mod tests {
     const UNSAVED_CHANGES: &[Change] = &[
         ("cursor", |s| s.set_cursor_tick(480)),
         ("solo", |s| s.set_track_soloed(0, true)),
-        ("plugin state", |s| edit_plugin(s, |i| i.state = vec![9, 9])),
+        ("plugin state", |s| {
+            edit_plugin(s, |i| i.state = [9, 9].into())
+        }),
     ];
 
     /// The same project hashes the same, however it was built.

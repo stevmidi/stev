@@ -794,7 +794,9 @@ then filling in plugin by plugin:
 ### Plugin state / presets
 
 `InstrumentRef.state` is the plugin's CLAP `state` blob (active preset + knob
-positions), persisted base64-encoded in the `.stev` and re-applied on load:
+positions), persisted base64-encoded in the `.stev` and re-applied on load.
+It is an `Arc<[u8]>`, made once on the UI thread when a state is captured and
+shared from there rather than copied (`420-large-projects.md` decision 7):
 
 - **Save.** The ⌘S handler calls `Display::capture_instrument_states` *before*
   sending `ConfirmFilename`: for each loaded editor, `ClapEditor::save_state`

@@ -201,7 +201,7 @@ mod tests {
         let TrackOutput::Instrument(instrument) = sequencer.tracks()[1].output() else {
             panic!("track 1 lost its plugin");
         };
-        assert_eq!(instrument.state, vec![1, 2, 3]);
+        assert_eq!(*instrument.state, [1, 2, 3]);
         fs::remove_dir_all(dir).unwrap();
     }
 

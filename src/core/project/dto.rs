@@ -10,6 +10,7 @@
 //! file-format change, not a rename.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
@@ -134,7 +135,7 @@ impl TrackOutputData {
                 display_name,
                 // A corrupt blob just means "load the plugin at its
                 // default" — never fail the whole project load for it.
-                state: BASE64.decode(state).unwrap_or_default(),
+                state: BASE64.decode(state).unwrap_or_default().into(),
             }),
             // Instrument track with no plugin reference (phase-3 project
             // or saved before a plugin was picked) — fall back to MIDI.
@@ -311,8 +312,9 @@ pub(crate) struct ProjectSnapshot {
     /// The project, every state blob empty.
     data: ProjectData,
     /// Each track's raw plugin state, in track order; empty on a track with
-    /// no plugin.
-    states: Vec<Vec<u8>>,
+    /// no plugin. Shared with the tracks, not copied
+    /// (`420-large-projects.md` decision 7).
+    states: Vec<Arc<[u8]>>,
 }
 
 impl ProjectSnapshot {
@@ -335,9 +337,11 @@ impl ProjectSnapshot {
             states: sequencer
                 .tracks()
                 .iter()
-                .map(|track| match track.output() {
-                    TrackOutput::Instrument(instrument) => instrument.state.clone(),
-                    TrackOutput::MidiOut { .. } => Vec::new(),
+                .map(|track| {
+                    track
+                        .output()
+                        .instrument()
+                        .map_or_else(Arc::default, |instrument| Arc::clone(&instrument.state))
                 })
                 .collect(),
         }
@@ -548,7 +552,7 @@ impl ProjectData {
 mod tests {
     use super::*;
     use crate::core::sequencer::test_support::{
-        clip_at, note_on, param_at, param_moves, test_sequencer, track_colors,
+        clip_at, note_on, param_at, param_moves, stub_instrument, test_sequencer, track_colors,
     };
     use crate::models::knobs::{KnobParams, UNASSIGNED_KNOBS, test_param};
 
@@ -954,6 +958,23 @@ mod tests {
             panic!("expected Instrument");
         };
         assert_eq!(BASE64.decode(state).unwrap(), blob);
+    }
+
+    /// A snapshot shares each track's plugin state rather than copying it
+    /// (`420-large-projects.md` decision 7), and still encodes it.
+    #[test]
+    fn a_snapshot_shares_the_plugin_state_and_encodes_it() {
+        let mut sequencer = test_sequencer();
+        sequencer.set_track_output(1, stub_instrument(vec![1, 2, 3]));
+        let instrument = sequencer.tracks()[1].output().instrument().unwrap();
+        let snapshot = ProjectSnapshot::of(&sequencer);
+        assert!(Arc::ptr_eq(&snapshot.states[1], &instrument.state));
+        assert!(snapshot.states[0].is_empty());
+
+        let TrackOutputData::Instrument { state, .. } = &snapshot.encoded().tracks[1].output else {
+            panic!("expected Instrument");
+        };
+        assert_eq!(BASE64.decode(state).unwrap(), [1, 2, 3]);
     }
 
     #[test]

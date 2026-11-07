@@ -893,7 +893,7 @@ mod tests {
             panic!("expected TrackAdded with its plugin");
         };
         assert_eq!(restored_id, track_id);
-        assert_eq!(reload.state, vec![1]);
+        assert_eq!(*reload.state, [1]);
     }
 
     #[test]
@@ -989,7 +989,7 @@ mod tests {
         assert!(matches!(
             result,
             EditResult::TrackOutputChanged { track_id: id, slot: s, instrument: Some(ref i) }
-                if id == track_id && s == slot && i.state == vec![7]
+                if id == track_id && s == slot && *i.state == [7]
         ));
 
         let result = record.undo(&mut sequencer).unwrap();

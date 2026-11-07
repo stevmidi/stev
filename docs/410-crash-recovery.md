@@ -73,7 +73,7 @@ Not planned (2026-11-07). The check hashes the whole project every 5 s, and a wr
 
 If either ever shows up (notes late every 5 s while editing, or a hitch after a knob turn on a large sampler), the way down keeps the derived check:
 
-1. **Plugin state as `Arc<[u8]>`** on `InstrumentRef`, so the snapshot shares the blobs instead of copying them. Small and contained; the first step.
+1. **Plugin state as `Arc<[u8]>`** on `InstrumentRef`, so the snapshot shares the blobs instead of copying them. Small and contained; the first step. Built by `420-large-projects.md` phase 3.
 2. **Clip events as `Arc<Vec<Event>>`, edited only through `Arc::make_mut`.** A snapshot then shares every clip. The check keeps an `Arc` of each clip from the last copy: one still pointing at the same allocation hasn't changed, since shared contents can't be edited in place, so its hash is reused and only edited clips and the fields around them are hashed again. Keeping the old `Arc` alive is what makes the pointer comparison sound: the allocation can't be freed and reused while the cache holds it. `make_mut` is the only way in, so no edit path can forget, and no flag is kept. It reaches every edit path in `models/` and the sequencer, and needs a test that the cached fingerprint equals a full hash.
 
 ## Testing

@@ -348,7 +348,7 @@ impl Display {
                         bundle_path: entry.bundle_path.clone(),
                         plugin_id: entry.plugin_id.clone(),
                         display_name: entry.name.clone(),
-                        state: Vec::new(),
+                        state: Arc::default(),
                     };
                     self.input_event_tx
                         .send(InputEvent::SetTrackOutput {
@@ -412,6 +412,9 @@ impl Display {
     /// save: better to keep the last good blob than overwrite it with nothing.
     fn capture_slot_instrument_state(&mut self, slot: usize) {
         if let Some(state) = self.save_slot_instrument_state(slot) {
+            // Made shared once, here: from the event on, every holder shares
+            // it (`420-large-projects.md` decision 7).
+            let state = Arc::from(state);
             self.input_event_tx
                 .send(InputEvent::CaptureTrackInstrumentState { slot, state })
                 .ok();

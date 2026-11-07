@@ -2,6 +2,8 @@
 //! vocabulary. Handled in `event_handlers/sequencer_handler.rs`; see that file
 //! and `050-undo-redo.md`.
 
+use std::sync::Arc;
+
 use crossbeam_channel::Sender;
 use uuid::Uuid;
 
@@ -410,7 +412,7 @@ pub(crate) enum SequencerCommand {
         /// The track's engine slot (`Track::slot`).
         slot: usize,
         /// Opaque plugin-state blob.
-        state: Vec<u8>,
+        state: Arc<[u8]>,
     },
     /// Adds an empty MIDI track at `track_idx` (after the selected one when
     /// `None`) as one undo step (`AddTrackEdit`). Refused at `MAX_TRACKS`,

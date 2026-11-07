@@ -89,7 +89,7 @@ fn instrument(state_bytes: usize) -> TrackOutput {
         bundle_path: "/Library/Audio/Plug-Ins/VST3/Stress.vst3".into(),
         plugin_id: "stress".to_owned(),
         display_name: "Stress".to_owned(),
-        state: vec![0x5A; state_bytes],
+        state: vec![0x5A; state_bytes].into(),
     })
 }
 

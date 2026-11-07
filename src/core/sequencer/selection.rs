@@ -6,6 +6,7 @@
 //! model state, never undoable. Selecting a track also re-arms live MIDI input
 //! ([`arm_selected_track`](Sequencer::arm_selected_track)).
 
+use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 use uuid::Uuid;
@@ -71,15 +72,15 @@ impl Sequencer {
     /// Returns whether the stored blob changed, for the crash recovery copy
     /// (`410-crash-recovery.md` decision 7). macOS plugin host — see
     /// `130-plugin-host.md`.
-    pub(crate) fn set_slot_instrument_state(&mut self, slot: usize, state: &[u8]) -> bool {
+    pub(crate) fn set_slot_instrument_state(&mut self, slot: usize, state: &Arc<[u8]>) -> bool {
         match self
             .tracks
             .iter_mut()
             .find(|t| t.slot() == slot)
             .map(|t| t.output_mut())
         {
-            Some(TrackOutput::Instrument(r)) if r.state != state => {
-                r.state = state.to_vec();
+            Some(TrackOutput::Instrument(r)) if r.state != *state => {
+                r.state = Arc::clone(state);
                 true
             }
             _ => false,
@@ -316,25 +317,24 @@ mod tests {
         assert_eq!(seq.arm_channel.load(Ordering::Relaxed), 3);
     }
 
-    /// A captured blob is stored, and the answer says whether it changed
-    /// anything: the crash recovery copy is rewritten on it
+    /// A captured blob is stored as the same `Arc`, and the answer says
+    /// whether it changed anything: the crash recovery copy is rewritten on it
     /// (`410-crash-recovery.md` decision 7). A slot no track holds, or a
     /// track with no plugin, takes nothing.
     #[test]
-    fn set_slot_instrument_state_says_whether_the_blob_changed() {
+    fn set_slot_instrument_state_says_whether_the_blob_changed_and_shares_it() {
         let mut seq = test_sequencer();
         seq.set_track_output(0, stub_instrument(vec![1]));
         let (plugin, midi) = (seq.tracks()[0].slot(), seq.tracks()[1].slot());
-        let state = |seq: &Sequencer| match seq.tracks()[0].output() {
-            TrackOutput::Instrument(r) => r.state.clone(),
-            TrackOutput::MidiOut { .. } => Vec::new(),
-        };
+        let state =
+            |seq: &Sequencer| Arc::clone(&seq.tracks()[0].output().instrument().unwrap().state);
 
-        assert!(seq.set_slot_instrument_state(plugin, &[2]));
-        assert_eq!(state(&seq), [2]);
-        assert!(!seq.set_slot_instrument_state(plugin, &[2]));
+        let captured = Arc::from([2]);
+        assert!(seq.set_slot_instrument_state(plugin, &captured));
+        assert!(Arc::ptr_eq(&state(&seq), &captured), "stored, not copied");
+        assert!(!seq.set_slot_instrument_state(plugin, &Arc::from([2])));
 
-        assert!(!seq.set_slot_instrument_state(midi, &[3]));
+        assert!(!seq.set_slot_instrument_state(midi, &Arc::from([3])));
         assert!(matches!(
             seq.tracks()[1].output(),
             TrackOutput::MidiOut { .. }
@@ -342,7 +342,7 @@ mod tests {
         let free = (0..MAX_TRACKS)
             .find(|slot| seq.tracks().iter().all(|t| t.slot() != *slot))
             .unwrap();
-        assert!(!seq.set_slot_instrument_state(free, &[3]));
-        assert_eq!(state(&seq), [2]);
+        assert!(!seq.set_slot_instrument_state(free, &Arc::from([3])));
+        assert_eq!(*state(&seq), [2]);
     }
 }

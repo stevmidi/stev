@@ -69,7 +69,7 @@ mod tests {
             bundle_path: PathBuf::from(format!("/{name}.clap")),
             plugin_id: name.to_owned(),
             display_name: name.to_owned(),
-            state: Vec::new(),
+            state: Vec::new().into(),
         }
     }
 

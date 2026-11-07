@@ -22,6 +22,7 @@
 //! Esc, Enter, Tab) stay `KeyPressed`. See `docs/archive/320-keyboard-shortcuts.md`.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use egui::{Key, Modifiers, TouchPhase};
 use uuid::Uuid;
@@ -808,7 +809,7 @@ pub(crate) enum InputEvent {
         /// The plugin's engine slot (`Track::slot`).
         slot: usize,
         /// Opaque plugin-state blob.
-        state: Vec<u8>,
+        state: Arc<[u8]>,
     },
     /// ⌘/Ctrl+T, or the `+` row under the last lane: add an empty MIDI track
     /// at `track_idx` — after the selected one when `None`.

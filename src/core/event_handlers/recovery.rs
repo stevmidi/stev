@@ -500,6 +500,7 @@ mod tests {
     /// The view captures the first track's plugin state as `state`.
     fn capture(h: &mut Harness, state: Vec<u8>) {
         let slot = h.sequencer.tracks()[0].slot();
+        let state = state.into();
         run_once(h, SequencerCommand::SetTrackInstrumentState { slot, state });
     }
 

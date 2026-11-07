@@ -883,7 +883,7 @@ mod tests {
             bundle_path: "/Library/Audio/Plug-Ins/VST3/Diva.vst3".into(),
             plugin_id: "diva".into(),
             display_name: "Diva".into(),
-            state: Vec::new(),
+            state: Vec::new().into(),
         };
         run_command(
             &mut h,
@@ -941,7 +941,7 @@ mod tests {
             } if s == slot => Some(instrument),
             _ => None,
         });
-        assert_eq!(reload.flatten().map(|i| i.state), Some(vec![7]));
+        assert!(reload.flatten().is_some_and(|i| *i.state == [7]));
 
         run_command(&mut h, &mut record, SequencerCommand::Undo);
         assert!(matches!(

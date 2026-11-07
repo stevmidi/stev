@@ -399,7 +399,7 @@ mod tests {
         });
         let reload = position(
             &events,
-            |e| matches!(e, UiEvent::SlotInstrument { slot: 2, track_id, instrument: Some(instrument) } if *track_id == removed_id && instrument.state == vec![7]),
+            |e| matches!(e, UiEvent::SlotInstrument { slot: 2, track_id, instrument: Some(instrument) } if *track_id == removed_id && *instrument.state == [7]),
         );
         assert!(mirror < reload, "the plugin reloads into a mirrored track");
         assert_eq!(h.sequencer.track_id_by_index(2), Some(removed_id));

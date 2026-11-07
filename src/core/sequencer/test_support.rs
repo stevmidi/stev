@@ -129,7 +129,7 @@ pub(crate) fn stub_instrument(state: Vec<u8>) -> TrackOutput {
         bundle_path: "/x.clap".into(),
         plugin_id: "id".into(),
         display_name: "Synth".into(),
-        state,
+        state: state.into(),
     })
 }
 

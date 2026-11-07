@@ -1,6 +1,6 @@
 # Large Projects
 
-**Status: design agreed 2026-11-07; phase 1 (measure) done 2026-11-07; phase 2 (the save on `"storage"`) built and measured 2026-11-07; phases 3 and 4 not built.** Issue: #23. Stev should stay on time with a project far bigger than its author makes: no late note or click while playing, through a save, a recovery copy or an edit. The work that grows with the project moves off the `"sequencer"` thread, or stops growing with it.
+**Status: design agreed 2026-11-07; phase 1 (measure) done 2026-11-07; phase 2 (the save on `"storage"`) built and measured 2026-11-07; phase 3 (plugin state shared) built and measured 2026-11-07; phase 4 not built.** Issue: #23. Stev should stay on time with a project far bigger than its author makes: no late note or click while playing, through a save, a recovery copy or an edit. The work that grows with the project moves off the `"sequencer"` thread, or stops growing with it.
 
 ## Background
 
@@ -39,7 +39,11 @@ How late the `"sequencer"` thread can run before anyone hears it: each tick carr
    - **What waits.** `project_action_workflow` holds every `ProjectAction` in `OpenProject::held` while a project save is on its way (`is_saving`; a template's changes neither `saved` nor the copy, so nothing waits for it); once the last outcome is in, they run in order through `handle_sequencer_command`, so the take session's refusals still apply. The recovery check is skipped while a project save is on its way (`OpenProject::tick`): the save deletes the copy once its file is safe, and a copy written behind it would only be deleted again. If the thread has gone, a save fails at once in the footer, so nothing waits on an outcome that won't come.
    - **Tests.** `writer.rs`: every save runs in order, a save deletes the copy written before it and a later write stays, a failed save keeps the copy, a panicking save reports a failure, a template is stripped and leaves the copy. `save.rs`: nothing counts as saved before the outcome, an edit during a save stays unsaved, a failed save changes nothing, a quit behind a save waits and goes ahead, behind a failed one prompts again, held actions wait for the last save, the check waits, a template leaves the project as it was and holds nothing up, a rename keeps the name written, a failed save leaves the copy to the check, no writer fails at once. `recovery.rs`' save tests now go through the outcome.
    - **The sweep** times `SaveProject` and `SaveTemplate` as the handover alone, the snapshot and the fingerprint.
-3. **Plugin state shared.** Decision 7.
+3. **Plugin state shared.** Decision 7. Built 2026-11-07:
+   - `InstrumentRef.state` is an `Arc<[u8]>`. `Display::capture_slot_instrument_state` copies the plugin's blob into one on the UI thread, the one copy left; `InputEvent::CaptureTrackInstrumentState` and `SequencerCommand::SetTrackInstrumentState` carry it, and `Sequencer::set_slot_instrument_state` stores the same `Arc`. A parked state (`InstrumentHost::parked_states`) never leaves `Display`, so it stays a `Vec`. It still compares the bytes first, to tell the recovery check whether the blob changed (decision 7 of `410`): a read, not a copy.
+   - `ProjectSnapshot` holds each track's `Arc`, so the snapshot of a save, a template or the recovery copy no longer copies the 50 MB. A blob replaced while a save is on its way is freed by whichever thread drops it last, `"storage"` when that is the save.
+   - The fingerprint never hashed the blobs (`fingerprint.rs`), so the check's 3 ms stays for phase 4.
+   - Left as they are: the load decodes each blob twice, once for the plugins it stages (`instrument_specs`) and once for the tracks (`apply_to_sequencer`), each copied into an `Arc`; with `Arc` one decode could serve both, but loading is out of scope (decision 11). A captured blob is still compared byte for byte on the `"sequencer"` thread (0.15 ms for 3 MB), and the blob it replaces is freed there; moving either off the thread is only worth it for single blobs of tens of MB.
 4. **Clips shared, the check cached.** Decisions 8 and 9.
 
 Each phase ends with the probe run again at the target size.
@@ -130,6 +134,34 @@ The hand run (2026-11-07): the stress project opened in a release build on the I
 - **⌘S holds the thread for 20 ms, down from 364.** The writing no longer shows on the `"sequencer"` thread at all. The 20 ms is the snapshot and the fingerprint, more than the sweep's 11 to 16 with the app's other threads running; phases 3 and 4 are aimed at it.
 - **One second, two after the save, had a tick 17.5 ms late with no arm past 0.06 ms** (and 1,466 ticks, the clock catching up): the thread was kept from running, or the ticks came late, with none of Stev's own work on it. It isn't the save's: phase 1's hand run had the same, 23.9 ms late with no arm past 0.07 (`20:39:14` in that run's log), with no save near it. Something outside Stev's arms, to look into on its own; the probe can't say what.
 - **The recovery check stays over budget every 5 s,** as phase 1 found: phase 4.
+
+### Phase 3 (2026-11-07)
+
+The sweep, release build on the Intel Mac at the target size, median and worst of five, in ms, against phase 2 and phase 1:
+
+| Command | Median | Worst | Before |
+|---|---|---|---|
+| Save, the handover (snapshot and fingerprint) | 5.1 | 5.2 | 11.3 (phase 2) |
+| Save as template, the handover (snapshot) | 0.00 | 0.01 | 9.0 (phase 2, before `template_of`) |
+| A captured plugin state (3 MB) | 0.15 | 0.20 | 0.60 (phase 1) |
+| Set track output, its undo putting 3 MB of state back | 0.16 | 0.16 | 1.7 (phase 1) |
+
+- **What is left of the save's handover is the clips:** copying their events into the snapshot and hashing them for the fingerprint. Phase 4.
+- **A captured state** costs only its byte comparison now (phase 3's notes).
+
+The hand run (2026-11-07): the stress project opened in a release build on the Intel Mac, played, edited, saved twice with ⌘S, the recovery check running.
+
+| What | Longest arm (ms) | Worst late (ms) | Before |
+|---|---|---|---|
+| Nothing but ticks, and the edits themselves | 0.03–0.39 | 1.0–1.1 | – |
+| The recovery check, nothing to write (every 5 s) | 2.8–3.9 | up to 3.8 | 2.8–3.8 |
+| The recovery check writing a copy, after an edit | 6.3–6.9 | up to 6.4 | 12–24 (phase 1) |
+| ⌘S, the handover | 7.4–7.7 | up to 8.4 | 20 (phase 2) |
+| Opening the project (a load, out of scope) | 207–214 | 215 | 206–218 |
+
+- **The copy's write and the save's handover are down by half to two thirds,** now that the snapshot shares the 50 MB of state: what is left is the clips' events copied and hashed, as in the sweep. The app's other threads add a couple of ms over the sweep's 5.1, as in phase 2.
+- **The check with nothing to write is unchanged,** as expected: the blobs were never hashed. Phase 4.
+- No tick ran late without a long arm this time (phase 2's unexplained 17.5 ms).
 
 ## Testing
 

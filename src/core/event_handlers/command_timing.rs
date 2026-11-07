@@ -449,7 +449,7 @@ const CASES: &[Case] = &[
         setup: none,
         command: |_| SequencerCommand::SetTrackInstrumentState {
             slot: 0,
-            state: vec![0xA5; STRESS_BLOB_BYTES / MAX_TRACKS],
+            state: vec![0xA5; STRESS_BLOB_BYTES / MAX_TRACKS].into(),
         },
     },
     Case {
