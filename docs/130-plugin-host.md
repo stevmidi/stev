@@ -806,9 +806,10 @@ positions), persisted base64-encoded in the `.stev` and re-applied on load:
   save, is skipped (the last good blob is kept).
 - **For the crash recovery copy** (`410-crash-recovery.md` decisions 6 and 7),
   the same capture, one slot at a time (`Display::capture_slot_instrument_state`),
-  runs when a plugin reports a preset (`ParameterGesture::ValuesChanged`) and the
-  frame its editor closes, by whatever route (`TrackInstrument::editor_was_open`,
-  compared after each `pump`). `set_slot_instrument_state` says whether the blob
+  runs a second after the plugin last reported a preset
+  (`ParameterGesture::ValuesChanged`), ended a knob turn, or closed its editor
+  by whatever route (`TrackInstrument::editor_was_open`, compared after each
+  `pump`); `Display::capture_soon` holds the deadlines. `set_slot_instrument_state` says whether the blob
   differs, and one that does makes the next recovery check rewrite the copy; it
   never makes the project count as changed. A sound changed with the editor
   still open is not caught.

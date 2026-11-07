@@ -110,10 +110,7 @@ impl Display {
     }
 
     /// Per frame: what every plugin's editor reported since the last frame
-    /// ([`handle_parameter_gesture`](Self::handle_parameter_gesture)). A
-    /// plugin that loaded a preset has its state captured for the crash
-    /// recovery copy once, however many times it said so
-    /// (`410-crash-recovery.md` decision 6).
+    /// ([`handle_parameter_gesture`](Self::handle_parameter_gesture)).
     pub(super) fn handle_parameter_gestures(&mut self) {
         let mut gestures = Vec::new();
         for (slot, loaded) in self.instruments.track_instruments.iter_mut().enumerate() {
@@ -127,15 +124,8 @@ impl Display {
                 );
             }
         }
-        let mut presets = Vec::new();
         for (slot, gesture) in gestures {
-            if matches!(gesture, ParameterGesture::ValuesChanged) && !presets.contains(&slot) {
-                presets.push(slot);
-            }
             self.handle_parameter_gesture(slot, gesture);
-        }
-        for slot in presets {
-            self.capture_slot_instrument_state(slot);
         }
     }
 
@@ -145,8 +135,9 @@ impl Display {
     /// that track's knobs holds is the hand's, as a drag is: its start and
     /// end hold the knob against playback (decision 6), and its moves are
     /// counted by the unsaved prompt and captured (decisions 9 and 10). New
-    /// values all at once are a preset, which the unsaved prompt counts too.
-    /// Anything else is the plugin's own business.
+    /// values all at once are a preset, which the unsaved prompt counts too,
+    /// and whose state goes to the crash recovery copy once the plugin is
+    /// quiet (`410-crash-recovery.md` decision 6). Anything else is the plugin's own business.
     fn handle_parameter_gesture(&mut self, slot: usize, gesture: ParameterGesture) {
         let Some(track_idx) = self.tracks.iter().position(|lane| lane.slot == slot) else {
             return;
@@ -176,6 +167,7 @@ impl Display {
                 self.input_event_tx
                     .send(InputEvent::PluginStateChanged { track_idx })
                     .ok();
+                self.capture_soon(slot);
             }
         }
     }

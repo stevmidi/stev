@@ -62,7 +62,10 @@ pub(crate) trait InstrumentEditor {
     /// time (or the first since a [`close`](Self::close)).
     fn show(&mut self);
 
-    /// Whether the editor window is currently shown.
+    /// Whether the editor is open: shown, and not yet closed or torn down.
+    /// A window off screen only because Stev is hidden (⌘H) still counts;
+    /// one minimized or otherwise taken off screen is torn down by
+    /// [`pump`](Self::pump), and so stops counting.
     fn is_open(&self) -> bool;
 
     /// Closes the editor window and **destroys** the plugin's GUI rather than

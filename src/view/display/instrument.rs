@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI32, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, TryRecvError};
 use log::{error, warn};
@@ -43,6 +43,12 @@ use super::status_message::StatusMessage;
 /// How often a project load waiting on the plugin catalog scan looks again
 /// (`restore_next_instrument`).
 const RESTORE_SCAN_POLL: Duration = Duration::from_millis(100);
+
+/// How long a plugin has to be quiet before its state is captured for the
+/// crash recovery copy (`410-crash-recovery.md` decision 6): a plugin that
+/// reports new values on every move in its editor, not only on a preset,
+/// is captured once it settles, not every frame.
+const CAPTURE_QUIET: Duration = Duration::from_secs(1);
 
 /// The macOS CLAP instrument host state, grouped out of [`Display`] — the
 /// running audio-thread handle, the per-track `!Send` editor instances, the
@@ -91,6 +97,9 @@ pub(super) struct InstrumentHost {
     /// (`restore_next_instrument`), under the `RestoringInstruments` overlay.
     /// `None` when no load is staging. See [`ProjectStaging`].
     pub(super) staging: Option<ProjectStaging>,
+    /// Plugins whose state is to be captured for the crash recovery copy, by
+    /// slot, each with when: [`CAPTURE_QUIET`] after the last reason to.
+    pending_captures: Vec<(usize, Instant)>,
 }
 
 /// What a parked plugin state is kept under: the track's id, then the
@@ -168,6 +177,7 @@ impl InstrumentHost {
             plugin_catalog: None,
             plugin_catalog_rx: None,
             staging: None,
+            pending_captures: Vec::new(),
         }
     }
 }
@@ -252,8 +262,9 @@ impl Display {
         // A sound changed in an editor reaches the recovery copy when the
         // editor closes.
         for slot in closed {
-            self.capture_slot_instrument_state(slot);
+            self.capture_soon(slot);
         }
+        self.capture_quiet_plugins(ctx);
     }
 
     /// The installed instrument plugins, as scanned by the background
@@ -396,15 +407,51 @@ impl Display {
     }
 
     /// Captures the current preset of the plugin in `slot` and hands it to
-    /// the sequencer: for a save, and for the crash recovery copy when the
-    /// plugin loads a preset or its editor closes (`410-crash-recovery.md`
-    /// decision 6). Skips a plugin with no `state` extension or a failed
+    /// the sequencer: for a save, and for the crash recovery copy
+    /// ([`capture_soon`](Self::capture_soon)). Skips a plugin with no `state` extension or a failed
     /// save: better to keep the last good blob than overwrite it with nothing.
-    pub(super) fn capture_slot_instrument_state(&mut self, slot: usize) {
+    fn capture_slot_instrument_state(&mut self, slot: usize) {
         if let Some(state) = self.save_slot_instrument_state(slot) {
             self.input_event_tx
                 .send(InputEvent::CaptureTrackInstrumentState { slot, state })
                 .ok();
+        }
+    }
+
+    /// Captures the state of the plugin in `slot` for the crash recovery copy
+    /// once it has been quiet for [`CAPTURE_QUIET`]: after a preset, the end
+    /// of a knob turn, or its editor closing (`410-crash-recovery.md`
+    /// decision 6). Another reason before then puts it off again.
+    pub(super) fn capture_soon(&mut self, slot: usize) {
+        let due = Instant::now() + CAPTURE_QUIET;
+        let pending = &mut self.instruments.pending_captures;
+        match pending.iter_mut().find(|(s, _)| *s == slot) {
+            Some(entry) => entry.1 = due,
+            None => pending.push((slot, due)),
+        }
+    }
+
+    /// Per frame: captures the plugins [`capture_soon`](Self::capture_soon)
+    /// asked for whose time has come, and wakes the UI for the next.
+    fn capture_quiet_plugins(&mut self, ctx: &egui::Context) {
+        let now = Instant::now();
+        let (due, waiting): (Vec<_>, Vec<_>) = self
+            .instruments
+            .pending_captures
+            .drain(..)
+            .partition(|(_, at)| *at <= now);
+        self.instruments.pending_captures = waiting;
+        for (slot, _) in due {
+            self.capture_slot_instrument_state(slot);
+        }
+        if let Some(next) = self
+            .instruments
+            .pending_captures
+            .iter()
+            .map(|(_, at)| *at)
+            .min()
+        {
+            ctx.request_repaint_after(next - now);
         }
     }
 

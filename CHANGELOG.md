@@ -22,7 +22,7 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ### Added
 
-- Crash recovery: if Stev crashes or is force-quit with unsaved changes, the next launch offers to restore them, with at most about 5 seconds lost. The project keeps its name, and the file on disk stays untouched until you save. A plugin's sound comes back as of its last preset load or the last time its editor closed; a change made with the editor still open is lost.
+- Crash recovery: if Stev crashes or is force-quit with unsaved changes, the next launch offers to restore them, with at most about 5 seconds lost. The project keeps its name, and the file on disk stays untouched until you save. A plugin's sound comes back as of its last preset load, knob turn or editor close; a change made with the editor still open is lost.
 
 ### Changed
 

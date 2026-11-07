@@ -99,14 +99,13 @@ impl RecoveryKeeper {
         if self.jobs().is_none() {
             return;
         }
-        let rewrite =
-            self.write_failed.swap(false, Ordering::Relaxed) | mem::take(&mut self.captured);
+        let retry = self.write_failed.swap(false, Ordering::Relaxed);
         let fingerprint = project::fingerprint(sequencer);
         if saved.is_fingerprint(fingerprint) {
             if self.copied.is_some() {
                 self.delete();
             }
-        } else if rewrite || !self.is_copied(fingerprint, saved.origin()) {
+        } else if retry || self.captured || !self.is_copied(fingerprint, saved.origin()) {
             self.write(sequencer, saved, fingerprint);
         }
     }
@@ -115,6 +114,7 @@ impl RecoveryKeeper {
     fn write(&mut self, sequencer: &Sequencer, saved: &SavedProject, fingerprint: u64) {
         let origin = saved.origin().cloned();
         self.copied = Some((fingerprint, origin.clone()));
+        self.captured = false;
         self.send(RecoveryJob::Write {
             snapshot: ProjectSnapshot::of(sequencer),
             origin,
@@ -123,6 +123,8 @@ impl RecoveryKeeper {
 
     /// A plugin's state, newly captured, now differs from the one the
     /// project held: the next check rewrites the copy, if there is to be one.
+    /// The flag lasts until a copy is handed over, which a restored project
+    /// gets at once, so one capture never costs two writes.
     pub(super) fn state_captured(&mut self) {
         self.captured = true;
     }

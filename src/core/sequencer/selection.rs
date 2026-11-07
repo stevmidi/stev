@@ -291,7 +291,9 @@ fn note_on_tuple(track: &Track, event: &Event) -> Option<(u8, u8, u8)> {
 mod tests {
     use crate::models::track::TrackOutput;
 
-    use super::super::test_support::test_sequencer;
+    use crate::core::config::MAX_TRACKS;
+
+    use super::super::test_support::{stub_instrument, test_sequencer};
     use super::*;
 
     #[test]
@@ -312,5 +314,35 @@ mod tests {
         // Out of range: nothing changes.
         seq.set_track_output(99, TrackOutput::MidiOut { channel: 5 });
         assert_eq!(seq.arm_channel.load(Ordering::Relaxed), 3);
+    }
+
+    /// A captured blob is stored, and the answer says whether it changed
+    /// anything: the crash recovery copy is rewritten on it
+    /// (`410-crash-recovery.md` decision 7). A slot no track holds, or a
+    /// track with no plugin, takes nothing.
+    #[test]
+    fn set_slot_instrument_state_says_whether_the_blob_changed() {
+        let mut seq = test_sequencer();
+        seq.set_track_output(0, stub_instrument(vec![1]));
+        let (plugin, midi) = (seq.tracks()[0].slot(), seq.tracks()[1].slot());
+        let state = |seq: &Sequencer| match seq.tracks()[0].output() {
+            TrackOutput::Instrument(r) => r.state.clone(),
+            TrackOutput::MidiOut { .. } => Vec::new(),
+        };
+
+        assert!(seq.set_slot_instrument_state(plugin, &[2]));
+        assert_eq!(state(&seq), [2]);
+        assert!(!seq.set_slot_instrument_state(plugin, &[2]));
+
+        assert!(!seq.set_slot_instrument_state(midi, &[3]));
+        assert!(matches!(
+            seq.tracks()[1].output(),
+            TrackOutput::MidiOut { .. }
+        ));
+        let free = (0..MAX_TRACKS)
+            .find(|slot| seq.tracks().iter().all(|t| t.slot() != *slot))
+            .unwrap();
+        assert!(!seq.set_slot_instrument_state(free, &[3]));
+        assert_eq!(state(&seq), [2]);
     }
 }

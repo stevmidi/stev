@@ -755,10 +755,17 @@ impl Display {
     }
 
     /// Tells the sequencer the hand let go of knob `knob` of `track_idx`.
-    pub(super) fn release_knob(&self, track_idx: usize, knob: usize) {
+    /// The plugin's state then goes to the crash recovery copy: a sound
+    /// shaped with the knobs alone, the editor never opened, would otherwise
+    /// never reach it (`410-crash-recovery.md` decision 6).
+    pub(super) fn release_knob(&mut self, track_idx: usize, knob: usize) {
         self.input_event_tx
             .send(InputEvent::ReleaseKnob { track_idx, knob })
             .ok();
+        #[cfg(target_os = "macos")]
+        if let Some(slot) = self.tracks.get(track_idx).map(|lane| lane.slot) {
+            self.capture_soon(slot);
+        }
     }
 
     /// Tells the sequencer the hand turned knob `knob` of `track_idx` to
