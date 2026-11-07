@@ -90,8 +90,8 @@ What it says against the decisions:
 
 - **The save is the worst by far,** at 360 ms: more than the 83 to 254 ms of `410`, since the `.stev` is pretty-printed and the copy isn't, and it adds `SavedProject`'s fingerprint. Decisions 3 to 6 stand.
 - **Edits over a whole project cost milliseconds**, all of it copying clips and their events: every marquee edit over the whole project passes 1 ms, as do the undos that put clips back. Decision 8's shared clips would make a copy of an unchanged clip a pointer, which should cover copy, cut, paste, remove and their undos; duplicates and moves still write their clips' new positions. To be checked again after phase 4.
-- **Merge clips is out of line** at 155 ms for 6,250 events a track, against 10 ms for duplicating the same clips: something in it grows faster than its events. Not one of decisions 3 to 9; to look into on its own.
-- **A new project** takes 12 ms, most likely dropping the old project's clips and state on the thread. Loading is out of scope (decision 11), but ⌘N isn't a load; to look into with merge.
+- **Merge clips is out of line** at 155 ms for 6,250 events a track, against 10 ms for duplicating the same clips: something in it grows faster than its events. Not one of decisions 3 to 9; to look into on its own (#24). The target there is a cost in step with the events merged, a typical merge within the budget, not 1 ms for merging a whole stress-size project: its events are new, so they can't be shared.
+- **A new project** takes 12 ms, most likely dropping the old project's clips and state on the thread. It is out of scope with loading (decision 11): ⌘N goes through the load's path (`load_project_workflow`), which stops the transport first, so nothing is playing to come late.
 - **A captured plugin state** (`SetTrackInstrumentState`) copies its 3 MB, as decision 7 says; it passed 1 ms once.
 
 ### The hand run (2026-11-07)
@@ -114,7 +114,7 @@ The stress project written by `write_stress_project` (a 90 MB `.stev`), opened i
 - **No audio overrun was journalled during the run.** The plugins didn't load, so the audio thread had nothing to render; MIDI Out and the click were the only paths a late tick could be heard on.
 - **Nothing new beyond the sweep** came up: the hand-made edits stayed under 1.5 ms.
 
-Phase 1 is done: decisions 3 to 8 stand as written, and the sweep added merge clips and ⌘N, which no phase covers yet.
+Phase 1 is done: decisions 3 to 8 stand as written, and the sweep added merge clips, which no phase covers (#24), and ⌘N, out of scope with loading.
 
 ### Phase 2 (2026-11-07)
 
@@ -195,7 +195,7 @@ The sweep, release build on the Intel Mac at the target size, median and worst o
 - **The recovery check is down from 3 ms to 0.02 with nothing changed,** and the save's handover from 5 ms to 0.02: both now hash only what was edited since the last check, and the snapshot copies nothing.
 - **Edits over a whole project are about 1 ms,** from 3 to 10: a clip copied for undo, the clipboard or a duplicate shares its events. Paste clips, move range and paste notes sit just past it; what is left is the clips' own bookkeeping and, for the first edit of a clip after a check, the copy of its events (decision 9).
 - **An edit of every clip followed by a check hashes everything again,** 4 ms, as the cache's first round shows. That needs a whole-project edit within the 5 s before a check, and it is once per edit.
-- **Merge clips and ⌘N are unchanged,** out of this design (phase 1). ⌘N's 18 ms against 12 is the old project's events freed at its fingerprint rather than with its clips, or noise; to look into with merge.
+- **Merge clips and ⌘N are unchanged,** out of this design (phase 1). ⌘N's 18 ms against 12 is the old project's events freed at its fingerprint rather than with its clips, or noise; it stops the transport, so it stays out of scope with loading.
 
 The hand runs (2026-11-07): the stress project opened in a release build on the Intel Mac, played, clips unmuted, notes moved, muted, deleted and duplicated in the clip view, saved with ⌘S between batches of edits and right after one, the recovery check running. Two runs of about a minute each; for the second the probe also named any command past 1 ms.
 
