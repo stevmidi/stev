@@ -9,7 +9,6 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::ops::Range;
-use std::sync::Arc;
 
 use log::debug;
 use uuid::Uuid;
@@ -183,9 +182,8 @@ impl Clip {
         }
 
         let fold = |tick: i32| (tick - phase_origin).rem_euclid(loop_len);
-        self.events = Arc::new(self.windowed_events(window_start..window_end, fold, loop_len - 1));
+        self.restore_events(self.windowed_events(window_start..window_end, fold, loop_len - 1));
         self.region_mut().set_region(Some(0), Some(loop_len));
-        self.sort_events_by_tick();
         self.calculate_note_lengths();
     }
 
@@ -322,12 +320,13 @@ impl Clip {
             return;
         }
 
-        let note_on_tick = self.events[note_on_idx].tick();
-        self.events_mut()[note_on_idx].set_tick(note_on_tick + nudge);
+        let events = self.events_mut();
+        let note_on_tick = events[note_on_idx].tick();
+        events[note_on_idx].set_tick(note_on_tick + nudge);
 
         if let Some(note_off_idx) = pairing.on_to_off.get(&note_on_idx).copied() {
-            let note_off_tick = self.events[note_off_idx].tick();
-            self.events_mut()[note_off_idx].set_tick(note_off_tick + nudge);
+            let note_off_tick = events[note_off_idx].tick();
+            events[note_off_idx].set_tick(note_off_tick + nudge);
         }
     }
 
@@ -335,10 +334,11 @@ impl Clip {
     /// length and moves its `NoteOff` (`off_idx`, if it has one). Does not
     /// re-sort.
     pub(super) fn set_note_end(&mut self, on_idx: usize, off_idx: Option<usize>, end: i32) {
-        let start = self.events[on_idx].tick();
-        self.events_mut()[on_idx].set_length(end - start);
+        let events = self.events_mut();
+        let start = events[on_idx].tick();
+        events[on_idx].set_length(end - start);
         if let Some(off_idx) = off_idx {
-            self.events_mut()[off_idx].set_tick(end);
+            events[off_idx].set_tick(end);
         }
     }
 
@@ -354,9 +354,10 @@ impl Clip {
             return;
         };
         let pitch = (i32::from(pitch) + semitones).clamp(0, 127) as u8;
-        self.events_mut()[on_idx].set_note_number(pitch);
+        let events = self.events_mut();
+        events[on_idx].set_note_number(pitch);
         if let Some(off_idx) = pairing.on_to_off.get(&on_idx).copied() {
-            self.events_mut()[off_idx].set_note_number(pitch);
+            events[off_idx].set_note_number(pitch);
         }
     }
 

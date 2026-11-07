@@ -214,8 +214,7 @@ impl Clip {
                 end: note_off.tick(),
             });
             targets.push(on_idx);
-            self.events_mut().push(note_on);
-            self.events_mut().push(note_off);
+            self.events_mut().extend([note_on, note_off]);
         }
 
         self.resolve_overlaps(spans, &targets);
@@ -323,8 +322,9 @@ impl Clip {
                     }
                 }
                 NoteDrag::ResizeStart { .. } => {
-                    self.events_mut()[on_idx].set_tick(new_start);
-                    self.events_mut()[on_idx].set_length(end - new_start);
+                    let note_on = &mut self.events_mut()[on_idx];
+                    note_on.set_tick(new_start);
+                    note_on.set_length(end - new_start);
                 }
                 NoteDrag::ResizeEnd { .. } => {
                     let off_idx = pairing.on_to_off.get(&on_idx).copied();

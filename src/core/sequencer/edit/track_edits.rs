@@ -20,6 +20,8 @@
 //! state by track id), and a restore reloads it the way a project load does.
 //! See `050-undo-redo.md` § Track add / remove.
 
+use std::sync::Arc;
+
 use uuid::Uuid;
 
 use crate::core::config::{MAX_TRACKS, TRACK_COLOR_COUNT, TRACK_VOLUME_DB_DEFAULT};
@@ -403,7 +405,7 @@ impl Sequencer {
 
 /// Clips by id with their event lists as they were before an edit rewrote
 /// their parameter moves — the edit's undo.
-type ClipSnapshots = Vec<(Uuid, Vec<Event>)>;
+type ClipSnapshots = Vec<(Uuid, Arc<Vec<Event>>)>;
 
 /// A knob assigned to a parameter of the track's plugin — the control the
 /// user turned in the plugin's editor while the knob was armed — or
@@ -515,7 +517,9 @@ impl Sequencer {
     /// Puts `snapshots` back in the clips of the track at `track_idx`.
     fn restore_clip_events(&mut self, track_idx: usize, snapshots: ClipSnapshots) {
         for (clip_id, events) in snapshots {
-            self.edit_clip_events(track_idx, clip_id, |clip| clip.restore_events(events));
+            self.edit_clip_events(track_idx, clip_id, |clip| {
+                clip.restore_shared_events(events)
+            });
         }
     }
 }

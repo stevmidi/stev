@@ -388,6 +388,11 @@ impl Sequencer {
         self.region_end.fetch_add(delta, Ordering::Relaxed);
     }
 
+    /// What the last project fingerprint hashed (`FingerprintCache`).
+    pub(crate) fn fingerprint_cache(&self) -> &FingerprintCache {
+        &self.fingerprint_cache
+    }
+
     /// The arrangement tracks.
     pub(crate) fn tracks(&self) -> &[Track] {
         &self.tracks

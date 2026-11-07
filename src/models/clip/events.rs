@@ -55,8 +55,9 @@ impl Clip {
             .checked_sub(1)
             .map_or(0, |before| self.events[before].tick());
         event.set_delta_ticks(prev_tick);
-        self.events_mut().insert(at, event);
-        if let Some(next) = self.events_mut().get_mut(at + 1) {
+        let events = self.events_mut();
+        events.insert(at, event);
+        if let Some(next) = events.get_mut(at + 1) {
             next.set_delta_ticks(tick);
         }
     }
@@ -344,8 +345,6 @@ impl Clip {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
     use crate::{
         core::time::Meter,
         models::{
@@ -601,8 +600,7 @@ mod tests {
     #[test]
     fn sort_puts_a_note_off_ahead_of_a_same_tick_note_on() {
         let mut clip = Clip::new();
-        clip.events = Arc::new(vec![on(480, 60), off(960, 60), on(0, 60), off(480, 60)]);
-        clip.sort_events_by_tick();
+        clip.restore_events(vec![on(480, 60), off(960, 60), on(0, 60), off(480, 60)]);
 
         assert_eq!(
             order(&clip),
@@ -624,8 +622,7 @@ mod tests {
     fn sort_keeps_a_zero_length_note_off_behind_its_note_on() {
         let mut clip = Clip::new();
         // A note ending at 480 where a zero-length note of the same pitch sits.
-        clip.events = Arc::new(vec![on(480, 60), off(480, 60), on(0, 60), off(480, 60)]);
-        clip.sort_events_by_tick();
+        clip.restore_events(vec![on(480, 60), off(480, 60), on(0, 60), off(480, 60)]);
 
         assert_eq!(
             order(&clip),
@@ -639,8 +636,7 @@ mod tests {
     #[test]
     fn sort_leaves_a_genuine_orphan_note_off_in_place() {
         let mut clip = Clip::new();
-        clip.events = Arc::new(vec![on(480, 62), off(480, 60)]);
-        clip.sort_events_by_tick();
+        clip.restore_events(vec![on(480, 62), off(480, 60)]);
 
         assert_eq!(order(&clip), vec![(480, false), (480, true)]);
         assert_eq!(clip.pair_note_events().orphan_note_offs, vec![0]);

@@ -3,8 +3,6 @@
 //! `core::project::read_smf`; this turns what it found into a clip that
 //! loops cleanly.
 
-use std::sync::Arc;
-
 use crate::{
     core::time::Meter,
     models::event::{Event, EventType},
@@ -32,8 +30,7 @@ impl Clip {
 
         let mut clip = Clip::new();
         clip.region_mut().set_region(Some(0), Some(length));
-        clip.events = Arc::new(events);
-        clip.sort_events_by_tick();
+        clip.restore_events(events);
         clip.remove_orphan_note_offs();
         clip.close_open_notes_at(length);
         clip.calculate_note_lengths();

@@ -407,11 +407,11 @@ impl Track {
     pub(crate) fn clips_with_param_moves(
         &self,
         matches: impl Fn(PluginParam) -> bool,
-    ) -> Vec<(Uuid, Vec<Event>)> {
+    ) -> Vec<(Uuid, Arc<Vec<Event>>)> {
         self.clips
             .iter()
             .filter(|clip| clip.has_param_moves(&matches))
-            .map(|clip| (clip.id(), clip.events().to_vec()))
+            .map(|clip| (clip.id(), Arc::clone(clip.shared_events())))
             .collect()
     }
 

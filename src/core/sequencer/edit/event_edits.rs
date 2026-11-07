@@ -15,6 +15,8 @@
 //! controller lane's `Delete`: a span of a controller cleared. See
 //! `050-undo-redo.md`.
 
+use std::sync::Arc;
+
 use undo::Record;
 use uuid::Uuid;
 
@@ -195,7 +197,7 @@ impl DragEventsVelocityEdit {
         let state = &mut self.state;
         let (event_ids, nudges) = (&self.event_ids, &self.nudges);
         let Some(pre_events) = sequencer.edit_clip_events(state.track_idx, state.clip_id, |clip| {
-            let pre_events = clip.events().to_vec();
+            let pre_events = Arc::clone(clip.shared_events());
             for &nudge in nudges {
                 clip.nudge_events_velocity(event_ids, nudge);
             }
@@ -476,10 +478,10 @@ impl DragNotesEdit {
         let Some(pre_events) = sequencer.edit_clip_events(state.track_idx, state.clip_id, |clip| {
             let pre_events = match held {
                 Some(origin) => {
-                    clip.restore_events(origin.clone());
+                    clip.restore_shared_events(Arc::clone(&origin));
                     origin
                 }
-                None => clip.events().to_vec(),
+                None => Arc::clone(clip.shared_events()),
             };
             clip.restore_event_selection(selection);
             clip.apply_note_drag(event_ids, drag);
@@ -571,8 +573,9 @@ struct ClipEventsEditState {
     clip_id: Uuid,
     /// Event selection to restore before mutating and report afterwards.
     selected_event_ids: Vec<Uuid>,
-    /// The clip's event list before `edit()`, for `undo()`.
-    pre_events: Option<Vec<Event>>,
+    /// The clip's event list before `edit()`, for `undo()`: shared with the
+    /// clip until the edit writes it (`Clip::shared_events`).
+    pre_events: Option<Arc<Vec<Event>>>,
 }
 
 impl ClipEventsEditState {
@@ -618,7 +621,7 @@ impl ClipEventsEditState {
         let selection = &self.selected_event_ids;
         let Some((pre_events, selected_event_ids)) =
             sequencer.edit_clip_events(self.track_idx, self.clip_id, |clip| {
-                let pre_events = clip.events().to_vec();
+                let pre_events = Arc::clone(clip.shared_events());
                 clip.restore_event_selection(selection);
                 (pre_events, mutate_clip(clip))
             })
@@ -631,14 +634,14 @@ impl ClipEventsEditState {
     }
 
     /// Restores the snapshotted event list, releasing like
-    /// [`edit_with`](Self::edit_with). The snapshot is moved into the clip
-    /// rather than copied: every `edit()` takes a fresh one first.
+    /// [`edit_with`](Self::edit_with). The snapshot is shared, not copied:
+    /// every `edit()` takes a fresh one first.
     fn undo(&mut self, sequencer: &mut Sequencer) -> EditResult {
         let Some(pre_events) = self.pre_events.take() else {
             return EditResult::NoOp;
         };
         let Some(()) = sequencer.edit_clip_events(self.track_idx, self.clip_id, |clip| {
-            clip.restore_events(pre_events)
+            clip.restore_shared_events(pre_events)
         }) else {
             return EditResult::NoOp;
         };

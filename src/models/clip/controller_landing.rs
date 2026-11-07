@@ -280,10 +280,13 @@ impl Clip {
             && old_value.is_some_and(|value| Some(value) != span_last)
             && !self.has_move_at(controller, end);
 
-        let len = self.events.len();
-        self.events_mut()
-            .retain(|event| !(is_move_of(event, controller) && span.contains(&event.tick())));
-        let removed = self.events.len() != len;
+        let in_span = |event: &Event| is_move_of(event, controller) && span.contains(&event.tick());
+        // Checked first, so a span with nothing in it leaves shared events
+        // shared (`Clip::events_mut`).
+        let removed = self.events.iter().any(in_span);
+        if removed {
+            self.events_mut().retain(|event| !in_span(event));
+        }
         if let Some(old_value) = old_value.filter(|_| write_back) {
             self.add_controller_move(controller, old_value, channel, end);
         }
@@ -348,6 +351,11 @@ impl Clip {
         to: Option<PluginParam>,
     ) {
         let selected = |event: &Event| event.param_move().is_some_and(|moved| matches(moved.param));
+        // Shared events with nothing to rewrite stay shared
+        // (`Clip::events_mut`).
+        if !self.events.iter().any(selected) {
+            return;
+        }
         match to {
             Some(to) => self
                 .events_mut()

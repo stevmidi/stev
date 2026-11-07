@@ -88,8 +88,7 @@ impl Clip {
         let mut sounding = Clip::new();
         let mut events = self.wheel_edges(&kept, origin, end);
         events.extend(kept.into_iter().filter(|event| !event.is_muted()));
-        sounding.events = Arc::new(events);
-        sounding.sort_events_by_tick();
+        sounding.restore_events(events);
         sounding
     }
 

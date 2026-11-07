@@ -99,9 +99,10 @@ impl Clip {
             nudge.max(1 - min_vel)
         };
 
+        let events = self.events_mut();
         for idx in selected_indices {
-            let current = self.events[idx].velocity().unwrap_or(64) as i32;
-            self.events_mut()[idx].set_velocity((current + effective_nudge) as u8);
+            let current = events[idx].velocity().unwrap_or(64) as i32;
+            events[idx].set_velocity((current + effective_nudge) as u8);
         }
     }
 
@@ -151,10 +152,11 @@ impl Clip {
             .iter()
             .any(|&idx| !self.events[idx].is_muted());
 
+        let events = self.events_mut();
         for &on_idx in &selected_on_indices {
-            self.events_mut()[on_idx].set_muted(target_muted);
+            events[on_idx].set_muted(target_muted);
             if let Some(off_idx) = pairing.on_to_off.get(&on_idx).copied() {
-                self.events_mut()[off_idx].set_muted(target_muted);
+                events[off_idx].set_muted(target_muted);
             }
         }
     }

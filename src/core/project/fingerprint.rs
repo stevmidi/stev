@@ -12,30 +12,43 @@ use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 
-use uuid::Uuid;
-
 use crate::core::sequencer::Sequencer;
 use crate::models::event::Event;
 use crate::models::track::TrackOutput;
 
-/// A clip's events as a fingerprint hashed them, and their hash.
+/// An event list a fingerprint hashed, and its hash.
 type HashedEvents = (Arc<Vec<Event>>, u64);
 
-/// Each clip's events as the last fingerprint hashed them, with their hash,
-/// by clip id. Kept by the [`Sequencer`] so every [`fingerprint`] shares it.
+/// The clips' event lists as the last fingerprint hashed them, with their
+/// hashes, by address. Kept by the [`Sequencer`] so every [`fingerprint`]
+/// shares it.
 ///
-/// Events still pointing at the allocation kept here haven't changed: a
-/// clip's events are shared (`Clip::shared_events`) and edited only through
+/// Events still at an address kept here haven't changed: a clip's events
+/// are shared (`Clip::shared_events`) and edited only through
 /// `Arc::make_mut`, which copies them first while anything else holds them,
 /// and holding the `Arc` here is what keeps the allocation from being freed
-/// and reused by other events. So the hash is reused, and only edited clips
-/// are hashed again; no edit has to say it changed anything. The cost is a
-/// copy: the first edit of a clip after a fingerprint copies its events,
-/// since this holds them too (decision 9).
+/// and its address reused. So the hash is reused, and only edited clips are
+/// hashed again; no edit has to say it changed anything. Clips sharing one
+/// list (a duplicate, a paste) share its hash. The cost is a copy: the first
+/// edit of a clip after a fingerprint copies its events, since this holds
+/// them too (decision 9).
 #[derive(Default)]
 pub(crate) struct FingerprintCache {
-    /// Each clip's events and their hash, from the last fingerprint.
-    clips: RefCell<HashMap<Uuid, HashedEvents>>,
+    /// Each event list's address, the list, and its hash.
+    hashes: RefCell<HashMap<usize, HashedEvents>>,
+}
+
+impl FingerprintCache {
+    /// Whether the last fingerprint hashed `events`, this very allocation.
+    #[cfg(test)]
+    fn holds(&self, events: &Arc<Vec<Event>>) -> bool {
+        self.hashes.borrow().contains_key(&address(events))
+    }
+}
+
+/// Where `events` live: the cache's key.
+fn address(events: &Arc<Vec<Event>>) -> usize {
+    Arc::as_ptr(events).addr()
 }
 
 /// A hash of everything `sequencer`'s project would write to disk but the
@@ -57,16 +70,18 @@ pub(crate) struct FingerprintCache {
 ///
 /// Stable within one run only — never persisted.
 pub(crate) fn fingerprint(sequencer: &Sequencer) -> u64 {
-    let cache = &sequencer.fingerprint_cache().clips;
+    let cache = &sequencer.fingerprint_cache().hashes;
     let last = cache.take();
     let mut next = HashMap::with_capacity(last.len());
-    let hash = hash_project(sequencer, |clip_id, events| {
-        let hash = match last.get(&clip_id) {
-            Some((hashed, hash)) if Arc::ptr_eq(hashed, events) => *hash,
-            _ => hash_events(events),
-        };
-        next.insert(clip_id, (Arc::clone(events), hash));
-        hash
+    let hash = hash_project(sequencer, |events| {
+        next.entry(address(events))
+            .or_insert_with(|| {
+                let hash = last
+                    .get(&address(events))
+                    .map_or_else(|| hash_events(events), |(_, hash)| *hash);
+                (Arc::clone(events), hash)
+            })
+            .1
     });
     cache.replace(next);
     hash
@@ -76,7 +91,7 @@ pub(crate) fn fingerprint(sequencer: &Sequencer) -> u64 {
 /// `events_hash`.
 fn hash_project(
     sequencer: &Sequencer,
-    mut events_hash: impl FnMut(Uuid, &Arc<Vec<Event>>) -> u64,
+    mut events_hash: impl FnMut(&Arc<Vec<Event>>) -> u64,
 ) -> u64 {
     let mut hasher = DefaultHasher::new();
     let meter = sequencer.meter();
@@ -119,7 +134,7 @@ fn hash_project(
                 clip.region().end(),
                 clip.is_muted(),
                 clip.swing_pct(),
-                events_hash(clip.id(), sequencer.saved_events(clip)),
+                events_hash(sequencer.saved_events(clip)),
             )
                 .hash(&mut hasher);
         }
@@ -187,7 +202,7 @@ mod tests {
     /// The fingerprint with nothing reused: every clip's events hashed. What
     /// the cached one is tested against.
     fn full_hash(sequencer: &Sequencer) -> u64 {
-        hash_project(sequencer, |_, events| hash_events(events))
+        hash_project(sequencer, |events| hash_events(events))
     }
 
     /// The events [`project`]'s clip starts with.
@@ -375,9 +390,8 @@ mod tests {
         let before = fingerprint(&sequencer);
         let untouched = Arc::clone(sequencer.tracks()[0].clips()[1].shared_events());
         let cached = |sequencer: &Sequencer, clip: usize| {
-            let clip = &sequencer.tracks()[0].clips()[clip];
-            let cache = sequencer.fingerprint_cache().clips.borrow();
-            Arc::ptr_eq(&cache[&clip.id()].0, clip.shared_events())
+            let events = sequencer.tracks()[0].clips()[clip].shared_events();
+            sequencer.fingerprint_cache().holds(events)
         };
         assert!(cached(&sequencer, 0));
 
@@ -392,6 +406,20 @@ mod tests {
         let after = fingerprint(&sequencer);
         assert_ne!(after, before);
         assert_eq!(after, full_hash(&sequencer));
+    }
+
+    /// A copy of a clip shares its events, and so their entry in the cache:
+    /// a duplicate isn't hashed again.
+    #[test]
+    fn a_copy_shares_its_clips_hash() {
+        let mut sequencer = project();
+        let mut copy = sequencer.tracks()[0].clips()[0].clone();
+        copy.generate_new_id();
+        copy.set_start_tick(3840);
+        sequencer.tracks_mut()[0].add_clip(&copy);
+        let hash = fingerprint(&sequencer);
+        assert_eq!(sequencer.fingerprint_cache().hashes.borrow().len(), 1);
+        assert_eq!(hash, full_hash(&sequencer));
     }
 
     /// A count or a value that goes back goes back to the same hash, so

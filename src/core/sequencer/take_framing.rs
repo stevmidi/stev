@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 use uuid::Uuid;
 
-use crate::core::{project::FingerprintCache, time::PPQN, view_state::ViewState};
+use crate::core::{time::PPQN, view_state::ViewState};
 use crate::models::{
     clip::{Clip, ClipEdge},
     event::{Event, EventType},
@@ -157,11 +157,6 @@ impl Sequencer {
         }
     }
 
-    /// What the last project fingerprint hashed (`FingerprintCache`).
-    pub(crate) fn fingerprint_cache(&self) -> &FingerprintCache {
-        &self.fingerprint_cache
-    }
-
     /// The take of the open session, which [`selected_clip`](Self::selected_clip)
     /// returns while it is open.
     pub(super) fn framed_take(&self) -> Option<&Clip> {
@@ -287,7 +282,6 @@ impl Sequencer {
         let pre_events = Arc::clone(&framing.pre_events);
         self.edit_clip_events(framing.track_idx, framing.clip_id, |clip| {
             clip.restore_shared_events(pre_events);
-            clip.calculate_note_lengths();
         });
         Some(framing)
     }

@@ -7,6 +7,8 @@
 //! edge, and `⌥=`/`⌥-` fix a bar count that came out wrong. Nothing about
 //! either is stored: each acts on what's there when the key is pressed.
 
+use std::sync::Arc;
+
 use uuid::Uuid;
 
 use crate::metadata::clip_metadata::ClipMetadata;
@@ -28,8 +30,8 @@ use super::super::EditResult;
 struct RetimedState {
     /// The clip's bounds.
     bounds: ClipBounds,
-    /// The clip's events.
-    events: Vec<Event>,
+    /// The clip's events, shared with the clip (`Clip::shared_events`).
+    events: Arc<Vec<Event>>,
     /// The project tempo, µs per quarter note — what a retime of the
     /// project's only clip sets (`RetimeClipEdit::sets_tempo`).
     tempo_us: i32,
@@ -123,7 +125,7 @@ impl RetimeClipEdit {
             sets_tempo: sequencer.number_of_clips() == 1,
             before: RetimedState {
                 bounds: clip.bounds(),
-                events: clip.events().to_vec(),
+                events: Arc::clone(clip.shared_events()),
                 tempo_us: sequencer.tempo_us(),
                 cursor_tick: clip.cursor_tick(),
             },
@@ -156,7 +158,7 @@ impl RetimeClipEdit {
             let retime = retime.then(clip.align_window_start_to_bar(meter));
             let after = RetimedState {
                 bounds: clip.bounds(),
-                events: clip.events().to_vec(),
+                events: Arc::clone(clip.shared_events()),
                 tempo_us,
                 cursor_tick: clip.cursor_tick(),
             };
@@ -216,7 +218,7 @@ impl RetimeClipEdit {
     ) -> EditResult {
         let Some((metadata, _)) = self.edit_clip(sequencer, |clip| {
             clip.set_bounds(state.bounds);
-            clip.restore_events(state.events.clone());
+            clip.restore_shared_events(Arc::clone(&state.events));
             clip.set_cursor_tick(state.cursor_tick);
             (ClipMetadata::from_clip(self.track_idx, clip), retime)
         }) else {
