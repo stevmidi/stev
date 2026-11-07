@@ -2,9 +2,8 @@
 //! folder dropdown and new-folder field (Save as template's fixed
 //! `Templates` in their place), the unsaved-changes prompt and the recovery
 //! question, each a modal frame centred on the canvas. The
-//! buttons' layout is shared with their click tests
-//! ([`unsaved_button_at`](Display::unsaved_button_at),
-//! [`recovery_button_at`](Display::recovery_button_at)).
+//! buttons' layout is shared with their click test
+//! ([`dialog_button_at`](Display::dialog_button_at)).
 
 use egui::{
     Align2, CornerRadius, FontId, Id, Painter, Pos2, Rect, Shape, Stroke, StrokeKind, Ui, pos2,
@@ -17,7 +16,7 @@ use crate::core::paths::TEMPLATES_DIR_NAME;
 use crate::core::project::{project_exists, project_name_from_input, template_exists};
 use crate::view::display::keyboard_tab::chords_label;
 use crate::view::display::project_dialog::{
-    ProjectDialog, RecoveryButton, SaveAs, SaveAsFocus, SaveAsHit, UnsavedButton,
+    DialogButton, ProjectDialog, SaveAs, SaveAsFocus, SaveAsHit,
 };
 use crate::view::display::project_state::ProjectViewState;
 use crate::view::display::text_field::{FieldStyle, MODAL_MARGIN};
@@ -39,16 +38,15 @@ struct DialogLayout {
     new_folder: Rect,
     /// The line under it: Save As's note, the prompt's key hints.
     note: Rect,
-    /// The prompt's buttons, left to right as in [`UnsavedButton::ALL`]. The
-    /// recovery question's two take the right-hand pair.
+    /// The button places, left to right: the widest row fills them, and a
+    /// shorter one takes those on the right.
     buttons: [Rect; 3],
 }
 
 impl DialogLayout {
-    /// The recovery question's buttons, left to right as in
-    /// [`RecoveryButton::ALL`].
-    fn recovery_buttons(&self) -> [Rect; 2] {
-        [self.buttons[1], self.buttons[2]]
+    /// Where the button `row` sits, left to right.
+    fn row_rects(&self, row: &[DialogButton]) -> &[Rect] {
+        &self.buttons[self.buttons.len() - row.len()..]
     }
 }
 
@@ -227,28 +225,20 @@ impl Display {
                     Some(SaveAsHit::Name) | None => false,
                 }
             }
-            Some(ProjectDialog::Unsaved { .. }) => self.unsaved_button_at(pointer).is_some(),
-            Some(ProjectDialog::Recovery { .. }) => self.recovery_button_at(pointer).is_some(),
+            Some(ProjectDialog::Unsaved { .. } | ProjectDialog::Recovery { .. }) => {
+                self.dialog_button_at(pointer).is_some()
+            }
             None => false,
         }
     }
 
-    /// The unsaved-changes prompt's button under canvas point `pos`, if any.
-    pub(in crate::view::display) fn unsaved_button_at(&self, pos: Pos2) -> Option<UnsavedButton> {
+    /// The open dialog's button under canvas point `pos`, if any.
+    pub(in crate::view::display) fn dialog_button_at(&self, pos: Pos2) -> Option<DialogButton> {
+        let row = self.project_dialog.as_ref()?.buttons();
         let layout = Self::dialog_layout(self.render.canvas_rect, true);
-        UnsavedButton::ALL
-            .into_iter()
-            .zip(layout.buttons)
-            .find_map(|(button, rect)| rect.contains(pos).then_some(button))
-    }
-
-    /// The recovery question's button under canvas point `pos`, if any.
-    pub(in crate::view::display) fn recovery_button_at(&self, pos: Pos2) -> Option<RecoveryButton> {
-        let layout = Self::dialog_layout(self.render.canvas_rect, true);
-        RecoveryButton::ALL
-            .into_iter()
-            .zip(layout.recovery_buttons())
-            .find_map(|(button, rect)| rect.contains(pos).then_some(button))
+        row.iter()
+            .zip(layout.row_rects(row))
+            .find_map(|(&button, rect)| rect.contains(pos).then_some(button))
     }
 
     /// Shows the open project dialog, if any, over the canvas `rect`, in
@@ -529,7 +519,7 @@ impl Display {
     fn draw_unsaved_prompt(
         painter: &Painter,
         rect: Rect,
-        selected: UnsavedButton,
+        selected: DialogButton,
         name: Option<&str>,
     ) {
         let layout = Self::dialog_layout(rect, true);
@@ -547,11 +537,7 @@ impl Display {
         };
         Self::draw_dialog_question(painter, &layout, question);
 
-        for (button, button_rect) in UnsavedButton::ALL.into_iter().zip(layout.buttons) {
-            let is_selected = button == selected;
-            let color = accent_if(is_selected, theme::fg());
-            Self::draw_modal_button(painter, button_rect, button.label(), is_selected, color);
-        }
+        Self::draw_dialog_buttons(painter, &layout, DialogButton::UNSAVED, selected);
     }
 
     /// The recovery question: what happened, what to do about it, and the two
@@ -560,7 +546,7 @@ impl Display {
     fn draw_recovery_question(
         painter: &Painter,
         rect: Rect,
-        selected: RecoveryButton,
+        selected: DialogButton,
         name: Option<&str>,
     ) {
         let layout = Self::dialog_layout(rect, true);
@@ -573,19 +559,26 @@ impl Display {
         );
 
         let question = match name {
-            Some(name) => format!("Reopen your unsaved changes to \"{name}\"?"),
-            None => "Reopen your unsaved new project?".to_owned(),
+            Some(name) => format!("Restore the project \"{name}\"?"),
+            None => "Restore your unsaved new project?".to_owned(),
         };
         let text = format!("Stev didn't close properly.\n{question}");
         Self::draw_dialog_question(painter, &layout, text);
 
-        let buttons = RecoveryButton::ALL
-            .into_iter()
-            .zip(layout.recovery_buttons());
-        for (button, button_rect) in buttons {
+        Self::draw_dialog_buttons(painter, &layout, DialogButton::RECOVERY, selected);
+    }
+
+    /// The button `row`, the `selected` one (Enter's) in the accent colour.
+    fn draw_dialog_buttons(
+        painter: &Painter,
+        layout: &DialogLayout,
+        row: &[DialogButton],
+        selected: DialogButton,
+    ) {
+        for (&button, &rect) in row.iter().zip(layout.row_rects(row)) {
             let is_selected = button == selected;
             let color = accent_if(is_selected, theme::fg());
-            Self::draw_modal_button(painter, button_rect, button.label(), is_selected, color);
+            Self::draw_modal_button(painter, rect, button.label(), is_selected, color);
         }
     }
 

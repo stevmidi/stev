@@ -17,10 +17,7 @@ use crate::core::paths::{RECOVERY_FILE_NAME, RECOVERY_LOCK_FILE_NAME, config_dir
 
 use super::dto::{ProjectData, ProjectSnapshot};
 use super::staged::StagedProject;
-use super::storage::{ProjectOrigin, project_exists, replace_file};
-
-/// The restore panel's title for a copy of a project never saved.
-const UNTITLED: &str = "Untitled";
+use super::storage::{ProjectOrigin, UNTITLED, project_exists, replace_file};
 
 /// The copy, on disk.
 #[derive(Serialize, Deserialize)]
@@ -45,7 +42,7 @@ impl RecoveryCopy {
         self.origin.as_ref().map(|origin| origin.name.as_str())
     }
 
-    /// The project to reopen, through the usual staged load. It keeps its
+    /// The project to restore, through the usual staged load. It keeps its
     /// name and folder while its file is there, and comes back untitled if
     /// the file has gone (`410-crash-recovery.md` decision 10).
     pub(crate) fn into_staged(self) -> StagedProject {
@@ -56,13 +53,10 @@ impl RecoveryCopy {
     /// project's file is on disk.
     fn staged_with(self, exists: impl FnOnce(&ProjectOrigin) -> bool) -> StagedProject {
         let (title, recovered) = match self.name() {
-            Some(name) => (
-                name.to_owned(),
-                format!("Reopened unsaved changes to {name}"),
-            ),
+            Some(name) => (name.to_owned(), format!("Restored {name}")),
             None => (
                 UNTITLED.to_owned(),
-                "Reopened your unsaved new project".to_owned(),
+                "Restored your unsaved new project".to_owned(),
             ),
         };
         StagedProject {
@@ -354,39 +348,33 @@ mod tests {
 
     /// With its file there, the project keeps its name and folder.
     #[test]
-    fn a_reopened_project_keeps_its_name() {
+    fn a_restored_project_keeps_its_name() {
         let staged = copy(Some("Song")).staged_with(|_| true);
         assert_eq!(staged.title, "Song");
         assert_eq!(
             staged.file,
             Some((Some("Songs".to_owned()), "Song".to_owned()))
         );
-        assert_eq!(
-            staged.recovered.as_deref(),
-            Some("Reopened unsaved changes to Song")
-        );
+        assert_eq!(staged.recovered.as_deref(), Some("Restored Song"));
     }
 
-    /// With its file gone it reopens untitled, the footer still naming it.
+    /// With its file gone it comes back untitled, the footer still naming it.
     #[test]
-    fn a_reopened_project_whose_file_has_gone_is_untitled() {
+    fn a_restored_project_whose_file_has_gone_is_untitled() {
         let staged = copy(Some("Song")).staged_with(|_| false);
         assert_eq!(staged.file, None);
-        assert_eq!(
-            staged.recovered.as_deref(),
-            Some("Reopened unsaved changes to Song")
-        );
+        assert_eq!(staged.recovered.as_deref(), Some("Restored Song"));
     }
 
-    /// A project never saved reopens untitled, and has no file to look for.
+    /// A project never saved comes back untitled, and has no file to look for.
     #[test]
-    fn a_reopened_new_project_is_untitled() {
+    fn a_restored_new_project_is_untitled() {
         let staged = copy(None).staged_with(|_| panic!("looked for a file"));
         assert_eq!(staged.title, UNTITLED);
         assert_eq!(staged.file, None);
         assert_eq!(
             staged.recovered.as_deref(),
-            Some("Reopened your unsaved new project")
+            Some("Restored your unsaved new project")
         );
     }
 

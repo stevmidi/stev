@@ -2,6 +2,7 @@
 //! copy: when one should exist, and what it should hold. The writing itself
 //! is the `"recovery"` thread's. See `410-crash-recovery.md`.
 
+use std::mem;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
@@ -17,6 +18,18 @@ use super::SavedProject;
 /// How often the project is compared with the copy: at most this much of the
 /// work is lost to a crash (`410-crash-recovery.md` decision 3).
 const CHECK_INTERVAL: Duration = Duration::from_secs(5);
+
+/// Where the copy a crash left stands. Anything but
+/// [`Free`](Self::Free) keeps every job from the copy
+/// (`410-crash-recovery.md` decision 14).
+enum Hold {
+    /// No offer to answer: the check keeps the copy.
+    Free,
+    /// This copy waits for the launch dialog's answer.
+    Offered(RecoveryCopy),
+    /// Restore was answered, and the project isn't in yet.
+    Restoring,
+}
 
 /// Keeps a recovery copy exactly while the quit prompt would ask. The check
 /// compares fingerprints on a timer, so no path that changes the project has
@@ -35,13 +48,10 @@ pub(crate) struct RecoveryKeeper {
     next_check: Instant,
     /// The fingerprint and origin of the project last handed over to be the
     /// copy; `None` while there should be no copy. The origin counts: a
-    /// rename has to reach the copy, or Reopen looks for a file that has gone.
+    /// rename has to reach the copy, or Restore looks for a file that has gone.
     copied: Option<(u64, Option<ProjectOrigin>)>,
-    /// The copy a crash left, waiting for the launch dialog's answer.
-    offer: Option<RecoveryCopy>,
-    /// Nothing touches the copy: an offer stands, or the project it became is
-    /// still loading (`410-crash-recovery.md` decision 14).
-    on_hold: bool,
+    /// Whether a crash's copy keeps the jobs back.
+    hold: Hold,
 }
 
 impl RecoveryKeeper {
@@ -61,8 +71,7 @@ impl RecoveryKeeper {
             write_failed,
             next_check: Instant::now(),
             copied: None,
-            on_hold: offer.is_some(),
-            offer,
+            hold: offer.map_or(Hold::Free, Hold::Offered),
         }
     }
 
@@ -81,7 +90,7 @@ impl RecoveryKeeper {
     /// handover, so an unchanged project isn't written twice while a write is
     /// on its way.
     fn check(&mut self, sequencer: &Sequencer, saved: &SavedProject) {
-        if self.jobs.is_none() || self.on_hold {
+        if self.jobs().is_none() {
             return;
         }
         let retry = self.write_failed.swap(false, Ordering::Relaxed);
@@ -108,21 +117,27 @@ impl RecoveryKeeper {
     }
 
     /// The copy on offer, taken to answer the launch dialog. The hold stays
-    /// until [`reopened`](Self::reopened) or [`discard`](Self::discard).
+    /// until [`restored`](Self::restored) or [`discard`](Self::discard).
     pub(super) fn take_offer(&mut self) -> Option<RecoveryCopy> {
-        self.offer.take()
+        match mem::replace(&mut self.hold, Hold::Restoring) {
+            Hold::Offered(copy) => Some(copy),
+            hold => {
+                self.hold = hold;
+                None
+            }
+        }
     }
 
     /// The offer was discarded: the copy goes, and the check takes over.
     pub(super) fn discard(&mut self) {
-        self.on_hold = false;
+        self.hold = Hold::Free;
         self.delete();
     }
 
-    /// The copy has been reopened as `sequencer`'s project: the check takes
+    /// The copy has been restored as `sequencer`'s project: the check takes
     /// over, with the copy on disk already this project.
-    pub(super) fn reopened(&mut self, sequencer: &Sequencer, saved: &SavedProject) {
-        self.on_hold = false;
+    pub(super) fn restored(&mut self, sequencer: &Sequencer, saved: &SavedProject) {
+        self.hold = Hold::Free;
         self.copied = Some((project::fingerprint(sequencer), saved.origin().cloned()));
     }
 
@@ -135,22 +150,28 @@ impl RecoveryKeeper {
 
     /// A clean quit: deletes the copy and waits for the `"recovery"` thread
     /// to finish, or a copy left behind would claim a crash on the next
-    /// launch (`410-crash-recovery.md` decision 13). All but a copy on hold:
-    /// a quit while Reopen loads its plugins sees only the startup project,
+    /// launch (`410-crash-recovery.md` decision 13). A copy on hold stays: a
+    /// quit while Restore loads its plugins sees only the startup project,
     /// with no changes to ask about, so the next launch offers the copy again.
     pub(crate) fn finish(&mut self) {
-        if !self.on_hold {
-            self.delete();
-        }
+        self.delete();
         self.jobs = None;
         if let Some(worker) = self.worker.take() {
             worker.join().ok();
         }
     }
 
-    /// Sends `job` to the `"recovery"` thread, if this instance has one.
+    /// Where jobs go: nowhere in an instance that can't keep the copy, or
+    /// while a hold stands.
+    fn jobs(&self) -> Option<&Sender<RecoveryJob>> {
+        self.jobs
+            .as_ref()
+            .filter(|_| matches!(self.hold, Hold::Free))
+    }
+
+    /// Sends `job` to the `"recovery"` thread, if it may have one.
     fn send(&self, job: RecoveryJob) {
-        if let Some(jobs) = &self.jobs {
+        if let Some(jobs) = self.jobs() {
             jobs.send(job).ok();
         }
     }
@@ -158,8 +179,7 @@ impl RecoveryKeeper {
     /// Puts `copy` on offer, as a launch after a crash does.
     #[cfg(test)]
     pub(super) fn offer(&mut self, copy: RecoveryCopy) {
-        self.offer = Some(copy);
-        self.on_hold = true;
+        self.hold = Hold::Offered(copy);
     }
 }
 
@@ -206,20 +226,24 @@ mod tests {
         h.open.recovery.check(&h.sequencer, &h.open.saved);
     }
 
+    /// Runs `cmd`.
+    fn run(h: &mut Harness, cmd: SequencerCommand) {
+        let mut record: Record<SequencerEdit> = Record::new();
+        run_command(h, &mut record, cmd);
+    }
+
     /// Asks to quit, past the prompt when `discard_changes`.
     fn quit(h: &mut Harness, discard_changes: bool) {
-        let mut record: Record<SequencerEdit> = Record::new();
         let cmd = SequencerCommand::ProjectAction {
             action: ProjectAction::Quit,
             discard_changes,
         };
-        run_command(h, &mut record, cmd);
+        run(h, cmd);
     }
 
     /// Answers the launch dialog.
-    fn answer(h: &mut Harness, reopen: bool) {
-        let mut record: Record<SequencerEdit> = Record::new();
-        run_command(h, &mut record, SequencerCommand::AnswerRecovery { reopen });
+    fn answer(h: &mut Harness, restore: bool) {
+        run(h, SequencerCommand::AnswerRecovery { restore });
     }
 
     /// Puts a copy of a project at 400,000 µs on offer, never saved, with a
@@ -278,10 +302,10 @@ mod tests {
         assert_eq!(jobs(&h), [Job::Write(300_000, None)]);
     }
 
-    /// Reopen brings the project back, says so once in the footer, and the
+    /// Restore brings the project back, says so once in the footer, and the
     /// copy stays as it is: it already holds this project.
     #[test]
-    fn reopen_brings_the_project_back_and_keeps_the_copy() {
+    fn restore_brings_the_project_back_and_keeps_the_copy() {
         let mut h = harness();
         offer(&mut h, false);
         answer(&mut h, true);
@@ -294,17 +318,17 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(lines, ["Reopened your unsaved new project"]);
+        assert_eq!(lines, ["Restored your unsaved new project"]);
 
         check(&mut h);
         assert_eq!(jobs(&h), []);
     }
 
-    /// With no baseline a reopened project counts as changed, untouched: a
+    /// With no baseline a restored project counts as changed, untouched: a
     /// quit asks, and nothing the check does removes the copy. A later change
     /// writes as usual.
     #[test]
-    fn a_reopened_project_counts_as_changed_until_it_is_saved() {
+    fn a_restored_project_counts_as_changed_until_it_is_saved() {
         let mut h = harness();
         offer(&mut h, false);
         answer(&mut h, true);
@@ -320,10 +344,10 @@ mod tests {
         assert!(!quit_prompts(&mut h));
     }
 
-    /// Going back to the state it reopened in still counts as changed: there
+    /// Going back to the state it was restored in still counts as changed: there
     /// is no baseline to land on, so the copy isn't deleted.
     #[test]
-    fn undoing_back_to_the_reopened_state_keeps_the_copy() {
+    fn undoing_back_to_the_restored_state_keeps_the_copy() {
         let mut h = harness();
         offer(&mut h, false);
         answer(&mut h, true);
@@ -337,25 +361,24 @@ mod tests {
         );
     }
 
-    /// Replacing a reopened project past the prompt leaves nothing to
+    /// Replacing a restored project past the prompt leaves nothing to
     /// recover, so the next check deletes the copy.
     #[test]
-    fn a_reopened_project_thrown_away_loses_the_copy() {
+    fn a_restored_project_thrown_away_loses_the_copy() {
         let mut h = harness();
         offer(&mut h, false);
         answer(&mut h, true);
-        let mut record: Record<SequencerEdit> = Record::new();
         let cmd = SequencerCommand::ProjectAction {
             action: ProjectAction::New,
             discard_changes: true,
         };
-        run_command(&mut h, &mut record, cmd);
+        run(&mut h, cmd);
         check(&mut h);
         assert_eq!(jobs(&h), [Job::Delete]);
     }
 
     /// With plugins the project waits on the view, and the hold stays until
-    /// it is in: only then does it count as reopened.
+    /// it is in: only then does it count as restored.
     #[test]
     fn the_hold_lasts_until_a_staged_project_is_applied() {
         let mut h = harness();
@@ -366,15 +389,14 @@ mod tests {
         check(&mut h);
         assert_eq!(jobs(&h), []);
 
-        let mut record: Record<SequencerEdit> = Record::new();
-        run_command(&mut h, &mut record, SequencerCommand::ApplyStagedProject);
+        run(&mut h, SequencerCommand::ApplyStagedProject);
         assert_eq!(h.sequencer.tempo_us(), 400_000);
         check(&mut h);
         assert_eq!(jobs(&h), []);
         assert!(quit_prompts(&mut h));
     }
 
-    /// A quit while Reopen loads its plugins sees the unchanged startup
+    /// A quit while Restore loads its plugins sees the unchanged startup
     /// project, so it doesn't prompt. It must not take the copy with it: the
     /// next launch offers it again.
     #[test]
@@ -383,6 +405,18 @@ mod tests {
         offer(&mut h, true);
         answer(&mut h, true);
         quit(&mut h, false);
+        assert_eq!(jobs(&h), []);
+    }
+
+    /// A save in the gap before a restored project is in leaves the copy:
+    /// the hold keeps every job back, not only the check's.
+    #[test]
+    fn a_save_during_the_restore_keeps_the_copy() {
+        let mut h = harness();
+        offer(&mut h, true);
+        answer(&mut h, true);
+        h.handlers
+            .project_saved(&h.sequencer, &mut h.open, None, "Song");
         assert_eq!(jobs(&h), []);
     }
 
@@ -402,11 +436,6 @@ mod tests {
         h.sequencer.set_tempo(400_000);
         check(h);
         jobs(h);
-    }
-
-    /// Runs `cmd`.
-    fn run(h: &mut Harness, cmd: SequencerCommand) {
-        run_command(h, &mut Record::new(), cmd);
     }
 
     /// The browser renaming the open project reaches the copy at the next
@@ -602,15 +631,7 @@ mod tests {
     #[test]
     fn a_quit_with_no_changes_deletes_too() {
         let mut h = harness();
-        let mut record: Record<SequencerEdit> = Record::new();
-        run_command(
-            &mut h,
-            &mut record,
-            SequencerCommand::ProjectAction {
-                action: ProjectAction::Quit,
-                discard_changes: false,
-            },
-        );
+        quit(&mut h, false);
         assert_eq!(jobs(&h), [Job::Delete]);
     }
 

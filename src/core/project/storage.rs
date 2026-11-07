@@ -40,9 +40,10 @@ const PROJECT_EXTENSION: &str = "stev";
 /// Added to a project file's name while it is being written.
 const TEMP_EXTENSION: &str = "tmp";
 
-/// The name a project copied into the library takes when its file name is no
-/// project name ([`project_name_from_input`]).
-const COPIED_PROJECT_FALLBACK_NAME: &str = "Untitled";
+/// What a project with no name of its own goes by: one never saved, and one
+/// copied into the library whose file name is no project name
+/// ([`project_name_from_input`]).
+pub(crate) const UNTITLED: &str = "Untitled";
 
 /// Where a project lives in the library, named as the browser names it: an
 /// entry in the recent list, the open project, what a recovery copy saves
@@ -310,7 +311,7 @@ fn project_in(path: &Path, root: &Path) -> Option<(Option<String>, String)> {
 /// Copies the project at `path`, from outside the library, into the projects
 /// root, and returns its name there. The file is read and parsed first, so
 /// one that won't load is never copied. Its name is the file's
-/// (or [`COPIED_PROJECT_FALLBACK_NAME`] when that is no project name), with
+/// (or [`UNTITLED`] when that is no project name), with
 /// `_2`, `_3`, … after it while the name is taken: nothing is overwritten.
 pub(crate) fn copy_project_in(path: &Path) -> Result<String, Box<dyn Error>> {
     copy_project_into(path, &project_dir())
@@ -323,7 +324,7 @@ fn copy_project_into(path: &Path, root: &Path) -> Result<String, Box<dyn Error>>
         .file_stem()
         .and_then(|stem| stem.to_str())
         .and_then(project_name_from_input)
-        .unwrap_or_else(|| COPIED_PROJECT_FALLBACK_NAME.to_owned());
+        .unwrap_or_else(|| UNTITLED.to_owned());
     let name = first_free_name(
         |n| n.map_or_else(|| stem.clone(), |n| format!("{stem}_{n}")),
         |name| stev_path(root, name).exists(),

@@ -302,7 +302,7 @@ fn main() {
             let offer = read_recovery_copy(&recovery_path()).unwrap_or_else(|e| {
                 warn!("Could not read the recovery copy: {e}");
                 event_handlers
-                    .send_status_ui_event(format!("Could not reopen your unsaved changes: {e}"));
+                    .send_status_ui_event(format!("Could not restore your unsaved changes: {e}"));
                 None
             });
             if let Some(copy) = &offer {

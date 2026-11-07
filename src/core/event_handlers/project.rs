@@ -199,7 +199,7 @@ impl EventHandlers {
     /// Applies the project in `open.staged`, if any — at once, or once the view
     /// has loaded its plugins (`open_read_project_workflow`). No
     /// unsaved-changes check: it ran before the project was read, and the
-    /// view takes no input while a staged one loads. A project reopened from
+    /// view takes no input while a staged one loads. A project restored from
     /// the recovery copy takes no baseline (`SavedProject::clear_baseline`),
     /// ends `recovery`'s hold on the copy and says so in the footer.
     pub(super) fn apply_staged_project_workflow(
@@ -228,12 +228,12 @@ impl EventHandlers {
         );
         if let Some(message) = recovered {
             open.saved.clear_baseline();
-            open.recovery.reopened(sequencer, &open.saved);
+            open.recovery.restored(sequencer, &open.saved);
             self.send_status_ui_event(message);
         }
     }
 
-    /// The launch dialog's answer: Reopen stages the recovery copy like any
+    /// The launch dialog's answer: Restore stages the recovery copy like any
     /// project read from disk, and the copy stays until the project is saved
     /// (`410-crash-recovery.md` decision 13); Discard deletes it.
     pub(super) fn answer_recovery_workflow(
@@ -241,10 +241,10 @@ impl EventHandlers {
         sequencer: &mut Sequencer,
         undo_record: &mut Record<SequencerEdit>,
         open: &mut OpenProject,
-        reopen: bool,
+        restore: bool,
     ) {
         match open.recovery.take_offer() {
-            Some(copy) if reopen => {
+            Some(copy) if restore => {
                 self.open_read_project_workflow(sequencer, undo_record, open, copy.into_staged());
             }
             Some(_) => open.recovery.discard(),
@@ -252,7 +252,8 @@ impl EventHandlers {
         }
     }
 
-    /// Runs `action` — unless `discard_changes` is false and the project
+    /// Runs `action` — unless it is Finder opening the project already open,
+    /// which does nothing, or `discard_changes` is false and the project
     /// changed since `saved`: then the view is asked to prompt
     /// (`UiEvent::UnsavedChanges`) and nothing else happens. A new project or
     /// a load becomes the new `saved`; quitting tells the view to close the
@@ -269,6 +270,16 @@ impl EventHandlers {
         action: &ProjectAction,
         discard_changes: bool,
     ) {
+        // As a macOS document does, the project already open stays as it is
+        // when Finder opens it again: no reload, so no prompt offering to
+        // throw away its changes. The browser's open still reloads it, a way
+        // to revert.
+        if let ProjectAction::OpenFile { path } = action
+            && let Some((folder, name)) = project::library_project(path)
+            && open.saved.origin() == Some(&ProjectOrigin::new(folder.as_deref(), &name))
+        {
+            return;
+        }
         if !discard_changes && open.saved.has_changes(sequencer) {
             self.ui_event_tx
                 .send(UiEvent::UnsavedChanges {
@@ -464,7 +475,7 @@ pub(crate) struct OpenProject {
 /// undoing back to the saved state count as no change.
 /// See `060-persistence.md` § Unsaved changes.
 pub(crate) struct SavedProject {
-    /// The saved project's fingerprint; `None` for a project reopened from
+    /// The saved project's fingerprint; `None` for a project restored from
     /// the crash recovery copy, which matches nothing until it is saved.
     fingerprint: Option<u64>,
     /// Where it is on disk; `None` for a project never saved (a new one, a
@@ -483,7 +494,7 @@ impl SavedProject {
         }
     }
 
-    /// Drops the baseline of a project just reopened from the recovery copy:
+    /// Drops the baseline of a project just restored from the recovery copy:
     /// it counts as changed until it is saved, so the quit prompt asks.
     /// Comparing with the file on disk wouldn't do: a copy that differs only
     /// in a plugin blob has the same fingerprint, and the next check would

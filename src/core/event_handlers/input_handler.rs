@@ -263,8 +263,8 @@ impl EventHandlers {
                 self.send_sequencer(SequencerCommand::ApplyStagedProject);
             }
 
-            InputEvent::AnswerRecovery { reopen } => {
-                self.send_sequencer(SequencerCommand::AnswerRecovery { reopen: *reopen });
+            InputEvent::AnswerRecovery { restore } => {
+                self.send_sequencer(SequencerCommand::AnswerRecovery { restore: *restore });
             }
 
             InputEvent::ProjectRenamed { old, new } => {

@@ -192,7 +192,6 @@ impl Display {
                     filename,
                     folder,
                 } => {
-                    self.reopening = false;
                     #[cfg(target_os = "macos")]
                     self.sync_instruments_to_tracks(&instruments);
                     #[cfg(not(target_os = "macos"))]

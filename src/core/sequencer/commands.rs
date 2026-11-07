@@ -591,8 +591,8 @@ pub(crate) enum SequencerCommand {
     /// The launch dialog's answer (`InputEvent::AnswerRecovery`): stage the
     /// crash recovery copy, or delete it. See `410-crash-recovery.md`.
     AnswerRecovery {
-        /// Reopen, not Discard.
-        reopen: bool,
+        /// Restore, not Discard.
+        restore: bool,
     },
     /// The browser renamed the project `old` on disk: if it is the open one,
     /// its origin follows, for the recovery copy and the agent bridge.

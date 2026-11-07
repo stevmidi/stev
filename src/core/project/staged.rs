@@ -17,7 +17,7 @@ pub(crate) struct StagedProject {
     /// the projects root; `None` opens it as a new project that was never
     /// saved (a template).
     pub(crate) file: Option<(Option<String>, String)>,
-    /// The footer line of a project reopened from the crash recovery copy;
+    /// The footer line of a project restored from the crash recovery copy;
     /// `None` for any other. Set, it takes no baseline to compare against
     /// (`410-crash-recovery.md` decision 11).
     pub(crate) recovered: Option<String>,

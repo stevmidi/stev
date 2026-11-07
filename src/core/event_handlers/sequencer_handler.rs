@@ -542,8 +542,8 @@ impl EventHandlers {
                 self.apply_staged_project_workflow(sequencer, undo_record, open);
             }
 
-            SequencerCommand::AnswerRecovery { reopen } => {
-                self.answer_recovery_workflow(sequencer, undo_record, open, *reopen);
+            SequencerCommand::AnswerRecovery { restore } => {
+                self.answer_recovery_workflow(sequencer, undo_record, open, *restore);
             }
 
             SequencerCommand::SaveProject { filename, folder } => {
@@ -705,9 +705,11 @@ mod tests {
     use uuid::Uuid;
 
     use crate::core::agent::{AgentReply, AgentRequest};
+    use crate::core::event_handlers::SavedProject;
     use crate::core::event_handlers::test_harness::{Harness, add_clip, harness, run_command};
     use crate::core::midi::message::Controller;
-    use crate::core::project::{ProjectAction, ProjectData};
+    use crate::core::paths::project_dir;
+    use crate::core::project::{ProjectAction, ProjectData, ProjectOrigin};
     use crate::core::sequencer::test_support::{param_at, rect, stub_instrument};
     use crate::core::sequencer::{SequencerCommand, SequencerEdit};
     use crate::core::time::Meter;
@@ -1120,6 +1122,30 @@ mod tests {
         );
         assert_eq!(h.sequencer.tracks().len(), tracks);
         assert!(record.can_undo());
+    }
+
+    /// Finder opening the project already open leaves it as it is, changes
+    /// and all: no prompt, no reload. Another project in the library still
+    /// prompts.
+    #[test]
+    fn opening_the_open_project_from_finder_does_nothing() {
+        let mut h = harness();
+        let mut record: Record<SequencerEdit> = Record::new();
+        let name = format!("stev-open-{}", std::process::id());
+        let origin = ProjectOrigin::new(None, &name);
+        h.open.saved = SavedProject::of(&h.sequencer, Some(origin));
+        h.sequencer.set_tempo(400_000);
+        let open = |name: &str| {
+            let path = project_dir().join(format!("{name}.stev"));
+            project_action(ProjectAction::OpenFile { path }, false)
+        };
+
+        run_command(&mut h, &mut record, open(&name));
+        assert_eq!(h.ui_events.try_iter().count(), 0);
+        assert_eq!(h.sequencer.tempo_us(), 400_000);
+
+        run_command(&mut h, &mut record, open(&format!("{name}-other")));
+        assert!(matches!(last_project_reply(&h), Some(Some(_))));
     }
 
     /// A project opened from Finder goes through the same check: a changed

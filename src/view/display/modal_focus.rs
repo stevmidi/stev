@@ -16,7 +16,8 @@ pub(crate) enum Overlay {
     Settings,
     /// A project load restoring its plugins, one per frame
     /// (`instrument_restore.rs`). Takes no input of its own: it swallows
-    /// every event until the last plugin is in, then closes itself.
+    /// every event until the last plugin is in, then closes itself. Restore
+    /// puts it up ahead of the staging, to hold that gap too.
     #[cfg(target_os = "macos")]
     RestoringInstruments,
 }

@@ -737,11 +737,11 @@ pub(crate) enum InputEvent {
     /// the sequencer applies it now, with no unsaved-changes check — that ran
     /// before it was staged. See `130-plugin-host.md` § Project persistence.
     ApplyStagedProject,
-    /// The launch dialog's answer: reopen the crash recovery copy, or discard
+    /// The launch dialog's answer: restore the crash recovery copy, or discard
     /// it. See `410-crash-recovery.md`.
     AnswerRecovery {
-        /// Reopen, not Discard.
-        reopen: bool,
+        /// Restore, not Discard.
+        restore: bool,
     },
     /// The browser renamed the project `old` on disk: the sequencer's record
     /// of the open project follows, if that is the one.
