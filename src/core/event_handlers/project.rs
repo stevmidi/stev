@@ -414,8 +414,9 @@ pub(crate) struct OpenProject {
     pub(crate) recovery: RecoveryKeeper,
     /// The way to the `"storage"` thread, for saves.
     pub(super) storage: Storage,
-    /// Saves handed to the `"storage"` thread, their outcomes still to come,
-    /// oldest first (`420-large-projects.md` decision 5).
+    /// Saves handed to the `"storage"` thread, a template's too, their
+    /// outcomes still to come, oldest first (`420-large-projects.md`
+    /// decision 5).
     pub(super) saving: VecDeque<PendingSave>,
     /// Project actions that came while a save was on its way, with their
     /// `discard_changes`, to run once the last outcome is in (decision 6).
@@ -447,30 +448,13 @@ impl OpenProject {
         }
     }
 
-    /// Whether a save is on its way to the disk.
+    /// Whether a save of the project is on its way to the disk. A
+    /// template's isn't counted: it changes neither `saved` nor the copy, so
+    /// nothing has to wait for it.
     pub(super) fn is_saving(&self) -> bool {
-        !self.saving.is_empty()
-    }
-
-    /// Follows a browser rename of the project `old` to `new`: the saved
-    /// project's origin, and any save's on its way.
-    pub(super) fn follow_rename(&mut self, old: &ProjectOrigin, new: &str) {
-        self.saved.follow_rename(old, new);
-        for pending in &mut self.saving {
-            if let PendingSave::Project { origin, .. } = pending {
-                origin.follow_rename(old, new);
-            }
-        }
-    }
-
-    /// Follows a browser rename of the project folder `old` to `new`.
-    pub(super) fn follow_folder_rename(&mut self, old: &str, new: &str) {
-        self.saved.follow_folder_rename(old, new);
-        for pending in &mut self.saving {
-            if let PendingSave::Project { origin, .. } = pending {
-                origin.follow_folder_rename(old, new);
-            }
-        }
+        self.saving
+            .iter()
+            .any(|pending| matches!(pending, PendingSave::Project { .. }))
     }
 
     /// A clean quit: the recovery copy deleted, and the `"storage"` thread

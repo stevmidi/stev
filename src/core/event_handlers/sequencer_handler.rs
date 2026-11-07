@@ -59,10 +59,10 @@ impl EventHandlers {
             // Done on disk already: the origin has to follow, whatever the
             // project is in the middle of.
             SequencerCommand::ProjectRenamed { old, new } => {
-                return open.follow_rename(old, new);
+                return open.saved.follow_rename(old, new);
             }
             SequencerCommand::ProjectFolderRenamed { old, new } => {
-                return open.follow_folder_rename(old, new);
+                return open.saved.follow_folder_rename(old, new);
             }
             // So is a save; the actions held behind it then run as if they
             // had just come (`420-large-projects.md` decision 6).

@@ -60,9 +60,13 @@ pub(crate) enum PendingSave {
         /// saved as, if the save succeeds (`420-large-projects.md`
         /// decision 5).
         fingerprint: u64,
-        /// Where it goes. Follows a browser rename made while it is on its
-        /// way.
+        /// Where it goes, as the job names it: a browser rename made while
+        /// it is on its way doesn't follow, since the file is written under
+        /// this name whatever the rename did, and that is the file the
+        /// project then counts as saved to.
         origin: ProjectOrigin,
+        /// Whether it deletes the recovery copy once its file is safe.
+        deletes_copy: bool,
     },
     /// The template of this name.
     Template(String),
@@ -95,14 +99,16 @@ impl EventHandlers {
         filename: &str,
     ) {
         let origin = ProjectOrigin::new(folder, filename);
+        let deletes_copy = open.recovery.deleted_by_save();
         let job = StorageJob::Save {
             snapshot: ProjectSnapshot::of(sequencer),
             target: SaveTarget::Project(origin.clone()),
-            delete_copy: open.recovery.deleted_by_save(),
+            delete_copy: deletes_copy,
         };
         let pending = PendingSave::Project {
             fingerprint: project::fingerprint(sequencer),
             origin,
+            deletes_copy,
         };
         self.hand_over(open, job, pending);
     }
@@ -161,8 +167,12 @@ impl EventHandlers {
                 if let PendingSave::Project {
                     fingerprint,
                     origin,
+                    deletes_copy,
                 } = pending
                 {
+                    if deletes_copy {
+                        open.recovery.copy_deleted();
+                    }
                     self.ui_event_tx
                         .send(UiEvent::ProjectSaved {
                             name: origin.name.clone(),
@@ -186,7 +196,7 @@ impl EventHandlers {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Instant;
+    use std::time::{Duration, Instant};
 
     use crate::core::event_handlers::test_harness::{
         Harness, harness, quit, run_once, save_as, statuses, written,
@@ -337,17 +347,13 @@ mod tests {
         assert!(ui(&h).prompted);
     }
 
-    /// A held action waits for every save on its way, not just the first,
-    /// a template's too.
+    /// A held action waits for every save on its way, not just the first.
     #[test]
     fn held_actions_wait_for_the_last_save() {
         let mut h = harness();
         h.sequencer.set_tempo(400_000);
         save_as(&mut h, "Song");
-        let template = SequencerCommand::SaveTemplate {
-            name: "Band".to_owned(),
-        };
-        run_once(&mut h, template);
+        save_as(&mut h, "Song");
         quit(&mut h, false);
         written(&mut h, None);
         assert!(!ui(&h).quit);
@@ -399,16 +405,58 @@ mod tests {
         );
     }
 
-    /// A browser rename of the file a save is writing reaches its origin.
+    /// A browser rename of the file a save is writing doesn't follow into
+    /// the save: the job writes under the old name, so that is the file the
+    /// project counts as saved to, and the renamed one keeps what it held.
     #[test]
-    fn a_rename_during_a_save_is_followed() {
+    fn a_rename_during_a_save_keeps_the_name_written() {
         let mut h = harness();
+        h.open.saved = SavedProject::saved_as(0, ProjectOrigin::new(None, "Song"));
         save_as(&mut h, "Song");
         let old = ProjectOrigin::new(None, "Song");
         let new = "Tune".to_owned();
         run_once(&mut h, SequencerCommand::ProjectRenamed { old, new });
-        written(&mut h, None);
         assert_eq!(h.open.saved.name(), Some("Tune"));
+        written(&mut h, None);
+        assert_eq!(h.open.saved.name(), Some("Song"));
+    }
+
+    /// A save that failed leaves the copy, and the keeper knows it: undoing
+    /// back to the saved state then deletes it, as without the save.
+    #[test]
+    fn a_failed_save_leaves_the_copy_to_the_check() {
+        let mut h = harness();
+        let tempo = h.sequencer.tempo_us();
+        h.sequencer.set_tempo(400_000);
+        h.open.tick(Instant::now(), &h.sequencer);
+        save_as(&mut h, "Song");
+        written(&mut h, Some("disk full"));
+        h.storage_jobs.try_iter().for_each(drop);
+        h.sequencer.set_tempo(tempo);
+        h.open.recovery.tick(
+            Instant::now() + Duration::from_secs(60),
+            &h.sequencer,
+            &h.open.saved,
+        );
+        assert!(
+            h.storage_jobs
+                .try_iter()
+                .any(|job| matches!(job, StorageJob::DeleteCopy))
+        );
+    }
+
+    /// A template's write holds nothing up: it changes neither `saved` nor
+    /// the copy, so a quit behind it goes ahead at once.
+    #[test]
+    fn a_template_holds_nothing_up() {
+        let mut h = harness();
+        let template = SequencerCommand::SaveTemplate {
+            name: "Band".to_owned(),
+        };
+        run_once(&mut h, template);
+        assert!(!h.open.is_saving());
+        quit(&mut h, false);
+        assert!(ui(&h).quit);
     }
 
     /// With the `"storage"` thread gone a save says so at once, and holds

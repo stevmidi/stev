@@ -169,17 +169,17 @@ impl RecoveryKeeper {
         self.send(StorageJob::DeleteCopy);
     }
 
-    /// A project save is being handed over, behind every job sent so far:
-    /// whether it is to delete the copy once its file is safe, as a project
-    /// saved has nothing to recover. Not while a crash's copy is on hold, nor
-    /// in an instance that keeps none. If it is, the copy counts as gone from
-    /// now: should the save fail, the next check writes it again.
-    pub(super) fn deleted_by_save(&mut self) -> bool {
-        let deletes = self.jobs().is_some();
-        if deletes {
-            self.copied = None;
-        }
-        deletes
+    /// Whether a project save handed over now is to delete the copy once
+    /// its file is safe, as a project saved has nothing to recover. Not while
+    /// a crash's copy is on hold, nor in an instance that keeps none.
+    pub(super) fn deleted_by_save(&self) -> bool {
+        self.jobs().is_some()
+    }
+
+    /// A save that was to delete the copy succeeded, so the copy is gone. A
+    /// failed one left it, and the check goes on from there.
+    pub(super) fn copy_deleted(&mut self) {
+        self.copied = None;
     }
 
     /// A clean quit: deletes the copy and lets go of the channel, so the

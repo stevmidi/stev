@@ -7,6 +7,7 @@
 
 use std::io;
 use std::iter;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -97,7 +98,14 @@ pub(crate) fn run_storage_jobs(
                     snapshot,
                     target,
                     delete_copy,
-                } => report(save(snapshot, &target, delete_copy, copy_path, &write)),
+                } => {
+                    // A save that panics still reports, or the actions held
+                    // behind it would wait for good.
+                    let saved = catch_unwind(AssertUnwindSafe(|| {
+                        save(snapshot, &target, delete_copy, copy_path, &write)
+                    }));
+                    report(saved.unwrap_or_else(|_| Err(WRITER_FAILED.to_owned())));
+                }
                 StorageJob::WriteCopy { snapshot, origin } => {
                     if let Err(e) = write_copy(copy_path, snapshot, origin) {
                         warn!("Could not write the recovery copy: {e}");
@@ -109,6 +117,9 @@ pub(crate) fn run_storage_jobs(
         }
     }
 }
+
+/// Why a save failed that panicked on the way.
+const WRITER_FAILED: &str = "the writer failed";
 
 /// Deletes the copy at `copy_path`, warning if that fails.
 fn remove_copy(copy_path: &Path) {
@@ -184,7 +195,8 @@ mod tests {
     }
 
     /// Runs `jobs` in order, as one batch, on the copy in `dir`, saving into
-    /// `dir` too (never the library), a name starting `fail` failing: whether
+    /// `dir` too (never the library), a name starting `fail` failing and one
+    /// starting `panic` panicking: whether
     /// a copy write failed, and the saves' outcomes.
     fn run(jobs: Vec<StorageJob>, dir: &Path) -> (bool, Vec<SaveOutcome>) {
         let (job_tx, job_rx) = unbounded();
@@ -200,6 +212,7 @@ mod tests {
             if name.starts_with("fail") {
                 return Err(io::Error::other("disk full"));
             }
+            assert!(!name.starts_with("panic"), "the write panicked");
             write_project_in(dir, data, name)
         };
         let write_failed = AtomicBool::new(false);
@@ -268,6 +281,17 @@ mod tests {
         let (_, outcomes) = run(jobs, &dir);
         assert_eq!(outcomes, [Ok(()), Err("disk full".to_owned())]);
         assert_eq!(saved(&dir, "One").tempo_us, 400_000);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A save that panics still reports, as a failure, and the jobs behind
+    /// it run: nothing waiting on its outcome waits for good.
+    #[test]
+    fn a_save_that_panics_still_reports() {
+        let dir = scratch_dir("writer-a_save_that_panics_still_reports");
+        let jobs = vec![save_as(400_000, "panic"), save_as(300_000, "Two")];
+        let (_, outcomes) = run(jobs, &dir);
+        assert_eq!(outcomes, [Err(WRITER_FAILED.to_owned()), Ok(())]);
         fs::remove_dir_all(dir).unwrap();
     }
 
