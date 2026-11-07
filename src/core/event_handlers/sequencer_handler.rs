@@ -1124,11 +1124,12 @@ mod tests {
         assert!(record.can_undo());
     }
 
-    /// Finder opening the project already open leaves it as it is, changes
-    /// and all: no prompt, no reload. Another project in the library still
-    /// prompts.
+    /// Finder opening the project already open leaves it as it is while it
+    /// has unsaved changes: no prompt, no reload. Another project in the
+    /// library still prompts, and with no changes the open project reloads
+    /// (here a file that isn't there, so the footer says so).
     #[test]
-    fn opening_the_open_project_from_finder_does_nothing() {
+    fn opening_the_open_project_from_finder_keeps_its_changes() {
         let mut h = harness();
         let mut record: Record<SequencerEdit> = Record::new();
         let name = format!("stev-open-{}", std::process::id());
@@ -1146,6 +1147,14 @@ mod tests {
 
         run_command(&mut h, &mut record, open(&format!("{name}-other")));
         assert!(matches!(last_project_reply(&h), Some(Some(_))));
+
+        h.open.saved = SavedProject::of(&h.sequencer, Some(ProjectOrigin::new(None, &name)));
+        run_command(&mut h, &mut record, open(&name));
+        let reloaded = h
+            .ui_events
+            .try_iter()
+            .any(|event| matches!(event, UiEvent::Status { message } if message.starts_with("Could not open")));
+        assert!(reloaded);
     }
 
     /// A project opened from Finder goes through the same check: a changed

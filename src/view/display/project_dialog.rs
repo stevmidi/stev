@@ -971,23 +971,34 @@ mod tests {
     /// and Esc is no answer: the question has no Cancel.
     #[test]
     fn the_recovery_question_has_to_be_answered() {
-        use DialogButton::{Discard, Restore};
         assert_eq!(
-            recovery_key(Key::ArrowLeft, Restore),
-            DialogKey::Select(Discard)
+            recovery_key(Key::ArrowLeft, DialogButton::Restore),
+            DialogKey::Select(DialogButton::Discard)
         );
         assert_eq!(
-            recovery_key(Key::ArrowLeft, Discard),
-            DialogKey::Select(Discard)
+            recovery_key(Key::ArrowLeft, DialogButton::Discard),
+            DialogKey::Select(DialogButton::Discard)
         );
         assert_eq!(
-            recovery_key(Key::ArrowRight, Discard),
-            DialogKey::Select(Restore)
+            recovery_key(Key::ArrowRight, DialogButton::Discard),
+            DialogKey::Select(DialogButton::Restore)
         );
-        assert_eq!(recovery_key(Key::Enter, Restore), DialogKey::Confirm);
-        assert_eq!(recovery_key(Key::Enter, Discard), DialogKey::Discard);
-        assert_eq!(recovery_key(Key::Escape, Restore), DialogKey::Swallow);
-        assert_eq!(recovery_key(Key::D, Restore), DialogKey::Swallow);
+        assert_eq!(
+            recovery_key(Key::Enter, DialogButton::Restore),
+            DialogKey::Confirm
+        );
+        assert_eq!(
+            recovery_key(Key::Enter, DialogButton::Discard),
+            DialogKey::Discard
+        );
+        assert_eq!(
+            recovery_key(Key::Escape, DialogButton::Restore),
+            DialogKey::Swallow
+        );
+        assert_eq!(
+            recovery_key(Key::D, DialogButton::Restore),
+            DialogKey::Swallow
+        );
     }
 
     /// A Save As over the root and folders `a`, `b`, `c`, starting at `idx`.
@@ -1348,14 +1359,18 @@ mod tests {
     /// ←/→ step through the buttons left to right and stop at either end.
     #[test]
     fn arrows_step_the_selection_without_wrapping() {
-        use DialogButton::{Cancel, DontSave, Save};
+        let (cancel, dont_save, save) = (
+            DialogButton::Cancel,
+            DialogButton::DontSave,
+            DialogButton::Save,
+        );
         for (key, from, to) in [
-            (Key::ArrowLeft, Save, DontSave),
-            (Key::ArrowLeft, DontSave, Cancel),
-            (Key::ArrowLeft, Cancel, Cancel),
-            (Key::ArrowRight, Cancel, DontSave),
-            (Key::ArrowRight, DontSave, Save),
-            (Key::ArrowRight, Save, Save),
+            (Key::ArrowLeft, save, dont_save),
+            (Key::ArrowLeft, dont_save, cancel),
+            (Key::ArrowLeft, cancel, cancel),
+            (Key::ArrowRight, cancel, dont_save),
+            (Key::ArrowRight, dont_save, save),
+            (Key::ArrowRight, save, save),
         ] {
             assert_eq!(unsaved_key(key, from), DialogKey::Select(to));
         }

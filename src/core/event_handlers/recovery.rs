@@ -100,13 +100,18 @@ impl RecoveryKeeper {
                 self.delete();
             }
         } else if retry || !self.is_copied(fingerprint, saved.origin()) {
-            let origin = saved.origin().cloned();
-            self.copied = Some((fingerprint, origin.clone()));
-            self.send(RecoveryJob::Write {
-                snapshot: ProjectSnapshot::of(sequencer),
-                origin,
-            });
+            self.write(sequencer, saved, fingerprint);
         }
+    }
+
+    /// Hands `sequencer`'s project, with `fingerprint`, over to be the copy.
+    fn write(&mut self, sequencer: &Sequencer, saved: &SavedProject, fingerprint: u64) {
+        let origin = saved.origin().cloned();
+        self.copied = Some((fingerprint, origin.clone()));
+        self.send(RecoveryJob::Write {
+            snapshot: ProjectSnapshot::of(sequencer),
+            origin,
+        });
     }
 
     /// Whether the last copy handed over is of this project, from `origin`.
@@ -119,12 +124,12 @@ impl RecoveryKeeper {
     /// The copy on offer, taken to answer the launch dialog. The hold stays
     /// until [`restored`](Self::restored) or [`discard`](Self::discard).
     pub(super) fn take_offer(&mut self) -> Option<RecoveryCopy> {
+        if !matches!(self.hold, Hold::Offered(_)) {
+            return None;
+        }
         match mem::replace(&mut self.hold, Hold::Restoring) {
             Hold::Offered(copy) => Some(copy),
-            hold => {
-                self.hold = hold;
-                None
-            }
+            _ => None,
         }
     }
 
@@ -135,10 +140,13 @@ impl RecoveryKeeper {
     }
 
     /// The copy has been restored as `sequencer`'s project: the check takes
-    /// over, with the copy on disk already this project.
+    /// over, and the copy is written again at once. Its project is the same,
+    /// but its origin may not be: one whose file has gone comes back
+    /// untitled, and a copy left naming that file would attach to whatever
+    /// takes the name next.
     pub(super) fn restored(&mut self, sequencer: &Sequencer, saved: &SavedProject) {
         self.hold = Hold::Free;
-        self.copied = Some((project::fingerprint(sequencer), saved.origin().cloned()));
+        self.write(sequencer, saved, project::fingerprint(sequencer));
     }
 
     /// Deletes the copy, after any write already queued: the project was
@@ -249,6 +257,11 @@ mod tests {
     /// Puts a copy of a project at 400,000 µs on offer, never saved, with a
     /// plugin on its first track when `plugin`.
     fn offer(h: &mut Harness, plugin: bool) {
+        offer_from(h, None, plugin);
+    }
+
+    /// [`offer`], of a project from `origin`.
+    fn offer_from(h: &mut Harness, origin: Option<ProjectOrigin>, plugin: bool) {
         let mut project = ProjectData {
             tempo_us: 400_000,
             ..ProjectData::default()
@@ -261,7 +274,7 @@ mod tests {
                 state: String::new(),
             };
         }
-        h.open.recovery.offer(RecoveryCopy::new(None, project));
+        h.open.recovery.offer(RecoveryCopy::new(origin, project));
     }
 
     /// Whether a quit now prompts, its prompt being all it does.
@@ -302,8 +315,9 @@ mod tests {
         assert_eq!(jobs(&h), [Job::Write(300_000, None)]);
     }
 
-    /// Restore brings the project back, says so once in the footer, and the
-    /// copy stays as it is: it already holds this project.
+    /// Restore brings the project back, says so once in the footer, and
+    /// writes the copy again at once, from where it now comes from; the
+    /// check then has nothing to add.
     #[test]
     fn restore_brings_the_project_back_and_keeps_the_copy() {
         let mut h = harness();
@@ -319,9 +333,23 @@ mod tests {
             })
             .collect();
         assert_eq!(lines, ["Restored your unsaved new project"]);
+        assert_eq!(jobs(&h), [Job::Write(400_000, None)]);
 
         check(&mut h);
         assert_eq!(jobs(&h), []);
+    }
+
+    /// A project whose file has gone comes back untitled, and the copy is
+    /// rewritten untitled too: left naming the old file, it would attach to
+    /// a new project of that name after the next crash.
+    #[test]
+    fn a_project_whose_file_has_gone_rewrites_the_copy_untitled() {
+        let mut h = harness();
+        let gone = format!("stev-gone-{}", std::process::id());
+        offer_from(&mut h, Some(ProjectOrigin::new(None, &gone)), false);
+        answer(&mut h, true);
+        assert_eq!(h.open.saved.name(), None);
+        assert_eq!(jobs(&h), [Job::Write(400_000, None)]);
     }
 
     /// With no baseline a restored project counts as changed, untouched: a
@@ -332,6 +360,7 @@ mod tests {
         let mut h = harness();
         offer(&mut h, false);
         answer(&mut h, true);
+        jobs(&h);
         assert!(quit_prompts(&mut h));
 
         h.sequencer.set_tempo(300_000);
@@ -351,6 +380,7 @@ mod tests {
         let mut h = harness();
         offer(&mut h, false);
         answer(&mut h, true);
+        jobs(&h);
         h.sequencer.set_tempo(300_000);
         check(&mut h);
         h.sequencer.set_tempo(400_000);
@@ -368,6 +398,7 @@ mod tests {
         let mut h = harness();
         offer(&mut h, false);
         answer(&mut h, true);
+        jobs(&h);
         let cmd = SequencerCommand::ProjectAction {
             action: ProjectAction::New,
             discard_changes: true,
@@ -391,6 +422,7 @@ mod tests {
 
         run(&mut h, SequencerCommand::ApplyStagedProject);
         assert_eq!(h.sequencer.tempo_us(), 400_000);
+        assert_eq!(jobs(&h), [Job::Write(400_000, None)]);
         check(&mut h);
         assert_eq!(jobs(&h), []);
         assert!(quit_prompts(&mut h));
@@ -426,6 +458,7 @@ mod tests {
         let mut h = harness();
         offer(&mut h, false);
         answer(&mut h, true);
+        jobs(&h);
         answer(&mut h, false);
         assert_eq!(jobs(&h), []);
     }

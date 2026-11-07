@@ -26,7 +26,7 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ### Changed
 
-- Double-clicking the project that's already open in Finder leaves it as it is, unsaved changes and all, instead of asking to save before reopening it from disk.
+- Double-clicking the project that's already open in Finder, with unsaved changes, leaves it as it is instead of asking to save before reopening it from disk.
 - Keys work from a plugin editor the way they do in a DAW: the plugin gets a key first, and what it doesn't use comes to Stev, so `/` captures and every other command works without clicking back. `⌘S`, `⇧⌘S` and `⌘N` always go to Stev. A plugin's text field keeps what's typed into it, now including Space, `0` and `v`.
 - On a VST3 track, a live key and a clip note of the same pitch now double up where the plugin allows it, as in a DAW: neither cuts the other.
 - CLAP plugins that accept native note events (Surge XT, Repro-5 and Repro-1 among them) now get them, with note ids, so clip and live notes of the same pitch can stay apart there too. Plugins that only take MIDI, such as Vital and the TAL synths, are unchanged.

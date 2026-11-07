@@ -252,8 +252,8 @@ impl EventHandlers {
         }
     }
 
-    /// Runs `action` — unless it is Finder opening the project already open,
-    /// which does nothing, or `discard_changes` is false and the project
+    /// Runs `action` — unless it is Finder opening the project already open
+    /// with unsaved changes, which does nothing, or `discard_changes` is false and the project
     /// changed since `saved`: then the view is asked to prompt
     /// (`UiEvent::UnsavedChanges`) and nothing else happens. A new project or
     /// a load becomes the new `saved`; quitting tells the view to close the
@@ -270,13 +270,15 @@ impl EventHandlers {
         action: &ProjectAction,
         discard_changes: bool,
     ) {
-        // As a macOS document does, the project already open stays as it is
-        // when Finder opens it again: no reload, so no prompt offering to
-        // throw away its changes. The browser's open still reloads it, a way
-        // to revert.
+        // As a macOS document does, the project already open with unsaved
+        // changes stays as it is when Finder opens it again: no reload, so no
+        // prompt offering to throw them away. With none it reloads, which
+        // picks up a file changed on disk. The browser's open always reloads,
+        // a way to revert.
         if let ProjectAction::OpenFile { path } = action
             && let Some((folder, name)) = project::library_project(path)
             && open.saved.origin() == Some(&ProjectOrigin::new(folder.as_deref(), &name))
+            && open.saved.has_changes(sequencer)
         {
             return;
         }
