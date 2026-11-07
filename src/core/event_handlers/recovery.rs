@@ -92,20 +92,21 @@ impl RecoveryKeeper {
     /// Brings the copy in line with the project: gone if the project has no
     /// changes, rewritten if it changed since the last copy, a plugin's state
     /// was captured, the last write failed or its origin moved. A capture
-    /// alone never makes a copy: a project with no changes has none. The fingerprint is recorded at the
-    /// handover, so an unchanged project isn't written twice while a write is
-    /// on its way.
+    /// alone never makes a copy: a project with no changes has none. The
+    /// fingerprint is recorded at the handover, so an unchanged project isn't
+    /// written twice while a write is on its way.
     fn check(&mut self, sequencer: &Sequencer, saved: &SavedProject) {
         if self.jobs().is_none() {
             return;
         }
-        let retry = self.write_failed.swap(false, Ordering::Relaxed);
+        let rewrite =
+            self.write_failed.swap(false, Ordering::Relaxed) | mem::take(&mut self.captured);
         let fingerprint = project::fingerprint(sequencer);
         if saved.is_fingerprint(fingerprint) {
             if self.copied.is_some() {
                 self.delete();
             }
-        } else if retry || self.captured || !self.is_copied(fingerprint, saved.origin()) {
+        } else if rewrite || !self.is_copied(fingerprint, saved.origin()) {
             self.write(sequencer, saved, fingerprint);
         }
     }
@@ -114,7 +115,6 @@ impl RecoveryKeeper {
     fn write(&mut self, sequencer: &Sequencer, saved: &SavedProject, fingerprint: u64) {
         let origin = saved.origin().cloned();
         self.copied = Some((fingerprint, origin.clone()));
-        self.captured = false;
         self.send(RecoveryJob::Write {
             snapshot: ProjectSnapshot::of(sequencer),
             origin,
@@ -477,18 +477,17 @@ mod tests {
         assert_eq!(jobs(&h), []);
     }
 
-    /// A project with an origin and a change handed over as the copy.
-    fn copied_project(h: &mut Harness, origin: &ProjectOrigin) {
-        h.open.saved = SavedProject::of(&h.sequencer, Some(origin.clone()));
+    /// A project from `origin` with a change, handed over as the copy.
+    fn copied_project(h: &mut Harness, origin: Option<&ProjectOrigin>) {
+        h.open.saved = SavedProject::of(&h.sequencer, origin.cloned());
         h.sequencer.set_tempo(400_000);
         check(h);
         jobs(h);
     }
 
-    /// A saved project with a plugin on its first track, its state `[1]`.
-    fn saved_with_plugin(h: &mut Harness) {
+    /// A plugin on the first track, its state `[1]`.
+    fn add_plugin(h: &mut Harness) {
         h.sequencer.tracks_mut()[0].set_output(stub_instrument(vec![1]));
-        h.open.saved = SavedProject::of(&h.sequencer, None);
     }
 
     /// The view captures the first track's plugin state as `state`.
@@ -503,16 +502,12 @@ mod tests {
     #[test]
     fn a_captured_state_rewrites_the_copy() {
         let mut h = harness();
-        saved_with_plugin(&mut h);
-        h.sequencer.set_tempo(400_000);
-        check(&mut h);
+        add_plugin(&mut h);
+        copied_project(&mut h, None);
         capture(&mut h, vec![2]);
         check(&mut h);
         check(&mut h);
-        assert_eq!(
-            jobs(&h),
-            [Job::Write(400_000, None), Job::Write(400_000, None)]
-        );
+        assert_eq!(jobs(&h), [Job::Write(400_000, None)]);
     }
 
     /// A capture that brings back the state the project already holds
@@ -520,10 +515,8 @@ mod tests {
     #[test]
     fn an_unchanged_state_rewrites_nothing() {
         let mut h = harness();
-        saved_with_plugin(&mut h);
-        h.sequencer.set_tempo(400_000);
-        check(&mut h);
-        jobs(&h);
+        add_plugin(&mut h);
+        copied_project(&mut h, None);
         capture(&mut h, vec![1]);
         check(&mut h);
         assert_eq!(jobs(&h), []);
@@ -534,7 +527,8 @@ mod tests {
     #[test]
     fn a_capture_alone_makes_no_copy() {
         let mut h = harness();
-        saved_with_plugin(&mut h);
+        add_plugin(&mut h);
+        h.open.saved = SavedProject::of(&h.sequencer, None);
         capture(&mut h, vec![2]);
         check(&mut h);
         assert_eq!(jobs(&h), []);
@@ -551,7 +545,7 @@ mod tests {
     fn a_renamed_project_rewrites_the_copy() {
         let mut h = harness();
         let old = ProjectOrigin::new(Some("Songs"), "Song");
-        copied_project(&mut h, &old);
+        copied_project(&mut h, Some(&old));
         let new = "Tune".to_owned();
         run(&mut h, SequencerCommand::ProjectRenamed { old, new });
         assert_eq!(h.open.saved.name(), Some("Tune"));
@@ -565,7 +559,7 @@ mod tests {
     #[test]
     fn a_renamed_folder_rewrites_the_copy() {
         let mut h = harness();
-        copied_project(&mut h, &ProjectOrigin::new(Some("Songs"), "Song"));
+        copied_project(&mut h, Some(&ProjectOrigin::new(Some("Songs"), "Song")));
         let (old, new) = ("Songs".to_owned(), "Album".to_owned());
         run(&mut h, SequencerCommand::ProjectFolderRenamed { old, new });
         check(&mut h);
@@ -578,7 +572,7 @@ mod tests {
     #[test]
     fn a_rename_of_another_project_changes_nothing() {
         let mut h = harness();
-        copied_project(&mut h, &ProjectOrigin::new(Some("Songs"), "Song"));
+        copied_project(&mut h, Some(&ProjectOrigin::new(Some("Songs"), "Song")));
         let old = ProjectOrigin::new(Some("Other"), "Song");
         let new = "Tune".to_owned();
         run(&mut h, SequencerCommand::ProjectRenamed { old, new });

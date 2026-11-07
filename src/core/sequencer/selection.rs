@@ -71,7 +71,7 @@ impl Sequencer {
     /// Returns whether the stored blob changed, for the crash recovery copy
     /// (`410-crash-recovery.md` decision 7). macOS plugin host — see
     /// `130-plugin-host.md`.
-    pub(crate) fn set_slot_instrument_state(&mut self, slot: usize, state: Vec<u8>) -> bool {
+    pub(crate) fn set_slot_instrument_state(&mut self, slot: usize, state: &[u8]) -> bool {
         match self
             .tracks
             .iter_mut()
@@ -79,7 +79,7 @@ impl Sequencer {
             .map(|t| t.output_mut())
         {
             Some(TrackOutput::Instrument(r)) if r.state != state => {
-                r.state = state;
+                r.state = state.to_vec();
                 true
             }
             _ => false,

@@ -274,8 +274,11 @@ impl InstrumentEditor for Vst3Editor {
         }
     }
 
+    /// The window lives from `show` to `teardown_gui`, so it stands for the
+    /// editor being open, whether or not it is on screen: hiding Stev (⌘H)
+    /// takes it off screen without closing it, as with CLAP.
     fn is_open(&self) -> bool {
-        self.window.as_ref().is_some_and(|w| w.is_visible())
+        self.window.is_some()
     }
 
     fn teardown_gui(&mut self) {

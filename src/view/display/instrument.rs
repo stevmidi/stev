@@ -250,8 +250,7 @@ impl Display {
             ctx.request_repaint_after(interval);
         }
         // A sound changed in an editor reaches the recovery copy when the
-        // editor closes. A VST3 editor also goes off screen when Stev is
-        // hidden (⌘H), which counts as a close here: one capture too many.
+        // editor closes.
         for slot in closed {
             self.capture_slot_instrument_state(slot);
         }
@@ -563,11 +562,10 @@ impl Display {
         entry: PluginCatalogEntry,
     ) {
         editor.take_parameter_gestures();
-        let editor_was_open = editor.is_open();
         self.instruments.track_instruments[slot] = Some(TrackInstrument {
             editor,
             entry,
-            editor_was_open,
+            editor_was_open: false,
         });
     }
 

@@ -636,7 +636,7 @@ impl EventHandlers {
             }
 
             SequencerCommand::SetTrackInstrumentState { slot, state } => {
-                if sequencer.set_slot_instrument_state(*slot, state.clone()) {
+                if sequencer.set_slot_instrument_state(*slot, state) {
                     open.recovery.state_captured();
                 }
             }
