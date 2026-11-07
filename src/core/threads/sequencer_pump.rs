@@ -23,7 +23,9 @@ use std::thread::{self, JoinHandle};
 use std::time::Instant;
 
 use crate::core::clock::ClockTick;
-use crate::core::event_handlers::{EventHandlers, OpenProject, RecoveryKeeper, SavedProject};
+use crate::core::event_handlers::{
+    EventHandlers, OpenProject, RecoveryKeeper, SavedProject, Storage,
+};
 use crate::core::metronome::Metronome;
 use crate::core::midi::input::RecordedMidi;
 use crate::core::project::ProjectData;
@@ -49,6 +51,7 @@ pub(crate) fn start_sequencer_thread(
     sequencer_command_rx: Receiver<SequencerCommand>,
     transport_command_rx: Receiver<TransportCommand>,
     recovery: RecoveryKeeper,
+    storage: Storage,
 ) -> JoinHandle<()> {
     thread::Builder::new()
         .name("sequencer".to_string())
@@ -63,11 +66,7 @@ pub(crate) fn start_sequencer_thread(
             let mut tap_tempo = TapTempo::default();
             // The empty startup project counts as saved: quitting before
             // touching anything asks nothing.
-            let mut open = OpenProject {
-                saved: SavedProject::of(&sequencer, None),
-                staged: None,
-                recovery,
-            };
+            let mut open = OpenProject::new(SavedProject::of(&sequencer, None), recovery, storage);
             let mut probe = TickProbe::new();
 
             loop {
@@ -113,7 +112,7 @@ pub(crate) fn start_sequencer_thread(
                             metronome.on_tick(tick.at, click_tick, sequencer.meter(), running);
                             probe.tick_handled(tick.at);
                         }
-                        open.recovery.tick(at, &sequencer, &open.saved);
+                        open.tick(at, &sequencer);
                         probe.arm_done("tick", started);
                     }
 

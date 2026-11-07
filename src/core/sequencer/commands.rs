@@ -8,7 +8,7 @@ use uuid::Uuid;
 use crate::core::agent::{AgentReply, AgentRequest};
 use crate::core::input_event::TimeSelectionRect;
 use crate::core::midi::message::Controller;
-use crate::core::project::{ProjectAction, ProjectOrigin};
+use crate::core::project::{ProjectAction, ProjectOrigin, SaveOutcome};
 use crate::core::sequencer::{AudioExportOutcome, TempoGesture};
 use crate::core::time::Meter;
 use crate::core::view_state::Pane;
@@ -611,22 +611,30 @@ pub(crate) enum SequencerCommand {
         /// Its new name.
         new: String,
     },
-    /// Write the current project to `folder/filename.stev` and say so in the
-    /// footer (`UiEvent::Status`) — the save or why it failed.
+    /// Hand the current project to the `"storage"` thread to be written to
+    /// `folder/filename.stev`; its outcome comes back as
+    /// [`ProjectWritten`](Self::ProjectWritten). See `420-large-projects.md`.
     SaveProject {
         /// Project file name, without extension.
         filename: String,
         /// `None` means the root fallback — no project folder selected yet.
         folder: Option<String>,
     },
-    /// Write the current project as the template `name` in the templates
-    /// folder (`ProjectData::into_template`), replacing one of that name,
-    /// and say so in the footer. The open project keeps its name, its file
-    /// and its unsaved state. See `archive/340-templates.md`.
+    /// Hand the current project to the `"storage"` thread to be written as
+    /// the template `name` in the templates folder
+    /// (`ProjectData::into_template`), replacing one of that name. The open
+    /// project keeps its name, its file and its unsaved state. See
+    /// `archive/340-templates.md`.
     SaveTemplate {
         /// Template file name, without extension.
         name: String,
     },
+    /// From the `"storage"` thread: how a save or a template went. Says so in
+    /// the footer; a project saved counts as saved as it was when handed
+    /// over, and the project actions held behind the save then run
+    /// (`420-large-projects.md` decisions 5 and 6). Goes ahead of every hold,
+    /// as it is done on disk already.
+    ProjectWritten(SaveOutcome),
     /// Write the lead clip to a `.mid` in `folder`, named after the project
     /// (`Sequencer::export_lead_clip`, `storage::save_clip_export`). Says how
     /// it went in the footer (`UiEvent::Status`), refusals included.

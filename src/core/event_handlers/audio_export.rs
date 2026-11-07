@@ -304,20 +304,10 @@ mod tests {
     use crate::core::sequencer::{AudioExportPlan, StemPlan};
     use crate::core::time::Meter;
 
-    use super::super::test_harness::{Harness, harness, run_command};
+    use super::super::test_harness::{Harness, harness, run_command, statuses};
     use super::*;
 
     const BAR: i32 = Meter::FOUR_FOUR.bars_to_ticks(1);
-
-    fn statuses(h: &Harness) -> Vec<String> {
-        h.ui_events
-            .try_iter()
-            .filter_map(|event| match event {
-                UiEvent::Status { message } => Some(message),
-                _ => None,
-            })
-            .collect()
-    }
 
     fn plan(stems: &[(usize, &str)], left_out: Vec<usize>) -> AudioExportPlan {
         AudioExportPlan {

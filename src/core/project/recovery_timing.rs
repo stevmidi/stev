@@ -9,7 +9,7 @@
 //! with [`EVENT_COUNTS`] events and [`BLOB_MEGABYTES`] of plugin state in
 //! total. The check is the
 //! [`fingerprint`] and the snapshot is [`ProjectSnapshot::of`], the two that
-//! run on the `"sequencer"` thread. The write adds what the `"recovery"`
+//! run on the `"sequencer"` thread. The write adds what the `"storage"`
 //! thread does: the encoding, the JSON and `replace_file`.
 //!
 //! The rounds run back to back, so the caches are warm and no audio is

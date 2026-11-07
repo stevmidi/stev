@@ -59,10 +59,22 @@ impl EventHandlers {
             // Done on disk already: the origin has to follow, whatever the
             // project is in the middle of.
             SequencerCommand::ProjectRenamed { old, new } => {
-                return open.saved.follow_rename(old, new);
+                return open.follow_rename(old, new);
             }
             SequencerCommand::ProjectFolderRenamed { old, new } => {
-                return open.saved.follow_folder_rename(old, new);
+                return open.follow_folder_rename(old, new);
+            }
+            // So is a save; the actions held behind it then run as if they
+            // had just come (`420-large-projects.md` decision 6).
+            SequencerCommand::ProjectWritten(outcome) => {
+                for (action, discard_changes) in self.project_written_workflow(open, outcome) {
+                    let cmd = SequencerCommand::ProjectAction {
+                        action,
+                        discard_changes,
+                    };
+                    self.handle_sequencer_command(&cmd, sequencer, undo_record, tap_tempo, open);
+                }
+                return;
             }
             _ => {}
         }
@@ -551,7 +563,7 @@ impl EventHandlers {
             }
 
             SequencerCommand::SaveTemplate { name } => {
-                self.save_template_workflow(sequencer, name);
+                self.save_template_workflow(sequencer, open, name);
             }
 
             SequencerCommand::ExportClip { time_bounds, name } => {
@@ -609,6 +621,7 @@ impl EventHandlers {
             | SequencerCommand::SetModalOpen(_)
             | SequencerCommand::ProjectRenamed { .. }
             | SequencerCommand::ProjectFolderRenamed { .. }
+            | SequencerCommand::ProjectWritten(_)
             | SequencerCommand::Agent { .. } => {}
 
             SequencerCommand::SetTrackOutput { track, output } => {

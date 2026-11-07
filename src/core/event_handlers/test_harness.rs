@@ -14,7 +14,7 @@ use rtrb::RingBuffer;
 use undo::Record;
 use uuid::Uuid;
 
-use crate::core::project::RecoveryJob;
+use crate::core::project::{ProjectAction, StorageJob};
 use crate::core::sequencer::test_support::{clip_at, note_off, note_on};
 use crate::core::sequencer::{Sequencer, SequencerCommand, SequencerEdit};
 use crate::core::shared_atomics::{AudioExportAtomics, TrackMixAtomics};
@@ -22,7 +22,7 @@ use crate::core::time::{Meter, TapTempo};
 use crate::core::transport::TransportCommand;
 use crate::view::display::UiEvent;
 
-use super::{EventHandlers, OpenProject, RecoveryKeeper, SavedProject};
+use super::{EventHandlers, OpenProject, RecoveryKeeper, SavedProject, Storage};
 
 /// The handlers plus what a test inspects or sets up: the `UiEvent` and
 /// transport-command streams they send, the published selection mirror, and
@@ -53,11 +53,11 @@ pub(crate) struct Harness {
     /// A sequencer with track 0 selected.
     pub(crate) sequencer: Sequencer,
     /// The project as a file: as last saved or loaded (the sequencer's empty
-    /// one to start with), and the crash recovery check, with no `"recovery"`
+    /// one to start with), and the crash recovery check, with no `"storage"`
     /// thread behind it.
     pub(crate) open: OpenProject,
-    /// Everything `open.recovery` sent, in order.
-    pub(crate) recovery_jobs: Receiver<RecoveryJob>,
+    /// Everything `open.recovery` sent to the `"storage"` thread, in order.
+    pub(crate) storage_jobs: Receiver<StorageJob>,
     /// The flag a failed write sets, for a test to set.
     pub(crate) recovery_write_failed: Arc<AtomicBool>,
 }
@@ -111,14 +111,14 @@ pub(crate) fn harness() -> Harness {
     sequencer.select_track(Some(track_id));
 
     let saved = SavedProject::of(&sequencer, None);
-    let (recovery_job_tx, recovery_jobs) = unbounded();
+    let (storage_job_tx, storage_jobs) = unbounded();
     let recovery_write_failed = Arc::new(AtomicBool::new(false));
     let recovery = RecoveryKeeper::new(
-        Some(recovery_job_tx),
-        None,
+        Some(storage_job_tx.clone()),
         recovery_write_failed.clone(),
         None,
     );
+    let storage = Storage::new(storage_job_tx, None);
     Harness {
         handlers,
         ui_events,
@@ -131,12 +131,8 @@ pub(crate) fn harness() -> Harness {
         running,
         region,
         sequencer,
-        open: OpenProject {
-            saved,
-            staged: None,
-            recovery,
-        },
-        recovery_jobs,
+        open: OpenProject::new(saved, recovery, storage),
+        storage_jobs,
         recovery_write_failed,
     }
 }
@@ -168,4 +164,48 @@ pub(crate) fn run_command(
         &mut TapTempo::default(),
         &mut h.open,
     );
+}
+
+/// Runs `cmd` with an undo record of its own.
+pub(crate) fn run_once(h: &mut Harness, cmd: SequencerCommand) {
+    let mut record: Record<SequencerEdit> = Record::new();
+    run_command(h, &mut record, cmd);
+}
+
+/// Asks to quit, past the prompt when `discard_changes`.
+pub(crate) fn quit(h: &mut Harness, discard_changes: bool) {
+    let cmd = SequencerCommand::ProjectAction {
+        action: ProjectAction::Quit,
+        discard_changes,
+    };
+    run_once(h, cmd);
+}
+
+/// Saves as `name` at the projects root: the handover alone, the outcome
+/// still to come ([`written`]).
+pub(crate) fn save_as(h: &mut Harness, name: &str) {
+    let cmd = SequencerCommand::SaveProject {
+        filename: name.to_owned(),
+        folder: None,
+    };
+    run_once(h, cmd);
+}
+
+/// The `"storage"` thread reports on the oldest save on its way: written,
+/// or failed with `error`.
+pub(crate) fn written(h: &mut Harness, error: Option<&str>) {
+    let outcome = error.map_or(Ok(()), |e| Err(e.to_owned()));
+    run_once(h, SequencerCommand::ProjectWritten(outcome));
+}
+
+/// The footer lines sent since the last call; every other `UiEvent` is
+/// dropped.
+pub(crate) fn statuses(h: &Harness) -> Vec<String> {
+    h.ui_events
+        .try_iter()
+        .filter_map(|event| match event {
+            UiEvent::Status { message } => Some(message),
+            _ => None,
+        })
+        .collect()
 }

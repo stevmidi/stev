@@ -122,7 +122,8 @@ impl EventHandlers {
             // A save, which writes the target as it was before the session
             // (`Sequencer::saved_events`); a template keeps no clips at all.
             | SequencerCommand::SaveProject { .. }
-            | SequencerCommand::SaveTemplate { .. } => return false,
+            | SequencerCommand::SaveTemplate { .. }
+            | SequencerCommand::ProjectWritten(_) => return false,
 
             // The project commands say why they did nothing.
             SequencerCommand::ProjectAction { .. }

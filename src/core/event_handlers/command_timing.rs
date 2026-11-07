@@ -21,11 +21,10 @@
 //! `OpenFile`, `NewFromTemplate`, `ApplyStagedProject`, `AnswerRecovery`,
 //! `ProjectRenamed`, `ProjectFolderRenamed`, `ExportClip`), the audio export
 //! (it needs the audio thread) and the agent bridge, whose reads the design
-//! leaves out of scope. `SaveProject` and `SaveTemplate` would write into the
-//! library, so their rows time the same work against a scratch file.
+//! leaves out of scope. `SaveProject` and `SaveTemplate` time the handover
+//! alone, the snapshot and the fingerprint: the writing is the `"storage"`
+//! thread's (`420-large-projects.md` phase 2), and the harness has none.
 
-use std::fs;
-use std::hint::black_box;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
@@ -35,10 +34,7 @@ use uuid::Uuid;
 use crate::core::config::MAX_TRACKS;
 use crate::core::input_event::TimeSelectionRect;
 use crate::core::midi::message::Controller;
-use crate::core::paths::scratch_dir;
-use crate::core::project::{
-    ProjectAction, ProjectData, STRESS_BLOB_BYTES, STRESS_EVENTS, fill_stress_project, replace_file,
-};
+use crate::core::project::{ProjectAction, STRESS_BLOB_BYTES, STRESS_EVENTS, fill_stress_project};
 use crate::core::sequencer::test_support::{clip_at, note_off, note_on, rect};
 use crate::core::sequencer::{SequencerCommand, SequencerEdit};
 use crate::core::time::Meter;
@@ -670,29 +666,28 @@ fn measure(case: &Case) -> Row {
     row
 }
 
-/// The save's work, as `save_project_workflow` does it, against a scratch
-/// file: the project's data, the JSON, the write, the new saved state.
+/// A save's or a template's handover, as the `"sequencer"` thread runs it:
+/// the snapshot and, for a save, the fingerprint. The job, and its drop,
+/// stay out of the timing, as they are the `"storage"` thread's.
 fn measure_save(template: bool) -> Row {
-    let dir = scratch_dir(if template {
-        "command-timing-template"
-    } else {
-        "command-timing-save"
-    });
-    let path = dir.join("save.stev");
     let mut row = Row::default();
-    let h = stress_harness();
+    let mut h = stress_harness();
+    let mut record: Record<SequencerEdit> = Record::new();
     for _ in 0..ROUNDS {
-        row.command.push(timed(|| {
-            let data = ProjectData::from_sequencer(&h.sequencer);
-            let data = if template { data.into_template() } else { data };
-            let json = serde_json::to_string_pretty(&data).unwrap();
-            replace_file(&path, &json).unwrap();
-            if !template {
-                black_box(SavedProject::of(&h.sequencer, None));
+        let cmd = if template {
+            SequencerCommand::SaveTemplate {
+                name: "Stress".to_owned(),
             }
-        }));
+        } else {
+            SequencerCommand::SaveProject {
+                filename: "Stress".to_owned(),
+                folder: None,
+            }
+        };
+        row.command
+            .push(timed(|| run_command(&mut h, &mut record, cmd)));
+        h.storage_jobs.try_iter().for_each(drop);
     }
-    fs::remove_dir_all(&dir).unwrap();
     row
 }
 
@@ -731,14 +726,8 @@ fn command_timing() {
         let mut row = measure(case);
         println!("{}", row.line(case.name));
     }
-    println!(
-        "{}",
-        measure_save(false).line("SaveProject (its work, scratch file)")
-    );
-    println!(
-        "{}",
-        measure_save(true).line("SaveTemplate (its work, scratch file)")
-    );
+    println!("{}", measure_save(false).line("SaveProject (the handover)"));
+    println!("{}", measure_save(true).line("SaveTemplate (the handover)"));
     println!(
         "{}",
         measure_playback().line("Sequencer::tick (playing, per tick)")

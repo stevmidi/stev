@@ -17,7 +17,7 @@ use crate::core::agent::{MCP_FLAG, run_mcp_server};
 #[cfg(unix)]
 use crate::core::threads::start_agent_bridge_thread;
 use crate::core::{
-    event_handlers::RecoveryKeeper,
+    event_handlers::{RecoveryKeeper, Storage},
     keymap::Keymap,
     logging,
     project::{read_recovery_copy, recovery_path, take_recovery_lock},
@@ -29,8 +29,8 @@ use crate::core::{
     },
     threads::{
         start_audio_engine, start_clock_thread, start_computer_keys_thread,
-        start_midi_output_thread, start_midi_watcher_thread, start_recovery_thread,
-        start_sequencer_thread,
+        start_midi_output_thread, start_midi_watcher_thread, start_sequencer_thread,
+        start_storage_thread,
     },
 };
 
@@ -291,38 +291,35 @@ fn main() {
     );
 
     // Here on the app's own startup path, so a `stev --mcp` never takes the
-    // lock (`410-crash-recovery.md` decision 16).
+    // lock (`410-crash-recovery.md` decision 16). Without it this instance
+    // keeps no copy, but still saves through the `"storage"` thread.
     let write_failed = shared_atomics.recovery_write_failed.clone();
-    let recovery = match take_recovery_lock() {
-        Some(lock) => {
-            // With the lock held, a copy here means a crash. The offer has to
-            // be up by the first frame (`410-crash-recovery.md` decision 9);
-            // a copy that won't load stays for the next clean quit to delete
-            // (decision 15).
-            let offer = read_recovery_copy(&recovery_path()).unwrap_or_else(|e| {
-                warn!("Could not read the recovery copy: {e}");
-                event_handlers
-                    .send_status_ui_event(format!("Could not restore your unsaved changes: {e}"));
-                None
-            });
-            if let Some(copy) = &offer {
-                display.offer_recovery(copy.name().map(str::to_owned));
-            }
-            let worker = start_recovery_thread(
-                lock,
-                recovery_path(),
-                shared_channels.recovery_job_rx,
-                write_failed.clone(),
-            );
-            RecoveryKeeper::new(
-                Some(shared_channels.recovery_job_tx),
-                Some(worker),
-                write_failed,
-                offer,
-            )
-        }
-        None => RecoveryKeeper::new(None, None, write_failed, None),
-    };
+    let lock = take_recovery_lock();
+    // With the lock held, a copy here means a crash. The offer has to be up by
+    // the first frame (`410-crash-recovery.md` decision 9); a copy that won't
+    // load stays for the next clean quit to delete (decision 15).
+    let offer = lock.as_ref().and_then(|_| {
+        read_recovery_copy(&recovery_path()).unwrap_or_else(|e| {
+            warn!("Could not read the recovery copy: {e}");
+            event_handlers
+                .send_status_ui_event(format!("Could not restore your unsaved changes: {e}"));
+            None
+        })
+    });
+    if let Some(copy) = &offer {
+        display.offer_recovery(copy.name().map(str::to_owned));
+    }
+    let storage_jobs = shared_channels.storage_job_tx;
+    let copy_jobs = lock.as_ref().map(|_| storage_jobs.clone());
+    let worker = start_storage_thread(
+        lock,
+        recovery_path(),
+        shared_channels.storage_job_rx,
+        write_failed.clone(),
+        shared_channels.sequencer_command_tx.clone(),
+    );
+    let recovery = RecoveryKeeper::new(copy_jobs, write_failed, offer);
+    let storage = Storage::new(storage_jobs, Some(worker));
 
     start_sequencer_thread(
         sequencer,
@@ -335,6 +332,7 @@ fn main() {
         shared_channels.sequencer_command_rx,
         shared_channels.transport_command_rx,
         recovery,
+        storage,
     );
 
     // The app's end of the MCP server; it holds the socket only while

@@ -93,7 +93,7 @@ fn resolve_dir(folder: Option<&str>) -> PathBuf {
 }
 
 /// The `.stev` file for project `name` in `dir`.
-fn stev_path(dir: &Path, name: &str) -> PathBuf {
+pub(super) fn stev_path(dir: &Path, name: &str) -> PathBuf {
     dir.join(format!("{name}.{PROJECT_EXTENSION}"))
 }
 
@@ -214,7 +214,7 @@ pub(crate) fn save_template(data: &ProjectData, name: &str) -> io::Result<()> {
 }
 
 /// Writes `data` as pretty JSON to `dir/name.stev` (creating `dir`).
-fn write_project_in(dir: &Path, data: &ProjectData, name: &str) -> io::Result<()> {
+pub(super) fn write_project_in(dir: &Path, data: &ProjectData, name: &str) -> io::Result<()> {
     fs::create_dir_all(dir)?;
     let json = serde_json::to_string_pretty(data).map_err(io::Error::other)?;
     replace_file(&stev_path(dir, name), &json)
@@ -224,9 +224,9 @@ fn write_project_in(dir: &Path, data: &ProjectData, name: &str) -> io::Result<()
 /// `path` once it is whole, so a crash or a failed write leaves the file
 /// that was there as it was (`060-persistence.md`). A temp file a crash
 /// left behind has no project extension, so the browser never lists it, and
-/// the next save replaces it. Nothing is synced to disk: a project saves on
-/// the `"sequencer"` thread, where a full sync (20-25 ms on an SSD) would
-/// stall the ticks of a playing loop.
+/// the next save replaces it. Nothing is synced to disk: a full sync took
+/// 20-25 ms on an SSD, when a project still saved on the `"sequencer"`
+/// thread. It now saves on the `"storage"` thread (`420-large-projects.md`).
 pub(crate) fn replace_file(path: &Path, contents: &str) -> io::Result<()> {
     let temp = path.with_added_extension(TEMP_EXTENSION);
     let written = fs::write(&temp, contents).and_then(|()| fs::rename(&temp, path));

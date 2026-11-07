@@ -2,7 +2,7 @@
 //! unsaved-changes check ([`SavedProject`]), and the MIDI clip export and
 //! import. See `060-persistence.md`.
 
-use std::{fmt::Display, path::Path};
+use std::{collections::VecDeque, fmt::Display, path::Path, time::Instant};
 
 use undo::Record;
 
@@ -252,13 +252,16 @@ impl EventHandlers {
         }
     }
 
-    /// Runs `action` — unless it is Finder opening the project already open
+    /// Runs `action` — unless a save is on its way, which holds it in
+    /// `open.held` until the outcome is in (`project_written_workflow`,
+    /// `420-large-projects.md` decision 6), or it is Finder opening the
+    /// project already open
     /// with unsaved changes, which does nothing, or `discard_changes` is false and the project
     /// changed since `saved`: then the view is asked to prompt
     /// (`UiEvent::UnsavedChanges`) and nothing else happens. A new project or
     /// a load becomes the new `saved`; quitting tells the view to close the
-    /// window (`UiEvent::QuitApproved`), once `open.recovery` has deleted the
-    /// copy and finished, since the process ends soon after. Both replies wake the
+    /// window (`UiEvent::QuitApproved`), once the copy is deleted and the
+    /// `"storage"` thread finished (`OpenProject::finish`), since the process ends soon after. Both replies wake the
     /// view, which may be waiting on no input of its own (a window close). An
     /// open with plugins is held in `open.staged` until the view has loaded
     /// them.
@@ -270,6 +273,10 @@ impl EventHandlers {
         action: &ProjectAction,
         discard_changes: bool,
     ) {
+        if open.is_saving() {
+            open.held.push((action.clone(), discard_changes));
+            return;
+        }
         // As a macOS document does, the project already open with unsaved
         // changes stays as it is when Finder opens it again: no reload, so no
         // prompt offering to throw them away. With none it reloads, which
@@ -318,71 +325,11 @@ impl EventHandlers {
                 self.new_from_template_workflow(sequencer, undo_record, open, path);
             }
             ProjectAction::Quit => {
-                open.recovery.finish();
+                open.finish();
                 self.ui_event_tx.send(UiEvent::QuitApproved).ok();
                 self.request_repaint();
             }
         }
-    }
-
-    /// Writes the project to `folder/filename.stev` (see
-    /// [`project_saved`](Self::project_saved) for what success does), and
-    /// says how it went in the footer.
-    pub(super) fn save_project_workflow(
-        &self,
-        sequencer: &Sequencer,
-        open: &mut OpenProject,
-        folder: Option<&str>,
-        filename: &str,
-    ) {
-        let data = ProjectData::from_sequencer(sequencer);
-        let message = match project::save_project(&data, folder, filename) {
-            Ok(()) => {
-                self.project_saved(sequencer, open, folder, filename);
-                format!("Saved {filename}")
-            }
-            Err(e) => format!("Could not save {filename}: {e}"),
-        };
-        self.send_status_ui_event(message);
-    }
-
-    /// The project now on disk as `folder/filename.stev` becomes `saved`,
-    /// which leaves nothing to recover, tells the view it is the open project
-    /// (`UiEvent::ProjectSaved`) and has the browser re-read the tree.
-    pub(super) fn project_saved(
-        &self,
-        sequencer: &Sequencer,
-        open: &mut OpenProject,
-        folder: Option<&str>,
-        filename: &str,
-    ) {
-        let origin = ProjectOrigin::new(folder, filename);
-        open.saved = SavedProject::of(sequencer, Some(origin));
-        open.recovery.delete();
-        self.ui_event_tx
-            .send(UiEvent::ProjectSaved {
-                name: filename.to_owned(),
-                folder: folder.map(str::to_owned),
-            })
-            .ok();
-        self.ui_event_tx.send(UiEvent::ProjectFilesChanged).ok();
-    }
-
-    /// Writes the project as the template `name`, stripped
-    /// (`ProjectData::into_template`), and says how it went in the footer;
-    /// on success the browser re-reads the tree. The open project stays as
-    /// it was: its name, its file and `saved` are untouched, so a project
-    /// with unsaved changes still has them. See `archive/340-templates.md`.
-    pub(super) fn save_template_workflow(&self, sequencer: &Sequencer, name: &str) {
-        let data = ProjectData::from_sequencer(sequencer).into_template();
-        let message = match project::save_template(&data, name) {
-            Ok(()) => {
-                self.ui_event_tx.send(UiEvent::ProjectFilesChanged).ok();
-                format!("Saved template {name}")
-            }
-            Err(e) => format!("Could not save template {name}: {e}"),
-        };
-        self.send_status_ui_event(message);
     }
 
     /// After a load or a new project: re-selects the clip under the cursor as
@@ -456,7 +403,7 @@ impl EventHandlers {
 
 /// What the `"sequencer"` thread keeps about the open project as a file,
 /// beside the sequencer and the undo record: what it was last saved as, what
-/// is on its way in, and its crash recovery copy.
+/// is on its way in or out, and its crash recovery copy.
 pub(crate) struct OpenProject {
     /// What the unsaved-changes check compares against.
     pub(crate) saved: SavedProject,
@@ -465,6 +412,74 @@ pub(crate) struct OpenProject {
     pub(crate) staged: Option<StagedProject>,
     /// The crash recovery copy.
     pub(crate) recovery: RecoveryKeeper,
+    /// The way to the `"storage"` thread, for saves.
+    pub(super) storage: Storage,
+    /// Saves handed to the `"storage"` thread, their outcomes still to come,
+    /// oldest first (`420-large-projects.md` decision 5).
+    pub(super) saving: VecDeque<PendingSave>,
+    /// Project actions that came while a save was on its way, with their
+    /// `discard_changes`, to run once the last outcome is in (decision 6).
+    pub(super) held: Vec<(ProjectAction, bool)>,
+}
+
+impl OpenProject {
+    /// The project `saved`, nothing staged or on its way, its copy kept by
+    /// `recovery` and its saves going to `storage`.
+    pub(crate) fn new(saved: SavedProject, recovery: RecoveryKeeper, storage: Storage) -> Self {
+        OpenProject {
+            saved,
+            staged: None,
+            recovery,
+            storage,
+            saving: VecDeque::new(),
+            held: Vec::new(),
+        }
+    }
+
+    /// Once per pass of the tick arm, `at` being the tick's instant: the
+    /// recovery check, when one is due and no save is on its way. A save
+    /// deletes the copy once its file is safe, so a copy written behind it
+    /// would only be deleted again; the check runs on the first tick after
+    /// the outcome instead.
+    pub(crate) fn tick(&mut self, at: Instant, sequencer: &Sequencer) {
+        if !self.is_saving() {
+            self.recovery.tick(at, sequencer, &self.saved);
+        }
+    }
+
+    /// Whether a save is on its way to the disk.
+    pub(super) fn is_saving(&self) -> bool {
+        !self.saving.is_empty()
+    }
+
+    /// Follows a browser rename of the project `old` to `new`: the saved
+    /// project's origin, and any save's on its way.
+    pub(super) fn follow_rename(&mut self, old: &ProjectOrigin, new: &str) {
+        self.saved.follow_rename(old, new);
+        for pending in &mut self.saving {
+            if let PendingSave::Project { origin, .. } = pending {
+                origin.follow_rename(old, new);
+            }
+        }
+    }
+
+    /// Follows a browser rename of the project folder `old` to `new`.
+    pub(super) fn follow_folder_rename(&mut self, old: &str, new: &str) {
+        self.saved.follow_folder_rename(old, new);
+        for pending in &mut self.saving {
+            if let PendingSave::Project { origin, .. } = pending {
+                origin.follow_folder_rename(old, new);
+            }
+        }
+    }
+
+    /// A clean quit: the recovery copy deleted, and the `"storage"` thread
+    /// waited for until it has run what it has and ended
+    /// (`410-crash-recovery.md` decision 13).
+    pub(super) fn finish(&mut self) {
+        self.recovery.finish();
+        self.storage.finish();
+    }
 }
 
 /// The project as it was last saved or loaded, as a
@@ -493,6 +508,15 @@ impl SavedProject {
         SavedProject {
             fingerprint: Some(project::fingerprint(sequencer)),
             origin,
+        }
+    }
+
+    /// `fingerprint`'s project, at `origin`, taken as saved: a save's
+    /// outcome, the project as it was at the handover.
+    pub(super) fn saved_as(fingerprint: u64, origin: ProjectOrigin) -> Self {
+        SavedProject {
+            fingerprint: Some(fingerprint),
+            origin: Some(origin),
         }
     }
 
@@ -537,7 +561,7 @@ impl SavedProject {
     }
 
     /// Whether `sequencer`'s project would save differently from this one.
-    fn has_changes(&self, sequencer: &Sequencer) -> bool {
+    pub(super) fn has_changes(&self, sequencer: &Sequencer) -> bool {
         !self.is_fingerprint(project::fingerprint(sequencer))
     }
 }

@@ -1,15 +1,13 @@
 //! The crash recovery copy on disk: one slot in the config directory, holding
-//! the open project and where it came from, and the [`RecoveryJob`]s the
-//! `"recovery"` thread runs on it. The copy is never a project file and never
+//! the open project and where it came from, written and deleted by the
+//! `"storage"` thread (`writer`). The copy is never a project file and never
 //! written over one. See `410-crash-recovery.md`.
 
 use std::error::Error;
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::{self, ErrorKind};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 
-use crossbeam_channel::Receiver;
 use log::{info, warn};
 use serde::{Deserialize, Serialize};
 
@@ -71,22 +69,6 @@ impl RecoveryCopy {
     }
 }
 
-/// A change to the copy, for the `"recovery"` thread. Writes and deletes go
-/// down one channel, so they run in the order they were sent, and a write in
-/// flight can't land after a delete and bring the copy back
-/// (`410-crash-recovery.md` decision 5).
-pub(crate) enum RecoveryJob {
-    /// Replace the copy with this project.
-    Write {
-        /// The project; encoded by the job, off the `"sequencer"` thread.
-        snapshot: ProjectSnapshot,
-        /// Where it came from.
-        origin: Option<ProjectOrigin>,
-    },
-    /// Delete the copy, if there is one.
-    Delete,
-}
-
 /// The copy's path.
 pub(crate) fn recovery_path() -> PathBuf {
     config_dir().join(RECOVERY_FILE_NAME)
@@ -104,7 +86,7 @@ pub(crate) fn read_recovery_copy(path: &Path) -> Result<Option<RecoveryCopy>, Bo
 }
 
 /// Writes the copy to `path`, replacing the one there only once it is whole.
-fn write_copy(
+pub(super) fn write_copy(
     path: &Path,
     snapshot: ProjectSnapshot,
     origin: Option<ProjectOrigin>,
@@ -119,39 +101,10 @@ fn write_copy(
 }
 
 /// Deletes the copy at `path`; there being none is no failure.
-fn delete_copy(path: &Path) -> io::Result<()> {
+pub(super) fn delete_copy(path: &Path) -> io::Result<()> {
     match fs::remove_file(path) {
         Err(e) if e.kind() != ErrorKind::NotFound => Err(e),
         _ => Ok(()),
-    }
-}
-
-/// Runs the jobs on the copy at `path`, in order, until every sender is gone.
-/// Only the last of those waiting runs: with one slot it decides what is left,
-/// so a stalled disk comes back to one write, not a backlog, and a quit
-/// doesn't wait on writes it is about to delete. A write that fails warns and
-/// sets `write_failed`, which the next check reads to write again. The
-/// `"recovery"` thread's whole loop, apart from the thread so tests needn't
-/// wait on one.
-pub(crate) fn run_recovery_jobs(
-    jobs: Receiver<RecoveryJob>,
-    path: &Path,
-    write_failed: &AtomicBool,
-) {
-    while let Ok(next) = jobs.recv() {
-        match jobs.try_iter().last().unwrap_or(next) {
-            RecoveryJob::Write { snapshot, origin } => {
-                if let Err(e) = write_copy(path, snapshot, origin) {
-                    warn!("Could not write the recovery copy: {e}");
-                    write_failed.store(true, Ordering::Relaxed);
-                }
-            }
-            RecoveryJob::Delete => {
-                if let Err(e) = delete_copy(path) {
-                    warn!("Could not delete the recovery copy: {e}");
-                }
-            }
-        }
     }
 }
 
@@ -194,34 +147,17 @@ pub(crate) fn take_recovery_lock() -> Option<File> {
 
 #[cfg(test)]
 mod tests {
-    use crossbeam_channel::unbounded;
-
     use crate::core::paths::scratch_dir;
     use crate::core::sequencer::test_support::{stub_instrument, test_sequencer};
     use crate::models::track::TrackOutput;
 
     use super::*;
 
-    /// A write of a project at `tempo_us`, from `origin`.
-    fn write(tempo_us: i32, origin: Option<ProjectOrigin>) -> RecoveryJob {
+    /// Writes a project at `tempo_us`, from `origin`, as the copy at `path`.
+    fn write(tempo_us: i32, origin: Option<ProjectOrigin>, path: &Path) {
         let sequencer = test_sequencer();
         sequencer.set_tempo(tempo_us);
-        RecoveryJob::Write {
-            snapshot: ProjectSnapshot::of(&sequencer),
-            origin,
-        }
-    }
-
-    /// Runs `jobs` in order on the copy at `path`; whether a write failed.
-    fn run(jobs: Vec<RecoveryJob>, path: &Path) -> bool {
-        let (job_tx, job_rx) = unbounded();
-        for job in jobs {
-            job_tx.send(job).unwrap();
-        }
-        drop(job_tx);
-        let write_failed = AtomicBool::new(false);
-        run_recovery_jobs(job_rx, path, &write_failed);
-        write_failed.load(Ordering::Relaxed)
+        write_copy(path, ProjectSnapshot::of(&sequencer), origin).unwrap();
     }
 
     /// The copy at `path`, as a launch reads it.
@@ -235,7 +171,7 @@ mod tests {
         let dir = scratch_dir("recovery-a_copy_holds_the_project_and_its_origin");
         let path = dir.join(RECOVERY_FILE_NAME);
         let origin = ProjectOrigin::new(Some("Songs"), "Song");
-        assert!(!run(vec![write(400_000, Some(origin.clone()))], &path));
+        write(400_000, Some(origin.clone()), &path);
         let copy = read_copy(&path);
         assert_eq!(copy.origin, Some(origin));
         assert_eq!(copy.project.tempo_us, 400_000);
@@ -247,7 +183,7 @@ mod tests {
     fn a_copy_of_a_project_never_saved_has_no_origin() {
         let dir = scratch_dir("recovery-a_copy_of_a_project_never_saved_has_no_origin");
         let path = dir.join(RECOVERY_FILE_NAME);
-        run(vec![write(400_000, None)], &path);
+        write(400_000, None, &path);
         assert_eq!(read_copy(&path).origin, None);
         fs::remove_dir_all(dir).unwrap();
     }
@@ -259,65 +195,13 @@ mod tests {
         let path = dir.join(RECOVERY_FILE_NAME);
         let mut sequencer = test_sequencer();
         sequencer.tracks_mut()[1].set_output(stub_instrument(vec![1, 2, 3]));
-        let job = RecoveryJob::Write {
-            snapshot: ProjectSnapshot::of(&sequencer),
-            origin: None,
-        };
-        run(vec![job], &path);
+        write_copy(&path, ProjectSnapshot::of(&sequencer), None).unwrap();
         let restored = read_copy(&path).project;
         restored.apply_to_sequencer(&mut sequencer);
         let TrackOutput::Instrument(instrument) = sequencer.tracks()[1].output() else {
             panic!("track 1 lost its plugin");
         };
         assert_eq!(instrument.state, vec![1, 2, 3]);
-        fs::remove_dir_all(dir).unwrap();
-    }
-
-    /// The last job sent decides, so a delete queued behind a write leaves
-    /// no copy, and a write behind a delete leaves one.
-    #[test]
-    fn writes_and_deletes_run_in_order() {
-        let dir = scratch_dir("recovery-writes_and_deletes_run_in_order");
-        let path = dir.join(RECOVERY_FILE_NAME);
-        run(vec![write(400_000, None), RecoveryJob::Delete], &path);
-        assert!(!path.exists());
-        run(
-            vec![
-                write(400_000, None),
-                RecoveryJob::Delete,
-                write(300_000, None),
-            ],
-            &path,
-        );
-        assert_eq!(read_copy(&path).project.tempo_us, 300_000);
-        fs::remove_dir_all(dir).unwrap();
-    }
-
-    /// A later write replaces the copy.
-    #[test]
-    fn the_last_write_is_the_copy() {
-        let dir = scratch_dir("recovery-the_last_write_is_the_copy");
-        let path = dir.join(RECOVERY_FILE_NAME);
-        run(vec![write(400_000, None), write(300_000, None)], &path);
-        assert_eq!(read_copy(&path).project.tempo_us, 300_000);
-        fs::remove_dir_all(dir).unwrap();
-    }
-
-    /// Deleting when there is no copy is no failure.
-    #[test]
-    fn deleting_no_copy_does_nothing() {
-        let dir = scratch_dir("recovery-deleting_no_copy_does_nothing");
-        let path = dir.join(RECOVERY_FILE_NAME);
-        assert!(!run(vec![RecoveryJob::Delete], &path));
-        fs::remove_dir_all(dir).unwrap();
-    }
-
-    /// A write that fails sets the flag the next check reads.
-    #[test]
-    fn a_failed_write_sets_the_flag() {
-        let dir = scratch_dir("recovery-a_failed_write_sets_the_flag");
-        let path = dir.join("missing").join(RECOVERY_FILE_NAME);
-        assert!(run(vec![write(400_000, None)], &path));
         fs::remove_dir_all(dir).unwrap();
     }
 

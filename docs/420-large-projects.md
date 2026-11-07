@@ -1,6 +1,6 @@
 # Large Projects
 
-**Status: design agreed 2026-11-07; phase 1 (measure) done 2026-11-07, phases 2 to 4 not built.** Issue: #23. Stev should stay on time with a project far bigger than its author makes: no late note or click while playing, through a save, a recovery copy or an edit. The work that grows with the project moves off the `"sequencer"` thread, or stops growing with it.
+**Status: design agreed 2026-11-07; phase 1 (measure) done 2026-11-07; phase 2 (the save on `"storage"`) built and measured 2026-11-07; phases 3 and 4 not built.** Issue: #23. Stev should stay on time with a project far bigger than its author makes: no late note or click while playing, through a save, a recovery copy or an edit. The work that grows with the project moves off the `"sequencer"` thread, or stops growing with it.
 
 ## Background
 
@@ -33,7 +33,12 @@ How late the `"sequencer"` thread can run before anyone hears it: each tick carr
 ## Phases
 
 1. **Measure.** A stress project at the target size, written by an ignored test into the library (`recovery_timing`'s synthetic project, saved as a `.stev`; its plugins won't load, but their state still travels). A temporary probe in the tick arm records how late each tick is handled (`now - at`), and the worst per second goes to the log. Played back with ⌘S, edits and recovery writes, it sets a baseline. A sweep times each `SequencerCommand` at the target size, to find whatever else passes 1 ms. Decisions 3 to 9 are checked against what it finds before they are built.
-2. **The save on `"storage"`.** Decisions 3 to 6.
+2. **The save on `"storage"`.** Decisions 3 to 6. Built 2026-11-07:
+   - **The thread.** `"recovery"` became `"storage"` (`core/threads/storage.rs`), started by every app instance: one without the recovery lock keeps no copy but still saves. Its jobs are `StorageJob` (`core/project/writer.rs`): `WriteCopy`, `DeleteCopy` and `Save { snapshot, target, delete_copy }`, the target a project (`ProjectOrigin`) or a template (stripped there). `run_storage_jobs` takes what is waiting as one batch, dropping each of the copy's jobs a later one makes pointless as it gathers them, and runs every save in its place. A save's outcome (`SaveOutcome`, its error if any) goes back as `SequencerCommand::ProjectWritten`, which goes ahead of every hold, as the renames do.
+   - **The handover.** `save_project_workflow` and `save_template_workflow` (`core/event_handlers/save.rs`) take the `ProjectSnapshot` (a template's without its clips, `ProjectSnapshot::template_of`) and send it through `OpenProject::storage` (`Storage`), the way to the thread; the `RecoveryKeeper` holds a clone of the same channel for the copy's jobs, so they and the saves share one order. The keeper says whether a project save deletes the copy (`deleted_by_save`: not while a crash's copy is on hold, nor in an instance that keeps none) and counts the copy gone from then; should the save fail, the next check writes it again. Every save, a template's too, waits in `OpenProject::saving` as a `PendingSave`, a project's with its fingerprint and origin; the outcome pops the oldest and, for a project saved, makes it `saved` (`SavedProject::saved_as`). A browser rename follows into a save on its way.
+   - **What waits.** `project_action_workflow` holds every `ProjectAction` in `OpenProject::held` while `saving` isn't empty, a template's save included; once the last outcome is in, they run in order through `handle_sequencer_command`, so the take session's refusals still apply. The recovery check is skipped while a save is on its way (`OpenProject::tick`): the save deletes the copy once its file is safe, and a copy written behind it would only be deleted again. If the thread has gone, a save fails at once in the footer, so nothing waits on an outcome that won't come.
+   - **Tests.** `writer.rs`: every save runs in order, a save deletes the copy written before it and a later write stays, a failed save keeps the copy, a template is stripped and leaves the copy. `save.rs`: nothing counts as saved before the outcome, an edit during a save stays unsaved, a failed save changes nothing, a quit behind a save waits and goes ahead, behind a failed one prompts again, held actions wait for the last save, the check waits, a template leaves the project as it was, a rename is followed, no writer fails at once. `recovery.rs`' save tests now go through the outcome.
+   - **The sweep** times `SaveProject` and `SaveTemplate` as the handover alone, the snapshot and the fingerprint.
 3. **Plugin state shared.** Decision 7.
 4. **Clips shared, the check cached.** Decisions 8 and 9.
 
@@ -99,6 +104,32 @@ The stress project written by `write_stress_project` (a 90 MB `.stev`), opened i
 - **Nothing new beyond the sweep** came up: the hand-made edits stayed under 1.5 ms.
 
 Phase 1 is done: decisions 3 to 8 stand as written, and the sweep added merge clips and ⌘N, which no phase covers yet.
+
+### Phase 2 (2026-11-07)
+
+The sweep, release build on the Intel Mac at the target size, median and worst of five, in ms:
+
+| Command | Median | Worst |
+|---|---|---|
+| Save, the handover (snapshot and fingerprint) | 11.3 | 15.9 |
+| Save as template, the handover (snapshot) | 9.0 | 13.4 |
+
+The template's row was taken before its snapshot left out the clips (`ProjectSnapshot::template_of`), which it now does; not measured again.
+
+From 360 and 177 ms, but still past the budget: the snapshot copies every clip's events and the 50 MB of plugin state, and the save hashes the project besides. Those are what phases 3 and 4 are for (decisions 7 and 8), the same cost the recovery check's copy write shows.
+
+The hand run (2026-11-07): the stress project opened in a release build on the Intel Mac, played, saved with ⌘S, the recovery check running.
+
+| What | Longest arm (ms) | Worst late (ms) |
+|---|---|---|
+| Nothing but ticks | 0.0–0.09 | 1.0–1.7 |
+| The recovery check, project unchanged since the save (every 5 s) | 2.8–3.6 | up to 3.6 |
+| ⌘S, the handover | 20 | 21 |
+| Opening the project (a load, out of scope) | 210–218 | 218 |
+
+- **⌘S holds the thread for 20 ms, down from 364.** The writing no longer shows on the `"sequencer"` thread at all. The 20 ms is the snapshot and the fingerprint, more than the sweep's 11 to 16 with the app's other threads running; phases 3 and 4 are aimed at it.
+- **One second, two after the save, had a tick 17.5 ms late with no arm past 0.06 ms** (and 1,466 ticks, the clock catching up): the thread was kept from running, or the ticks came late, with none of Stev's own work on it. It isn't the save's: phase 1's hand run had the same, 23.9 ms late with no arm past 0.07 (`20:39:14` in that run's log), with no save near it. Something outside Stev's arms, to look into on its own; the probe can't say what.
+- **The recovery check stays over budget every 5 s,** as phase 1 found: phase 4.
 
 ## Testing
 

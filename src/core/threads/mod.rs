@@ -17,8 +17,9 @@
 //!   plus every command dispatch (`150-clock-position-sync.md`).
 //! - `tick_probe.rs` — a temporary probe in that loop: how late the ticks
 //!   run and how long each arm holds the thread (`420-large-projects.md`).
-//! - `recovery.rs` — the `"recovery"` thread, which writes and deletes the
-//!   crash recovery copy (`410-crash-recovery.md`).
+//! - `storage.rs` — the `"storage"` thread, the project's one writer: saves,
+//!   templates and the crash recovery copy (`420-large-projects.md`,
+//!   `410-crash-recovery.md`).
 //! - `controller.rs` — the parked MIDI-CC controller route, `#[allow(dead_code)]`
 //!   and never called; kept on purpose (`000-architecture.md`).
 //! - `agent_bridge.rs` (Unix) — the `"agent-bridge"` thread, the app's end of
@@ -30,8 +31,8 @@ mod computer_keys;
 mod controller;
 mod midi_output;
 mod midi_watcher;
-mod recovery;
 mod sequencer_pump;
+mod storage;
 mod tick_probe;
 
 #[cfg(unix)]
@@ -41,8 +42,8 @@ pub(crate) use midi_output::start_midi_output_thread;
 #[cfg(test)]
 pub(crate) use midi_output::{MidiSink, run_midi_output_loop};
 pub(crate) use midi_watcher::start_midi_watcher_thread;
-pub(crate) use recovery::start_recovery_thread;
 pub(crate) use sequencer_pump::start_sequencer_thread;
+pub(crate) use storage::start_storage_thread;
 
 use crossbeam_channel::Sender;
 use log::error;

@@ -301,11 +301,12 @@ impl Default for ProjectData {
     }
 }
 
-/// A project taken off the sequencer with its plugin state still raw: what
-/// [`ProjectData::from_sequencer`] makes, short of the base64, which is nearly
-/// all of its cost on a project with big blobs. So the `"sequencer"` thread
-/// takes this and the `"recovery"` thread does the encoding
-/// (`410-crash-recovery.md` decision 5).
+/// A project taken off the sequencer with its plugin state still raw: the
+/// [`ProjectData`] a save writes, short of the base64, which is nearly all of
+/// its cost on a project with big blobs. So the `"sequencer"` thread takes
+/// this and the `"storage"` thread does the encoding, for a save and for the
+/// recovery copy (`420-large-projects.md` decision 3,
+/// `410-crash-recovery.md` decision 5).
 pub(crate) struct ProjectSnapshot {
     /// The project, every state blob empty.
     data: ProjectData,
@@ -317,8 +318,20 @@ pub(crate) struct ProjectSnapshot {
 impl ProjectSnapshot {
     /// `sequencer`'s project as it stands.
     pub(crate) fn of(sequencer: &Sequencer) -> Self {
+        Self::taken(sequencer, true)
+    }
+
+    /// `sequencer`'s project with no clips, for a template, which keeps none
+    /// (`ProjectData::into_template`): the events aren't copied only to be
+    /// dropped.
+    pub(crate) fn template_of(sequencer: &Sequencer) -> Self {
+        Self::taken(sequencer, false)
+    }
+
+    /// `sequencer`'s project, its clips too when `with_clips`.
+    fn taken(sequencer: &Sequencer, with_clips: bool) -> Self {
         ProjectSnapshot {
-            data: ProjectData::without_state(sequencer),
+            data: ProjectData::without_state(sequencer, with_clips),
             states: sequencer
                 .tracks()
                 .iter()
@@ -358,21 +371,17 @@ impl ProjectData {
         self
     }
 
-    /// Snapshots the sequencer into a serializable `ProjectData` (base64-encodes
-    /// each plugin's state blob).
+    /// The sequencer's project as a save writes it, at once: for tests. A
+    /// save takes a [`ProjectSnapshot`] and encodes it on the `"storage"`
+    /// thread (`420-large-projects.md` decision 3).
+    #[cfg(test)]
     pub(crate) fn from_sequencer(sequencer: &Sequencer) -> Self {
-        let mut data = Self::without_state(sequencer);
-        for (saved, track) in data.tracks.iter_mut().zip(sequencer.tracks()) {
-            if let TrackOutput::Instrument(instrument) = track.output() {
-                saved.set_state(&instrument.state);
-            }
-        }
-        data
+        ProjectSnapshot::of(sequencer).encoded()
     }
 
     /// The sequencer's project with every state blob left empty, for
-    /// [`ProjectSnapshot`] to fill in.
-    fn without_state(sequencer: &Sequencer) -> Self {
+    /// [`ProjectSnapshot`] to fill in; with no clips unless `with_clips`.
+    fn without_state(sequencer: &Sequencer, with_clips: bool) -> Self {
         let tracks = sequencer
             .tracks()
             .iter()
@@ -381,6 +390,7 @@ impl ProjectData {
                 let clips = track
                     .clips()
                     .iter()
+                    .filter(|_| with_clips)
                     .map(|clip| {
                         let events = sequencer
                             .saved_events(clip)

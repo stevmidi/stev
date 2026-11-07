@@ -1,16 +1,19 @@
 //! [`RecoveryKeeper`] — the `"sequencer"` thread's side of the crash recovery
 //! copy: when one should exist, and what it should hold. The writing itself
-//! is the `"recovery"` thread's. See `410-crash-recovery.md`.
+//! is the `"storage"` thread's, down the channel saves take too ([`Storage`]),
+//! so they and the copy's jobs stay in one order. See `410-crash-recovery.md`
+//! and `420-large-projects.md` decision 3.
+//!
+//! [`Storage`]: super::Storage
 
 use std::mem;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::Sender;
 
-use crate::core::project::{self, ProjectOrigin, ProjectSnapshot, RecoveryCopy, RecoveryJob};
+use crate::core::project::{self, ProjectOrigin, ProjectSnapshot, RecoveryCopy, StorageJob};
 use crate::core::sequencer::Sequencer;
 
 use super::SavedProject;
@@ -33,16 +36,14 @@ enum Hold {
 
 /// Keeps a recovery copy exactly while the quit prompt would ask. The check
 /// compares fingerprints on a timer, so no path that changes the project has
-/// to remember it, and hands any write to the `"recovery"` thread: what is
+/// to remember it, and hands any write to the `"storage"` thread: what is
 /// left on the `"sequencer"` thread is the hash, and the snapshot when the
 /// project changed.
 pub(crate) struct RecoveryKeeper {
-    /// Down to the `"recovery"` thread; `None` in an instance that can't keep
+    /// Down to the `"storage"` thread; `None` in an instance that can't keep
     /// the copy, and once [`finish`](Self::finish) has run.
-    jobs: Option<Sender<RecoveryJob>>,
-    /// The `"recovery"` thread, for [`finish`](Self::finish) to wait on.
-    worker: Option<JoinHandle<()>>,
-    /// Set by the `"recovery"` thread when a write fails.
+    jobs: Option<Sender<StorageJob>>,
+    /// Set by the `"storage"` thread when a copy write fails.
     write_failed: Arc<AtomicBool>,
     /// When the next check is due.
     next_check: Instant,
@@ -59,19 +60,17 @@ pub(crate) struct RecoveryKeeper {
 }
 
 impl RecoveryKeeper {
-    /// A keeper sending to `jobs`, with `worker` to wait on at the end. With
-    /// no `jobs` another instance has the copy, and this keeper does nothing
-    /// (`410-crash-recovery.md` decision 16). `offer` is the copy a crash
-    /// left, which holds everything until the launch dialog is answered.
+    /// A keeper sending to `jobs`. With no `jobs` another instance has the
+    /// copy, and this keeper does nothing (`410-crash-recovery.md` decision
+    /// 16). `offer` is the copy a crash left, which holds everything until
+    /// the launch dialog is answered.
     pub(crate) fn new(
-        jobs: Option<Sender<RecoveryJob>>,
-        worker: Option<JoinHandle<()>>,
+        jobs: Option<Sender<StorageJob>>,
         write_failed: Arc<AtomicBool>,
         offer: Option<RecoveryCopy>,
     ) -> Self {
         RecoveryKeeper {
             jobs,
-            worker,
             write_failed,
             next_check: Instant::now(),
             copied: None,
@@ -115,7 +114,7 @@ impl RecoveryKeeper {
         let origin = saved.origin().cloned();
         self.copied = Some((fingerprint, origin.clone()));
         self.captured = false;
-        self.send(RecoveryJob::Write {
+        self.send(StorageJob::WriteCopy {
             snapshot: ProjectSnapshot::of(sequencer),
             origin,
         });
@@ -164,36 +163,47 @@ impl RecoveryKeeper {
         self.write(sequencer, saved, project::fingerprint(sequencer));
     }
 
-    /// Deletes the copy, after any write already queued: the project was
-    /// saved, so it is no longer anything to recover.
-    pub(crate) fn delete(&mut self) {
+    /// Deletes the copy, after any write already queued.
+    fn delete(&mut self) {
         self.copied = None;
-        self.send(RecoveryJob::Delete);
+        self.send(StorageJob::DeleteCopy);
     }
 
-    /// A clean quit: deletes the copy and waits for the `"recovery"` thread
-    /// to finish, or a copy left behind would claim a crash on the next
-    /// launch (`410-crash-recovery.md` decision 13). A copy on hold stays: a
-    /// quit while Restore loads its plugins sees only the startup project,
-    /// with no changes to ask about, so the next launch offers the copy again.
+    /// A project save is being handed over, behind every job sent so far:
+    /// whether it is to delete the copy once its file is safe, as a project
+    /// saved has nothing to recover. Not while a crash's copy is on hold, nor
+    /// in an instance that keeps none. If it is, the copy counts as gone from
+    /// now: should the save fail, the next check writes it again.
+    pub(super) fn deleted_by_save(&mut self) -> bool {
+        let deletes = self.jobs().is_some();
+        if deletes {
+            self.copied = None;
+        }
+        deletes
+    }
+
+    /// A clean quit: deletes the copy and lets go of the channel, so the
+    /// `"storage"` thread can end once the delete is done; the caller waits
+    /// for it ([`Storage::finish`](super::Storage::finish)), or a copy left
+    /// behind would claim a crash on the next launch
+    /// (`410-crash-recovery.md` decision 13). A copy on hold stays: a quit
+    /// while Restore loads its plugins sees only the startup project, with no
+    /// changes to ask about, so the next launch offers the copy again.
     pub(crate) fn finish(&mut self) {
         self.delete();
         self.jobs = None;
-        if let Some(worker) = self.worker.take() {
-            worker.join().ok();
-        }
     }
 
     /// Where jobs go: nowhere in an instance that can't keep the copy, or
     /// while a hold stands.
-    fn jobs(&self) -> Option<&Sender<RecoveryJob>> {
+    fn jobs(&self) -> Option<&Sender<StorageJob>> {
         self.jobs
             .as_ref()
             .filter(|_| matches!(self.hold, Hold::Free))
     }
 
-    /// Sends `job` to the `"recovery"` thread, if it may have one.
-    fn send(&self, job: RecoveryJob) {
+    /// Sends `job` to the `"storage"` thread, if it may have one.
+    fn send(&self, job: StorageJob) {
         if let Some(jobs) = self.jobs() {
             jobs.send(job).ok();
         }
@@ -211,14 +221,16 @@ mod tests {
     use std::fs::{self, File};
 
     use crossbeam_channel::unbounded;
-    use undo::Record;
 
-    use crate::core::event_handlers::test_harness::{Harness, add_clip, harness, run_command};
+    use crate::core::event_handlers::Storage;
+    use crate::core::event_handlers::test_harness::{
+        Harness, add_clip, harness, quit, run_once, save_as, written,
+    };
     use crate::core::paths::scratch_dir;
     use crate::core::project::{ProjectAction, ProjectData, TrackOutputData};
+    use crate::core::sequencer::SequencerCommand;
     use crate::core::sequencer::test_support::stub_instrument;
-    use crate::core::sequencer::{SequencerCommand, SequencerEdit};
-    use crate::core::threads::start_recovery_thread;
+    use crate::core::threads::start_storage_thread;
     use crate::view::display::UiEvent;
 
     use super::*;
@@ -230,19 +242,31 @@ mod tests {
         Write(i32, Option<ProjectOrigin>),
         /// A delete.
         Delete,
+        /// A save, deleting the copy once it is safe when true.
+        Save(bool),
     }
 
     /// The jobs sent since the last call.
     fn jobs(h: &Harness) -> Vec<Job> {
-        h.recovery_jobs
+        h.storage_jobs
             .try_iter()
             .map(|job| match job {
-                RecoveryJob::Write { snapshot, origin } => {
+                StorageJob::WriteCopy { snapshot, origin } => {
                     Job::Write(snapshot.encoded().tempo_us, origin)
                 }
-                RecoveryJob::Delete => Job::Delete,
+                StorageJob::DeleteCopy => Job::Delete,
+                StorageJob::Save { delete_copy, .. } => Job::Save(delete_copy),
             })
             .collect()
+    }
+
+    /// Saves as `Song` at the projects root, the `"storage"` thread reporting
+    /// it written: the jobs sent meanwhile.
+    fn save(h: &mut Harness) -> Vec<Job> {
+        save_as(h, "Song");
+        let sent = jobs(h);
+        written(h, None);
+        sent
     }
 
     /// Runs one check.
@@ -250,24 +274,9 @@ mod tests {
         h.open.recovery.check(&h.sequencer, &h.open.saved);
     }
 
-    /// Runs `cmd`.
-    fn run(h: &mut Harness, cmd: SequencerCommand) {
-        let mut record: Record<SequencerEdit> = Record::new();
-        run_command(h, &mut record, cmd);
-    }
-
-    /// Asks to quit, past the prompt when `discard_changes`.
-    fn quit(h: &mut Harness, discard_changes: bool) {
-        let cmd = SequencerCommand::ProjectAction {
-            action: ProjectAction::Quit,
-            discard_changes,
-        };
-        run(h, cmd);
-    }
-
     /// Answers the launch dialog.
     fn answer(h: &mut Harness, restore: bool) {
-        run(h, SequencerCommand::AnswerRecovery { restore });
+        run_once(h, SequencerCommand::AnswerRecovery { restore });
     }
 
     /// Puts a copy of a project at 400,000 µs on offer, never saved, with a
@@ -383,9 +392,7 @@ mod tests {
         check(&mut h);
         assert_eq!(jobs(&h), [Job::Write(300_000, None)]);
 
-        h.handlers
-            .project_saved(&h.sequencer, &mut h.open, None, "Song");
-        assert_eq!(jobs(&h), [Job::Delete]);
+        assert_eq!(save(&mut h), [Job::Save(true)]);
         assert!(!quit_prompts(&mut h));
     }
 
@@ -419,7 +426,7 @@ mod tests {
             action: ProjectAction::New,
             discard_changes: true,
         };
-        run(&mut h, cmd);
+        run_once(&mut h, cmd);
         check(&mut h);
         assert_eq!(jobs(&h), [Job::Delete]);
     }
@@ -436,7 +443,7 @@ mod tests {
         check(&mut h);
         assert_eq!(jobs(&h), []);
 
-        run(&mut h, SequencerCommand::ApplyStagedProject);
+        run_once(&mut h, SequencerCommand::ApplyStagedProject);
         assert_eq!(h.sequencer.tempo_us(), 400_000);
         assert_eq!(jobs(&h), [Job::Write(400_000, None)]);
         check(&mut h);
@@ -457,15 +464,13 @@ mod tests {
     }
 
     /// A save in the gap before a restored project is in leaves the copy:
-    /// the hold keeps every job back, not only the check's.
+    /// the hold keeps every job of the copy's back, the save's delete too.
     #[test]
     fn a_save_during_the_restore_keeps_the_copy() {
         let mut h = harness();
         offer(&mut h, true);
         answer(&mut h, true);
-        h.handlers
-            .project_saved(&h.sequencer, &mut h.open, None, "Song");
-        assert_eq!(jobs(&h), []);
+        assert_eq!(save(&mut h), [Job::Save(false)]);
     }
 
     /// A second answer finds no offer, and does nothing.
@@ -495,7 +500,7 @@ mod tests {
     /// The view captures the first track's plugin state as `state`.
     fn capture(h: &mut Harness, state: Vec<u8>) {
         let slot = h.sequencer.tracks()[0].slot();
-        run(h, SequencerCommand::SetTrackInstrumentState { slot, state });
+        run_once(h, SequencerCommand::SetTrackInstrumentState { slot, state });
     }
 
     /// A new preset reaches the copy: blobs stay out of the fingerprint, so
@@ -549,7 +554,7 @@ mod tests {
         let old = ProjectOrigin::new(Some("Songs"), "Song");
         copied_project(&mut h, Some(&old));
         let new = "Tune".to_owned();
-        run(&mut h, SequencerCommand::ProjectRenamed { old, new });
+        run_once(&mut h, SequencerCommand::ProjectRenamed { old, new });
         assert_eq!(h.open.saved.name(), Some("Tune"));
         check(&mut h);
         check(&mut h);
@@ -563,7 +568,7 @@ mod tests {
         let mut h = harness();
         copied_project(&mut h, Some(&ProjectOrigin::new(Some("Songs"), "Song")));
         let (old, new) = ("Songs".to_owned(), "Album".to_owned());
-        run(&mut h, SequencerCommand::ProjectFolderRenamed { old, new });
+        run_once(&mut h, SequencerCommand::ProjectFolderRenamed { old, new });
         check(&mut h);
         let renamed = ProjectOrigin::new(Some("Album"), "Song");
         assert_eq!(jobs(&h), [Job::Write(400_000, Some(renamed))]);
@@ -577,9 +582,9 @@ mod tests {
         copied_project(&mut h, Some(&ProjectOrigin::new(Some("Songs"), "Song")));
         let old = ProjectOrigin::new(Some("Other"), "Song");
         let new = "Tune".to_owned();
-        run(&mut h, SequencerCommand::ProjectRenamed { old, new });
+        run_once(&mut h, SequencerCommand::ProjectRenamed { old, new });
         let (old, new) = ("Other".to_owned(), "Album".to_owned());
-        run(&mut h, SequencerCommand::ProjectFolderRenamed { old, new });
+        run_once(&mut h, SequencerCommand::ProjectFolderRenamed { old, new });
         check(&mut h);
         assert_eq!(h.open.saved.name(), Some("Song"));
         assert_eq!(jobs(&h), []);
@@ -591,7 +596,7 @@ mod tests {
         let mut h = harness();
         let old = ProjectOrigin::new(None, "Song");
         let new = "Tune".to_owned();
-        run(&mut h, SequencerCommand::ProjectRenamed { old, new });
+        run_once(&mut h, SequencerCommand::ProjectRenamed { old, new });
         assert_eq!(h.open.saved.name(), None);
     }
 
@@ -695,16 +700,14 @@ mod tests {
         assert_eq!(jobs(&h), [Job::Write(400_000, None)]);
     }
 
-    /// A save makes the copy pointless: it goes at once, not at the next
-    /// check, and a later change writes a new one.
+    /// A save makes the copy pointless: the save deletes it once the file is
+    /// safe, not the next check, and a later change writes a new one.
     #[test]
     fn a_save_deletes_the_copy() {
         let mut h = harness();
         h.sequencer.set_tempo(400_000);
         check(&mut h);
-        h.handlers
-            .project_saved(&h.sequencer, &mut h.open, None, "Song");
-        assert_eq!(jobs(&h), [Job::Write(400_000, None), Job::Delete]);
+        assert_eq!(save(&mut h), [Job::Write(400_000, None), Job::Save(true)]);
 
         check(&mut h);
         assert_eq!(jobs(&h), []);
@@ -749,37 +752,41 @@ mod tests {
     }
 
     /// The real thread: a write reaches the disk, and by the time `finish`
-    /// returns the delete behind it has too, and the thread has ended.
+    /// returns the delete behind it has too, and the thread has ended, the
+    /// lock let go.
     #[test]
     fn finish_waits_for_the_thread_to_delete_the_copy() {
         let h = harness();
         let dir = scratch_dir("recovery-finish");
         let path = dir.join("copy.json");
-        let lock = File::create(dir.join("lock")).unwrap();
+        let lock = Some(File::create(dir.join("lock")).unwrap());
         let (jobs_tx, jobs_rx) = unbounded();
         let write_failed = Arc::new(AtomicBool::new(false));
-        let worker = start_recovery_thread(lock, path.clone(), jobs_rx, write_failed.clone());
-        let mut keeper = RecoveryKeeper::new(Some(jobs_tx), Some(worker), write_failed, None);
+        let failed = write_failed.clone();
+        let worker = start_storage_thread(lock, path.clone(), jobs_rx, failed, unbounded().0);
+        let mut keeper = RecoveryKeeper::new(Some(jobs_tx.clone()), write_failed, None);
+        let mut storage = Storage::new(jobs_tx, Some(worker));
 
         h.sequencer.set_tempo(400_000);
         keeper.check(&h.sequencer, &h.open.saved);
         keeper.finish();
+        storage.finish();
 
-        assert!(keeper.worker.is_none());
         assert!(!path.exists());
         fs::remove_dir_all(dir).unwrap();
     }
 
     /// Without the lock this instance has nowhere to send a job, so nothing
-    /// is recorded as copied and quitting has nothing to wait for
-    /// (`410-crash-recovery.md` decision 16).
+    /// is recorded as copied and its saves leave the other instance's copy
+    /// alone (`410-crash-recovery.md` decision 16).
     #[test]
     fn an_instance_without_the_lock_stays_out() {
         let h = harness();
-        let mut keeper = RecoveryKeeper::new(None, None, Arc::new(AtomicBool::new(false)), None);
+        let mut keeper = RecoveryKeeper::new(None, Arc::new(AtomicBool::new(false)), None);
         h.sequencer.set_tempo(400_000);
         keeper.check(&h.sequencer, &h.open.saved);
         assert_eq!(keeper.copied, None);
+        assert!(!keeper.deleted_by_save());
         keeper.finish();
     }
 }
