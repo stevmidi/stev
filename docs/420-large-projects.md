@@ -1,6 +1,6 @@
 # Large Projects
 
-**Status: design agreed 2026-11-07; phase 1 (measure) done 2026-11-07; phase 2 (the save on `"storage"`) built and measured 2026-11-07; phase 3 (plugin state shared) built and measured 2026-11-07; phase 4 not built.** Issue: #23. Stev should stay on time with a project far bigger than its author makes: no late note or click while playing, through a save, a recovery copy or an edit. The work that grows with the project moves off the `"sequencer"` thread, or stops growing with it.
+**Status: design agreed 2026-11-07; phase 1 (measure) done 2026-11-07; phase 2 (the save on `"storage"`) built and measured 2026-11-07; phase 3 (plugin state shared) built and measured 2026-11-07; phase 4 (clips shared, the check cached) built and measured 2026-11-07. Complete.** Issue: #23. Stev should stay on time with a project far bigger than its author makes: no late note or click while playing, through a save, a recovery copy or an edit. The work that grows with the project moves off the `"sequencer"` thread, or stops growing with it.
 
 ## Background
 
@@ -44,7 +44,13 @@ How late the `"sequencer"` thread can run before anyone hears it: each tick carr
    - `ProjectSnapshot` holds each track's `Arc`, so the snapshot of a save, a template or the recovery copy no longer copies the 50 MB. A blob replaced while a save is on its way is freed by whichever thread drops it last, `"storage"` when that is the save.
    - The fingerprint never hashed the blobs (`fingerprint.rs`), so the check's 3 ms stays for phase 4.
    - Left as they are: the load decodes each blob twice, once for the plugins it stages (`instrument_specs`) and once for the tracks (`apply_to_sequencer`), each copied into an `Arc`; with `Arc` one decode could serve both, but loading is out of scope (decision 11). A captured blob is still compared byte for byte on the `"sequencer"` thread (0.15 ms for 3 MB), and the blob it replaces is freed there; moving either off the thread is only worth it for single blobs of tens of MB.
-4. **Clips shared, the check cached.** Decisions 8 and 9.
+4. **Clips shared, the check cached.** Decisions 8 and 9. Built 2026-11-07:
+   - **The events.** `Clip::events` is an `Arc<Vec<Event>>`, private to `models/clip/` like before, and every write goes through `Clip::events_mut` (`Arc::make_mut`), so a clip's copies (undo, the clipboard, a snapshot, the cache) share the list until one of them is edited. `Clip::shared_events` hands out the `Arc`; `Clip::restore_shared_events` puts one back without a copy. Playback only reads (`Clip::tick` no longer borrows the list mutably), so nothing on the tick path copies.
+   - **The take session.** Its events from before the session (`TakeFraming::pre_events`) are the target's `Arc`, so `Sequencer::saved_events` returns an `Arc` either way, and a snapshot or the cache shares it.
+   - **The snapshot.** `ProjectSnapshot` keeps each clip's `Arc` beside a `ProjectData` whose clips have no events; `ProjectSnapshot::encoded` turns them into `EventData` (`EventData::of`) on the `"storage"` thread. A template's snapshot has none.
+   - **The cache.** `FingerprintCache` (`fingerprint.rs`), kept on the `Sequencer` behind a `RefCell` so every `fingerprint(&Sequencer)` shares it without a change to its callers, maps each clip id to its events' `Arc` and their hash from the last fingerprint. A clip's events are hashed on their own (`hash_events`) and that hash goes into the project's, so reusing one gives the same result as hashing everything. Each fingerprint rebuilds the map from the clips it saw, so a removed clip's events are let go at the next one. A load's own fingerprint (`SavedProject::of`) fills it, so the first check after a load is already warm.
+   - **Tests.** `fingerprint.rs`: the cached fingerprint equals a full hash after every saved and unsaved change, and an edit in place copies the events the cache holds, so the edited clip is hashed again and the other keeps its allocation. `dto.rs`: a snapshot shares the clips' events and still encodes them, a template's has none.
+   - Left as they are: an edit's undo step still copies the events it may restore (`events().to_vec()` in the event edits); sharing them would save memory, not time, since the edit's `make_mut` copies once anyway. Merge clips and ⌘N (phase 1's extra findings) aren't touched.
 
 Each phase ends with the probe run again at the target size.
 
@@ -53,7 +59,7 @@ Each phase ends with the probe run again at the target size.
 ### The tools (phase 1)
 
 - **The stress project** (`src/core/project/stress.rs`): `fill_stress_project` builds the 16 tracks, five back-to-back clips on each, the events in groups of ten (two notes, three bends, three parameter moves, the two notes ending) and the plugin state split over the tracks. `recovery_timing` builds its projects there too. `cargo test --release write_stress_project -- --ignored` writes the target, `Stress/Stress 100k.stev`, into the library. Its plugins point at a bundle that doesn't exist, so none loads, but their state travels.
-- **The probe** (`src/core/threads/tick_probe.rs`, temporary): once a second while ticks arrive, `stev.log` gets the worst lateness of a tick's work (`now - at` after the tick is handled), how many ticks were past 1 ms, the longest any arm of the `select!` loop held the thread and which arm, and how many arms held it past 1 ms. The lateness includes the clock's own wake (a tick's `at` lies inside the timer's last interval, so up to about 1 ms of it is the timer's); the arm times are Stev's own work. It goes when phase 4 has been measured with it.
+- **The probe** (`src/core/threads/tick_probe.rs`, temporary, removed 2026-11-07 after phase 4's hand runs; `git show 4717a70` to bring it back, and phase 4's version also named any command past 1 ms): once a second while ticks arrive, `stev.log` gets the worst lateness of a tick's work (`now - at` after the tick is handled), how many ticks were past 1 ms, the longest any arm of the `select!` loop held the thread and which arm, and how many arms held it past 1 ms. The lateness includes the clock's own wake (a tick's `at` lies inside the timer's last interval, so up to about 1 ms of it is the timer's); the arm times are Stev's own work.
 - **The sweep** (`src/core/event_handlers/command_timing.rs`): `cargo test --release command_timing -- --ignored --nocapture` times each `SequencerCommand` through the handlers on a fresh stress project, five rounds, with its undo and redo when it records a step; marquee commands cover every track and the whole project. Its module docs list what it leaves out: the capture commits (they need a take), tap tempo, the commands that touch the user's files or settings, the audio export and the agent bridge. Save and Save as template are timed as their work against a scratch file.
 
 ### The sweep (2026-11-07)
@@ -162,6 +168,49 @@ The hand run (2026-11-07): the stress project opened in a release build on the I
 - **The copy's write and the save's handover are down by half to two thirds,** now that the snapshot shares the 50 MB of state: what is left is the clips' events copied and hashed, as in the sweep. The app's other threads add a couple of ms over the sweep's 5.1, as in phase 2.
 - **The check with nothing to write is unchanged,** as expected: the blobs were never hashed. Phase 4.
 - No tick ran late without a long arm this time (phase 2's unexplained 17.5 ms).
+
+### Phase 4 (2026-11-07)
+
+The sweep, release build on the Intel Mac at the target size, median and worst of five, in ms, against phase 1 (or phase 3, for the save). Undo and redo moved alike; every other command stayed as it was.
+
+| Command | Median | Worst | Before |
+|---|---|---|---|
+| Save, the handover (snapshot and fingerprint) | 0.02 | 0.04 | 5.1 (phase 3) |
+| Duplicate time (all) | 0.80 | 0.83 | 10.4 |
+| Duplicate clips (all) | 0.78 | 0.80 | 10.4 |
+| Paste clips (all) | 1.2 | 1.3 | 6.6 |
+| Move range (all, a bar on) | 1.3 | 1.8 | 6.6 |
+| Cut clips (all) | 0.71 | 0.98 | 3.1 |
+| Copy clips (all) | 0.11 | 0.14 | 3.2 |
+| Remove clips (all), its undo | 0.73, 0.65 | 0.87, 0.70 | 0.75, 7.1 |
+| Delete time (a bar) | 0.85 | 1.0 | 1.9 |
+| Split clips (all, mid) | 0.21 | 0.25 | 1.3 |
+| Paste notes (a 1,250-event clip) | 1.3 | 1.5 | 1.2 |
+| Merge clips (⌘J, all), its undo | 142, 1.1 | 147, 1.3 | 155, 11.0 |
+| New project (⌘N) | 18 | 25 | 11.7 |
+
+`recovery_timing`, the same machine, median of eleven rounds, at 100,000 events and 50 MB: the check 0.02 ms (3.8 ms in its first round, the cache empty), the snapshot 0.01 ms.
+
+- **The recovery check is down from 3 ms to 0.02 with nothing changed,** and the save's handover from 5 ms to 0.02: both now hash only what was edited since the last check, and the snapshot copies nothing.
+- **Edits over a whole project are about 1 ms,** from 3 to 10: a clip copied for undo, the clipboard or a duplicate shares its events. Paste clips, move range and paste notes sit just past it; what is left is the clips' own bookkeeping and, for the first edit of a clip after a check, the copy of its events (decision 9).
+- **An edit of every clip followed by a check hashes everything again,** 4 ms, as the cache's first round shows. That needs a whole-project edit within the 5 s before a check, and it is once per edit.
+- **Merge clips and ⌘N are unchanged,** out of this design (phase 1). ⌘N's 18 ms against 12 is the old project's events freed at its fingerprint rather than with its clips, or noise; to look into with merge.
+
+The hand runs (2026-11-07): the stress project opened in a release build on the Intel Mac, played, clips unmuted, notes moved, muted, deleted and duplicated in the clip view, saved with ⌘S between batches of edits and right after one, the recovery check running. Two runs of about a minute each; for the second the probe also named any command past 1 ms.
+
+| What | Longest arm (ms) | Worst late (ms) | Phase 3 |
+|---|---|---|---|
+| Ticks, edits, saves and every recovery check | 0.02–0.99 | 1.0–2.1 | check 2.8–3.9, copy write 6.3–6.9, ⌘S 7.4–7.7 |
+| Duplicate selected events (a 1,250-event clip, the first edit of it after a check) | 1.5 | 1.7 | – |
+| One command in the first run, unnamed | 6.7 | 7.0 | – |
+| Opening the project (a load, out of scope) | 184–243 | 244 | 207–215 |
+
+- **The recovery check no longer shows:** no tick arm, which is where the check runs, passed 0.83 ms in either run, with nothing to write or a copy to write.
+- **⌘S no longer shows either:** no save passed 1 ms in the second run, where one would have been named. Its handover is the 0.02 to 0.09 ms of the sweep.
+- **Duplicate selected events passed the budget once,** at 1.5 ms: the clip's events copied because the cache held them (decision 9), with the edit itself.
+- **One command took 6.7 ms in the first run, and it isn't known which.** Replaying that run's edits in the sweep's harness (clip mutes, a note drag, a mute and a delete of events, a save and its outcome, an undo, a second save, a check after each) found nothing past 0.9 ms, and the second run, with the probe naming commands, had none. Phase 3's ⌘S at 7.4–7.7 ms against the sweep's 5.1 may have been the same thing beside the save. Like phase 2's late tick with no long arm, to look into on its own if it comes back.
+
+The author noticed nothing in either run: playback, edits and saves stayed smooth, the 6.7 ms included. With that the design is done, and the probe has gone. The sweep (`command_timing`) and `recovery_timing` stay, as ignored tests, to measure the next change against.
 
 ## Testing
 

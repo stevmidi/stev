@@ -15,9 +15,11 @@
 //! is one starting up to [`TAKE_EARLY_TICKS`] before it — a note played a
 //! little ahead of the beat `[` sits on.
 
+use std::sync::Arc;
+
 use uuid::Uuid;
 
-use crate::core::{time::PPQN, view_state::ViewState};
+use crate::core::{project::FingerprintCache, time::PPQN, view_state::ViewState};
 use crate::models::{
     clip::{Clip, ClipEdge},
     event::{Event, EventType},
@@ -49,8 +51,10 @@ pub(crate) struct TakeFraming {
     /// is closed there.
     target_window: (i32, i32),
     /// The target's events from before the session, put back on Esc and
-    /// before Enter's edit snapshots the clip.
-    pre_events: Vec<Event>,
+    /// before Enter's edit snapshots the clip. Shared with the clip
+    /// (`Clip::shared_events`), so the project's saved state is
+    /// [`saved_events`](Sequencer::saved_events) without a copy.
+    pre_events: Arc<Vec<Event>>,
     /// The view that had the keyboard when the session opened, which gets
     /// it back when it closes.
     return_to: ViewState,
@@ -146,11 +150,16 @@ impl Sequencer {
     /// The events a save writes for `clip`: the target of an open session as
     /// it was before the session (the take is no part of the project until
     /// Enter inserts it), any other clip as it is.
-    pub(crate) fn saved_events<'a>(&'a self, clip: &'a Clip) -> &'a [Event] {
+    pub(crate) fn saved_events<'a>(&'a self, clip: &'a Clip) -> &'a Arc<Vec<Event>> {
         match &self.take_framing {
             Some(framing) if framing.clip_id == clip.id() => &framing.pre_events,
-            _ => clip.events(),
+            _ => clip.shared_events(),
         }
+    }
+
+    /// What the last project fingerprint hashed (`FingerprintCache`).
+    pub(crate) fn fingerprint_cache(&self) -> &FingerprintCache {
+        &self.fingerprint_cache
     }
 
     /// The take of the open session, which [`selected_clip`](Self::selected_clip)
@@ -215,7 +224,7 @@ impl Sequencer {
             clip_id: target.id(),
             insert_at,
             target_window,
-            pre_events: target.events().to_vec(),
+            pre_events: Arc::clone(target.shared_events()),
             return_to,
         })
     }
@@ -275,9 +284,9 @@ impl Sequencer {
     /// before it. The closed session, `None` with none open.
     fn close_take_framing(&mut self) -> Option<TakeFraming> {
         let framing = self.take_framing.take()?;
-        let pre_events = framing.pre_events.clone();
+        let pre_events = Arc::clone(&framing.pre_events);
         self.edit_clip_events(framing.track_idx, framing.clip_id, |clip| {
-            clip.restore_events(pre_events);
+            clip.restore_shared_events(pre_events);
             clip.calculate_note_lengths();
         });
         Some(framing)
@@ -293,9 +302,9 @@ impl Sequencer {
             return;
         };
         let (track_idx, clip_id) = (framing.track_idx, framing.clip_id);
-        let pre_events = framing.pre_events.clone();
+        let pre_events = Arc::clone(&framing.pre_events);
         self.edit_clip_events(track_idx, clip_id, |clip| {
-            clip.restore_events(pre_events);
+            clip.restore_shared_events(pre_events);
             clip.land_take(&framed.events, framed.wheel_end);
         });
     }

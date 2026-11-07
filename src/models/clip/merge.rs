@@ -4,6 +4,7 @@
 //! exactly like the clips it replaces, and an exported file like the clip.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use uuid::Uuid;
 
@@ -41,7 +42,7 @@ impl Clip {
 
         let mut lossless = true;
         for piece in pieces {
-            lossless &= piece.bake_into(&mut clip.events);
+            lossless &= piece.bake_into(clip.events_mut());
         }
         if let Some(first) = pieces.iter().min_by_key(|piece| piece.start_tick()) {
             clip.set_swing_pct(first.swing_pct());
@@ -60,7 +61,7 @@ impl Clip {
     /// exporting a clip is asking for its content. Sorted, offs first on a
     /// shared tick.
     pub(crate) fn exported_events(&self) -> Vec<Event> {
-        self.sounding_from(0).events
+        Arc::unwrap_or_clone(self.sounding_from(0).events)
     }
 
     /// What this clip sounds, in arrangement ticks: the
@@ -71,7 +72,7 @@ impl Clip {
     pub(crate) fn played_events(&self) -> Vec<Event> {
         let mut played = self.sounding_from(self.start_tick);
         played.calculate_note_lengths();
-        played.events
+        Arc::unwrap_or_clone(played.events)
     }
 
     /// The [`exported_events`](Self::exported_events) rules with the window
@@ -85,10 +86,9 @@ impl Clip {
             end,
         );
         let mut sounding = Clip::new();
-        sounding.events = self.wheel_edges(&kept, origin, end);
-        sounding
-            .events
-            .extend(kept.into_iter().filter(|event| !event.is_muted()));
+        let mut events = self.wheel_edges(&kept, origin, end);
+        events.extend(kept.into_iter().filter(|event| !event.is_muted()));
+        sounding.events = Arc::new(events);
         sounding.sort_events_by_tick();
         sounding
     }

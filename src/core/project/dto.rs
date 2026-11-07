@@ -64,6 +64,23 @@ pub(crate) struct EventData {
     pub(crate) muted: bool,
 }
 
+impl EventData {
+    /// `event` as a save writes it.
+    fn of(event: &Event) -> Self {
+        EventData {
+            tick: event.tick(),
+            length: event.end_tick() - event.tick(),
+            midi_message: event.midi_message().to_vec(),
+            param_move: event.param_move().map(|moved| ParamMoveData {
+                param: moved.param.id,
+                plugin: Some(moved.param.plugin),
+                value: moved.value,
+            }),
+            muted: event.is_muted(),
+        }
+    }
+}
+
 /// One clip, on disk.
 #[derive(Serialize, Deserialize, Clone)]
 pub(crate) struct ClipData {
@@ -302,15 +319,19 @@ impl Default for ProjectData {
     }
 }
 
-/// A project taken off the sequencer with its plugin state still raw: the
-/// [`ProjectData`] a save writes, short of the base64, which is nearly all of
-/// its cost on a project with big blobs. So the `"sequencer"` thread takes
-/// this and the `"storage"` thread does the encoding, for a save and for the
-/// recovery copy (`420-large-projects.md` decision 3,
-/// `410-crash-recovery.md` decision 5).
+/// A project taken off the sequencer with its plugin state and its clips'
+/// events still as the sequencer holds them, shared, not copied: the
+/// [`ProjectData`] a save writes, short of the base64 and the events'
+/// [`EventData`]. So the `"sequencer"` thread takes this and the `"storage"`
+/// thread does the rest, for a save and for the recovery copy
+/// (`420-large-projects.md` decisions 3, 7 and 8, `410-crash-recovery.md`
+/// decision 5).
 pub(crate) struct ProjectSnapshot {
-    /// The project, every state blob empty.
+    /// The project, every state blob empty and every clip without events.
     data: ProjectData,
+    /// Each clip's events, by track and clip in the order of `data`. Shared
+    /// with the clips (`Clip::shared_events`).
+    events: Vec<Vec<Arc<Vec<Event>>>>,
     /// Each track's raw plugin state, in track order; empty on a track with
     /// no plugin. Shared with the tracks, not copied
     /// (`420-large-projects.md` decision 7).
@@ -334,6 +355,18 @@ impl ProjectSnapshot {
     fn taken(sequencer: &Sequencer, with_clips: bool) -> Self {
         ProjectSnapshot {
             data: ProjectData::without_state(sequencer, with_clips),
+            events: sequencer
+                .tracks()
+                .iter()
+                .map(|track| {
+                    track
+                        .clips()
+                        .iter()
+                        .filter(|_| with_clips)
+                        .map(|clip| Arc::clone(sequencer.saved_events(clip)))
+                        .collect()
+                })
+                .collect(),
             states: sequencer
                 .tracks()
                 .iter()
@@ -349,9 +382,16 @@ impl ProjectSnapshot {
 
     /// The whole project, each state blob in base64.
     pub(crate) fn encoded(self) -> ProjectData {
-        let ProjectSnapshot { mut data, states } = self;
-        for (track, raw) in data.tracks.iter_mut().zip(states) {
+        let ProjectSnapshot {
+            mut data,
+            events,
+            states,
+        } = self;
+        for ((track, raw), events) in data.tracks.iter_mut().zip(states).zip(events) {
             track.set_state(&raw);
+            for (clip, events) in track.clips.iter_mut().zip(events) {
+                clip.events = events.iter().map(EventData::of).collect();
+            }
         }
         data
     }
@@ -383,8 +423,9 @@ impl ProjectData {
         ProjectSnapshot::of(sequencer).encoded()
     }
 
-    /// The sequencer's project with every state blob left empty, for
-    /// [`ProjectSnapshot`] to fill in; with no clips unless `with_clips`.
+    /// The sequencer's project with every state blob and every clip's events
+    /// left empty, for [`ProjectSnapshot`] to fill in; with no clips unless
+    /// `with_clips`.
     fn without_state(sequencer: &Sequencer, with_clips: bool) -> Self {
         let tracks = sequencer
             .tracks()
@@ -395,31 +436,13 @@ impl ProjectData {
                     .clips()
                     .iter()
                     .filter(|_| with_clips)
-                    .map(|clip| {
-                        let events = sequencer
-                            .saved_events(clip)
-                            .iter()
-                            .map(|event| EventData {
-                                tick: event.tick(),
-                                length: event.end_tick() - event.tick(),
-                                midi_message: event.midi_message().to_vec(),
-                                param_move: event.param_move().map(|moved| ParamMoveData {
-                                    param: moved.param.id,
-                                    plugin: Some(moved.param.plugin),
-                                    value: moved.value,
-                                }),
-                                muted: event.is_muted(),
-                            })
-                            .collect::<Vec<_>>();
-
-                        ClipData {
-                            start_tick: clip.start_tick(),
-                            region_start: clip.region().start(),
-                            region_end: clip.region().end(),
-                            muted: clip.is_muted(),
-                            swing_pct: clip.swing_pct(),
-                            events,
-                        }
+                    .map(|clip| ClipData {
+                        start_tick: clip.start_tick(),
+                        region_start: clip.region().start(),
+                        region_end: clip.region().end(),
+                        muted: clip.is_muted(),
+                        swing_pct: clip.swing_pct(),
+                        events: Vec::new(),
                     })
                     .collect::<Vec<_>>();
 
@@ -552,7 +575,8 @@ impl ProjectData {
 mod tests {
     use super::*;
     use crate::core::sequencer::test_support::{
-        clip_at, note_on, param_at, param_moves, stub_instrument, test_sequencer, track_colors,
+        clip_at, note_off, note_on, param_at, param_moves, stub_instrument, test_sequencer,
+        track_colors,
     };
     use crate::models::knobs::{KnobParams, UNASSIGNED_KNOBS, test_param};
 
@@ -975,6 +999,35 @@ mod tests {
             panic!("expected Instrument");
         };
         assert_eq!(BASE64.decode(state).unwrap(), [1, 2, 3]);
+    }
+
+    /// A snapshot shares each clip's events rather than copying them
+    /// (`420-large-projects.md` decision 8), and still encodes them; a
+    /// template's has none.
+    #[test]
+    fn a_snapshot_shares_the_clips_events_and_encodes_them() {
+        let mut sequencer = test_sequencer();
+        let mut clip = clip_at(0, 1920);
+        clip.restore_events(vec![note_on(0), note_off(240)]);
+        clip.calculate_note_lengths();
+        sequencer.tracks_mut()[1].add_clip(&clip);
+        let events = sequencer.tracks()[1].clips()[0].shared_events();
+        let snapshot = ProjectSnapshot::of(&sequencer);
+        assert!(Arc::ptr_eq(&snapshot.events[1][0], events));
+        assert!(snapshot.events[0].is_empty());
+        assert!(snapshot.data.tracks[1].clips[0].events.is_empty());
+
+        let data = snapshot.encoded();
+        let ticks: Vec<_> = data.tracks[1].clips[0]
+            .events
+            .iter()
+            .map(|event| (event.tick, event.length))
+            .collect();
+        assert_eq!(ticks, [(0, 240), (240, 0)]);
+
+        let template = ProjectSnapshot::template_of(&sequencer);
+        assert!(template.events.iter().all(Vec::is_empty));
+        assert!(template.encoded().tracks[1].clips.is_empty());
     }
 
     #[test]

@@ -15,8 +15,6 @@
 //!   keyboard's notes as live input.
 //! - `sequencer_pump.rs` — the `"sequencer"` thread, the hub: the tick pump
 //!   plus every command dispatch (`150-clock-position-sync.md`).
-//! - `tick_probe.rs` — a temporary probe in that loop: how late the ticks
-//!   run and how long each arm holds the thread (`420-large-projects.md`).
 //! - `storage.rs` — the `"storage"` thread, the project's one writer: saves,
 //!   templates and the crash recovery copy (`420-large-projects.md`,
 //!   `410-crash-recovery.md`).
@@ -33,7 +31,6 @@ mod midi_output;
 mod midi_watcher;
 mod sequencer_pump;
 mod storage;
-mod tick_probe;
 
 #[cfg(unix)]
 pub(crate) use agent_bridge::start_agent_bridge_thread;

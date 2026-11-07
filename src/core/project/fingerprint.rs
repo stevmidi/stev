@@ -3,12 +3,40 @@
 //! the crash recovery check (`410-crash-recovery.md` decision 4) share it, so
 //! a project has a recovery copy exactly when the quit prompt would ask. The
 //! recovery check runs during playback, so it takes no snapshot and walks no
-//! JSON: on a real project that is 0.06 ms against 1.65.
+//! JSON: on a real project that is 0.06 ms against 1.65. A clip's events
+//! unchanged since the last fingerprint aren't hashed again
+//! ([`FingerprintCache`], `420-large-projects.md` decision 8).
 
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
+use std::sync::Arc;
+
+use uuid::Uuid;
 
 use crate::core::sequencer::Sequencer;
+use crate::models::event::Event;
 use crate::models::track::TrackOutput;
+
+/// A clip's events as a fingerprint hashed them, and their hash.
+type HashedEvents = (Arc<Vec<Event>>, u64);
+
+/// Each clip's events as the last fingerprint hashed them, with their hash,
+/// by clip id. Kept by the [`Sequencer`] so every [`fingerprint`] shares it.
+///
+/// Events still pointing at the allocation kept here haven't changed: a
+/// clip's events are shared (`Clip::shared_events`) and edited only through
+/// `Arc::make_mut`, which copies them first while anything else holds them,
+/// and holding the `Arc` here is what keeps the allocation from being freed
+/// and reused by other events. So the hash is reused, and only edited clips
+/// are hashed again; no edit has to say it changed anything. The cost is a
+/// copy: the first edit of a clip after a fingerprint copies its events,
+/// since this holds them too (decision 9).
+#[derive(Default)]
+pub(crate) struct FingerprintCache {
+    /// Each clip's events and their hash, from the last fingerprint.
+    clips: RefCell<HashMap<Uuid, HashedEvents>>,
+}
 
 /// A hash of everything `sequencer`'s project would write to disk but the
 /// plugins' state blobs: two projects with the same fingerprint save the same
@@ -24,8 +52,32 @@ use crate::models::track::TrackOutput;
 /// saved, while playback's never asks to save. So does each preset the plugin
 /// says it loaded (`Track::plugin_changes`).
 ///
+/// Clips whose events are unchanged since the last call reuse their hash
+/// ([`FingerprintCache`]); the result is the same as hashing them all.
+///
 /// Stable within one run only — never persisted.
 pub(crate) fn fingerprint(sequencer: &Sequencer) -> u64 {
+    let cache = &sequencer.fingerprint_cache().clips;
+    let last = cache.take();
+    let mut next = HashMap::with_capacity(last.len());
+    let hash = hash_project(sequencer, |clip_id, events| {
+        let hash = match last.get(&clip_id) {
+            Some((hashed, hash)) if Arc::ptr_eq(hashed, events) => *hash,
+            _ => hash_events(events),
+        };
+        next.insert(clip_id, (Arc::clone(events), hash));
+        hash
+    });
+    cache.replace(next);
+    hash
+}
+
+/// The fingerprint of `sequencer`'s project, each clip's events hashed by
+/// `events_hash`.
+fn hash_project(
+    sequencer: &Sequencer,
+    mut events_hash: impl FnMut(Uuid, &Arc<Vec<Event>>) -> u64,
+) -> u64 {
     let mut hasher = DefaultHasher::new();
     let meter = sequencer.meter();
     (
@@ -61,29 +113,35 @@ pub(crate) fn fingerprint(sequencer: &Sequencer) -> u64 {
             (param.map(|param| param.id), by_hand.map(f64::to_bits)).hash(&mut hasher);
         }
         for clip in track.clips() {
-            let events = sequencer.saved_events(clip);
             (
                 clip.start_tick(),
                 clip.region().start(),
                 clip.region().end(),
                 clip.is_muted(),
                 clip.swing_pct(),
-                events.len(),
+                events_hash(clip.id(), sequencer.saved_events(clip)),
             )
                 .hash(&mut hasher);
-            for event in events {
-                (
-                    event.tick(),
-                    event.end_tick(),
-                    event.midi_message(),
-                    event.is_muted(),
-                    event
-                        .param_move()
-                        .map(|moved| (moved.param, moved.value.to_bits())),
-                )
-                    .hash(&mut hasher);
-            }
         }
+    }
+    hasher.finish()
+}
+
+/// A hash of one clip's events, as a save writes them.
+fn hash_events(events: &[Event]) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    events.len().hash(&mut hasher);
+    for event in events {
+        (
+            event.tick(),
+            event.end_tick(),
+            event.midi_message(),
+            event.is_muted(),
+            event
+                .param_move()
+                .map(|moved| (moved.param, moved.value.to_bits())),
+        )
+            .hash(&mut hasher);
     }
     hasher.finish()
 }
@@ -124,6 +182,12 @@ mod tests {
             hasher.write_u32(track.plugin_changes());
         }
         hasher.finish()
+    }
+
+    /// The fingerprint with nothing reused: every clip's events hashed. What
+    /// the cached one is tested against.
+    fn full_hash(sequencer: &Sequencer) -> u64 {
+        hash_project(sequencer, |_, events| hash_events(events))
     }
 
     /// The events [`project`]'s clip starts with.
@@ -287,6 +351,47 @@ mod tests {
             assert_eq!(fingerprint(&sequencer), direct, "direct: {name}");
             assert_eq!(json_hash(&sequencer), json, "json: {name}");
         }
+    }
+
+    /// After any change, a fingerprint reusing the last one's hashes equals
+    /// one hashing everything (`420-large-projects.md` decision 8).
+    #[test]
+    fn the_cached_fingerprint_equals_a_full_hash() {
+        for (name, change) in SAVED_CHANGES.iter().chain(UNSAVED_CHANGES) {
+            let mut sequencer = project();
+            fingerprint(&sequencer);
+            change(&mut sequencer);
+            assert_eq!(fingerprint(&sequencer), full_hash(&sequencer), "{name}");
+        }
+    }
+
+    /// An edit made in place, through `Arc::make_mut`, copies the events the
+    /// cache holds rather than changing them under it, so the clip is hashed
+    /// again; the clip it didn't touch keeps the allocation the cache holds.
+    #[test]
+    fn an_edit_in_place_is_hashed_again() {
+        let mut sequencer = project();
+        sequencer.tracks_mut()[0].add_clip(&clip_at(3840, 1920));
+        let before = fingerprint(&sequencer);
+        let untouched = Arc::clone(sequencer.tracks()[0].clips()[1].shared_events());
+        let cached = |sequencer: &Sequencer, clip: usize| {
+            let clip = &sequencer.tracks()[0].clips()[clip];
+            let cache = sequencer.fingerprint_cache().clips.borrow();
+            Arc::ptr_eq(&cache[&clip.id()].0, clip.shared_events())
+        };
+        assert!(cached(&sequencer, 0));
+
+        edit_clip(&mut sequencer, |clip| clip.shift_event_space(480));
+        assert!(!cached(&sequencer, 0));
+        assert!(cached(&sequencer, 1));
+        assert!(Arc::ptr_eq(
+            &untouched,
+            sequencer.tracks()[0].clips()[1].shared_events()
+        ));
+
+        let after = fingerprint(&sequencer);
+        assert_ne!(after, before);
+        assert_eq!(after, full_hash(&sequencer));
     }
 
     /// A count or a value that goes back goes back to the same hash, so

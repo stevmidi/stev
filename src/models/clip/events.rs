@@ -15,6 +15,8 @@
 //! Selected-event editing is in `edits.rs`; quantize and swing detection in
 //! `quantize.rs`.
 
+use std::sync::Arc;
+
 use crate::core::time::Meter;
 use crate::models::{
     controllers::ControllerValues,
@@ -36,7 +38,7 @@ impl Clip {
             .unwrap_or(0);
 
         event.set_delta_ticks(prev_tick);
-        self.events.push(event);
+        self.events_mut().push(event);
     }
 
     /// [`add_event`](Self::add_event) for an event that may be stamped
@@ -53,8 +55,8 @@ impl Clip {
             .checked_sub(1)
             .map_or(0, |before| self.events[before].tick());
         event.set_delta_ticks(prev_tick);
-        self.events.insert(at, event);
-        if let Some(next) = self.events.get_mut(at + 1) {
+        self.events_mut().insert(at, event);
+        if let Some(next) = self.events_mut().get_mut(at + 1) {
             next.set_delta_ticks(tick);
         }
     }
@@ -65,7 +67,7 @@ impl Clip {
     /// `delta_ticks`, then steps the index. `None` on a tick where nothing is
     /// due.
     pub(crate) fn tick(&mut self) -> Option<Event> {
-        if let Some(event) = self.events.get_mut(self.current_event_idx) {
+        if let Some(event) = self.events.get(self.current_event_idx) {
             if self.elapsed_delta_ticks < event.delta_ticks() {
                 self.elapsed_delta_ticks += 1;
             } else if self.elapsed_delta_ticks == event.delta_ticks() {
@@ -134,8 +136,15 @@ impl Clip {
     /// Replaces the whole event list (undo restore), re-sorting and rebuilding
     /// `delta_ticks`.
     pub(crate) fn restore_events(&mut self, events: Vec<Event>) {
-        self.events = events;
+        self.events = Arc::new(events);
         self.sort_events_by_tick();
+    }
+
+    /// [`restore_events`](Self::restore_events) with another clip's shared
+    /// events ([`shared_events`](Self::shared_events)), already sorted, so
+    /// nothing is copied until the clip is next edited.
+    pub(crate) fn restore_shared_events(&mut self, events: Arc<Vec<Event>>) {
+        self.events = events;
     }
 
     /// Trims the clip to its region: drops events outside `[region.start,
@@ -147,9 +156,10 @@ impl Clip {
         let clip_length = self.region_length();
 
         let window = region_start..self.region.end();
-        self.events.retain(|event| window.contains(&event.tick()));
+        self.events_mut()
+            .retain(|event| window.contains(&event.tick()));
 
-        for event in &mut self.events {
+        for event in self.events_mut() {
             event.set_tick(event.tick() - region_start);
         }
 
@@ -170,7 +180,7 @@ impl Clip {
     /// [`crop`](Self::crop) nothing outside the region is dropped. `delta` must
     /// not push the region below 0 (`Region::set_region` clamps negatives).
     pub(crate) fn shift_event_space(&mut self, delta: i32) {
-        for event in &mut self.events {
+        for event in self.events_mut() {
             event.set_tick(event.tick() + delta);
         }
 
@@ -201,7 +211,8 @@ impl Clip {
     /// their ticks keep their absolute values. Prunes the offs thereby
     /// orphaned. Used to drop stale history from a running capture.
     pub(crate) fn trim_before_tick(&mut self, cutoff_tick: i32) {
-        self.events.retain(|event| event.tick() >= cutoff_tick);
+        self.events_mut()
+            .retain(|event| event.tick() >= cutoff_tick);
         self.remove_orphan_note_offs();
         self.calculate_note_lengths();
         self.update_delta_ticks();
@@ -256,8 +267,8 @@ impl Clip {
             }
         };
 
-        relocate_group(&mut self.events, &late_group);
-        relocate_group(&mut self.events, &early_group);
+        relocate_group(self.events_mut(), &late_group);
+        relocate_group(self.events_mut(), &early_group);
 
         self.sort_events_by_tick();
         self.calculate_note_lengths();
@@ -273,7 +284,7 @@ impl Clip {
     /// zero-length note — its off has no open note to end, so it stays
     /// behind its own same-tick `NoteOn`.
     pub(crate) fn sort_events_by_tick(&mut self) {
-        self.events
+        self.events_mut()
             .sort_by_key(|event| (event.tick(), event.event_type() != Some(EventType::NoteOff)));
         self.keep_zero_length_offs_after_their_ons();
         self.update_delta_ticks();
@@ -309,7 +320,7 @@ impl Clip {
                     if let Some(offset) = own_on {
                         // The off lands just behind its `NoteOn`; re-examine
                         // whatever slid into `idx`.
-                        self.events[idx..=idx + 1 + offset].rotate_left(1);
+                        self.events_mut()[idx..=idx + 1 + offset].rotate_left(1);
                         continue;
                     }
                 }
@@ -324,7 +335,7 @@ impl Clip {
     pub(super) fn update_delta_ticks(&mut self) {
         let mut prev_tick = 0;
 
-        for event in &mut self.events {
+        for event in self.events_mut() {
             event.set_delta_ticks(prev_tick);
             prev_tick = event.tick();
         }
@@ -333,6 +344,8 @@ impl Clip {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use crate::{
         core::time::Meter,
         models::{
@@ -588,7 +601,7 @@ mod tests {
     #[test]
     fn sort_puts_a_note_off_ahead_of_a_same_tick_note_on() {
         let mut clip = Clip::new();
-        clip.events = vec![on(480, 60), off(960, 60), on(0, 60), off(480, 60)];
+        clip.events = Arc::new(vec![on(480, 60), off(960, 60), on(0, 60), off(480, 60)]);
         clip.sort_events_by_tick();
 
         assert_eq!(
@@ -611,7 +624,7 @@ mod tests {
     fn sort_keeps_a_zero_length_note_off_behind_its_note_on() {
         let mut clip = Clip::new();
         // A note ending at 480 where a zero-length note of the same pitch sits.
-        clip.events = vec![on(480, 60), off(480, 60), on(0, 60), off(480, 60)];
+        clip.events = Arc::new(vec![on(480, 60), off(480, 60), on(0, 60), off(480, 60)]);
         clip.sort_events_by_tick();
 
         assert_eq!(
@@ -626,7 +639,7 @@ mod tests {
     #[test]
     fn sort_leaves_a_genuine_orphan_note_off_in_place() {
         let mut clip = Clip::new();
-        clip.events = vec![on(480, 62), off(480, 60)];
+        clip.events = Arc::new(vec![on(480, 62), off(480, 60)]);
         clip.sort_events_by_tick();
 
         assert_eq!(order(&clip), vec![(480, false), (480, true)]);

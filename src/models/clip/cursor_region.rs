@@ -309,7 +309,7 @@ impl Clip {
             self.region_length()
         );
 
-        for event in &mut self.events {
+        for event in self.events_mut() {
             event.set_tick(Self::adjust_tick_to_tempo(
                 event.tick(),
                 clip_tempo,

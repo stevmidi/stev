@@ -214,8 +214,8 @@ impl Clip {
                 end: note_off.tick(),
             });
             targets.push(on_idx);
-            self.events.push(note_on);
-            self.events.push(note_off);
+            self.events_mut().push(note_on);
+            self.events_mut().push(note_off);
         }
 
         self.resolve_overlaps(spans, &targets);
@@ -323,8 +323,8 @@ impl Clip {
                     }
                 }
                 NoteDrag::ResizeStart { .. } => {
-                    self.events[on_idx].set_tick(new_start);
-                    self.events[on_idx].set_length(end - new_start);
+                    self.events_mut()[on_idx].set_tick(new_start);
+                    self.events_mut()[on_idx].set_length(end - new_start);
                 }
                 NoteDrag::ResizeEnd { .. } => {
                     let off_idx = pairing.on_to_off.get(&on_idx).copied();
@@ -404,7 +404,7 @@ impl Clip {
 
         removed.sort_unstable();
         for idx in removed.into_iter().rev() {
-            self.events.remove(idx);
+            self.events_mut().remove(idx);
         }
         self.sort_events_by_tick();
     }
@@ -430,8 +430,9 @@ mod tests {
         for &(start, end, pitch) in notes {
             let on = Event::new(start, end - start, vec![0x90, pitch, 100]);
             ids.push(on.id());
-            clip.events.push(on);
-            clip.events.push(Event::new(end, 0, vec![0x80, pitch, 0]));
+            clip.events_mut().push(on);
+            clip.events_mut()
+                .push(Event::new(end, 0, vec![0x80, pitch, 0]));
         }
         clip.sort_events_by_tick();
         (clip, ids)
@@ -550,7 +551,7 @@ mod tests {
     #[test]
     fn paste_keeps_velocity_and_mute() {
         let (mut source, ids) = clip_with(&[(0, 240, 60)]);
-        source.events[0].set_velocity(42);
+        source.events_mut()[0].set_velocity(42);
         source.restore_event_selection(&ids);
         source.toggle_muted_for_selected_events();
         let copied = source.copy_selected_notes();

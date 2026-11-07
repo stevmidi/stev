@@ -137,7 +137,7 @@ impl Clip {
             return;
         }
         let mut flags = superseded.into_iter();
-        self.events.retain(|_| !flags.next().unwrap_or(false));
+        self.events_mut().retain(|_| !flags.next().unwrap_or(false));
         self.update_delta_ticks();
     }
 
@@ -281,7 +281,7 @@ impl Clip {
             && !self.has_move_at(controller, end);
 
         let len = self.events.len();
-        self.events
+        self.events_mut()
             .retain(|event| !(is_move_of(event, controller) && span.contains(&event.tick())));
         let removed = self.events.len() != len;
         if let Some(old_value) = old_value.filter(|_| write_back) {
@@ -350,12 +350,12 @@ impl Clip {
         let selected = |event: &Event| event.param_move().is_some_and(|moved| matches(moved.param));
         match to {
             Some(to) => self
-                .events
+                .events_mut()
                 .iter_mut()
                 .filter(|event| selected(event))
                 .for_each(|event| event.set_param(to)),
             None => {
-                self.events.retain(|event| !selected(event));
+                self.events_mut().retain(|event| !selected(event));
                 self.update_delta_ticks();
             }
         }

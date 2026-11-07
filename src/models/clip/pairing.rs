@@ -9,6 +9,7 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::ops::Range;
+use std::sync::Arc;
 
 use log::debug;
 use uuid::Uuid;
@@ -109,7 +110,7 @@ impl Clip {
     /// paired `NoteOff` (0 for an unpaired note). Call after any edit that
     /// moves note edges.
     pub(crate) fn calculate_note_lengths(&mut self) {
-        for event in &mut self.events {
+        for event in self.events_mut() {
             if event.event_type() == Some(EventType::NoteOn) {
                 event.set_length(0);
             }
@@ -117,9 +118,10 @@ impl Clip {
 
         let pairing = self.pair_note_events();
 
+        let events = self.events_mut();
         for (on_idx, off_idx) in pairing.on_to_off {
-            let length = self.events[off_idx].tick() - self.events[on_idx].tick();
-            self.events[on_idx].set_length(length);
+            let length = events[off_idx].tick() - events[on_idx].tick();
+            events[on_idx].set_length(length);
         }
     }
 
@@ -181,7 +183,7 @@ impl Clip {
         }
 
         let fold = |tick: i32| (tick - phase_origin).rem_euclid(loop_len);
-        self.events = self.windowed_events(window_start..window_end, fold, loop_len - 1);
+        self.events = Arc::new(self.windowed_events(window_start..window_end, fold, loop_len - 1));
         self.region_mut().set_region(Some(0), Some(loop_len));
         self.sort_events_by_tick();
         self.calculate_note_lengths();
@@ -283,7 +285,7 @@ impl Clip {
 
         for on_idx in pairing.open_note_ons {
             let note_off = Self::note_off_for(&self.events[on_idx], tick);
-            self.events.push(note_off);
+            self.events_mut().push(note_off);
 
             debug!("Closing open note idx {} at tick {}", on_idx, tick);
         }
@@ -300,7 +302,7 @@ impl Clip {
         }
 
         let mut idx = 0usize;
-        self.events.retain(|_| {
+        self.events_mut().retain(|_| {
             let keep = pairing.orphan_note_offs.binary_search(&idx).is_err();
             idx += 1;
             keep
@@ -321,11 +323,11 @@ impl Clip {
         }
 
         let note_on_tick = self.events[note_on_idx].tick();
-        self.events[note_on_idx].set_tick(note_on_tick + nudge);
+        self.events_mut()[note_on_idx].set_tick(note_on_tick + nudge);
 
         if let Some(note_off_idx) = pairing.on_to_off.get(&note_on_idx).copied() {
             let note_off_tick = self.events[note_off_idx].tick();
-            self.events[note_off_idx].set_tick(note_off_tick + nudge);
+            self.events_mut()[note_off_idx].set_tick(note_off_tick + nudge);
         }
     }
 
@@ -334,9 +336,9 @@ impl Clip {
     /// re-sort.
     pub(super) fn set_note_end(&mut self, on_idx: usize, off_idx: Option<usize>, end: i32) {
         let start = self.events[on_idx].tick();
-        self.events[on_idx].set_length(end - start);
+        self.events_mut()[on_idx].set_length(end - start);
         if let Some(off_idx) = off_idx {
-            self.events[off_idx].set_tick(end);
+            self.events_mut()[off_idx].set_tick(end);
         }
     }
 
@@ -352,9 +354,9 @@ impl Clip {
             return;
         };
         let pitch = (i32::from(pitch) + semitones).clamp(0, 127) as u8;
-        self.events[on_idx].set_note_number(pitch);
+        self.events_mut()[on_idx].set_note_number(pitch);
         if let Some(off_idx) = pairing.on_to_off.get(&on_idx).copied() {
-            self.events[off_idx].set_note_number(pitch);
+            self.events_mut()[off_idx].set_note_number(pitch);
         }
     }
 

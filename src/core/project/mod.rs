@@ -28,7 +28,7 @@ pub(crate) use dto::TrackOutputData;
 #[cfg(all(test, debug_assertions))]
 pub(crate) use dto::{ClipData, EventData};
 pub(crate) use dto::{ProjectData, ProjectSnapshot};
-pub(crate) use fingerprint::fingerprint;
+pub(crate) use fingerprint::{FingerprintCache, fingerprint};
 pub(crate) use recent::{note_recent, remove_recent, rename_recent, rename_recent_folder};
 pub(crate) use recovery::{RecoveryCopy, read_recovery_copy, recovery_path, take_recovery_lock};
 pub(crate) use smf::write_smf;

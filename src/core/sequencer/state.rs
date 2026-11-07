@@ -27,6 +27,7 @@ use crate::core::midi::{
     message::{Controller, Midi3},
     out_queue::MidiOutMessage,
 };
+use crate::core::project::FingerprintCache;
 use crate::{
     core::{
         config,
@@ -151,6 +152,9 @@ pub(crate) struct Sequencer {
     /// The open take session, if any (`take_framing.rs`): while it is open
     /// the lead clip the clip view shows is the take.
     pub(super) take_framing: Option<TakeFraming>,
+    /// What the last [`fingerprint`](crate::core::project::fingerprint)
+    /// hashed, for the next to reuse (`420-large-projects.md` decision 8).
+    pub(super) fingerprint_cache: FingerprintCache,
     /// The audio export in progress, if any (`audio_export.rs`).
     pub(super) audio_export: Option<AudioExportRun>,
     /// How many audio exports have begun: the last one's id.
@@ -236,6 +240,7 @@ impl Sequencer {
             capture_clock_offset: None,
             capture_last_note_at: None,
             take_framing: None,
+            fingerprint_cache: FingerprintCache::default(),
             audio_export: None,
             audio_exports_begun: 0,
             audio_export_atomics,

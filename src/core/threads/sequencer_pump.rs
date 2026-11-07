@@ -10,9 +10,7 @@
 //! check compares against (`060-persistence.md`), a project read from disk
 //! while the view loads its plugins (`130-plugin-host.md`), and the
 //! [`RecoveryKeeper`] whose check the tick arm runs
-//! (`410-crash-recovery.md`). A temporary [`TickProbe`] logs how late the
-//! ticks run and how long each arm holds the thread
-//! (`420-large-projects.md` phase 1).
+//! (`410-crash-recovery.md`).
 
 use crossbeam_channel::{Receiver, select};
 use undo::Record;
@@ -20,7 +18,6 @@ use undo::Record;
 use std::iter;
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
-use std::time::Instant;
 
 use crate::core::clock::ClockTick;
 use crate::core::event_handlers::{
@@ -32,8 +29,6 @@ use crate::core::project::ProjectData;
 use crate::core::sequencer::{Sequencer, SequencerCommand, SequencerEdit};
 use crate::core::time::TapTempo;
 use crate::core::transport::{TickOutcome, Transport, TransportCommand, TransportEvent};
-
-use super::tick_probe::TickProbe;
 
 /// Starts the `"sequencer"` thread — the hub. Its `select!` loop ticks the
 /// transport on each [`ClockTick`], drains MIDI input, and dispatches every
@@ -67,13 +62,11 @@ pub(crate) fn start_sequencer_thread(
             // The empty startup project counts as saved: quitting before
             // touching anything asks nothing.
             let mut open = OpenProject::new(SavedProject::of(&sequencer, None), recovery, storage);
-            let mut probe = TickProbe::new();
 
             loop {
                 select! {
                     recv(tick_rx) -> tick => {
                         let Ok(first) = tick else { break };
-                        let started = Instant::now();
                         let at = first.at;
                         // This tick, then any extra ticks that arrived while
                         // processing, each run to completion before the next is
@@ -110,14 +103,11 @@ pub(crate) fn start_sequencer_thread(
                                 metronome.playback_retimed();
                             }
                             metronome.on_tick(tick.at, click_tick, sequencer.meter(), running);
-                            probe.tick_handled(tick.at);
                         }
                         open.tick(at, &sequencer);
-                        probe.arm_done("tick", started);
                     }
 
                     recv(midi_in_rx) -> midi_message => {
-                        let started = Instant::now();
                         if let Ok((message, tick)) = midi_message {
                             if sequencer.is_performance_lane_armed() {
                                 event_handlers.handle_performance_lane_midi_input(&mut sequencer, &mut transport, &message);
@@ -132,31 +122,24 @@ pub(crate) fn start_sequencer_thread(
                                 }
                             }
                         }
-                        probe.arm_done("midi in", started);
                     }
 
                     recv(transport_event_rx) -> transport_event => {
-                        let started = Instant::now();
                         if let Ok(event) = transport_event {
                             event_handlers.handle_transport_event(&event, &mut sequencer, &transport);
                         }
-                        probe.arm_done("transport event", started);
                     }
 
                     recv(sequencer_command_rx) -> command => {
-                        let started = Instant::now();
                         if let Ok(cmd) = command {
                             event_handlers.handle_sequencer_command(&cmd, &mut sequencer, &mut undo_record, &mut tap_tempo, &mut open);
                         }
-                        probe.arm_done("sequencer command", started);
                     }
 
                     recv(transport_command_rx) -> command => {
-                        let started = Instant::now();
                         if let Ok(cmd) = command {
                             event_handlers.handle_transport_command(&cmd, &mut transport, &mut sequencer, &metronome);
                         }
-                        probe.arm_done("transport command", started);
                     }
                 }
             }

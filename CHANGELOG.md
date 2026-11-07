@@ -26,6 +26,7 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ### Changed
 
+- Big projects stay on time while you work: the check for unsaved changes, the background crash-recovery copy and edits across many clips no longer copy or re-read every clip, so they don't make notes or the click late.
 - Saving no longer holds up playback: the project is written in the background, so a big project's ⌘S doesn't make notes or the click late. Saving then quitting or opening another project waits for the save to finish first.
 - Double-clicking the project that's already open in Finder, with unsaved changes, leaves it as it is instead of asking to save before reopening it from disk.
 - Keys work from a plugin editor the way they do in a DAW: the plugin gets a key first, and what it doesn't use comes to Stev, so `/` captures and every other command works without clicking back. `⌘S`, `⇧⌘S` and `⌘N` always go to Stev. A plugin's text field keeps what's typed into it, now including Space, `0` and `v`.

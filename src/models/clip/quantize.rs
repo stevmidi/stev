@@ -124,7 +124,7 @@ impl Clip {
 
         let mut offsets: Vec<i32> = Vec::new();
 
-        for event in &self.events {
+        for event in self.events.iter() {
             if event.event_type() != Some(EventType::NoteOn) {
                 continue;
             }

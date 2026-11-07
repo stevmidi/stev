@@ -79,8 +79,12 @@ pub(crate) struct Clip {
     event_selection: Selection,
 
     // --- MIDI events, region and swing ---
-    /// The clip's events, sorted by tick, timed in event-tick space.
-    events: Vec<Event>,
+    /// The clip's events, sorted by tick, timed in event-tick space. Shared
+    /// between the clip's copies (undo, the clipboard, a project snapshot,
+    /// the fingerprint's cache) and written only through
+    /// [`events_mut`](Self::events_mut), so contents that are shared are
+    /// never edited in place (`420-large-projects.md` decision 8).
+    events: Arc<Vec<Event>>,
     /// Position of the clip on the *arrangement* timeline — a position.
     start_tick: i32,
     /// The loop window in *event-tick* space; also the clip's playable length.
@@ -110,7 +114,7 @@ impl Clip {
         Clip {
             id: Uuid::new_v4(),
             event_selection: Selection::new(),
-            events: Vec::new(),
+            events: Arc::default(),
             start_tick: 0,
             region: Region::new(0, 0),
             swing_pct: 50,
@@ -187,6 +191,20 @@ impl Clip {
     /// The clip's events, sorted by tick.
     pub(crate) fn events(&self) -> &[Event] {
         &self.events
+    }
+
+    /// The clip's events as shared: a pointer to the same allocation means
+    /// the same events, since shared events are never edited in place. What
+    /// a project snapshot and the fingerprint's cache hold
+    /// (`420-large-projects.md` decision 8).
+    pub(crate) fn shared_events(&self) -> &Arc<Vec<Event>> {
+        &self.events
+    }
+
+    /// The event list to edit: copied first if anything else shares it
+    /// ([`Arc::make_mut`]). The only way to write it.
+    fn events_mut(&mut self) -> &mut Vec<Event> {
+        Arc::make_mut(&mut self.events)
     }
 
     /// Whether the clip holds a note (a `NoteOn`).
