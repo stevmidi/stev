@@ -262,18 +262,36 @@ fn read_project(path: &Path) -> Result<(String, ProjectData), Box<dyn Error>> {
 /// names it: `(folder, name)` for one directly in the projects root (folder
 /// `None`) or in one of its project folders; `None` anywhere else — outside
 /// the library, deeper, or in the clips folder or a hidden one. Both paths
-/// are compared resolved, so a symlink on either side doesn't matter.
+/// are compared resolved ([`resolved`]), so a symlink on either side
+/// doesn't matter.
 pub(crate) fn library_project(path: &Path) -> Option<(Option<String>, String)> {
-    let canonical = |p: &Path| fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
-    project_in(&canonical(path), &canonical(&project_dir()))
+    project_in(&resolved(path), &resolved(&project_dir()))
 }
 
 /// Whether the `.stev` at `path` is a template: directly in the templates
 /// folder, compared resolved as [`library_project`] does. Finder opens one
 /// as the browser does, untitled (`archive/340-templates.md`).
 pub(crate) fn is_template_file(path: &Path) -> bool {
-    let canonical = |p: &Path| fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
-    is_template_in(&canonical(path), &canonical(&templates_dir()))
+    is_template_in(&resolved(path), &resolved(&templates_dir()))
+}
+
+/// `path` with its folder resolved (symlinks, and on Windows the verbatim
+/// `\\?\` form `fs::canonicalize` gives), and its file name kept as is.
+/// Resolving the folder rather than the whole path treats a file that isn't
+/// there yet the same as one that is: canonicalizing a missing file fails,
+/// and the unresolved path it fell back to never matched a resolved root.
+/// A path whose folder won't resolve either comes back as given.
+fn resolved(path: &Path) -> PathBuf {
+    let parent_and_name = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .zip(path.file_name());
+    match parent_and_name {
+        Some((parent, name)) => fs::canonicalize(parent)
+            .map(|parent| parent.join(name))
+            .unwrap_or_else(|_| path.to_path_buf()),
+        None => fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()),
+    }
 }
 
 /// [`is_template_file`] with the templates folder `dir`, both paths as given.
@@ -778,6 +796,28 @@ mod tests {
         ] {
             assert!(!is_template(not), "{not}");
         }
+    }
+
+    /// A file that isn't there resolves as its folder does, so it still
+    /// matches a resolved root. Regression: canonicalizing the whole path
+    /// failed for a missing file and kept it unresolved, which on Windows
+    /// (the verbatim `\\?\` prefix) or under a symlinked folder (macOS's
+    /// `/var` temp folder) never matched the root, so Finder opening the open
+    /// project was not recognised as the open project.
+    #[test]
+    fn a_missing_file_resolves_as_its_folder_does() {
+        let dir = std::env::temp_dir();
+        let missing = dir.join(format!("stev-missing-{}.stev", std::process::id()));
+        let resolved_dir = fs::canonicalize(&dir).unwrap();
+        assert_eq!(
+            resolved(&missing),
+            resolved_dir.join(missing.file_name().unwrap())
+        );
+        assert_eq!(resolved(&dir), resolved_dir);
+        assert_eq!(
+            project_in(&resolved(&missing), &resolved(&dir)).map(|(folder, _)| folder),
+            Some(None)
+        );
     }
 
     /// A project in the root or one project folder down is named as the
