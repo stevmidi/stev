@@ -67,6 +67,15 @@ Stopped or playing made little difference. The 50 MB blob guess was about 60 tim
 
 The built fingerprint covers every field, not only the events. Rerun on the same machine and the same synthetic projects, it took 0.28 ms at 10,000 events, 3.0 at 100,000 and 5.5 at 200,000, with or without blobs: about twice the events-only column above, so about 0.11 ms on the biggest real project. The snapshot the `"sequencer"` thread takes when the project changed, blobs still raw, took 0.26 ms at 10,000 events, 2.8 at 100,000, and about 8 ms more with 50 MB of blobs. Both are synthetic, and not yet measured during playback.
 
+## If size ever matters
+
+Not planned (2026-11-07). The check hashes the whole project every 5 s, and a write snapshots all of it, because nothing then has to report a change: the same reason `SavedProject` compares fingerprints rather than keep a dirty flag. At the sizes in use that is about 0.1 ms per check, and a project would need about 30,000 events before the hash made a tick late now and then, still inside the one-buffer headroom clip events are scheduled with (`000` § Threading Model). What grows first is plugin state, which the snapshot copies.
+
+If either ever shows up (notes late every 5 s while editing, or a hitch after a knob turn on a large sampler), the way down keeps the derived check:
+
+1. **Plugin state as `Arc<[u8]>`** on `InstrumentRef`, so the snapshot shares the blobs instead of copying them. Small and contained; the first step.
+2. **Clip events as `Arc<Vec<Event>>`, edited only through `Arc::make_mut`.** A snapshot then shares every clip. The check keeps an `Arc` of each clip from the last copy: one still pointing at the same allocation hasn't changed, since shared contents can't be edited in place, so its hash is reused and only edited clips and the fields around them are hashed again. Keeping the old `Arc` alive is what makes the pointer comparison sound: the allocation can't be freed and reused while the cache holds it. `make_mut` is the only way in, so no edit path can forget, and no flag is kept. It reaches every edit path in `models/` and the sequencer, and needs a test that the cached fingerprint equals a full hash.
+
 ## Testing
 
 `kill -9` while the project has changes is the everyday test: it works every time, and to recovery it looks the same as a crash, since no Stev code runs in either. Finish with one real crash from the ⌘H recipe. Each phase's logic carries its tests as usual: what makes a copy exist or go is pure enough to test through the harness.
