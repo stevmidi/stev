@@ -1,6 +1,6 @@
 # Large Projects
 
-**Status: design agreed 2026-11-07, not built.** Stev should stay on time with a project far bigger than its author makes: no late note or click while playing, through a save, a recovery copy or an edit. The work that grows with the project moves off the `"sequencer"` thread, or stops growing with it.
+**Status: design agreed 2026-11-07; phase 1 (measure) done 2026-11-07, phases 2 to 4 not built.** Issue: #23. Stev should stay on time with a project far bigger than its author makes: no late note or click while playing, through a save, a recovery copy or an edit. The work that grows with the project moves off the `"sequencer"` thread, or stops growing with it.
 
 ## Background
 
@@ -38,6 +38,67 @@ How late the `"sequencer"` thread can run before anyone hears it: each tick carr
 4. **Clips shared, the check cached.** Decisions 8 and 9.
 
 Each phase ends with the probe run again at the target size.
+
+## Measurements
+
+### The tools (phase 1)
+
+- **The stress project** (`src/core/project/stress.rs`): `fill_stress_project` builds the 16 tracks, five back-to-back clips on each, the events in groups of ten (two notes, three bends, three parameter moves, the two notes ending) and the plugin state split over the tracks. `recovery_timing` builds its projects there too. `cargo test --release write_stress_project -- --ignored` writes the target, `Stress/Stress 100k.stev`, into the library. Its plugins point at a bundle that doesn't exist, so none loads, but their state travels.
+- **The probe** (`src/core/threads/tick_probe.rs`, temporary): once a second while ticks arrive, `stev.log` gets the worst lateness of a tick's work (`now - at` after the tick is handled), how many ticks were past 1 ms, the longest any arm of the `select!` loop held the thread and which arm, and how many arms held it past 1 ms. The lateness includes the clock's own wake (a tick's `at` lies inside the timer's last interval, so up to about 1 ms of it is the timer's); the arm times are Stev's own work. It goes when phase 4 has been measured with it.
+- **The sweep** (`src/core/event_handlers/command_timing.rs`): `cargo test --release command_timing -- --ignored --nocapture` times each `SequencerCommand` through the handlers on a fresh stress project, five rounds, with its undo and redo when it records a step; marquee commands cover every track and the whole project. Its module docs list what it leaves out: the capture commits (they need a take), tap tempo, the commands that touch the user's files or settings, the audio export and the agent bridge. Save and Save as template are timed as their work against a scratch file.
+
+### The sweep (2026-11-07)
+
+A release build on the Intel Mac at the target size, median and worst of five, in ms. Everything not listed stayed under 0.3 ms, apart from single worst rounds a little past 1 ms with a median far under it (noise). Playback itself is cheap: `Sequencer::tick` took 0.00 ms in the median and 0.09 at worst over 20,000 ticks.
+
+| Command | Median | Worst | Undo | Redo |
+|---|---|---|---|---|
+| Save (`ProjectData`, pretty JSON, write, `SavedProject`) | 360 | 373 | – | – |
+| Save as template | 177 | 215 | – | – |
+| Merge clips (⌘J, all) | 155 | 174 | 11.0 | 6.5 |
+| New project (⌘N) | 11.7 | 13.6 | – | – |
+| Duplicate time (all) | 10.4 | 12.1 | 3.4 | 2.7 |
+| Duplicate clips (all) | 10.4 | 10.7 | 3.9 | 2.7 |
+| Paste clips (all) | 6.6 | 10.0 | 10.3 | 6.4 |
+| Move range (all, a bar on) | 6.6 | 8.1 | 6.2 | 6.3 |
+| Cut clips (all; scoped alike) | 3.1 | 4.3 | 6.6 | 3.1 |
+| Copy clips (all; scoped alike) | 3.2 | 3.9 | – | – |
+| Remove clips (all) | 0.75 | 0.94 | 7.1 | 2.9 |
+| Delete time (a bar) | 1.9 | 1.9 | 2.3 | 1.7 |
+| Split clips (all, mid) | 1.3 | 2.1 | 0.6 | 0.7 |
+| Paste notes (a 1,250-event clip) | 1.2 | 1.3 | 0.1 | 0.7 |
+| Set track output (undo puts 3 MB of state back) | 0.19 | 0.20 | 1.7 | 0.17 |
+| A captured plugin state (3 MB) | 0.60 | 1.5 | – | – |
+
+What it says against the decisions:
+
+- **The save is the worst by far,** at 360 ms: more than the 83 to 254 ms of `410`, since the `.stev` is pretty-printed and the copy isn't, and it adds `SavedProject`'s fingerprint. Decisions 3 to 6 stand.
+- **Edits over a whole project cost milliseconds**, all of it copying clips and their events: every marquee edit over the whole project passes 1 ms, as do the undos that put clips back. Decision 8's shared clips would make a copy of an unchanged clip a pointer, which should cover copy, cut, paste, remove and their undos; duplicates and moves still write their clips' new positions. To be checked again after phase 4.
+- **Merge clips is out of line** at 155 ms for 6,250 events a track, against 10 ms for duplicating the same clips: something in it grows faster than its events. Not one of decisions 3 to 9; to look into on its own.
+- **A new project** takes 12 ms, most likely dropping the old project's clips and state on the thread. Loading is out of scope (decision 11), but ⌘N isn't a load; to look into with merge.
+- **A captured plugin state** (`SetTrackInstrumentState`) copies its 3 MB, as decision 7 says; it passed 1 ms once.
+
+### The hand run (2026-11-07)
+
+The stress project written by `write_stress_project` (a 90 MB `.stev`), opened in a release build on the Intel Mac, played, saved with ⌘S, edited, with the recovery check running. Two minutes of the probe's lines:
+
+| What | Longest arm (ms) | Worst late (ms) |
+|---|---|---|
+| Nothing but ticks, clean or edited | 0.0–0.15 | 1.0–1.2 |
+| The recovery check, project unchanged since the save (every 5 s) | 2.8–3.8 | up to 3.3 |
+| The recovery check writing a copy, after edits (every 5 s) | 12–24 | up to 24 |
+| ⌘S | 364 | 364 |
+| ⌘S again, a second later | 448 | 449 |
+| Opening the project (a load, out of scope) | 206 | 206 |
+| The edits themselves | at most 1.5 | – |
+
+- **The floor is the clock, not Stev.** With nothing else running, a tick's work finishes about 1.0 ms after its `at`: the timer's interval, as the probe's docs expect. While playing, 10 to 60 ticks a second finish just past 1 ms (1.0 to 1.2), with the arms under 0.2 ms. That is the timer, so the budget is read from the arms, not from that count.
+- **The recovery check is over budget every 5 s,** even with nothing to write: 3 ms for the fingerprint, as `410` measured synthetically. Once the project differs from the save, each check also takes the snapshot, 12 to 24 ms with its 50 MB of state. Decisions 7 and 8 are aimed at exactly these two.
+- **⌘S holds the thread for 364 ms,** as the sweep found. Decisions 3 to 6.
+- **No audio overrun was journalled during the run.** The plugins didn't load, so the audio thread had nothing to render; MIDI Out and the click were the only paths a late tick could be heard on.
+- **Nothing new beyond the sweep** came up: the hand-made edits stayed under 1.5 ms.
+
+Phase 1 is done: decisions 3 to 8 stand as written, and the sweep added merge clips and ⌘N, which no phase covers yet.
 
 ## Testing
 

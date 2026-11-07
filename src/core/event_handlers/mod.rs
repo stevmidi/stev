@@ -42,6 +42,8 @@ mod clip_lifecycle;
 mod clip_range_edits;
 mod clip_view;
 mod command_helpers;
+#[cfg(test)]
+mod command_timing;
 mod edit_result_handler;
 mod input_handler;
 mod performance_lane_handler;

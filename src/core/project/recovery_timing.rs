@@ -5,8 +5,9 @@
 //!
 //! Run with `cargo test --release recovery_timing -- --ignored --nocapture`.
 //!
-//! Every project is the 16-track maximum with [`EVENT_COUNTS`] events and
-//! [`BLOB_MEGABYTES`] of plugin state in total. The check is the
+//! Every project is the stress project (`stress`) at the 16-track maximum
+//! with [`EVENT_COUNTS`] events and [`BLOB_MEGABYTES`] of plugin state in
+//! total. The check is the
 //! [`fingerprint`] and the snapshot is [`ProjectSnapshot::of`], the two that
 //! run on the `"sequencer"` thread. The write adds what the `"recovery"`
 //! thread does: the encoding, the JSON and `replace_file`.
@@ -25,14 +26,12 @@ use std::time::{Duration, Instant};
 use crate::core::config::MAX_TRACKS;
 use crate::core::paths::scratch_dir;
 use crate::core::sequencer::Sequencer;
-use crate::core::sequencer::test_support::{bend_at, clip_at, param_at, test_sequencer};
-use crate::core::xorshift::XorShift;
-use crate::models::event::Event;
-use crate::models::track::{InstrumentRef, TrackOutput};
+use crate::core::sequencer::test_support::test_sequencer;
 
 use super::dto::{ProjectData, ProjectSnapshot};
 use super::fingerprint::fingerprint;
 use super::storage::replace_file;
+use super::stress::{MEGABYTE, fill_stress_project};
 
 /// Total events in a project, across all its clips. Each divides evenly into
 /// the clips; about 100,000 is the design's stress case.
@@ -42,69 +41,14 @@ const EVENT_COUNTS: [usize; 5] = [2_000, 10_000, 50_000, 100_000, 200_000];
 /// tracks; about 50 is the design's stress case.
 const BLOB_MEGABYTES: [usize; 3] = [0, 5, 50];
 
-/// Clips on each track.
-const CLIPS_PER_TRACK: usize = 5;
-
-/// Ticks between one event and the next in a clip.
-const EVENT_SPACING_TICKS: i32 = 24;
-
-/// A note's length in ticks.
-const NOTE_LENGTH_TICKS: i32 = 240;
-
 /// Timed rounds per project.
 const ROUNDS: usize = 11;
 
-/// Bytes in a megabyte, as [`BLOB_MEGABYTES`] counts them.
-const MEGABYTE: usize = 1_000_000;
-
-/// Steps of a parameter move's value: enough that a value writes as many
-/// digits as a real one.
-const PARAM_VALUE_STEPS: u64 = 1 << 20;
-
-/// The `index`th event of a clip. Four in ten are notes' edges and the rest
-/// wheel and knob moves, as in a clip dense with them: a parameter move is
-/// the dearest to write, with its float.
-fn event(index: usize, rng: &mut XorShift) -> Event {
-    let tick = index as i32 * EVENT_SPACING_TICKS;
-    let pitch = 36 + rng.below(48) as u8;
-    match index % 10 {
-        0 | 1 => Event::new(tick, NOTE_LENGTH_TICKS, vec![0x90, pitch, 100]),
-        2 | 3 => Event::new(tick, 0, vec![0x80, pitch, 0]),
-        4..=6 => bend_at(tick, rng.below(128) as u8),
-        _ => {
-            let value = rng.below(PARAM_VALUE_STEPS) as f64 / PARAM_VALUE_STEPS as f64;
-            param_at(tick, 714, value)
-        }
-    }
-}
-
-/// A plugin output holding `state_bytes` of state. What the bytes are makes
-/// no difference to base64 or to the JSON around it.
-fn instrument(state_bytes: usize) -> TrackOutput {
-    TrackOutput::Instrument(InstrumentRef {
-        bundle_path: "/Library/Audio/Plug-Ins/VST3/Timing.vst3".into(),
-        plugin_id: "timing".to_owned(),
-        display_name: "Timing".to_owned(),
-        state: vec![0x5A; state_bytes],
-    })
-}
-
 /// The maximum track count with `events` events and `blob_bytes` of plugin
-/// state in total.
+/// state in total: the stress project at that size.
 fn project(events: usize, blob_bytes: usize) -> Sequencer {
     let mut sequencer = test_sequencer();
-    sequencer.set_track_count(MAX_TRACKS);
-    let mut rng = XorShift::new(1);
-    let per_clip = events / (MAX_TRACKS * CLIPS_PER_TRACK);
-    let clip_length = per_clip as i32 * EVENT_SPACING_TICKS;
-    for track in sequencer.tracks_mut() {
-        track.set_output(instrument(blob_bytes / MAX_TRACKS));
-        for index in 0..CLIPS_PER_TRACK {
-            let mut clip = clip_at(index as i32 * clip_length, clip_length);
-            clip.restore_events((0..per_clip).map(|i| event(i, &mut rng)).collect());
-            track.add_clip(&clip);
-        }
-    }
+    fill_stress_project(&mut sequencer, events, blob_bytes);
     sequencer
 }
 
