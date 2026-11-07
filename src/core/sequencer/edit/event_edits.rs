@@ -770,6 +770,9 @@ mod tests {
         clip.add_event(Event::new(on_tick + 100, 0, vec![0x80, 60, 0]));
         clip.add_event(Event::new(on_tick, 0, vec![0x90, 64, 40]));
         clip.add_event(Event::new(on_tick + 100, 0, vec![0x80, 64, 0]));
+        // Sorted, as every clip in a project is: undo puts the list back as
+        // it was, without sorting it again.
+        clip.sort_events_by_tick();
 
         let note_60_id = clip
             .events()

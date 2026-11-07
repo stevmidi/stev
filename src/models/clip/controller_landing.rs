@@ -280,13 +280,9 @@ impl Clip {
             && old_value.is_some_and(|value| Some(value) != span_last)
             && !self.has_move_at(controller, end);
 
-        let in_span = |event: &Event| is_move_of(event, controller) && span.contains(&event.tick());
-        // Checked first, so a span with nothing in it leaves shared events
-        // shared (`Clip::events_mut`).
-        let removed = self.events.iter().any(in_span);
-        if removed {
-            self.events_mut().retain(|event| !in_span(event));
-        }
+        let removed = self.retain_events(|event| {
+            !(is_move_of(event, controller) && span.contains(&event.tick()))
+        });
         if let Some(old_value) = old_value.filter(|_| write_back) {
             self.add_controller_move(controller, old_value, channel, end);
         }
@@ -351,7 +347,7 @@ impl Clip {
         to: Option<PluginParam>,
     ) {
         let selected = |event: &Event| event.param_move().is_some_and(|moved| matches(moved.param));
-        // Shared events with nothing to rewrite stay shared
+        // Nothing to rewrite writes nothing, so shared events stay shared
         // (`Clip::events_mut`).
         if !self.events.iter().any(selected) {
             return;
@@ -363,7 +359,7 @@ impl Clip {
                 .filter(|event| selected(event))
                 .for_each(|event| event.set_param(to)),
             None => {
-                self.events_mut().retain(|event| !selected(event));
+                self.retain_events(|event| !selected(event));
                 self.update_delta_ticks();
             }
         }
@@ -393,6 +389,8 @@ fn is_move_of(event: &Event, controller: Controller) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
     use crate::models::event::EventType;
     use crate::models::knobs::{ParamId, test_param};
@@ -412,6 +410,23 @@ mod tests {
         clip.restore_events(events);
         clip.region_mut().set_region(Some(0), Some(BAR * 4));
         clip
+    }
+
+    /// Clearing a span with nothing in it, or rewriting moves of a parameter
+    /// the clip doesn't hold, writes nothing, so shared events stay shared
+    /// (`420-large-projects.md` decision 8).
+    #[test]
+    fn a_rewrite_with_nothing_to_do_keeps_the_events_shared() {
+        let mut clip = clip_with(vec![param(0, 714, 0.25), param(BAR, 714, 0.75)]);
+        let shared = Arc::clone(clip.shared_events());
+        assert!(!clip.clear_controller_span(Controller::Param(test_param(715)), 0, BAR * 2));
+        clip.rewrite_param_moves(|param| param.id == 715, None);
+        clip.rewrite_param_moves(|param| param.id == 715, Some(test_param(716)));
+        assert!(Arc::ptr_eq(clip.shared_events(), &shared));
+
+        clip.rewrite_param_moves(|param| param.id == 714, None);
+        assert!(!Arc::ptr_eq(clip.shared_events(), &shared));
+        assert!(clip.events().is_empty());
     }
 
     /// The clip's wheel moves as `(tick, message)`.

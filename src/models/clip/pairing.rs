@@ -108,19 +108,29 @@ impl Clip {
     /// Recomputes every `NoteOn`'s `length` field from the tick distance to its
     /// paired `NoteOff` (0 for an unpaired note). Call after any edit that
     /// moves note edges.
+    /// Writes nothing when every length is already right, so shared events
+    /// stay shared (`Clip::events_mut`).
     pub(crate) fn calculate_note_lengths(&mut self) {
-        for event in self.events_mut() {
-            if event.event_type() == Some(EventType::NoteOn) {
-                event.set_length(0);
-            }
-        }
-
         let pairing = self.pair_note_events();
-
+        let length = |events: &[Event], on_idx: usize| {
+            pairing
+                .on_to_off
+                .get(&on_idx)
+                .map_or(0, |&off_idx| events[off_idx].tick() - events[on_idx].tick())
+        };
+        let is_on = |event: &Event| event.event_type() == Some(EventType::NoteOn);
+        let stale = self.events.iter().enumerate().any(|(idx, event)| {
+            is_on(event) && event.end_tick() - event.tick() != length(&self.events, idx)
+        });
+        if !stale {
+            return;
+        }
         let events = self.events_mut();
-        for (on_idx, off_idx) in pairing.on_to_off {
-            let length = events[off_idx].tick() - events[on_idx].tick();
-            events[on_idx].set_length(length);
+        for idx in 0..events.len() {
+            if is_on(&events[idx]) {
+                let length = length(events, idx);
+                events[idx].set_length(length);
+            }
         }
     }
 

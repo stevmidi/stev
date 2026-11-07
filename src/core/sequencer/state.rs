@@ -154,7 +154,7 @@ pub(crate) struct Sequencer {
     pub(super) take_framing: Option<TakeFraming>,
     /// What the last [`fingerprint`](crate::core::project::fingerprint)
     /// hashed, for the next to reuse (`420-large-projects.md` decision 8).
-    pub(super) fingerprint_cache: FingerprintCache,
+    fingerprint_cache: FingerprintCache,
     /// The audio export in progress, if any (`audio_export.rs`).
     pub(super) audio_export: Option<AudioExportRun>,
     /// How many audio exports have begun: the last one's id.

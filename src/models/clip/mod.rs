@@ -202,7 +202,9 @@ impl Clip {
     }
 
     /// The event list to edit: copied first if anything else shares it
-    /// ([`Arc::make_mut`]). The only way to write it.
+    /// ([`Arc::make_mut`]). The only way to write it, so a write that may
+    /// change nothing checks first (`retain_events`, `sort_events_by_tick`,
+    /// `update_delta_ticks`, `calculate_note_lengths`).
     fn events_mut(&mut self) -> &mut Vec<Event> {
         Arc::make_mut(&mut self.events)
     }

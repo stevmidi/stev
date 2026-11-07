@@ -15,6 +15,7 @@
 //! Selected-event editing is in `edits.rs`; quantize and swing detection in
 //! `quantize.rs`.
 
+use std::iter;
 use std::sync::Arc;
 
 use crate::core::time::Meter;
@@ -145,6 +146,7 @@ impl Clip {
     /// events ([`shared_events`](Self::shared_events)), already sorted, so
     /// nothing is copied until the clip is next edited.
     pub(crate) fn restore_shared_events(&mut self, events: Arc<Vec<Event>>) {
+        debug_assert!(events.is_sorted_by_key(Event::tick));
         self.events = events;
     }
 
@@ -157,8 +159,7 @@ impl Clip {
         let clip_length = self.region_length();
 
         let window = region_start..self.region.end();
-        self.events_mut()
-            .retain(|event| window.contains(&event.tick()));
+        self.retain_events(|event| window.contains(&event.tick()));
 
         for event in self.events_mut() {
             event.set_tick(event.tick() - region_start);
@@ -212,8 +213,7 @@ impl Clip {
     /// their ticks keep their absolute values. Prunes the offs thereby
     /// orphaned. Used to drop stale history from a running capture.
     pub(crate) fn trim_before_tick(&mut self, cutoff_tick: i32) {
-        self.events_mut()
-            .retain(|event| event.tick() >= cutoff_tick);
+        self.retain_events(|event| event.tick() >= cutoff_tick);
         self.remove_orphan_note_offs();
         self.calculate_note_lengths();
         self.update_delta_ticks();
@@ -284,9 +284,14 @@ impl Clip {
     /// stack matches each off to its own note. The one exception is a
     /// zero-length note — its off has no open note to end, so it stays
     /// behind its own same-tick `NoteOn`.
+    ///
+    /// Like every helper here, it writes only what changes, so shared events
+    /// already in order stay shared (`Clip::events_mut`).
     pub(crate) fn sort_events_by_tick(&mut self) {
-        self.events_mut()
-            .sort_by_key(|event| (event.tick(), event.event_type() != Some(EventType::NoteOff)));
+        let key = |event: &Event| (event.tick(), event.event_type() != Some(EventType::NoteOff));
+        if !self.events.is_sorted_by_key(key) {
+            self.events_mut().sort_by_key(key);
+        }
         self.keep_zero_length_offs_after_their_ons();
         self.update_delta_ticks();
     }
@@ -333,18 +338,39 @@ impl Clip {
 
     /// Recomputes each event's `delta_ticks` as the gap from the previous event
     /// in the (already sorted) list.
+    /// Writes nothing when every delta is already right.
     pub(super) fn update_delta_ticks(&mut self) {
+        let prev_ticks = || iter::once(0).chain(self.events.iter().map(Event::tick));
+        let stale = self
+            .events
+            .iter()
+            .zip(prev_ticks())
+            .any(|(event, prev_tick)| event.delta_ticks() != event.tick() - prev_tick);
+        if !stale {
+            return;
+        }
         let mut prev_tick = 0;
-
         for event in self.events_mut() {
             event.set_delta_ticks(prev_tick);
             prev_tick = event.tick();
         }
     }
+
+    /// Keeps the events `keep` accepts, in order; `true` when any went.
+    /// Writes nothing when every event stays.
+    pub(super) fn retain_events(&mut self, keep: impl Fn(&Event) -> bool) -> bool {
+        if self.events.iter().all(&keep) {
+            return false;
+        }
+        self.events_mut().retain(keep);
+        true
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use crate::{
         core::time::Meter,
         models::{
@@ -375,6 +401,55 @@ mod tests {
         assert_eq!(ticks, vec![5, 10, 20, 30, 50, 60]);
         let deltas: Vec<i32> = clip.events().iter().map(Event::delta_ticks).collect();
         assert_eq!(deltas, vec![5, 5, 10, 10, 20, 10]);
+    }
+
+    /// A clip holding one note, its lengths and deltas worked out, and a
+    /// second handle on its events, as the fingerprint's cache keeps one.
+    fn shared_clip() -> (Clip, Arc<Vec<Event>>) {
+        let mut clip = Clip::new();
+        clip.restore_events(vec![on(0, 60), off(240, 60), on(480, 62), off(720, 62)]);
+        clip.calculate_note_lengths();
+        let shared = Arc::clone(clip.shared_events());
+        (clip, shared)
+    }
+
+    /// The tail helpers write nothing when there is nothing to change, so
+    /// shared events stay shared (`420-large-projects.md` decision 8).
+    #[test]
+    fn a_write_that_changes_nothing_keeps_the_events_shared() {
+        let (mut clip, shared) = shared_clip();
+        clip.sort_events_by_tick();
+        clip.calculate_note_lengths();
+        clip.trim_before_tick(0);
+        clip.remove_orphan_note_offs();
+        assert!(Arc::ptr_eq(clip.shared_events(), &shared));
+    }
+
+    /// A write that changes something copies the shared events and leaves
+    /// the other handle as it was.
+    #[test]
+    fn a_write_that_changes_something_copies_the_events() {
+        let (mut clip, shared) = shared_clip();
+        clip.trim_before_tick(480);
+        assert!(!Arc::ptr_eq(clip.shared_events(), &shared));
+        assert_eq!(clip.events().len(), 2);
+        assert_eq!(shared.len(), 4);
+    }
+
+    /// The helpers still mend what is out of date, and only that.
+    #[test]
+    fn stale_deltas_and_lengths_are_still_written() {
+        let mut clip = Clip::new();
+        clip.restore_events(vec![on(0, 60), off(240, 60)]);
+        assert_eq!(clip.events()[0].end_tick(), 0);
+        clip.calculate_note_lengths();
+        assert_eq!(clip.events()[0].end_tick(), 240);
+
+        let mut later = clip.events().to_vec();
+        later[1].set_tick(300);
+        clip.restore_shared_events(Arc::new(later));
+        clip.sort_events_by_tick();
+        assert_eq!(clip.events()[1].delta_ticks(), 300);
     }
 
     fn clip_with_region(region_start: i32, region_end: i32) -> Clip {
