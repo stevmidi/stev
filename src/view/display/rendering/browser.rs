@@ -388,8 +388,8 @@ impl Display {
         let tree = &self.browser.tree;
         let rows = tree.rows();
 
-        let current_folder = self.project.project_current_folder.as_deref();
-        let current_name = self.project.project_current_name.as_deref();
+        let project = &self.project;
+        let current_folder = project.folder();
         let selected = tree.selected();
         let scroll = self.browser.scroll;
         let hovered = self.hovered_browser_row();
@@ -438,10 +438,9 @@ impl Display {
             let (label, is_open) = match &row.item {
                 BrowserItem::Category(category) => (category.label().to_owned(), false),
                 BrowserItem::Folder(name) => (name.clone(), current_folder == Some(name.as_str())),
-                BrowserItem::Project { folder, name } | BrowserItem::Recent { folder, name } => (
-                    name.clone(),
-                    folder.as_deref() == current_folder && Some(name.as_str()) == current_name,
-                ),
+                BrowserItem::Project { folder, name } | BrowserItem::Recent { folder, name } => {
+                    (name.clone(), project.is_open(folder.as_deref(), name))
+                }
                 BrowserItem::Template(name) => (name.clone(), false),
                 BrowserItem::Clip(name) => (format!("{name}.mid"), false),
                 BrowserItem::Plugin(plugin) => {

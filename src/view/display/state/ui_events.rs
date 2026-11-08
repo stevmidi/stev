@@ -189,8 +189,7 @@ impl Display {
                 UiEvent::ProjectLoaded {
                     clips,
                     instruments,
-                    filename,
-                    folder,
+                    origin,
                 } => {
                     #[cfg(target_os = "macos")]
                     self.sync_instruments_to_tracks(&instruments);
@@ -205,14 +204,14 @@ impl Display {
                     // A loaded project is adopted (its folder current, first
                     // in Recent); a new one is untitled, and goes where the
                     // current folder is.
-                    match filename {
-                        Some(name) => {
-                            self.adopt_project(folder, name);
+                    match origin {
+                        Some(origin) => {
+                            self.adopt_project(origin);
                             if self.browser.visible {
                                 self.reload_browser();
                             }
                         }
-                        None => self.project.project_current_name = None,
+                        None => self.project.open = None,
                     }
                     self.render.clip_shapes.clear();
                     self.clear_lead_clip_shapes();
@@ -231,7 +230,8 @@ impl Display {
                 }
                 UiEvent::UnsavedChanges { action } => self.open_unsaved_prompt(action),
                 UiEvent::QuitApproved => self.quit_approved = true,
-                UiEvent::ProjectSaved { name, folder } => self.adopt_project(folder, name),
+                UiEvent::ProjectSaved { origin } => self.adopt_project(origin),
+                UiEvent::OpenProjectFile { origin } => self.project.follow_file(origin),
                 UiEvent::ProjectFilesChanged => {
                     if self.browser.visible {
                         self.reload_browser();

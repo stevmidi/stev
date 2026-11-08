@@ -249,12 +249,9 @@ impl Display {
                 let new_folder_keys = chords_label(self.keymap.chords(Action::NewProjectFolder));
                 Self::show_save_as(ui, rect, save_as, &self.project, &new_folder_keys)
             }
-            Some(ProjectDialog::Unsaved { selected, .. }) => Self::draw_unsaved_prompt(
-                ui.painter(),
-                rect,
-                *selected,
-                self.project.project_current_name.as_deref(),
-            ),
+            Some(ProjectDialog::Unsaved { selected, .. }) => {
+                Self::draw_unsaved_prompt(ui.painter(), rect, *selected, self.project.name())
+            }
             Some(ProjectDialog::Recovery { name, selected }) => {
                 Self::draw_recovery_question(ui.painter(), rect, *selected, name.as_deref())
             }
@@ -324,10 +321,7 @@ impl Display {
         let hover = ui.input(|i| i.pointer.hover_pos());
 
         let folder = save_as.folder();
-        let is_open_project = |name: &str| {
-            project.project_current_folder.as_deref() == folder
-                && project.project_current_name.as_deref() == Some(name)
-        };
+        let is_open_project = |name: &str| project.is_open(folder, name);
         // While a folder is being typed, `folder` is the one before it: no
         // project there to replace.
         let note = match project_name_from_input(&save_as.field.text) {

@@ -19,7 +19,7 @@
 //! `FitTempo`; they need a take), `TapTempo` (wall-clock taps), the commands
 //! that touch the user's files or settings (`ProjectAction::Open` and
 //! `OpenFile`, `NewFromTemplate`, `ApplyStagedProject`, `AnswerRecovery`,
-//! `ProjectRenamed`, `ProjectFolderRenamed`, `ExportClip`), the audio export
+//! `LibraryChanged`, `ExportClip`), the audio export
 //! (it needs the audio thread) and the agent bridge, whose reads the design
 //! leaves out of scope. `SaveProject` and `SaveTemplate` time the handover
 //! alone, the snapshot and the fingerprint: the writing is the `"storage"`

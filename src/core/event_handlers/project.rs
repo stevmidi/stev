@@ -10,7 +10,9 @@ use crate::{
     core::{
         config::MAX_TRACKS,
         input_event::TimeSelectionRect,
-        project::{self, ProjectAction, ProjectData, ProjectOrigin, StagedProject},
+        project::{
+            self, Followed, LibraryChange, ProjectAction, ProjectData, ProjectOrigin, StagedProject,
+        },
         sequencer::{ExportRefusal, PasteClipsEdit, SequencerEdit},
     },
     models::{clip::Clip, track::TrackOutput},
@@ -45,7 +47,7 @@ impl EventHandlers {
         let origin = filename
             .as_deref()
             .map(|name| ProjectOrigin::new(folder.as_deref(), name));
-        *saved = SavedProject::of(sequencer, origin);
+        *saved = SavedProject::of(sequencer, origin.clone());
         let instruments = sequencer
             .tracks()
             .iter()
@@ -58,8 +60,7 @@ impl EventHandlers {
             .send(UiEvent::ProjectLoaded {
                 clips,
                 instruments,
-                filename,
-                folder,
+                origin,
             })
             .ok();
         self.emit_tracks(sequencer, None);
@@ -513,19 +514,23 @@ impl SavedProject {
         self.fingerprint = None;
     }
 
-    /// Follows a browser rename of the project `old` to `new`, if it is this
-    /// one: the view has renamed the file, and the origin has to name it.
-    pub(super) fn follow_rename(&mut self, old: &ProjectOrigin, new: &str) {
-        if let Some(origin) = &mut self.origin {
-            origin.follow_rename(old, new);
-        }
-    }
-
-    /// Follows a browser rename of the project folder `old` to `new`, if this
-    /// project is in it.
-    pub(super) fn follow_folder_rename(&mut self, old: &str, new: &str) {
-        if let Some(origin) = &mut self.origin {
-            origin.follow_folder_rename(old, new);
+    /// Follows `change`, made by the browser on disk, if it touched this
+    /// project: moved or renamed, the origin names it where it is; deleted
+    /// (it, or its folder), the project goes on untitled and counts as
+    /// changed until it is saved, since the only copy of it on disk is in
+    /// the Trash and the quit prompt has to ask. Whether it touched it.
+    pub(super) fn follow(&mut self, change: &LibraryChange) -> bool {
+        let Some(origin) = &mut self.origin else {
+            return false;
+        };
+        match origin.follow(change) {
+            Followed::Untouched => false,
+            Followed::Moved => true,
+            Followed::Gone => {
+                self.origin = None;
+                self.clear_baseline();
+                true
+            }
         }
     }
 

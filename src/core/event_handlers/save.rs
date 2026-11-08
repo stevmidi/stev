@@ -175,8 +175,7 @@ impl EventHandlers {
                     }
                     self.ui_event_tx
                         .send(UiEvent::ProjectSaved {
-                            name: origin.name.clone(),
-                            folder: origin.folder.clone(),
+                            origin: origin.clone(),
                         })
                         .ok();
                     open.saved = SavedProject::saved_as(fingerprint, origin);
@@ -201,6 +200,7 @@ mod tests {
     use crate::core::event_handlers::test_harness::{
         Harness, harness, quit, run_once, save_as, statuses, written,
     };
+    use crate::core::project::LibraryChange;
     use crate::core::sequencer::SequencerCommand;
     use crate::core::sequencer::test_support::clip_at;
 
@@ -414,8 +414,11 @@ mod tests {
         h.open.saved = SavedProject::saved_as(0, ProjectOrigin::new(None, "Song"));
         save_as(&mut h, "Song");
         let old = ProjectOrigin::new(None, "Song");
-        let new = "Tune".to_owned();
-        run_once(&mut h, SequencerCommand::ProjectRenamed { old, new });
+        let new = ProjectOrigin::new(None, "Tune");
+        run_once(
+            &mut h,
+            SequencerCommand::LibraryChanged(LibraryChange::Moved { old, new }),
+        );
         assert_eq!(h.open.saved.name(), Some("Tune"));
         written(&mut h, None);
         assert_eq!(h.open.saved.name(), Some("Song"));

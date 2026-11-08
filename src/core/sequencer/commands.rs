@@ -10,7 +10,7 @@ use uuid::Uuid;
 use crate::core::agent::{AgentReply, AgentRequest};
 use crate::core::input_event::TimeSelectionRect;
 use crate::core::midi::message::Controller;
-use crate::core::project::{ProjectAction, ProjectOrigin, SaveOutcome};
+use crate::core::project::{LibraryChange, ProjectAction, SaveOutcome};
 use crate::core::sequencer::{AudioExportOutcome, TempoGesture};
 use crate::core::time::Meter;
 use crate::core::view_state::Pane;
@@ -597,22 +597,11 @@ pub(crate) enum SequencerCommand {
         /// Restore, not Discard.
         restore: bool,
     },
-    /// The browser renamed the project `old` on disk: if it is the open one,
-    /// its origin follows, for the recovery copy and the agent bridge.
-    ProjectRenamed {
-        /// The project as it was.
-        old: ProjectOrigin,
-        /// Its new name.
-        new: String,
-    },
-    /// The browser renamed the project folder `old` on disk: the origin of an
-    /// open project in it follows.
-    ProjectFolderRenamed {
-        /// The folder's name as it was.
-        old: String,
-        /// Its new name.
-        new: String,
-    },
+    /// The browser changed the project library on disk: if it touched the
+    /// open project, `SavedProject`'s origin follows (moved, or gone so the
+    /// project goes on untitled, counted as changed) and the view hears
+    /// where it is (`UiEvent::OpenProjectFile`). See `060-persistence.md`.
+    LibraryChanged(LibraryChange),
     /// Hand the current project to the `"storage"` thread to be written to
     /// `folder/filename.stev`; its outcome comes back as
     /// [`ProjectWritten`](Self::ProjectWritten). See `420-large-projects.md`.

@@ -57,12 +57,15 @@ impl EventHandlers {
                 return;
             }
             // Done on disk already: the origin has to follow, whatever the
-            // project is in the middle of.
-            SequencerCommand::ProjectRenamed { old, new } => {
-                return open.saved.follow_rename(old, new);
-            }
-            SequencerCommand::ProjectFolderRenamed { old, new } => {
-                return open.saved.follow_folder_rename(old, new);
+            // project is in the middle of, and the view's copy of it with it.
+            SequencerCommand::LibraryChanged(change) => {
+                if open.saved.follow(change) {
+                    let origin = open.saved.origin().cloned();
+                    self.ui_event_tx
+                        .send(UiEvent::OpenProjectFile { origin })
+                        .ok();
+                }
+                return;
             }
             // So is a save; the actions held behind it then run as if they
             // had just come (`420-large-projects.md` decision 6).
@@ -619,8 +622,7 @@ impl EventHandlers {
             // Answered above, ahead of the holds.
             SequencerCommand::SetMarquee(_)
             | SequencerCommand::SetModalOpen(_)
-            | SequencerCommand::ProjectRenamed { .. }
-            | SequencerCommand::ProjectFolderRenamed { .. }
+            | SequencerCommand::LibraryChanged(_)
             | SequencerCommand::ProjectWritten(_)
             | SequencerCommand::Agent { .. } => {}
 
@@ -1080,15 +1082,10 @@ mod tests {
 
         run_command(&mut h, &mut record, open(true));
         let loaded = h.ui_events.try_iter().find_map(|event| match event {
-            UiEvent::ProjectLoaded {
-                clips,
-                filename,
-                folder,
-                ..
-            } => Some((clips.is_empty(), filename, folder)),
+            UiEvent::ProjectLoaded { clips, origin, .. } => Some((clips.is_empty(), origin)),
             _ => None,
         });
-        assert_eq!(loaded, Some((true, None, None)));
+        assert_eq!(loaded, Some((true, None)));
         assert!(h.sequencer.tracks().iter().all(|t| t.clips().is_empty()));
         assert_eq!(h.sequencer.tracks().len(), 2);
         assert_eq!(h.sequencer.tempo_us(), 666_667);

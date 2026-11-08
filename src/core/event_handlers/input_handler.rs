@@ -267,18 +267,8 @@ impl EventHandlers {
                 self.send_sequencer(SequencerCommand::AnswerRecovery { restore: *restore });
             }
 
-            InputEvent::ProjectRenamed { old, new } => {
-                self.send_sequencer(SequencerCommand::ProjectRenamed {
-                    old: old.clone(),
-                    new: new.clone(),
-                });
-            }
-
-            InputEvent::ProjectFolderRenamed { old, new } => {
-                self.send_sequencer(SequencerCommand::ProjectFolderRenamed {
-                    old: old.clone(),
-                    new: new.clone(),
-                });
+            InputEvent::LibraryChanged(change) => {
+                self.send_sequencer(SequencerCommand::LibraryChanged(change.clone()));
             }
 
             InputEvent::SetTrackOutput { track, output } => {

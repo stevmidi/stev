@@ -5,7 +5,7 @@
 
 use crate::core::config::RECENT_PROJECTS_MAX;
 
-use super::storage::ProjectOrigin;
+use super::storage::{Followed, LibraryChange, ProjectOrigin};
 
 /// Puts `project` first — just opened or saved — dropping its older entry
 /// and anything past [`RECENT_PROJECTS_MAX`].
@@ -20,19 +20,10 @@ pub(crate) fn remove_recent(list: &mut Vec<ProjectOrigin>, project: &ProjectOrig
     list.retain(|entry| entry != project);
 }
 
-/// Follows a rename of the project `old` to `new` (its name), keeping its
-/// place in the list.
-pub(crate) fn rename_recent(list: &mut [ProjectOrigin], old: &ProjectOrigin, new: &str) {
-    for entry in list {
-        entry.follow_rename(old, new);
-    }
-}
-
-/// Follows a rename of the project folder `old` to `new`.
-pub(crate) fn rename_recent_folder(list: &mut [ProjectOrigin], old: &str, new: &str) {
-    for entry in list {
-        entry.follow_folder_rename(old, new);
-    }
+/// Follows `change`, made by the browser on disk: a moved or renamed
+/// entry keeps its place in the list, a deleted one is dropped.
+pub(crate) fn follow_recent(list: &mut Vec<ProjectOrigin>, change: &LibraryChange) {
+    list.retain_mut(|entry| entry.follow(change) != Followed::Gone);
 }
 
 #[cfg(test)]
@@ -76,15 +67,41 @@ mod tests {
     }
 
     #[test]
-    fn renames_keep_the_place_in_the_list() {
+    fn library_changes_keep_the_place_in_the_list_or_drop_the_entry() {
         let mut list = vec![
             ProjectOrigin::new(Some("f"), "a"),
             ProjectOrigin::new(None, "a"),
             ProjectOrigin::new(Some("f"), "b"),
+            ProjectOrigin::new(Some("h"), "c"),
         ];
-        rename_recent(&mut list, &ProjectOrigin::new(Some("f"), "a"), "z");
-        assert_eq!(names(&list), vec!["f/z", "/a", "f/b"]);
-        rename_recent_folder(&mut list, "f", "g");
-        assert_eq!(names(&list), vec!["g/z", "/a", "g/b"]);
+        let moved = |old: ProjectOrigin, new: ProjectOrigin| LibraryChange::Moved { old, new };
+        // A rename is a move within the folder.
+        let change = moved(
+            ProjectOrigin::new(Some("f"), "a"),
+            ProjectOrigin::new(Some("f"), "z"),
+        );
+        follow_recent(&mut list, &change);
+        assert_eq!(names(&list), vec!["f/z", "/a", "f/b", "h/c"]);
+        let change = LibraryChange::FolderRenamed {
+            old: "f".into(),
+            new: "g".into(),
+        };
+        follow_recent(&mut list, &change);
+        assert_eq!(names(&list), vec!["g/z", "/a", "g/b", "h/c"]);
+        // A move to another folder.
+        let change = moved(
+            ProjectOrigin::new(Some("g"), "b"),
+            ProjectOrigin::new(None, "b"),
+        );
+        follow_recent(&mut list, &change);
+        assert_eq!(names(&list), vec!["g/z", "/a", "/b", "h/c"]);
+        // Deletes drop their entries: the same name elsewhere stays.
+        follow_recent(
+            &mut list,
+            &LibraryChange::Deleted(ProjectOrigin::new(None, "a")),
+        );
+        assert_eq!(names(&list), vec!["g/z", "/b", "h/c"]);
+        follow_recent(&mut list, &LibraryChange::FolderDeleted("g".into()));
+        assert_eq!(names(&list), vec!["/b", "h/c"]);
     }
 }

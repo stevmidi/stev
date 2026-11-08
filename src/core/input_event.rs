@@ -31,7 +31,7 @@ use crate::{
     core::{
         keymap::Action,
         midi::message::Controller,
-        project::{ProjectAction, ProjectOrigin},
+        project::{LibraryChange, ProjectAction},
         time::Meter,
         view_state::Pane,
     },
@@ -744,22 +744,10 @@ pub(crate) enum InputEvent {
         /// Restore, not Discard.
         restore: bool,
     },
-    /// The browser renamed the project `old` on disk: the sequencer's record
-    /// of the open project follows, if that is the one.
-    ProjectRenamed {
-        /// The project as it was.
-        old: ProjectOrigin,
-        /// Its new name.
-        new: String,
-    },
-    /// The browser renamed the project folder `old` on disk: the sequencer's
-    /// record of the open project follows, if it is in there.
-    ProjectFolderRenamed {
-        /// The folder's name as it was.
-        old: String,
-        /// Its new name.
-        new: String,
-    },
+    /// The browser changed the project library on disk (a project or folder
+    /// moved, renamed or deleted): the sequencer's record of the open
+    /// project follows, if it touched that one.
+    LibraryChanged(LibraryChange),
     /// The settings modal's MIDI tab connected a port: save both connected
     /// ports (empty: none).
     ConfirmMidiPorts {

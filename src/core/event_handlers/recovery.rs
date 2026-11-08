@@ -227,7 +227,7 @@ mod tests {
         Harness, add_clip, harness, quit, run_once, save_as, written,
     };
     use crate::core::paths::scratch_dir;
-    use crate::core::project::{ProjectAction, ProjectData, TrackOutputData};
+    use crate::core::project::{LibraryChange, ProjectAction, ProjectData, TrackOutputData};
     use crate::core::sequencer::SequencerCommand;
     use crate::core::sequencer::test_support::stub_instrument;
     use crate::core::threads::start_storage_thread;
@@ -547,20 +547,57 @@ mod tests {
         assert_eq!(jobs(&h), [Job::Write(400_000, None)]);
     }
 
+    /// Where the view was told the open project went
+    /// (`UiEvent::OpenProjectFile` with somewhere to go) since the last call.
+    fn moves_told(h: &Harness) -> Vec<ProjectOrigin> {
+        h.ui_events
+            .try_iter()
+            .filter_map(|event| match event {
+                UiEvent::OpenProjectFile { origin } => origin,
+                _ => None,
+            })
+            .collect()
+    }
+
     /// The browser renaming the open project reaches the copy at the next
-    /// check, though the project itself didn't change, and once.
+    /// check, though the project itself didn't change, and once; the view
+    /// hears the new name from the sequencer.
     #[test]
     fn a_renamed_project_rewrites_the_copy() {
         let mut h = harness();
         let old = ProjectOrigin::new(Some("Songs"), "Song");
         copied_project(&mut h, Some(&old));
-        let new = "Tune".to_owned();
-        run_once(&mut h, SequencerCommand::ProjectRenamed { old, new });
-        assert_eq!(h.open.saved.name(), Some("Tune"));
-        check(&mut h);
-        check(&mut h);
+        moves_told(&h);
         let renamed = ProjectOrigin::new(Some("Songs"), "Tune");
+        let new = renamed.clone();
+        run_once(
+            &mut h,
+            SequencerCommand::LibraryChanged(LibraryChange::Moved { old, new }),
+        );
+        assert_eq!(h.open.saved.name(), Some("Tune"));
+        assert_eq!(moves_told(&h), std::slice::from_ref(&renamed));
+        check(&mut h);
+        check(&mut h);
         assert_eq!(jobs(&h), [Job::Write(400_000, Some(renamed))]);
+    }
+
+    /// So does moving it to another folder.
+    #[test]
+    fn a_moved_project_rewrites_the_copy() {
+        let mut h = harness();
+        let old = ProjectOrigin::new(Some("Songs"), "Song");
+        copied_project(&mut h, Some(&old));
+        moves_told(&h);
+        let moved = ProjectOrigin::new(None, "Song");
+        let new = moved.clone();
+        run_once(
+            &mut h,
+            SequencerCommand::LibraryChanged(LibraryChange::Moved { old, new }),
+        );
+        assert_eq!(h.open.saved.origin(), Some(&moved));
+        assert_eq!(moves_told(&h), std::slice::from_ref(&moved));
+        check(&mut h);
+        assert_eq!(jobs(&h), [Job::Write(400_000, Some(moved))]);
     }
 
     /// So does renaming the folder it is in.
@@ -568,10 +605,15 @@ mod tests {
     fn a_renamed_folder_rewrites_the_copy() {
         let mut h = harness();
         copied_project(&mut h, Some(&ProjectOrigin::new(Some("Songs"), "Song")));
+        moves_told(&h);
         let (old, new) = ("Songs".to_owned(), "Album".to_owned());
-        run_once(&mut h, SequencerCommand::ProjectFolderRenamed { old, new });
-        check(&mut h);
+        run_once(
+            &mut h,
+            SequencerCommand::LibraryChanged(LibraryChange::FolderRenamed { old, new }),
+        );
         let renamed = ProjectOrigin::new(Some("Album"), "Song");
+        assert_eq!(moves_told(&h), std::slice::from_ref(&renamed));
+        check(&mut h);
         assert_eq!(jobs(&h), [Job::Write(400_000, Some(renamed))]);
     }
 
@@ -581,14 +623,83 @@ mod tests {
     fn a_rename_of_another_project_changes_nothing() {
         let mut h = harness();
         copied_project(&mut h, Some(&ProjectOrigin::new(Some("Songs"), "Song")));
+        moves_told(&h);
         let old = ProjectOrigin::new(Some("Other"), "Song");
-        let new = "Tune".to_owned();
-        run_once(&mut h, SequencerCommand::ProjectRenamed { old, new });
+        let new = ProjectOrigin::new(Some("Other"), "Tune");
+        run_once(
+            &mut h,
+            SequencerCommand::LibraryChanged(LibraryChange::Moved { old, new }),
+        );
         let (old, new) = ("Other".to_owned(), "Album".to_owned());
-        run_once(&mut h, SequencerCommand::ProjectFolderRenamed { old, new });
+        run_once(
+            &mut h,
+            SequencerCommand::LibraryChanged(LibraryChange::FolderRenamed { old, new }),
+        );
         check(&mut h);
         assert_eq!(h.open.saved.name(), Some("Song"));
+        assert_eq!(moves_told(&h), []);
         assert_eq!(jobs(&h), []);
+    }
+
+    /// Every `UiEvent::OpenProjectFile` since the last call.
+    fn files_told(h: &Harness) -> Vec<Option<ProjectOrigin>> {
+        h.ui_events
+            .try_iter()
+            .filter_map(|event| match event {
+                UiEvent::OpenProjectFile { origin } => Some(origin),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The browser deleting the open project leaves it open, untitled and
+    /// counted as changed, since its only copy is in the Trash: the view
+    /// hears it is untitled, and the next check writes an untitled copy.
+    #[test]
+    fn a_deleted_project_goes_on_untitled() {
+        let mut h = harness();
+        let origin = ProjectOrigin::new(Some("Songs"), "Song");
+        h.open.saved = SavedProject::of(&h.sequencer, Some(origin.clone()));
+        run_once(
+            &mut h,
+            SequencerCommand::LibraryChanged(LibraryChange::Deleted(origin)),
+        );
+        assert_eq!(h.open.saved.name(), None);
+        assert!(h.open.saved.has_changes(&h.sequencer));
+        assert_eq!(files_told(&h), [None]);
+        check(&mut h);
+        assert_eq!(jobs(&h), [Job::Write(h.sequencer.tempo_us(), None)]);
+    }
+
+    /// So does deleting the folder it is in; another folder's delete, or
+    /// another project's, changes nothing.
+    #[test]
+    fn a_deleted_folder_leaves_its_open_project_untitled() {
+        let mut h = harness();
+        let origin = ProjectOrigin::new(Some("Songs"), "Song");
+        h.open.saved = SavedProject::of(&h.sequencer, Some(origin));
+        let other = ProjectOrigin::new(None, "Song");
+        run_once(
+            &mut h,
+            SequencerCommand::LibraryChanged(LibraryChange::Deleted(other)),
+        );
+        let folder = "Other".to_owned();
+        run_once(
+            &mut h,
+            SequencerCommand::LibraryChanged(LibraryChange::FolderDeleted(folder)),
+        );
+        assert_eq!(h.open.saved.name(), Some("Song"));
+        assert!(!h.open.saved.has_changes(&h.sequencer));
+        assert_eq!(files_told(&h), []);
+
+        let folder = "Songs".to_owned();
+        run_once(
+            &mut h,
+            SequencerCommand::LibraryChanged(LibraryChange::FolderDeleted(folder)),
+        );
+        assert_eq!(h.open.saved.name(), None);
+        assert!(h.open.saved.has_changes(&h.sequencer));
+        assert_eq!(files_told(&h), [None]);
     }
 
     /// A project never saved has nothing to follow.
@@ -596,9 +707,13 @@ mod tests {
     fn a_rename_leaves_an_unsaved_project_untitled() {
         let mut h = harness();
         let old = ProjectOrigin::new(None, "Song");
-        let new = "Tune".to_owned();
-        run_once(&mut h, SequencerCommand::ProjectRenamed { old, new });
+        let new = ProjectOrigin::new(None, "Tune");
+        run_once(
+            &mut h,
+            SequencerCommand::LibraryChanged(LibraryChange::Moved { old, new }),
+        );
         assert_eq!(h.open.saved.name(), None);
+        assert_eq!(moves_told(&h), []);
     }
 
     /// A project with no changes has no copy.

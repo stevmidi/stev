@@ -65,21 +65,66 @@ impl ProjectOrigin {
         }
     }
 
-    /// Follows a rename of the project `old` to `new` (its name), if this is
-    /// that project.
-    pub(crate) fn follow_rename(&mut self, old: &ProjectOrigin, new: &str) {
-        if self == old {
-            self.name = new.to_owned();
+    /// Follows `change`, made by the browser on disk: a move or rename of
+    /// this project, or of its folder, moves it in place; a delete of it, or
+    /// of its folder, leaves it [`Gone`](Followed::Gone).
+    pub(crate) fn follow(&mut self, change: &LibraryChange) -> Followed {
+        let in_folder = |folder: &str| self.folder.as_deref() == Some(folder);
+        match change {
+            LibraryChange::Moved { old, new } if self == old => {
+                new.clone_into(self);
+                Followed::Moved
+            }
+            LibraryChange::FolderRenamed { old, new } if in_folder(old) => {
+                self.folder = Some(new.clone());
+                Followed::Moved
+            }
+            LibraryChange::Deleted(deleted) if self == deleted => Followed::Gone,
+            LibraryChange::FolderDeleted(folder) if in_folder(folder) => Followed::Gone,
+            _ => Followed::Untouched,
         }
     }
+}
 
-    /// Follows a rename of the project folder `old` to `new`, if this project
-    /// is in it.
-    pub(crate) fn follow_folder_rename(&mut self, old: &str, new: &str) {
-        if self.folder.as_deref() == Some(old) {
-            self.folder = Some(new.to_owned());
-        }
-    }
+/// A change the browser made to the project library on disk. Three things
+/// follow it: the sequencer's record of the open project (`SavedProject`,
+/// the one record of which file is open, #22), the Recent list
+/// ([`follow_recent`](super::follow_recent)) and the default folder
+/// (`ProjectViewState`). The view sends it once the disk has changed
+/// (`InputEvent::LibraryChanged`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum LibraryChange {
+    /// The project `old` is now `new`: a rename is a move within its folder.
+    Moved {
+        /// The project as it was.
+        old: ProjectOrigin,
+        /// Where it is now.
+        new: ProjectOrigin,
+    },
+    /// The project folder `old` is now called `new`.
+    FolderRenamed {
+        /// The folder's name as it was.
+        old: String,
+        /// Its new name.
+        new: String,
+    },
+    /// The project was deleted (to the Trash on macOS).
+    Deleted(ProjectOrigin),
+    /// The project folder was deleted with its projects.
+    FolderDeleted(String),
+}
+
+/// What a [`LibraryChange`] did to one [`ProjectOrigin`]
+/// ([`ProjectOrigin::follow`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Followed {
+    /// It wasn't this project, or its folder.
+    Untouched,
+    /// The project, or its folder, moved or was renamed: the origin now
+    /// names it where it is.
+    Moved,
+    /// The project, or its folder, was deleted: the origin names nothing.
+    Gone,
 }
 
 /// `folder: None` resolves to `project_dir()` itself — the fallback used when

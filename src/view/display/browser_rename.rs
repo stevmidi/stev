@@ -18,12 +18,12 @@ use egui::{FontId, Id, Rect, Ui, UiBuilder, pos2, vec2};
 use crate::core::config::PROJECT_NAME_MAX_CHARS;
 use crate::core::input_event::InputEvent;
 use crate::core::project::{
-    ProjectOrigin, create_project_folder, project_name_from_input, rename_clip, rename_project,
-    rename_project_folder, rename_recent, rename_recent_folder, rename_template,
+    LibraryChange, ProjectOrigin, create_project_folder, project_name_from_input, rename_clip,
+    rename_project, rename_project_folder, rename_template,
 };
 
 use super::Display;
-use super::browser::{BROWSER_FONT_SIZE, BrowserItem, browser_text_x, update_recent};
+use super::browser::{BROWSER_FONT_SIZE, BrowserItem, browser_text_x};
 use super::pane::KeyFocus;
 use super::status_message::StatusMessage;
 use super::text_field::{FieldEvent, FieldStyle, ROW_MARGIN, TextField, field_event, field_rect};
@@ -186,39 +186,25 @@ impl Display {
     }
 
     /// After `item` was renamed to `new` on disk (or the new folder made):
-    /// the Recent list and the sequencer's record of the open project
-    /// (`InputEvent::ProjectRenamed`) follow a renamed project or folder; the
-    /// open project, renamed, is what ⌘S saves to; the current folder,
-    /// renamed, stays current; a renamed folder stays expanded. Then
-    /// re-lists the tree and selects the row under its new name.
+    /// a renamed project or folder is a library change
+    /// ([`library_changed`](Display::library_changed): the Recent list, the
+    /// default folder and the open project follow), and a renamed folder
+    /// stays expanded. Then re-lists the tree and selects the row under its
+    /// new name.
     fn follow_browser_rename(&mut self, item: &BrowserItem, new: &str) {
         match item {
             BrowserItem::Project { folder, name } | BrowserItem::Recent { folder, name } => {
-                let old = ProjectOrigin::new(folder.as_deref(), name);
-                update_recent(|list| rename_recent(list, &old, new));
-                self.input_event_tx
-                    .send(InputEvent::ProjectRenamed {
-                        old,
-                        new: new.to_owned(),
-                    })
-                    .ok();
-                if *folder == self.project.project_current_folder
-                    && self.project.project_current_name.as_ref() == Some(name)
-                {
-                    self.project.project_current_name = Some(new.to_owned());
-                }
+                // A rename is a move within the folder.
+                self.library_changed(LibraryChange::Moved {
+                    old: ProjectOrigin::new(folder.as_deref(), name),
+                    new: ProjectOrigin::new(folder.as_deref(), new),
+                });
             }
             BrowserItem::Folder(old) => {
-                update_recent(|list| rename_recent_folder(list, old, new));
-                self.input_event_tx
-                    .send(InputEvent::ProjectFolderRenamed {
-                        old: old.clone(),
-                        new: new.to_owned(),
-                    })
-                    .ok();
-                if self.project.project_current_folder.as_ref() == Some(old) {
-                    self.set_current_project_folder(Some(new.to_owned()));
-                }
+                self.library_changed(LibraryChange::FolderRenamed {
+                    old: old.clone(),
+                    new: new.to_owned(),
+                });
                 self.browser.tree.carry_folder_expansion(old, new);
             }
             _ => {}

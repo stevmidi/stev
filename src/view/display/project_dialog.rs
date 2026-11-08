@@ -11,9 +11,10 @@
 //!   made by the save, so a cancelled Save As leaves nothing on disk). Tab
 //!   moves the keyboard name → dropdown → `+` (Enter or Space presses it),
 //!   or between the name and the new folder's field while that is open. It
-//!   starts at the browser's selected folder (see [`save_folder_default`]),
-//!   else the current folder. Enter saves under the typed name there, makes
-//!   it the open project and its folder the current one; Esc cancels.
+//!   starts at the default folder (`ProjectViewState::default_folder`),
+//!   whatever the browser shows or has selected. Enter saves under the typed
+//!   name there, makes it the open project and its folder the default one;
+//!   Esc cancels.
 //! - **Save as template** (⌘/Ctrl+⌥+S, the browser's TEMPLATES `+`): Save
 //!   As with `template` set — the same name field, but "Save in" is the
 //!   fixed text `Templates`, with no dropdown or `+`, so the name is the
@@ -54,7 +55,7 @@ use egui::{Context, Key, Pos2, ViewportCommand, pos2};
 use crate::core::input_event::{InputEvent, KeyModifiers};
 use crate::core::keymap::Action;
 use crate::core::project::{
-    ProjectAction, UNTITLED, list_project_folders, project_folder_name_from_input,
+    ProjectAction, ProjectOrigin, UNTITLED, list_project_folders, project_folder_name_from_input,
     project_name_from_input,
 };
 #[cfg(target_os = "macos")]
@@ -63,7 +64,7 @@ use crate::view::appkit::take_open_document;
 use super::Display;
 #[cfg(target_os = "macos")]
 use super::Overlay;
-use super::browser::{BrowserItem, scroll_to_show};
+use super::browser::scroll_to_show;
 use super::settings_modal::{scroll_by, wheel_rows, window_start};
 use super::text_field::{FieldEvent, TextField, field_key};
 
@@ -449,21 +450,6 @@ const ROOT_LABEL: &str = "Projects";
 /// Most rows the open dropdown list shows at once.
 pub(super) const LIST_MAX_ROWS: usize = 8;
 
-/// Where Save As starts saving: the folder the browser has selected — the
-/// folder itself, or the one holding the selected project, recent or not — while the panel
-/// is shown (`selected` is `None` otherwise); anything else selected, or
-/// nothing, leaves `current`, the open project's folder. `None` is the
-/// projects root.
-fn save_folder_default(selected: Option<&BrowserItem>, current: Option<&str>) -> Option<String> {
-    match selected {
-        Some(BrowserItem::Folder(name)) => Some(name.clone()),
-        Some(BrowserItem::Project { folder, .. } | BrowserItem::Recent { folder, .. }) => {
-            folder.clone()
-        }
-        _ => current.map(str::to_owned),
-    }
-}
-
 /// Save As's keymap: ↑/↓ open the folder list and move through it, the
 /// new-folder chord (`new_folder`, the keymap's [`Action::NewProjectFolder`])
 /// opens the new folder's field, Tab (⇧Tab) moves the keyboard to the next
@@ -673,11 +659,7 @@ impl Display {
     /// The name Save As and Save as template start with, selected: the open
     /// project's — or [`UNTITLED`] for one never saved.
     fn save_as_name(&self) -> TextField {
-        let text = self
-            .project
-            .project_current_name
-            .clone()
-            .unwrap_or_else(|| UNTITLED.to_owned());
+        let text = self.project.name().unwrap_or(UNTITLED).to_owned();
         TextField::new(text)
     }
 
@@ -689,14 +671,10 @@ impl Display {
     }
 
     /// Opens Save As with the open project's name — or [`UNTITLED`] for one
-    /// never saved — selected; `then` runs after the save.
+    /// never saved — selected, in the default folder; `then` runs after the
+    /// save.
     pub(super) fn open_save_as(&mut self, then: Option<ProjectAction>) {
-        let selected = self
-            .browser
-            .visible
-            .then(|| self.browser.tree.selected())
-            .flatten();
-        let default = save_folder_default(selected, self.project.project_current_folder.as_deref());
+        let default = self.project.default_folder.clone();
         let mut folders: Vec<Option<String>> = once(None)
             .chain(list_project_folders().into_iter().map(Some))
             .collect();
@@ -775,11 +753,8 @@ impl Display {
     /// never saved — then asks for `then`: ⌘/Ctrl+S (`None`), the prompt's
     /// Save (its action).
     pub(super) fn save_project(&mut self, then: Option<ProjectAction>) {
-        match self.project.project_current_name.clone() {
-            Some(name) => {
-                let folder = self.project.project_current_folder.clone();
-                self.save_project_as(name, folder, then);
-            }
+        match self.project.open.clone() {
+            Some(ProjectOrigin { folder, name }) => self.save_project_as(name, folder, then),
             None => self.open_save_as(then),
         }
     }
@@ -949,12 +924,11 @@ mod tests {
     use egui::Key;
 
     use crate::core::input_event::KeyModifiers;
-    use crate::view::display::browser::{BrowserCategory, BrowserItem};
     use crate::view::display::text_field::TextField;
 
     use super::{
         DialogButton, DialogKey, LIST_MAX_ROWS, SaveAs, SaveAsFocus, SaveAsHit, button_key,
-        field_key, save_as_key, save_folder_default,
+        field_key, save_as_key,
     };
 
     /// The prompt's keymap.
@@ -1259,45 +1233,6 @@ mod tests {
 
     /// The selected folder, or the folder of the selected project (under
     /// its folder or Recent), is where Save As starts; anything else selected leaves the current folder.
-    #[test]
-    fn save_as_starts_in_the_selected_folder() {
-        let folder = BrowserItem::Folder("b".into());
-        let in_a = BrowserItem::Project {
-            folder: Some("a".into()),
-            name: "song".into(),
-        };
-        let loose = BrowserItem::Project {
-            folder: None,
-            name: "song".into(),
-        };
-        let category = BrowserItem::Category(BrowserCategory::Projects);
-        let clip = BrowserItem::Clip("riff".into());
-        assert_eq!(
-            save_folder_default(Some(&folder), Some("a")),
-            Some("b".into())
-        );
-        assert_eq!(
-            save_folder_default(Some(&in_a), Some("c")),
-            Some("a".into())
-        );
-        assert_eq!(save_folder_default(Some(&loose), Some("c")), None);
-        let recent_in_a = BrowserItem::Recent {
-            folder: Some("a".into()),
-            name: "song".into(),
-        };
-        assert_eq!(
-            save_folder_default(Some(&recent_in_a), Some("c")),
-            Some("a".into())
-        );
-        assert_eq!(
-            save_folder_default(Some(&category), Some("c")),
-            Some("c".into())
-        );
-        assert_eq!(save_folder_default(Some(&clip), None), None);
-        assert_eq!(save_folder_default(None, Some("a")), Some("a".into()));
-        assert_eq!(save_folder_default(None, None), None);
-    }
-
     /// ↑/↓ drive the folder list, the new-folder chord opens the new
     /// folder's field, Tab and ⇧Tab move the keyboard on and back and Space
     /// presses; the rest of Save As's keys are unchanged.

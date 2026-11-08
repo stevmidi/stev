@@ -73,9 +73,8 @@ impl Display {
             .filter(|_| self.view_state() == ViewState::Arranger);
         let name = self
             .project
-            .project_current_name
-            .as_deref()
-            .or(self.project.project_current_folder.as_deref())
+            .name()
+            .or(self.project.folder())
             .unwrap_or("project")
             .to_owned();
         (time_bounds, name)

@@ -28,7 +28,7 @@
 //! what Enter means), unit-tested; the `impl Display` below drives it from
 //! input and reads the filesystem.
 
-use std::{collections::HashSet, io, path::PathBuf, time::Instant};
+use std::{collections::HashSet, path::PathBuf, time::Instant};
 
 use egui::{Key, Pos2, Vec2, vec2};
 
@@ -37,9 +37,9 @@ use crate::core::{
     input_event::is_pane_focus_key,
     keymap::Action,
     project::{
-        ProjectAction, ProjectOrigin, clip_path, delete_clip, delete_project,
-        delete_project_folder, delete_template, list_clips, list_project_folders, list_projects,
-        list_templates, note_recent, project_exists, remove_recent, template_path,
+        LibraryChange, ProjectAction, ProjectOrigin, clip_path, delete_clip, delete_project,
+        delete_project_folder, delete_template, follow_recent, list_clips, list_project_folders,
+        list_projects, list_templates, note_recent, project_exists, remove_recent, template_path,
     },
     settings::{load_settings, update_settings},
 };
@@ -846,8 +846,8 @@ impl BrowserTree {
     /// folder); else opens the selected project or template, expands/collapses
     /// the selected folder or category, imports the selected clip or puts the
     /// selected plugin on the selected track.
-    /// A folder is never made current here: Save As picks where a project
-    /// goes, defaulting to the selection (`save_folder_default`).
+    /// A folder is never made the default here: Save As starts in the
+    /// default folder, whatever is selected (`ProjectViewState`).
     pub(super) fn activate(&mut self) -> Option<BrowserAction> {
         let armed = self.delete_armed.take().is_some();
         let item = self.selected.clone()?;
@@ -1129,10 +1129,9 @@ impl Display {
     pub(super) fn show_browser(&mut self) {
         self.reload_browser();
         self.sync_browser_plugins();
-        self.browser.tree.select_initial(
-            self.project.project_current_folder.as_deref(),
-            self.project.project_current_name.as_deref(),
-        );
+        self.browser
+            .tree
+            .select_initial(self.project.folder(), self.project.name());
         self.browser.visible = true;
         self.key_focus = KeyFocus::Browser;
         self.scroll_browser_to_selection();
@@ -1422,13 +1421,15 @@ impl Display {
         }
     }
 
-    /// Makes `name` in `folder` the open project, just loaded or saved: what
-    /// ⌘S saves to, its folder current, and first in the Recent list. The
-    /// caller re-lists a shown panel (a save's `ProjectFilesChanged` does).
-    pub(super) fn adopt_project(&mut self, folder: Option<String>, name: String) {
-        update_recent(|list| note_recent(list, ProjectOrigin::new(folder.as_deref(), &name)));
-        self.project.project_current_name = Some(name);
-        self.set_current_project_folder(folder);
+    /// Makes `origin` the open project, as the sequencer reports it just
+    /// loaded or saved: what ⌘S saves to, its folder the default one, and
+    /// first in the Recent list. The caller re-lists a shown panel (a save's
+    /// `ProjectFilesChanged` does).
+    pub(super) fn adopt_project(&mut self, origin: ProjectOrigin) {
+        update_recent(|list| note_recent(list, origin.clone()));
+        if self.project.adopt(origin) {
+            self.persist_default_folder();
+        }
     }
 
     /// Deletes the project, template, clip or folder `item` — to the Trash
@@ -1437,13 +1438,27 @@ impl Display {
         let Some(name) = item.renamable_name() else {
             return;
         };
-        let result = match item {
-            BrowserItem::Project { folder, .. } => delete_project(folder.as_deref(), name),
-            BrowserItem::Template(_) => delete_template(name),
-            BrowserItem::Clip(_) => delete_clip(name),
-            BrowserItem::Folder(_) => self.delete_browser_folder(name),
+        // A project or folder deleted changes the library: an open project
+        // in it goes on untitled, the default folder falls back to the root.
+        let (result, change) = match item {
+            BrowserItem::Project { folder, .. } => (
+                delete_project(folder.as_deref(), name),
+                Some(LibraryChange::Deleted(ProjectOrigin::new(
+                    folder.as_deref(),
+                    name,
+                ))),
+            ),
+            BrowserItem::Template(_) => (delete_template(name), None),
+            BrowserItem::Clip(_) => (delete_clip(name), None),
+            BrowserItem::Folder(_) => (
+                delete_project_folder(name),
+                Some(LibraryChange::FolderDeleted(name.to_owned())),
+            ),
             _ => return,
         };
+        if let (Ok(()), Some(change)) = (&result, change) {
+            self.library_changed(change);
+        }
         let message = match result {
             Ok(()) => deleted_message(name),
             Err(e) => format!("Could not delete {name}: {e}"),
@@ -1452,32 +1467,25 @@ impl Display {
         self.reload_browser();
     }
 
-    /// Deletes the project folder `name` with its projects. A project open
-    /// from it stays open, as the open project does when it is deleted, and
-    /// ⌘S saves it back into the folder, made again; with none open from it,
-    /// a current folder deleted hands over to the projects root.
-    fn delete_browser_folder(&mut self, name: &str) -> io::Result<()> {
-        let current = self.project.project_current_folder.as_deref() == Some(name);
-        delete_project_folder(name)?;
-        // The open project stays open, and its folder current, as after
-        // deleting the open project: ⌘S writes both back. With none open
-        // from it, a new project's ⌘S must not make the deleted folder
-        // again.
-        if current && self.project.project_current_name.is_none() {
-            self.set_current_project_folder(None);
+    /// Tells everything that follows the project library about `change`,
+    /// just made on disk: the Recent list, the default folder, and the
+    /// sequencer's record of the open project, whose answer moves the view's
+    /// copy (`UiEvent::OpenProjectFile`; #22). Every browser rename and
+    /// delete of a project or folder comes through here.
+    pub(super) fn library_changed(&mut self, change: LibraryChange) {
+        update_recent(|list| follow_recent(list, &change));
+        if self.project.follow_library(&change) {
+            self.persist_default_folder();
         }
-        Ok(())
+        self.input_event_tx
+            .send(InputEvent::LibraryChanged(change))
+            .ok();
     }
 
-    /// Makes `folder` the current project folder (`None`: the projects root)
-    /// — where a saved project lives, and Save As's fallback — persisting it
-    /// to `settings.json` so it's remembered across sessions. A no-op if it
-    /// already is.
-    pub(super) fn set_current_project_folder(&mut self, folder: Option<String>) {
-        if self.project.project_current_folder == folder {
-            return;
-        }
-        self.project.project_current_folder = folder.clone();
+    /// Writes the default project folder to `settings.json` (as
+    /// `last_project_folder`), so it's remembered across sessions.
+    pub(super) fn persist_default_folder(&mut self) {
+        let folder = self.project.default_folder.clone();
         update_settings("last project folder", |settings| {
             settings.last_project_folder = folder;
         });

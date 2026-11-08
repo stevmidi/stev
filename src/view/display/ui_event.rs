@@ -10,7 +10,10 @@
 use uuid::Uuid;
 
 use crate::{
-    core::{config::DEFAULT_TRACK_COUNT, project::ProjectAction},
+    core::{
+        config::DEFAULT_TRACK_COUNT,
+        project::{ProjectAction, ProjectOrigin},
+    },
     metadata::clip_metadata::ClipMetadata,
     metadata::clip_view::ClipView,
     models::clip::EventSpaceRetime,
@@ -211,14 +214,11 @@ pub(crate) enum UiEvent {
         /// `(engine slot, plugin reference)` for every plugin track — what
         /// `Display` swaps in from a staged load.
         instruments: Vec<(usize, InstrumentRef)>,
-        /// The project's saved name, or `None` for a freshly created (unnamed)
-        /// project — sets `Display::project`'s `project_current_name` so a later
-        /// ⌘/Ctrl+S doesn't overwrite whatever was previously open.
-        filename: Option<String>,
-        /// The loaded project's folder (`None`: the projects root) — becomes
-        /// the current folder. Meaningless for a new project, which keeps
-        /// the current one.
-        folder: Option<String>,
+        /// Where the loaded project is on disk, `None` for a new one never
+        /// saved: the sequencer's record of it (`SavedProject`), which the
+        /// view's copy (`Display::project`'s `open`) takes, so a later ⌘/Ctrl+S
+        /// doesn't overwrite whatever was previously open.
+        origin: Option<ProjectOrigin>,
     },
     /// `action` was asked for but the project has unsaved changes: show the
     /// Save / Don't Save / Cancel prompt (`project_dialog.rs`).
@@ -304,15 +304,22 @@ pub(crate) enum UiEvent {
     /// since the marquee's tick range no longer corresponds to any real
     /// content (see `delete_time_workflow`).
     TimeSelectionCleared,
-    /// The project was written to `folder/name.stev`: it becomes the open
-    /// project and `folder` the current one. Sent only once the file is
-    /// written, so a save that failed leaves a project never saved unnamed —
-    /// and a later ⌘/Ctrl+S opens Save As again.
+    /// The project was written to `origin`: it becomes the open project and
+    /// its folder the default one. Sent only once the file is written, so a
+    /// save that failed leaves a project never saved unnamed — and a later
+    /// ⌘/Ctrl+S opens Save As again.
     ProjectSaved {
-        /// The name it was saved under.
-        name: String,
-        /// Its folder (`None`: the projects root).
-        folder: Option<String>,
+        /// Where it was saved.
+        origin: ProjectOrigin,
+    },
+    /// A browser move, rename or delete changed the open project's file, and
+    /// the sequencer's record of it followed: the view's copy follows too.
+    /// The sequencer is the one that knows which file is open, so the view
+    /// never follows on its own (#22).
+    OpenProjectFile {
+        /// Where the open project is now; `None` once its file, or the
+        /// folder it was in, was deleted: it goes on untitled.
+        origin: Option<ProjectOrigin>,
     },
     /// A project or `.mid` was written into the projects tree (a save, a
     /// clip export): a shown browser panel re-reads it from disk.
