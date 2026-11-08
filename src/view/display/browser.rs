@@ -764,41 +764,47 @@ impl BrowserTree {
 
     /// The first time the panel shows (nothing selected yet): with no saved
     /// project open (an untitled one, as at launch), selects the first
-    /// recent project; with one open, its row under Recent when listed
-    /// there. Else the open project if it is listed — expanding its folder
-    /// to show it — else the current folder, else the first row. A folder
-    /// with no open project in it stays collapsed.
+    /// recent project; with one open (`open`), its row under Recent when
+    /// listed there. Else the open project if it is listed — expanding its
+    /// folder to show it — else the default folder, else the first row. A
+    /// folder with no open project in it stays collapsed.
     pub(super) fn select_initial(
         &mut self,
-        current_folder: Option<&str>,
-        current_name: Option<&str>,
+        open: Option<&ProjectOrigin>,
+        default_folder: Option<&str>,
     ) {
         if self.selected.is_some() {
             return;
         }
-        let recent = match current_name {
-            None => self.disk.recent.first().cloned(),
-            Some(name) => Some(ProjectOrigin::new(current_folder, name)),
+        let recent = match open {
+            None => self.disk.recent.first(),
+            Some(open) => Some(open),
         }
-        .map(|ProjectOrigin { folder, name }| BrowserItem::Recent { folder, name })
+        .map(|ProjectOrigin { folder, name }| BrowserItem::Recent {
+            folder: folder.clone(),
+            name: name.clone(),
+        })
         .filter(|item| self.is_listed(item));
         if let Some(item) = recent {
             self.selected = Some(item);
             return;
         }
-        if let (Some(folder), Some(name)) = (current_folder, current_name)
+        if let Some(ProjectOrigin {
+            folder: Some(folder),
+            name,
+        }) = open
             && self
                 .disk
                 .folder_projects(folder)
                 .is_some_and(|projects| projects.iter().any(|p| p == name))
         {
-            self.set_item_expanded(&BrowserItem::Folder(folder.to_owned()), true);
+            self.set_item_expanded(&BrowserItem::Folder(folder.clone()), true);
         }
-        let open = current_name.map(|name| BrowserItem::Project {
-            folder: current_folder.map(str::to_owned),
-            name: name.to_owned(),
+        let open = open.map(|ProjectOrigin { folder, name }| BrowserItem::Project {
+            folder: folder.clone(),
+            name: name.clone(),
         });
-        let folder = current_folder.map(|f| BrowserItem::Folder(f.to_owned()));
+        let folder = default_folder.map(|f| BrowserItem::Folder(f.to_owned()));
         self.selected = [open, folder]
             .into_iter()
             .flatten()
@@ -1142,7 +1148,7 @@ impl Display {
         self.sync_browser_plugins();
         self.browser
             .tree
-            .select_initial(self.project.folder(), self.project.name());
+            .select_initial(self.project.open(), self.project.default_folder.as_deref());
         self.browser.visible = true;
         self.key_focus = KeyFocus::Browser;
         self.scroll_browser_to_selection();
@@ -2052,7 +2058,7 @@ mod tests {
     #[test]
     fn initial_selection_is_the_open_project_in_its_expanded_folder() {
         let mut tree = tree();
-        tree.select_initial(Some("a"), Some("a1"));
+        tree.select_initial(Some(&ProjectOrigin::new(Some("a"), "a1")), Some("a"));
         assert!(tree.is_expanded("a"));
         assert_eq!(tree.selected(), Some(&project(Some("a"), "a1")));
     }
@@ -2060,7 +2066,7 @@ mod tests {
     #[test]
     fn initial_selection_falls_back_to_the_folder_then_the_top() {
         let mut stale = tree();
-        stale.select_initial(Some("b"), Some("gone"));
+        stale.select_initial(Some(&ProjectOrigin::new(Some("b"), "gone")), Some("b"));
         assert_eq!(stale.selected(), Some(&folder("b")));
         assert!(!stale.is_expanded("b"));
 
@@ -2070,16 +2076,16 @@ mod tests {
 
         // Only the first show picks; later shows keep the user's selection.
         fresh.select(folder("b"));
-        fresh.select_initial(Some("a"), None);
+        fresh.select_initial(None, Some("a"));
         assert_eq!(fresh.selected(), Some(&folder("b")));
     }
 
-    /// An untitled project (as at launch) leaves the current folder
+    /// An untitled project (as at launch) leaves the default folder
     /// collapsed, selected but not opened.
     #[test]
     fn initial_selection_without_an_open_project_keeps_the_folder_collapsed() {
         let mut tree = tree();
-        tree.select_initial(Some("a"), None);
+        tree.select_initial(None, Some("a"));
         assert!(!tree.is_expanded("a"));
         assert_eq!(tree.selected(), Some(&folder("a")));
     }
@@ -2190,22 +2196,22 @@ mod tests {
     #[test]
     fn initial_selection_prefers_the_recent_rows() {
         let mut untitled = tree_with_recent();
-        untitled.select_initial(Some("b"), None);
+        untitled.select_initial(None, Some("b"));
         assert_eq!(untitled.selected(), Some(&recent(Some("a"), "a1")));
         assert!(!untitled.is_expanded("b"));
 
         let mut open = tree_with_recent();
-        open.select_initial(None, Some("loose"));
+        open.select_initial(Some(&ProjectOrigin::new(None, "loose")), None);
         assert_eq!(open.selected(), Some(&recent(None, "loose")));
 
         let mut in_folder = tree_with_recent();
-        in_folder.select_initial(Some("a"), Some("a1"));
+        in_folder.select_initial(Some(&ProjectOrigin::new(Some("a"), "a1")), Some("a"));
         assert_eq!(in_folder.selected(), Some(&recent(Some("a"), "a1")));
         assert!(!in_folder.is_expanded("a"));
 
         // Open but not recent: its row under its folder, expanded.
         let mut older = tree_with_recent();
-        older.select_initial(Some("a"), Some("a2"));
+        older.select_initial(Some(&ProjectOrigin::new(Some("a"), "a2")), Some("a"));
         assert_eq!(older.selected(), Some(&project(Some("a"), "a2")));
         assert!(older.is_expanded("a"));
     }
@@ -2214,10 +2220,10 @@ mod tests {
     #[test]
     fn initial_selection_with_no_recent_projects_falls_back() {
         let mut untitled = tree();
-        untitled.select_initial(Some("a"), None);
+        untitled.select_initial(None, Some("a"));
         assert_eq!(untitled.selected(), Some(&folder("a")));
         let mut open = tree();
-        open.select_initial(Some("a"), Some("a1"));
+        open.select_initial(Some(&ProjectOrigin::new(Some("a"), "a1")), Some("a"));
         assert_eq!(open.selected(), Some(&project(Some("a"), "a1")));
     }
 

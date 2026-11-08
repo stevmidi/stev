@@ -421,6 +421,21 @@ mod tests {
         assert_eq!(h.open.saved.name(), Some("Song"));
     }
 
+    /// So does a delete: the save writes the file again, so the project is
+    /// named and saved again, not left untitled.
+    #[test]
+    fn a_delete_during_a_save_keeps_the_file_written() {
+        let mut h = harness();
+        h.open.saved = SavedProject::saved_as(0, ProjectOrigin::new(None, "Song"));
+        save_as(&mut h, "Song");
+        let deleted = ProjectOrigin::new(None, "Song");
+        library_changed(&mut h, LibraryChange::Deleted(deleted));
+        assert_eq!(h.open.saved.name(), None);
+        written(&mut h, None);
+        assert_eq!(h.open.saved.name(), Some("Song"));
+        assert!(!h.open.saved.has_changes(&h.sequencer));
+    }
+
     /// A save that failed leaves the copy, and the keeper knows it: undoing
     /// back to the saved state then deletes it, as without the save.
     #[test]

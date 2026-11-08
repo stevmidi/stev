@@ -65,7 +65,7 @@ fn track_header_key(key: Key, modifiers: KeyModifiers) -> Option<TrackHeaderKey>
 impl Display {
     /// What an export takes from the view: the arranger marquee (`None` in
     /// the clip view) and the name its file or folder starts with — the open
-    /// project's name, else its folder's, else `project`.
+    /// project's name, else the default folder's, else `project`.
     fn export_scope(&self) -> (Option<TimeSelectionRect>, String) {
         let time_bounds = self
             .gesture
@@ -74,7 +74,7 @@ impl Display {
         let name = self
             .project
             .name()
-            .or(self.project.folder())
+            .or(self.project.default_folder.as_deref())
             .unwrap_or("project")
             .to_owned();
         (time_bounds, name)

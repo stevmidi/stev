@@ -87,14 +87,6 @@ impl ProjectViewState {
         self.open.as_ref().map(|open| open.name.as_str())
     }
 
-    /// The current folder: the open project's, else the default one.
-    pub(super) fn folder(&self) -> Option<&str> {
-        match &self.open {
-            Some(open) => open.folder.as_deref(),
-            None => self.default_folder.as_deref(),
-        }
-    }
-
     /// Whether `name` in `folder` is the open project.
     pub(super) fn is_open(&self, folder: Option<&str>, name: &str) -> bool {
         self.open
@@ -108,17 +100,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_current_folder_is_the_open_projects_else_the_default() {
+    fn the_open_project_is_named_and_recognised() {
         let mut project = ProjectViewState::new(Some("last".to_owned()));
-        assert_eq!(project.folder(), Some("last"));
         assert_eq!(project.name(), None);
         assert!(!project.is_open(Some("last"), "a"));
 
-        project.open = Some(ProjectOrigin::new(None, "a"));
-        assert_eq!(project.folder(), None);
+        project.follow_file(Some(ProjectOrigin::new(None, "a")));
         assert_eq!(project.name(), Some("a"));
         assert!(project.is_open(None, "a"));
         assert!(!project.is_open(Some("last"), "a"));
+        // The default folder is its own: a move doesn't set it.
+        assert_eq!(project.default_folder.as_deref(), Some("last"));
     }
 
     /// The four rules: none set is the projects root, an open or a save sets

@@ -6,8 +6,8 @@
 //! makes the new folder), Esc cancels, a click away commits (and then acts
 //! as usual). A blank or unchanged name changes nothing; a name the file
 //! system would trip over, or one already taken, is refused with a footer
-//! message. Renaming the open project, or the current folder, renames what
-//! ⌘S saves to. See `020-views-and-state.md` § Views.
+//! message. Renaming the open project, or its folder, renames what ⌘S saves
+//! to. See `020-views-and-state.md` § Views.
 //!
 //! The field and its keymap are the app's one text field ([`TextField`],
 //! [`field_event`]); this module decides where it goes and what a commit

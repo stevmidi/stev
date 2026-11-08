@@ -14,7 +14,7 @@ use super::*;
 
 /// Right inset of a plugin row's format label.
 const FORMAT_RIGHT_X: f32 = 10.0;
-/// Radius of the dot before the current folder's and the open project's
+/// Radius of the dot before the default folder's and the open project's
 /// first mark. A dot, not a bar at the panel's edge: an edge bar reads as the
 /// selection.
 const OPEN_DOT_R: f32 = 3.0;
@@ -389,7 +389,7 @@ impl Display {
         let rows = tree.rows();
 
         let project = &self.project;
-        let current_folder = project.folder();
+        let default_folder = project.default_folder.as_deref();
         let selected = tree.selected();
         let scroll = self.browser.scroll;
         let hovered = self.hovered_browser_row();
@@ -433,11 +433,11 @@ impl Display {
                 ));
             }
 
-            // The current folder and the open project get a dot before their
-            // first mark.
+            // The default folder (where Save As starts) and the open project
+            // get a dot before their first mark.
             let (label, is_open) = match &row.item {
                 BrowserItem::Category(category) => (category.label().to_owned(), false),
-                BrowserItem::Folder(name) => (name.clone(), current_folder == Some(name.as_str())),
+                BrowserItem::Folder(name) => (name.clone(), default_folder == Some(name.as_str())),
                 BrowserItem::Project { folder, name } | BrowserItem::Recent { folder, name } => {
                     (name.clone(), project.is_open(folder.as_deref(), name))
                 }

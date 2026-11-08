@@ -64,6 +64,11 @@ impl EventHandlers {
                     self.ui_event_tx
                         .send(UiEvent::OpenProjectFile { origin })
                         .ok();
+                    // Woken now, the view takes it before the next key: a
+                    // frame handles input ahead of these events, and an idle
+                    // UI would otherwise hold them until a ⌘S came in and
+                    // saved to the old file.
+                    self.request_repaint();
                 }
                 return;
             }
