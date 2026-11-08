@@ -46,6 +46,8 @@ mod command_helpers;
 mod command_timing;
 mod edit_result_handler;
 mod input_handler;
+#[cfg(test)]
+mod long_take_timing;
 mod performance_lane_handler;
 mod project;
 mod recovery;

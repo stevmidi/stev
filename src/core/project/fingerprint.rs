@@ -44,6 +44,13 @@ impl FingerprintCache {
     fn holds(&self, events: &Arc<Vec<Event>>) -> bool {
         self.hashes.borrow().contains_key(&address(events))
     }
+
+    /// Forgets every hash, so the next edit of a clip copies nothing on the
+    /// cache's account: the long-take timing's contrast.
+    #[cfg(test)]
+    pub(crate) fn clear(&self) {
+        self.hashes.borrow_mut().clear();
+    }
 }
 
 /// Where `events` live: the cache's key.

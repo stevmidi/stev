@@ -26,7 +26,7 @@ How late the `"sequencer"` thread can run before anyone hears it: each tick carr
 6. **What follows a save waits for its result.** Save then Quit, Save then Open and the like queue their action behind the save (`save_project_as`). While a save is on its way, a `ProjectAction` is held until the result arrives, then runs as it would have: on success it finds nothing unsaved, on failure it prompts again. A quit also waits for the `"storage"` thread to finish, as it does for the copy (`410` decision 13). Edits, playback and everything else carry on during a save.
 7. **Plugin state is shared, not copied.** `InstrumentRef.state` becomes `Arc<[u8]>`. A snapshot then shares the blobs, and a captured state is made into an `Arc` once, where today the view's event, the sequencer command and the store each copy it.
 8. **Clips are shared, and the check reuses what didn't change.** A clip's events become `Arc<Vec<Event>>`, edited only through `Arc::make_mut`. A snapshot shares every clip. The fingerprint keeps an `Arc` of each clip and its hash from the last time: a clip still pointing at the same allocation hasn't changed, since shared contents can't be edited in place, so its hash is reused, and only edited clips and the fields around them are hashed again. Holding the old `Arc` is what makes the pointer comparison sound: the allocation can't be freed and reused while the cache holds it. `make_mut` is the only way in, so no edit path can forget, and no dirty flag is kept, as the author prefers. A test checks that the cached fingerprint equals a full hash, as `fingerprint.rs` already checks the direct hash against the JSON one.
-9. **What 8 doesn't fix is the single huge clip.** Sharing works per clip. A project whose events sit in one clip gains little: the first edit after a check copies the whole clip (the cache holds a second reference), and its hash is redone. The measurements say whether that needs more; splitting a clip's events into chunks would be the next step, not taken until then.
+9. **What 8 doesn't fix is the single huge clip.** Sharing works per clip. A project whose events sit in one clip gains little: the first edit after a check copies the whole clip (the cache holds a second reference), and its hash is redone. The measurements say whether that needs more; splitting a clip's events into chunks would be the next step, not taken until then. Measured 2026-11-08 (§ The long take): the copy costs nothing you can see, and the edits' own work is what grows with a long take, so chunking isn't the fix.
 10. **Saving a plugin's state stays on the UI thread.** Both formats expect it on the main thread, and its cost is the plugin's own. Stev only controls how often it asks: a second after the last preset, knob turn or editor close (`410` decision 6), and once per plugin on ⌘S.
 11. **Out of scope:** loading, which stops the transport and stages plugins already (`060`); undo memory; the agent bridge's reads. Phase 1's sweep may find others. They go in this doc if it does.
 
@@ -62,6 +62,7 @@ Each phase ends with the probe run again at the target size.
 - **The stress project** (`src/core/project/stress.rs`): `fill_stress_project` builds the 16 tracks, five back-to-back clips on each, the events in groups of ten (two notes, three bends, three parameter moves, the two notes ending) and the plugin state split over the tracks. `recovery_timing` builds its projects there too. `cargo test --release write_stress_project -- --ignored` writes the target, `Stress/Stress 100k.stev`, into the library. Its plugins point at a bundle that doesn't exist, so none loads, but their state travels.
 - **The probe** (`src/core/threads/tick_probe.rs`, temporary, removed 2026-11-07 after phase 4's hand runs; `git show 4717a70` to bring it back, and phase 4's version also named any command past 1 ms): once a second while ticks arrive, `stev.log` gets the worst lateness of a tick's work (`now - at` after the tick is handled), how many ticks were past 1 ms, the longest any arm of the `select!` loop held the thread and which arm, and how many arms held it past 1 ms. The lateness includes the clock's own wake (a tick's `at` lies inside the timer's last interval, so up to about 1 ms of it is the timer's); the arm times are Stev's own work.
 - **The sweep** (`src/core/event_handlers/command_timing.rs`): `cargo test --release command_timing -- --ignored --nocapture` times each `SequencerCommand` through the handlers on a fresh stress project, five rounds, with its undo and redo when it records a step; marquee commands cover every track and the whole project. Its module docs list what it leaves out: the capture commits (they need a take), tap tempo, the commands that touch the user's files or settings, the audio export and the agent bridge. Save and Save as template are timed as their work against a scratch file.
+- **The long-take timing** (`src/core/event_handlers/long_take_timing.rs`, added 2026-11-08): decision 9's single huge clip, an edit of one long take dense with wheel rides and the check after it. § The long take has its figures.
 
 ### The sweep (2026-11-07)
 
@@ -212,6 +213,23 @@ The hand runs (2026-11-07): the stress project opened in a release build on the 
 - **One command took 6.7 ms in the first run, and it isn't known which.** Replaying that run's edits in the sweep's harness (clip mutes, a note drag, a mute and a delete of events, a save and its outcome, an undo, a second save, a check after each) found nothing past 0.9 ms, and the second run, with the probe naming commands, had none. Phase 3's ⌘S at 7.4–7.7 ms against the sweep's 5.1 may have been the same thing beside the save. Like phase 2's late tick with no long arm, to look into on its own if it comes back.
 
 The author noticed nothing in either run: playback, edits and saves stayed smooth, the 6.7 ms included. With that the design is done, and the probe has gone. The sweep (`command_timing`) and `recovery_timing` stay, as ignored tests, to measure the next change against.
+
+### The long take (2026-11-08)
+
+Decision 9's case, measured: `src/core/event_handlers/long_take_timing.rs`, run with `cargo test --release long_take_timing -- --ignored --nocapture`. The stress project with track 0's clips replaced by one take at 120 BPM: eight notes a bar, and wheel rides at a common controller's rate, 100 moves a second while a wheel moves, pitch bend in the first bar of every four and the mod wheel in the third, about 116 events a bar. A round runs the check (warm), times one small edit of the take and the check after it, then undoes the edit. The `no cache` column times the same edit again with the check's cache emptied, so without the copy decision 9 expects. The same Intel Mac, release, medians of seven rounds, in ms:
+
+| Bars | Events | Drag a note | Mute a note | Clear a bar of bend | Check after | Drag, no cache |
+|---|---|---|---|---|---|---|
+| 16 | 1,856 | 0.12 | 0.09 | 0.25 | 0.06 | 0.12 |
+| 64 | 7,424 | 0.54 | 0.34 | 1.06 | 0.22 | 0.46 |
+| 128 | 14,848 | 1.08 | 0.75 | 2.12 | 0.43 | 0.94 |
+| 256 | 29,696 | 2.38 | 1.68 | 4.39 | 0.91 | 2.23 |
+| 512 | 59,392 | 4.80 | 3.23 | 9.59 | 1.66 | 5.40 |
+
+- **The check is not the problem.** Hashing the edited take again costs about 30 ns an event: under 1 ms up to about 256 bars (8.5 minutes at 120 BPM), 1.7 ms at 512.
+- **The cache's copy isn't either.** With the cache empty, every edit costs the same. The time is in the edits themselves, which grow with the clip's events, not with what they change: clearing one bar of bend in a 64-bar take already passes 1 ms.
+- **So chunking a clip's events (decision 9's next step) wouldn't help.** If a long, dense take ever needs to be cheaper to edit, the edits' own per-event work is the place to look, starting with the clear span and the note drag.
+- **In practice,** a take of up to 64 bars with steady wheel rides stays at about 1 ms for an edit, and past that, an edit of one long take is a few milliseconds, once per edit, not continuously.
 
 ## Testing
 
