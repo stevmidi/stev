@@ -150,6 +150,21 @@ impl Event {
         Event::with_payload(tick, 0, self.payload.clone())
     }
 
+    /// [`copy_at`](Self::copy_at) with the id given rather than a fresh
+    /// random one: a bake that writes many events takes its ids from one
+    /// sequence (`merge.rs`'s `FreshIds`), since a v4 id per event is most of
+    /// a whole-project merge's time.
+    pub(crate) fn copy_with_id(&self, tick: i32, id: Uuid) -> Self {
+        Event {
+            id,
+            tick,
+            delta_ticks: 0,
+            length: 0,
+            payload: self.payload.clone(),
+            muted: false,
+        }
+    }
+
     // --- Identity accessor ---
     /// The stable id — see the [`id`](Self::id) field.
     pub(crate) fn id(&self) -> Uuid {

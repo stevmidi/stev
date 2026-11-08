@@ -13,6 +13,31 @@ use crate::models::event::Event;
 
 use super::Clip;
 
+/// The ids of one bake's events: a single random v4 base, then a counter
+/// from it. A fresh random id per event is a random-number call each, which
+/// took most of a whole-project merge (issue #24); from a random base the
+/// counter's ids are as unlikely to collide as v4 ids are.
+struct FreshIds {
+    /// The id the next [`take`](Self::take) returns, as its bits.
+    next: u128,
+}
+
+impl FreshIds {
+    /// A new sequence from a random base.
+    fn new() -> Self {
+        Self {
+            next: Uuid::new_v4().as_u128(),
+        }
+    }
+
+    /// The next id in the sequence.
+    fn take(&mut self) -> Uuid {
+        let id = Uuid::from_u128(self.next);
+        self.next = self.next.wrapping_add(1);
+        id
+    }
+}
+
 /// What [`Clip::merged`] built.
 pub(crate) struct MergedClip {
     /// The merged clip: window `0..length`, at `start_tick` 0, fresh event ids.
@@ -41,8 +66,9 @@ impl Clip {
         clip.region_mut().set_region(Some(0), Some(length));
 
         let mut lossless = true;
+        let mut ids = FreshIds::new();
         for piece in pieces {
-            lossless &= piece.bake_into(clip.events_mut());
+            lossless &= piece.bake_into(clip.events_mut(), &mut ids);
         }
         if let Some(first) = pieces.iter().min_by_key(|piece| piece.start_tick()) {
             clip.set_swing_pct(first.swing_pct());
@@ -93,10 +119,10 @@ impl Clip {
     }
 
     /// Appends what this clip plays to `out` (see [`merged`](Self::merged)),
-    /// retimed so the window start lands on `start_tick`, with fresh ids.
-    /// Returns whether every event came over unaltered: same events, same
-    /// ticks, none muted by the clip.
-    fn bake_into(&self, out: &mut Vec<Event>) -> bool {
+    /// retimed so the window start lands on `start_tick`, with fresh ids
+    /// from `ids`. Returns whether every event came over unaltered: same
+    /// events, same ticks, none muted by the clip.
+    fn bake_into(&self, out: &mut Vec<Event>, ids: &mut FreshIds) -> bool {
         let (window_start, window_end) = (self.region.start(), self.region.end());
         let offset = self.start_tick - window_start;
         let kept = self.windowed_events(
@@ -124,7 +150,7 @@ impl Clip {
         // window's own events on that tick, as playback sends its chase.
         out.extend(edges.into_iter().chain(kept).map(|event| {
             let muted = event.is_muted() || self.muted;
-            let mut copy = event.copy_at(event.tick());
+            let mut copy = event.copy_with_id(event.tick(), ids.take());
             copy.set_muted(muted);
             copy
         }));
@@ -383,6 +409,21 @@ mod tests {
                 .iter()
                 .all(|e| !source_ids.contains(&e.id()))
         );
+    }
+
+    #[test]
+    fn a_bake_gives_every_event_its_own_id() {
+        let notes: Vec<(i32, i32, u8)> = (0..500).map(|i| (i * 24, i * 24 + 10, 60)).collect();
+        let first = piece(0, (0, 12_000), &notes);
+        let second = piece(12_000, (0, 12_000), &notes);
+
+        let merged = Clip::merged(&[&first, &second], 24_000);
+
+        let mut ids: Vec<_> = merged.clip.events().iter().map(Event::id).collect();
+        assert_eq!(ids.len(), 2_000);
+        ids.sort();
+        ids.dedup();
+        assert_eq!(ids.len(), 2_000);
     }
 
     /// `(tick, status, note)` of every exported event.

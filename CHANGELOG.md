@@ -37,6 +37,7 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ### Fixed
 
+- Merge Clips (`⌘/Ctrl+J`) is much faster on large projects: merging a whole 100,000-event project took about 140 ms, and now takes about 26 ms. A take of 2,500 events merges in under a millisecond.
 - Selecting a note while the clip plays that pitch no longer leaves notes stuck in VST3 plugins. Serum 2 held such a note until the transport stopped, and Kontakt 8 until muted in its own window.
 - Muting a clip with the arranger marquee while it plays releases its sounding notes. They used to hang until the loop wrapped or the transport stopped.
 - Muting a note with `M` in the clip view while it sounds releases it. It used to hang until the loop wrapped or the transport stopped.
