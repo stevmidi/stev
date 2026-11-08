@@ -224,11 +224,7 @@ impl Display {
                     Some(SaveAsHit::Name) | None => false,
                 }
             }
-            Some(
-                ProjectDialog::Unsaved { .. }
-                | ProjectDialog::Replace { .. }
-                | ProjectDialog::Recovery { .. },
-            ) => self.dialog_button_at(pointer).is_some(),
+            Some(_) => self.dialog_button_at(pointer).is_some(),
             None => false,
         }
     }
@@ -245,23 +241,35 @@ impl Display {
     /// Shows the open project dialog, if any, over the canvas `rect`, in
     /// the canvas `ui`.
     pub(in crate::view::display) fn show_project_dialog(&mut self, ui: &mut Ui, rect: Rect) {
-        match &mut self.project_dialog {
-            Some(ProjectDialog::SaveAs(save_as)) => {
+        let Some(dialog) = &mut self.project_dialog else {
+            return;
+        };
+        let (title, question) = match dialog {
+            ProjectDialog::SaveAs(save_as) => {
                 let new_folder_keys = chords_label(self.keymap.chords(Action::NewProjectFolder));
-                Self::show_save_as(ui, rect, save_as, &new_folder_keys)
+                Self::show_save_as(ui, rect, save_as, &new_folder_keys);
+                return;
             }
-            Some(ProjectDialog::Unsaved { selected, .. }) => {
-                Self::draw_unsaved_prompt(ui.painter(), rect, *selected, self.project.name())
+            ProjectDialog::Unsaved { .. } => (
+                "UNSAVED CHANGES",
+                Self::unsaved_question(self.project.name()),
+            ),
+            ProjectDialog::Replace { save_as, name, .. } => {
+                ("REPLACE", Self::replace_question(save_as, name))
             }
-            Some(ProjectDialog::Replace {
-                save_as,
-                name,
+            ProjectDialog::Recovery { name, .. } => {
+                ("RECOVERY", Self::recovery_question(name.as_deref()))
+            }
+        };
+        if let Some(selected) = dialog.selected() {
+            Self::draw_button_prompt(
+                ui.painter(),
+                rect,
+                title,
+                question,
+                dialog.buttons(),
                 selected,
-            }) => Self::draw_replace_prompt(ui.painter(), rect, save_as, name, *selected),
-            Some(ProjectDialog::Recovery { name, selected }) => {
-                Self::draw_recovery_question(ui.painter(), rect, *selected, name.as_deref())
-            }
-            None => {}
+            );
         }
     }
 
@@ -494,14 +502,15 @@ impl Display {
         }
     }
 
-    /// The unsaved-changes prompt: the question and the three buttons, the
+    /// A prompt: the `title`, the `question`, and the button `row`, the
     /// `selected` one (Enter's) in the accent colour.
-    /// `name` is the open project's, `None` for one never saved.
-    fn draw_unsaved_prompt(
+    fn draw_button_prompt(
         painter: &Painter,
         rect: Rect,
+        title: &str,
+        question: String,
+        row: &[DialogButton],
         selected: DialogButton,
-        name: Option<&str>,
     ) {
         let layout = Self::dialog_layout(rect, true);
         Self::draw_modal_frame(
@@ -509,75 +518,39 @@ impl Display {
             rect,
             layout.panel.width(),
             layout.panel.height(),
-            "UNSAVED CHANGES",
+            title,
         );
+        Self::draw_dialog_question(painter, &layout, question);
+        Self::draw_dialog_buttons(painter, &layout, row, selected);
+    }
 
-        let question = match name {
+    /// The unsaved-changes prompt's question; `name` is the open project's,
+    /// `None` for one never saved.
+    fn unsaved_question(name: Option<&str>) -> String {
+        match name {
             Some(name) => format!("Save changes to \"{name}\" before closing?"),
             None => "Save this new project before closing?".to_owned(),
-        };
-        Self::draw_dialog_question(painter, &layout, question);
-
-        Self::draw_dialog_buttons(painter, &layout, DialogButton::UNSAVED, selected);
+        }
     }
 
-    /// The replace prompt over `save_as`: which file of `name` it would
-    /// replace and where, and Cancel / Replace, the `selected` one (Enter's)
-    /// in the accent colour.
-    fn draw_replace_prompt(
-        painter: &Painter,
-        rect: Rect,
-        save_as: &SaveAs,
-        name: &str,
-        selected: DialogButton,
-    ) {
-        let layout = Self::dialog_layout(rect, true);
-        Self::draw_modal_frame(
-            painter,
-            rect,
-            layout.panel.width(),
-            layout.panel.height(),
-            "REPLACE",
-        );
-
-        let exists = if save_as.template {
-            format!("The template \"{name}\" already exists.")
+    /// The replace prompt's question over `save_as`: which file of `name`
+    /// it would replace, and where.
+    fn replace_question(save_as: &SaveAs, name: &str) -> String {
+        if save_as.template {
+            format!("The template \"{name}\" already exists.\nDo you want to replace it?")
         } else {
             let folder = save_as.folder_label(save_as.folder_idx());
-            format!("\"{name}\" already exists in {folder}.")
-        };
-        let text = format!("{exists}\nDo you want to replace it?");
-        Self::draw_dialog_question(painter, &layout, text);
-
-        Self::draw_dialog_buttons(painter, &layout, DialogButton::REPLACE, selected);
+            format!("\"{name}\" already exists in {folder}.\nDo you want to replace it?")
+        }
     }
 
-    /// The recovery question: what happened, what to do about it, and the two
-    /// buttons, the `selected` one (Enter's) in the accent colour. `name` is
-    /// the copy's project, `None` for one never saved.
-    fn draw_recovery_question(
-        painter: &Painter,
-        rect: Rect,
-        selected: DialogButton,
-        name: Option<&str>,
-    ) {
-        let layout = Self::dialog_layout(rect, true);
-        Self::draw_modal_frame(
-            painter,
-            rect,
-            layout.panel.width(),
-            layout.panel.height(),
-            "RECOVERY",
-        );
-
-        let question = match name {
-            Some(name) => format!("Restore the project \"{name}\"?"),
-            None => "Restore your unsaved new project?".to_owned(),
-        };
-        let text = format!("Stev didn't close properly.\n{question}");
-        Self::draw_dialog_question(painter, &layout, text);
-
-        Self::draw_dialog_buttons(painter, &layout, DialogButton::RECOVERY, selected);
+    /// The recovery question: what happened, and what to do about it;
+    /// `name` is the copy's project, `None` for one never saved.
+    fn recovery_question(name: Option<&str>) -> String {
+        match name {
+            Some(name) => format!("Stev didn't close properly.\nRestore the project \"{name}\"?"),
+            None => "Stev didn't close properly.\nRestore your unsaved new project?".to_owned(),
+        }
     }
 
     /// The button `row`, the `selected` one (Enter's) in the accent colour.

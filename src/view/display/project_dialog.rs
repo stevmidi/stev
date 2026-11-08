@@ -117,6 +117,36 @@ impl ProjectDialog {
             ProjectDialog::Recovery { .. } => DialogButton::RECOVERY,
         }
     }
+
+    /// The button Enter presses, ←/→ move: every dialog's but Save As's,
+    /// which has no buttons.
+    pub(super) fn selected(&self) -> Option<DialogButton> {
+        match self {
+            ProjectDialog::SaveAs(_) => None,
+            ProjectDialog::Unsaved { selected, .. }
+            | ProjectDialog::Replace { selected, .. }
+            | ProjectDialog::Recovery { selected, .. } => Some(*selected),
+        }
+    }
+
+    /// [`selected`](Self::selected), to move it.
+    fn selected_mut(&mut self) -> Option<&mut DialogButton> {
+        match self {
+            ProjectDialog::SaveAs(_) => None,
+            ProjectDialog::Unsaved { selected, .. }
+            | ProjectDialog::Replace { selected, .. }
+            | ProjectDialog::Recovery { selected, .. } => Some(selected),
+        }
+    }
+
+    /// The dialog Cancel goes back to: the Save As under the replace
+    /// prompt; `None` (closing) for the rest.
+    fn back(self) -> Option<ProjectDialog> {
+        match self {
+            ProjectDialog::Replace { save_as, .. } => Some(ProjectDialog::SaveAs(*save_as)),
+            _ => None,
+        }
+    }
 }
 
 /// Save As's name field and destination folder.
@@ -194,22 +224,16 @@ impl SaveAs {
         }
     }
 
-    /// The name the save would replace: a template of that name, or another
-    /// project of that name in the chosen folder — not the open project,
-    /// which a save rewrites anyway. `None` while the name is refused or a
-    /// new folder is being typed (the chosen folder is still the one before
-    /// it). Reads the disk.
-    pub(super) fn replaces(&self, project: &ProjectViewState) -> Option<String> {
-        let name = project_name_from_input(&self.field.text)?;
-        let folder = self.folder();
-        let taken = if self.template {
-            template_exists(&name)
+    /// Whether saving under `name` replaces another file: a template of
+    /// that name, or a project of that name in the chosen folder — not the
+    /// open project, which a save rewrites anyway. Reads the disk.
+    fn replaces(&self, name: &str, project: &ProjectViewState) -> bool {
+        if self.template {
+            template_exists(name)
         } else {
-            self.folder_field.is_none()
-                && !project.is_open(folder, &name)
-                && project_exists(folder, &name)
-        };
-        taken.then_some(name)
+            let folder = self.folder();
+            !project.is_open(folder, name) && project_exists(folder, name)
+        }
     }
 
     /// The Tab stops, in order: the name, the dropdown and the `+` — or,
@@ -824,23 +848,17 @@ impl Display {
                     .resolve_press(key, modifiers, self.focused_pane());
                 save_as_key(key, modifiers, action == Some(Action::NewProjectFolder))
             }
-            (
-                &InputEvent::KeyPressed { key, .. },
-                &ProjectDialog::Unsaved { selected, .. }
-                | &ProjectDialog::Replace { selected, .. }
-                | &ProjectDialog::Recovery { selected, .. },
-            ) => button_key(key, selected, dialog.buttons()),
-            (
-                &InputEvent::MouseClicked { x, y, .. },
-                ProjectDialog::Unsaved { .. }
-                | ProjectDialog::Replace { .. }
-                | ProjectDialog::Recovery { .. },
-            ) => self
-                .dialog_button_at(pos2(x, y))
-                .map_or(DialogKey::Swallow, DialogButton::key),
+            (&InputEvent::KeyPressed { key, .. }, _) => {
+                dialog.selected().map_or(DialogKey::Swallow, |selected| {
+                    button_key(key, selected, dialog.buttons())
+                })
+            }
             (&InputEvent::MouseClicked { x, y, .. }, ProjectDialog::SaveAs(_)) => {
                 DialogKey::Click(pos2(x, y))
             }
+            (&InputEvent::MouseClicked { x, y, .. }, _) => self
+                .dialog_button_at(pos2(x, y))
+                .map_or(DialogKey::Swallow, DialogButton::key),
             (&InputEvent::TimelineScroll { delta_y, .. }, ProjectDialog::SaveAs(_)) => {
                 DialogKey::Scroll(delta_y)
             }
@@ -872,12 +890,7 @@ impl Display {
             DialogKey::Discard => self.discard_project_changes(),
             DialogKey::Cancel => {
                 if !self.save_as_mut().is_some_and(SaveAs::escape) {
-                    self.project_dialog = match self.project_dialog.take() {
-                        Some(ProjectDialog::Replace { save_as, .. }) => {
-                            Some(ProjectDialog::SaveAs(*save_as))
-                        }
-                        _ => None,
-                    };
+                    self.project_dialog = self.project_dialog.take().and_then(ProjectDialog::back);
                 }
             }
             key @ (DialogKey::Folder(_)
@@ -900,11 +913,10 @@ impl Display {
                 }
             }
             DialogKey::Select(button) => {
-                if let Some(
-                    ProjectDialog::Unsaved { selected, .. }
-                    | ProjectDialog::Replace { selected, .. }
-                    | ProjectDialog::Recovery { selected, .. },
-                ) = &mut self.project_dialog
+                if let Some(selected) = self
+                    .project_dialog
+                    .as_mut()
+                    .and_then(ProjectDialog::selected_mut)
                 {
                     *selected = button;
                 }
@@ -930,17 +942,24 @@ impl Display {
     /// Save As for a project never saved. The recovery question restores.
     fn confirm_project_dialog(&mut self) {
         match self.project_dialog.take() {
-            Some(ProjectDialog::SaveAs(save_as)) => match save_as.replaces(&self.project) {
-                Some(name) => {
+            Some(ProjectDialog::SaveAs(save_as)) => {
+                let Some(name) = project_name_from_input(&save_as.field.text) else {
+                    self.project_dialog = Some(ProjectDialog::SaveAs(save_as));
+                    return;
+                };
+                if save_as.replaces(&name, &self.project) {
                     self.project_dialog = Some(ProjectDialog::Replace {
                         save_as: Box::new(save_as),
                         name,
                         selected: DialogButton::Replace,
-                    })
+                    });
+                } else {
+                    self.save_as_confirmed(save_as, name);
                 }
-                None => self.save_as_confirmed(save_as),
-            },
-            Some(ProjectDialog::Replace { save_as, .. }) => self.save_as_confirmed(*save_as),
+            }
+            Some(ProjectDialog::Replace { save_as, name, .. }) => {
+                self.save_as_confirmed(*save_as, name)
+            }
             Some(ProjectDialog::Unsaved { action, .. }) => self.save_project(Some(action)),
             Some(ProjectDialog::Recovery { .. }) => {
                 // The restored project is what opens: a file Finder asked for
@@ -961,17 +980,15 @@ impl Display {
         }
     }
 
-    /// Save As's save, any replacing agreed: saves under its name and asks
+    /// Save As's save under `name`, any replacing agreed: saves and asks
     /// for the action waiting on it, if any — or, as Save as template,
-    /// writes the template. A name that isn't one keeps Save As open.
-    fn save_as_confirmed(&mut self, save_as: SaveAs) {
-        match project_name_from_input(&save_as.field.text) {
-            Some(name) if save_as.template => self.save_template(name),
-            Some(name) => {
-                let folder = save_as.folder().map(str::to_owned);
-                self.save_project_as(name, folder, save_as.then);
-            }
-            None => self.project_dialog = Some(ProjectDialog::SaveAs(save_as)),
+    /// writes the template.
+    fn save_as_confirmed(&mut self, save_as: SaveAs, name: String) {
+        if save_as.template {
+            self.save_template(name);
+        } else {
+            let folder = save_as.folder().map(str::to_owned);
+            self.save_project_as(name, folder, save_as.then);
         }
     }
 
