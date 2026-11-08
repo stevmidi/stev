@@ -13,12 +13,11 @@ use egui::{
 use crate::core::config::PROJECT_NAME_MAX_CHARS;
 use crate::core::keymap::Action;
 use crate::core::paths::TEMPLATES_DIR_NAME;
-use crate::core::project::{project_exists, project_name_from_input, template_exists};
+use crate::core::project::project_name_from_input;
 use crate::view::display::keyboard_tab::chords_label;
 use crate::view::display::project_dialog::{
     DialogButton, ProjectDialog, SaveAs, SaveAsFocus, SaveAsHit,
 };
-use crate::view::display::project_state::ProjectViewState;
 use crate::view::display::text_field::{FieldStyle, MODAL_MARGIN};
 
 use super::*;
@@ -225,9 +224,11 @@ impl Display {
                     Some(SaveAsHit::Name) | None => false,
                 }
             }
-            Some(ProjectDialog::Unsaved { .. } | ProjectDialog::Recovery { .. }) => {
-                self.dialog_button_at(pointer).is_some()
-            }
+            Some(
+                ProjectDialog::Unsaved { .. }
+                | ProjectDialog::Replace { .. }
+                | ProjectDialog::Recovery { .. },
+            ) => self.dialog_button_at(pointer).is_some(),
             None => false,
         }
     }
@@ -247,11 +248,16 @@ impl Display {
         match &mut self.project_dialog {
             Some(ProjectDialog::SaveAs(save_as)) => {
                 let new_folder_keys = chords_label(self.keymap.chords(Action::NewProjectFolder));
-                Self::show_save_as(ui, rect, save_as, &self.project, &new_folder_keys)
+                Self::show_save_as(ui, rect, save_as, &new_folder_keys)
             }
             Some(ProjectDialog::Unsaved { selected, .. }) => {
                 Self::draw_unsaved_prompt(ui.painter(), rect, *selected, self.project.name())
             }
+            Some(ProjectDialog::Replace {
+                save_as,
+                name,
+                selected,
+            }) => Self::draw_replace_prompt(ui.painter(), rect, save_as, name, *selected),
             Some(ProjectDialog::Recovery { name, selected }) => {
                 Self::draw_recovery_question(ui.painter(), rect, *selected, name.as_deref())
             }
@@ -261,22 +267,16 @@ impl Display {
 
     /// Save As: the name field, the folder dropdown and its `+` — or, while
     /// it is open, the new folder's field over the box — and a note under
-    /// them: why the name (or the new folder's) won't do, that the project
-    /// replaces another. Save as template has its own title, and the fixed
-    /// text `Templates` in place of the dropdown and the `+`; its note says
-    /// when the name replaces a template. Right of the note, the keys of whatever has the
+    /// them: why the name (or the new folder's) won't do — a name that
+    /// replaces another says nothing here, the replace prompt asks on Enter.
+    /// Save as template has its own title, and the fixed text `Templates` in
+    /// place of the dropdown and the `+`. Right of the note, the keys of whatever has the
     /// keyboard — or, with the pointer on the `+`, `new_folder_keys`, its
     /// key (none while unbound). The name field's
     /// first frame selects its text; it and the new folder's field hold the
     /// egui focus by turns (`SaveAs::focus`), so typing lands in the one with
     /// the keyboard — neither while the dropdown or the `+` has it.
-    fn show_save_as(
-        ui: &mut Ui,
-        rect: Rect,
-        save_as: &mut SaveAs,
-        project: &ProjectViewState,
-        new_folder_keys: &str,
-    ) {
+    fn show_save_as(ui: &mut Ui, rect: Rect, save_as: &mut SaveAs, new_folder_keys: &str) {
         let layout = Self::dialog_layout(rect, false);
         Self::draw_modal_frame(
             ui.painter(),
@@ -320,25 +320,12 @@ impl Display {
         }
         let hover = ui.input(|i| i.pointer.hover_pos());
 
-        let folder = save_as.folder();
-        let is_open_project = |name: &str| project.is_open(folder, name);
-        // While a folder is being typed, `folder` is the one before it: no
-        // project there to replace.
-        let note = match project_name_from_input(&save_as.field.text) {
-            _ if save_as.folder_refused() => "Not a valid folder name".to_owned(),
-            None => "Not a valid file name".to_owned(),
-            Some(name) if save_as.template && template_exists(&name) => {
-                format!("Replaces the template {name}")
-            }
-            Some(name)
-                if !save_as.template
-                    && !typing_folder
-                    && !is_open_project(&name)
-                    && project_exists(folder, &name) =>
-            {
-                format!("Replaces the existing {name}")
-            }
-            Some(_) => String::new(),
+        let note = if save_as.folder_refused() {
+            "Not a valid folder name".to_owned()
+        } else if project_name_from_input(&save_as.field.text).is_none() {
+            "Not a valid file name".to_owned()
+        } else {
+            String::new()
         };
         let painter = ui.painter();
         let hint_font = FontId::proportional(Self::FONT_HINT);
@@ -532,6 +519,37 @@ impl Display {
         Self::draw_dialog_question(painter, &layout, question);
 
         Self::draw_dialog_buttons(painter, &layout, DialogButton::UNSAVED, selected);
+    }
+
+    /// The replace prompt over `save_as`: which file of `name` it would
+    /// replace and where, and Cancel / Replace, the `selected` one (Enter's)
+    /// in the accent colour.
+    fn draw_replace_prompt(
+        painter: &Painter,
+        rect: Rect,
+        save_as: &SaveAs,
+        name: &str,
+        selected: DialogButton,
+    ) {
+        let layout = Self::dialog_layout(rect, true);
+        Self::draw_modal_frame(
+            painter,
+            rect,
+            layout.panel.width(),
+            layout.panel.height(),
+            "REPLACE",
+        );
+
+        let exists = if save_as.template {
+            format!("The template \"{name}\" already exists.")
+        } else {
+            let folder = save_as.folder_label(save_as.folder_idx());
+            format!("\"{name}\" already exists in {folder}.")
+        };
+        let text = format!("{exists}\nDo you want to replace it?");
+        Self::draw_dialog_question(painter, &layout, text);
+
+        Self::draw_dialog_buttons(painter, &layout, DialogButton::REPLACE, selected);
     }
 
     /// The recovery question: what happened, what to do about it, and the two

@@ -605,12 +605,12 @@ fn first_free_name(name: impl Fn(Option<u32>) -> String, taken: impl Fn(&str) ->
 }
 
 /// Whether `folder/name.stev` exists (`None`: the projects root) — Save As
-/// warns before replacing it.
+/// asks before replacing it.
 pub(crate) fn project_exists(folder: Option<&str>, name: &str) -> bool {
     stev_path(&resolve_dir(folder), name).exists()
 }
 
-/// Whether the template `name` exists — Save as template warns before
+/// Whether the template `name` exists — Save as template asks before
 /// replacing it.
 pub(crate) fn template_exists(name: &str) -> bool {
     template_path(name).exists()

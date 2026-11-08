@@ -14,12 +14,14 @@
 //!   starts at the default folder (`ProjectViewState::default_folder`),
 //!   whatever the browser shows or has selected. Enter saves under the typed
 //!   name there, makes it the open project and its folder the default one;
-//!   Esc cancels.
+//!   Esc cancels. Over another project of that name, Enter asks first (the
+//!   replace prompt, below).
 //! - **Save as template** (⌘/Ctrl+⌥+S, the browser's TEMPLATES `+`): Save
 //!   As with `template` set — the same name field, but "Save in" is the
 //!   fixed text `Templates`, with no dropdown or `+`, so the name is the
 //!   only stop. Enter writes the open project into the templates folder
-//!   (`InputEvent::SaveTemplate`), replacing one of that name; the open
+//!   (`InputEvent::SaveTemplate`) — over one of that name, once the replace
+//!   prompt is answered; the open
 //!   project keeps its name, its file and its unsaved state
 //!   (`archive/340-templates.md`).
 //! - **Unsaved changes**: asked for by the sequencer (`UiEvent::UnsavedChanges`)
@@ -29,6 +31,11 @@
 //!   ⌘/Ctrl+S would — through Save As for a project never saved, the action
 //!   waiting on it). `D` (or ⌘/Ctrl+D) goes on without saving and Esc
 //!   cancels, whatever is selected; each is also a button.
+//!
+//! - **Replace**: Save As's Enter on a name another project (or template)
+//!   already has. Cancel / Replace, Replace selected, so Enter, Enter still
+//!   replaces; ←/→ move the selection. Cancel or Esc goes back to Save As as
+//!   it was, Replace saves over the other file.
 //!
 //! - **Crash recovery**: up from the first frame of a launch that found a
 //!   recovery copy ([`offer_recovery`](Display::offer_recovery)). ←/→ move the
@@ -55,8 +62,8 @@ use egui::{Context, Key, Pos2, ViewportCommand, pos2};
 use crate::core::input_event::{InputEvent, KeyModifiers};
 use crate::core::keymap::Action;
 use crate::core::project::{
-    ProjectAction, ProjectOrigin, UNTITLED, list_project_folders, project_folder_name_from_input,
-    project_name_from_input,
+    ProjectAction, ProjectOrigin, UNTITLED, list_project_folders, project_exists,
+    project_folder_name_from_input, project_name_from_input, template_exists,
 };
 #[cfg(target_os = "macos")]
 use crate::view::appkit::take_open_document;
@@ -65,6 +72,7 @@ use super::Display;
 #[cfg(target_os = "macos")]
 use super::Overlay;
 use super::browser::scroll_to_show;
+use super::project_state::ProjectViewState;
 use super::settings_modal::{scroll_by, wheel_rows, window_start};
 use super::text_field::{FieldEvent, TextField, field_key};
 
@@ -76,6 +84,17 @@ pub(super) enum ProjectDialog {
     Unsaved {
         /// What runs after Save or Don't Save.
         action: ProjectAction,
+        /// The button Enter presses, moved with ←/→.
+        selected: DialogButton,
+    },
+    /// The Cancel / Replace prompt over Save As, whose save would replace
+    /// the project or template `name`.
+    Replace {
+        /// The Save As it came from: Cancel goes back to it, Replace saves
+        /// it.
+        save_as: Box<SaveAs>,
+        /// The project or template it would replace.
+        name: String,
         /// The button Enter presses, moved with ←/→.
         selected: DialogButton,
     },
@@ -94,6 +113,7 @@ impl ProjectDialog {
         match self {
             ProjectDialog::SaveAs(_) => &[],
             ProjectDialog::Unsaved { .. } => DialogButton::UNSAVED,
+            ProjectDialog::Replace { .. } => DialogButton::REPLACE,
             ProjectDialog::Recovery { .. } => DialogButton::RECOVERY,
         }
     }
@@ -172,6 +192,24 @@ impl SaveAs {
             then,
             template,
         }
+    }
+
+    /// The name the save would replace: a template of that name, or another
+    /// project of that name in the chosen folder — not the open project,
+    /// which a save rewrites anyway. `None` while the name is refused or a
+    /// new folder is being typed (the chosen folder is still the one before
+    /// it). Reads the disk.
+    pub(super) fn replaces(&self, project: &ProjectViewState) -> Option<String> {
+        let name = project_name_from_input(&self.field.text)?;
+        let folder = self.folder();
+        let taken = if self.template {
+            template_exists(&name)
+        } else {
+            self.folder_field.is_none()
+                && !project.is_open(folder, &name)
+                && project_exists(folder, &name)
+        };
+        taken.then_some(name)
     }
 
     /// The Tab stops, in order: the name, the dropdown and the `+` — or,
@@ -522,6 +560,8 @@ pub(super) enum DialogButton {
     DontSave,
     /// The prompt: save, then go on.
     Save,
+    /// The replace prompt: save over the other file.
+    Replace,
     /// The recovery question: delete the copy.
     Discard,
     /// The recovery question: open it.
@@ -536,6 +576,9 @@ impl DialogButton {
         DialogButton::Save,
     ];
 
+    /// The replace prompt's row, left to right.
+    pub(super) const REPLACE: &[DialogButton] = &[DialogButton::Cancel, DialogButton::Replace];
+
     /// The recovery question's row, left to right.
     pub(super) const RECOVERY: &[DialogButton] = &[DialogButton::Discard, DialogButton::Restore];
 
@@ -545,6 +588,7 @@ impl DialogButton {
             DialogButton::Cancel => "Cancel",
             DialogButton::DontSave => "Don't Save",
             DialogButton::Save => "Save",
+            DialogButton::Replace => "Replace",
             DialogButton::Discard => "Discard",
             DialogButton::Restore => "Restore",
         }
@@ -563,7 +607,9 @@ impl DialogButton {
         match self {
             DialogButton::Cancel => DialogKey::Cancel,
             DialogButton::DontSave | DialogButton::Discard => DialogKey::Discard,
-            DialogButton::Save | DialogButton::Restore => DialogKey::Confirm,
+            DialogButton::Save | DialogButton::Replace | DialogButton::Restore => {
+                DialogKey::Confirm
+            }
         }
     }
 }
@@ -781,11 +827,14 @@ impl Display {
             (
                 &InputEvent::KeyPressed { key, .. },
                 &ProjectDialog::Unsaved { selected, .. }
+                | &ProjectDialog::Replace { selected, .. }
                 | &ProjectDialog::Recovery { selected, .. },
             ) => button_key(key, selected, dialog.buttons()),
             (
                 &InputEvent::MouseClicked { x, y, .. },
-                ProjectDialog::Unsaved { .. } | ProjectDialog::Recovery { .. },
+                ProjectDialog::Unsaved { .. }
+                | ProjectDialog::Replace { .. }
+                | ProjectDialog::Recovery { .. },
             ) => self
                 .dialog_button_at(pos2(x, y))
                 .map_or(DialogKey::Swallow, DialogButton::key),
@@ -823,7 +872,12 @@ impl Display {
             DialogKey::Discard => self.discard_project_changes(),
             DialogKey::Cancel => {
                 if !self.save_as_mut().is_some_and(SaveAs::escape) {
-                    self.project_dialog = None;
+                    self.project_dialog = match self.project_dialog.take() {
+                        Some(ProjectDialog::Replace { save_as, .. }) => {
+                            Some(ProjectDialog::SaveAs(*save_as))
+                        }
+                        _ => None,
+                    };
                 }
             }
             key @ (DialogKey::Folder(_)
@@ -848,6 +902,7 @@ impl Display {
             DialogKey::Select(button) => {
                 if let Some(
                     ProjectDialog::Unsaved { selected, .. }
+                    | ProjectDialog::Replace { selected, .. }
                     | ProjectDialog::Recovery { selected, .. },
                 ) = &mut self.project_dialog
                 {
@@ -868,22 +923,24 @@ impl Display {
     }
 
     /// Enter, or the prompt's Save. Save As with a name that isn't one
-    /// stays open (its hint says why); with one, it saves and asks for the
-    /// action waiting on it, if any — or, as Save as template, writes the
-    /// template. The prompt saves and asks for its action again — through
+    /// stays open (its hint says why); with one that replaces another
+    /// project or template, the replace prompt asks first; else it saves
+    /// ([`save_as_confirmed`](Self::save_as_confirmed)). The replace
+    /// prompt's Replace saves. The prompt saves and asks for its action again — through
     /// Save As for a project never saved. The recovery question restores.
     fn confirm_project_dialog(&mut self) {
         match self.project_dialog.take() {
-            Some(ProjectDialog::SaveAs(save_as)) => {
-                match project_name_from_input(&save_as.field.text) {
-                    Some(name) if save_as.template => self.save_template(name),
-                    Some(name) => {
-                        let folder = save_as.folder().map(str::to_owned);
-                        self.save_project_as(name, folder, save_as.then);
-                    }
-                    None => self.project_dialog = Some(ProjectDialog::SaveAs(save_as)),
+            Some(ProjectDialog::SaveAs(save_as)) => match save_as.replaces(&self.project) {
+                Some(name) => {
+                    self.project_dialog = Some(ProjectDialog::Replace {
+                        save_as: Box::new(save_as),
+                        name,
+                        selected: DialogButton::Replace,
+                    })
                 }
-            }
+                None => self.save_as_confirmed(save_as),
+            },
+            Some(ProjectDialog::Replace { save_as, .. }) => self.save_as_confirmed(*save_as),
             Some(ProjectDialog::Unsaved { action, .. }) => self.save_project(Some(action)),
             Some(ProjectDialog::Recovery { .. }) => {
                 // The restored project is what opens: a file Finder asked for
@@ -901,6 +958,20 @@ impl Display {
                     .ok();
             }
             None => {}
+        }
+    }
+
+    /// Save As's save, any replacing agreed: saves under its name and asks
+    /// for the action waiting on it, if any — or, as Save as template,
+    /// writes the template. A name that isn't one keeps Save As open.
+    fn save_as_confirmed(&mut self, save_as: SaveAs) {
+        match project_name_from_input(&save_as.field.text) {
+            Some(name) if save_as.template => self.save_template(name),
+            Some(name) => {
+                let folder = save_as.folder().map(str::to_owned);
+                self.save_project_as(name, folder, save_as.then);
+            }
+            None => self.project_dialog = Some(ProjectDialog::SaveAs(save_as)),
         }
     }
 
@@ -1307,6 +1378,26 @@ mod tests {
         ] {
             assert_eq!(unsaved_key(key, from), DialogKey::Select(to));
         }
+    }
+
+    /// The replace prompt: Enter replaces with Replace selected (as it
+    /// opens), ← moves to Cancel, where Enter goes back, as Esc does.
+    #[test]
+    fn the_replace_prompt_replaces_or_goes_back() {
+        let replace_key = |key, selected| button_key(key, selected, DialogButton::REPLACE);
+        let (cancel, replace) = (DialogButton::Cancel, DialogButton::Replace);
+        assert_eq!(replace_key(Key::Enter, replace), DialogKey::Confirm);
+        assert_eq!(
+            replace_key(Key::ArrowLeft, replace),
+            DialogKey::Select(cancel)
+        );
+        assert_eq!(
+            replace_key(Key::ArrowRight, cancel),
+            DialogKey::Select(replace)
+        );
+        assert_eq!(replace_key(Key::Enter, cancel), DialogKey::Cancel);
+        assert_eq!(replace_key(Key::Escape, replace), DialogKey::Cancel);
+        assert_eq!(replace_key(Key::R, replace), DialogKey::Swallow);
     }
 
     /// A stray key does nothing — above all no key discards the changes,

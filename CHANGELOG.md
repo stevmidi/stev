@@ -26,6 +26,8 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ### Changed
 
+- Save As and Save as template ask before replacing another project or template of the same name, with a Cancel / Replace prompt (titled REPLACE, Replace selected, so Enter, Enter replaces; Cancel or Esc goes back to the name). Before, a single Enter replaced it, with only a note under the field to warn.
+
 - Deleting the open project, or the folder it's in, from the browser leaves it open as an untitled project with unsaved changes. ⌘S then asks where to save it, instead of quietly putting the deleted file or folder back.
 - Save As always starts in the folder of the project you last opened or saved, or in Projects when that folder has been deleted, whether the browser is open or not. It no longer starts in the folder selected in the browser.
 - Big projects stay on time while you work: the check for unsaved changes, the background crash-recovery copy and edits across many clips no longer copy or re-read every clip, so they don't make notes or the click late.
