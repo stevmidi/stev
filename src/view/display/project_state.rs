@@ -22,8 +22,10 @@ use crate::core::project::{LibraryChange, ProjectOrigin};
 pub(super) struct ProjectViewState {
     /// Where the open project is on disk, `None` before it is first saved:
     /// what ⌘/Ctrl+S saves to. A copy of the sequencer's record, never
-    /// changed by the view on its own.
-    pub(super) open: Option<ProjectOrigin>,
+    /// changed by the view on its own: private, so the only writers are
+    /// [`adopt`](Self::adopt) and [`follow_file`](Self::follow_file), both
+    /// fed by the sequencer's events.
+    open: Option<ProjectOrigin>,
     /// The folder Save As starts in, persisted to `settings.json` as
     /// `last_project_folder` so it's remembered across sessions. `None`: the
     /// projects root.
@@ -51,8 +53,8 @@ impl ProjectViewState {
     }
 
     /// Takes `origin` as where the open project is now, as the sequencer
-    /// reports it moved or renamed by the browser — or `None`, deleted, so
-    /// it goes on untitled. The default folder stays: only an open or a save
+    /// reports it moved or renamed by the browser — or `None`: deleted, so
+    /// it goes on untitled, or a new project never saved. The default folder stays: only an open or a save
     /// sets it, and a deleted folder falls back on its own
     /// ([`follow_library`](Self::follow_library)).
     pub(super) fn follow_file(&mut self, origin: Option<ProjectOrigin>) {
@@ -73,6 +75,11 @@ impl ProjectViewState {
         };
         self.default_folder = default;
         true
+    }
+
+    /// Where the open project is on disk, `None` before it is first saved.
+    pub(super) fn open(&self) -> Option<&ProjectOrigin> {
+        self.open.as_ref()
     }
 
     /// The open project's name, `None` before it is first saved.

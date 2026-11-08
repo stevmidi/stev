@@ -224,7 +224,7 @@ mod tests {
 
     use crate::core::event_handlers::Storage;
     use crate::core::event_handlers::test_harness::{
-        Harness, add_clip, harness, quit, run_once, save_as, written,
+        Harness, add_clip, harness, library_changed, quit, run_once, save_as, written,
     };
     use crate::core::paths::scratch_dir;
     use crate::core::project::{LibraryChange, ProjectAction, ProjectData, TrackOutputData};
@@ -547,13 +547,12 @@ mod tests {
         assert_eq!(jobs(&h), [Job::Write(400_000, None)]);
     }
 
-    /// Where the view was told the open project went
-    /// (`UiEvent::OpenProjectFile` with somewhere to go) since the last call.
-    fn moves_told(h: &Harness) -> Vec<ProjectOrigin> {
+    /// Every `UiEvent::OpenProjectFile` since the last call.
+    fn files_told(h: &Harness) -> Vec<Option<ProjectOrigin>> {
         h.ui_events
             .try_iter()
             .filter_map(|event| match event {
-                UiEvent::OpenProjectFile { origin } => origin,
+                UiEvent::OpenProjectFile { origin } => Some(origin),
                 _ => None,
             })
             .collect()
@@ -567,15 +566,12 @@ mod tests {
         let mut h = harness();
         let old = ProjectOrigin::new(Some("Songs"), "Song");
         copied_project(&mut h, Some(&old));
-        moves_told(&h);
+        files_told(&h);
         let renamed = ProjectOrigin::new(Some("Songs"), "Tune");
         let new = renamed.clone();
-        run_once(
-            &mut h,
-            SequencerCommand::LibraryChanged(LibraryChange::Moved { old, new }),
-        );
+        library_changed(&mut h, LibraryChange::Moved { old, new });
         assert_eq!(h.open.saved.name(), Some("Tune"));
-        assert_eq!(moves_told(&h), std::slice::from_ref(&renamed));
+        assert_eq!(files_told(&h), [Some(renamed.clone())]);
         check(&mut h);
         check(&mut h);
         assert_eq!(jobs(&h), [Job::Write(400_000, Some(renamed))]);
@@ -587,15 +583,12 @@ mod tests {
         let mut h = harness();
         let old = ProjectOrigin::new(Some("Songs"), "Song");
         copied_project(&mut h, Some(&old));
-        moves_told(&h);
+        files_told(&h);
         let moved = ProjectOrigin::new(None, "Song");
         let new = moved.clone();
-        run_once(
-            &mut h,
-            SequencerCommand::LibraryChanged(LibraryChange::Moved { old, new }),
-        );
+        library_changed(&mut h, LibraryChange::Moved { old, new });
         assert_eq!(h.open.saved.origin(), Some(&moved));
-        assert_eq!(moves_told(&h), std::slice::from_ref(&moved));
+        assert_eq!(files_told(&h), [Some(moved.clone())]);
         check(&mut h);
         assert_eq!(jobs(&h), [Job::Write(400_000, Some(moved))]);
     }
@@ -605,14 +598,11 @@ mod tests {
     fn a_renamed_folder_rewrites_the_copy() {
         let mut h = harness();
         copied_project(&mut h, Some(&ProjectOrigin::new(Some("Songs"), "Song")));
-        moves_told(&h);
+        files_told(&h);
         let (old, new) = ("Songs".to_owned(), "Album".to_owned());
-        run_once(
-            &mut h,
-            SequencerCommand::LibraryChanged(LibraryChange::FolderRenamed { old, new }),
-        );
+        library_changed(&mut h, LibraryChange::FolderRenamed { old, new });
         let renamed = ProjectOrigin::new(Some("Album"), "Song");
-        assert_eq!(moves_told(&h), std::slice::from_ref(&renamed));
+        assert_eq!(files_told(&h), [Some(renamed.clone())]);
         check(&mut h);
         assert_eq!(jobs(&h), [Job::Write(400_000, Some(renamed))]);
     }
@@ -623,33 +613,16 @@ mod tests {
     fn a_rename_of_another_project_changes_nothing() {
         let mut h = harness();
         copied_project(&mut h, Some(&ProjectOrigin::new(Some("Songs"), "Song")));
-        moves_told(&h);
+        files_told(&h);
         let old = ProjectOrigin::new(Some("Other"), "Song");
         let new = ProjectOrigin::new(Some("Other"), "Tune");
-        run_once(
-            &mut h,
-            SequencerCommand::LibraryChanged(LibraryChange::Moved { old, new }),
-        );
+        library_changed(&mut h, LibraryChange::Moved { old, new });
         let (old, new) = ("Other".to_owned(), "Album".to_owned());
-        run_once(
-            &mut h,
-            SequencerCommand::LibraryChanged(LibraryChange::FolderRenamed { old, new }),
-        );
+        library_changed(&mut h, LibraryChange::FolderRenamed { old, new });
         check(&mut h);
         assert_eq!(h.open.saved.name(), Some("Song"));
-        assert_eq!(moves_told(&h), []);
+        assert_eq!(files_told(&h), []);
         assert_eq!(jobs(&h), []);
-    }
-
-    /// Every `UiEvent::OpenProjectFile` since the last call.
-    fn files_told(h: &Harness) -> Vec<Option<ProjectOrigin>> {
-        h.ui_events
-            .try_iter()
-            .filter_map(|event| match event {
-                UiEvent::OpenProjectFile { origin } => Some(origin),
-                _ => None,
-            })
-            .collect()
     }
 
     /// The browser deleting the open project leaves it open, untitled and
@@ -660,10 +633,7 @@ mod tests {
         let mut h = harness();
         let origin = ProjectOrigin::new(Some("Songs"), "Song");
         h.open.saved = SavedProject::of(&h.sequencer, Some(origin.clone()));
-        run_once(
-            &mut h,
-            SequencerCommand::LibraryChanged(LibraryChange::Deleted(origin)),
-        );
+        library_changed(&mut h, LibraryChange::Deleted(origin));
         assert_eq!(h.open.saved.name(), None);
         assert!(h.open.saved.has_changes(&h.sequencer));
         assert_eq!(files_told(&h), [None]);
@@ -679,24 +649,15 @@ mod tests {
         let origin = ProjectOrigin::new(Some("Songs"), "Song");
         h.open.saved = SavedProject::of(&h.sequencer, Some(origin));
         let other = ProjectOrigin::new(None, "Song");
-        run_once(
-            &mut h,
-            SequencerCommand::LibraryChanged(LibraryChange::Deleted(other)),
-        );
+        library_changed(&mut h, LibraryChange::Deleted(other));
         let folder = "Other".to_owned();
-        run_once(
-            &mut h,
-            SequencerCommand::LibraryChanged(LibraryChange::FolderDeleted(folder)),
-        );
+        library_changed(&mut h, LibraryChange::FolderDeleted(folder));
         assert_eq!(h.open.saved.name(), Some("Song"));
         assert!(!h.open.saved.has_changes(&h.sequencer));
         assert_eq!(files_told(&h), []);
 
         let folder = "Songs".to_owned();
-        run_once(
-            &mut h,
-            SequencerCommand::LibraryChanged(LibraryChange::FolderDeleted(folder)),
-        );
+        library_changed(&mut h, LibraryChange::FolderDeleted(folder));
         assert_eq!(h.open.saved.name(), None);
         assert!(h.open.saved.has_changes(&h.sequencer));
         assert_eq!(files_told(&h), [None]);
@@ -708,12 +669,9 @@ mod tests {
         let mut h = harness();
         let old = ProjectOrigin::new(None, "Song");
         let new = ProjectOrigin::new(None, "Tune");
-        run_once(
-            &mut h,
-            SequencerCommand::LibraryChanged(LibraryChange::Moved { old, new }),
-        );
+        library_changed(&mut h, LibraryChange::Moved { old, new });
         assert_eq!(h.open.saved.name(), None);
-        assert_eq!(moves_told(&h), []);
+        assert_eq!(files_told(&h), []);
     }
 
     /// A project with no changes has no copy.

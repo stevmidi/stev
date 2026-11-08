@@ -201,9 +201,9 @@ impl Display {
                     // meant for the project (⌘O goes back for the next).
                     self.close_overlay();
                     self.leave_browser();
-                    // A loaded project is adopted (its folder current, first
-                    // in Recent); a new one is untitled, and goes where the
-                    // current folder is.
+                    // A loaded project is adopted (its folder the default,
+                    // first in Recent); a new one is untitled, and Save As
+                    // starts it in the default folder.
                     match origin {
                         Some(origin) => {
                             self.adopt_project(origin);
@@ -211,7 +211,7 @@ impl Display {
                                 self.reload_browser();
                             }
                         }
-                        None => self.project.open = None,
+                        None => self.project.follow_file(None),
                     }
                     self.render.clip_shapes.clear();
                     self.clear_lead_clip_shapes();

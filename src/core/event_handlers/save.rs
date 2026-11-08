@@ -198,7 +198,7 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use crate::core::event_handlers::test_harness::{
-        Harness, harness, quit, run_once, save_as, statuses, written,
+        Harness, harness, library_changed, quit, run_once, save_as, statuses, written,
     };
     use crate::core::project::LibraryChange;
     use crate::core::sequencer::SequencerCommand;
@@ -415,10 +415,7 @@ mod tests {
         save_as(&mut h, "Song");
         let old = ProjectOrigin::new(None, "Song");
         let new = ProjectOrigin::new(None, "Tune");
-        run_once(
-            &mut h,
-            SequencerCommand::LibraryChanged(LibraryChange::Moved { old, new }),
-        );
+        library_changed(&mut h, LibraryChange::Moved { old, new });
         assert_eq!(h.open.saved.name(), Some("Tune"));
         written(&mut h, None);
         assert_eq!(h.open.saved.name(), Some("Song"));

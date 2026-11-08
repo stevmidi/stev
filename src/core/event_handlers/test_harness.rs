@@ -14,7 +14,7 @@ use rtrb::RingBuffer;
 use undo::Record;
 use uuid::Uuid;
 
-use crate::core::project::{ProjectAction, StorageJob};
+use crate::core::project::{LibraryChange, ProjectAction, StorageJob};
 use crate::core::sequencer::test_support::{clip_at, note_off, note_on};
 use crate::core::sequencer::{Sequencer, SequencerCommand, SequencerEdit};
 use crate::core::shared_atomics::{AudioExportAtomics, TrackMixAtomics};
@@ -196,6 +196,12 @@ pub(crate) fn save_as(h: &mut Harness, name: &str) {
 pub(crate) fn written(h: &mut Harness, error: Option<&str>) {
     let outcome = error.map_or(Ok(()), |e| Err(e.to_owned()));
     run_once(h, SequencerCommand::ProjectWritten(outcome));
+}
+
+/// Runs the browser's `change` to the library through the sequencer
+/// (`SequencerCommand::LibraryChanged`).
+pub(crate) fn library_changed(h: &mut Harness, change: LibraryChange) {
+    run_once(h, SequencerCommand::LibraryChanged(change));
 }
 
 /// The footer lines sent since the last call; every other `UiEvent` is

@@ -355,6 +355,17 @@ impl BrowserItem {
         }
     }
 
+    /// Where a project row's project is (under its folder or Recent); `None`
+    /// for any other row.
+    pub(super) fn project_origin(&self) -> Option<ProjectOrigin> {
+        match self {
+            BrowserItem::Project { folder, name } | BrowserItem::Recent { folder, name } => {
+                Some(ProjectOrigin::new(folder.as_deref(), name))
+            }
+            _ => None,
+        }
+    }
+
     /// Whether Delete arms a delete on this row: a project, template, clip
     /// or folder, but not a recent project, which Delete takes off the list
     /// instead ([`BrowserTree::delete_key`]).
@@ -1426,10 +1437,8 @@ impl Display {
     /// first in the Recent list. The caller re-lists a shown panel (a save's
     /// `ProjectFilesChanged` does).
     pub(super) fn adopt_project(&mut self, origin: ProjectOrigin) {
-        update_recent(|list| note_recent(list, origin.clone()));
-        if self.project.adopt(origin) {
-            self.persist_default_folder();
-        }
+        let default_moved = self.project.adopt(origin.clone());
+        self.update_library_settings(|list| note_recent(list, origin), default_moved);
     }
 
     /// Deletes the project, template, clip or folder `item` — to the Trash
@@ -1438,23 +1447,18 @@ impl Display {
         let Some(name) = item.renamable_name() else {
             return;
         };
+        let result = match item {
+            BrowserItem::Project { folder, .. } => delete_project(folder.as_deref(), name),
+            BrowserItem::Template(_) => delete_template(name),
+            BrowserItem::Clip(_) => delete_clip(name),
+            BrowserItem::Folder(_) => delete_project_folder(name),
+            _ => return,
+        };
         // A project or folder deleted changes the library: an open project
         // in it goes on untitled, the default folder falls back to the root.
-        let (result, change) = match item {
-            BrowserItem::Project { folder, .. } => (
-                delete_project(folder.as_deref(), name),
-                Some(LibraryChange::Deleted(ProjectOrigin::new(
-                    folder.as_deref(),
-                    name,
-                ))),
-            ),
-            BrowserItem::Template(_) => (delete_template(name), None),
-            BrowserItem::Clip(_) => (delete_clip(name), None),
-            BrowserItem::Folder(_) => (
-                delete_project_folder(name),
-                Some(LibraryChange::FolderDeleted(name.to_owned())),
-            ),
-            _ => return,
+        let change = match item {
+            BrowserItem::Folder(_) => Some(LibraryChange::FolderDeleted(name.to_owned())),
+            _ => item.project_origin().map(LibraryChange::Deleted),
         };
         if let (Ok(()), Some(change)) = (&result, change) {
             self.library_changed(change);
@@ -1473,21 +1477,27 @@ impl Display {
     /// copy (`UiEvent::OpenProjectFile`; #22). Every browser rename and
     /// delete of a project or folder comes through here.
     pub(super) fn library_changed(&mut self, change: LibraryChange) {
-        update_recent(|list| follow_recent(list, &change));
-        if self.project.follow_library(&change) {
-            self.persist_default_folder();
-        }
+        let default_moved = self.project.follow_library(&change);
+        self.update_library_settings(|list| follow_recent(list, &change), default_moved);
         self.input_event_tx
             .send(InputEvent::LibraryChanged(change))
             .ok();
     }
 
-    /// Writes the default project folder to `settings.json` (as
-    /// `last_project_folder`), so it's remembered across sessions.
-    pub(super) fn persist_default_folder(&mut self) {
-        let folder = self.project.default_folder.clone();
-        update_settings("last project folder", |settings| {
-            settings.last_project_folder = folder;
+    /// Writes what the view keeps in `settings.json` about the library in
+    /// one go: `recent` applied to the Recent list, and the default folder
+    /// (as `last_project_folder`, remembered across sessions) when it moved.
+    fn update_library_settings(
+        &self,
+        recent: impl FnOnce(&mut Vec<ProjectOrigin>),
+        default_moved: bool,
+    ) {
+        let default = default_moved.then(|| self.project.default_folder.clone());
+        update_settings("project library", |settings| {
+            recent(&mut settings.recent_projects);
+            if let Some(folder) = default {
+                settings.last_project_folder = folder;
+            }
         });
     }
 }

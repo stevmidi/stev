@@ -753,7 +753,7 @@ impl Display {
     /// never saved — then asks for `then`: ⌘/Ctrl+S (`None`), the prompt's
     /// Save (its action).
     pub(super) fn save_project(&mut self, then: Option<ProjectAction>) {
-        match self.project.open.clone() {
+        match self.project.open().cloned() {
             Some(ProjectOrigin { folder, name }) => self.save_project_as(name, folder, then),
             None => self.open_save_as(then),
         }
@@ -1231,8 +1231,6 @@ mod tests {
         assert_eq!(dialog.list_window(), 0..LIST_MAX_ROWS);
     }
 
-    /// The selected folder, or the folder of the selected project (under
-    /// its folder or Recent), is where Save As starts; anything else selected leaves the current folder.
     /// ↑/↓ drive the folder list, the new-folder chord opens the new
     /// folder's field, Tab and ⇧Tab move the keyboard on and back and Space
     /// presses; the rest of Save As's keys are unchanged.
