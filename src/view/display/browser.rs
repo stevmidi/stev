@@ -33,7 +33,7 @@
 
 use std::{collections::HashSet, path::PathBuf, time::Instant};
 
-use egui::{Key, Pos2, Vec2, vec2};
+use egui::{Context, Key, Pos2, Vec2, vec2};
 
 use crate::core::{
     config::BROWSER_W_DEFAULT,
@@ -1389,7 +1389,15 @@ impl Display {
     /// are the panel's too, whatever their modifiers, and keep the keyboard
     /// here: ⌘C copies the selected project, ⌘V pastes it
     /// (`430-browser-clipboard.md`); the ⇧ forms do nothing.
-    pub(super) fn handle_browser_key(&mut self, event: &InputEvent, ctx: &egui::Context) -> bool {
+    pub(super) fn handle_browser_key(&mut self, event: &InputEvent, ctx: &Context) -> bool {
+        if matches!(
+            event,
+            InputEvent::Copy { .. } | InputEvent::Cut { .. } | InputEvent::Paste { .. }
+        ) {
+            // A clipboard chord's footer line would hide an armed delete's
+            // question, and the next Enter would carry it out unasked.
+            self.browser.tree.delete_armed = None;
+        }
         match *event {
             InputEvent::Copy { shift: false } => self.clip_browser_project(false, ctx),
             InputEvent::Cut { shift: false } => self.clip_browser_project(true, ctx),
@@ -1529,7 +1537,7 @@ impl Display {
     /// primes the system clipboard so the next ⌘V arrives
     /// (`CLIP_CLIPBOARD_SENTINEL`). Nothing moves until the paste. Any other
     /// row leaves the clipboard as it was; the footer says why.
-    fn clip_browser_project(&mut self, cut: bool, ctx: &egui::Context) {
+    fn clip_browser_project(&mut self, cut: bool, ctx: &Context) {
         let selected = self.browser.tree.selected();
         let (verb, does, only) = if cut {
             ("Cut", "move", "Only a project moves")

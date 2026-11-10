@@ -614,14 +614,19 @@ fn name_taken() -> io::Error {
 }
 
 /// Moves `from` to `to` — in its folder (a rename) or into another (the
-/// browser's move) — unless that would replace another file: `to` is taken when an entry of exactly its name exists, or when it
-/// exists at all and isn't `from` under a different case (a case-only rename
-/// on a case-insensitive volume, where `to` "exists" because it is `from`).
+/// browser's move) — unless that would replace another file: `to` is taken
+/// when an entry of exactly its name exists, or when it exists at all and
+/// isn't `from` under a different case in the same folder (a case-only
+/// rename on a case-insensitive volume, where `to` "exists" because it is
+/// `from`).
 fn rename_no_replace(from: &Path, to: &Path) -> io::Result<()> {
-    let same_but_case = matches!(
-        (from.file_name().and_then(|n| n.to_str()), to.file_name().and_then(|n| n.to_str())),
-        (Some(a), Some(b)) if a.to_lowercase() == b.to_lowercase()
-    );
+    // Only within one folder can `to` be `from` itself: across folders a
+    // name differing in case is another file.
+    let same_but_case = from.parent() == to.parent()
+        && matches!(
+            (from.file_name().and_then(|n| n.to_str()), to.file_name().and_then(|n| n.to_str())),
+            (Some(a), Some(b)) if a.to_lowercase() == b.to_lowercase()
+        );
     // Only a case-only rename needs the folder read: there `to` "exists"
     // whether or not it is another file.
     let exact_entry = || {
@@ -1085,6 +1090,29 @@ mod tests {
             assert!(rename_no_replace(&dir.join("a.stev"), &dir.join("B.stev")).is_err());
         }
         assert_eq!(fs::read_to_string(dir.join("b.stev")).unwrap(), "b");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Across folders a name that differs only in case is another file,
+    /// never `from` itself, and is never replaced.
+    #[test]
+    fn a_move_never_replaces_a_name_differing_in_case_in_another_folder() {
+        let dir = scratch_dir("move-case");
+        let ideas = dir.join("Ideas");
+        fs::create_dir(&ideas).unwrap();
+        fs::write(dir.join("riff.stev"), "riff").unwrap();
+        fs::write(ideas.join("RIFF.stev"), "other").unwrap();
+        // Taken where the volume is case-insensitive (macOS by default); on
+        // a case-sensitive one `riff.stev` is a free name of its own.
+        if ideas.join("riff.stev").exists() {
+            let err =
+                rename_no_replace(&dir.join("riff.stev"), &ideas.join("riff.stev")).unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+            assert_eq!(
+                fs::read_to_string(ideas.join("RIFF.stev")).unwrap(),
+                "other"
+            );
+        }
         fs::remove_dir_all(&dir).unwrap();
     }
 

@@ -63,14 +63,13 @@ impl ProjectViewState {
     /// leaves the default where the last one was. Whether the default
     /// changed, to be persisted.
     pub(super) fn follow_file(&mut self, origin: Option<ProjectOrigin>) -> bool {
-        let changed = origin
-            .as_ref()
-            .is_some_and(|origin| self.default_folder != origin.folder);
-        if let Some(origin) = &origin
-            && changed
-        {
-            self.default_folder.clone_from(&origin.folder);
-        }
+        let changed = match &origin {
+            Some(origin) if origin.folder != self.default_folder => {
+                self.default_folder.clone_from(&origin.folder);
+                true
+            }
+            _ => false,
+        };
         self.open = origin;
         changed
     }
