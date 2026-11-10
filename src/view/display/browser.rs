@@ -182,9 +182,12 @@ fn deleted_message(name: &str) -> String {
 /// that was taken — alone for a duplicate in its own folder.
 fn copied_message(from: &ProjectOrigin, folder: Option<&str>, name: &str) -> String {
     let source = &from.name;
-    let renamed = (name != source).then(|| format!(" as {name}"));
-    let renamed = renamed.as_deref().unwrap_or_default();
-    if folder == from.folder.as_deref() && !renamed.is_empty() {
+    let renamed = if name == source {
+        String::new()
+    } else {
+        format!(" as {name}")
+    };
+    if folder == from.folder.as_deref() && name != source {
         format!("Copied {source}{renamed}")
     } else {
         let to = folder.unwrap_or("Projects");
@@ -426,6 +429,17 @@ impl BrowserItem {
         };
         *name = new_name;
         Some(item)
+    }
+}
+
+impl From<&ProjectOrigin> for BrowserItem {
+    /// The project's row under its folder (or the projects root): the
+    /// inverse of [`BrowserItem::project_origin`].
+    fn from(ProjectOrigin { folder, name }: &ProjectOrigin) -> Self {
+        BrowserItem::Project {
+            folder: folder.clone(),
+            name: name.clone(),
+        }
     }
 }
 
@@ -804,10 +818,7 @@ impl BrowserTree {
         if let Some(folder) = &project.folder {
             self.set_item_expanded(&BrowserItem::Folder(folder.clone()), true);
         }
-        self.select(BrowserItem::Project {
-            folder: project.folder.clone(),
-            name: project.name.clone(),
-        });
+        self.select(project.into());
     }
 
     /// The first time the panel shows (nothing selected yet): with no saved
@@ -848,10 +859,7 @@ impl BrowserTree {
         {
             self.set_item_expanded(&BrowserItem::Folder(folder.clone()), true);
         }
-        let open = open.map(|ProjectOrigin { folder, name }| BrowserItem::Project {
-            folder: folder.clone(),
-            name: name.clone(),
-        });
+        let open = open.map(BrowserItem::from);
         let folder = default_folder.map(|f| BrowserItem::Folder(f.to_owned()));
         self.selected = [open, folder]
             .into_iter()
@@ -1336,24 +1344,22 @@ impl Display {
     /// (`430-browser-clipboard.md`); the ⇧ forms do nothing.
     pub(super) fn handle_browser_key(&mut self, event: &InputEvent, ctx: &egui::Context) -> bool {
         match *event {
-            InputEvent::Copy { shift } => {
-                if !shift {
-                    self.copy_browser_project(ctx);
-                }
-                return true;
-            }
+            InputEvent::Copy { shift: false } => self.copy_browser_project(ctx),
+            InputEvent::Paste {
+                shift: false,
+                alt: false,
+            } => self.paste_browser_project(),
             // ⌘X cuts and ⌥⌘V moves once the browser moves projects
-            // (`430-browser-clipboard.md` § Phases); until then they only
-            // stay out of the pane.
-            InputEvent::Cut { .. } => return true,
-            InputEvent::Paste { shift, alt } => {
-                if !shift && !alt {
-                    self.paste_browser_project();
-                }
-                return true;
-            }
-            _ => {}
+            // (`430-browser-clipboard.md` § Phases); until then they, and
+            // the ⇧ forms, only stay out of the pane.
+            InputEvent::Copy { .. } | InputEvent::Cut { .. } | InputEvent::Paste { .. } => {}
+            _ => return self.handle_browser_key_press(event),
         }
+        true
+    }
+
+    /// [`handle_browser_key`](Self::handle_browser_key) for a key press.
+    fn handle_browser_key_press(&mut self, event: &InputEvent) -> bool {
         let InputEvent::KeyPressed { key, modifiers } = event else {
             return false;
         };

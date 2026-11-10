@@ -8,8 +8,7 @@
 use std::{
     cmp::Reverse,
     error::Error,
-    fs,
-    io::{self, Write},
+    fs, io,
     iter::once,
     path::{Path, PathBuf},
     time::SystemTime,
@@ -273,12 +272,38 @@ pub(super) fn write_project_in(dir: &Path, data: &ProjectData, name: &str) -> io
 /// 20-25 ms on an SSD, when a project still saved on the `"sequencer"`
 /// thread. It now saves on the `"storage"` thread (`420-large-projects.md`).
 pub(crate) fn replace_file(path: &Path, contents: &str) -> io::Result<()> {
+    write_through_temp(
+        path,
+        |temp| fs::write(temp, contents),
+        |temp, path| fs::rename(temp, path),
+    )
+}
+
+/// Makes the file at `path` through a temp file beside it: `fill` writes the
+/// temp file, and `finish` renames it to `path` once it is whole — over what
+/// is there ([`replace_file`]) or never ([`rename_no_replace`]). A failure
+/// at either step removes the temp file, so nothing half-written is left.
+fn write_through_temp(
+    path: &Path,
+    fill: impl FnOnce(&Path) -> io::Result<()>,
+    finish: impl FnOnce(&Path, &Path) -> io::Result<()>,
+) -> io::Result<()> {
     let temp = path.with_added_extension(TEMP_EXTENSION);
-    let written = fs::write(&temp, contents).and_then(|()| fs::rename(&temp, path));
+    let written = fill(&temp).and_then(|()| finish(&temp, path));
     if written.is_err() {
         let _ = fs::remove_file(&temp);
     }
     written
+}
+
+/// The first of `stem`, `stem_2`, `stem_3`, … with no project in `dir` — in
+/// any case, where the volume doesn't tell them apart: the name a project
+/// copied into `dir` takes.
+fn first_free_project_name(dir: &Path, stem: &str) -> String {
+    first_free_name(
+        |n| n.map_or_else(|| stem.to_owned(), |n| format!("{stem}_{n}")),
+        |name| stev_path(dir, name).exists(),
+    )
 }
 
 /// Reads and deserializes `folder/name.stev` (`None`: the projects root).
@@ -375,7 +400,8 @@ fn project_in(path: &Path, root: &Path) -> Option<(Option<String>, String)> {
 /// root, and returns its name there. The file is read and parsed first, so
 /// one that won't load is never copied. Its name is the file's
 /// (or [`UNTITLED`] when that is no project name), with
-/// `_2`, `_3`, … after it while the name is taken: nothing is overwritten.
+/// `_2`, `_3`, … after it while the name is taken: nothing is overwritten,
+/// and a failed copy leaves no half-written file.
 pub(crate) fn copy_project_in(path: &Path) -> Result<String, Box<dyn Error>> {
     copy_project_into(path, &project_dir())
 }
@@ -388,15 +414,12 @@ fn copy_project_into(path: &Path, root: &Path) -> Result<String, Box<dyn Error>>
         .and_then(|stem| stem.to_str())
         .and_then(project_name_from_input)
         .unwrap_or_else(|| UNTITLED.to_owned());
-    let name = first_free_name(
-        |n| n.map_or_else(|| stem.clone(), |n| format!("{stem}_{n}")),
-        |name| stev_path(root, name).exists(),
-    );
-    fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(stev_path(root, &name))?
-        .write_all(json.as_bytes())?;
+    let name = first_free_project_name(root, &stem);
+    write_through_temp(
+        &stev_path(root, &name),
+        |temp| fs::write(temp, &json),
+        rename_no_replace,
+    )?;
     Ok(name)
 }
 
@@ -475,23 +498,19 @@ pub(crate) fn copy_project(from: &ProjectOrigin, to_folder: Option<&str>) -> io:
     )
 }
 
-/// [`copy_project`] of `name` in the folder `from` into the folder `to`.
-/// Written through a temp file beside the copy, renamed into place once it
-/// is whole and never over another file, so a failed copy leaves no
-/// half-written `.stev`, and nothing is replaced.
+/// [`copy_project`] of `name` in the folder `from` into the folder `to`,
+/// through a temp file never renamed over another file
+/// ([`write_through_temp`]), so a failed copy leaves no half-written `.stev`
+/// and nothing is replaced. `fs::copy` clones the file on APFS, so even a
+/// project heavy with plugin state copies at once on the UI thread.
 fn copy_project_between(from: &Path, name: &str, to: &Path) -> io::Result<String> {
-    let bytes = fs::read(stev_path(from, name))?;
-    let copy = first_free_name(
-        |n| n.map_or_else(|| name.to_owned(), |n| format!("{name}_{n}")),
-        |copy| stev_path(to, copy).exists(),
-    );
-    let path = stev_path(to, &copy);
-    let temp = path.with_added_extension(TEMP_EXTENSION);
-    let written = fs::write(&temp, bytes).and_then(|()| rename_no_replace(&temp, &path));
-    if written.is_err() {
-        let _ = fs::remove_file(&temp);
-    }
-    written.map(|()| copy)
+    let copy = first_free_project_name(to, name);
+    write_through_temp(
+        &stev_path(to, &copy),
+        |temp| fs::copy(stev_path(from, name), temp).map(drop),
+        rename_no_replace,
+    )?;
+    Ok(copy)
 }
 
 /// Renames the clip `old` (its stem) to `new` in the clips folder, refusing
