@@ -178,6 +178,7 @@ impl DuplicateTimeEdit {
                 shifted: s,
                 split_updated: su,
                 split_removed: sr,
+                ..
             } = insert.undo(sequencer)
         {
             shifted = s;

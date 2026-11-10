@@ -7,8 +7,8 @@ use uuid::Uuid;
 
 use super::super::super::Sequencer;
 use super::super::EditResult;
-use super::partition_metadata;
 use super::split::SplitClipsEdit;
+use super::{SelectionBefore, partition_metadata};
 
 // ---------------------------------------------------------------------------
 // InsertSilence
@@ -44,6 +44,9 @@ pub(crate) struct InsertSilenceEdit {
     /// the exact same set rather than rescanning — same pattern as
     /// `SplitClipsEdit`/`PasteClipsEdit`.
     shift_targets: Option<Vec<(usize, Uuid)>>,
+    /// The track and lead clip selected before the last `edit()`, which
+    /// undo restores, as `DeleteInRangeEdit`'s does.
+    before: SelectionBefore,
 }
 
 impl InsertSilenceEdit {
@@ -69,6 +72,7 @@ impl InsertSilenceEdit {
             amount: end - start,
             split,
             shift_targets: None,
+            before: SelectionBefore::default(),
         })
     }
 
@@ -78,6 +82,7 @@ impl InsertSilenceEdit {
         &mut self,
         sequencer: &mut Sequencer,
     ) -> EditResult {
+        self.before = SelectionBefore::of(sequencer);
         let (split_updated, split_added_ids) = match self.split.as_mut().map(|s| s.edit(sequencer))
         {
             Some(EditResult::ClipsSplit { updated, added }) => {
@@ -130,6 +135,13 @@ impl InsertSilenceEdit {
             shifted,
             split_updated,
             split_removed,
+            selected_track_idx: self.before.track_idx,
+            selected_clip_id: self.before.clip_id,
+            restored_marquee: self.before.marquee(
+                self.insert_tick,
+                self.insert_tick + self.amount,
+                None,
+            ),
         }
     }
 }
@@ -242,11 +254,14 @@ mod tests {
             shifted,
             split_updated,
             split_removed,
+            restored_marquee,
+            ..
         } = edit.undo(&mut sequencer)
         else {
             panic!("expected SilenceRemoved");
         };
 
+        assert_eq!((restored_marquee.start, restored_marquee.end), (480, 720));
         assert_eq!(split_removed.len(), 1);
         assert_eq!(split_updated.len(), 1);
         assert_eq!(shifted.len(), 1);

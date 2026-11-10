@@ -76,6 +76,23 @@ pub(crate) enum PasteLead {
     KeepSelection,
 }
 
+/// The marquee an undo puts back, with the cursor it was anchored to: the
+/// marquee lives at the cursor (`020-views-and-state.md` § Arranger Time
+/// Selection), so the rect alone came back wherever the cursor had moved
+/// since, a zero-width one drawn as the cursor line there.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RestoredMarquee {
+    /// Low tick of the marquee.
+    pub(crate) start: i32,
+    /// High tick of the marquee.
+    pub(crate) end: i32,
+    /// Its inclusive track span, `None` to leave the marquee's as it is (an
+    /// edit across every track).
+    pub(crate) tracks: Option<(usize, usize)>,
+    /// The cursor as the edit found it.
+    pub(crate) cursor_tick: i32,
+}
+
 /// What changed — returned by edit() and undo() so the handler can fire UI
 /// events. See the module docs for the shared field vocabulary.
 pub(crate) enum EditResult {
@@ -89,17 +106,19 @@ pub(crate) enum EditResult {
     },
     /// Undo of a split: `updated` is each original clip restored to its
     /// pre-split bounds, `removed` is each remainder clip that gets deleted.
-    /// Carries selection context (`selected_track_idx`/`selected_clip_id`) in
-    /// case the currently-selected clip was one of the removed remainders.
+    /// Carries the selection from before the split, to restore.
     ClipsUnsplit {
         /// Existing clips whose bounds changed (ids kept).
         updated: Vec<ClipMetadata>,
         /// Clips deleted whole.
         removed: Vec<ClipMetadata>,
-        /// Selection at the time, in case the operation removed the selected clip.
+        /// The selection from before the edit, to restore.
         selected_track_idx: Option<usize>,
-        /// Selection at the time, in case the operation removed the selected clip.
+        /// The selection from before the edit, to restore.
         selected_clip_id: Option<Uuid>,
+        /// The marquee a marquee split (`⌘E` over one) was made with, to put
+        /// back; `None` for a single-clip split, which had none.
+        restored_marquee: Option<RestoredMarquee>,
     },
     /// Forward direction of Insert Silence: `split_updated`/`split_added`
     /// mirror `ClipsSplit` (clips split to make room at the insertion
@@ -124,6 +143,13 @@ pub(crate) enum EditResult {
         split_updated: Vec<ClipMetadata>,
         /// The right-hand split halves, deleted again (undo).
         split_removed: Vec<ClipMetadata>,
+        /// The selection from before the insert, to restore.
+        selected_track_idx: Option<usize>,
+        /// The selection from before the insert, to restore.
+        selected_clip_id: Option<Uuid>,
+        /// The inserted range, for the marquee to cover again (its track
+        /// span left as it is: the insert is global).
+        restored_marquee: RestoredMarquee,
     },
     /// Forward direction of "Delete Time" — the opposite of `SilenceInserted`:
     /// `carve_updated`/`carve_added`/`carve_removed` mirror `RangeDeleted`
@@ -199,10 +225,13 @@ pub(crate) enum EditResult {
         added: Vec<ClipMetadata>,
         /// Clips deleted whole.
         removed: Vec<ClipMetadata>,
-        /// Selection at the time, in case the operation removed the selected clip.
+        /// The selection from before the edit, to restore.
         selected_track_idx: Option<usize>,
-        /// Selection at the time, in case the operation removed the selected clip.
+        /// The selection from before the edit, to restore.
         selected_clip_id: Option<Uuid>,
+        /// The carved range and tracks, for the marquee to cover again
+        /// (`tracks: None` for the all-track cut).
+        restored_marquee: RestoredMarquee,
     },
     /// Forward direction of "mute the time selection" (`MuteInRangeEdit`):
     /// every clip overlapping the range is split at its edges like
@@ -225,10 +254,12 @@ pub(crate) enum EditResult {
         updated: Vec<ClipMetadata>,
         /// Clips deleted whole (split-off pieces).
         removed: Vec<ClipMetadata>,
-        /// Selection at the time, in case the operation removed the selected clip.
+        /// The selection from before the mute, to restore.
         selected_track_idx: Option<usize>,
-        /// Selection at the time, in case the operation removed the selected clip.
+        /// The selection from before the mute, to restore.
         selected_clip_id: Option<Uuid>,
+        /// The muted marquee, to put back.
+        restored_marquee: RestoredMarquee,
     },
     /// Forward direction of a clip paste. `pasted` is every clipboard clip
     /// added at the cursor. The `carve_*` buckets mirror `RangeDeleted` and

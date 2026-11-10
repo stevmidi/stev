@@ -11,7 +11,7 @@ use crate::models::clip::Clip;
 use super::super::super::Sequencer;
 use super::super::EditResult;
 use super::split::EdgeSplits;
-use super::{detach, detached_clone, in_tracks, interior_clip_ids, metadata_for};
+use super::{SelectionBefore, detach, detached_clone, in_tracks, interior_clip_ids, metadata_for};
 
 // ---------------------------------------------------------------------------
 // DeleteInRange
@@ -47,6 +47,9 @@ pub(crate) struct DeleteInRangeEdit {
     /// first `edit()`; re-removed on redo, re-added on undo — the same
     /// frozen-snapshot pattern `SplitClipsEdit`/`PasteClipsEdit` use.
     removed: Option<Vec<(usize, Clip)>>,
+    /// The track and lead clip selected before the last `edit()`, so undo
+    /// selects again the clip the delete dropped.
+    before: SelectionBefore,
 }
 
 impl DeleteInRangeEdit {
@@ -109,6 +112,7 @@ impl DeleteInRangeEdit {
             track_filter,
             splits: EdgeSplits::new(sequencer, track_filter, start, end),
             removed: None,
+            before: SelectionBefore::default(),
         })
     }
 
@@ -118,8 +122,8 @@ impl DeleteInRangeEdit {
         &mut self,
         sequencer: &mut Sequencer,
     ) -> EditResult {
-        let selected_track_idx = sequencer.selected_track_index();
-        let selected_clip_id = sequencer.selected_clip_id();
+        self.before = SelectionBefore::of(sequencer);
+        let (selected_track_idx, selected_clip_id) = (self.before.track_idx, self.before.clip_id);
 
         // 1. Split every straddling clip at `end`, then at `start`.
         let (split_updated_ids, split_added_ids) = self.splits.edit(sequencer);
@@ -161,13 +165,14 @@ impl DeleteInRangeEdit {
         }
     }
 
-    /// Re-adds the removed pieces, then un-splits both edges.
+    /// Re-adds the removed pieces, then un-splits both edges, and reports
+    /// the lead clip and the marquee from before the edit for the handler to
+    /// restore.
     pub(in crate::core::sequencer::edit) fn undo(
         &mut self,
         sequencer: &mut Sequencer,
     ) -> EditResult {
-        let selected_track_idx = sequencer.selected_track_index();
-        let selected_clip_id = sequencer.selected_clip_id();
+        let (selected_track_idx, selected_clip_id) = (self.before.track_idx, self.before.clip_id);
 
         let Some(frozen) = self.removed.as_ref() else {
             return EditResult::NoOp;
@@ -221,6 +226,7 @@ impl DeleteInRangeEdit {
             removed,
             selected_track_idx,
             selected_clip_id,
+            restored_marquee: self.before.marquee(self.start, self.end, self.track_filter),
         }
     }
 

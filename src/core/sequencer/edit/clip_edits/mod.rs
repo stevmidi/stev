@@ -23,7 +23,7 @@ use crate::models::clip::Clip;
 use crate::models::region::Region;
 
 use super::super::Sequencer;
-use super::EditResult;
+use super::{EditResult, RestoredMarquee};
 
 mod commit_clip;
 mod create_clips;
@@ -56,6 +56,45 @@ pub(crate) use paste::PasteClipsEdit;
 pub(crate) use resize_clip::ResizeClipEdit;
 pub(crate) use retime_clip::RetimeClipEdit;
 pub(crate) use split::SplitClipsEdit;
+
+/// The lead clip, its track and the cursor as an edit found them: what its
+/// undo puts back, whatever the user did since (`050-undo-redo.md`
+/// § Invariants). Taken on every `edit()`, so a redo takes it again.
+#[derive(Copy, Clone, Default)]
+pub(super) struct SelectionBefore {
+    /// The selected track.
+    pub(super) track_idx: Option<usize>,
+    /// The lead clip.
+    pub(super) clip_id: Option<Uuid>,
+    /// The cursor, which a marquee is anchored to.
+    cursor_tick: i32,
+}
+
+impl SelectionBefore {
+    /// The selection and cursor now.
+    pub(super) fn of(sequencer: &Sequencer) -> Self {
+        Self {
+            track_idx: sequencer.selected_track_index(),
+            clip_id: sequencer.selected_clip_id(),
+            cursor_tick: sequencer.cursor_tick(),
+        }
+    }
+
+    /// The marquee `[start, end)` on `tracks`, at this cursor.
+    pub(super) fn marquee(
+        self,
+        start: i32,
+        end: i32,
+        tracks: Option<(usize, usize)>,
+    ) -> RestoredMarquee {
+        RestoredMarquee {
+            start,
+            end,
+            tracks,
+            cursor_tick: self.cursor_tick,
+        }
+    }
+}
 
 /// `Clip::clone` with a freshly-constructed `Region`, breaking the
 /// `Arc<AtomicI32>` sharing a plain clone keeps (see `050-undo-redo.md`). Any

@@ -10,7 +10,7 @@ use uuid::Uuid;
 use super::super::super::Sequencer;
 use super::super::EditResult;
 use super::split::EdgeSplits;
-use super::{in_tracks, interior_clip_ids, metadata_for};
+use super::{SelectionBefore, in_tracks, interior_clip_ids, metadata_for};
 
 // ---------------------------------------------------------------------------
 // MuteInRange
@@ -40,6 +40,9 @@ pub(crate) struct MuteInRangeEdit {
     /// piece's exact prior state, and the uniform target derived from it
     /// stays the same on redo.
     mute_targets: Option<Vec<(usize, Uuid, bool)>>,
+    /// The track and lead clip selected before the last `edit()`, which
+    /// undo restores, as `DeleteInRangeEdit`'s does.
+    before: SelectionBefore,
 }
 
 impl MuteInRangeEdit {
@@ -75,6 +78,7 @@ impl MuteInRangeEdit {
             tracks,
             splits: EdgeSplits::new(sequencer, Some(tracks), start, end),
             mute_targets: None,
+            before: SelectionBefore::default(),
         })
     }
 
@@ -85,6 +89,8 @@ impl MuteInRangeEdit {
         &mut self,
         sequencer: &mut Sequencer,
     ) -> EditResult {
+        self.before = SelectionBefore::of(sequencer);
+
         // 1. Split every straddling clip at `end`, then at `start`.
         let (split_updated_ids, split_added_ids) = self.splits.edit(sequencer);
         let split_added_ids: HashSet<Uuid> = split_added_ids.into_iter().collect();
@@ -135,8 +141,7 @@ impl MuteInRangeEdit {
         &mut self,
         sequencer: &mut Sequencer,
     ) -> EditResult {
-        let selected_track_idx = sequencer.selected_track_index();
-        let selected_clip_id = sequencer.selected_clip_id();
+        let (selected_track_idx, selected_clip_id) = (self.before.track_idx, self.before.clip_id);
 
         let Some(mute_targets) = self.mute_targets.as_ref() else {
             return EditResult::NoOp;
@@ -171,6 +176,7 @@ impl MuteInRangeEdit {
             removed: split_removed,
             selected_track_idx,
             selected_clip_id,
+            restored_marquee: self.before.marquee(self.start, self.end, Some(self.tracks)),
         }
     }
 }

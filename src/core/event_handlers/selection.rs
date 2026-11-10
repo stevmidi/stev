@@ -14,15 +14,27 @@ impl EventHandlers {
     /// the clip selection, selects the track, re-selects whatever clip is
     /// under the cursor, and tells the UI.
     pub(crate) fn select_track_workflow(&self, sequencer: &mut Sequencer, new_idx: usize) {
+        if self.switch_track_workflow(sequencer, new_idx) {
+            let clip_id = sequencer.find_selected_track_clip_id_at_cursor();
+            self.select_clip_workflow(sequencer, clip_id);
+        }
+    }
+
+    /// `select_track_workflow` up to the lead clip, which the caller then
+    /// picks itself (a band press its pressed clip, an undo the lead from
+    /// before its edit), so the clip under the cursor is never selected and
+    /// swapped straight out. Returns whether anything changed: `false` for an
+    /// unknown index or the track already selected with the lane unarmed.
+    pub(super) fn switch_track_workflow(&self, sequencer: &mut Sequencer, new_idx: usize) -> bool {
         let Some(id) = sequencer.track_id_by_index(new_idx) else {
-            return;
+            return false;
         };
         let new_id = Some(id);
 
         let performance_lane_was_armed = sequencer.is_performance_lane_armed();
 
         if new_id == sequencer.selected_track_id() && !performance_lane_was_armed {
-            return;
+            return false;
         }
 
         sequencer.set_performance_lane_armed(false);
@@ -31,9 +43,7 @@ impl EventHandlers {
 
         sequencer.select_track(new_id);
         self.send_track_selected_ui_event(new_idx);
-
-        let clip_id = sequencer.find_selected_track_clip_id_at_cursor();
-        self.select_clip_workflow(sequencer, clip_id);
+        true
     }
 
     /// Cycle track selection by one, wrapping at both ends. `direction > 0`
@@ -244,7 +254,7 @@ impl EventHandlers {
         };
 
         sequencer.set_cursor_tick(start);
-        self.select_track_workflow(sequencer, track_idx);
+        self.switch_track_workflow(sequencer, track_idx);
         self.select_clip_workflow(sequencer, Some(clip_id));
         sequencer.sync_selected_clip_cursor_with_arranger();
 

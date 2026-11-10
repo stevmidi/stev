@@ -3,12 +3,24 @@
 //! arm. One match on the result's variant fans out clip-added / -updated /
 //! -removed and event-updated notifications. See `050-undo-redo.md`.
 
-use crate::core::sequencer::{EditResult, PasteLead};
+use crate::core::sequencer::{EditResult, PasteLead, RestoredMarquee};
 
 use super::clip_range_edits::CarveResult;
 use super::*;
 
 impl EventHandlers {
+    /// An undo's marquee, after its lead clip is reselected: the cursor back
+    /// where the edit found it, since the marquee is anchored there (the lead
+    /// clip's cursor follows), then the marquee itself, sent last so the
+    /// view re-latches the cursor and track it is anchored to
+    /// (`020-views-and-state.md`). Playback is untouched: it runs on its own
+    /// tick.
+    fn restore_marquee_workflow(&self, sequencer: &mut Sequencer, marquee: RestoredMarquee) {
+        sequencer.set_cursor_tick(marquee.cursor_tick);
+        sequencer.sync_selected_clip_cursor_with_arranger();
+        self.send_time_selection_set_ui_event(marquee.start, marquee.end, marquee.tracks);
+    }
+
     /// Dispatch UI side-effects based on what an edit/undo/redo did. Called
     /// from every `undo_record.edit/undo/redo` arm in
     /// `handle_sequencer_command`; the clip-level workflows it fans out to
@@ -24,6 +36,7 @@ impl EventHandlers {
                 removed,
                 selected_track_idx,
                 selected_clip_id,
+                restored_marquee,
             } => {
                 self.unsplit_clips_workflow(
                     sequencer,
@@ -32,6 +45,9 @@ impl EventHandlers {
                     selected_track_idx,
                     selected_clip_id,
                 );
+                if let Some(marquee) = restored_marquee {
+                    self.restore_marquee_workflow(sequencer, marquee);
+                }
             }
             EditResult::SilenceInserted {
                 shifted,
@@ -44,8 +60,13 @@ impl EventHandlers {
                 shifted,
                 split_updated,
                 split_removed,
+                selected_track_idx,
+                selected_clip_id,
+                restored_marquee,
             } => {
                 self.remove_silence_workflow(sequencer, &shifted, &split_updated, &split_removed);
+                self.reselect_surviving_clip(sequencer, selected_track_idx, selected_clip_id);
+                self.restore_marquee_workflow(sequencer, restored_marquee);
             }
             EditResult::TimeDeleted {
                 shifted,
@@ -108,6 +129,7 @@ impl EventHandlers {
                 removed,
                 selected_track_idx,
                 selected_clip_id,
+                restored_marquee,
             } => {
                 self.restore_range_workflow(
                     sequencer,
@@ -115,6 +137,7 @@ impl EventHandlers {
                     selected_track_idx,
                     selected_clip_id,
                 );
+                self.restore_marquee_workflow(sequencer, restored_marquee);
             }
             EditResult::RangeMuted { updated, added } => {
                 self.mute_in_range_workflow(sequencer, &updated, &added);
@@ -124,6 +147,7 @@ impl EventHandlers {
                 removed,
                 selected_track_idx,
                 selected_clip_id,
+                restored_marquee,
             } => {
                 self.unmute_in_range_workflow(
                     sequencer,
@@ -132,6 +156,7 @@ impl EventHandlers {
                     selected_track_idx,
                     selected_clip_id,
                 );
+                self.restore_marquee_workflow(sequencer, restored_marquee);
             }
             EditResult::ClipCommitted { clip } => {
                 self.commit_clip_workflow(sequencer, &clip);

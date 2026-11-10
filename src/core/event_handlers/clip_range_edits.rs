@@ -82,14 +82,28 @@ impl EventHandlers {
         self.send_clips_removed_ui_event(carve.removed);
     }
 
-    /// Reselects the clip that was selected before the edit if it is on its
-    /// track, otherwise clears the selection — the undo workflows' fallback.
-    fn reselect_surviving_clip(
+    /// Puts back the selection from before the edit: its track, then the
+    /// clip that was the lead if it is on that track, otherwise none — the
+    /// undo workflows' fallback, and a forward edit's, whose track is
+    /// already the selected one. The lead clip lives on the selected track,
+    /// so an undo after the user moved to another track selects the edit's
+    /// track again, with no lead if the edit had none. An armed performance
+    /// lane is live state, like the loop: an undo never disarms it, so then
+    /// the selection stays as it is.
+    pub(super) fn reselect_surviving_clip(
         &self,
         sequencer: &mut Sequencer,
         selected_track_idx: Option<usize>,
         selected_clip_id: Option<Uuid>,
     ) {
+        let track_moved = selected_track_idx
+            .is_some_and(|track_idx| sequencer.selected_track_index() != Some(track_idx));
+        if track_moved && sequencer.is_performance_lane_armed() {
+            return;
+        }
+        if let Some(track_idx) = selected_track_idx.filter(|_| track_moved) {
+            self.switch_track_workflow(sequencer, track_idx);
+        }
         let survivor = selected_track_idx
             .zip(selected_clip_id)
             .filter(|&(track_idx, clip_id)| sequencer.clip_on(track_idx, clip_id).is_some())
@@ -121,12 +135,9 @@ impl EventHandlers {
 
     /// Undo of a split: `updated` is each original clip restored to its
     /// pre-split bounds, `removed` is each right-hand piece being deleted.
-    /// Since a split leaves its right-hand piece selected (see
-    /// `split_clips_workflow`), the common case here is that
-    /// `selected_clip_id` names one of `removed` — fall back to the
-    /// original (now-restored) clip it was split from rather than
-    /// `delete_in_range_workflow`'s usual "clear the selection" fallback for
-    /// a removed clip with nothing to replace it.
+    /// The selection is the one from before the split (`SplitClipsEdit`'s
+    /// `before`), never the right-hand piece the split selected,
+    /// so it reselects as every range undo does.
     pub(super) fn unsplit_clips_workflow(
         &self,
         sequencer: &mut Sequencer,
@@ -137,21 +148,7 @@ impl EventHandlers {
     ) {
         sequencer.reset();
 
-        let restored_original_id =
-            selected_track_idx
-                .zip(selected_clip_id)
-                .and_then(|(track_idx, clip_id)| {
-                    removed
-                        .iter()
-                        .position(|clip| clip.track_idx == track_idx && clip.clip_id == clip_id)
-                        .and_then(|i| updated.get(i))
-                        .map(|clip| clip.clip_id)
-                });
-
-        match restored_original_id {
-            Some(original_id) => self.select_clip_workflow(sequencer, Some(original_id)),
-            None => self.reselect_surviving_clip(sequencer, selected_track_idx, selected_clip_id),
-        }
+        self.reselect_surviving_clip(sequencer, selected_track_idx, selected_clip_id);
 
         self.send_clips_removed_ui_event(removed);
         self.send_clips_updated_ui_event(updated);
@@ -180,8 +177,9 @@ impl EventHandlers {
 
     /// Undo of Insert Silence: `shifted` is every clip moved back left,
     /// `split_updated`/`split_removed` mirror `unsplit_clips_workflow`. No
-    /// reselection here either, for the same reason as
-    /// `insert_silence_workflow` above.
+    /// reselection here: Duplicate Time's undo shares it and reselects
+    /// itself, and Insert Silence's own undo (`SilenceRemoved`) puts back the
+    /// selection from before the insert after it (`reselect_surviving_clip`).
     pub(super) fn remove_silence_workflow(
         &self,
         sequencer: &mut Sequencer,

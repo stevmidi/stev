@@ -30,7 +30,10 @@ only — no recording/capture, no persistence. Key files:
   — `Display::performance_lane_hit_at`, part of the same `ArrangerLayout`
   geometry `track_idx_at` uses) arms it via `select_performance_lane_workflow`.
   Mutually exclusive with track selection: selecting a track disarms the lane
-  and vice versa (`sequencer/state.rs`'s `performance_lane_armed`).
+  and vice versa (`sequencer/state.rs`'s `performance_lane_armed`). An undo
+  never disarms it: arming is live state, like the loop, so an undo that would
+  put back another track's selection leaves the selection as it is while the
+  lane is armed (`reselect_surviving_clip`, `050-undo-redo.md` § Invariants).
 - `performance_lane_armed: Arc<AtomicBool>` (`SharedAtomics`) is read by
   `MidiInputForwarder` on its own thread to suppress **every audible route**
   while armed — both the MIDI-OUT thru-forward and the hosted CLAP instrument

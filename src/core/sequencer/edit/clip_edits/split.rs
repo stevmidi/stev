@@ -4,12 +4,13 @@
 
 use uuid::Uuid;
 
+use crate::core::input_event::TimeSelectionRect;
 use crate::metadata::clip_metadata::ClipMetadata;
 use crate::models::clip::Clip;
 
 use super::super::super::Sequencer;
 use super::super::EditResult;
-use super::{detached_clone, in_tracks};
+use super::{SelectionBefore, detached_clone, in_tracks};
 
 // ---------------------------------------------------------------------------
 // Private Sequencer helpers — used exclusively by edit structs in this file
@@ -186,6 +187,13 @@ pub(crate) struct SplitClipsEdit {
     /// Reused on redo so ids and content stay identical across repeated
     /// undo/redo, same pattern as `PasteClipsEdit`'s frozen `targets`.
     frozen: Option<Vec<FrozenSplit>>,
+    /// The marquee a marquee split was made with (`from_marquee`), which
+    /// undo puts back; `None` for a single-clip split and inside the edits
+    /// built on this one.
+    marquee: Option<TimeSelectionRect>,
+    /// The track and lead clip selected before the last `edit()`, which
+    /// undo restores, as `DeleteInRangeEdit`'s does.
+    before: SelectionBefore,
 }
 
 impl SplitClipsEdit {
@@ -218,6 +226,8 @@ impl SplitClipsEdit {
             split_tick,
             targets: vec![(track_idx, clip_id)],
             frozen: None,
+            marquee: None,
+            before: SelectionBefore::default(),
         })
     }
 
@@ -234,23 +244,20 @@ impl SplitClipsEdit {
         Self::from_time_range_filtered(sequencer, None, start, end, split_tick)
     }
 
-    /// Like `from_time_range`, but restricted to an inclusive track span —
-    /// the arranger marquee's track-scoped `E`.
-    pub(crate) fn from_time_range_in_tracks(
+    /// The arranger marquee's track-scoped `⌘E`: like `from_time_range`,
+    /// restricted to the marquee's tracks, and undo puts the marquee back.
+    pub(crate) fn from_marquee(
         sequencer: &Sequencer,
-        track_start: usize,
-        track_end: usize,
-        start: i32,
-        end: i32,
+        rect: TimeSelectionRect,
         split_tick: i32,
     ) -> Option<Self> {
-        Self::from_time_range_filtered(
-            sequencer,
-            Some((track_start, track_end)),
-            start,
-            end,
-            split_tick,
-        )
+        let tracks = Some((rect.track_start, rect.track_end));
+        let edit =
+            Self::from_time_range_filtered(sequencer, tracks, rect.start, rect.end, split_tick)?;
+        Some(Self {
+            marquee: Some(rect),
+            ..edit
+        })
     }
 
     /// Shared constructor: the targets are every clip (optionally restricted
@@ -287,6 +294,8 @@ impl SplitClipsEdit {
             split_tick,
             targets,
             frozen: None,
+            marquee: None,
+            before: SelectionBefore::default(),
         })
     }
 
@@ -296,6 +305,7 @@ impl SplitClipsEdit {
         &mut self,
         sequencer: &mut Sequencer,
     ) -> EditResult {
+        self.before = SelectionBefore::of(sequencer);
         let mut updated = Vec::new();
         let mut added = Vec::new();
 
@@ -338,8 +348,7 @@ impl SplitClipsEdit {
             return EditResult::NoOp;
         };
 
-        let selected_track_idx = sequencer.selected_track_index();
-        let selected_clip_id = sequencer.selected_clip_id();
+        let (selected_track_idx, selected_clip_id) = (self.before.track_idx, self.before.clip_id);
 
         let mut updated = Vec::new();
         let mut removed = Vec::new();
@@ -360,6 +369,10 @@ impl SplitClipsEdit {
                 removed,
                 selected_track_idx,
                 selected_clip_id,
+                restored_marquee: self.marquee.map(|rect| {
+                    let tracks = Some((rect.track_start, rect.track_end));
+                    self.before.marquee(rect.start, rect.end, tracks)
+                }),
             }
         }
     }
@@ -457,7 +470,7 @@ mod tests {
     use crate::models::event::Event;
 
     use crate::core::sequencer::test_support::{
-        clip_at, drain, instrument_track_0, sequencer_with, test_sequencer,
+        clip_at, drain, instrument_track_0, rect, sequencer_with, test_sequencer,
     };
 
     use super::*;
@@ -614,14 +627,14 @@ mod tests {
     }
 
     #[test]
-    fn split_from_time_range_in_tracks_only_touches_the_named_span() {
+    fn split_from_marquee_only_touches_the_named_span() {
         let mut sequencer = test_sequencer();
         sequencer.tracks_mut()[0].add_clip(&clip_at(0, 960)); // outside the span
         sequencer.tracks_mut()[1].add_clip(&clip_at(0, 960)); // in the span
         sequencer.tracks_mut()[2].add_clip(&clip_at(0, 960)); // in the span
         sequencer.tracks_mut()[3].add_clip(&clip_at(0, 960)); // outside the span
 
-        let mut edit = SplitClipsEdit::from_time_range_in_tracks(&sequencer, 1, 2, 0, 960, 480)
+        let mut edit = SplitClipsEdit::from_marquee(&sequencer, rect(0, 960, 1, 2), 480)
             .expect("clips on tracks 1 and 2 contain the split tick");
         let EditResult::ClipsSplit { updated, added } = edit.edit(&mut sequencer) else {
             panic!("expected ClipsSplit");
@@ -636,11 +649,11 @@ mod tests {
     }
 
     #[test]
-    fn split_from_time_range_in_tracks_ignores_a_clip_just_outside_the_span() {
+    fn split_from_marquee_ignores_a_clip_just_outside_the_span() {
         let mut sequencer = test_sequencer();
         sequencer.tracks_mut()[3].add_clip(&clip_at(0, 960));
 
-        assert!(SplitClipsEdit::from_time_range_in_tracks(&sequencer, 1, 2, 0, 960, 480).is_none());
+        assert!(SplitClipsEdit::from_marquee(&sequencer, rect(0, 960, 1, 2), 480).is_none());
     }
 
     fn clip_with_open_note() -> Clip {

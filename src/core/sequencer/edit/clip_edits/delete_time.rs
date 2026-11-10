@@ -148,6 +148,7 @@ impl DeleteTimeEdit {
                     removed,
                     selected_track_idx,
                     selected_clip_id,
+                    ..
                 }) => (
                     updated,
                     added,

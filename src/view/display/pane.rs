@@ -88,6 +88,15 @@ impl ClipPanel {
     pub(super) fn tab_moves_focus_only(self) -> bool {
         self.layout() == PaneLayout::Docked
     }
+
+    /// The pane the keyboard has to move to after a layout change left
+    /// `focused` off screen, or `None` while it still shows. Only
+    /// maximizing does that, from the arranger: the keyboard never stays
+    /// in a pane the user can't see (issue #3).
+    pub(super) fn focus_after_resize(self, focused: Pane) -> Option<Pane> {
+        let off_screen = self.layout() == PaneLayout::ClipOnly && focused == Pane::Arranger;
+        off_screen.then_some(Pane::Clip)
+    }
 }
 
 /// Which panes the lane area shows.
@@ -243,6 +252,25 @@ mod tests {
         assert!(!panel(true, PanelSize::Maximized).tab_moves_focus_only());
         assert!(!panel(false, PanelSize::Docked).tab_moves_focus_only());
         assert!(!panel(false, PanelSize::Maximized).tab_moves_focus_only());
+    }
+
+    /// Regression (issue #3): `⌘⌥E` from the arranger maximized the clip
+    /// view but left the keyboard in the arranger, off screen, so `⌘Z` and
+    /// the arrows acted on a pane nobody could see.
+    #[test]
+    fn maximizing_from_the_arranger_moves_the_keyboard_to_the_clip_view() {
+        let panel = |visible, size| ClipPanel { visible, size };
+        let maximized = panel(true, PanelSize::Maximized);
+        assert_eq!(
+            maximized.focus_after_resize(Pane::Arranger),
+            Some(Pane::Clip)
+        );
+        assert_eq!(maximized.focus_after_resize(Pane::Clip), None);
+        let docked = panel(true, PanelSize::Docked);
+        assert_eq!(docked.focus_after_resize(Pane::Arranger), None);
+        assert_eq!(docked.focus_after_resize(Pane::Clip), None);
+        let hidden = panel(false, PanelSize::Maximized);
+        assert_eq!(hidden.focus_after_resize(Pane::Arranger), None);
     }
 
     #[test]

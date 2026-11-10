@@ -145,14 +145,7 @@ impl EventHandlers {
             SequencerCommand::SplitClips { time_bounds } => {
                 let cursor = sequencer.cursor_tick();
                 let edit = match time_bounds {
-                    Some(rect) => SplitClipsEdit::from_time_range_in_tracks(
-                        sequencer,
-                        rect.track_start,
-                        rect.track_end,
-                        rect.start,
-                        rect.end,
-                        cursor,
-                    ),
+                    Some(rect) => SplitClipsEdit::from_marquee(sequencer, *rect, cursor),
                     None => SplitClipsEdit::from_selected_clip(sequencer, cursor),
                 };
                 self.record_edit(sequencer, undo_record, edit);
@@ -732,7 +725,7 @@ mod tests {
     use crate::core::midi::message::Controller;
     use crate::core::paths::project_dir;
     use crate::core::project::{ProjectAction, ProjectData, ProjectOrigin};
-    use crate::core::sequencer::test_support::{param_at, rect, stub_instrument};
+    use crate::core::sequencer::test_support::{clip_at, param_at, rect, stub_instrument};
     use crate::core::sequencer::{SequencerCommand, SequencerEdit};
     use crate::core::time::Meter;
     use crate::core::view_state::ViewState;
@@ -1856,6 +1849,195 @@ mod tests {
                 .iter()
                 .any(|event| matches!(event, UiEvent::EventsUpdated { .. }))
         );
+    }
+
+    /// Issue #3: undoing a marquee delete puts back the state before it,
+    /// whatever was done since — the clips, the lead clip (so the clip view
+    /// shows it again) and the marquee — and moves no focus: from a clip
+    /// view opened on another clip, the view stays and shows the deleted
+    /// one. Read at undo time, the dropped lead stayed dropped and the clip
+    /// view stayed on the other clip or empty.
+    #[test]
+    fn undoing_a_range_delete_restores_the_lead_clip_and_the_marquee() {
+        let (mut h, lead_id, _) = harness_with_clip();
+        add_clip(&mut h.sequencer, 1920);
+        let (other_id, _) = add_clip(&mut h.sequencer, 3840 * 2);
+        let mut record: Record<SequencerEdit> = Record::new();
+        let carve = SequencerCommand::RemoveClips {
+            rect: rect(0, 3840, 0, 0),
+        };
+        run_command(&mut h, &mut record, carve);
+        assert_eq!(h.sequencer.selected_clip_id(), None);
+        h.sequencer.select_clip(Some(other_id));
+        h.cursor_tick.store(3840 * 2, Ordering::Relaxed);
+        run_command(&mut h, &mut record, SequencerCommand::EnterClip);
+        h.ui_events.try_iter().for_each(drop);
+
+        run_command(&mut h, &mut record, SequencerCommand::Undo);
+
+        assert_eq!(h.sequencer.cursor_tick(), 0);
+        assert_eq!(h.handlers.view_state(), ViewState::Clip);
+        assert_eq!(h.sequencer.selected_clip_id(), Some(lead_id));
+        let events: Vec<UiEvent> = h.ui_events.try_iter().collect();
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, UiEvent::ClipExited))
+        );
+        assert!(events.iter().any(|event| matches!(
+            event,
+            UiEvent::LeadClipChanged { clip_view: Some(view) } if view.clip_id == lead_id
+        )));
+        assert!(matches!(
+            events.last(),
+            Some(UiEvent::TimeSelectionSet {
+                start: 0,
+                end: 3840,
+                track_span: Some((0, 0)),
+            })
+        ));
+    }
+
+    /// Issue #3: the same undo after moving to a clip on another track
+    /// selects the deleted clip's track again, since the lead clip lives on
+    /// the selected track. Without it the clip was the lead in name only and
+    /// the clip view said "No clip at the cursor".
+    #[test]
+    fn undoing_a_range_delete_from_another_track_selects_the_clips_track() {
+        let (mut h, lead_id, _) = harness_with_clip();
+        add_clip(&mut h.sequencer, 1920);
+        h.sequencer.tracks_mut()[1].add_clip(&clip_at(0, 1920));
+        let mut record: Record<SequencerEdit> = Record::new();
+        let carve = SequencerCommand::RemoveClips {
+            rect: rect(0, 3840, 0, 0),
+        };
+        run_command(&mut h, &mut record, carve);
+        h.handlers.select_track_workflow(&mut h.sequencer, 1);
+        assert!(
+            h.sequencer
+                .selected_clip_id()
+                .is_some_and(|id| id != lead_id)
+        );
+        h.ui_events.try_iter().for_each(drop);
+
+        run_command(&mut h, &mut record, SequencerCommand::Undo);
+
+        assert_eq!(h.sequencer.selected_track_index(), Some(0));
+        assert_eq!(h.sequencer.selected_clip_id(), Some(lead_id));
+        let lead = h.ui_events.try_iter().filter_map(|event| match event {
+            UiEvent::LeadClipChanged { clip_view } => Some(clip_view.map(|view| view.clip_id)),
+            _ => None,
+        });
+        assert_eq!(lead.last(), Some(Some(lead_id)));
+    }
+
+    /// Range mute (`M`), a marquee split (`⌘E`) and Insert Silence (`⌘I`)
+    /// undo like the range delete: the marquee comes back last (Insert
+    /// Silence, global, with its track span left alone) at the cursor it was
+    /// anchored to, and the lead clip and its track as they were before the
+    /// edit, from another track and tick by now. Without the cursor, a
+    /// zero-width marquee came back as the cursor line wherever it had gone.
+    #[test]
+    fn undoing_a_marquee_edit_restores_the_marquee_and_the_lead_clip() {
+        let marquee = rect(480, 960, 0, 0);
+        let cases = [
+            (
+                SequencerCommand::MuteClipsInRange { rect: marquee },
+                Some((0, 0)),
+            ),
+            (
+                SequencerCommand::SplitClips {
+                    time_bounds: Some(marquee),
+                },
+                Some((0, 0)),
+            ),
+            (
+                SequencerCommand::InsertSilenceInRange {
+                    start: marquee.start,
+                    end: marquee.end,
+                },
+                None,
+            ),
+        ];
+        for (command, track_span) in cases {
+            let (mut h, lead_id, _) = harness_with_clip();
+            h.sequencer.tracks_mut()[1].add_clip(&clip_at(0, 1920));
+            h.cursor_tick.store(720, Ordering::Relaxed);
+            let mut record: Record<SequencerEdit> = Record::new();
+            run_command(&mut h, &mut record, command);
+            assert_eq!(record.len(), 1);
+            h.handlers.select_track_workflow(&mut h.sequencer, 1);
+            h.cursor_tick.store(3840 * 2, Ordering::Relaxed);
+            h.ui_events.try_iter().for_each(drop);
+
+            run_command(&mut h, &mut record, SequencerCommand::Undo);
+
+            assert_eq!(h.sequencer.cursor_tick(), 720, "{track_span:?}");
+            assert_eq!(
+                h.sequencer.selected_track_index(),
+                Some(0),
+                "{track_span:?}"
+            );
+            assert_eq!(
+                h.sequencer.selected_clip_id(),
+                Some(lead_id),
+                "{track_span:?}"
+            );
+            let events: Vec<UiEvent> = h.ui_events.try_iter().collect();
+            assert!(
+                matches!(
+                    events.last(),
+                    Some(UiEvent::TimeSelectionSet { start: 480, end: 960, track_span: span })
+                        if *span == track_span
+                ),
+                "{track_span:?}"
+            );
+        }
+    }
+
+    /// An edit made with no lead clip undoes to its track with no lead,
+    /// whatever the user selected since: the state before the edit, not
+    /// the lead picked now cleared on the track moved to.
+    #[test]
+    fn undoing_an_edit_made_with_no_lead_restores_its_track_without_one() {
+        let mut h = harness();
+        add_clip(&mut h.sequencer, 1920);
+        h.sequencer.tracks_mut()[1].add_clip(&clip_at(0, 1920));
+        assert_eq!(h.sequencer.selected_clip_id(), None);
+        let mut record: Record<SequencerEdit> = Record::new();
+        let mute = SequencerCommand::MuteClipsInRange {
+            rect: rect(1920, 3840, 0, 0),
+        };
+        run_command(&mut h, &mut record, mute);
+        h.handlers.select_track_workflow(&mut h.sequencer, 1);
+        assert!(h.sequencer.selected_clip_id().is_some());
+
+        run_command(&mut h, &mut record, SequencerCommand::Undo);
+
+        assert_eq!(h.sequencer.selected_track_index(), Some(0));
+        assert_eq!(h.sequencer.selected_clip_id(), None);
+    }
+
+    /// An armed performance lane is live state, like the loop: an undo that
+    /// would select another track leaves the lane armed and the selection as
+    /// it is, and still puts the clips back.
+    #[test]
+    fn an_undo_never_disarms_the_performance_lane() {
+        let (mut h, lead_id, _) = harness_with_clip();
+        let mut record: Record<SequencerEdit> = Record::new();
+        let carve = SequencerCommand::RemoveClips {
+            rect: rect(0, 3840, 0, 0),
+        };
+        run_command(&mut h, &mut record, carve);
+        h.handlers.select_track_workflow(&mut h.sequencer, 1);
+        h.handlers
+            .select_performance_lane_workflow(&mut h.sequencer);
+
+        run_command(&mut h, &mut record, SequencerCommand::Undo);
+
+        assert!(h.sequencer.is_performance_lane_armed());
+        assert_eq!(h.sequencer.selected_track_index(), Some(1));
+        assert!(h.sequencer.clip_on(0, lead_id).is_some());
     }
 
     /// Decision 13: a write while a modal is up says why and changes
