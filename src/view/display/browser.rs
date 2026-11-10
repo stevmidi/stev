@@ -17,7 +17,8 @@
 //!
 //! Its keyboard focus is view-local: while focused it takes the arrows,
 //! Enter, Delete/Backspace, Esc and the clipboard chords (⌘C copies a
-//! project, ⌘V pastes it into a folder: `430-browser-clipboard.md`), and
+//! project, ⌘X cuts it, ⌘V pastes it into a folder, ⌥⌘V moves it there:
+//! `430-browser-clipboard.md`), and
 //! every other key falls through to the
 //! view underneath (`Arranger` or `Clip`), so Space still plays. The main
 //! canvas is drawn shifted right by the panel's width (an egui layer
@@ -39,10 +40,10 @@ use crate::core::{
     input_event::{CLIP_CLIPBOARD_SENTINEL, is_pane_focus_key},
     keymap::Action,
     project::{
-        LibraryChange, ProjectAction, ProjectOrigin, clip_path, copy_project, delete_clip,
-        delete_project, delete_project_folder, delete_template, follow_recent, list_clips,
-        list_project_folders, list_projects, list_templates, note_recent, project_exists,
-        remove_recent, template_path,
+        Followed, LibraryChange, ProjectAction, ProjectOrigin, clip_path, copy_project,
+        delete_clip, delete_project, delete_project_folder, delete_template, follow_recent,
+        list_clips, list_project_folders, list_projects, list_templates, move_project, note_recent,
+        project_exists, remove_recent, template_path,
     },
     settings::{load_settings, update_settings},
 };
@@ -178,20 +179,18 @@ fn deleted_message(name: &str) -> String {
 }
 
 /// The footer's word for the project `from` pasted as `name` into `folder`
-/// (`None`: the projects root): where it went, and the name it took when
-/// that was taken — alone for a duplicate in its own folder.
-fn copied_message(from: &ProjectOrigin, folder: Option<&str>, name: &str) -> String {
+/// (`None`: the projects root), `moved` or copied: where it went, and the
+/// name it took when that was taken — alone for a duplicate in its own
+/// folder. A move into its own folder went nowhere.
+fn pasted_message(moved: bool, from: &ProjectOrigin, folder: Option<&str>, name: &str) -> String {
     let source = &from.name;
-    let renamed = if name == source {
-        String::new()
-    } else {
-        format!(" as {name}")
-    };
-    if folder == from.folder.as_deref() && name != source {
-        format!("Copied {source}{renamed}")
-    } else {
-        let to = folder.unwrap_or("Projects");
-        format!("Copied {source} to {to}{renamed}")
+    let verb = if moved { "Moved" } else { "Copied" };
+    let to = folder.unwrap_or("Projects");
+    match (folder == from.folder.as_deref(), name == source) {
+        (true, true) => format!("{source} is already in {to}"),
+        (true, false) => format!("{verb} {source} as {name}"),
+        (false, true) => format!("{verb} {source} to {to}"),
+        (false, false) => format!("{verb} {source} to {to} as {name}"),
     }
 }
 
@@ -401,6 +400,17 @@ impl BrowserItem {
             }
             BrowserItem::Category(BrowserCategory::Projects) => Some(None),
             _ => None,
+        }
+    }
+
+    /// Whether this is `project`'s row, under its folder or Recent. Compared
+    /// in place: the list is drawn every frame.
+    fn is_project(&self, project: &ProjectOrigin) -> bool {
+        match self {
+            BrowserItem::Project { folder, name } | BrowserItem::Recent { folder, name } => {
+                *folder == project.folder && *name == project.name
+            }
+            _ => false,
         }
     }
 
@@ -1019,10 +1029,38 @@ pub(super) struct BrowserPanel {
     /// The open rename field (⌘R on a project, template, clip or folder
     /// row), see `browser_rename.rs`.
     pub(super) rename: Option<BrowserRename>,
-    /// The project ⌘C copied, which ⌘V pastes into the selected folder
-    /// (`430-browser-clipboard.md`): the browser's own, apart from the clip
-    /// and note clipboards and the system's, and gone with the session.
-    pub(super) clipboard: Option<ProjectOrigin>,
+    /// The project ⌘C copied or ⌘X cut, which ⌘V pastes into the selected
+    /// folder (`430-browser-clipboard.md`): the browser's own, apart from
+    /// the clip and note clipboards and the system's, and gone with the
+    /// session.
+    pub(super) clipboard: Option<BrowserClipboard>,
+}
+
+/// What the browser's clipboard holds: a project, copied or cut.
+#[derive(Clone)]
+pub(super) struct BrowserClipboard {
+    /// The project, where it is now: it follows every library change
+    /// (`Display::library_changed`).
+    pub(super) project: ProjectOrigin,
+    /// Cut (⌘X): the paste moves it, and its rows are drawn dimmed until
+    /// then. Copied (⌘C): the paste copies it, unless it is ⌥⌘V.
+    pub(super) cut: bool,
+}
+
+impl BrowserPanel {
+    /// The project a pending cut holds, its rows drawn dimmed.
+    pub(super) fn cut_project(&self) -> Option<&ProjectOrigin> {
+        self.clipboard
+            .as_ref()
+            .filter(|clipboard| clipboard.cut)
+            .map(|clipboard| &clipboard.project)
+    }
+
+    /// Whether `item` is a row of the project a pending cut holds.
+    pub(super) fn is_cut(&self, item: &BrowserItem) -> bool {
+        self.cut_project()
+            .is_some_and(|project| item.is_project(project))
+    }
 }
 
 /// A draggable browser row under the held primary button, before it leaves
@@ -1199,6 +1237,15 @@ impl Display {
             clips: list_clips(),
             recent: recent_projects(),
         });
+        // A cut whose file has gone (deleted or moved in Finder) has nothing
+        // left to move.
+        if self
+            .browser
+            .cut_project()
+            .is_some_and(|cut| !project_exists(cut.folder.as_deref(), &cut.name))
+        {
+            self.browser.clipboard = None;
+        }
     }
 
     /// Shows the panel with the keyboard (`⌘⌥B` on a hidden panel, `⌘O`),
@@ -1344,14 +1391,10 @@ impl Display {
     /// (`430-browser-clipboard.md`); the ⇧ forms do nothing.
     pub(super) fn handle_browser_key(&mut self, event: &InputEvent, ctx: &egui::Context) -> bool {
         match *event {
-            InputEvent::Copy { shift: false } => self.copy_browser_project(ctx),
-            InputEvent::Paste {
-                shift: false,
-                alt: false,
-            } => self.paste_browser_project(),
-            // ⌘X cuts and ⌥⌘V moves once the browser moves projects
-            // (`430-browser-clipboard.md` § Phases); until then they, and
-            // the ⇧ forms, only stay out of the pane.
+            InputEvent::Copy { shift: false } => self.clip_browser_project(false, ctx),
+            InputEvent::Cut { shift: false } => self.clip_browser_project(true, ctx),
+            InputEvent::Paste { shift: false, alt } => self.paste_browser_project(alt),
+            // The ⇧ forms only stay out of the pane.
             InputEvent::Copy { .. } | InputEvent::Cut { .. } | InputEvent::Paste { .. } => {}
             _ => return self.handle_browser_key_press(event),
         }
@@ -1396,7 +1439,9 @@ impl Display {
                 let plugin = self.gesture.plugin_drag.take();
                 if midi.is_some() || plugin.is_some() {
                     self.browser.press = None;
-                } else if tree.delete_armed.take().is_none() {
+                } else if tree.delete_armed.take().is_some() {
+                    // The pending delete was the never-mind.
+                } else if self.browser.clipboard.take_if(|clip| clip.cut).is_none() {
                     self.leave_browser();
                 }
             }
@@ -1478,36 +1523,41 @@ impl Display {
         }
     }
 
-    /// ⌘C: puts the selected project (under its folder or Recent) on the
-    /// browser's clipboard and primes the system clipboard, so the next ⌘V
-    /// arrives (`CLIP_CLIPBOARD_SENTINEL`). Any other row copies nothing and
-    /// leaves the clipboard as it was; the footer says why.
-    fn copy_browser_project(&mut self, ctx: &egui::Context) {
+    /// ⌘C (`cut` false) or ⌘X: puts the selected project (under its folder
+    /// or Recent) on the browser's clipboard, replacing what was there, and
+    /// primes the system clipboard so the next ⌘V arrives
+    /// (`CLIP_CLIPBOARD_SENTINEL`). Nothing moves until the paste. Any other
+    /// row leaves the clipboard as it was; the footer says why.
+    fn clip_browser_project(&mut self, cut: bool, ctx: &egui::Context) {
         let selected = self.browser.tree.selected();
+        let (verb, does) = if cut {
+            ("Cut", "move")
+        } else {
+            ("Copied", "copy")
+        };
         let message = match selected.and_then(BrowserItem::project_origin) {
             Some(project) => {
-                let message = format!("Copied {}: paste in a folder to copy it", project.name);
-                self.browser.clipboard = Some(project);
+                let message = format!("{verb} {}: paste in a folder to {does} it", project.name);
+                self.browser.clipboard = Some(BrowserClipboard { project, cut });
                 ctx.copy_text(CLIP_CLIPBOARD_SENTINEL.to_owned());
                 message
             }
             None if matches!(selected, Some(BrowserItem::Folder(_))) => {
-                "Only a project copies, not a folder".to_owned()
+                format!("Only a project {does}s, not a folder")
             }
-            None => "Only a project copies".to_owned(),
+            None => format!("Only a project {does}s"),
         };
         self.render.status = Some(StatusMessage::new(message));
     }
 
-    /// ⌘V: copies the project on the browser's clipboard into the selected
-    /// folder, or the selected project's ([`BrowserItem::paste_folder`]),
-    /// under the next free name when its own is taken there, then selects
-    /// the copy. The clipboard keeps the project, so the next paste makes
-    /// another copy. Not a library change: nothing anyone holds names the
-    /// new file. The open project stays the open one, and the copy holds its
-    /// last save.
-    fn paste_browser_project(&mut self) {
-        let Some(from) = self.browser.clipboard.clone() else {
+    /// ⌘V (`alt` false) or ⌥⌘V: pastes the project on the browser's
+    /// clipboard into the selected folder, or the selected project's
+    /// ([`BrowserItem::paste_folder`]), under the next free name when its own
+    /// is taken there, then selects it. A cut, or any ⌥⌘V, moves it and
+    /// empties the clipboard; a copy copies it and keeps it there, so the
+    /// next paste makes another copy. A failure leaves everything as it was.
+    fn paste_browser_project(&mut self, alt: bool) {
+        let Some(BrowserClipboard { project: from, cut }) = self.browser.clipboard.clone() else {
             self.render.status = Some(StatusMessage::new(
                 "Nothing to paste: copy a project first".to_owned(),
             ));
@@ -1525,15 +1575,36 @@ impl Display {
             ));
             return;
         };
-        let message = match copy_project(&from, folder.as_deref()) {
+        let moved = cut || alt;
+        let pasted = if moved {
+            move_project(&from, folder.as_deref())
+        } else {
+            copy_project(&from, folder.as_deref())
+        };
+        let message = match pasted {
             Ok(name) => {
+                let to = ProjectOrigin::new(folder.as_deref(), &name);
+                if moved {
+                    self.browser.clipboard = None;
+                    // The Recent list, the open project and ⌘S follow the
+                    // move as they follow a rename. A copy is no library
+                    // change: nothing anyone holds names the new file.
+                    if to != from {
+                        self.library_changed(LibraryChange::Moved {
+                            old: from.clone(),
+                            new: to.clone(),
+                        });
+                    }
+                }
                 self.reload_browser();
-                let copy = ProjectOrigin::new(folder.as_deref(), &name);
-                self.browser.tree.reveal_project(&copy);
+                self.browser.tree.reveal_project(&to);
                 self.scroll_browser_to_selection();
-                copied_message(&from, folder.as_deref(), &name)
+                pasted_message(moved, &from, folder.as_deref(), &name)
             }
-            Err(e) => format!("Could not copy {}: {e}", from.name),
+            Err(e) => {
+                let verb = if moved { "move" } else { "copy" };
+                format!("Could not {verb} {}: {e}", from.name)
+            }
         };
         self.render.status = Some(StatusMessage::new(message));
     }
@@ -1620,9 +1691,15 @@ impl Display {
     /// Tells everything that follows the project library about `change`,
     /// just made on disk: the Recent list, the default folder, and the
     /// sequencer's record of the open project, whose answer moves the view's
-    /// copy (`UiEvent::OpenProjectFile`; #22). Every browser rename and
-    /// delete of a project or folder comes through here.
+    /// copy (`UiEvent::OpenProjectFile`; #22), and the browser's clipboard.
+    /// Every browser rename, move and delete of a project or folder comes
+    /// through here.
     pub(super) fn library_changed(&mut self, change: LibraryChange) {
+        if let Some(clipboard) = &mut self.browser.clipboard
+            && clipboard.project.follow(&change) == Followed::Gone
+        {
+            self.browser.clipboard = None;
+        }
         let default_moved = self.project.follow_library(&change);
         self.update_library_settings(|list| follow_recent(list, &change), default_moved);
         self.input_event_tx
@@ -2476,33 +2553,56 @@ mod tests {
         assert_eq!(tree.selected(), Some(&project(None, "loose")));
     }
 
-    /// The footer names where a copy went and, when its name was taken
+    /// The footer names where a paste went and, when its name was taken
     /// there, the name it took; a duplicate in its own folder needs only the
-    /// name.
+    /// name, and a move into its own folder went nowhere.
     #[test]
-    fn a_copy_says_where_it_went_and_what_it_was_named() {
+    fn a_paste_says_where_it_went_and_what_it_was_named() {
         let riff = ProjectOrigin::new(Some("Jams"), "riff");
+        let says = |moved, folder, name| pasted_message(moved, &riff, folder, name);
+        assert_eq!(says(false, Some("Ideas"), "riff"), "Copied riff to Ideas");
+        assert_eq!(says(false, None, "riff"), "Copied riff to Projects");
+        assert_eq!(says(false, Some("Jams"), "riff_2"), "Copied riff as riff_2");
         assert_eq!(
-            copied_message(&riff, Some("Ideas"), "riff"),
-            "Copied riff to Ideas"
-        );
-        assert_eq!(
-            copied_message(&riff, None, "riff"),
-            "Copied riff to Projects"
-        );
-        assert_eq!(
-            copied_message(&riff, Some("Jams"), "riff_2"),
-            "Copied riff as riff_2"
-        );
-        assert_eq!(
-            copied_message(&riff, Some("Ideas"), "riff_2"),
+            says(false, Some("Ideas"), "riff_2"),
             "Copied riff to Ideas as riff_2"
         );
+        assert_eq!(says(true, Some("Ideas"), "riff"), "Moved riff to Ideas");
+        assert_eq!(
+            says(true, None, "riff_2"),
+            "Moved riff to Projects as riff_2"
+        );
+        assert_eq!(says(true, Some("Jams"), "riff"), "riff is already in Jams");
         let loose = ProjectOrigin::new(None, "loose");
         assert_eq!(
-            copied_message(&loose, None, "loose_2"),
-            "Copied loose as loose_2"
+            pasted_message(true, &loose, None, "loose"),
+            "loose is already in Projects"
         );
+    }
+
+    /// A cut project's rows are its row under its folder and under Recent,
+    /// and no other project's, even one of its name elsewhere.
+    #[test]
+    fn a_cut_dims_the_projects_rows_wherever_they_are_listed() {
+        let mut panel = BrowserPanel::default();
+        let riff = ProjectOrigin::new(Some("a"), "a1");
+        panel.clipboard = Some(BrowserClipboard {
+            project: riff.clone(),
+            cut: false,
+        });
+        assert!(
+            !panel.is_cut(&project(Some("a"), "a1")),
+            "a copy dims nothing"
+        );
+        panel.clipboard = Some(BrowserClipboard {
+            project: riff,
+            cut: true,
+        });
+        assert!(panel.is_cut(&project(Some("a"), "a1")));
+        assert!(panel.is_cut(&recent(Some("a"), "a1")));
+        assert!(!panel.is_cut(&project(None, "a1")));
+        assert!(!panel.is_cut(&project(Some("a"), "a2")));
+        assert!(!panel.is_cut(&folder("a")));
     }
 
     #[test]

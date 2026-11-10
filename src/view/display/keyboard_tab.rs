@@ -493,7 +493,9 @@ const FIXED: &[FixedGroup] = &[
             ("⌘R", "Rename the file or folder"),
             ("Backspace", "Delete the file or folder"),
             ("⌘C", "Copy the project"),
+            ("⌘X", "Cut the project, to move it"),
             ("⌘V", "Paste the project into the folder"),
+            ("⌥⌘V", "Move the project into the folder"),
         ],
     ),
     (

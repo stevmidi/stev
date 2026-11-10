@@ -40,7 +40,7 @@ pub(crate) use storage::{
     copy_project_in, create_audio_export_dir, create_project_folder, delete_clip, delete_project,
     delete_project_folder, delete_template, file_stem, is_midi_file, is_template_file,
     library_project, list_clips, list_project_folders, list_projects, list_templates,
-    load_midi_clip, load_project, load_project_file, project_exists,
+    load_midi_clip, load_project, load_project_file, move_project, project_exists,
     project_folder_name_from_input, project_name_from_input, rename_clip, rename_project,
     rename_project_folder, rename_template, save_clip_export, stem_file_name, template_exists,
     template_path,

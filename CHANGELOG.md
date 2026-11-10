@@ -20,6 +20,10 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ## [Unreleased]
 
+### Added
+
+- Copy, cut and paste projects in the browser. Select a project and press ⌘C or ⌘X, then select a folder (or a project in it) and press ⌘V: a copy is copied there, a cut is moved. ⌥⌘V moves a copied project too, as in Finder. A name that's taken gets `_2`, so ⌘C then ⌘V in the same folder duplicates a project. Nothing moves until you paste: the cut project shows dimmed, and Esc cancels. A moved project stays in Recent, and if it's the open one, ⌘S saves it in its new folder and Save As starts there. Only projects copy and move, not folders, templates or clips.
+
 ## [0.15.0] - 2026-11-08
 
 ### Added

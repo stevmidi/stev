@@ -513,6 +513,32 @@ fn copy_project_between(from: &Path, name: &str, to: &Path) -> io::Result<String
     Ok(copy)
 }
 
+/// Moves the project `from` into `to_folder` (`None`: the projects root)
+/// and returns the name it took there, by [`copy_project`]'s rule. A rename
+/// across folders: the projects root and its folders are on one volume, so
+/// the move is atomic, and it never replaces another file. A move into its
+/// own folder moves nothing (`430-browser-clipboard.md`).
+pub(crate) fn move_project(from: &ProjectOrigin, to_folder: Option<&str>) -> io::Result<String> {
+    move_project_between(
+        &resolve_dir(from.folder.as_deref()),
+        &from.name,
+        &resolve_dir(to_folder),
+    )
+}
+
+/// [`move_project`] of `name` in the folder `from` into the folder `to`.
+fn move_project_between(from: &Path, name: &str, to: &Path) -> io::Result<String> {
+    let path = stev_path(from, name);
+    if from == to {
+        // Still an error when the project is gone, as for a real move.
+        fs::metadata(&path)?;
+        return Ok(name.to_owned());
+    }
+    let moved = first_free_project_name(to, name);
+    rename_no_replace(&path, &stev_path(to, &moved))?;
+    Ok(moved)
+}
+
 /// Renames the clip `old` (its stem) to `new` in the clips folder, refusing
 /// to replace another file ([`rename_no_replace`]).
 pub(crate) fn rename_clip(old: &str, new: &str) -> io::Result<()> {
@@ -1132,6 +1158,55 @@ mod tests {
         assert!(copy_project_between(&dir, "riff", &dir.join("Missing")).is_err());
         assert!(names_in(&jams).is_empty());
         assert_eq!(names_in(&dir), ["Jams", "riff.stev"]);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_move_takes_the_project_to_the_folder_under_its_own_name() {
+        let dir = scratch_dir("move-to-folder");
+        let jams = dir.join("Jams");
+        fs::create_dir(&jams).unwrap();
+        fs::write(dir.join("riff.stev"), "riff").unwrap();
+
+        assert_eq!(move_project_between(&dir, "riff", &jams).unwrap(), "riff");
+        assert_eq!(names_in(&dir), ["Jams"]);
+        assert_eq!(fs::read_to_string(jams.join("riff.stev")).unwrap(), "riff");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A taken name gets the next number, and the project there stays.
+    #[test]
+    fn a_move_onto_a_taken_name_takes_the_next_number() {
+        let dir = scratch_dir("move-numbered");
+        let jams = dir.join("Jams");
+        fs::create_dir(&jams).unwrap();
+        fs::write(dir.join("riff.stev"), "riff").unwrap();
+        fs::write(jams.join("riff.stev"), "other").unwrap();
+
+        assert_eq!(move_project_between(&dir, "riff", &jams).unwrap(), "riff_2");
+        assert_eq!(fs::read_to_string(jams.join("riff.stev")).unwrap(), "other");
+        assert_eq!(
+            fs::read_to_string(jams.join("riff_2.stev")).unwrap(),
+            "riff"
+        );
+        assert_eq!(names_in(&dir), ["Jams"]);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A move into its own folder moves nothing and renames nothing; a
+    /// project that is gone is an error either way, and touches nothing.
+    #[test]
+    fn a_move_into_its_own_folder_moves_nothing() {
+        let dir = scratch_dir("move-in-place");
+        let jams = dir.join("Jams");
+        fs::create_dir(&jams).unwrap();
+        fs::write(dir.join("riff.stev"), "riff").unwrap();
+
+        assert_eq!(move_project_between(&dir, "riff", &dir).unwrap(), "riff");
+        assert_eq!(names_in(&dir), ["Jams", "riff.stev"]);
+        assert!(move_project_between(&dir, "gone", &dir).is_err());
+        assert!(move_project_between(&dir, "gone", &jams).is_err());
+        assert!(names_in(&jams).is_empty());
         fs::remove_dir_all(&dir).unwrap();
     }
 

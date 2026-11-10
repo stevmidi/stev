@@ -479,20 +479,21 @@ impl Display {
             }
 
             // An armed delete's row is drawn as any selected row: its
-            // question is the footer's (`draw_status_bar`).
-            let (text, color) = if matches!(
+            // question is the footer's (`draw_status_bar`). A cut project's
+            // rows are dim, selected or not, until the paste moves it.
+            let dim = matches!(
                 row.item,
                 BrowserItem::Clip(_) | BrowserItem::Scanning | BrowserItem::Category(_)
-            ) && !(is_selected && focused)
-            {
-                (label, theme::fg_dim())
+            ) && !(is_selected && focused);
+            let color = if dim || self.browser.is_cut(&row.item) {
+                theme::fg_dim()
             } else {
-                (label, accent_if(is_selected && focused, theme::fg()))
+                accent_if(is_selected && focused, theme::fg())
             };
             painter.text(
                 pos2(row_rect.min.x + browser_text_x(row), mid_y),
                 Align2::LEFT_CENTER,
-                text,
+                label,
                 font.clone(),
                 color,
             );
