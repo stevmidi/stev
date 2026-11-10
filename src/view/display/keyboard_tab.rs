@@ -319,18 +319,19 @@ impl KeyboardTab {
 /// (the key itself never arrives), for the refusal to word. `None` for
 /// anything else.
 fn recorded_chord(event: &InputEvent) -> Option<Chord> {
-    let (key, shift) = match *event {
+    let (key, shift, alt) = match *event {
         InputEvent::KeyPressed { key, modifiers } => {
             return Some(Chord::from_press(key, modifiers));
         }
-        InputEvent::Copy { shift } => (Key::C, shift),
-        InputEvent::Cut { shift } => (Key::X, shift),
-        InputEvent::Paste => (Key::V, false),
+        InputEvent::Copy { shift } => (Key::C, shift, false),
+        InputEvent::Cut { shift } => (Key::X, shift, false),
+        InputEvent::Paste { shift, alt } => (Key::V, shift, alt),
         _ => return None,
     };
     let modifiers = KeyModifiers {
         command: true,
         shift,
+        alt,
         ..KeyModifiers::default()
     };
     Some(Chord::from_press(key, modifiers))
@@ -491,6 +492,8 @@ const FIXED: &[FixedGroup] = &[
             ("Enter", "Open the project or template, import the clip"),
             ("⌘R", "Rename the file or folder"),
             ("Backspace", "Delete the file or folder"),
+            ("⌘C", "Copy the project"),
+            ("⌘V", "Paste the project into the folder"),
         ],
     ),
     (

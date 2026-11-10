@@ -171,7 +171,7 @@ impl Display {
             InputEvent::KeyPressed { key, modifiers } => {
                 Some((key, self.pressed_action(key, modifiers)))
             }
-            InputEvent::Copy { .. } | InputEvent::Cut { .. } | InputEvent::Paste => {
+            InputEvent::Copy { .. } | InputEvent::Cut { .. } | InputEvent::Paste { .. } => {
                 self.key_focus = KeyFocus::Pane;
                 None
             }

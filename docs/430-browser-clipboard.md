@@ -1,6 +1,6 @@
 # Browser Copy, Cut and Paste
 
-**Status: design agreed 2026-11-10, not built.** The browser panel copies, cuts and pastes projects with ⌘C, ⌘X and ⌘V, and moves them Finder's way with ⌥⌘V. It is how a project moves to another folder, or gets duplicated, without leaving Stev.
+**Status: design agreed 2026-11-10; phase 1 (copy and paste) built 2026-11-10, phase 2 not built.** The browser panel copies, cuts and pastes projects with ⌘C, ⌘X and ⌘V, and moves them Finder's way with ⌥⌘V. It is how a project moves to another folder, or gets duplicated, without leaving Stev.
 
 ## Background
 
@@ -35,8 +35,8 @@ Finder has no Cut for files (Edit ▸ Cut is greyed out on every file). It moves
 
 ## Things to check while building
 
-- **Does ⌥⌘V arrive as a paste?** egui-winit's `is_paste_command` only asks for ⌘ and the V key, so ⌥⌘V should become `Event::Paste` with `modifiers.alt` set, and `InputEvent::Paste` would grow an `alt` field the way `Copy` and `Cut` carry `shift`. But egui-winit picks the logical key first, and on macOS ⌥V types `√` on many layouts, which could hide the V (the physical key is only the fallback when there is no logical one). Check it with the `log::trace!` in egui-winit's key handling on a US and a Nordic layout before relying on it. If it doesn't arrive, match the raw `Key` event in the browser and say so here.
-- **egui only sends `Paste` when the OS clipboard holds text.** The clip clipboard primes it with `CLIP_CLIPBOARD_SENTINEL` for this reason (`input_poller.rs`). A browser copy or cut needs the same priming (its own sentinel, or the same one), or ⌘V after a browser ⌘C with an empty system clipboard never reaches the browser.
+- **Does ⌥⌘V arrive as a paste?** Yes, by the source (winit 0.30.13, egui-winit 0.36.2; checked in phase 1, to confirm by hand on a US and a Nordic layout). egui-winit's `is_paste_command` only asks for ⌘ and the V key, and picks the logical key first. On macOS winit's `create_key_event` takes the logical key of a letter from `characters()` only when neither ⌃ nor ⌘ is held; with ⌘ held it uses `charactersIgnoringModifiers`, which heeds ⇧ but ignores ⌥ (winit's own comment: "yes, even ALT is ignored"). So ⌥⌘V reaches egui as the logical `v` with `modifiers.alt` set, never as `√`, and becomes `Event::Paste`. `InputEvent::Paste` now carries `shift` and `alt`, sampled from `i.modifiers` as `Copy` and `Cut` sample `shift`.
+- **egui only sends `Paste` when the OS clipboard holds text.** The clip clipboard primes it with `CLIP_CLIPBOARD_SENTINEL` for this reason (`input_poller.rs`). A browser copy primes it with the same sentinel (`Display::copy_browser_project`); a cut will too.
 - **Leaving the panel.** A clipboard chord is no longer a pane command from the browser, so it must not go through `Display::leave_browser`. Esc's order becomes: cancel a pending delete, else cancel a pending cut, else give the keyboard back.
 
 ## Phases

@@ -893,18 +893,29 @@ pub(crate) enum InputEvent {
         /// Shift held at the moment of the chord.
         shift: bool,
     },
-    /// ⌘/Ctrl+V, as a bare intent (no payload). Same story as `Copy`: the raw
-    /// `V` key press never arrives. Emitted for every `egui::Event::Paste`
-    /// regardless of clipboard contents; the Arranger pastes the clip
-    /// clipboard, the clip view the note clipboard.
-    Paste,
+    /// ⌘/Ctrl+V (optionally with Shift or Alt). Same story as `Copy`: the raw
+    /// `V` key press never arrives, and the modifiers are sampled from
+    /// `i.modifiers`. ⌥⌘V does arrive as a paste on macOS: with ⌘ held,
+    /// winit takes the logical key from `charactersIgnoringModifiers`, which
+    /// ignores ⌥, so the `V` is never hidden behind the `√` ⌥V types. Emitted
+    /// for every `egui::Event::Paste` regardless of clipboard contents; the
+    /// Arranger pastes the clip clipboard and the clip view the note
+    /// clipboard (any modifiers), the browser a copied project (plain ⌘V
+    /// only, `430-browser-clipboard.md`).
+    Paste {
+        /// Shift held at the moment of the chord.
+        shift: bool,
+        /// Alt (⌥) held at the moment of the chord.
+        alt: bool,
+    },
 }
 
-/// Written to the OS text clipboard whenever clips or notes are copied,
+/// Written to the OS text clipboard whenever clips, notes or a browser
+/// project are copied,
 /// purely so a subsequent ⌘/Ctrl+V reliably produces an `egui::Event::Paste`
 /// (egui-winit only emits that event when the OS clipboard holds non-empty
 /// text). The real payload lives in `Sequencer::clip_clipboard` /
-/// `Sequencer::note_clipboard`, in memory.
+/// `Sequencer::note_clipboard` / `BrowserPanel::clipboard`, in memory.
 pub(crate) const CLIP_CLIPBOARD_SENTINEL: &str = "stev:clips";
 
 /// The modifier state sampled with a key press or mouse move. Only the

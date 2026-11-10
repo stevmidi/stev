@@ -501,7 +501,7 @@ impl Display {
                 || self.handle_project_input_event(&event)
                 || self.handle_overlay_input_event(&event)
                 || match self.key_focus {
-                    KeyFocus::Browser => self.handle_browser_key(&event),
+                    KeyFocus::Browser => self.handle_browser_key(&event, ctx),
                     KeyFocus::TrackHeaders if self.track_headers_have_keyboard() => {
                         self.handle_track_header_key(&event)
                     }

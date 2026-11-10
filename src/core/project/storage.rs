@@ -462,6 +462,38 @@ pub(crate) fn rename_project(folder: Option<&str>, old: &str, new: &str) -> io::
     rename_no_replace(&stev_path(&dir, old), &stev_path(&dir, new))
 }
 
+/// Copies the project `from` into `to_folder` (`None`: the projects root),
+/// byte for byte as Finder would, and returns the name the copy took: its
+/// own, or with `_2`, `_3`, … after it while that is taken in `to_folder` —
+/// in any case, where the volume doesn't tell them apart. So a copy into its
+/// own folder is a duplicate. The browser's paste (`430-browser-clipboard.md`).
+pub(crate) fn copy_project(from: &ProjectOrigin, to_folder: Option<&str>) -> io::Result<String> {
+    copy_project_between(
+        &resolve_dir(from.folder.as_deref()),
+        &from.name,
+        &resolve_dir(to_folder),
+    )
+}
+
+/// [`copy_project`] of `name` in the folder `from` into the folder `to`.
+/// Written through a temp file beside the copy, renamed into place once it
+/// is whole and never over another file, so a failed copy leaves no
+/// half-written `.stev`, and nothing is replaced.
+fn copy_project_between(from: &Path, name: &str, to: &Path) -> io::Result<String> {
+    let bytes = fs::read(stev_path(from, name))?;
+    let copy = first_free_name(
+        |n| n.map_or_else(|| name.to_owned(), |n| format!("{name}_{n}")),
+        |copy| stev_path(to, copy).exists(),
+    );
+    let path = stev_path(to, &copy);
+    let temp = path.with_added_extension(TEMP_EXTENSION);
+    let written = fs::write(&temp, bytes).and_then(|()| rename_no_replace(&temp, &path));
+    if written.is_err() {
+        let _ = fs::remove_file(&temp);
+    }
+    written.map(|()| copy)
+}
+
 /// Renames the clip `old` (its stem) to `new` in the clips folder, refusing
 /// to replace another file ([`rename_no_replace`]).
 pub(crate) fn rename_clip(old: &str, new: &str) -> io::Result<()> {
@@ -1019,6 +1051,68 @@ mod tests {
         fs::write(dir.join("song.stev"), "a").unwrap();
         rename_no_replace(&dir.join("song.stev"), &dir.join("Song.stev")).unwrap();
         assert_eq!(names_in(&dir), ["Song.stev"]);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_copy_into_another_folder_keeps_its_name_and_its_bytes() {
+        let dir = scratch_dir("copy-to-folder");
+        let jams = dir.join("Jams");
+        fs::create_dir(&jams).unwrap();
+        fs::write(dir.join("riff.stev"), "as saved").unwrap();
+
+        assert_eq!(copy_project_between(&dir, "riff", &jams).unwrap(), "riff");
+        assert_eq!(
+            fs::read_to_string(jams.join("riff.stev")).unwrap(),
+            "as saved"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.join("riff.stev")).unwrap(),
+            "as saved"
+        );
+        assert_eq!(names_in(&jams), ["riff.stev"]);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A copy into its own folder is a duplicate, and the next one takes the
+    /// next number; a name taken in the target folder is never replaced.
+    #[test]
+    fn a_copy_onto_a_taken_name_takes_the_next_number() {
+        let dir = scratch_dir("copy-numbered");
+        let jams = dir.join("Jams");
+        fs::create_dir(&jams).unwrap();
+        fs::write(dir.join("riff.stev"), "riff").unwrap();
+        fs::write(jams.join("riff.stev"), "other").unwrap();
+
+        assert_eq!(copy_project_between(&dir, "riff", &dir).unwrap(), "riff_2");
+        assert_eq!(copy_project_between(&dir, "riff", &dir).unwrap(), "riff_3");
+        assert_eq!(copy_project_between(&dir, "riff", &jams).unwrap(), "riff_2");
+        assert_eq!(fs::read_to_string(jams.join("riff.stev")).unwrap(), "other");
+        assert_eq!(
+            fs::read_to_string(jams.join("riff_2.stev")).unwrap(),
+            "riff"
+        );
+        // Taken in any case, where the volume is case-insensitive (macOS by
+        // default).
+        if dir.join("RIFF.stev").exists() {
+            fs::write(jams.join("Riff_3.stev"), "case").unwrap();
+            assert_eq!(copy_project_between(&dir, "riff", &jams).unwrap(), "riff_4");
+        }
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A project that is gone, or a folder that can't be written to, leaves
+    /// nothing behind, not even the temp file.
+    #[test]
+    fn a_failed_copy_leaves_nothing_behind() {
+        let dir = scratch_dir("copy-fails");
+        let jams = dir.join("Jams");
+        fs::create_dir(&jams).unwrap();
+        assert!(copy_project_between(&dir, "gone", &jams).is_err());
+        fs::write(dir.join("riff.stev"), "riff").unwrap();
+        assert!(copy_project_between(&dir, "riff", &dir.join("Missing")).is_err());
+        assert!(names_in(&jams).is_empty());
+        assert_eq!(names_in(&dir), ["Jams", "riff.stev"]);
         fs::remove_dir_all(&dir).unwrap();
     }
 

@@ -453,10 +453,14 @@ impl InputPoller {
                         });
                     }
                     // egui-winit only emits `Paste` when the OS clipboard holds
-                    // non-empty text, so a clip-copy first primes it with
-                    // `CLIP_CLIPBOARD_SENTINEL`; the text itself is never read.
+                    // non-empty text, so a clip, note or browser copy first
+                    // primes it with `CLIP_CLIPBOARD_SENTINEL`; the text itself
+                    // is never read.
                     Event::Paste(_) => {
-                        self.input_events.push(InputEvent::Paste);
+                        self.input_events.push(InputEvent::Paste {
+                            shift: i.modifiers.shift,
+                            alt: i.modifiers.alt,
+                        });
                     }
                     // Each raw scroll, for the knob panel's dials, which need
                     // its phase (`InputEvent::WheelScrolled`); the smoothed

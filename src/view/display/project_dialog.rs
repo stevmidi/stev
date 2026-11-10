@@ -867,7 +867,7 @@ impl Display {
             (
                 InputEvent::Copy { .. }
                 | InputEvent::Cut { .. }
-                | InputEvent::Paste
+                | InputEvent::Paste { .. }
                 | InputEvent::MouseDoubleClicked { .. }
                 | InputEvent::MouseMoved { .. }
                 | InputEvent::PointerMotion { .. }

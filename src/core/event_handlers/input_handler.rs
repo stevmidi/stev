@@ -141,10 +141,10 @@ impl EventHandlers {
             // (Shift+⌘/Ctrl+C likewise arrives as `InputEvent::Copy { shift: true }`,
             // resolved in `Display::forward_input_event` against the view-local
             // time selection before it reaches here.)
-            InputEvent::Paste if self.view_state() == ViewState::Arranger => {
+            InputEvent::Paste { .. } if self.view_state() == ViewState::Arranger => {
                 self.send_sequencer(SequencerCommand::PasteClips);
             }
-            InputEvent::Paste if self.view_state() == ViewState::Clip => {
+            InputEvent::Paste { .. } if self.view_state() == ViewState::Clip => {
                 self.send_sequencer(SequencerCommand::PasteNotes);
             }
 

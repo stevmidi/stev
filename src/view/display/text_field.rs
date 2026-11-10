@@ -221,7 +221,9 @@ pub(super) fn field_key(key: Key) -> FieldEvent {
 pub(super) fn field_event(event: &InputEvent, field: Option<Rect>) -> FieldEvent {
     match *event {
         InputEvent::KeyPressed { key, .. } => field_key(key),
-        InputEvent::Copy { .. } | InputEvent::Cut { .. } | InputEvent::Paste => FieldEvent::Swallow,
+        InputEvent::Copy { .. } | InputEvent::Cut { .. } | InputEvent::Paste { .. } => {
+            FieldEvent::Swallow
+        }
         InputEvent::MouseClicked { x, y, .. } | InputEvent::MouseDoubleClicked { x, y } => {
             if field.is_some_and(|field| field.contains(pos2(x, y))) {
                 FieldEvent::Swallow
@@ -330,7 +332,13 @@ mod tests {
         );
         assert!(!FieldEvent::CommitAndPass.consumed());
         assert_eq!(
-            field_event(&InputEvent::Paste, Some(field)),
+            field_event(
+                &InputEvent::Paste {
+                    shift: false,
+                    alt: false,
+                },
+                Some(field)
+            ),
             FieldEvent::Swallow
         );
         assert_eq!(
