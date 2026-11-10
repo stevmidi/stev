@@ -1439,9 +1439,10 @@ impl Display {
                 let plugin = self.gesture.plugin_drag.take();
                 if midi.is_some() || plugin.is_some() {
                     self.browser.press = None;
-                } else if tree.delete_armed.take().is_some() {
-                    // The pending delete was the never-mind.
-                } else if self.browser.clipboard.take_if(|clip| clip.cut).is_none() {
+                } else if tree.delete_armed.take().is_none()
+                    && self.browser.clipboard.take_if(|clip| clip.cut).is_none()
+                {
+                    // Nothing pending to cancel: the keyboard goes back.
                     self.leave_browser();
                 }
             }
@@ -1530,10 +1531,10 @@ impl Display {
     /// row leaves the clipboard as it was; the footer says why.
     fn clip_browser_project(&mut self, cut: bool, ctx: &egui::Context) {
         let selected = self.browser.tree.selected();
-        let (verb, does) = if cut {
-            ("Cut", "move")
+        let (verb, does, only) = if cut {
+            ("Cut", "move", "Only a project moves")
         } else {
-            ("Copied", "copy")
+            ("Copied", "copy", "Only a project copies")
         };
         let message = match selected.and_then(BrowserItem::project_origin) {
             Some(project) => {
@@ -1543,9 +1544,9 @@ impl Display {
                 message
             }
             None if matches!(selected, Some(BrowserItem::Folder(_))) => {
-                format!("Only a project {does}s, not a folder")
+                format!("{only}, not a folder")
             }
-            None => format!("Only a project {does}s"),
+            None => only.to_owned(),
         };
         self.render.status = Some(StatusMessage::new(message));
     }
@@ -1658,6 +1659,15 @@ impl Display {
         self.update_library_settings(|list| note_recent(list, origin), default_moved);
     }
 
+    /// Takes `origin` as where the open project is now, as the sequencer
+    /// answers a library change (`UiEvent::OpenProjectFile`): its folder the
+    /// default, remembered when that moved ([`ProjectViewState::follow_file`]).
+    pub(super) fn follow_open_file(&mut self, origin: Option<ProjectOrigin>) {
+        if self.project.follow_file(origin) {
+            self.update_library_settings(|_| {}, true);
+        }
+    }
+
     /// Deletes the project, template, clip or folder `item` — to the Trash
     /// (macOS) — then says how it went in the footer and re-reads the tree.
     fn delete_browser_item(&mut self, item: &BrowserItem) {
@@ -1695,11 +1705,9 @@ impl Display {
     /// Every browser rename, move and delete of a project or folder comes
     /// through here.
     pub(super) fn library_changed(&mut self, change: LibraryChange) {
-        if let Some(clipboard) = &mut self.browser.clipboard
-            && clipboard.project.follow(&change) == Followed::Gone
-        {
-            self.browser.clipboard = None;
-        }
+        self.browser
+            .clipboard
+            .take_if(|clipboard| clipboard.project.follow(&change) == Followed::Gone);
         let default_moved = self.project.follow_library(&change);
         self.update_library_settings(|list| follow_recent(list, &change), default_moved);
         self.input_event_tx

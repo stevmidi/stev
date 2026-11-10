@@ -211,7 +211,9 @@ impl Display {
                                 self.reload_browser();
                             }
                         }
-                        None => self.project.follow_file(None),
+                        None => {
+                            self.project.follow_file(None);
+                        }
                     }
                     self.render.clip_shapes.clear();
                     self.clear_lead_clip_shapes();
@@ -231,7 +233,7 @@ impl Display {
                 UiEvent::UnsavedChanges { action } => self.open_unsaved_prompt(action),
                 UiEvent::QuitApproved => self.quit_approved = true,
                 UiEvent::ProjectSaved { origin } => self.adopt_project(origin),
-                UiEvent::OpenProjectFile { origin } => self.project.follow_file(origin),
+                UiEvent::OpenProjectFile { origin } => self.follow_open_file(origin),
                 UiEvent::ProjectFilesChanged => {
                     if self.browser.visible {
                         self.reload_browser();

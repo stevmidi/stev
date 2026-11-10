@@ -17,7 +17,8 @@ use crate::core::project::{LibraryChange, ProjectOrigin};
 /// selection, nor whether the panel is shown, nor a paste or move of another
 /// project. Opening a project makes its folder the default, and so does
 /// saving one ([`adopt`](Self::adopt)); the browser moving the open project
-/// to another folder takes the default with it, and a rename of its folder
+/// to another folder takes the default with it
+/// ([`follow_file`](Self::follow_file)), and a rename of its folder
 /// keeps it the default under the new name; deleting the default folder
 /// falls back to the projects root
 /// ([`follow_library`](Self::follow_library)); and with none set, the
@@ -56,19 +57,29 @@ impl ProjectViewState {
     }
 
     /// Takes `origin` as where the open project is now, as the sequencer
-    /// reports it moved or renamed by the browser — or `None`: deleted, so
-    /// it goes on untitled, or a new project never saved. The default
-    /// folder stays: a move already took it along, when the browser made the
-    /// change ([`follow_library`](Self::follow_library)), and an untitled
-    /// project leaves it where the last one was.
-    pub(super) fn follow_file(&mut self, origin: Option<ProjectOrigin>) {
+    /// reports it moved or renamed by the browser — its folder the default,
+    /// so a move to another folder takes the default along — or `None`:
+    /// deleted, so it goes on untitled, or a new project never saved, which
+    /// leaves the default where the last one was. Whether the default
+    /// changed, to be persisted.
+    pub(super) fn follow_file(&mut self, origin: Option<ProjectOrigin>) -> bool {
+        let changed = origin
+            .as_ref()
+            .is_some_and(|origin| self.default_folder != origin.folder);
+        if let Some(origin) = &origin
+            && changed
+        {
+            self.default_folder.clone_from(&origin.folder);
+        }
         self.open = origin;
+        changed
     }
 
     /// Follows `change`, made by the browser on disk: the default folder
     /// renamed stays the default under its new name, and deleted falls back
-    /// to the projects root, whatever is open; the open project moved to
-    /// another folder takes the default there. The open project isn't
+    /// to the projects root, whatever is open (a project open from it or
+    /// not; one open in it follows to the new name in
+    /// [`follow_file`](Self::follow_file) too). The open project isn't
     /// followed here: the sequencer's record is the one, and it reports back
     /// (`UiEvent::OpenProjectFile`). Whether the default changed.
     pub(super) fn follow_library(&mut self, change: &LibraryChange) -> bool {
@@ -76,16 +87,10 @@ impl ProjectViewState {
         let default = match change {
             LibraryChange::FolderRenamed { old, new } if is_default(old) => Some(new.clone()),
             LibraryChange::FolderDeleted(folder) if is_default(folder) => None,
-            // The view's copy still names the project where it was: the
-            // sequencer's answer comes after (`follow_file`).
-            LibraryChange::Moved { old, new } if self.open.as_ref() == Some(old) => {
-                new.folder.clone()
-            }
             _ => return false,
         };
-        let changed = self.default_folder != default;
         self.default_folder = default;
-        changed
+        true
     }
 
     /// Where the open project is on disk, `None` before it is first saved.
@@ -120,8 +125,6 @@ mod tests {
         assert_eq!(project.name(), Some("a"));
         assert!(project.is_open(None, "a"));
         assert!(!project.is_open(Some("last"), "a"));
-        // The sequencer's report of the file sets nothing else.
-        assert_eq!(project.default_folder.as_deref(), Some("last"));
     }
 
     /// The rules: none set is the projects root, an open or a save sets it,
@@ -138,10 +141,6 @@ mod tests {
         assert!(project.adopt(ProjectOrigin::new(None, "loose")));
         assert_eq!(project.default_folder, None);
 
-        // The sequencer's report of the open file sets nothing on its own.
-        project.adopt(ProjectOrigin::new(Some("a"), "song"));
-        project.follow_file(Some(ProjectOrigin::new(Some("b"), "song")));
-        assert_eq!(project.default_folder.as_deref(), Some("a"));
         project.adopt(ProjectOrigin::new(Some("a"), "song"));
 
         // A rename keeps it the default under its new name; another folder's
@@ -177,36 +176,22 @@ mod tests {
         assert_eq!(project.default_folder.as_deref(), Some("a"));
     }
 
-    /// The default folder is the open project's folder: a move of the open
-    /// project to another folder takes it along, a rename in place or a
-    /// move back keeps them together, and the move is followed before the
-    /// sequencer reports the file (`follow_file`).
+    /// The default folder is the open project's folder: the sequencer's
+    /// report of a move to another folder takes it along, a rename in
+    /// place keeps it, and a delete (untitled) leaves it.
     #[test]
     fn a_move_of_the_open_project_takes_the_default_folder_along() {
         let mut project = ProjectViewState::new(None);
         let song = |folder: Option<&str>, name: &str| ProjectOrigin::new(folder, name);
         project.adopt(song(Some("Ideas"), "riff"));
-        let moved = |old, new| LibraryChange::Moved { old, new };
 
-        assert!(project.follow_library(&moved(
-            song(Some("Ideas"), "riff"),
-            song(Some("Jams"), "riff")
-        )));
+        assert!(project.follow_file(Some(song(Some("Jams"), "riff"))));
         assert_eq!(project.default_folder.as_deref(), Some("Jams"));
-        project.follow_file(Some(song(Some("Jams"), "riff")));
-
-        // A rename in its folder leaves the default where it is.
-        assert!(!project.follow_library(&moved(
-            song(Some("Jams"), "riff"),
-            song(Some("Jams"), "lick")
-        )));
-        project.follow_file(Some(song(Some("Jams"), "lick")));
-
-        // To the projects root, and back.
-        assert!(project.follow_library(&moved(song(Some("Jams"), "lick"), song(None, "lick"))));
+        assert!(!project.follow_file(Some(song(Some("Jams"), "lick"))));
+        assert!(project.follow_file(Some(song(None, "lick"))));
         assert_eq!(project.default_folder, None);
-        project.follow_file(Some(song(None, "lick")));
-        assert!(project.follow_library(&moved(song(None, "lick"), song(Some("Ideas"), "lick"))));
+        assert!(project.follow_file(Some(song(Some("Ideas"), "lick"))));
+        assert!(!project.follow_file(None));
         assert_eq!(project.default_folder.as_deref(), Some("Ideas"));
     }
 }

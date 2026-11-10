@@ -613,8 +613,8 @@ fn name_taken() -> io::Error {
     io::Error::new(io::ErrorKind::AlreadyExists, "that name is taken")
 }
 
-/// Moves `from` to `to` in the same folder unless that would replace another
-/// file: `to` is taken when an entry of exactly its name exists, or when it
+/// Moves `from` to `to` — in its folder (a rename) or into another (the
+/// browser's move) — unless that would replace another file: `to` is taken when an entry of exactly its name exists, or when it
 /// exists at all and isn't `from` under a different case (a case-only rename
 /// on a case-insensitive volume, where `to` "exists" because it is `from`).
 fn rename_no_replace(from: &Path, to: &Path) -> io::Result<()> {
