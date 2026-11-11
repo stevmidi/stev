@@ -702,18 +702,13 @@ impl Display {
     }
 
     /// `⌘⌥E`: flips the clip panel between maximized and docked. Hidden, it
-    /// only changes the size the panel will show at. Maximized from the
-    /// arranger, the keyboard moves to the clip view with it, as a click
-    /// there would (`ClipPanel::focus_after_resize`).
+    /// only changes the size the panel will show at.
     fn toggle_clip_panel_size(&mut self) {
         let panel = &mut self.render.clip_panel;
         panel.size = match panel.size {
             PanelSize::Maximized => PanelSize::Docked,
             PanelSize::Docked => PanelSize::Maximized,
         };
-        if let Some(pane) = panel.focus_after_resize(self.focused_pane()) {
-            self.focus_pane(pane);
-        }
     }
 
     /// Runs `f` with `pane` as the active pane, restoring the previous one
