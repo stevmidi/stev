@@ -1,0 +1,51 @@
+# Undo and Redo Restore the View Around the Edit
+
+**Status: design agreed 2026-11-11; not built.** Every undo step records what the user was looking at just before it and just after it: the selected track, the lead clip, the cursor and the marquee. An undo puts back the state before the edit, and a redo the state after it, whatever the user did in between. One mechanism for every clip and note edit, in place of the per-edit fields #3 added to four of them.
+
+## Background
+
+From #3 (landed `f86a54d`, 2026-11-11). An undo in the clip view could change the arrangement out of sight: a range delete's undo read the selection at undo time, after the delete had dropped it, so the clip came back in the arranger while the clip view stayed empty or on another clip. The fix settled on a rule (`050` § Undo from the clip view): **an undo restores the state before the edit and never moves the focus or the layout**; the loop and an armed performance lane are live state it never touches.
+
+#3 built that rule edit by edit. Range delete and cut, range mute, a marquee split and Insert Silence each take a `SelectionBefore` (`clip_edits/mod.rs`) in `edit()`, and their undo results carry it back in pieces: `selected_track_idx` and `selected_clip_id`, plus a `RestoredMarquee` the handler turns into the cursor and the marquee (`restore_marquee_workflow`). That left gaps, found by hand-testing and the code review that followed:
+
+- **Four undos still restore part of it.** Delete Time, Duplicate Time and Duplicate Clips put the marquee back without its cursor, and the marquee move puts the cursor at the marquee's start (`select_range_workflow`). Delete Time's undo inherits the delete's selection but drops its marquee.
+- **The marquee comes back on the wrong tracks** after the all-track cut (`⇧⌘X`) and Insert Silence: their commands carry only `start`/`end`, so the undo has no track span and keeps the current one.
+- **Redo isn't covered.** A redo reruns the edit, and its forward workflow picks the selection from wherever the cursor is now: a split's redo selects the piece under the current cursor, not the one the split selected.
+- **The shape repeats.** Four `EditResult` variants each carry the same three fields, every nested edit takes a `SelectionBefore` nobody reads (the splits inside `EdgeSplits`, Insert Silence's split), and each new edit has to remember the convention.
+
+What an undo or redo puts back doesn't depend on the edit. So it belongs where every edit passes: the undo record.
+
+## Decisions (2026-11-11)
+
+1. **The view state.** `ViewSnapshot { track: Option<Uuid>, lead_clip: Option<Uuid>, cursor_tick: i32, marquee: Option<TimeSelectionRect> }`, taken from the sequencer. The track by id, not index, so nothing depends on indices staying put. The marquee from the sequencer's mirror (decision 4).
+2. **Kept with the step.** The record holds `UndoStep { edit: SequencerEdit, before: ViewSnapshot, after: Cell<Option<ViewSnapshot>> }` instead of a bare `SequencerEdit`. `impl undo::Edit for UndoStep` passes `edit`, `undo` and `redo` through to the edit. `EventHandlers::record_edit` (`command_helpers.rs`), which every undoable step goes through, the agent bridge's writes included, takes `before` just before `undo_record.edit`, and fills `after` once `handle_edit_result` has run the edit's selection and marquee changes (`Record::get_entry(head - 1)`; the `undo` crate only lends entries immutably, hence the `Cell`). A merge keeps the first step's `before` and takes the newest `after`, so one drag undoes to where it started and redoes to where it ended. `Merged::Annul` removes the step, so `record_edit` checks the record shrank and fills nothing.
+3. **Applied once, after every undo and redo.** The `Undo` arm runs `handle_edit_result` for the clips, then `restore_view_workflow(step.before)`; the `Redo` arm the same with `step.after`. It puts back the track and lead clip (`reselect_surviving_clip`: the snapshot's track again, its lead clip if it is still there, else none; skipped while the performance lane is armed), the cursor (`set_cursor_tick`, the lead clip's cursor following), then the marquee, sent last so the view re-latches the cursor and track it is anchored to: `TimeSelectionSet` with its track span, or `TimeSelectionCleared` when there was none. The undo workflows stop reselecting and setting the marquee themselves.
+4. **The marquee from the sequencer's mirror, kept current by both sides.** `Sequencer::marquee()` already mirrors the view's marquee for the agent bridge (`SetMarquee`, from `Display::publish_marquee` once a frame, on a change). It holds the full rect, track span included, so the all-track cut and Insert Silence undo onto the tracks they had, with no new command fields. Two rules keep it current:
+   - **The view's changes**: a key's command is queued during a frame and sent at the start of the next, after `publish_marquee` ran at the end of the frame, so the mirror is current when a command arrives (checked 2026-11-11: `Display::ui` drains `input_event_rx` before `handle_input_events`, and publishes after).
+   - **The sequencer's own**: when a workflow moves the marquee (Duplicate onto the copy, Delete Time clearing it, a band press), it updates the mirror in the same step it sends the `UiEvent`, so `after` sees it at once rather than a frame later, when the view would echo it back. `TimeSelectionSet` then always names its track span: the sequencer resolves the fallback the view applies today (the current marquee's span, else the selected track) and sends the full rect, so the two sides can't resolve it differently.
+5. **Only clip and note edits put the view back.** As in Ableton (checked 2026-11-11: undoing a tempo change after drawing a marquee changes the tempo and keeps the marquee), a step restores the view only if it changed clips or notes: every clip edit, every event edit, the capture commit and insert, and the agent bridge's writes. The tempo, the meter, a track's name, its output and a knob mapping undo and redo with the view as it is. Track add and remove keep their own selection rules (`050` § Track add / remove: the added or restored track becomes the selected one). `SequencerEdit::restores_view`, an exhaustive match, so a new edit has to be placed.
+6. **Nothing else moves.** As in `050` § Undo from the clip view: no focus change and no layout change, and the loop region and the performance lane's arming are never restored. The clip view's own cursor and its note selection are not part of the snapshot: a note edit's undo already restores its event selection (`EventsModified`), and the clip cursor follows the arranger cursor.
+7. **The agent bridge's writes are recorded like any edit**, so ⌘Z after an agent write undoes it to what the user was looking at when it ran. The marquee mirror is also what the agent read from, so the two match.
+
+## What goes away
+
+- `SelectionBefore` and its `before` field on `DeleteInRangeEdit`, `MuteInRangeEdit`, `SplitClipsEdit` and `InsertSilenceEdit`; `SplitClipsEdit::from_marquee` and its stored marquee (the command's rect is enough for the edit itself).
+- `RestoredMarquee`, and every undo variant's marquee field: `restored_marquee` on `ClipsUnsplit`, `SilenceRemoved`, `RangeRestored` and `RangeUnmuted`; `restored_selection` on `TimeUndeleted`, `ClipsUnduplicated`, `TimeUnduplicated` and `RangeUnmoved`.
+- The undo variants' `selected_track_idx`/`selected_clip_id`, where they only served the undo (the forward variants keep theirs: "the selection sticks if the clip survived" is a forward rule). `PasteClipsEdit`'s selection taken at construction for its undo.
+- `restore_marquee_workflow`, and the undo half of `select_range_workflow` (the move's undo putting the cursor at the marquee's start).
+- The undo workflows' own reselects (`unsplit_clips_workflow`'s and the rest), now that one place does it.
+- The view's track-span fallback in its `TimeSelectionSet` handler (`ui_events.rs`), with the span always sent.
+
+## Things to check while building
+
+- **Merging**: a merged drag (`DragNotes`, `ResizeClip`, `DragEventsVelocity`, `SetTempo` bursts) undoes to where the first step started and redoes to where the last ended; an `Annul` leaves no `after` written to the step before it.
+- **The record's limit**: when the record drops its oldest step, nothing indexes by position, so nothing shifts (the snapshots live in the steps).
+- **The take session**: undo is blocked during it (`take_framing.rs`), so nothing new; the stopped `/` commit's undo (`ClipUncommitted`) still leaves the clip view when the open clip goes (`uncommit_clip_workflow`), before the snapshot lands.
+- **A snapshot naming a track or clip that is gone**: `reselect_surviving_clip` already checks `clip_on`; the track is looked up by id, and a missing one leaves the track selection as it is.
+- **Redo after the user moved on**: a split's redo selects the right-hand piece the split selected, not the piece under the current cursor; a Duplicate's redo puts the marquee on the copy again.
+- **The regression tests from #3** (`sequencer_handler.rs`: the range delete, the cross-track undo, the three marquee edits, no lead, the armed lane, `⌘L` in the clip view) keep passing unchanged: they describe behaviour, not the mechanism. Tests for the four undos, the redos, the all-track cut's tracks and a tempo undo that leaves the marquee alone join them.
+- **`050`** is rewritten for one mechanism (§ Invariants' long bullet becomes a paragraph about `UndoStep`), and `020` § Arranger Time Selection says an undo or redo puts the marquee back.
+
+## Phases
+
+One phase: `UndoStep` and `ViewSnapshot`, the restore after undo and redo, the mirror kept current, `restores_view`, the removals above, and the tests. The behaviour #3 built stays as it is; the four undos, the redos and the all-track cut catch up with it.
