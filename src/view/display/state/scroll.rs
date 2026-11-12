@@ -301,11 +301,35 @@ impl Display {
         // (it round-trips through the sequencer thread) for a click that
         // both starts a drag and reselects its track: the drag's anchor is
         // still set when it lands, so it's ignored here instead of wiping
-        // the selection mid-drag.
-        if (cursor_moved || track_changed) && self.gesture.time_selection_anchor.is_none() {
+        // the selection mid-drag. After a quick release the same move can
+        // still be on its way (`time_selection_settling`): it is let
+        // through until both have landed, and any other move collapses.
+        let settling = self.gesture.time_selection_settling.take();
+        let position = (cursor_tick, self.selected_track_idx);
+        let own_move = settling
+            .is_some_and(|anchor| is_drag_own_move(anchor, position, cursor_moved, track_changed));
+        if own_move {
+            self.gesture.time_selection_settling =
+                settling.filter(|&(tick, track_idx)| position != (tick, Some(track_idx)));
+        } else if (cursor_moved || track_changed) && self.gesture.time_selection_anchor.is_none() {
             self.gesture.time_selection = None;
         }
     }
+}
+
+/// Whether what moved this frame, the cursor or the selected track, moved to
+/// where a released marquee drag's press put it (`anchor`): the press's own
+/// move landing late rather than the user moving away. Nothing moving
+/// counts, since the move may still be on its way.
+fn is_drag_own_move(
+    anchor: (i32, usize),
+    (cursor_tick, selected_track): (i32, Option<usize>),
+    cursor_moved: bool,
+    track_changed: bool,
+) -> bool {
+    let (anchor_tick, anchor_track) = anchor;
+    (!cursor_moved || cursor_tick == anchor_tick)
+        && (!track_changed || selected_track == Some(anchor_track))
 }
 
 /// Upper bound for arranger `scroll_x`, in pixels: `last_content_tick` (the
@@ -379,13 +403,30 @@ fn followed_scroll_x(
 #[cfg(test)]
 mod tests {
     use super::{
-        arranger_max_scroll_x, clip_scroll_range, followed_scroll_x, rescaled_clip_scroll_x,
-        scrolled_offset,
+        arranger_max_scroll_x, clip_scroll_range, followed_scroll_x, is_drag_own_move,
+        rescaled_clip_scroll_x, scrolled_offset,
     };
     use crate::core::time::Meter;
     use crate::view::display::state::zoom::zoomed_scroll_x;
 
     const TWO_BARS: i32 = Meter::FOUR_FOUR.bars_to_ticks(2);
+
+    /// A released drag's press landing late (the track from the lane, then
+    /// the cursor) is its own move; a move anywhere else is the user's.
+    #[test]
+    fn a_released_drags_own_move_is_one_onto_its_anchor() {
+        let anchor = (960, 2);
+        // Nothing has landed yet, nothing moved.
+        assert!(is_drag_own_move(anchor, (0, None), false, false));
+        // The track lands, from the performance lane.
+        assert!(is_drag_own_move(anchor, (0, Some(2)), false, true));
+        // The cursor lands.
+        assert!(is_drag_own_move(anchor, (960, Some(2)), true, false));
+        // Another track, or another tick: the user moved.
+        assert!(!is_drag_own_move(anchor, (960, Some(1)), false, true));
+        assert!(!is_drag_own_move(anchor, (480, Some(2)), true, false));
+        assert!(!is_drag_own_move(anchor, (960, None), false, true));
+    }
 
     #[test]
     fn scroll_left_advances_and_right_rewinds() {

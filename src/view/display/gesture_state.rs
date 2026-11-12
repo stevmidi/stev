@@ -53,10 +53,16 @@ pub(super) struct GestureState {
     /// in `draw_time_selection` and tracks every cursor move for free.
     pub(super) time_selection: Option<TimeSelectionRect>,
     /// `(tick, track)` the current time selection drag was anchored at — the
-    /// track resolved via `track_idx_at` (clamped to track 0 for an anchor on
-    /// the performance-lane row). `Some` while the primary mouse button is
+    /// track resolved via `track_idx_at` (none for a press on the
+    /// performance-lane row). `Some` while the primary mouse button is
     /// held, so it doubles as the drag-active flag.
     pub(super) time_selection_anchor: Option<(i32, usize)>,
+    /// The anchor of a marquee drag just released, until the cursor and
+    /// track selection its press asked for have landed: both round-trip
+    /// through other threads, and one landing after a quick release is the
+    /// drag's own move, not a reason to collapse its marquee
+    /// (`sync_time_selection_to_cursor`).
+    pub(super) time_selection_settling: Option<(i32, usize)>,
     /// The marquee as last sent to the sequencer for the agent bridge
     /// ([`publish_marquee`](super::Display::publish_marquee)), so it is sent
     /// once per change.

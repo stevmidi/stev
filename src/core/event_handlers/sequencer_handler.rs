@@ -42,7 +42,9 @@ impl EventHandlers {
         // hold: none applies to them, and a write that can't run now says
         // why itself (`360-mcp-server.md` decision 13).
         match cmd {
-            SequencerCommand::SetMarquee(marquee) => return sequencer.set_marquee(*marquee),
+            SequencerCommand::SetMarquee(marquee) => {
+                return self.mirror_marquee_workflow(sequencer, *marquee);
+            }
             SequencerCommand::SetModalOpen(open) => return sequencer.set_modal_open(*open),
             SequencerCommand::Agent { request, reply } => {
                 let answer = match answer(request, sequencer, open.saved.name()) {
@@ -2026,6 +2028,37 @@ mod tests {
         assert_eq!(h.sequencer.selected_track_index(), None);
         assert_eq!(h.sequencer.selected_clip_id(), None);
         assert_eq!(h.sequencer.marquee(), None);
+    }
+
+    /// No marquee exists while the lane is armed, whatever asks for one:
+    /// the view's mirror and a workflow's are both refused, and the view is
+    /// told to drop its own.
+    #[test]
+    fn a_marquee_is_refused_while_the_performance_lane_is_armed() {
+        let (mut h, _, _) = harness_with_clip();
+        h.handlers
+            .select_performance_lane_workflow(&mut h.sequencer);
+        while h.ui_events.try_recv().is_ok() {}
+
+        h.handlers
+            .mirror_marquee_workflow(&mut h.sequencer, Some(rect(0, 1920, 0, 0)));
+        assert_eq!(h.sequencer.marquee(), None);
+        h.handlers
+            .set_marquee_workflow(&mut h.sequencer, rect(0, 1920, 0, 0));
+        assert_eq!(h.sequencer.marquee(), None);
+
+        let events: Vec<_> = h.ui_events.try_iter().collect();
+        assert_eq!(events.len(), 2);
+        assert!(
+            events
+                .iter()
+                .all(|event| matches!(event, UiEvent::TimeSelectionCleared))
+        );
+
+        h.handlers.select_track_workflow(&mut h.sequencer, 0);
+        h.handlers
+            .mirror_marquee_workflow(&mut h.sequencer, Some(rect(0, 1920, 0, 0)));
+        assert_eq!(h.sequencer.marquee(), Some(rect(0, 1920, 0, 0)));
     }
 
     /// A track selected from the lane disarms it and takes the clip under

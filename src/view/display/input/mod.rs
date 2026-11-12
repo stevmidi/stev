@@ -1043,7 +1043,11 @@ impl Display {
                 self.finish_browser_resize();
                 self.finish_midi_drag();
                 self.finish_plugin_drag();
-                self.gesture.time_selection_anchor = None;
+                // A marquee's press may still be on its way to the cursor
+                // and the track selection: keep its anchor until it lands.
+                let anchor = self.gesture.time_selection_anchor.take();
+                self.gesture.time_selection_settling =
+                    anchor.filter(|_| self.gesture.time_selection.is_some());
                 self.clear_event_marquee();
                 self.gesture.velocity_drag = None;
                 if self.gesture.note_drag.is_some() {

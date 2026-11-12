@@ -890,6 +890,7 @@ impl Display {
     fn clear_time_selection(&mut self) {
         self.gesture.time_selection = None;
         self.gesture.time_selection_anchor = None;
+        self.gesture.time_selection_settling = None;
     }
 
     /// Drops the hover cursor line and every view-local gesture — selection,

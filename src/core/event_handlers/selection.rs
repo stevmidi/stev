@@ -336,12 +336,33 @@ impl EventHandlers {
     /// would echo it back (`440-undo-view-state.md` decision 4). Sent after
     /// any cursor or track move of the same workflow: the view re-latches
     /// the cursor and track the marquee is anchored to when it arrives
-    /// (`020-views-and-state.md` § Arranger Time Selection).
+    /// (`020-views-and-state.md` § Arranger Time Selection). Refused while
+    /// the performance lane is armed, when no marquee exists
+    /// (`450-performance-lane-selection.md` decision 3): the view's is
+    /// dropped instead.
     pub(super) fn set_marquee_workflow(&self, sequencer: &mut Sequencer, rect: TimeSelectionRect) {
+        if sequencer.is_performance_lane_armed() {
+            return self.clear_marquee_workflow(sequencer);
+        }
         sequencer.set_marquee(Some(rect));
         self.ui_event_tx
             .send(UiEvent::TimeSelectionSet { rect })
             .ok();
+    }
+
+    /// Mirrors the view's marquee (`SequencerCommand::SetMarquee`). One
+    /// sent while the performance lane is armed, by a gesture that ran
+    /// before the view heard of the lane, is dropped on both sides, as in
+    /// [`set_marquee_workflow`](Self::set_marquee_workflow).
+    pub(super) fn mirror_marquee_workflow(
+        &self,
+        sequencer: &mut Sequencer,
+        marquee: Option<TimeSelectionRect>,
+    ) {
+        if marquee.is_some() && sequencer.is_performance_lane_armed() {
+            return self.clear_marquee_workflow(sequencer);
+        }
+        sequencer.set_marquee(marquee);
     }
 
     /// Drops the arranger marquee (`UiEvent::TimeSelectionCleared`), the
