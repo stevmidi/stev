@@ -56,9 +56,12 @@ What an undo or redo puts back doesn't depend on the edit. So it belongs where e
 
 ## As built (2026-11-12)
 
-- `reselect_surviving_clip` keeps one track switch: for a step whose lead clip is gone (or had none), where there is no clip to hand `select_clip_workflow`, it still selects the step's track. With a surviving lead, the switch is `select_clip_workflow`'s.
+- `reselect_surviving_clip` keeps its own track switch, made whenever the track moved: a step whose lead clip is gone (or had none) has no clip to hand `select_clip_workflow`, but its track still comes back. `select_clip_workflow`'s own switch then finds the track already selected.
 - An undo of a note edit made in another clip than the lead now makes that clip the lead again (decision 5); `undoing_a_note_edit_off_the_lead_redraws_that_clips_thumbnail` became `undoing_a_note_edit_off_the_lead_puts_its_clip_back_as_the_lead`. The thumbnail-only path stays for an agent write to a clip that isn't the lead.
-- `SplitClipsEdit::from_marquee` went back to `from_time_range_in_tracks`, its name before #3.
+- `SplitClipsEdit::from_marquee` stays, taking the rect without storing it.
+- `UndoStep`'s `undo` and `redo` return the view to put back with the result (`StepOutput`), so the command arms never index the record; `top_step` finds the step on top for `record_edit` and the note drag.
+- Duplicate Time freezes its marquee's tracks when the edit is made, so `TimeDuplicated::new_selection` is a full rect and a redo moves the marquee onto the same tracks.
+- `PasteLead::Clip` carries its track (Merge Clips knows it), and `restore_view_workflow` lives in `selection.rs` beside the marquee workflows.
 - The #3 tests set the marquee mirror before their commands, as the view does; otherwise they are unchanged.
 
 ## Phases

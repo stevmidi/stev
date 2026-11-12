@@ -67,9 +67,11 @@ impl PasteClipsEdit {
         let lead = targets
             .iter()
             .find(|(track_idx, _)| Some(*track_idx) == selected_track_idx)
-            .map(|(_, clip)| clip.id())
-            .or_else(|| sequencer.selected_clip_id())
-            .map_or(PasteLead::CursorRule, PasteLead::Clip);
+            .map(|(track_idx, clip)| (*track_idx, clip.id()))
+            .or_else(|| selected_track_idx.zip(sequencer.selected_clip_id()))
+            .map_or(PasteLead::CursorRule, |(track_idx, clip_id)| {
+                PasteLead::Clip { track_idx, clip_id }
+            });
         Self::from_targets(sequencer, targets, lead)
     }
 }
@@ -288,7 +290,14 @@ mod tests {
             panic!("expected ClipsPasted");
         };
 
-        assert_eq!(lead, PasteLead::Clip(pasted[0].clip_id));
+        let clip_id = pasted[0].clip_id;
+        assert_eq!(
+            lead,
+            PasteLead::Clip {
+                track_idx: 1,
+                clip_id
+            }
+        );
     }
 
     /// Merging while a merged-away clip's note sounds must not hang it.

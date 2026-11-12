@@ -55,7 +55,7 @@ pub(crate) use tempo_edit::{SetTempoEdit, TempoGesture};
 pub(crate) use track_edits::{
     AddTrackEdit, RemoveTrackEdit, RenameTrackEdit, SetKnobParamEdit, SetTrackOutputEdit,
 };
-pub(crate) use undo_step::{UndoStep, ViewSnapshot};
+pub(crate) use undo_step::{StepOutput, UndoStep, ViewSnapshot, top_step};
 
 /// Which clip a paste makes the lead (`EditResult::ClipsPasted`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -65,7 +65,12 @@ pub(crate) enum PasteLead {
     CursorRule,
     /// This clip, wherever the cursor sits (Merge Clips: the merged clip on
     /// the selected track, or the lead it already had).
-    Clip(Uuid),
+    Clip {
+        /// The clip's track.
+        track_idx: usize,
+        /// The clip.
+        clip_id: Uuid,
+    },
     /// This clip, selected the way a clip band press leaves it: the cursor
     /// on its start, its track selected, its span marqueed (the MIDI clip
     /// import — a dropped clip lands like a dropped band drag).
@@ -367,8 +372,9 @@ pub(crate) enum EditResult {
         split_added: Vec<ClipMetadata>,
         /// The clipboard clips added at the cursor.
         pasted: Vec<ClipMetadata>,
-        /// Arranger time selection the view should advance to.
-        new_selection: (i32, i32),
+        /// Arranger time selection the view should advance to, on the
+        /// tracks the marquee had.
+        new_selection: TimeSelectionRect,
     },
     /// Undo of "Duplicate Time": `unpasted` is every copied clip being removed,
     /// `shifted`/`split_updated`/`split_removed` mirror `SilenceRemoved`.

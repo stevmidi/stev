@@ -39,8 +39,12 @@ impl Sequencer {
 
     /// Index of the selected track in `tracks`, if any.
     pub(crate) fn selected_track_index(&self) -> Option<usize> {
-        let track_id = self.track_selection.selected_id()?;
-        self.tracks.iter().position(|t| t.id() == track_id)
+        self.track_index_by_id(self.track_selection.selected_id()?)
+    }
+
+    /// Index of the track with this id, if it is still there.
+    pub(crate) fn track_index_by_id(&self, id: Uuid) -> Option<usize> {
+        self.tracks.iter().position(|t| t.id() == id)
     }
 
     /// Id of the track at `idx`, if in range.

@@ -105,9 +105,7 @@ impl EventHandlers {
         let survivor = selected_track_idx
             .zip(selected_clip_id)
             .filter(|&(track_idx, clip_id)| sequencer.clip_on(track_idx, clip_id).is_some());
-        if survivor.is_none()
-            && let Some(track_idx) = selected_track_idx.filter(|_| track_moved)
-        {
+        if let Some(track_idx) = selected_track_idx.filter(|_| track_moved) {
             self.switch_track_workflow(sequencer, track_idx);
         }
         self.select_clip_workflow(sequencer, survivor);
@@ -306,9 +304,8 @@ impl EventHandlers {
                 let clip_to_select = cursor_clip_among(sequencer, pasted);
                 self.select_clip_workflow(sequencer, clip_to_select);
             }
-            PasteLead::Clip(clip_id) => {
-                let lead = sequencer.selected_track_index().map(|idx| (idx, clip_id));
-                self.select_clip_workflow(sequencer, lead);
+            PasteLead::Clip { track_idx, clip_id } => {
+                self.select_clip_workflow(sequencer, Some((track_idx, clip_id)));
             }
             PasteLead::ClipSpan { track_idx, clip_id } => {
                 self.select_clip_span_workflow(sequencer, track_idx, clip_id);

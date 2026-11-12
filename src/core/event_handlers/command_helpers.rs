@@ -4,7 +4,7 @@
 
 use undo::Record;
 
-use crate::core::sequencer::{SequencerEdit, UndoStep, ViewSnapshot};
+use crate::core::sequencer::{SequencerEdit, UndoStep, ViewSnapshot, top_step};
 
 use super::*;
 
@@ -41,15 +41,12 @@ impl EventHandlers {
         };
         let head = undo_record.head();
         let step = UndoStep::new(edit.into(), ViewSnapshot::of(sequencer));
-        let result = undo_record.edit(sequencer, step);
+        let (result, _) = undo_record.edit(sequencer, step);
         self.handle_edit_result(sequencer, result);
         if undo_record.head() >= head
-            && let Some(entry) = undo_record
-                .head()
-                .checked_sub(1)
-                .and_then(|top| undo_record.get_entry(top))
+            && let Some(step) = top_step(undo_record)
         {
-            entry.as_ref().set_after(ViewSnapshot::of(sequencer));
+            step.set_after(ViewSnapshot::of(sequencer));
         }
         true
     }

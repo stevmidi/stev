@@ -6,7 +6,7 @@
 
 use std::cell::Cell;
 
-use undo::{Edit, Merged};
+use undo::{Edit, Merged, Record};
 use uuid::Uuid;
 
 use crate::core::input_event::TimeSelectionRect;
@@ -78,13 +78,13 @@ impl UndoStep {
 
     /// The view an undo of this step puts back, `None` for an edit that
     /// leaves the view alone ([`SequencerEdit::restores_view`]).
-    pub(crate) fn view_before(&self) -> Option<ViewSnapshot> {
+    fn view_before(&self) -> Option<ViewSnapshot> {
         self.edit.restores_view().then_some(self.before)
     }
 
     /// The view a redo of this step puts back, `None` for an edit that
     /// leaves the view alone, or before `after` was filled.
-    pub(crate) fn view_after(&self) -> Option<ViewSnapshot> {
+    fn view_after(&self) -> Option<ViewSnapshot> {
         self.after.get().filter(|_| self.edit.restores_view())
     }
 
@@ -94,20 +94,31 @@ impl UndoStep {
     }
 }
 
+/// The step on top of `record`: the one last recorded or redone, which a
+/// merge goes into and the next undo takes back.
+pub(crate) fn top_step(record: &Record<UndoStep>) -> Option<&UndoStep> {
+    let top = record.head().checked_sub(1)?;
+    record.get_entry(top).map(|entry| entry.as_ref())
+}
+
+/// What a step's edit did, with the view an undo or redo of it puts back
+/// (`None` on the edit itself, and for an edit that leaves the view alone).
+pub(crate) type StepOutput = (EditResult, Option<ViewSnapshot>);
+
 impl Edit for UndoStep {
     type Target = Sequencer;
-    type Output = EditResult;
+    type Output = StepOutput;
 
-    fn edit(&mut self, target: &mut Sequencer) -> EditResult {
-        self.edit.edit(target)
+    fn edit(&mut self, target: &mut Sequencer) -> StepOutput {
+        (self.edit.edit(target), None)
     }
 
-    fn undo(&mut self, target: &mut Sequencer) -> EditResult {
-        self.edit.undo(target)
+    fn undo(&mut self, target: &mut Sequencer) -> StepOutput {
+        (self.edit.undo(target), self.view_before())
     }
 
-    fn redo(&mut self, target: &mut Sequencer) -> EditResult {
-        self.edit.redo(target)
+    fn redo(&mut self, target: &mut Sequencer) -> StepOutput {
+        (self.edit.redo(target), self.view_after())
     }
 
     /// Merges the edits (`SequencerEdit::merge`), keeping this step's

@@ -16,7 +16,7 @@ use crate::core::sequencer::{
     MuteInRangeEdit, MuteSelectedEventsEdit, NudgeSelectedEventsEdit,
     NudgeSelectedEventsLengthEdit, PasteClipsEdit, QuantizeEventsEdit, RenameTrackEdit,
     SequencerEdit, SetMeterEdit, SetTempoEdit, SetTrackOutputEdit, SplitClipsEdit, TempoGesture,
-    TransposeSelectedEventsEdit, UndoStep,
+    TransposeSelectedEventsEdit, UndoStep, top_step,
 };
 use crate::core::time::TapTempo;
 use crate::models::clip::ClipEdge;
@@ -145,14 +145,7 @@ impl EventHandlers {
             SequencerCommand::SplitClips { time_bounds } => {
                 let cursor = sequencer.cursor_tick();
                 let edit = match time_bounds {
-                    Some(rect) => SplitClipsEdit::from_time_range_in_tracks(
-                        sequencer,
-                        rect.track_start,
-                        rect.track_end,
-                        rect.start,
-                        rect.end,
-                        cursor,
-                    ),
+                    Some(rect) => SplitClipsEdit::from_marquee(sequencer, *rect, cursor),
                     None => SplitClipsEdit::from_selected_clip(sequencer, cursor),
                 };
                 self.record_edit(sequencer, undo_record, edit);
@@ -416,11 +409,7 @@ impl EventHandlers {
                 drag,
                 drag_id,
             } => {
-                let top = undo_record
-                    .head()
-                    .checked_sub(1)
-                    .and_then(|idx| undo_record.get_entry(idx))
-                    .map(|entry| entry.as_ref().sequencer_edit());
+                let top = top_step(undo_record).map(UndoStep::sequencer_edit);
                 let edit = DragNotesEdit::from_sequencer(
                     sequencer,
                     top,
@@ -602,25 +591,14 @@ impl EventHandlers {
             // The step's view goes back after its clips: the view before
             // the edit on an undo, after it on a redo (`UndoStep`).
             SequencerCommand::Undo => {
-                if let Some(result) = undo_record.undo(sequencer) {
-                    self.handle_edit_result(sequencer, result);
-                    let undone = undo_record.get_entry(undo_record.head());
-                    if let Some(view) = undone.and_then(|entry| entry.as_ref().view_before()) {
-                        self.restore_view_workflow(sequencer, view);
-                    }
+                if let Some(step) = undo_record.undo(sequencer) {
+                    self.handle_step_output(sequencer, step);
                 }
             }
 
             SequencerCommand::Redo => {
-                if let Some(result) = undo_record.redo(sequencer) {
-                    self.handle_edit_result(sequencer, result);
-                    let redone = undo_record
-                        .head()
-                        .checked_sub(1)
-                        .and_then(|idx| undo_record.get_entry(idx));
-                    if let Some(view) = redone.and_then(|entry| entry.as_ref().view_after()) {
-                        self.restore_view_workflow(sequencer, view);
-                    }
+                if let Some(step) = undo_record.redo(sequencer) {
+                    self.handle_step_output(sequencer, step);
                 }
             }
 
@@ -1718,7 +1696,7 @@ mod tests {
         let mut record = Record::new();
         run_command(&mut h, &mut record, stretch(note_id));
         assert!(play(&mut h, 480).is_empty());
-        let undone = record.undo(&mut h.sequencer).unwrap();
+        let (undone, _) = record.undo(&mut h.sequencer).unwrap();
         h.handlers.handle_edit_result(&mut h.sequencer, undone);
         assert_eq!(play(&mut h, 1320), vec![(600, 60, false)]);
     }

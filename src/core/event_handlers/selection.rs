@@ -7,6 +7,7 @@
 //! sequencer moves it too (`set_marquee_workflow`), keeping its mirror current.
 
 use crate::core::input_event::TimeSelectionRect;
+use crate::core::sequencer::ViewSnapshot;
 
 use super::*;
 
@@ -276,13 +277,37 @@ impl EventHandlers {
         self.select_clip_workflow(sequencer, Some((track_idx, clip_id)));
         sequencer.sync_selected_clip_cursor_with_arranger();
 
-        let rect = TimeSelectionRect {
-            start,
-            end,
-            track_start: track_idx,
-            track_end: track_idx,
-        };
+        let rect = TimeSelectionRect::spanning(start, end, track_idx, track_idx);
         self.set_marquee_workflow(sequencer, rect);
+    }
+
+    // --- Undo and redo ---
+
+    /// Puts back the view an undo step recorded (`UndoStep`): before the
+    /// edit after an undo, after it after a redo, whatever the user did in
+    /// between. The track and the lead clip first (the lead if it is still
+    /// on that track, else none; a track that is gone leaves the selection
+    /// as it is, and an armed performance lane is never disarmed —
+    /// `reselect_surviving_clip`), then the cursor (the lead clip's cursor
+    /// following), then the marquee, sent last so the view re-latches the
+    /// cursor and track it is anchored to (`020-views-and-state.md`). The
+    /// focus, the layout, the loop and playback are untouched
+    /// (`440-undo-view-state.md` decision 6).
+    pub(super) fn restore_view_workflow(&self, sequencer: &mut Sequencer, view: ViewSnapshot) {
+        let track_idx = view
+            .track
+            .and_then(|id| sequencer.tracks().iter().position(|track| track.id() == id));
+        if let Some(track_idx) = track_idx {
+            self.reselect_surviving_clip(sequencer, Some(track_idx), view.lead_clip);
+        }
+        sequencer.set_cursor_tick(view.cursor_tick);
+        sequencer.sync_selected_clip_cursor_with_arranger();
+        match view.marquee {
+            Some(rect) => self.set_marquee_workflow(sequencer, rect),
+            None => self.clear_marquee_workflow(sequencer),
+        }
+        // A lead clip put back carries its own event selection.
+        self.publish_event_selection(sequencer);
     }
 
     // --- Marquee ---

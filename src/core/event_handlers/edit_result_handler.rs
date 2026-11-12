@@ -2,41 +2,23 @@
 //! turned into `UiEvent`s — called from every `undo_record.edit/undo/redo`
 //! arm. One match on the result's variant fans out clip-added / -updated /
 //! -removed and event-updated notifications. What an undo or redo puts back
-//! of the view is not in the result but in the step
-//! (`restore_view_workflow`). See `050-undo-redo.md`.
+//! of the view is not in the result but in the step (`handle_step_output`,
+//! `selection.rs`'s `restore_view_workflow`). See `050-undo-redo.md`.
 
-use crate::core::input_event::TimeSelectionRect;
-use crate::core::sequencer::{EditResult, PasteLead, ViewSnapshot};
+use crate::core::sequencer::{EditResult, PasteLead, StepOutput};
 
 use super::clip_range_edits::CarveResult;
 use super::*;
 
 impl EventHandlers {
-    /// Puts back the view an undo step recorded (`UndoStep`): before the
-    /// edit after an undo, after it after a redo, whatever the user did in
-    /// between. The track and the lead clip first (the lead if it is still
-    /// on that track, else none; a track that is gone leaves the selection
-    /// as it is, and an armed performance lane is never disarmed —
-    /// `reselect_surviving_clip`), then the cursor (the lead clip's cursor
-    /// following), then the marquee, sent last so the view re-latches the
-    /// cursor and track it is anchored to (`020-views-and-state.md`). The
-    /// focus, the layout, the loop and playback are untouched
-    /// (`440-undo-view-state.md` decision 6).
-    pub(super) fn restore_view_workflow(&self, sequencer: &mut Sequencer, view: ViewSnapshot) {
-        let track_idx = view
-            .track
-            .and_then(|id| sequencer.tracks().iter().position(|track| track.id() == id));
-        if let Some(track_idx) = track_idx {
-            self.reselect_surviving_clip(sequencer, Some(track_idx), view.lead_clip);
+    /// An undo or redo: the clips first (`handle_edit_result`), then the
+    /// view the step puts back, if any (`restore_view_workflow`).
+    pub(super) fn handle_step_output(&self, sequencer: &mut Sequencer, step: StepOutput) {
+        let (result, view) = step;
+        self.handle_edit_result(sequencer, result);
+        if let Some(view) = view {
+            self.restore_view_workflow(sequencer, view);
         }
-        sequencer.set_cursor_tick(view.cursor_tick);
-        sequencer.sync_selected_clip_cursor_with_arranger();
-        match view.marquee {
-            Some(rect) => self.set_marquee_workflow(sequencer, rect),
-            None => self.clear_marquee_workflow(sequencer),
-        }
-        // A lead clip put back carries its own event selection.
-        self.publish_event_selection(sequencer);
     }
 
     /// Dispatch UI side-effects based on what an edit/undo/redo did. Called
@@ -258,9 +240,8 @@ impl EventHandlers {
                 // Reuse both halves' workflows verbatim: the insert-silence half
                 // first (shifted / split clips), then the paste half (the copy),
                 // then advance the Arranger time selection onto the copy, on
-                // the marquee's tracks (the edit spans every track, so it
-                // names none), else the selected track's. The paste carve
-                // buckets are always empty — the gap is pre-cleared.
+                // the tracks the edit froze. The paste carve buckets are
+                // always empty — the gap is pre-cleared.
                 self.insert_silence_workflow(sequencer, &shifted, &split_updated, &split_added);
                 self.paste_clips_workflow(
                     sequencer,
@@ -268,19 +249,7 @@ impl EventHandlers {
                     &pasted,
                     PasteLead::CursorRule,
                 );
-                let (track_start, track_end) = sequencer
-                    .marquee()
-                    .map(|rect| (rect.track_start, rect.track_end))
-                    .or_else(|| sequencer.selected_track_index().map(|idx| (idx, idx)))
-                    .unwrap_or_default();
-                let (start, end) = new_selection;
-                let rect = TimeSelectionRect {
-                    start,
-                    end,
-                    track_start,
-                    track_end,
-                };
-                self.set_marquee_workflow(sequencer, rect);
+                self.set_marquee_workflow(sequencer, new_selection);
             }
             EditResult::TimeUnduplicated {
                 unpasted,

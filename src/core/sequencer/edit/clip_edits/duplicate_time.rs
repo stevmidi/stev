@@ -3,6 +3,8 @@
 //! [`InsertSilenceEdit`] + [`PasteClipsEdit`]. Plain `⌘/Ctrl+D` is the
 //! non-shifting `DuplicateClipsEdit` next door.
 
+use crate::core::input_event::TimeSelectionRect;
+
 use super::super::super::Sequencer;
 use super::super::EditResult;
 use super::insert_silence::InsertSilenceEdit;
@@ -43,6 +45,12 @@ pub(crate) struct DuplicateTimeEdit {
     start: i32,
     /// High tick of the duplicated span — also the insertion point.
     end: i32,
+    /// The tracks the marquee covers once it moves on to the copy: the
+    /// marquee's as the sequencer mirrors it when the command arrives, else
+    /// the selected track. The edit itself spans every track, so its command
+    /// names none; frozen here so a redo moves the marquee onto the same
+    /// tracks.
+    tracks: (usize, usize),
     /// Opens the gap at `end`. `None` when `InsertSilenceEdit::from_time_range`
     /// finds nothing at or after `end` to move — the paste still happens, into
     /// the already-empty `[end, end + width)` span.
@@ -77,9 +85,16 @@ impl DuplicateTimeEdit {
         // inserts `width` ticks at `end`.
         let insert = InsertSilenceEdit::from_time_range(sequencer, end, end + width);
 
+        let tracks = sequencer
+            .marquee()
+            .map(|rect| (rect.track_start, rect.track_end))
+            .or_else(|| sequencer.selected_track_index().map(|idx| (idx, idx)))
+            .unwrap_or_default();
+
         Some(Self {
             start,
             end,
+            tracks,
             insert,
             paste,
             region_shifted: None,
@@ -137,7 +152,12 @@ impl DuplicateTimeEdit {
             split_updated,
             split_added,
             pasted,
-            new_selection: (self.end, self.end + (self.end - self.start)),
+            new_selection: TimeSelectionRect::spanning(
+                self.end,
+                self.end + (self.end - self.start),
+                self.tracks.0,
+                self.tracks.1,
+            ),
         }
     }
 
@@ -246,7 +266,7 @@ mod tests {
 
         assert_eq!(pasted.len(), 2);
         assert_eq!(shifted.len(), 1); // the [200,300) clip on track 0
-        assert_eq!(new_selection, (100, 200));
+        assert_eq!(new_selection, TimeSelectionRect::spanning(100, 200, 0, 0));
         // Unlike plain `⌘D` (`DuplicateClipsEdit`), the [200,300) clip is
         // pushed to [300,400) rather than overwritten.
         assert_eq!(
