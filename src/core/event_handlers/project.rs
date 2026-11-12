@@ -13,7 +13,7 @@ use crate::{
         project::{
             self, Followed, LibraryChange, ProjectAction, ProjectData, ProjectOrigin, StagedProject,
         },
-        sequencer::{ExportRefusal, PasteClipsEdit, SequencerEdit},
+        sequencer::{ExportRefusal, PasteClipsEdit, UndoStep},
     },
     models::{clip::Clip, track::TrackOutput},
 };
@@ -33,7 +33,7 @@ impl EventHandlers {
     fn load_project_workflow(
         &self,
         sequencer: &mut Sequencer,
-        undo_record: &mut Record<SequencerEdit>,
+        undo_record: &mut Record<UndoStep>,
         saved: &mut SavedProject,
         data: ProjectData,
         filename: Option<String>,
@@ -83,7 +83,7 @@ impl EventHandlers {
     fn open_project_workflow(
         &self,
         sequencer: &mut Sequencer,
-        undo_record: &mut Record<SequencerEdit>,
+        undo_record: &mut Record<UndoStep>,
         open: &mut OpenProject,
         folder: Option<&str>,
         filename: &str,
@@ -111,7 +111,7 @@ impl EventHandlers {
     fn open_file_workflow(
         &self,
         sequencer: &mut Sequencer,
-        undo_record: &mut Record<SequencerEdit>,
+        undo_record: &mut Record<UndoStep>,
         open: &mut OpenProject,
         path: &Path,
     ) {
@@ -142,7 +142,7 @@ impl EventHandlers {
     fn new_from_template_workflow(
         &self,
         sequencer: &mut Sequencer,
-        undo_record: &mut Record<SequencerEdit>,
+        undo_record: &mut Record<UndoStep>,
         open: &mut OpenProject,
         path: &Path,
     ) {
@@ -162,10 +162,9 @@ impl EventHandlers {
     }
 
     /// A project or template `name` that couldn't be read: the footer says
-    /// why, and the open project stays.
+    /// why, and the open project stays, the focus with it.
     fn open_failed(&self, name: &str, e: impl Display) {
         self.send_status_ui_event(format!("Could not open {name}: {e}"));
-        self.set_view_state(ViewState::Arranger);
     }
 
     /// A project just read from disk: without plugins, applies it at once.
@@ -176,7 +175,7 @@ impl EventHandlers {
     fn open_read_project_workflow(
         &self,
         sequencer: &mut Sequencer,
-        undo_record: &mut Record<SequencerEdit>,
+        undo_record: &mut Record<UndoStep>,
         open: &mut OpenProject,
         project: StagedProject,
     ) {
@@ -206,7 +205,7 @@ impl EventHandlers {
     pub(super) fn apply_staged_project_workflow(
         &self,
         sequencer: &mut Sequencer,
-        undo_record: &mut Record<SequencerEdit>,
+        undo_record: &mut Record<UndoStep>,
         open: &mut OpenProject,
     ) {
         let Some(StagedProject {
@@ -240,7 +239,7 @@ impl EventHandlers {
     pub(super) fn answer_recovery_workflow(
         &self,
         sequencer: &mut Sequencer,
-        undo_record: &mut Record<SequencerEdit>,
+        undo_record: &mut Record<UndoStep>,
         open: &mut OpenProject,
         restore: bool,
     ) {
@@ -269,7 +268,7 @@ impl EventHandlers {
     pub(super) fn project_action_workflow(
         &self,
         sequencer: &mut Sequencer,
-        undo_record: &mut Record<SequencerEdit>,
+        undo_record: &mut Record<UndoStep>,
         open: &mut OpenProject,
         action: &ProjectAction,
         discard_changes: bool,
@@ -380,7 +379,7 @@ impl EventHandlers {
     pub(super) fn import_clip_workflow(
         &self,
         sequencer: &mut Sequencer,
-        undo_record: &mut Record<SequencerEdit>,
+        undo_record: &mut Record<UndoStep>,
         clip: &Clip,
         name: &str,
         target: Option<(usize, i32)>,
@@ -561,7 +560,7 @@ mod tests {
 
     use crate::core::event_handlers::test_harness::harness;
     use crate::core::project::{ProjectData, StagedProject, TrackOutputData};
-    use crate::core::sequencer::SequencerEdit;
+    use crate::core::sequencer::UndoStep;
     use crate::core::transport::TransportCommand;
     use crate::models::track::{InstrumentRef, TrackOutput};
     use crate::view::display::UiEvent;
@@ -606,7 +605,7 @@ mod tests {
     #[test]
     fn a_project_with_plugins_is_staged_before_it_is_applied() {
         let mut h = harness();
-        let mut record: Record<SequencerEdit> = Record::new();
+        let mut record: Record<UndoStep> = Record::new();
         let tempo = h.sequencer.tempo_us();
 
         h.handlers.open_read_project_workflow(
@@ -649,7 +648,7 @@ mod tests {
     #[test]
     fn a_project_without_plugins_is_applied_at_once() {
         let mut h = harness();
-        let mut record: Record<SequencerEdit> = Record::new();
+        let mut record: Record<UndoStep> = Record::new();
 
         h.handlers.open_read_project_workflow(
             &mut h.sequencer,

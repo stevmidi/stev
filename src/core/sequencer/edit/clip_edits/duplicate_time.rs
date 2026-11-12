@@ -3,8 +3,6 @@
 //! [`InsertSilenceEdit`] + [`PasteClipsEdit`]. Plain `⌘/Ctrl+D` is the
 //! non-shifting `DuplicateClipsEdit` next door.
 
-use uuid::Uuid;
-
 use super::super::super::Sequencer;
 use super::super::EditResult;
 use super::insert_silence::InsertSilenceEdit;
@@ -154,19 +152,9 @@ impl DuplicateTimeEdit {
         }
 
         let mut unpasted = Vec::new();
-        let mut selected_track_idx = None;
-        let mut selected_clip_id: Option<Uuid> = None;
 
-        if let EditResult::ClipsUnpasted {
-            unpasted: u,
-            selected_track_idx: sti,
-            selected_clip_id: sci,
-            ..
-        } = self.paste.undo(sequencer)
-        {
+        if let EditResult::ClipsUnpasted { unpasted: u, .. } = self.paste.undo(sequencer) {
             unpasted = u;
-            selected_track_idx = sti;
-            selected_clip_id = sci;
         }
 
         let mut shifted = Vec::new();
@@ -191,9 +179,6 @@ impl DuplicateTimeEdit {
             shifted,
             split_updated,
             split_removed,
-            selected_track_idx,
-            selected_clip_id,
-            restored_selection: (self.start, self.end),
         }
     }
 }
@@ -270,13 +255,9 @@ mod tests {
         );
         assert_eq!(starts(&sequencer, 1), vec![(0, 100), (100, 200)]);
 
-        let EditResult::TimeUnduplicated {
-            restored_selection, ..
-        } = edit.undo(&mut sequencer)
-        else {
+        let EditResult::TimeUnduplicated { .. } = edit.undo(&mut sequencer) else {
             panic!("expected TimeUnduplicated");
         };
-        assert_eq!(restored_selection, (0, 100));
         assert_eq!(starts(&sequencer, 0), vec![(0, 100), (200, 300)]);
         assert_eq!(starts(&sequencer, 1), vec![(0, 100)]);
     }

@@ -10,7 +10,7 @@ use undo::Record;
 use crate::{
     core::{
         config::MAX_TRACKS,
-        sequencer::{AddTrackEdit, RemoveTrackEdit, SequencerEdit, SetKnobParamEdit},
+        sequencer::{AddTrackEdit, RemoveTrackEdit, SetKnobParamEdit, UndoStep},
     },
     models::knobs::{ParamId, param_taken_message},
     models::track::{InstrumentRef, TrackOutput, TrackShift},
@@ -79,7 +79,7 @@ impl EventHandlers {
     pub(super) fn set_knob_param_workflow(
         &self,
         sequencer: &mut Sequencer,
-        undo_record: &mut Record<SequencerEdit>,
+        undo_record: &mut Record<UndoStep>,
         track_idx: usize,
         knob: usize,
         param: Option<ParamId>,
@@ -118,7 +118,7 @@ impl EventHandlers {
     pub(super) fn add_track_workflow(
         &self,
         sequencer: &mut Sequencer,
-        undo_record: &mut Record<SequencerEdit>,
+        undo_record: &mut Record<UndoStep>,
         track_idx: Option<usize>,
     ) {
         let edit = AddTrackEdit::new(sequencer, track_idx);
@@ -135,7 +135,7 @@ impl EventHandlers {
     pub(super) fn remove_track_workflow(
         &self,
         sequencer: &mut Sequencer,
-        undo_record: &mut Record<SequencerEdit>,
+        undo_record: &mut Record<UndoStep>,
         track_idx: Option<usize>,
     ) {
         let edit = RemoveTrackEdit::new(sequencer, track_idx);
@@ -173,12 +173,14 @@ impl EventHandlers {
     }
 
     /// The track at `track_idx` left the arrangement
-    /// (`EditResult::TrackRemoved`): out of the clip view if it showed one of
-    /// its clips, the view's mirror (with the shift — the view drops the
-    /// track's clip shapes and the marquee, and moves its selection), its
-    /// plugin in `slot` torn down. If it was the selected track, the one that
-    /// took its place is selected (the one above when it was the last);
-    /// otherwise the selection stays on its track.
+    /// (`EditResult::TrackRemoved`): the view's mirror (with the shift — the
+    /// view drops the track's clip shapes and the marquee, and moves its
+    /// selection), its plugin in `slot` torn down. If it was the selected
+    /// track, the one that took its place is selected (the one above when it
+    /// was the last); otherwise the selection stays on its track. The clip
+    /// view keeps the keyboard if it had it (an undone add or a redone
+    /// remove), on the track taking its place: only the user moves the focus
+    /// (`440-undo-view-state.md` decision 6).
     pub(super) fn track_removed_workflow(
         &self,
         sequencer: &mut Sequencer,
@@ -187,9 +189,6 @@ impl EventHandlers {
         slot: usize,
     ) {
         let was_selected = sequencer.selected_track_id() == Some(track_id);
-        if was_selected && self.view_state() == ViewState::Clip {
-            self.exit_clip_workflow(sequencer);
-        }
         self.emit_tracks(sequencer, Some(TrackShift::Removed(track_idx)));
         self.send_slot_instrument(slot, track_id, None);
         if was_selected {
@@ -207,6 +206,7 @@ mod tests {
     use crate::core::event_handlers::test_harness::{Harness, harness, run_command};
     use crate::core::sequencer::SequencerCommand;
     use crate::core::sequencer::test_support::stub_instrument;
+    use crate::core::view_state::ViewState;
     use crate::models::track::TrackShift;
     use crate::view::display::UiEvent;
 
@@ -226,6 +226,31 @@ mod tests {
     /// Where in `events` the first one `pick` matches sits.
     fn position(events: &[UiEvent], pick: impl Fn(&UiEvent) -> bool) -> usize {
         events.iter().position(pick).expect("event sent")
+    }
+
+    /// Undoing the add of the selected track from the clip view keeps the
+    /// clip view, on the track taking its place: only the user moves the
+    /// keyboard (`440-undo-view-state.md` decision 6). It used to leave to
+    /// the arranger.
+    #[test]
+    fn undoing_an_add_from_the_clip_view_keeps_the_clip_view() {
+        let mut h = harness();
+        let mut record = Record::new();
+        run_command(
+            &mut h,
+            &mut record,
+            SequencerCommand::AddTrack { track_idx: None },
+        );
+        assert_eq!(h.sequencer.selected_track_index(), Some(1));
+        run_command(&mut h, &mut record, SequencerCommand::EnterClip);
+        ui_events(&h);
+
+        run_command(&mut h, &mut record, SequencerCommand::Undo);
+
+        assert_eq!(h.handlers.view_state(), ViewState::Clip);
+        assert_eq!(h.sequencer.selected_track_index(), Some(1));
+        let events = ui_events(&h);
+        assert!(!events.iter().any(|e| matches!(e, UiEvent::ClipExited)));
     }
 
     #[test]

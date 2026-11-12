@@ -38,7 +38,7 @@ use crate::core::config::MAX_TRACKS;
 use crate::core::midi::message::Controller;
 use crate::core::project::{STRESS_BLOB_BYTES, STRESS_EVENTS, fill_stress_project};
 use crate::core::sequencer::test_support::{clip_at, mod_at};
-use crate::core::sequencer::{SequencerCommand, SequencerEdit};
+use crate::core::sequencer::{SequencerCommand, UndoStep};
 use crate::core::time::PPQN;
 use crate::models::clip::NoteDrag;
 use crate::models::event::{Event, EventType};
@@ -152,16 +152,16 @@ struct Edit {
     /// The row's label.
     name: &'static str,
     /// Run untimed before the command, after the warm check.
-    setup: fn(&mut Harness, &mut Record<SequencerEdit>),
+    setup: fn(&mut Harness, &mut Record<UndoStep>),
     /// The command to time.
     command: fn(&Harness) -> SequencerCommand,
 }
 
 /// No setup.
-fn none(_: &mut Harness, _: &mut Record<SequencerEdit>) {}
+fn none(_: &mut Harness, _: &mut Record<UndoStep>) {}
 
 /// The take's first note selected.
-fn select_first_note(h: &mut Harness, record: &mut Record<SequencerEdit>) {
+fn select_first_note(h: &mut Harness, record: &mut Record<UndoStep>) {
     let id = first_note(h);
     run_command(h, record, SequencerCommand::SelectClipEvent(Some(id)));
 }
@@ -266,7 +266,7 @@ fn drain(h: &Harness) {
 /// Times `edit` of a take of `bars` bars over [`ROUNDS`].
 fn measure(bars: i32, edit: &Edit) -> Row {
     let mut h = long_take_harness(bars);
-    let mut record: Record<SequencerEdit> = Record::new();
+    let mut record: Record<UndoStep> = Record::new();
     let mut at = Instant::now();
     let mut row = Row::default();
     for _ in 0..ROUNDS {

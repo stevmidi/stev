@@ -14,27 +14,22 @@ impl EventHandlers {
     /// sequencer.
     pub(super) fn commit_clip_workflow(&self, sequencer: &mut Sequencer, clip: &ClipMetadata) {
         self.send_clips_added_ui_event(slice::from_ref(clip));
-        self.select_clip_workflow(sequencer, Some(clip.clip_id));
+        self.select_clip_workflow(sequencer, Some((clip.track_idx, clip.clip_id)));
         sequencer.reset();
     }
 
     /// Undo of a clip commit (`EditResult::ClipUncommitted`): the clip has
-    /// already been lifted off its track. If it is the clip open in the clip
-    /// view — the user opened the clip after committing it — leave to the
-    /// Arranger through `exit_clip_workflow` (the lifted clip has no view to
-    /// refresh). Then drop it from the selection (telling the view the lead
-    /// clip is gone) and, last, remove its shape.
+    /// already been lifted off its track. If it was the lead clip, it stops
+    /// being it (telling the view the lead clip is gone), then its shape
+    /// goes. The clip view stays where it is, docked or maximized, on "No
+    /// clip at the cursor" if it showed this clip, as after undoing a delete
+    /// that took the lead clip: only the user moves the keyboard
+    /// (`440-undo-view-state.md` decision 6).
     pub(super) fn uncommit_clip_workflow(&self, sequencer: &mut Sequencer, clip: &ClipMetadata) {
         sequencer.reset();
 
-        let was_selected = sequencer.selected_clip_id() == Some(clip.clip_id);
-
-        if was_selected {
-            if self.view_state() == ViewState::Clip {
-                self.exit_clip_workflow(sequencer);
-            }
+        if sequencer.selected_clip_id() == Some(clip.clip_id) {
             self.select_clip_workflow(sequencer, None);
-            self.send_lead_clip_changed_ui_event(None);
         }
 
         self.send_clips_removed_ui_event(slice::from_ref(clip));

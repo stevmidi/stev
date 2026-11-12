@@ -3,7 +3,10 @@
 //! Selection is model state (not undoable), but changing it fans out a wave of
 //! `UiEvent`s and, for tracks, re-arms live input. `publish_event_selection` mirrors
 //! whether any event is selected into `SharedAtomics::has_event_selection`
-//! for the UI thread's key routing.
+//! for the UI thread's key routing. The marquee is the view's, but the
+//! sequencer moves it too (`set_marquee_workflow`), keeping its mirror current.
+
+use crate::core::input_event::TimeSelectionRect;
 
 use super::*;
 
@@ -16,7 +19,7 @@ impl EventHandlers {
     pub(crate) fn select_track_workflow(&self, sequencer: &mut Sequencer, new_idx: usize) {
         if self.switch_track_workflow(sequencer, new_idx) {
             let clip_id = sequencer.find_selected_track_clip_id_at_cursor();
-            self.select_clip_workflow(sequencer, clip_id);
+            self.select_clip_workflow(sequencer, clip_id.map(|id| (new_idx, id)));
         }
     }
 
@@ -72,12 +75,26 @@ impl EventHandlers {
         self.send_performance_lane_selected_ui_event();
     }
 
-    /// Sets the lead clip selection to `new_id` (`None` clears). The lead
-    /// clip is what `Shift+Tab` opens, `/` inserts into and the clip view
-    /// shows; the arranger deliberately draws no "selected clip" (see
-    /// `030-ui-design.md` § `draw_clip_body`). A change of lead goes through
-    /// [`Self::change_lead_clip`].
-    pub(super) fn select_clip_workflow(&self, sequencer: &mut Sequencer, new_id: Option<Uuid>) {
+    /// Makes `lead`, a clip and the track it is on, the lead clip (`None`
+    /// clears it). The lead clip lives on the selected track — the clip
+    /// view looks it up there — so a clip on another track selects that
+    /// track first (`switch_track_workflow`, which disarms the performance
+    /// lane as any track selection does), and no caller can make a lead in
+    /// name only. The lead clip is what `Shift+Tab` opens, `/` inserts into
+    /// and the clip view shows; the arranger deliberately draws no "selected
+    /// clip" (see `030-ui-design.md` § `draw_clip_body`). A change of lead
+    /// goes through [`Self::change_lead_clip`].
+    pub(super) fn select_clip_workflow(
+        &self,
+        sequencer: &mut Sequencer,
+        lead: Option<(usize, Uuid)>,
+    ) {
+        if let Some((track_idx, _)) = lead
+            && sequencer.selected_track_index() != Some(track_idx)
+        {
+            self.switch_track_workflow(sequencer, track_idx);
+        }
+        let new_id = lead.map(|(_, clip_id)| clip_id);
         self.change_lead_clip(sequencer, new_id, |sequencer| {
             sequencer.select_clip(new_id);
         });
@@ -218,7 +235,8 @@ impl EventHandlers {
     pub(super) fn sync_clip_selection_to_cursor_workflow(&self, sequencer: &mut Sequencer) {
         self.cancel_take_framing_workflow(sequencer);
         let clip_id = sequencer.find_selected_track_clip_id_at_cursor();
-        self.select_clip_workflow(sequencer, clip_id);
+        let lead = sequencer.selected_track_index().zip(clip_id);
+        self.select_clip_workflow(sequencer, lead);
         sequencer.sync_selected_clip_cursor_with_arranger();
     }
 
@@ -255,10 +273,40 @@ impl EventHandlers {
 
         sequencer.set_cursor_tick(start);
         self.switch_track_workflow(sequencer, track_idx);
-        self.select_clip_workflow(sequencer, Some(clip_id));
+        self.select_clip_workflow(sequencer, Some((track_idx, clip_id)));
         sequencer.sync_selected_clip_cursor_with_arranger();
 
-        self.send_time_selection_set_ui_event(start, end, Some((track_idx, track_idx)));
+        let rect = TimeSelectionRect {
+            start,
+            end,
+            track_start: track_idx,
+            track_end: track_idx,
+        };
+        self.set_marquee_workflow(sequencer, rect);
+    }
+
+    // --- Marquee ---
+
+    /// Puts the arranger marquee on `rect` (`UiEvent::TimeSelectionSet`),
+    /// its track span always named. The sequencer's mirror of the marquee
+    /// (`Sequencer::marquee`) is set in the same step, so an undo step's
+    /// `after` sees it at once rather than a frame later, when the view
+    /// would echo it back (`440-undo-view-state.md` decision 4). Sent after
+    /// any cursor or track move of the same workflow: the view re-latches
+    /// the cursor and track the marquee is anchored to when it arrives
+    /// (`020-views-and-state.md` § Arranger Time Selection).
+    pub(super) fn set_marquee_workflow(&self, sequencer: &mut Sequencer, rect: TimeSelectionRect) {
+        sequencer.set_marquee(Some(rect));
+        self.ui_event_tx
+            .send(UiEvent::TimeSelectionSet { rect })
+            .ok();
+    }
+
+    /// Drops the arranger marquee (`UiEvent::TimeSelectionCleared`), the
+    /// mirror with it, as [`set_marquee_workflow`](Self::set_marquee_workflow).
+    pub(super) fn clear_marquee_workflow(&self, sequencer: &mut Sequencer) {
+        sequencer.set_marquee(None);
+        self.ui_event_tx.send(UiEvent::TimeSelectionCleared).ok();
     }
 }
 

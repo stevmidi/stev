@@ -1,6 +1,6 @@
 # Undo and Redo Restore the View Around the Edit
 
-**Status: design agreed 2026-11-11; not built.** Every undo step records what the user was looking at just before it and just after it: the selected track, the lead clip, the cursor and the marquee. An undo puts back the state before the edit, and a redo the state after it, whatever the user did in between. One mechanism for every clip and note edit, in place of the per-edit fields #3 added to four of them.
+**Status: design agreed 2026-11-11; built 2026-11-12 (the one phase; as-built in `050` § Undo and the view, `020` § Arranger Time Selection).** Every undo step records what the user was looking at just before it and just after it: the selected track, the lead clip, the cursor and the marquee. An undo puts back the state before the edit, and a redo the state after it, whatever the user did in between. One mechanism for every clip and note edit, in place of the per-edit fields #3 added to four of them.
 
 ## Background
 
@@ -53,6 +53,13 @@ What an undo or redo puts back doesn't depend on the edit. So it belongs where e
 - **Redo after the user moved on**: a split's redo selects the right-hand piece the split selected, not the piece under the current cursor; a Duplicate's redo puts the marquee on the copy again.
 - **The regression tests from #3** (`sequencer_handler.rs`: the range delete, the cross-track undo, the three marquee edits, no lead, the armed lane, `⌘L` in the clip view) keep passing unchanged: they describe behaviour, not the mechanism. Tests for the four undos, the redos, the all-track cut's tracks and a tempo undo that leaves the marquee alone join them.
 - **`050`** is rewritten for one mechanism (§ Invariants' long bullet becomes a paragraph about `UndoStep`), and `020` § Arranger Time Selection says an undo or redo puts the marquee back.
+
+## As built (2026-11-12)
+
+- `reselect_surviving_clip` keeps one track switch: for a step whose lead clip is gone (or had none), where there is no clip to hand `select_clip_workflow`, it still selects the step's track. With a surviving lead, the switch is `select_clip_workflow`'s.
+- An undo of a note edit made in another clip than the lead now makes that clip the lead again (decision 5); `undoing_a_note_edit_off_the_lead_redraws_that_clips_thumbnail` became `undoing_a_note_edit_off_the_lead_puts_its_clip_back_as_the_lead`. The thumbnail-only path stays for an agent write to a clip that isn't the lead.
+- `SplitClipsEdit::from_marquee` went back to `from_time_range_in_tracks`, its name before #3.
+- The #3 tests set the marquee mirror before their commands, as the view does; otherwise they are unchanged.
 
 ## Phases
 

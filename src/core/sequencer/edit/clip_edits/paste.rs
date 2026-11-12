@@ -1,8 +1,6 @@
 //! Undoable clip paste — drop the session clipboard at the cursor, carving out
 //! overlapping material per target track via [`DeleteInRangeEdit`].
 
-use uuid::Uuid;
-
 use crate::metadata::clip_metadata::ClipMetadata;
 use crate::models::clip::Clip;
 
@@ -46,10 +44,6 @@ pub(crate) struct PasteClipsEdit {
     /// Which clip becomes the lead after the paste (Merge Clips and the
     /// MIDI clip import name one). Reported as `ClipsPasted::lead`.
     lead: PasteLead,
-    /// Selection at construction time, so undo can restore it.
-    selected_track_idx: Option<usize>,
-    /// Selection at construction time, so undo can restore it.
-    selected_clip_id: Option<Uuid>,
 }
 
 impl PasteClipsEdit {
@@ -115,8 +109,6 @@ impl PasteClipsEdit {
             targets,
             carves: None,
             lead,
-            selected_track_idx: sequencer.selected_track_index(),
-            selected_clip_id: sequencer.selected_clip_id(),
         })
     }
 
@@ -209,8 +201,6 @@ impl PasteClipsEdit {
             carve_added: carved.added,
             carve_removed: carved.removed,
             unpasted,
-            selected_track_idx: self.selected_track_idx,
-            selected_clip_id: self.selected_clip_id,
         }
     }
 }
@@ -219,6 +209,8 @@ impl PasteClipsEdit {
 mod tests {
     use std::sync::atomic::Ordering;
     use std::time::Instant;
+
+    use uuid::Uuid;
 
     use crate::core::input_event::TimeSelectionRect;
 

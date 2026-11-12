@@ -101,23 +101,6 @@ impl EventHandlers {
         }
     }
 
-    /// Fans out [`UiEvent::TimeSelectionSet`]: the marquee over `[start, end)`,
-    /// on `track_span` (inclusive) or on every track.
-    pub(super) fn send_time_selection_set_ui_event(
-        &self,
-        start: i32,
-        end: i32,
-        track_span: Option<(usize, usize)>,
-    ) {
-        self.ui_event_tx
-            .send(UiEvent::TimeSelectionSet {
-                start,
-                end,
-                track_span,
-            })
-            .ok();
-    }
-
     /// Fans out [`UiEvent::PerformanceLaneSelected`].
     pub(super) fn send_performance_lane_selected_ui_event(&self) {
         self.ui_event_tx.send(UiEvent::PerformanceLaneSelected).ok();

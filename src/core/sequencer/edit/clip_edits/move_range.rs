@@ -294,7 +294,6 @@ impl MoveRangeEdit {
             carve_updated: carved.updated,
             carve_added: carved.added,
             carve_removed: carved.removed,
-            restored_selection: self.rect,
         }
     }
 }
@@ -560,7 +559,6 @@ mod tests {
             restored,
             split_removed,
             carve_added,
-            restored_selection,
             ..
         } = edit.undo(&mut sequencer)
         else {
@@ -572,10 +570,6 @@ mod tests {
         assert_eq!(ids(&carve_added), vec![victim]);
         assert_eq!(restored.len(), 2);
         assert!(ids(&restored).contains(&a) && ids(&restored).contains(&c));
-        assert_eq!(
-            (restored_selection.start, restored_selection.end),
-            (1000, 2000)
-        );
 
         assert_eq!(starts(&sequencer, 0), vec![(0, 4000)]);
         assert_eq!(starts(&sequencer, 1), vec![(1200, 1700)]);

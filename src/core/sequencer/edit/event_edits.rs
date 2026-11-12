@@ -17,7 +17,6 @@
 
 use std::sync::Arc;
 
-use undo::Record;
 use uuid::Uuid;
 
 use crate::core::midi::message::{Controller, parse_wheel};
@@ -423,24 +422,20 @@ pub(crate) struct DragNotesEdit {
 
 impl DragNotesEdit {
     /// `drag` applied to `event_ids` in the selected clip, as a step of
-    /// gesture `drag_id`: a later step when the edit on top of `record` is
-    /// this gesture's. `None` with no clip selected or no ids, or for a first
-    /// step that changes nothing.
+    /// gesture `drag_id`: a later step when `top`, the edit on top of the
+    /// undo record, is this gesture's. `None` with no clip selected or no
+    /// ids, or for a first step that changes nothing.
     pub(crate) fn from_sequencer(
         sequencer: &Sequencer,
-        record: &Record<SequencerEdit>,
+        top: Option<&SequencerEdit>,
         event_ids: Vec<Uuid>,
         drag: NoteDrag,
         drag_id: u64,
     ) -> Option<Self> {
-        let previous = record
-            .head()
-            .checked_sub(1)
-            .and_then(|idx| record.get_entry(idx))
-            .and_then(|entry| match entry.as_ref() {
-                SequencerEdit::DragNotes(edit) if edit.drag_id == drag_id => Some(edit),
-                _ => None,
-            });
+        let previous = top.and_then(|edit| match edit {
+            SequencerEdit::DragNotes(edit) if edit.drag_id == drag_id => Some(edit),
+            _ => None,
+        });
         if event_ids.is_empty() || (previous.is_none() && drag.is_noop()) {
             return None;
         }

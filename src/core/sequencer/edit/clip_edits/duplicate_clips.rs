@@ -32,7 +32,7 @@ pub(crate) struct DuplicateClipsEdit {
     inner: PasteClipsEdit,
     /// The marquee this was built from, frozen at construction — never
     /// re-read from the (view-local) time selection on redo. `edit()` reports
-    /// it slid right by its own width, `undo()` reports it as-is.
+    /// it slid right by its own width.
     rect: TimeSelectionRect,
 }
 
@@ -103,7 +103,7 @@ impl DuplicateClipsEdit {
     }
 
     /// Delegates to the inner paste's undo, then rewraps its result as
-    /// [`EditResult::ClipsUnduplicated`] carrying the original marquee.
+    /// [`EditResult::ClipsUnduplicated`].
     pub(in crate::core::sequencer::edit) fn undo(
         &mut self,
         sequencer: &mut Sequencer,
@@ -114,16 +114,11 @@ impl DuplicateClipsEdit {
                 carve_added,
                 carve_removed,
                 unpasted,
-                selected_track_idx,
-                selected_clip_id,
             } => EditResult::ClipsUnduplicated {
                 carve_updated,
                 carve_added,
                 carve_removed,
                 unpasted,
-                selected_track_idx,
-                selected_clip_id,
-                restored_selection: self.rect,
             },
             other => other,
         }
@@ -204,24 +199,10 @@ mod tests {
         );
         assert_eq!(starts(&sequencer, 1), vec![(0, 100)]);
 
-        let EditResult::ClipsUnduplicated {
-            unpasted,
-            restored_selection,
-            ..
-        } = edit.undo(&mut sequencer)
-        else {
+        let EditResult::ClipsUnduplicated { unpasted, .. } = edit.undo(&mut sequencer) else {
             panic!("expected ClipsUnduplicated");
         };
         assert_eq!(unpasted.len(), 1);
-        assert_eq!(
-            restored_selection,
-            TimeSelectionRect {
-                start: 0,
-                end: 100,
-                track_start: 0,
-                track_end: 0,
-            }
-        );
         assert_eq!(starts(&sequencer, 0), vec![(0, 100), (200, 300)]);
     }
 

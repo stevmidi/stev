@@ -16,7 +16,7 @@ use uuid::Uuid;
 
 use crate::core::project::{LibraryChange, ProjectAction, StorageJob};
 use crate::core::sequencer::test_support::{clip_at, note_off, note_on};
-use crate::core::sequencer::{Sequencer, SequencerCommand, SequencerEdit};
+use crate::core::sequencer::{Sequencer, SequencerCommand, UndoStep};
 use crate::core::shared_atomics::{AudioExportAtomics, TrackMixAtomics};
 use crate::core::time::{Meter, TapTempo};
 use crate::core::transport::TransportCommand;
@@ -152,11 +152,7 @@ pub(crate) fn add_clip(sequencer: &mut Sequencer, start_tick: i32) -> (Uuid, Uui
 }
 
 /// Runs `cmd` through the handlers, recording on `record`.
-pub(crate) fn run_command(
-    h: &mut Harness,
-    record: &mut Record<SequencerEdit>,
-    cmd: SequencerCommand,
-) {
+pub(crate) fn run_command(h: &mut Harness, record: &mut Record<UndoStep>, cmd: SequencerCommand) {
     h.handlers.handle_sequencer_command(
         &cmd,
         &mut h.sequencer,
@@ -168,7 +164,7 @@ pub(crate) fn run_command(
 
 /// Runs `cmd` with an undo record of its own.
 pub(crate) fn run_once(h: &mut Harness, cmd: SequencerCommand) {
-    let mut record: Record<SequencerEdit> = Record::new();
+    let mut record: Record<UndoStep> = Record::new();
     run_command(h, &mut record, cmd);
 }
 

@@ -15,7 +15,7 @@ use std::slice;
 use undo::Record;
 
 use crate::core::input_event::{CLIP_CLIPBOARD_SENTINEL, TimeSelectionRect};
-use crate::core::sequencer::{DeleteInRangeEdit, PasteLead, SequencerEdit};
+use crate::core::sequencer::{DeleteInRangeEdit, PasteLead, UndoStep};
 
 use super::*;
 
@@ -56,13 +56,14 @@ impl CarveResult<'static> {
     };
 }
 
-/// The clip under the cursor on the selected track, if it is one of
-/// `candidates` — the "the clip at the cursor becomes the selection" rule a
-/// split, a paste and a range move share.
-fn cursor_clip_among(sequencer: &Sequencer, candidates: &[ClipMetadata]) -> Option<Uuid> {
-    sequencer
+/// The clip under the cursor on the selected track, with that track, if it
+/// is one of `candidates` — the "the clip at the cursor becomes the
+/// selection" rule a split, a paste and a range move share.
+fn cursor_clip_among(sequencer: &Sequencer, candidates: &[ClipMetadata]) -> Option<(usize, Uuid)> {
+    let clip_id = sequencer
         .find_selected_track_clip_id_at_cursor()
-        .filter(|id| candidates.iter().any(|m| m.clip_id == *id))
+        .filter(|id| candidates.iter().any(|m| m.clip_id == *id));
+    sequencer.selected_track_index().zip(clip_id)
 }
 
 impl EventHandlers {
@@ -82,11 +83,11 @@ impl EventHandlers {
         self.send_clips_removed_ui_event(carve.removed);
     }
 
-    /// Puts back the selection from before the edit: its track, then the
-    /// clip that was the lead if it is on that track, otherwise none — the
-    /// undo workflows' fallback, and a forward edit's, whose track is
-    /// already the selected one. The lead clip lives on the selected track,
-    /// so an undo after the user moved to another track selects the edit's
+    /// Selects `selected_track_idx` and, on it, `selected_clip_id` if that
+    /// clip is still there, otherwise no lead — what an undo or redo puts
+    /// back (`restore_view_workflow`), and a forward edit's rule that the
+    /// lead sticks if it survived, whose track is already the selected one.
+    /// An undo after the user moved to another track selects the edit's
     /// track again, with no lead if the edit had none. An armed performance
     /// lane is live state, like the loop: an undo never disarms it, so then
     /// the selection stays as it is.
@@ -101,13 +102,14 @@ impl EventHandlers {
         if track_moved && sequencer.is_performance_lane_armed() {
             return;
         }
-        if let Some(track_idx) = selected_track_idx.filter(|_| track_moved) {
-            self.switch_track_workflow(sequencer, track_idx);
-        }
         let survivor = selected_track_idx
             .zip(selected_clip_id)
-            .filter(|&(track_idx, clip_id)| sequencer.clip_on(track_idx, clip_id).is_some())
-            .map(|(_, clip_id)| clip_id);
+            .filter(|&(track_idx, clip_id)| sequencer.clip_on(track_idx, clip_id).is_some());
+        if survivor.is_none()
+            && let Some(track_idx) = selected_track_idx.filter(|_| track_moved)
+        {
+            self.switch_track_workflow(sequencer, track_idx);
+        }
         self.select_clip_workflow(sequencer, survivor);
     }
 
@@ -128,27 +130,23 @@ impl EventHandlers {
         self.send_clips_updated_ui_event(updated);
         self.send_clips_added_ui_event(added);
 
-        if let Some(cursor_clip_id) = cursor_clip_among(sequencer, added) {
-            self.select_clip_workflow(sequencer, Some(cursor_clip_id));
+        if let Some(cursor_clip) = cursor_clip_among(sequencer, added) {
+            self.select_clip_workflow(sequencer, Some(cursor_clip));
         }
     }
 
     /// Undo of a split: `updated` is each original clip restored to its
     /// pre-split bounds, `removed` is each right-hand piece being deleted.
-    /// The selection is the one from before the split (`SplitClipsEdit`'s
-    /// `before`), never the right-hand piece the split selected,
-    /// so it reselects as every range undo does.
+    /// The selection from before the split goes back with the step
+    /// (`restore_view_workflow`), as after every clip edit's undo; so does
+    /// every undo workflow below.
     pub(super) fn unsplit_clips_workflow(
         &self,
         sequencer: &mut Sequencer,
         updated: &[ClipMetadata],
         removed: &[ClipMetadata],
-        selected_track_idx: Option<usize>,
-        selected_clip_id: Option<Uuid>,
     ) {
         sequencer.reset();
-
-        self.reselect_surviving_clip(sequencer, selected_track_idx, selected_clip_id);
 
         self.send_clips_removed_ui_event(removed);
         self.send_clips_updated_ui_event(updated);
@@ -176,10 +174,8 @@ impl EventHandlers {
     }
 
     /// Undo of Insert Silence: `shifted` is every clip moved back left,
-    /// `split_updated`/`split_removed` mirror `unsplit_clips_workflow`. No
-    /// reselection here: Duplicate Time's undo shares it and reselects
-    /// itself, and Insert Silence's own undo (`SilenceRemoved`) puts back the
-    /// selection from before the insert after it (`reselect_surviving_clip`).
+    /// `split_updated`/`split_removed` mirror `unsplit_clips_workflow`.
+    /// Duplicate Time's undo shares it.
     pub(super) fn remove_silence_workflow(
         &self,
         sequencer: &mut Sequencer,
@@ -238,22 +234,17 @@ impl EventHandlers {
     /// Undo of Delete Time: `shifted` is every clip moved back right, `carve`
     /// mirrors `restore_range_workflow` (the carve unwinding — cleared
     /// material reappearing, trimmed clips restored, the carve's boundary
-    /// piece deleted again). Reselects the clip that was selected before the
-    /// delete if it's back.
+    /// piece deleted again).
     pub(super) fn restore_time_workflow(
         &self,
         sequencer: &mut Sequencer,
         shifted: &[ClipMetadata],
         carve: CarveResult,
-        selected_track_idx: Option<usize>,
-        selected_clip_id: Option<Uuid>,
     ) {
         sequencer.reset();
 
         self.send_clips_updated_ui_event(shifted);
         self.send_uncarve_ui_events(&carve);
-
-        self.reselect_surviving_clip(sequencer, selected_track_idx, selected_clip_id);
     }
 
     /// Forward direction of "mute the time selection" (`M`): `updated` is
@@ -276,23 +267,17 @@ impl EventHandlers {
 
     /// Undo of "mute the time selection": `updated` is each trimmed clip
     /// restored to full bounds (mute flag already restored beforehand),
-    /// `removed` is each split-created piece being deleted again. Reselects
-    /// the clip that was selected before the edit if it survived, otherwise
-    /// clears — same fallback as `restore_range_workflow`.
+    /// `removed` is each split-created piece being deleted again.
     pub(super) fn unmute_in_range_workflow(
         &self,
         sequencer: &mut Sequencer,
         updated: &[ClipMetadata],
         removed: &[ClipMetadata],
-        selected_track_idx: Option<usize>,
-        selected_clip_id: Option<Uuid>,
     ) {
         sequencer.reset();
 
         self.send_clips_updated_ui_event(updated);
         self.send_clips_removed_ui_event(removed);
-
-        self.reselect_surviving_clip(sequencer, selected_track_idx, selected_clip_id);
     }
 
     /// Forward direction of a clip paste (`⌘V`): `pasted` is every clip added
@@ -321,7 +306,10 @@ impl EventHandlers {
                 let clip_to_select = cursor_clip_among(sequencer, pasted);
                 self.select_clip_workflow(sequencer, clip_to_select);
             }
-            PasteLead::Clip(clip_id) => self.select_clip_workflow(sequencer, Some(clip_id)),
+            PasteLead::Clip(clip_id) => {
+                let lead = sequencer.selected_track_index().map(|idx| (idx, clip_id));
+                self.select_clip_workflow(sequencer, lead);
+            }
             PasteLead::ClipSpan { track_idx, clip_id } => {
                 self.select_clip_span_workflow(sequencer, track_idx, clip_id);
             }
@@ -337,21 +325,16 @@ impl EventHandlers {
 
     /// Undo of a clip paste: `unpasted` is every pasted clip being removed;
     /// `carve` mirrors `restore_range_workflow` (carved material coming back).
-    /// Restores the pre-paste selection if that clip is still around.
     pub(super) fn unpaste_clips_workflow(
         &self,
         sequencer: &mut Sequencer,
         carve: CarveResult,
         unpasted: &[ClipMetadata],
-        selected_track_idx: Option<usize>,
-        selected_clip_id: Option<Uuid>,
     ) {
         sequencer.reset();
 
         self.send_clips_removed_ui_event(unpasted);
         self.send_uncarve_ui_events(&carve);
-
-        self.reselect_surviving_clip(sequencer, selected_track_idx, selected_clip_id);
     }
 
     /// Forward direction of a clip move (the arranger band drag): `from` is
@@ -384,8 +367,8 @@ impl EventHandlers {
     /// Undo of a clip move: `from` is the clip at the destination it is being
     /// lifted from, `to` the clip back at its original position; `carve`
     /// mirrors `unpaste_clips_workflow`'s buckets (carved originals coming
-    /// back). Same remove + add + span-reselect shape as
-    /// `move_clip_workflow`, on the restored position.
+    /// back). Same remove + add shape as `move_clip_workflow`, on the
+    /// restored position.
     pub(super) fn unmove_clip_workflow(
         &self,
         sequencer: &mut Sequencer,
@@ -394,13 +377,10 @@ impl EventHandlers {
         carve: CarveResult,
     ) {
         sequencer.reset();
-        self.clear_clip_selection_workflow(sequencer);
 
         self.send_clips_removed_ui_event(slice::from_ref(from));
         self.send_uncarve_ui_events(&carve);
         self.send_clips_added_ui_event(slice::from_ref(to));
-
-        self.select_clip_span_workflow(sequencer, to.track_idx, to.clip_id);
     }
 
     /// Forward direction of a marquee move (the band drag started inside an
@@ -439,8 +419,7 @@ impl EventHandlers {
     /// bounds (`ClipAdded`'s add-or-replace covers a leftover shape the UI
     /// still has and one that left with its piece alike), `split_removed`
     /// the right-hand leftovers deleted again, `carve` mirrors
-    /// `unpaste_clips_workflow`'s buckets. Then the marquee goes back on
-    /// `restored_selection`.
+    /// `unpaste_clips_workflow`'s buckets.
     pub(super) fn unmove_range_workflow(
         &self,
         sequencer: &mut Sequencer,
@@ -448,24 +427,20 @@ impl EventHandlers {
         restored: &[ClipMetadata],
         split_removed: &[ClipMetadata],
         carve: CarveResult,
-        restored_selection: TimeSelectionRect,
     ) {
         sequencer.reset();
-        self.clear_clip_selection_workflow(sequencer);
 
         self.send_clips_removed_ui_event(unmoved);
         self.send_uncarve_ui_events(&carve);
         self.send_clips_removed_ui_event(split_removed);
         self.send_clips_added_ui_event(restored);
-
-        self.select_range_workflow(sequencer, restored_selection, restored);
     }
 
     /// The marquee-block equivalent of `select_clip_span_workflow`: cursor
     /// to `rect.start`, `rect.track_start` selected, the clip under the
-    /// cursor there selected if it is one of `candidates` (the moved pieces
-    /// / the restored originals — same "the clip at the cursor becomes the
-    /// selection" rule as `paste_clips_workflow`), then the marquee set to
+    /// cursor there selected if it is one of `candidates` (the moved pieces —
+    /// same "the clip at the cursor becomes the selection" rule as
+    /// `paste_clips_workflow`), then the marquee set to
     /// `rect` — sent last so the `TimeSelectionSet` handler re-latches
     /// the cursor and track it just moved (`020-views-and-state.md`).
     fn select_range_workflow(
@@ -479,29 +454,16 @@ impl EventHandlers {
         let clip_to_select = cursor_clip_among(sequencer, candidates);
         self.select_clip_workflow(sequencer, clip_to_select);
 
-        self.send_time_selection_set_ui_event(
-            rect.start,
-            rect.end,
-            Some((rect.track_start, rect.track_end)),
-        );
+        self.set_marquee_workflow(sequencer, rect);
     }
 
     /// Undo of a range delete: `carve.added` is each cleared clip
     /// reappearing, `carve.updated` is each trimmed clip restored to full
     /// bounds, `carve.removed` is each right-hand piece being deleted again.
-    /// Reselects the clip that was selected before the delete if it is back.
-    pub(super) fn restore_range_workflow(
-        &self,
-        sequencer: &mut Sequencer,
-        carve: CarveResult,
-        selected_track_idx: Option<usize>,
-        selected_clip_id: Option<Uuid>,
-    ) {
+    pub(super) fn restore_range_workflow(&self, sequencer: &mut Sequencer, carve: CarveResult) {
         sequencer.reset();
 
         self.send_uncarve_ui_events(&carve);
-
-        self.reselect_surviving_clip(sequencer, selected_track_idx, selected_clip_id);
     }
 
     /// Carves the marquee rectangle out of the marqueed tracks
@@ -511,7 +473,7 @@ impl EventHandlers {
     pub(super) fn delete_rect_workflow(
         &self,
         sequencer: &mut Sequencer,
-        undo_record: &mut Record<SequencerEdit>,
+        undo_record: &mut Record<UndoStep>,
         rect: TimeSelectionRect,
     ) {
         let edit = DeleteInRangeEdit::from_track_span(
@@ -533,7 +495,7 @@ impl EventHandlers {
     pub(super) fn cut_clips_workflow(
         &self,
         sequencer: &mut Sequencer,
-        undo_record: &mut Record<SequencerEdit>,
+        undo_record: &mut Record<UndoStep>,
         start: i32,
         end: i32,
     ) {
@@ -555,7 +517,7 @@ impl EventHandlers {
     pub(super) fn cut_clips_scoped_workflow(
         &self,
         sequencer: &mut Sequencer,
-        undo_record: &mut Record<SequencerEdit>,
+        undo_record: &mut Record<UndoStep>,
         rect: TimeSelectionRect,
     ) {
         sequencer.copy_clips_scoped_to_clipboard(rect);

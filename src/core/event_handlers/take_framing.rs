@@ -10,7 +10,7 @@
 use undo::Record;
 
 use crate::core::project::ProjectAction;
-use crate::core::sequencer::{InsertCaptureEdit, SequencerEdit};
+use crate::core::sequencer::{InsertCaptureEdit, UndoStep};
 use crate::models::clip::Clip;
 
 use super::*;
@@ -48,7 +48,7 @@ impl EventHandlers {
         &self,
         cmd: &SequencerCommand,
         sequencer: &mut Sequencer,
-        undo_record: &mut Record<SequencerEdit>,
+        undo_record: &mut Record<UndoStep>,
     ) -> bool {
         if !sequencer.is_framing_take() {
             return false;
@@ -158,7 +158,7 @@ impl EventHandlers {
     fn finish_take_framing_workflow(
         &self,
         sequencer: &mut Sequencer,
-        undo_record: &mut Record<SequencerEdit>,
+        undo_record: &mut Record<UndoStep>,
     ) {
         let Some((return_to, insert)) = sequencer.finish_take_framing() else {
             return;

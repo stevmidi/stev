@@ -76,8 +76,9 @@ pub(crate) use edit::{
     InsertSilenceEdit, MoveClipEdit, MoveRangeEdit, MuteInRangeEdit, MuteSelectedEventsEdit,
     NudgeSelectedEventsEdit, NudgeSelectedEventsLengthEdit, PasteClipsEdit, PasteLead,
     QuantizeEventsEdit, RemoveTrackEdit, RenameTrackEdit, ReplaceClipNotesEdit, ResizeClipEdit,
-    RestoredMarquee, RetimeClipEdit, SequencerEdit, SetKnobParamEdit, SetMeterEdit, SetTempoEdit,
-    SetTrackOutputEdit, SplitClipsEdit, TempoGesture, TransposeSelectedEventsEdit,
+    RetimeClipEdit, SequencerEdit, SetKnobParamEdit, SetMeterEdit, SetTempoEdit,
+    SetTrackOutputEdit, SplitClipsEdit, TempoGesture, TransposeSelectedEventsEdit, UndoStep,
+    ViewSnapshot,
 };
 pub(crate) use export::ExportRefusal;
 pub(crate) use instrument_event::ClipInstrumentEvent;

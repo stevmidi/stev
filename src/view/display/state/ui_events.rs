@@ -26,30 +26,8 @@ impl Display {
                 UiEvent::PerformanceLaneSelected => {
                     self.performance_lane_selected = true;
                 }
-                UiEvent::TimeSelectionSet {
-                    start,
-                    end,
-                    track_span,
-                } => {
-                    // Shift+⌘/Ctrl+D's chained-selection advance carries
-                    // only a tick pair (`DuplicateTimeEdit` doesn't track a
-                    // track span) — preserve whatever track range was already
-                    // active so repeated presses keep the same scope,
-                    // defaulting to the selected track for a fresh chain. The
-                    // clip band press and plain ⌘/Ctrl+D (`DuplicateClipsEdit`
-                    // freezes its rect) name their span explicitly.
-                    let (track_start, track_end) = track_span.unwrap_or_else(|| {
-                        self.gesture
-                            .time_selection
-                            .map(|r| (r.track_start, r.track_end))
-                            .unwrap_or((self.selected_track_idx, self.selected_track_idx))
-                    });
-                    self.gesture.time_selection = Some(TimeSelectionRect {
-                        start,
-                        end,
-                        track_start,
-                        track_end,
-                    });
+                UiEvent::TimeSelectionSet { rect } => {
+                    self.gesture.time_selection = Some(rect);
                     // Re-latch the collapse watchers: the workflow that sent
                     // this may also have moved the cursor / selected track
                     // (the band press does both), and those already hold

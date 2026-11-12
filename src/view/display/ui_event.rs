@@ -12,6 +12,7 @@ use uuid::Uuid;
 use crate::{
     core::{
         config::DEFAULT_TRACK_COUNT,
+        input_event::TimeSelectionRect,
         project::{ProjectAction, ProjectOrigin},
     },
     metadata::clip_metadata::ClipMetadata,
@@ -282,27 +283,26 @@ pub(crate) enum UiEvent {
         /// Event tick of the span's end.
         end: i32,
     },
-    /// Set the Arranger time selection to `[start, end)`. Pushed by both
-    /// Duplicate workflows so the selection advances onto the fresh copy and
-    /// repeated `⌘/Ctrl+D`/`Shift+⌘/Ctrl+D` chains down the timeline, and by
-    /// the clip band press (`select_clip_span_workflow`) to marquee exactly
-    /// one clip's span. The handler re-latches `sync_time_selection_to_cursor`'s
-    /// watchers, so a cursor/track move made by the same workflow (the band
-    /// press moves both) doesn't collapse the selection a frame later.
+    /// Set the Arranger time selection to `rect`, its track span always
+    /// named: the sequencer resolves any fallback itself, so its mirror of
+    /// the marquee and the view can't disagree (`440-undo-view-state.md`
+    /// decision 4). Pushed by both Duplicate workflows so the selection
+    /// advances onto the fresh copy and repeated `⌘/Ctrl+D`/`Shift+⌘/Ctrl+D`
+    /// chains down the timeline, by the clip band press
+    /// (`select_clip_span_workflow`) to marquee exactly one clip's span, and
+    /// by an undo or redo putting the marquee back. The handler re-latches
+    /// `sync_time_selection_to_cursor`'s watchers, so a cursor/track move
+    /// made by the same workflow (the band press moves both) doesn't
+    /// collapse the selection a frame later.
     TimeSelectionSet {
-        /// Start tick of the range.
-        start: i32,
-        /// End tick of the range.
-        end: i32,
-        /// Inclusive track span, or `None` to keep whatever span is already
-        /// active (defaulting to the selected track) — the Duplicate Time
-        /// chain carries no track span of its own; Duplicate Clips does.
-        track_span: Option<(usize, usize)>,
+        /// The marquee.
+        rect: TimeSelectionRect,
     },
     /// Collapse the Arranger time selection back to the track cursor —
     /// pushed by the "Delete Time" workflow once the deleted span is gone,
     /// since the marquee's tick range no longer corresponds to any real
-    /// content (see `delete_time_workflow`).
+    /// content (see `delete_time_workflow`), and by an undo or redo whose
+    /// step had no marquee.
     TimeSelectionCleared,
     /// The project was written to `origin`: it becomes the open project and
     /// its folder the default one. Sent only once the file is written, so a

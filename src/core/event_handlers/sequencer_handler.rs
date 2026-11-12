@@ -16,7 +16,7 @@ use crate::core::sequencer::{
     MuteInRangeEdit, MuteSelectedEventsEdit, NudgeSelectedEventsEdit,
     NudgeSelectedEventsLengthEdit, PasteClipsEdit, QuantizeEventsEdit, RenameTrackEdit,
     SequencerEdit, SetMeterEdit, SetTempoEdit, SetTrackOutputEdit, SplitClipsEdit, TempoGesture,
-    TransposeSelectedEventsEdit,
+    TransposeSelectedEventsEdit, UndoStep,
 };
 use crate::core::time::TapTempo;
 use crate::models::clip::ClipEdge;
@@ -34,7 +34,7 @@ impl EventHandlers {
         &self,
         cmd: &SequencerCommand,
         sequencer: &mut Sequencer,
-        undo_record: &mut Record<SequencerEdit>,
+        undo_record: &mut Record<UndoStep>,
         tap_tempo: &mut TapTempo,
         open: &mut OpenProject,
     ) {
@@ -145,7 +145,14 @@ impl EventHandlers {
             SequencerCommand::SplitClips { time_bounds } => {
                 let cursor = sequencer.cursor_tick();
                 let edit = match time_bounds {
-                    Some(rect) => SplitClipsEdit::from_marquee(sequencer, *rect, cursor),
+                    Some(rect) => SplitClipsEdit::from_time_range_in_tracks(
+                        sequencer,
+                        rect.track_start,
+                        rect.track_end,
+                        rect.start,
+                        rect.end,
+                        cursor,
+                    ),
                     None => SplitClipsEdit::from_selected_clip(sequencer, cursor),
                 };
                 self.record_edit(sequencer, undo_record, edit);
@@ -409,9 +416,14 @@ impl EventHandlers {
                 drag,
                 drag_id,
             } => {
+                let top = undo_record
+                    .head()
+                    .checked_sub(1)
+                    .and_then(|idx| undo_record.get_entry(idx))
+                    .map(|entry| entry.as_ref().sequencer_edit());
                 let edit = DragNotesEdit::from_sequencer(
                     sequencer,
-                    undo_record,
+                    top,
                     event_ids.clone(),
                     *drag,
                     *drag_id,
@@ -587,15 +599,28 @@ impl EventHandlers {
                 self.import_clip_workflow(sequencer, undo_record, clip, name, *target);
             }
 
+            // The step's view goes back after its clips: the view before
+            // the edit on an undo, after it on a redo (`UndoStep`).
             SequencerCommand::Undo => {
                 if let Some(result) = undo_record.undo(sequencer) {
                     self.handle_edit_result(sequencer, result);
+                    let undone = undo_record.get_entry(undo_record.head());
+                    if let Some(view) = undone.and_then(|entry| entry.as_ref().view_before()) {
+                        self.restore_view_workflow(sequencer, view);
+                    }
                 }
             }
 
             SequencerCommand::Redo => {
                 if let Some(result) = undo_record.redo(sequencer) {
                     self.handle_edit_result(sequencer, result);
+                    let redone = undo_record
+                        .head()
+                        .checked_sub(1)
+                        .and_then(|idx| undo_record.get_entry(idx));
+                    if let Some(view) = redone.and_then(|entry| entry.as_ref().view_after()) {
+                        self.restore_view_workflow(sequencer, view);
+                    }
                 }
             }
 
@@ -726,7 +751,7 @@ mod tests {
     use crate::core::paths::project_dir;
     use crate::core::project::{ProjectAction, ProjectData, ProjectOrigin};
     use crate::core::sequencer::test_support::{clip_at, param_at, rect, stub_instrument};
-    use crate::core::sequencer::{SequencerCommand, SequencerEdit};
+    use crate::core::sequencer::{SequencerCommand, UndoStep};
     use crate::core::time::Meter;
     use crate::core::view_state::ViewState;
     use crate::models::{
@@ -967,7 +992,7 @@ mod tests {
         }
         while h.transport_commands.try_recv().is_ok() {}
 
-        let mut record: Record<SequencerEdit> = Record::new();
+        let mut record: Record<UndoStep> = Record::new();
         run_command(&mut h, &mut record, SequencerCommand::Commit);
         assert_eq!(h.handlers.view_state(), ViewState::Clip);
         assert!(record.is_empty());
@@ -988,7 +1013,7 @@ mod tests {
     #[test]
     fn new_project_clears_the_undo_record() {
         let mut h = harness();
-        let mut record: Record<SequencerEdit> = Record::new();
+        let mut record: Record<UndoStep> = Record::new();
         run_command(
             &mut h,
             &mut record,
@@ -1009,7 +1034,7 @@ mod tests {
     #[test]
     fn an_untouched_project_quits_without_a_prompt() {
         let mut h = harness();
-        let mut record: Record<SequencerEdit> = Record::new();
+        let mut record: Record<UndoStep> = Record::new();
         run_command(&mut h, &mut record, quit());
         assert_eq!(last_project_reply(&h), Some(None));
     }
@@ -1019,7 +1044,7 @@ mod tests {
     #[test]
     fn a_changed_project_prompts_and_dont_save_goes_on() {
         let mut h = harness();
-        let mut record: Record<SequencerEdit> = Record::new();
+        let mut record: Record<UndoStep> = Record::new();
         run_command(
             &mut h,
             &mut record,
@@ -1049,7 +1074,7 @@ mod tests {
     #[test]
     fn a_template_opens_as_an_untitled_project_without_clips() {
         let mut h = harness();
-        let mut record: Record<SequencerEdit> = Record::new();
+        let mut record: Record<UndoStep> = Record::new();
         let mut source = harness();
         add_clip(&mut source.sequencer, 0);
         let mut template = ProjectData::from_sequencer(&source.sequencer);
@@ -1100,7 +1125,7 @@ mod tests {
     #[test]
     fn a_failed_template_load_keeps_the_open_project() {
         let mut h = harness();
-        let mut record: Record<SequencerEdit> = Record::new();
+        let mut record: Record<UndoStep> = Record::new();
         let path =
             std::env::temp_dir().join(format!("stev-no-template-{}.stev", std::process::id()));
         run_command(
@@ -1141,7 +1166,7 @@ mod tests {
     #[test]
     fn opening_the_open_project_from_finder_keeps_its_changes() {
         let mut h = harness();
-        let mut record: Record<SequencerEdit> = Record::new();
+        let mut record: Record<UndoStep> = Record::new();
         let name = format!("stev-open-{}", std::process::id());
         let origin = ProjectOrigin::new(None, &name);
         h.open.saved = SavedProject::of(&h.sequencer, Some(origin));
@@ -1173,7 +1198,7 @@ mod tests {
     #[test]
     fn opening_from_finder_is_checked_first() {
         let mut h = harness();
-        let mut record: Record<SequencerEdit> = Record::new();
+        let mut record: Record<UndoStep> = Record::new();
         let path = std::env::temp_dir().join(format!("stev-missing-{}.stev", std::process::id()));
         let open = || project_action(ProjectAction::OpenFile { path: path.clone() }, false);
         run_command(
@@ -1214,7 +1239,7 @@ mod tests {
     #[test]
     fn unsaved_means_it_would_save_differently() {
         let mut h = harness();
-        let mut record: Record<SequencerEdit> = Record::new();
+        let mut record: Record<UndoStep> = Record::new();
         run_command(
             &mut h,
             &mut record,
@@ -1237,7 +1262,7 @@ mod tests {
     #[test]
     fn inserted_and_dragged_notes_are_one_undo_step_each() {
         let (mut h, clip_id, _) = harness_with_clip();
-        let mut record: Record<SequencerEdit> = Record::new();
+        let mut record: Record<UndoStep> = Record::new();
 
         run_command(
             &mut h,
@@ -1286,7 +1311,7 @@ mod tests {
     #[test]
     fn copied_notes_paste_at_the_clip_cursor_as_one_undo_step() {
         let (mut h, clip_id, note_id) = harness_with_clip();
-        let mut record: Record<SequencerEdit> = Record::new();
+        let mut record: Record<UndoStep> = Record::new();
         run_command(
             &mut h,
             &mut record,
@@ -1327,7 +1352,7 @@ mod tests {
     #[test]
     fn cut_notes_is_one_undo_step_and_needs_a_selection() {
         let (mut h, clip_id, _) = harness_with_clip();
-        let mut record: Record<SequencerEdit> = Record::new();
+        let mut record: Record<UndoStep> = Record::new();
         run_command(&mut h, &mut record, SequencerCommand::PasteNotes);
         assert_eq!(record.len(), 0);
 
@@ -1350,7 +1375,7 @@ mod tests {
     #[test]
     fn a_live_note_drag_trims_only_where_it_lands_and_back_to_start_annuls() {
         let (mut h, clip_id, _) = harness_with_clip();
-        let mut record: Record<SequencerEdit> = Record::new();
+        let mut record: Record<UndoStep> = Record::new();
         run_command(
             &mut h,
             &mut record,
@@ -1428,7 +1453,7 @@ mod tests {
     #[test]
     fn a_note_drag_step_after_a_save_still_starts_from_where_the_gesture_began() {
         let (mut h, clip_id, note_id) = harness_with_clip();
-        let mut record: Record<SequencerEdit> = Record::new();
+        let mut record: Record<UndoStep> = Record::new();
         let step = |delta_ticks| {
             drag_step(
                 &[note_id],
@@ -1466,7 +1491,7 @@ mod tests {
     #[test]
     fn clearing_a_wheel_span_is_one_undo_step() {
         let (mut h, clip_id, _) = harness_with_clip();
-        let mut record: Record<SequencerEdit> = Record::new();
+        let mut record: Record<UndoStep> = Record::new();
         let curve = vec![
             Event::new(0, 0, vec![0xB0, 0x01, 40]),
             Event::new(480, 0, vec![0xB0, 0x01, 80]),
@@ -1726,7 +1751,7 @@ mod tests {
     /// One agent-bridge call through the handlers, answered.
     fn agent_call(
         h: &mut Harness,
-        record: &mut Record<SequencerEdit>,
+        record: &mut Record<UndoStep>,
         tool: &str,
         arguments: Value,
     ) -> AgentReply {
@@ -1817,12 +1842,15 @@ mod tests {
         );
     }
 
-    /// Undoing a note edit after the lead moved to another clip redraws the
-    /// edited clip's thumbnail and leaves the new lead's clip view alone.
+    /// Undoing a note edit after the lead moved to another clip puts back
+    /// the clip it was made in as the lead, as every clip and note edit's
+    /// undo puts back the view before it (`440-undo-view-state.md`
+    /// decision 5): the clip view shows the notes as they were. It used to
+    /// stay on the new lead and only redraw the edited clip's thumbnail.
     #[test]
-    fn undoing_a_note_edit_off_the_lead_redraws_that_clips_thumbnail() {
+    fn undoing_a_note_edit_off_the_lead_puts_its_clip_back_as_the_lead() {
         let (mut h, clip_id, _) = harness_with_clip();
-        let mut record: Record<SequencerEdit> = Record::new();
+        let mut record: Record<UndoStep> = Record::new();
         run_command(
             &mut h,
             &mut record,
@@ -1834,21 +1862,22 @@ mod tests {
             },
         );
         let (other_id, _) = add_clip(&mut h.sequencer, 3840 * 4);
-        h.sequencer.select_clip(Some(other_id));
+        h.cursor_tick.store(3840 * 4, Ordering::Relaxed);
+        h.handlers
+            .sync_clip_selection_to_cursor_workflow(&mut h.sequencer);
+        assert_eq!(h.sequencer.selected_clip_id(), Some(other_id));
         h.ui_events.try_iter().for_each(drop);
 
         run_command(&mut h, &mut record, SequencerCommand::Undo);
+
         assert_eq!(note_ons(&h, clip_id), vec![(0, 60)]);
-        assert_eq!(h.sequencer.selected_clip_id(), Some(other_id));
+        assert_eq!(h.sequencer.selected_clip_id(), Some(clip_id));
+        assert_eq!(h.sequencer.cursor_tick(), 0);
         let events: Vec<UiEvent> = h.ui_events.try_iter().collect();
-        assert!(events.iter().any(
-            |event| matches!(event, UiEvent::ClipUpdated { clip } if clip.clip_id == clip_id)
-        ));
-        assert!(
-            !events
-                .iter()
-                .any(|event| matches!(event, UiEvent::EventsUpdated { .. }))
-        );
+        assert!(events.iter().any(|event| matches!(
+            event,
+            UiEvent::LeadClipChanged { clip_view: Some(view) } if view.clip_id == clip_id
+        )));
     }
 
     /// Issue #3: undoing a marquee delete puts back the state before it,
@@ -1862,10 +1891,10 @@ mod tests {
         let (mut h, lead_id, _) = harness_with_clip();
         add_clip(&mut h.sequencer, 1920);
         let (other_id, _) = add_clip(&mut h.sequencer, 3840 * 2);
-        let mut record: Record<SequencerEdit> = Record::new();
-        let carve = SequencerCommand::RemoveClips {
-            rect: rect(0, 3840, 0, 0),
-        };
+        let mut record: Record<UndoStep> = Record::new();
+        let marquee = rect(0, 3840, 0, 0);
+        h.sequencer.set_marquee(Some(marquee));
+        let carve = SequencerCommand::RemoveClips { rect: marquee };
         run_command(&mut h, &mut record, carve);
         assert_eq!(h.sequencer.selected_clip_id(), None);
         h.sequencer.select_clip(Some(other_id));
@@ -1890,11 +1919,7 @@ mod tests {
         )));
         assert!(matches!(
             events.last(),
-            Some(UiEvent::TimeSelectionSet {
-                start: 0,
-                end: 3840,
-                track_span: Some((0, 0)),
-            })
+            Some(UiEvent::TimeSelectionSet { rect }) if *rect == marquee
         ));
     }
 
@@ -1907,7 +1932,7 @@ mod tests {
         let (mut h, lead_id, _) = harness_with_clip();
         add_clip(&mut h.sequencer, 1920);
         h.sequencer.tracks_mut()[1].add_clip(&clip_at(0, 1920));
-        let mut record: Record<SequencerEdit> = Record::new();
+        let mut record: Record<UndoStep> = Record::new();
         let carve = SequencerCommand::RemoveClips {
             rect: rect(0, 3840, 0, 0),
         };
@@ -1933,37 +1958,35 @@ mod tests {
 
     /// Range mute (`M`), a marquee split (`⌘E`) and Insert Silence (`⌘I`)
     /// undo like the range delete: the marquee comes back last (Insert
-    /// Silence, global, with its track span left alone) at the cursor it was
-    /// anchored to, and the lead clip and its track as they were before the
-    /// edit, from another track and tick by now. Without the cursor, a
-    /// zero-width marquee came back as the cursor line wherever it had gone.
+    /// Silence, global, on the tracks it had) at the cursor it was anchored
+    /// to, and the lead clip and its track as they were before the edit,
+    /// from another track and tick by now. Without the cursor, a zero-width
+    /// marquee came back as the cursor line wherever it had gone.
     #[test]
     fn undoing_a_marquee_edit_restores_the_marquee_and_the_lead_clip() {
         let marquee = rect(480, 960, 0, 0);
         let cases = [
+            ("mute", SequencerCommand::MuteClipsInRange { rect: marquee }),
             (
-                SequencerCommand::MuteClipsInRange { rect: marquee },
-                Some((0, 0)),
-            ),
-            (
+                "split",
                 SequencerCommand::SplitClips {
                     time_bounds: Some(marquee),
                 },
-                Some((0, 0)),
             ),
             (
+                "insert silence",
                 SequencerCommand::InsertSilenceInRange {
                     start: marquee.start,
                     end: marquee.end,
                 },
-                None,
             ),
         ];
-        for (command, track_span) in cases {
+        for (name, command) in cases {
             let (mut h, lead_id, _) = harness_with_clip();
             h.sequencer.tracks_mut()[1].add_clip(&clip_at(0, 1920));
             h.cursor_tick.store(720, Ordering::Relaxed);
-            let mut record: Record<SequencerEdit> = Record::new();
+            h.sequencer.set_marquee(Some(marquee));
+            let mut record: Record<UndoStep> = Record::new();
             run_command(&mut h, &mut record, command);
             assert_eq!(record.len(), 1);
             h.handlers.select_track_workflow(&mut h.sequencer, 1);
@@ -1972,25 +1995,16 @@ mod tests {
 
             run_command(&mut h, &mut record, SequencerCommand::Undo);
 
-            assert_eq!(h.sequencer.cursor_tick(), 720, "{track_span:?}");
-            assert_eq!(
-                h.sequencer.selected_track_index(),
-                Some(0),
-                "{track_span:?}"
-            );
-            assert_eq!(
-                h.sequencer.selected_clip_id(),
-                Some(lead_id),
-                "{track_span:?}"
-            );
+            assert_eq!(h.sequencer.cursor_tick(), 720, "{name}");
+            assert_eq!(h.sequencer.selected_track_index(), Some(0), "{name}");
+            assert_eq!(h.sequencer.selected_clip_id(), Some(lead_id), "{name}");
             let events: Vec<UiEvent> = h.ui_events.try_iter().collect();
             assert!(
                 matches!(
                     events.last(),
-                    Some(UiEvent::TimeSelectionSet { start: 480, end: 960, track_span: span })
-                        if *span == track_span
+                    Some(UiEvent::TimeSelectionSet { rect }) if *rect == marquee
                 ),
-                "{track_span:?}"
+                "{name}"
             );
         }
     }
@@ -2004,7 +2018,7 @@ mod tests {
         add_clip(&mut h.sequencer, 1920);
         h.sequencer.tracks_mut()[1].add_clip(&clip_at(0, 1920));
         assert_eq!(h.sequencer.selected_clip_id(), None);
-        let mut record: Record<SequencerEdit> = Record::new();
+        let mut record: Record<UndoStep> = Record::new();
         let mute = SequencerCommand::MuteClipsInRange {
             rect: rect(1920, 3840, 0, 0),
         };
@@ -2024,7 +2038,7 @@ mod tests {
     #[test]
     fn an_undo_never_disarms_the_performance_lane() {
         let (mut h, lead_id, _) = harness_with_clip();
-        let mut record: Record<SequencerEdit> = Record::new();
+        let mut record: Record<UndoStep> = Record::new();
         let carve = SequencerCommand::RemoveClips {
             rect: rect(0, 3840, 0, 0),
         };
@@ -2038,6 +2052,120 @@ mod tests {
         assert!(h.sequencer.is_performance_lane_armed());
         assert_eq!(h.sequencer.selected_track_index(), Some(1));
         assert!(h.sequencer.clip_on(0, lead_id).is_some());
+    }
+
+    /// Decision 7 (`440-undo-view-state.md`): ⌘Z after an agent write undoes
+    /// it to what the user was looking at when it ran — the lead clip, its
+    /// track, the cursor and the marquee the write read from.
+    #[test]
+    fn undoing_an_agent_write_restores_the_view_it_ran_in() {
+        let (mut h, lead_id, _) = harness_with_clip();
+        h.cursor_tick.store(480, Ordering::Relaxed);
+        let marquee = rect(0, 1920, 0, 0);
+        h.sequencer.set_marquee(Some(marquee));
+        let mut record = Record::new();
+        let created = agent_call(
+            &mut h,
+            &mut record,
+            "create_clips",
+            json!({ "clips": [{ "track": 3, "start": "3", "length": 4, "notes": "C3 0 1 90" }] }),
+        );
+        assert!(!created.is_error, "{}", created.text);
+        h.handlers.select_track_workflow(&mut h.sequencer, 1);
+        h.cursor_tick.store(3840 * 8, Ordering::Relaxed);
+        h.sequencer.set_marquee(None);
+
+        run_command(&mut h, &mut record, SequencerCommand::Undo);
+
+        assert!(h.sequencer.tracks()[2].clips().is_empty());
+        assert_eq!(h.sequencer.selected_track_index(), Some(0));
+        assert_eq!(h.sequencer.selected_clip_id(), Some(lead_id));
+        assert_eq!(h.sequencer.cursor_tick(), 480);
+        assert_eq!(h.sequencer.marquee(), Some(marquee));
+    }
+
+    /// A drag merged into one step undoes to where its first step started
+    /// and redoes to where its last ended (`440-undo-view-state.md`
+    /// decision 2).
+    #[test]
+    fn a_merged_drag_undoes_to_its_start_and_redoes_to_its_end() {
+        let (mut h, _, note_id) = harness_with_clip();
+        let mut record = Record::new();
+        let nudge = |nudge| SequencerCommand::DragEventsVelocity {
+            event_ids: vec![note_id],
+            nudge,
+            drag_id: 7,
+        };
+        run_command(&mut h, &mut record, nudge(5));
+        h.cursor_tick.store(240, Ordering::Relaxed);
+        run_command(&mut h, &mut record, nudge(5));
+        assert_eq!(record.len(), 1);
+        h.cursor_tick.store(960, Ordering::Relaxed);
+
+        run_command(&mut h, &mut record, SequencerCommand::Undo);
+        assert_eq!(h.sequencer.cursor_tick(), 0);
+        run_command(&mut h, &mut record, SequencerCommand::Redo);
+        assert_eq!(h.sequencer.cursor_tick(), 240);
+    }
+
+    /// A drag back to where it began annuls its step (`Merged::Annul`), and
+    /// the step below it keeps its own `after`: its redo doesn't land where
+    /// the annulled drag was made.
+    #[test]
+    fn an_annulled_drag_leaves_the_step_below_its_view() {
+        let (mut h, _, note_id) = harness_with_clip();
+        h.cursor_tick.store(120, Ordering::Relaxed);
+        let mut record = Record::new();
+        let insert = SequencerCommand::InsertNote {
+            tick: 480,
+            length: 480,
+            pitch: 64,
+            velocity: 100,
+        };
+        run_command(&mut h, &mut record, insert);
+        h.cursor_tick.store(600, Ordering::Relaxed);
+        let moved = Move {
+            delta_ticks: 240,
+            delta_pitch: 0,
+        };
+        let back = Move {
+            delta_ticks: 0,
+            delta_pitch: 0,
+        };
+        run_command(&mut h, &mut record, drag_step(&[note_id], moved));
+        run_command(&mut h, &mut record, drag_step(&[note_id], back));
+        assert_eq!(record.len(), 1);
+
+        run_command(&mut h, &mut record, SequencerCommand::Undo);
+        assert_eq!(h.sequencer.cursor_tick(), 120);
+        h.cursor_tick.store(1500, Ordering::Relaxed);
+        run_command(&mut h, &mut record, SequencerCommand::Redo);
+        assert_eq!(h.sequencer.cursor_tick(), 120);
+    }
+
+    /// A project that fails to open leaves the open project as it is, the
+    /// focus with it: from the clip view, the clip view keeps the keyboard
+    /// (`440-undo-view-state.md` decision 6). It used to move it to the
+    /// arranger, left over from when loading was a view state of its own.
+    #[test]
+    fn a_failed_open_keeps_the_focus() {
+        let (mut h, _, _) = harness_with_clip();
+        let mut record: Record<UndoStep> = Record::new();
+        run_command(&mut h, &mut record, SequencerCommand::EnterClip);
+        let path = std::env::temp_dir().join(format!("stev-gone-{}.stev", std::process::id()));
+
+        run_command(
+            &mut h,
+            &mut record,
+            project_action(ProjectAction::OpenFile { path }, true),
+        );
+
+        assert_eq!(h.handlers.view_state(), ViewState::Clip);
+        let status = h.ui_events.try_iter().find_map(|event| match event {
+            UiEvent::Status { message } => Some(message),
+            _ => None,
+        });
+        assert!(status.is_some_and(|status| status.starts_with("Could not open stev-gone-")));
     }
 
     /// Decision 13: a write while a modal is up says why and changes

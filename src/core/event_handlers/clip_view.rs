@@ -69,7 +69,10 @@ impl EventHandlers {
 mod tests {
     use std::sync::atomic::Ordering;
 
-    use crate::core::event_handlers::test_harness::{add_clip, harness};
+    use undo::Record;
+
+    use crate::core::event_handlers::test_harness::{harness, run_command};
+    use crate::core::sequencer::{SequencerCommand, UndoStep};
     use crate::core::view_state::ViewState;
     use crate::view::display::UiEvent;
 
@@ -101,26 +104,37 @@ mod tests {
         );
     }
 
-    /// Undoing the commit of the clip open in the clip view leaves to the
-    /// arranger (`ClipExited`), drops the lead clip and removes its shape.
+    /// Undoing the commit of the clip open in the clip view keeps the clip
+    /// view, on no clip, as after undoing a delete that took the lead clip:
+    /// the lead clip goes and its shape with it, and only the user moves the
+    /// keyboard (`440-undo-view-state.md` decision 6). It used to leave to
+    /// the arranger.
     #[test]
-    fn uncommitting_the_open_clip_exits_to_the_arranger() {
+    fn uncommitting_the_open_clip_keeps_the_clip_view_on_no_clip() {
         let mut h = harness();
-        let (clip_id, _) = add_clip(&mut h.sequencer, 0);
-        h.handlers
-            .sync_clip_selection_to_cursor_workflow(&mut h.sequencer);
-        h.handlers.set_view_state(ViewState::Clip);
-        let metadata = h.sequencer.selected_clip_metadata().unwrap();
-        h.sequencer.tracks_mut()[0].remove_clip_by_id(clip_id);
+        let mut record: Record<UndoStep> = Record::new();
+        let empty_clip = SequencerCommand::InsertEmptyClip { time_bounds: None };
+        run_command(&mut h, &mut record, empty_clip);
+        let clip_id = h.sequencer.selected_clip_id().unwrap();
+        run_command(&mut h, &mut record, SequencerCommand::EnterClip);
         while h.ui_events.try_recv().is_ok() {}
 
-        h.handlers
-            .uncommit_clip_workflow(&mut h.sequencer, &metadata);
+        run_command(&mut h, &mut record, SequencerCommand::Undo);
 
-        assert_eq!(h.handlers.view_state(), ViewState::Arranger);
+        assert_eq!(h.handlers.view_state(), ViewState::Clip);
         assert_eq!(h.sequencer.selected_clip_id(), None);
+        assert!(h.sequencer.tracks()[0].get_clip_by_id(clip_id).is_none());
         let events: Vec<_> = h.ui_events.try_iter().collect();
-        assert!(events.iter().any(|e| matches!(e, UiEvent::ClipExited)));
-        assert!(matches!(events.last(), Some(UiEvent::ClipRemoved { .. })));
+        assert!(!events.iter().any(|e| matches!(e, UiEvent::ClipExited)));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, UiEvent::LeadClipChanged { clip_view: None }))
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, UiEvent::ClipRemoved { clip } if clip.clip_id == clip_id))
+        );
     }
 }

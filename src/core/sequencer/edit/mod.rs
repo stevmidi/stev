@@ -15,9 +15,11 @@
 //! `updated` = an existing clip whose bounds changed (id kept), `added` = a new
 //! clip, `removed` = a deleted clip, `shifted` = a clip moved wholesale along
 //! the timeline, `split_*` = the split half of an insert/duplicate,
-//! `carve_*` = the range-delete done to clear space for a paste. Each carries
-//! `selected_track_idx`/`selected_clip_id` when the operation might have
-//! removed the selected clip.
+//! `carve_*` = the range-delete done to clear space for a paste. A forward
+//! variant carries `selected_track_idx`/`selected_clip_id` when the operation
+//! might have removed the selected clip. No undo variant carries a selection
+//! or a marquee: what an undo or redo puts back of the view is kept with the
+//! step itself ([`UndoStep`], `440-undo-view-state.md`).
 
 use std::sync::atomic::Ordering;
 
@@ -35,6 +37,7 @@ mod event_edits;
 mod meter_edit;
 mod tempo_edit;
 mod track_edits;
+mod undo_step;
 
 pub(crate) use clip_edits::{
     CommitClipEdit, CreateClipsEdit, DeleteInRangeEdit, DeleteTimeEdit, DuplicateClipsEdit,
@@ -52,6 +55,7 @@ pub(crate) use tempo_edit::{SetTempoEdit, TempoGesture};
 pub(crate) use track_edits::{
     AddTrackEdit, RemoveTrackEdit, RenameTrackEdit, SetKnobParamEdit, SetTrackOutputEdit,
 };
+pub(crate) use undo_step::{UndoStep, ViewSnapshot};
 
 /// Which clip a paste makes the lead (`EditResult::ClipsPasted`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -76,23 +80,6 @@ pub(crate) enum PasteLead {
     KeepSelection,
 }
 
-/// The marquee an undo puts back, with the cursor it was anchored to: the
-/// marquee lives at the cursor (`020-views-and-state.md` § Arranger Time
-/// Selection), so the rect alone came back wherever the cursor had moved
-/// since, a zero-width one drawn as the cursor line there.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub(crate) struct RestoredMarquee {
-    /// Low tick of the marquee.
-    pub(crate) start: i32,
-    /// High tick of the marquee.
-    pub(crate) end: i32,
-    /// Its inclusive track span, `None` to leave the marquee's as it is (an
-    /// edit across every track).
-    pub(crate) tracks: Option<(usize, usize)>,
-    /// The cursor as the edit found it.
-    pub(crate) cursor_tick: i32,
-}
-
 /// What changed — returned by edit() and undo() so the handler can fire UI
 /// events. See the module docs for the shared field vocabulary.
 pub(crate) enum EditResult {
@@ -106,19 +93,11 @@ pub(crate) enum EditResult {
     },
     /// Undo of a split: `updated` is each original clip restored to its
     /// pre-split bounds, `removed` is each remainder clip that gets deleted.
-    /// Carries the selection from before the split, to restore.
     ClipsUnsplit {
         /// Existing clips whose bounds changed (ids kept).
         updated: Vec<ClipMetadata>,
         /// Clips deleted whole.
         removed: Vec<ClipMetadata>,
-        /// The selection from before the edit, to restore.
-        selected_track_idx: Option<usize>,
-        /// The selection from before the edit, to restore.
-        selected_clip_id: Option<Uuid>,
-        /// The marquee a marquee split (`⌘E` over one) was made with, to put
-        /// back; `None` for a single-clip split, which had none.
-        restored_marquee: Option<RestoredMarquee>,
     },
     /// Forward direction of Insert Silence: `split_updated`/`split_added`
     /// mirror `ClipsSplit` (clips split to make room at the insertion
@@ -143,13 +122,6 @@ pub(crate) enum EditResult {
         split_updated: Vec<ClipMetadata>,
         /// The right-hand split halves, deleted again (undo).
         split_removed: Vec<ClipMetadata>,
-        /// The selection from before the insert, to restore.
-        selected_track_idx: Option<usize>,
-        /// The selection from before the insert, to restore.
-        selected_clip_id: Option<Uuid>,
-        /// The inserted range, for the marquee to cover again (its track
-        /// span left as it is: the insert is global).
-        restored_marquee: RestoredMarquee,
     },
     /// Forward direction of "Delete Time" — the opposite of `SilenceInserted`:
     /// `carve_updated`/`carve_added`/`carve_removed` mirror `RangeDeleted`
@@ -176,9 +148,6 @@ pub(crate) enum EditResult {
     },
     /// Undo of Delete Time: `shifted` is every clip moved back right,
     /// `carve_updated`/`carve_added`/`carve_removed` mirror `RangeRestored`.
-    /// `restored_selection` is the original `[start, end)` bounds the
-    /// deleted material reappears at, so the handler can put the Arranger
-    /// time selection back — the mirror of `TimeDeleted`'s collapse.
     TimeUndeleted {
         /// Clips moved wholesale along the timeline.
         shifted: Vec<ClipMetadata>,
@@ -188,12 +157,6 @@ pub(crate) enum EditResult {
         carve_added: Vec<ClipMetadata>,
         /// The carve's right-hand pieces, deleted again (undo).
         carve_removed: Vec<ClipMetadata>,
-        /// Selection at the time, in case the operation removed the selected clip.
-        selected_track_idx: Option<usize>,
-        /// Selection at the time, in case the operation removed the selected clip.
-        selected_clip_id: Option<Uuid>,
-        /// The original time-selection bounds to put back (undo).
-        restored_selection: (i32, i32),
     },
     /// Forward direction of Ableton-style range delete: `updated` is each
     /// clip trimmed at one edge (id kept), `added` is each new right-hand
@@ -225,13 +188,6 @@ pub(crate) enum EditResult {
         added: Vec<ClipMetadata>,
         /// Clips deleted whole.
         removed: Vec<ClipMetadata>,
-        /// The selection from before the edit, to restore.
-        selected_track_idx: Option<usize>,
-        /// The selection from before the edit, to restore.
-        selected_clip_id: Option<Uuid>,
-        /// The carved range and tracks, for the marquee to cover again
-        /// (`tracks: None` for the all-track cut).
-        restored_marquee: RestoredMarquee,
     },
     /// Forward direction of "mute the time selection" (`MuteInRangeEdit`):
     /// every clip overlapping the range is split at its edges like
@@ -254,12 +210,6 @@ pub(crate) enum EditResult {
         updated: Vec<ClipMetadata>,
         /// Clips deleted whole (split-off pieces).
         removed: Vec<ClipMetadata>,
-        /// The selection from before the mute, to restore.
-        selected_track_idx: Option<usize>,
-        /// The selection from before the mute, to restore.
-        selected_clip_id: Option<Uuid>,
-        /// The muted marquee, to put back.
-        restored_marquee: RestoredMarquee,
     },
     /// Forward direction of a clip paste. `pasted` is every clipboard clip
     /// added at the cursor. The `carve_*` buckets mirror `RangeDeleted` and
@@ -280,7 +230,6 @@ pub(crate) enum EditResult {
     },
     /// Undo of a clip paste: `unpasted` is every pasted clip being removed, the
     /// `carve_*` buckets mirror `RangeRestored` (carved originals coming back).
-    /// Carries the pre-paste selection so the handler can restore it.
     ClipsUnpasted {
         /// Range-delete: trimmed originals (ids kept).
         carve_updated: Vec<ClipMetadata>,
@@ -290,10 +239,6 @@ pub(crate) enum EditResult {
         carve_removed: Vec<ClipMetadata>,
         /// The pasted clips being removed again (undo).
         unpasted: Vec<ClipMetadata>,
-        /// Selection at the time, in case the operation removed the selected clip.
-        selected_track_idx: Option<usize>,
-        /// Selection at the time, in case the operation removed the selected clip.
-        selected_clip_id: Option<Uuid>,
     },
     /// Forward direction of plain `⌘/Ctrl+D` "Duplicate Clips"
     /// (`DuplicateClipsEdit`): exactly `ClipsPasted`'s buckets — it *is* a
@@ -314,8 +259,7 @@ pub(crate) enum EditResult {
         /// Arranger time selection the view should advance to.
         new_selection: TimeSelectionRect,
     },
-    /// Undo of "Duplicate Clips": exactly `ClipsUnpasted`'s buckets plus
-    /// `restored_selection`, the original marquee rect to put back.
+    /// Undo of "Duplicate Clips": exactly `ClipsUnpasted`'s buckets.
     ClipsUnduplicated {
         /// Range-delete: trimmed originals (ids kept).
         carve_updated: Vec<ClipMetadata>,
@@ -325,12 +269,6 @@ pub(crate) enum EditResult {
         carve_removed: Vec<ClipMetadata>,
         /// The copied clips being removed again (undo).
         unpasted: Vec<ClipMetadata>,
-        /// Selection at the time, in case the operation removed the selected clip.
-        selected_track_idx: Option<usize>,
-        /// Selection at the time, in case the operation removed the selected clip.
-        selected_clip_id: Option<Uuid>,
-        /// Arranger time selection the view should restore.
-        restored_selection: TimeSelectionRect,
     },
     /// Forward direction of a clip move (`MoveClipEdit`, the arranger band
     /// drag): `from` is the clip as it sat on its source track, `to` the same
@@ -399,7 +337,6 @@ pub(crate) enum EditResult {
     /// in the UI and each is applied as an add-or-replace — `split_removed`
     /// the right-hand leftovers deleted again by the un-split (never a
     /// piece), the `carve_*` buckets mirror `RangeRestored`.
-    /// `restored_selection` is the original rect for the marquee.
     RangeUnmoved {
         /// Every piece at the destination it is leaving (the shapes to remove).
         unmoved: Vec<ClipMetadata>,
@@ -413,8 +350,6 @@ pub(crate) enum EditResult {
         carve_added: Vec<ClipMetadata>,
         /// Range-delete: clips cleared whole.
         carve_removed: Vec<ClipMetadata>,
-        /// Arranger time selection the view should restore.
-        restored_selection: TimeSelectionRect,
     },
     /// Forward direction of `Shift+⌘/Ctrl+D` "Duplicate Time" (`DuplicateTimeEdit`):
     /// `shifted`/`split_updated`/`split_added` are the `InsertSilenceEdit` half
@@ -437,8 +372,6 @@ pub(crate) enum EditResult {
     },
     /// Undo of "Duplicate Time": `unpasted` is every copied clip being removed,
     /// `shifted`/`split_updated`/`split_removed` mirror `SilenceRemoved`.
-    /// Carries the pre-edit selection context (in case the selected clip was a
-    /// copy) and `restored_selection`, the original time selection bounds.
     TimeUnduplicated {
         /// The pasted clips being removed again (undo).
         unpasted: Vec<ClipMetadata>,
@@ -448,12 +381,6 @@ pub(crate) enum EditResult {
         split_updated: Vec<ClipMetadata>,
         /// The right-hand split halves, deleted again (undo).
         split_removed: Vec<ClipMetadata>,
-        /// Selection at the time, in case the operation removed the selected clip.
-        selected_track_idx: Option<usize>,
-        /// Selection at the time, in case the operation removed the selected clip.
-        selected_clip_id: Option<Uuid>,
-        /// The original time-selection bounds to put back (undo).
-        restored_selection: (i32, i32),
     },
     /// One clip's edges moved (`ResizeClipEdit`, or `RetimeClipEdit`,
     /// which also retimed its events and may have set the tempo; either direction):
@@ -476,9 +403,10 @@ pub(crate) enum EditResult {
         /// The clip as placed.
         clip: ClipMetadata,
     },
-    /// Undo of a clip commit: the clip has been lifted off its track. No
-    /// frozen selection context — lifting doesn't touch the selection, so the
-    /// handler reads it live (and leaves the clip view if this clip was open).
+    /// Undo of a clip commit: the clip has been lifted off its track. The
+    /// handler drops it as the lead if it was; the clip view stays where it
+    /// is, on no clip if it showed this one (`440-undo-view-state.md`
+    /// decision 6).
     ClipUncommitted {
         /// The clip that was removed.
         clip: ClipMetadata,
@@ -790,6 +718,52 @@ sequencer_edit_dispatch!(
     SetTempo(SetTempoEdit),
     SetMeter(SetMeterEdit),
 );
+
+impl SequencerEdit {
+    /// Whether an undo or redo of this edit puts back the view around it
+    /// ([`UndoStep`]): every edit that changes clips or notes does, as in
+    /// Ableton; the tempo, the meter, a track's name, its output and a
+    /// knob's mapping undo with the view as it is, and a track add or remove
+    /// keeps its own selection rule (`050-undo-redo.md` § Track add /
+    /// remove). Exhaustive, so a new edit has to be placed.
+    pub(crate) fn restores_view(&self) -> bool {
+        match self {
+            SequencerEdit::CommitClip(_)
+            | SequencerEdit::CreateClips(_)
+            | SequencerEdit::DuplicateClips(_)
+            | SequencerEdit::DuplicateTime(_)
+            | SequencerEdit::DeleteInRange(_)
+            | SequencerEdit::DeleteTime(_)
+            | SequencerEdit::SplitClips(_)
+            | SequencerEdit::InsertSilence(_)
+            | SequencerEdit::PasteClips(_)
+            | SequencerEdit::MoveClip(_)
+            | SequencerEdit::MoveRange(_)
+            | SequencerEdit::ResizeClip(_)
+            | SequencerEdit::RetimeClip(_)
+            | SequencerEdit::MuteInRange(_)
+            | SequencerEdit::DeleteSelectedEvents(_)
+            | SequencerEdit::NudgeSelectedEvents(_)
+            | SequencerEdit::NudgeSelectedEventsLength(_)
+            | SequencerEdit::TransposeSelectedEvents(_)
+            | SequencerEdit::DragEventsVelocity(_)
+            | SequencerEdit::MuteSelectedEvents(_)
+            | SequencerEdit::QuantizeEvents(_)
+            | SequencerEdit::ClearControllerSpan(_)
+            | SequencerEdit::InsertCapture(_)
+            | SequencerEdit::InsertNotes(_)
+            | SequencerEdit::ReplaceClipNotes(_)
+            | SequencerEdit::DragNotes(_) => true,
+            SequencerEdit::AddTrack(_)
+            | SequencerEdit::RemoveTrack(_)
+            | SequencerEdit::RenameTrack(_)
+            | SequencerEdit::SetTrackOutput(_)
+            | SequencerEdit::SetKnobParam(_)
+            | SequencerEdit::SetTempo(_)
+            | SequencerEdit::SetMeter(_) => false,
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {

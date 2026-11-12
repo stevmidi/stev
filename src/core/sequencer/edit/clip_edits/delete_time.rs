@@ -140,23 +140,14 @@ impl DeleteTimeEdit {
         // itself unwinds.
         sequencer.shift_clips(targets, self.end - self.start);
 
-        let (carve_updated, carve_added, carve_removed, selected_track_idx, selected_clip_id) =
+        let (carve_updated, carve_added, carve_removed) =
             match self.delete.as_mut().map(|d| d.undo(sequencer)) {
                 Some(EditResult::RangeRestored {
                     updated,
                     added,
                     removed,
-                    selected_track_idx,
-                    selected_clip_id,
-                    ..
-                }) => (
-                    updated,
-                    added,
-                    removed,
-                    selected_track_idx,
-                    selected_clip_id,
-                ),
-                _ => (Vec::new(), Vec::new(), Vec::new(), None, None),
+                }) => (updated, added, removed),
+                _ => (Vec::new(), Vec::new(), Vec::new()),
             };
 
         let removed_ids: HashSet<Uuid> = carve_removed.iter().map(|m| m.clip_id).collect();
@@ -167,9 +158,6 @@ impl DeleteTimeEdit {
             carve_updated,
             carve_added,
             carve_removed,
-            selected_track_idx,
-            selected_clip_id,
-            restored_selection: (self.start, self.end),
         }
     }
 }
@@ -342,25 +330,6 @@ mod tests {
         let restored = sequencer.tracks()[0].get_clip_by_id(original_id).unwrap();
         assert_eq!(restored.start_tick(), 0);
         assert_eq!(restored.end_tick(), 1920);
-    }
-
-    /// Undo reports the original `[start, end)` bounds so the handler can put
-    /// the Arranger time selection back where the deleted material reappears.
-    #[test]
-    fn undo_reports_the_original_selection_bounds() {
-        let mut sequencer = test_sequencer();
-        sequencer.tracks_mut()[0].add_clip(&clip_at(0, 1920));
-
-        let mut edit = DeleteTimeEdit::from_time_range(&sequencer, 480, 720).unwrap();
-        edit.edit(&mut sequencer);
-
-        let EditResult::TimeUndeleted {
-            restored_selection, ..
-        } = edit.undo(&mut sequencer)
-        else {
-            panic!("expected TimeUndeleted");
-        };
-        assert_eq!(restored_selection, (480, 720));
     }
 
     #[test]

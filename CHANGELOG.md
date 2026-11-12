@@ -24,9 +24,13 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 - Copy, cut and paste projects in the browser. Select a project and press ⌘C or ⌘X, then select a folder (or a project in it) and press ⌘V: a copy is copied there, a cut is moved. ⌥⌘V moves a copied project too, as in Finder. A name that's taken gets `_2`, so ⌘C then ⌘V in the same folder duplicates a project. Nothing moves until you paste: the cut project shows dimmed, and Esc cancels. A moved project stays in Recent, and if it's the open one, ⌘S saves it in its new folder and Save As starts there. Only projects copy and move, not folders, templates or clips.
 
+### Changed
+
+- Undo and redo never move the keyboard. Undoing the commit of the clip open in the clip view, or the add of the selected track from it, keeps the clip view (on no clip, or on the track taking its place) instead of going back to the arranger. A project that fails to open leaves the keyboard where it was too.
+
 ### Fixed
 
-- Undo puts back what you were looking at before the edit, the clip in the clip view and the marquee at the cursor it started from, even after you've moved on to another clip, track or bar. This covers a marquee delete or cut, a range mute (M), a split over a marquee (⌘E) and Insert Silence (⌘I). Before, a delete's clips came back in the arranger while the clip view stayed empty or on the other clip, and those undos left the marquee gone.
+- Undo puts back what you were looking at before the edit, and redo what you were looking at after it: the selected track, the clip in the clip view, the cursor and the marquee, even after you've moved on to another clip, track or bar. This covers every clip and note edit, an agent's writes included. Before, a delete's clips came back in the arranger while the clip view stayed empty or on the other clip; Delete Time, Duplicate Time, Duplicate Clips and a marquee move put the marquee back away from its cursor; the all-track cut (⇧⌘X) and Insert Silence put it back on the wrong tracks; and a redo picked its selection from wherever the cursor had gone, so a split's redo could select the wrong piece. Undoing a tempo, meter, track name, output or knob change leaves the view as it is, as in Ableton.
 
 ## [0.15.0] - 2026-11-08
 

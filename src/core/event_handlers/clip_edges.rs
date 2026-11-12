@@ -8,7 +8,7 @@
 
 use undo::Record;
 
-use crate::core::sequencer::{EdgeTarget, ResizeClipEdit, RetimeClipEdit, SequencerEdit};
+use crate::core::sequencer::{EdgeTarget, ResizeClipEdit, RetimeClipEdit, UndoStep};
 use crate::models::clip::{ClipBounds, ClipEdge, EventSpaceRetime};
 
 use super::*;
@@ -20,7 +20,7 @@ impl EventHandlers {
     pub(super) fn drag_clip_edge_workflow(
         &self,
         sequencer: &mut Sequencer,
-        undo_record: &mut Record<SequencerEdit>,
+        undo_record: &mut Record<UndoStep>,
         edge: ClipEdge,
         target_tick: i32,
         drag_id: u64,
@@ -43,7 +43,7 @@ impl EventHandlers {
     pub(super) fn window_edge_workflow(
         &self,
         sequencer: &mut Sequencer,
-        undo_record: &mut Record<SequencerEdit>,
+        undo_record: &mut Record<UndoStep>,
         edge: ClipEdge,
         tick: i32,
     ) {
@@ -63,7 +63,7 @@ impl EventHandlers {
     pub(super) fn clip_edge_to_cursor_workflow(
         &self,
         sequencer: &mut Sequencer,
-        undo_record: &mut Record<SequencerEdit>,
+        undo_record: &mut Record<UndoStep>,
         edge: ClipEdge,
     ) {
         let in_clip_view = self.view_state().is_clip_view();
@@ -115,7 +115,7 @@ impl EventHandlers {
     pub(super) fn fit_first_clip_tempo_workflow(
         &self,
         sequencer: &mut Sequencer,
-        undo_record: &mut Record<SequencerEdit>,
+        undo_record: &mut Record<UndoStep>,
     ) {
         self.record_edit(
             sequencer,
@@ -131,7 +131,7 @@ impl EventHandlers {
     pub(super) fn rescale_selected_clip_workflow(
         &self,
         sequencer: &mut Sequencer,
-        undo_record: &mut Record<SequencerEdit>,
+        undo_record: &mut Record<UndoStep>,
         direction: i32,
     ) {
         self.record_edit(
@@ -147,7 +147,7 @@ impl EventHandlers {
     fn resize_clip_workflow(
         &self,
         sequencer: &mut Sequencer,
-        undo_record: &mut Record<SequencerEdit>,
+        undo_record: &mut Record<UndoStep>,
         clip_id: Uuid,
         after: Option<ClipBounds>,
         drag_id: Option<u64>,

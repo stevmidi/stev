@@ -36,7 +36,7 @@ use crate::core::input_event::TimeSelectionRect;
 use crate::core::midi::message::Controller;
 use crate::core::project::{ProjectAction, STRESS_BLOB_BYTES, STRESS_EVENTS, fill_stress_project};
 use crate::core::sequencer::test_support::{clip_at, note_off, note_on, rect};
-use crate::core::sequencer::{SequencerCommand, SequencerEdit};
+use crate::core::sequencer::{SequencerCommand, UndoStep};
 use crate::core::time::Meter;
 use crate::core::view_state::Pane;
 use crate::models::clip::{Clip, ClipEdge, NoteDrag};
@@ -65,39 +65,39 @@ struct Case {
     /// matters.
     name: &'static str,
     /// Run untimed before the command.
-    setup: fn(&mut Harness, &mut Record<SequencerEdit>),
+    setup: fn(&mut Harness, &mut Record<UndoStep>),
     /// The command to time.
     command: fn(&Harness) -> SequencerCommand,
 }
 
 /// No setup.
-fn none(_: &mut Harness, _: &mut Record<SequencerEdit>) {}
+fn none(_: &mut Harness, _: &mut Record<UndoStep>) {}
 
 /// Every event of the lead clip selected.
-fn select_all(h: &mut Harness, record: &mut Record<SequencerEdit>) {
+fn select_all(h: &mut Harness, record: &mut Record<UndoStep>) {
     run_command(h, record, SequencerCommand::SelectAllEvents);
 }
 
 /// The lead clip's notes copied.
-fn copy_notes(h: &mut Harness, record: &mut Record<SequencerEdit>) {
+fn copy_notes(h: &mut Harness, record: &mut Record<UndoStep>) {
     select_all(h, record);
     run_command(h, record, SequencerCommand::CopyNotes);
 }
 
 /// The whole project copied.
-fn copy_clips(h: &mut Harness, record: &mut Record<SequencerEdit>) {
+fn copy_clips(h: &mut Harness, record: &mut Record<UndoStep>) {
     let end = project_end(h);
     run_command(h, record, SequencerCommand::CopyClips { start: 0, end });
 }
 
 /// The transport cursor halfway through the project, inside a clip on
 /// every track.
-fn cursor_mid(h: &mut Harness, _: &mut Record<SequencerEdit>) {
+fn cursor_mid(h: &mut Harness, _: &mut Record<UndoStep>) {
     h.cursor_tick.store(project_end(h) / 2, Ordering::Relaxed);
 }
 
 /// The clip view focused on the lead clip.
-fn enter_clip(h: &mut Harness, record: &mut Record<SequencerEdit>) {
+fn enter_clip(h: &mut Harness, record: &mut Record<UndoStep>) {
     run_command(h, record, SequencerCommand::EnterClip);
 }
 
@@ -648,7 +648,7 @@ fn measure(case: &Case) -> Row {
     let mut row = Row::default();
     for _ in 0..ROUNDS {
         let mut h = stress_harness();
-        let mut record: Record<SequencerEdit> = Record::new();
+        let mut record: Record<UndoStep> = Record::new();
         (case.setup)(&mut h, &mut record);
         let steps = record.len();
         let command = (case.command)(&h);
@@ -672,7 +672,7 @@ fn measure(case: &Case) -> Row {
 fn measure_save(template: bool) -> Row {
     let mut row = Row::default();
     let mut h = stress_harness();
-    let mut record: Record<SequencerEdit> = Record::new();
+    let mut record: Record<UndoStep> = Record::new();
     for _ in 0..ROUNDS {
         let cmd = if template {
             SequencerCommand::SaveTemplate {

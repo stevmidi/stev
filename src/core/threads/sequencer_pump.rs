@@ -5,7 +5,7 @@
 //! leaks the next clip's note-on — see `150-clock-position-sync.md`), drains
 //! MIDI input, and dispatches every [`SequencerCommand`] / [`TransportCommand`]
 //! through `EventHandlers` against the thread-local `Sequencer` / `Transport` /
-//! `Metronome`. It also owns the `Record<SequencerEdit>` undo stack
+//! `Metronome`. It also owns the `Record<UndoStep>` undo stack
 //! (`050-undo-redo.md`) and the [`OpenProject`]: what the unsaved-changes
 //! check compares against (`060-persistence.md`), a project read from disk
 //! while the view loads its plugins (`130-plugin-host.md`), and the
@@ -26,7 +26,7 @@ use crate::core::event_handlers::{
 use crate::core::metronome::Metronome;
 use crate::core::midi::input::RecordedMidi;
 use crate::core::project::ProjectData;
-use crate::core::sequencer::{Sequencer, SequencerCommand, SequencerEdit};
+use crate::core::sequencer::{Sequencer, SequencerCommand, UndoStep};
 use crate::core::time::TapTempo;
 use crate::core::transport::{TickOutcome, Transport, TransportCommand, TransportEvent};
 
@@ -57,7 +57,7 @@ pub(crate) fn start_sequencer_thread(
 
             event_handlers.select_track_workflow(&mut sequencer, 0);
 
-            let mut undo_record: Record<SequencerEdit> = Record::new();
+            let mut undo_record: Record<UndoStep> = Record::new();
             let mut tap_tempo = TapTempo::default();
             // The empty startup project counts as saved: quitting before
             // touching anything asks nothing.
