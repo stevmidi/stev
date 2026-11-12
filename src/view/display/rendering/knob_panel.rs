@@ -76,7 +76,7 @@ impl Display {
         let Some(knobs) = self.knob_rects() else {
             return;
         };
-        let accent = self.track_color(self.selected_track_idx);
+        let accent = self.lead_clip_color();
         let switches = self.knob_labels_switch_lanes();
         let hovered = self.knob_under_pointer();
         let armed = self.armed_knob();

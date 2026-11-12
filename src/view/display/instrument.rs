@@ -568,9 +568,10 @@ impl Display {
 
     /// Re-points the live target when the selected track changes.
     pub(super) fn sync_live_instrument_target(&self) {
-        let target = self
-            .track_instrument(self.selected_track_idx)
-            .and(self.track_slot(self.selected_track_idx));
+        let target = self.selected_track_idx.and_then(|track_idx| {
+            self.track_instrument(track_idx)
+                .and(self.track_slot(track_idx))
+        });
         self.set_live_instrument_target(target);
     }
 

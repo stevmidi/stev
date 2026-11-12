@@ -88,11 +88,8 @@ impl EventHandlers {
     /// back (`restore_view_workflow`), and a forward edit's rule that the
     /// lead sticks if it survived, whose track is already the selected one.
     /// An undo after the user moved to another track selects the edit's
-    /// track again, with no lead if the edit had none. An armed performance
-    /// lane is live state, like the loop: an undo never disarms it, so then
-    /// the track stays as it is, and so does the lead unless the edit took
-    /// it off that track (a clip move undone): a lead is always on the
-    /// selected track, so it is dropped.
+    /// track again, with no lead if the edit had none; that leaves an armed
+    /// performance lane, as any track selection does.
     pub(super) fn reselect_surviving_clip(
         &self,
         sequencer: &mut Sequencer,
@@ -101,12 +98,6 @@ impl EventHandlers {
     ) {
         let track_moved = selected_track_idx
             .is_some_and(|track_idx| sequencer.selected_track_index() != Some(track_idx));
-        if track_moved && sequencer.is_performance_lane_armed() {
-            if sequencer.selected_clip_id().is_some() && sequencer.lead_clip().is_none() {
-                self.clear_clip_selection_workflow(sequencer);
-            }
-            return;
-        }
         let survivor = selected_track_idx
             .zip(selected_clip_id)
             .filter(|&(track_idx, clip_id)| sequencer.clip_on(track_idx, clip_id).is_some());

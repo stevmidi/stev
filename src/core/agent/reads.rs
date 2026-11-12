@@ -1090,6 +1090,22 @@ mod tests {
         );
     }
 
+    /// With the performance lane selected there is no selected track to
+    /// report.
+    #[test]
+    fn the_context_names_no_selected_track_with_the_performance_lane_selected() {
+        let mut sequencer = sequencer(vec![(0, clip(0, BAR, &[(60, 0, 960)]))]);
+        sequencer.select_track(sequencer.track_id_by_index(0));
+        assert!(get_context(&sequencer).contains("Selected track: "));
+
+        sequencer.select_track(None);
+        sequencer.set_performance_lane_armed(true);
+
+        let text = get_context(&sequencer);
+        assert!(!text.contains("Selected track"), "{text}");
+        assert!(!text.contains("Lead clip: "), "{text}");
+    }
+
     #[test]
     fn the_capture_reads_nothing_on_an_empty_buffer_and_checks_bars() {
         let sequencer = sequencer(Vec::new());

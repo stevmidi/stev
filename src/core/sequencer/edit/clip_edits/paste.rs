@@ -48,13 +48,23 @@ pub(crate) struct PasteClipsEdit {
 
 impl PasteClipsEdit {
     /// `⌘/Ctrl+V`: paste the session clipboard at the cursor tick, on the
-    /// selected track when the clipboard is track-anchored.
+    /// selected track when the clipboard is track-anchored. `None` for a
+    /// track-anchored clipboard with no selected track (the performance
+    /// lane is selected): a command aimed at the selected track does nothing
+    /// then, rather than fall back to the tracks the copy came from
+    /// (`450-performance-lane-selection.md` decision 8). An all-track copy
+    /// never used the selected track and pastes either way.
     pub(crate) fn from_sequencer(sequencer: &Sequencer) -> Option<Self> {
+        let clipboard = sequencer.clip_clipboard()?;
+        let selected_track = sequencer.selected_track_index();
+        if clipboard.is_track_anchored() && selected_track.is_none() {
+            return None;
+        }
         Self::from_clipboard_at(
             sequencer,
-            sequencer.clip_clipboard()?,
+            clipboard,
             sequencer.cursor_tick(),
-            sequencer.selected_track_index(),
+            selected_track,
         )
     }
 
@@ -374,10 +384,10 @@ mod tests {
         assert_eq!(first_ids, redo_ids, "redo must reuse the frozen clip ids");
     }
 
-    /// Pieces keep their absolute source track, so a paste needs no track
-    /// selection at all.
+    /// An all-track copy's pieces keep their absolute source track, so its
+    /// paste needs no track selection at all.
     #[test]
-    fn paste_does_not_need_a_selected_track() {
+    fn an_all_track_paste_does_not_need_a_selected_track() {
         let mut sequencer = test_sequencer();
         sequencer.tracks_mut()[1].add_clip(&clip_at(0, 480));
         sequencer.copy_clips_to_clipboard(0, 480);
@@ -451,10 +461,11 @@ mod tests {
         assert_eq!(starts(&sequencer, 1), vec![(0, 480)]);
     }
 
-    /// A marquee-scoped copy with no selected track pastes back onto its
-    /// source tracks, exactly like the all-track form.
+    /// A marquee-scoped copy aims at the selected track, so with none (the
+    /// performance lane is selected) it pastes nothing, rather than falling
+    /// back to its source tracks.
     #[test]
-    fn scoped_paste_without_a_selected_track_keeps_source_tracks() {
+    fn scoped_paste_without_a_selected_track_pastes_nothing() {
         let mut sequencer = test_sequencer();
         sequencer.tracks_mut()[3].add_clip(&clip_at(0, 480));
         sequencer.copy_clips_scoped_to_clipboard(TimeSelectionRect {
@@ -466,9 +477,9 @@ mod tests {
 
         sequencer.select_track(None);
         set_cursor(&sequencer, 960);
-        let mut edit = PasteClipsEdit::from_sequencer(&sequencer).unwrap();
-        edit.edit(&mut sequencer);
-        assert_eq!(starts(&sequencer, 3), vec![(0, 480), (960, 1440)]);
+
+        assert!(PasteClipsEdit::from_sequencer(&sequencer).is_none());
+        assert_eq!(starts(&sequencer, 3), vec![(0, 480)]);
     }
 
     /// The all-track `Shift+⌘C` clipboard ignores the selected track on paste.

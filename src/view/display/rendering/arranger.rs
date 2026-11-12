@@ -73,7 +73,7 @@ impl Display {
         for track_idx in 0..layout.track_count {
             let lane_y = rect.min.y + layout.lane_top(track_idx);
             let accent = self.track_color(track_idx);
-            let is_selected_track = track_idx == self.selected_track_idx;
+            let is_selected_track = Some(track_idx) == self.selected_track_idx;
 
             // One common lane shade for every unselected track — the old
             // even/odd alternation read as distracting zebra banding, and the

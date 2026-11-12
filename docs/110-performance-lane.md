@@ -29,11 +29,31 @@ only — no recording/capture, no persistence. Key files:
 - `SequencerCommand::SelectPerformanceLane` (sent by clicking the reserved row
   — `Display::performance_lane_hit_at`, part of the same `ArrangerLayout`
   geometry `track_idx_at` uses) arms it via `select_performance_lane_workflow`.
-  Mutually exclusive with track selection: selecting a track disarms the lane
-  and vice versa (`sequencer/state.rs`'s `performance_lane_armed`). An undo
-  never disarms it: arming is live state, like the loop, so an undo that would
-  put back another track's selection leaves the selection as it is while the
-  lane is armed (`reselect_surviving_clip`, `050-undo-redo.md` § Invariants).
+  The arranger has **one selected row**, a track or the lane
+  (`450-performance-lane-selection.md`): arming drops the lead clip, the
+  track selection and the marquee (`clear_clip_selection_workflow`,
+  `Sequencer::select_track(None)`, `clear_marquee_workflow`), and selecting a
+  track disarms the lane (`switch_track_workflow`). Armed implies no selected
+  track, in the sequencer and in the view (`Display::selected_track_idx` is
+  an `Option`, `None` from `UiEvent::PerformanceLaneSelected`). The reverse
+  doesn't hold (a load has no selected track for a moment), so the flag is
+  stored, not derived.
+- **While the lane is selected, a command aimed at the selected track does
+  nothing**: no lead clip (the clip view shows "No clip at the cursor"), no
+  capture, no knob, no `v`, no rename, no plugin from the browser with Enter;
+  no marquee, so `⇧`-arrows, a `⇧`-click and `⌘A` start none, and `⌥←`/`⌥→`
+  have no track's clip edges to jump to; a marquee-scoped `⌘V` pastes nothing
+  (`PasteClipsEdit::from_sequencer`), while an all-track one pastes as ever.
+  `↓` selects the first track and `↑` the last
+  (`cycle_selected_track_workflow`); the lane itself is reached only by a
+  click. The cursor still moves with `←`/`→`, and its accent sits on the lane
+  row (`draw_selected_track_cursor`). A press on a track row selects that
+  track first, and so leaves the lane.
+- **An undo or redo that puts a track back leaves the lane**: the restore
+  selects the step's track the ordinary way, which disarms. Arming is never
+  restored: a step recorded while armed has no track in its snapshot and
+  leaves the selection as it is (`restore_view_workflow`,
+  `050-undo-redo.md` § Invariants).
 - `performance_lane_armed: Arc<AtomicBool>` (`SharedAtomics`) is read by
   `MidiInputForwarder` on its own thread to suppress **every audible route**
   while armed — both the MIDI-OUT thru-forward and the hosted CLAP instrument

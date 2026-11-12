@@ -14,7 +14,7 @@ impl Display {
         while let Ok(event) = self.ui_event_rx.try_recv() {
             match event {
                 UiEvent::TrackSelected { track_idx } => {
-                    self.selected_track_idx = track_idx;
+                    self.selected_track_idx = Some(track_idx);
                     self.performance_lane_selected = false;
                     self.in_pane(Pane::Arranger, Self::reveal_selected_track);
                     #[cfg(target_os = "macos")]
@@ -23,7 +23,11 @@ impl Display {
                 UiEvent::Status { message } => {
                     self.render.status = Some(StatusMessage::new(message));
                 }
+                // The lane is the selected row, so no track is: the change
+                // collapses the marquee like any other track change
+                // (`sync_time_selection_to_cursor`).
                 UiEvent::PerformanceLaneSelected => {
+                    self.selected_track_idx = None;
                     self.performance_lane_selected = true;
                 }
                 UiEvent::TimeSelectionSet { rect } => {
@@ -38,7 +42,7 @@ impl Display {
                     // the UI events) would read that move as "cursor moved"
                     // and wipe the selection it was just handed.
                     self.gesture.last_cursor_tick = Some(self.cursor_tick.load(Ordering::Relaxed));
-                    self.gesture.last_selected_track_idx = Some(self.selected_track_idx);
+                    self.gesture.last_selected_track_idx = self.selected_track_idx;
                 }
                 UiEvent::DuplicateSpanSet { start, end } => {
                     self.gesture.duplicate_span = Some((start, end));
@@ -267,7 +271,8 @@ impl Display {
     /// track span on an add (a remove clears the marquee, with every other
     /// gesture). The selection lands where the sequencer puts it — the added
     /// track; after a remove the same track, or the one that took the removed
-    /// selected track's place — and the collapse watcher is re-latched to it,
+    /// selected track's place, or still none with the performance lane
+    /// selected — and the collapse watcher is re-latched to it,
     /// so the edit's own selection move never reads as the user's (an add
     /// keeps the marquee). Any drag in flight, the output menu and an open
     /// rename field are dropped either way: they name a track by position. Engine-side state
@@ -291,13 +296,15 @@ impl Display {
                         shift.apply_span((rect.track_start, rect.track_end))?;
                     Some(rect)
                 });
-                at
+                Some(at)
             }
-            TrackShift::Removed(at) => shift
-                .apply(self.selected_track_idx)
-                .unwrap_or_else(|| at.min(self.track_count() - 1)),
+            TrackShift::Removed(at) => self.selected_track_idx.map(|track_idx| {
+                shift
+                    .apply(track_idx)
+                    .unwrap_or_else(|| at.min(self.track_count() - 1))
+            }),
         };
-        self.gesture.last_selected_track_idx = Some(self.selected_track_idx);
+        self.gesture.last_selected_track_idx = self.selected_track_idx;
     }
 }
 

@@ -549,7 +549,8 @@ impl Display {
 
     /// The track the knobs act on: the selected one, if there is one.
     pub(super) fn knobs_track(&self) -> Option<usize> {
-        (self.selected_track_idx < self.tracks.len()).then_some(self.selected_track_idx)
+        self.selected_track_idx
+            .filter(|&track_idx| track_idx < self.tracks.len())
     }
 
     /// The parameter knob `knob` of the selected track drives, if any.

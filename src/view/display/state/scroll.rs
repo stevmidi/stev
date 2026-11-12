@@ -291,11 +291,9 @@ impl Display {
             .is_some_and(|last_tick| last_tick != cursor_tick);
         self.gesture.last_cursor_tick = Some(cursor_tick);
 
-        let track_changed = self
-            .gesture
-            .last_selected_track_idx
-            .is_some_and(|last_idx| last_idx != self.selected_track_idx);
-        self.gesture.last_selected_track_idx = Some(self.selected_track_idx);
+        // A change to or from no track (the performance lane) counts.
+        let track_changed = self.gesture.last_selected_track_idx != self.selected_track_idx;
+        self.gesture.last_selected_track_idx = self.selected_track_idx;
 
         // A drag sets the cursor/track at its own anchor, so the move it
         // causes must not wipe the range that same drag is building. This

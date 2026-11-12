@@ -735,9 +735,12 @@ impl Display {
     /// whole — after the selection moved (`UiEvent::TrackSelected`), so
     /// Up/Down never walks the selection out of view. A selection already in
     /// view moves nothing, and so does one made while the arranger is hidden
-    /// (no viewport to reveal it in).
+    /// (no viewport to reveal it in). With no selected track there is
+    /// nothing to reveal.
     pub(in crate::view::display) fn reveal_selected_track(&mut self) {
-        self.reveal_track(self.selected_track_idx);
+        if let Some(track_idx) = self.selected_track_idx {
+            self.reveal_track(track_idx);
+        }
     }
 
     /// Scrolls the arranger's lanes just enough to show `track_idx` whole —
@@ -805,7 +808,7 @@ impl Display {
         self.draw_arranger_view(&lanes_painter, rect);
         self.draw_cursor_line(painter, rect);
         self.draw_playhead(painter, rect);
-        self.draw_selected_track_cursor(&lanes_painter, rect);
+        self.draw_selected_track_cursor(painter, &lanes_painter, rect);
     }
 
     /// The docked clip pane with no clip under the cursor: a quiet note in

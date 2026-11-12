@@ -28,6 +28,8 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 - Undo and redo never move the keyboard. Undoing the commit of the clip open in the clip view, or the add of the selected track from it, keeps the clip view (on no clip, or on the track taking its place) instead of going back to the arranger. A project that fails to open leaves the keyboard where it was too.
 
+- Selecting the performance lane deselects the track. While the lane is selected there is no selected track, no clip in the clip view and no marquee, so the keys that act on the selected track (Delete on a marquee, a paste of clips copied from a marquee, `v`, the knobs, ⌥←/→) do nothing instead of acting on the track you left. ↓ goes to the first track and ↑ to the last. An undo that puts a track's selection back leaves the lane.
+
 ### Fixed
 
 - Undo puts back what you were looking at before the edit, and redo what you were looking at after it: the selected track, the clip in the clip view, the cursor and the marquee, even after you've moved on to another clip, track or bar. This covers every clip and note edit, an agent's writes included. Before, a delete's clips came back in the arranger while the clip view stayed empty or on the other clip; Delete Time, Duplicate Time, Duplicate Clips and a marquee move put the marquee back away from its cursor; the all-track cut (⇧⌘X) and Insert Silence put it back on the wrong tracks; and a redo picked its selection from wherever the cursor had gone, so a split's redo could select the wrong piece. Undoing a tempo, meter, track name, output or knob change leaves the view as it is, as in Ableton.

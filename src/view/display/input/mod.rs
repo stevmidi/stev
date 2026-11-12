@@ -800,7 +800,9 @@ impl Display {
             // `EventHandlers`. `⌘V` arrives as `InputEvent::Paste`.
             #[cfg(target_os = "macos")]
             InputEvent::Action(Action::TogglePluginEditor) => {
-                self.toggle_instrument_editor(self.selected_track_idx);
+                if let Some(track_idx) = self.selected_track_idx {
+                    self.toggle_instrument_editor(track_idx);
+                }
                 true
             }
             // Two-finger trackpad / wheel scroll. View-local (mutates the
@@ -1356,7 +1358,9 @@ impl Display {
             // ⌘/Ctrl+R — rename the selected track (Ableton's chord): the
             // rename field over its header's name.
             InputEvent::Action(Action::RenameTrack) => {
-                self.open_track_rename(self.selected_track_idx);
+                if let Some(track_idx) = self.selected_track_idx {
+                    self.open_track_rename(track_idx);
+                }
                 true
             }
             // ⌘/Ctrl+J — "Merge Clips" (Ableton's Consolidate): bake the

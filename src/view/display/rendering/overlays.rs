@@ -429,7 +429,18 @@ impl Display {
     /// clip pane has the keyboard: `Space` still plays from here, so it stays
     /// visible, but dimmed so it can't be mistaken for the clip pane's own
     /// cursor, which the arrow keys move.
-    pub(super) fn draw_selected_track_cursor(&self, painter: &Painter, rect: Rect) {
+    ///
+    /// With the performance lane selected the accent sits on the lane row
+    /// (`450-performance-lane-selection.md` decision 6), drawn with
+    /// `painter`; the track rows are drawn with `lanes_painter`, clipped to
+    /// the lane viewport. With neither a track nor the lane selected (a
+    /// load, for a moment) nothing is drawn.
+    pub(super) fn draw_selected_track_cursor(
+        &self,
+        painter: &Painter,
+        lanes_painter: &Painter,
+        rect: Rect,
+    ) {
         if self.active_pane() == Pane::Clip {
             return;
         }
@@ -443,15 +454,26 @@ impl Display {
         }
 
         let layout = self.arranger_layout();
-        let (track_lo, track_hi) = self
+        let track_span = self
             .gesture
             .time_selection
             .map(|sel| (sel.track_start, sel.track_end))
-            .unwrap_or((self.selected_track_idx, self.selected_track_idx));
-
-        let tracks_top = rect.min.y + layout.tracks_top();
-        let (row_top, _) = track_row_y_range(tracks_top, layout.lane_h, track_lo);
-        let (_, row_bottom) = track_row_y_range(tracks_top, layout.lane_h, track_hi);
+            .or(self
+                .selected_track_idx
+                .map(|track_idx| (track_idx, track_idx)));
+        let (painter, row_top, row_bottom) = match track_span {
+            Some((track_lo, track_hi)) => {
+                let tracks_top = rect.min.y + layout.tracks_top();
+                let (row_top, _) = track_row_y_range(tracks_top, layout.lane_h, track_lo);
+                let (_, row_bottom) = track_row_y_range(tracks_top, layout.lane_h, track_hi);
+                (lanes_painter, row_top, row_bottom)
+            }
+            None if self.performance_lane_selected => {
+                let row_top = rect.min.y + layout.performance_lane_top;
+                (painter, row_top, row_top + layout.performance_lane_h)
+            }
+            None => return,
+        };
 
         let x = self.tick_to_screen_x(self.render_cursor_tick());
         if !self.content_x_on_screen(x) {

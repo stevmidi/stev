@@ -252,8 +252,10 @@ pub(crate) struct Display {
     // --- Arranger selected track ---
     /// The arranger's selected track. Not project state despite the
     /// original grouping — it is read broadly (rendering, input, the CLAP
-    /// host), so it stays flat on `Display`.
-    selected_track_idx: usize,
+    /// host), so it stays flat on `Display`. `None` while the performance
+    /// lane is the selected row (`450-performance-lane-selection.md`): no
+    /// reader falls back to a track then.
+    selected_track_idx: Option<usize>,
     /// Which view-local surface has the keyboard: the focused pane, the
     /// track-header column or the browser panel. See [`KeyFocus`] and
     /// `020-views-and-state.md` § Views (Track header focus).
@@ -474,7 +476,7 @@ impl Display {
                 ..BrowserPanel::default()
             },
             drag_pointer: None,
-            selected_track_idx: 0,
+            selected_track_idx: Some(0),
             key_focus: KeyFocus::Pane,
             track_rename: None,
             tempo_chip: TempoChip::default(),
@@ -1029,9 +1031,11 @@ impl Display {
     }
 
     /// The accent colour of the lead clip's track — the clip view's notes.
-    /// The lead clip is always on the selected track.
+    /// The lead clip is always on the selected track; with none there is no
+    /// lead either, and the colour is the theme accent.
     fn lead_clip_color(&self) -> Color32 {
-        self.track_color(self.selected_track_idx)
+        self.selected_track_idx
+            .map_or_else(theme::accent, |track_idx| self.track_color(track_idx))
     }
 
     /// The lead clip's arrangement room before the next clip on its track,

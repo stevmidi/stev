@@ -2010,53 +2010,87 @@ mod tests {
         assert_eq!(h.sequencer.selected_clip_id(), None);
     }
 
-    /// An armed performance lane is live state, like the loop: an undo that
-    /// would select another track leaves the lane armed and the selection as
-    /// it is, and still puts the clips back.
+    /// Selecting the performance lane leaves the track: no selected track,
+    /// no lead clip and no marquee while it is armed.
     #[test]
-    fn an_undo_never_disarms_the_performance_lane() {
+    fn selecting_the_performance_lane_drops_the_track_the_lead_and_the_marquee() {
+        let (mut h, _, _) = harness_with_clip();
+        h.handlers
+            .set_marquee_workflow(&mut h.sequencer, rect(0, 1920, 0, 0));
+        assert!(h.sequencer.selected_clip_id().is_some());
+
+        h.handlers
+            .select_performance_lane_workflow(&mut h.sequencer);
+
+        assert!(h.sequencer.is_performance_lane_armed());
+        assert_eq!(h.sequencer.selected_track_index(), None);
+        assert_eq!(h.sequencer.selected_clip_id(), None);
+        assert_eq!(h.sequencer.marquee(), None);
+    }
+
+    /// A track selected from the lane disarms it and takes the clip under
+    /// the cursor as its lead, as any track selection does.
+    #[test]
+    fn selecting_a_track_from_the_lane_selects_the_clip_under_the_cursor() {
+        let (mut h, clip_id, _) = harness_with_clip();
+        h.handlers
+            .select_performance_lane_workflow(&mut h.sequencer);
+
+        h.handlers.select_track_workflow(&mut h.sequencer, 0);
+
+        assert!(!h.sequencer.is_performance_lane_armed());
+        assert_eq!(h.sequencer.selected_track_index(), Some(0));
+        assert_eq!(h.sequencer.selected_clip_id(), Some(clip_id));
+    }
+
+    /// An undo that puts a track back leaves the performance lane: the
+    /// track is selected the ordinary way, which disarms, and the lead from
+    /// before the edit comes back with it.
+    #[test]
+    fn an_undo_that_puts_a_track_back_leaves_the_performance_lane() {
         let (mut h, lead_id, _) = harness_with_clip();
         let mut record: Record<UndoStep> = Record::new();
         let carve = SequencerCommand::RemoveClips {
             rect: rect(0, 3840, 0, 0),
         };
         run_command(&mut h, &mut record, carve);
-        h.handlers.select_track_workflow(&mut h.sequencer, 1);
         h.handlers
             .select_performance_lane_workflow(&mut h.sequencer);
 
         run_command(&mut h, &mut record, SequencerCommand::Undo);
 
-        assert!(h.sequencer.is_performance_lane_armed());
-        assert_eq!(h.sequencer.selected_track_index(), Some(1));
-        assert!(h.sequencer.clip_on(0, lead_id).is_some());
+        assert!(!h.sequencer.is_performance_lane_armed());
+        assert_eq!(h.sequencer.selected_track_index(), Some(0));
+        assert_eq!(h.sequencer.selected_clip_id(), Some(lead_id));
     }
 
-    /// With the lane armed, undoing a clip move to another track leaves the
-    /// track and the lane as they are but drops the lead, which the undo
-    /// took off the selected track: a lead is never on another track.
+    /// A step recorded while the lane was armed has no track to put back:
+    /// undoing it changes no selection, and arming is never restored, so
+    /// the track selected since stays.
     #[test]
-    fn an_armed_undo_of_a_clip_move_drops_the_lead_it_took_away() {
+    fn an_undo_of_a_step_recorded_while_armed_changes_no_selection() {
         let (mut h, clip_id, _) = harness_with_clip();
         let mut record: Record<UndoStep> = Record::new();
-        let moved = SequencerCommand::MoveClip {
-            track_idx: 0,
-            clip_id,
-            to_track_idx: 1,
-            to_start_tick: 0,
-        };
-        run_command(&mut h, &mut record, moved);
-        assert_eq!(h.sequencer.selected_track_index(), Some(1));
-        assert_eq!(h.sequencer.selected_clip_id(), Some(clip_id));
         h.handlers
             .select_performance_lane_workflow(&mut h.sequencer);
+        let carve = SequencerCommand::RemoveClips {
+            rect: rect(0, 3840, 0, 0),
+        };
+        run_command(&mut h, &mut record, carve);
 
         run_command(&mut h, &mut record, SequencerCommand::Undo);
 
         assert!(h.sequencer.is_performance_lane_armed());
-        assert_eq!(h.sequencer.selected_track_index(), Some(1));
-        assert!(h.sequencer.clip_on(0, clip_id).is_some());
+        assert_eq!(h.sequencer.selected_track_index(), None);
         assert_eq!(h.sequencer.selected_clip_id(), None);
+        assert!(h.sequencer.clip_on(0, clip_id).is_some());
+
+        run_command(&mut h, &mut record, SequencerCommand::Redo);
+        h.handlers.select_track_workflow(&mut h.sequencer, 1);
+        run_command(&mut h, &mut record, SequencerCommand::Undo);
+
+        assert!(!h.sequencer.is_performance_lane_armed());
+        assert_eq!(h.sequencer.selected_track_index(), Some(1));
     }
 
     /// An undo or redo of a note edit leaves the clip cursor where the

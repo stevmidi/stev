@@ -51,29 +51,43 @@ impl EventHandlers {
     }
 
     /// Cycle track selection by one, wrapping at both ends. `direction > 0`
-    /// selects the next track, `direction <= 0` the previous. No-op when
-    /// there are no tracks.
+    /// selects the next track, `direction <= 0` the previous. With no track
+    /// selected (the performance lane is) the next track is the first and
+    /// the previous the last. No-op when there are no tracks.
     pub(super) fn cycle_selected_track_workflow(&self, sequencer: &mut Sequencer, direction: i32) {
         let track_count = sequencer.tracks().len();
         if track_count == 0 {
             return;
         }
 
-        let current_idx = sequencer.selected_track_index().unwrap_or(0);
-        let step = if direction > 0 { 1 } else { track_count - 1 };
-        let new_idx = (current_idx + step) % track_count;
+        let forward = direction > 0;
+        let new_idx = match sequencer.selected_track_index() {
+            Some(current_idx) => {
+                let step = if forward { 1 } else { track_count - 1 };
+                (current_idx + step) % track_count
+            }
+            None if forward => 0,
+            None => track_count - 1,
+        };
         self.select_track_workflow(sequencer, new_idx);
     }
 
-    /// Arms the performance lane (mutually exclusive with track selection)
+    /// Selects the performance lane, the arranger's other kind of selected
+    /// row: drops the lead clip and the track selection, then arms the lane
     /// so the physical MIDI keyboard is mapped to bar-jump triggers instead
-    /// of normal note capture. Mirrors `select_track_workflow`'s shape.
+    /// of normal note capture. While it is armed there is no selected track
+    /// (`450-performance-lane-selection.md`); selecting a track disarms it
+    /// (`switch_track_workflow`). The marquee, anchored to the selected
+    /// track, goes too.
     pub(super) fn select_performance_lane_workflow(&self, sequencer: &mut Sequencer) {
         if sequencer.is_performance_lane_armed() {
             return;
         }
+        self.clear_clip_selection_workflow(sequencer);
+        sequencer.select_track(None);
         sequencer.set_performance_lane_armed(true);
         self.send_performance_lane_selected_ui_event();
+        self.clear_marquee_workflow(sequencer);
     }
 
     /// Makes `lead`, a clip and the track it is on, the lead clip (`None`
@@ -287,14 +301,17 @@ impl EventHandlers {
     /// Puts back the view an undo step recorded (`UndoStep`): before the
     /// edit after an undo, after it after a redo, whatever the user did in
     /// between. The cursor first, then the track and the lead clip (the
-    /// lead if it is still on that track, else none; a track that is gone
-    /// leaves the selection as it is, and an armed performance lane is
-    /// never disarmed — `reselect_surviving_clip`), the lead clip's cursor
+    /// lead if it is still on that track, else none — `reselect_surviving_clip`;
+    /// selecting the track leaves an armed performance lane, as any track
+    /// selection does, while a step with no track, one recorded with the
+    /// lane armed, or a track that is gone leaves the selection as it is:
+    /// `450-performance-lane-selection.md` decision 4), the lead clip's cursor
     /// following the arranger cursor only if the lead or the cursor
     /// changed, then the marquee, sent last so the view re-latches the
     /// cursor and track it is anchored to (`020-views-and-state.md`). The
     /// focus, the layout, the loop and playback are untouched
-    /// (`440-undo-view-state.md` decision 6).
+    /// (`440-undo-view-state.md` decision 6), and the lane is never armed
+    /// by a step.
     pub(super) fn restore_view_workflow(&self, sequencer: &mut Sequencer, view: ViewSnapshot) {
         // The cursor first, so a lead clip put back takes it as its own
         // (`change_lead_clip`). A lead that stays keeps its clip cursor
@@ -491,6 +508,27 @@ mod tests {
         h.handlers
             .cycle_selected_track_workflow(&mut h.sequencer, 1);
         assert_eq!(h.sequencer.selected_track_index(), Some(1));
+    }
+
+    /// From the performance lane, which has no place in the cycle, the next
+    /// track is the first and the previous the last.
+    #[test]
+    fn track_cycling_from_the_performance_lane_enters_at_either_end() {
+        let mut h = harness();
+        let last = h.sequencer.tracks().len() - 1;
+
+        h.handlers
+            .select_performance_lane_workflow(&mut h.sequencer);
+        h.handlers
+            .cycle_selected_track_workflow(&mut h.sequencer, 1);
+        assert_eq!(h.sequencer.selected_track_index(), Some(0));
+        assert!(!h.sequencer.is_performance_lane_armed());
+
+        h.handlers
+            .select_performance_lane_workflow(&mut h.sequencer);
+        h.handlers
+            .cycle_selected_track_workflow(&mut h.sequencer, -1);
+        assert_eq!(h.sequencer.selected_track_index(), Some(last));
     }
 
     /// Moving off every clip announces "no lead clip".

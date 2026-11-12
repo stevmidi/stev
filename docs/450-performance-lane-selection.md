@@ -1,6 +1,6 @@
 # The Performance Lane Is an Exclusive Selection
 
-**Status: design agreed 2026-11-12, not built.** Selecting the performance lane deselects the track, as selecting a track already deselects the lane. While the lane is selected there is no selected track and no lead clip. The undo restore loses its special case for an armed lane.
+**Status: design agreed 2026-11-12; built 2026-11-12 (the one phase; as-built in `110` § Arming, `020` § Arranger Time Selection, `050` § Invariants).** Selecting the performance lane deselects the track, as selecting a track already deselects the lane. While the lane is selected there is no selected track and no lead clip. The undo restore loses its special case for an armed lane.
 
 ## Background
 
@@ -14,7 +14,7 @@ It also costs the undo restore a special case (`440` decision 3, `reselect_survi
 
 1. **One selected row.** The arranger has one selected row: a track or the performance lane. Arming the lane clears the track selection and with it the lead clip (`clear_clip_selection_workflow`, then `Sequencer::select_track(None)`); selecting a track disarms the lane, as today. Armed implies no selected track. The reverse does not hold, since a project can be without a selected track for a moment (a load), so the armed flag stays what it is, an `Arc<AtomicBool>` that `MidiInputForwarder` reads, and is not derived.
 2. **The view's selected track becomes `Option<usize>`.** `UiEvent::PerformanceLaneSelected` sets it to `None`; `TrackSelected` sets it and clears `performance_lane_selected` as today. No "last track" is remembered on either side.
-3. **The marquee goes when the lane is selected.** A marquee is anchored to the cursor and the selected track, and collapses when either moves (`sync_time_selection_to_cursor`). Selecting the lane is a track change like any other, so it collapses the marquee. With no anchor track, `⇧←/→/↑/↓` and a `⇧`-click start nothing while the lane is selected. A press on a track row selects that track first, as today, and so leaves the lane.
+3. **The marquee goes when the lane is selected.** A marquee is anchored to the cursor and the selected track, and collapses when either moves (`sync_time_selection_to_cursor`). Selecting the lane is a track change like any other, so it collapses the marquee. With no anchor track, `⇧←/→/↑/↓` and a `⇧`-click start nothing while the lane is selected. As built, `⌘A` starts nothing either (it needs no anchor, but its marquee would be one with the lane selected), a drag from the lane row anchors none (it used to anchor on track 1), and the sequencer clears its marquee mirror in the same step (`clear_marquee_workflow`). A press on a track row selects that track first, as today, and so leaves the lane.
 4. **An undo or redo that puts a track back leaves the lane.** The restore selects the snapshot's track through the ordinary track selection, which disarms. Decided 2026-11-12, reversing `440` decision 6 and `110` ("an undo never disarms it") for the track only. The reason: with the lane selected nothing shows which track or clip the step changed, and the alternative is the special case this design removes. Arming is still never restored: a step recorded while the lane was armed has no track in its snapshot, and undoing it leaves the selection as it is (`restore_view_workflow` already skips a missing track). The loop is untouched, as before.
 
    Rejected: keeping the lane armed with one guard in `restore_view_workflow` (armed: skip the track and the lead). It is what to fall back to if leaving the lane on `⌘Z` turns out wrong in use.
@@ -71,9 +71,9 @@ The sequencer side already takes `Option`: `selected_track_index()` and `selecte
 
 - **Every `selected_track_idx` use in the view** compiles against `Option` with no `unwrap_or(0)`: a silent fallback to track 1 is the bug this design removes.
 - **The clip view with the keyboard** when the lane is clicked: the focus stays (only the user moves it, `020` § Views), on "No clip at the cursor".
-- **The take session**: arming during one. The lane row is in the arranger, so a click there moves the keyboard first; check what the session does when its track is deselected, or refuse the arm while it is open.
-- **An audio export run** (`130`): the lane click is already blocked or not; no change expected.
-- **Tests**: arming clears the track and the lead and collapses the marquee; a track click after it selects the clip under the cursor; `↓`/`↑` from the lane; a scoped `⌘V` with the lane selected pastes nothing and an all-track one still does (`paste_does_not_need_a_selected_track` is rewritten for the all-track copy); an undo that puts a track back leaves the lane; an undo of a step recorded while armed changes no selection; `get_context` with the lane selected.
+- **The take session**: arming during one. Checked: `SelectPerformanceLane` already cancels the session before it runs, with the other track changes (`take_framing.rs`).
+- **An audio export run** (`130`): checked, the lane click is already blocked (`SelectPerformanceLane` is not on `audio_export_command`'s allow list); no change.
+- **Tests**: arming clears the track and the lead and collapses the marquee; a track click after it selects the clip under the cursor; `↓`/`↑` from the lane; a scoped `⌘V` with the lane selected pastes nothing and an all-track one still does (`paste_does_not_need_a_selected_track` was already an all-track copy and is renamed `an_all_track_paste_does_not_need_a_selected_track`; `scoped_paste_without_a_selected_track_keeps_source_tracks` is the one rewritten); an undo that puts a track back leaves the lane; an undo of a step recorded while armed changes no selection; `get_context` with the lane selected.
 - **Docs**: `110` § Arming, `020` (track selection, the marquee's anchor), `050`, `010` if `↑`/`↓` is listed there, and a `CHANGELOG.md` line (a user would notice).
 
 ## Phases

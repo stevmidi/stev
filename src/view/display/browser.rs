@@ -1641,7 +1641,9 @@ impl Display {
                 });
             }
             BrowserAction::LoadPlugin(plugin) => {
-                self.put_plugin_on_track(self.selected_track_idx, &plugin);
+                if let Some(track_idx) = self.selected_track_idx {
+                    self.put_plugin_on_track(track_idx, &plugin);
+                }
             }
             BrowserAction::ImportClip(name) => {
                 self.import_midi_file(&clip_path(&name));

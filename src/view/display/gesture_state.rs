@@ -64,8 +64,9 @@ pub(super) struct GestureState {
     /// Cursor tick observed last frame, used only to detect that the cursor moved
     /// so the time selection can collapse. `None` until the first observation.
     pub(super) last_cursor_tick: Option<i32>,
-    /// Selected track observed last frame, used only to detect that it changed
-    /// so the time selection can collapse. `None` until the first observation.
+    /// Selected track observed last frame (`None` for none, the performance
+    /// lane selected), used only to detect that it changed so the time
+    /// selection can collapse.
     pub(super) last_selected_track_idx: Option<usize>,
     /// Anchor of an in-progress event marquee-select drag. `Some` only while
     /// the primary button is held in `Clip` — like `time_selection_anchor`,

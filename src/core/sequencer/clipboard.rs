@@ -47,10 +47,18 @@ impl ClipClipboard {
         &self.clips
     }
 
+    /// Whether the copy was scoped to a marquee's tracks (plain `⌘C`), so a
+    /// paste aims at the selected track.
+    pub(crate) fn is_track_anchored(&self) -> bool {
+        self.track_anchor.is_some()
+    }
+
     /// The track `piece` should land on when pasted with `selected_track`
     /// as the paste target: `selected_track + (piece.track_idx - anchor)`
-    /// when the clipboard has a track anchor and a track is selected, the
-    /// piece's absolute source track otherwise.
+    /// when the clipboard has a track anchor and a target is given, the
+    /// piece's absolute source track otherwise (an all-track copy, or the
+    /// Duplicates, which pass no target; `⌘V` of a track-anchored copy with
+    /// no selected track never gets here, `PasteClipsEdit::from_sequencer`).
     pub(crate) fn target_track(
         &self,
         piece: &ClipboardClip,
@@ -356,7 +364,7 @@ mod tests {
             .map(|c| clipboard.target_track(c, Some(2)))
             .collect();
         assert_eq!(targets, vec![2, 4]);
-        // No selected track: back on the source tracks.
+        // No target track (the Duplicates): back on the source tracks.
         let targets: Vec<usize> = clipboard
             .clips()
             .iter()
