@@ -196,8 +196,9 @@ impl EventHandlers {
     /// below (ESC, a click on empty grid, and leaving the clip all come
     /// through it), and the `EventsModified` arm of `handle_edit_result` (the
     /// only `EditResult` variant that carries a selection, produced by
-    /// delete/duplicate and their undo/redo). Not a blanket call after every
-    /// command. It replaced `sync_clip_edit_view_state`, which flipped a
+    /// delete/duplicate and their undo/redo), and `restore_view_workflow`,
+    /// since a lead clip put back by an undo or redo carries its own. Not a
+    /// blanket call after every command. It replaced `sync_clip_edit_view_state`, which flipped a
     /// `Clip` ⇄ `ClipEdit` view for the same bit; unlike it, this runs in
     /// every view, so the mirror is right when a clip is next opened.
     pub(super) fn publish_event_selection(&self, sequencer: &Sequencer) {
@@ -246,8 +247,8 @@ impl EventHandlers {
     /// one-press equivalent of dragging a time selection edge to edge over
     /// it, so the marquee ops (`⌘/Ctrl+D`, `Delete`, `⌘C`/`⌘X`, `M`) get the
     /// whole clip without a hand-dragged range. Also re-run after a clip
-    /// move (and its undo) so the clip lands in exactly this state wherever
-    /// it now sits. See `020-views-and-state.md` § "Clip Band Press & Move
+    /// move so the clip lands in exactly this state wherever it now sits
+    /// (its undo puts back the view from before, `restore_view_workflow`). See `020-views-and-state.md` § "Clip Band Press & Move
     /// Drag".
     ///
     /// Done here rather than in the view because the marquee is
@@ -285,23 +286,29 @@ impl EventHandlers {
 
     /// Puts back the view an undo step recorded (`UndoStep`): before the
     /// edit after an undo, after it after a redo, whatever the user did in
-    /// between. The track and the lead clip first (the lead if it is still
-    /// on that track, else none; a track that is gone leaves the selection
-    /// as it is, and an armed performance lane is never disarmed —
-    /// `reselect_surviving_clip`), then the cursor (the lead clip's cursor
-    /// following), then the marquee, sent last so the view re-latches the
+    /// between. The cursor first, then the track and the lead clip (the
+    /// lead if it is still on that track, else none; a track that is gone
+    /// leaves the selection as it is, and an armed performance lane is
+    /// never disarmed — `reselect_surviving_clip`), the lead clip's cursor
+    /// following the arranger cursor only if the lead or the cursor
+    /// changed, then the marquee, sent last so the view re-latches the
     /// cursor and track it is anchored to (`020-views-and-state.md`). The
     /// focus, the layout, the loop and playback are untouched
     /// (`440-undo-view-state.md` decision 6).
     pub(super) fn restore_view_workflow(&self, sequencer: &mut Sequencer, view: ViewSnapshot) {
-        let track_idx = view
-            .track
-            .and_then(|id| sequencer.tracks().iter().position(|track| track.id() == id));
-        if let Some(track_idx) = track_idx {
+        // The cursor first, so a lead clip put back takes it as its own
+        // (`change_lead_clip`). A lead that stays keeps its clip cursor
+        // unless the arranger cursor moves, as everywhere else: an undo in
+        // the clip view leaves the clip cursor where the edit's result put
+        // it (`EventsModified`'s duplicate span).
+        let cursor_moved = sequencer.cursor_tick() != view.cursor_tick;
+        sequencer.set_cursor_tick(view.cursor_tick);
+        if let Some(track_idx) = view.track.and_then(|id| sequencer.track_index_by_id(id)) {
             self.reselect_surviving_clip(sequencer, Some(track_idx), view.lead_clip);
         }
-        sequencer.set_cursor_tick(view.cursor_tick);
-        sequencer.sync_selected_clip_cursor_with_arranger();
+        if cursor_moved {
+            sequencer.sync_selected_clip_cursor_with_arranger();
+        }
         match view.marquee {
             Some(rect) => self.set_marquee_workflow(sequencer, rect),
             None => self.clear_marquee_workflow(sequencer),

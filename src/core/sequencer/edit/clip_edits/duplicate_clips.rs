@@ -102,26 +102,13 @@ impl DuplicateClipsEdit {
         }
     }
 
-    /// Delegates to the inner paste's undo, then rewraps its result as
-    /// [`EditResult::ClipsUnduplicated`].
+    /// The inner paste's undo, as it is: [`EditResult::ClipsUnpasted`]. The
+    /// marquee comes back with the undo step (`UndoStep`).
     pub(in crate::core::sequencer::edit) fn undo(
         &mut self,
         sequencer: &mut Sequencer,
     ) -> EditResult {
-        match self.inner.undo(sequencer) {
-            EditResult::ClipsUnpasted {
-                carve_updated,
-                carve_added,
-                carve_removed,
-                unpasted,
-            } => EditResult::ClipsUnduplicated {
-                carve_updated,
-                carve_added,
-                carve_removed,
-                unpasted,
-            },
-            other => other,
-        }
+        self.inner.undo(sequencer)
     }
 }
 
@@ -199,8 +186,8 @@ mod tests {
         );
         assert_eq!(starts(&sequencer, 1), vec![(0, 100)]);
 
-        let EditResult::ClipsUnduplicated { unpasted, .. } = edit.undo(&mut sequencer) else {
-            panic!("expected ClipsUnduplicated");
+        let EditResult::ClipsUnpasted { unpasted, .. } = edit.undo(&mut sequencer) else {
+            panic!("expected ClipsUnpasted");
         };
         assert_eq!(unpasted.len(), 1);
         assert_eq!(starts(&sequencer, 0), vec![(0, 100), (200, 300)]);

@@ -264,17 +264,6 @@ pub(crate) enum EditResult {
         /// Arranger time selection the view should advance to.
         new_selection: TimeSelectionRect,
     },
-    /// Undo of "Duplicate Clips": exactly `ClipsUnpasted`'s buckets.
-    ClipsUnduplicated {
-        /// Range-delete: trimmed originals (ids kept).
-        carve_updated: Vec<ClipMetadata>,
-        /// Range-delete: new right-hand pieces.
-        carve_added: Vec<ClipMetadata>,
-        /// Range-delete: clips cleared whole.
-        carve_removed: Vec<ClipMetadata>,
-        /// The copied clips being removed again (undo).
-        unpasted: Vec<ClipMetadata>,
-    },
     /// Forward direction of a clip move (`MoveClipEdit`, the arranger band
     /// drag): `from` is the clip as it sat on its source track, `to` the same
     /// clip (same id) at its destination. The `carve_*` buckets mirror

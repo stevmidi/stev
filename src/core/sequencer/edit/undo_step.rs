@@ -15,9 +15,12 @@ use super::super::Sequencer;
 use super::{EditResult, SequencerEdit};
 
 /// The view an undo or redo puts back: the selected track, the lead clip,
-/// the cursor and the arranger marquee. The track is kept by id, so nothing
-/// depends on indices staying put; the marquee comes from the sequencer's
-/// mirror of the view's (`Sequencer::marquee`), track span included. The
+/// the cursor and the arranger marquee. The track and the lead clip are kept
+/// by id. The marquee comes from the sequencer's mirror of the view's
+/// (`Sequencer::marquee`), and its track span is by index: right because
+/// track order only changes through the undo record (a track add or
+/// remove), which puts the order back before an older step is undone. A
+/// track reorder outside the record would need the span kept by id too. The
 /// clip view's own cursor and note selection are not in it: a note edit's
 /// undo restores its event selection itself (`EditResult::EventsModified`),
 /// and the clip cursor follows the arranger cursor.

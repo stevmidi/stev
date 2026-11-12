@@ -2032,6 +2032,57 @@ mod tests {
         assert!(h.sequencer.clip_on(0, lead_id).is_some());
     }
 
+    /// With the lane armed, undoing a clip move to another track leaves the
+    /// track and the lane as they are but drops the lead, which the undo
+    /// took off the selected track: a lead is never on another track.
+    #[test]
+    fn an_armed_undo_of_a_clip_move_drops_the_lead_it_took_away() {
+        let (mut h, clip_id, _) = harness_with_clip();
+        let mut record: Record<UndoStep> = Record::new();
+        let moved = SequencerCommand::MoveClip {
+            track_idx: 0,
+            clip_id,
+            to_track_idx: 1,
+            to_start_tick: 0,
+        };
+        run_command(&mut h, &mut record, moved);
+        assert_eq!(h.sequencer.selected_track_index(), Some(1));
+        assert_eq!(h.sequencer.selected_clip_id(), Some(clip_id));
+        h.handlers
+            .select_performance_lane_workflow(&mut h.sequencer);
+
+        run_command(&mut h, &mut record, SequencerCommand::Undo);
+
+        assert!(h.sequencer.is_performance_lane_armed());
+        assert_eq!(h.sequencer.selected_track_index(), Some(1));
+        assert!(h.sequencer.clip_on(0, clip_id).is_some());
+        assert_eq!(h.sequencer.selected_clip_id(), None);
+    }
+
+    /// An undo or redo of a note edit leaves the clip cursor where the
+    /// edit's result put it (the duplicate span's start), rather than
+    /// resetting it from the arranger cursor, which the step didn't move.
+    #[test]
+    fn undoing_a_span_duplicate_keeps_the_clip_cursor_on_the_span() {
+        let (mut h, _, _) = harness_with_clip();
+        let mut record: Record<UndoStep> = Record::new();
+        h.cursor_tick.store(1200, Ordering::Relaxed);
+        h.handlers.select_all_events_workflow(&mut h.sequencer);
+        let clip_cursor = |h: &Harness| h.sequencer.selected_clip().unwrap().cursor_tick();
+        let duplicate = SequencerCommand::DuplicateSelectedEvents {
+            span: Some((0, 480)),
+        };
+
+        run_command(&mut h, &mut record, duplicate);
+        assert_eq!(clip_cursor(&h), 480);
+
+        run_command(&mut h, &mut record, SequencerCommand::Undo);
+        assert_eq!(clip_cursor(&h), 0);
+
+        run_command(&mut h, &mut record, SequencerCommand::Redo);
+        assert_eq!(clip_cursor(&h), 480);
+    }
+
     /// Decision 7 (`440-undo-view-state.md`): ⌘Z after an agent write undoes
     /// it to what the user was looking at when it ran — the lead clip, its
     /// track, the cursor and the marquee the write read from.

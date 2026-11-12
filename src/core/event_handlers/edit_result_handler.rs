@@ -134,12 +134,6 @@ impl EventHandlers {
                 carve_added,
                 carve_removed,
                 unpasted,
-            }
-            | EditResult::ClipsUnduplicated {
-                carve_updated,
-                carve_added,
-                carve_removed,
-                unpasted,
             } => {
                 self.unpaste_clips_workflow(
                     sequencer,
