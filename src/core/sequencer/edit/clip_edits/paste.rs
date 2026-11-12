@@ -48,37 +48,29 @@ pub(crate) struct PasteClipsEdit {
 
 impl PasteClipsEdit {
     /// `⌘/Ctrl+V`: paste the session clipboard at the cursor tick, on the
-    /// selected track when the clipboard is track-anchored. `None` for a
-    /// track-anchored clipboard with no selected track (the performance
-    /// lane is selected): a command aimed at the selected track does nothing
-    /// then, rather than fall back to the tracks the copy came from
-    /// (`450-performance-lane-selection.md` decision 8). An all-track copy
-    /// never used the selected track and pastes either way.
+    /// selected track when the clipboard is track-anchored (`None` then
+    /// with no selected track, the performance lane selected:
+    /// `ClipClipboard::target_track`).
     pub(crate) fn from_sequencer(sequencer: &Sequencer) -> Option<Self> {
-        let clipboard = sequencer.clip_clipboard()?;
-        let selected_track = sequencer.selected_track_index();
-        if clipboard.is_track_anchored() && selected_track.is_none() {
-            return None;
-        }
         Self::from_clipboard_at(
             sequencer,
-            clipboard,
+            sequencer.clip_clipboard()?,
             sequencer.cursor_tick(),
-            selected_track,
+            sequencer.selected_track_index(),
         )
     }
 
     /// Core of a paste, decoupled from *which* clipboard and *where*. Each piece
     /// lands at `anchor + piece.start_tick()` (clipboard pieces are normalized
     /// to their copy anchor) on `clipboard.target_track(piece, target_track)`
-    /// — its absolute source track unless both the clipboard is track-anchored
-    /// and `target_track` is `Some`. Shared by `⌘V` (`from_sequencer`, real
+    /// — its absolute source track unless the clipboard is track-anchored,
+    /// which needs a `target_track` (`None` without one). Shared by `⌘V` (`from_sequencer`, real
     /// clipboard + cursor + selected track), `DuplicateTimeEdit`
     /// (`Shift+⌘/Ctrl+D`, a throwaway `Sequencer::clipboard_snapshot` + the
     /// selection's `end` as anchor) and `DuplicateClipsEdit` (plain
     /// `⌘/Ctrl+D`, a throwaway track-scoped `copy_range_to_clipboard` + the
-    /// same anchor); both Duplicates pass `target_track: None` so their copy
-    /// stays on the source tracks regardless of the selection.
+    /// same anchor); both Duplicates' copies have no track anchor, so they
+    /// stay on the source tracks regardless of the selection.
     pub(in crate::core::sequencer::edit) fn from_clipboard_at(
         sequencer: &Sequencer,
         clipboard: &ClipClipboard,
@@ -92,9 +84,9 @@ impl PasteClipsEdit {
                 let mut clip = detached_clone(&piece.clip);
                 clip.generate_new_id();
                 clip.set_start_tick(anchor + piece.clip.start_tick());
-                (clipboard.target_track(piece, target_track), clip)
+                Some((clipboard.target_track(piece, target_track)?, clip))
             })
-            .collect();
+            .collect::<Option<_>>()?;
         Self::from_targets(sequencer, targets, PasteLead::CursorRule)
     }
 

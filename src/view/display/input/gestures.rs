@@ -1064,8 +1064,7 @@ impl Display {
 
     /// Moves the selection's free tick edge to `next_tick`
     /// ([`nudged_tick_selection`]), keeping its track span — the selected
-    /// track alone with no selection. Nothing without a selected track (the
-    /// performance lane is selected): there is no anchor.
+    /// track alone with no selection.
     fn set_nudged_tick_selection(&mut self, anchor_tick: i32, next_tick: i32) {
         let Some(anchor_track) = self.selected_track_idx else {
             return;
@@ -1081,8 +1080,7 @@ impl Display {
     /// The selected track's clip starts and ends — plus tick 0, so a leftward
     /// jump from before the first clip still has somewhere to land — fed to
     /// [`next_clip_edge`]. Every shape on the track counts, the one being
-    /// recorded included (its live end is a real edge). `None` without a
-    /// selected track (the performance lane is selected).
+    /// recorded included (its live end is a real edge).
     fn next_clip_edge_on_selected_track(&self, from: i32, direction: i32) -> Option<i32> {
         let track_idx = self.selected_track_idx?;
         let edges = self
@@ -1113,7 +1111,6 @@ impl Display {
     /// back onto its anchor clears the selection only if the tick span is
     /// *also* back at the cursor, so an independent `⇧←`/`⇧→` tick extension
     /// survives a `⇧↑`/`⇧↓` track edge returning home.
-    /// Nothing without a selected track (the performance lane is selected).
     pub(super) fn nudge_time_selection_track(&mut self, direction: i32) {
         let Some(anchor_track) = self.selected_track_idx else {
             return;
@@ -1152,7 +1149,7 @@ impl Display {
     /// performance lane is selected, when no marquee exists
     /// (`450-performance-lane-selection.md` decision 3).
     pub(super) fn select_all_clips(&mut self) {
-        if self.selected_track_idx.is_none() {
+        if self.performance_lane_selected() {
             return;
         }
         let shapes = self

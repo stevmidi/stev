@@ -47,26 +47,22 @@ impl ClipClipboard {
         &self.clips
     }
 
-    /// Whether the copy was scoped to a marquee's tracks (plain `⌘C`), so a
-    /// paste aims at the selected track.
-    pub(crate) fn is_track_anchored(&self) -> bool {
-        self.track_anchor.is_some()
-    }
-
     /// The track `piece` should land on when pasted with `selected_track`
     /// as the paste target: `selected_track + (piece.track_idx - anchor)`
-    /// when the clipboard has a track anchor and a target is given, the
-    /// piece's absolute source track otherwise (an all-track copy, or the
-    /// Duplicates, which pass no target; `⌘V` of a track-anchored copy with
-    /// no selected track never gets here, `PasteClipsEdit::from_sequencer`).
+    /// when the clipboard has a track anchor, the piece's absolute source
+    /// track when it has none (an all-track copy, the Duplicates'
+    /// throwaway ones). `None` for a track-anchored clipboard with no
+    /// selected track: the copy aims at the selected track, and never falls
+    /// back to the tracks it came from
+    /// (`450-performance-lane-selection.md` decision 8).
     pub(crate) fn target_track(
         &self,
         piece: &ClipboardClip,
         selected_track: Option<usize>,
-    ) -> usize {
-        match (self.track_anchor, selected_track) {
-            (Some(anchor), Some(selected)) => selected + piece.track_idx.saturating_sub(anchor),
-            _ => piece.track_idx,
+    ) -> Option<usize> {
+        match self.track_anchor {
+            Some(anchor) => Some(selected_track? + piece.track_idx.saturating_sub(anchor)),
+            None => Some(piece.track_idx),
         }
     }
 }
@@ -358,19 +354,19 @@ mod tests {
             track_end: 5,
         });
         let clipboard = sequencer.clip_clipboard().unwrap();
-        let targets: Vec<usize> = clipboard
+        let targets: Vec<Option<usize>> = clipboard
             .clips()
             .iter()
             .map(|c| clipboard.target_track(c, Some(2)))
             .collect();
-        assert_eq!(targets, vec![2, 4]);
-        // No target track (the Duplicates): back on the source tracks.
-        let targets: Vec<usize> = clipboard
+        assert_eq!(targets, vec![Some(2), Some(4)]);
+        // No selected track: nowhere, never back on the source tracks.
+        let targets: Vec<Option<usize>> = clipboard
             .clips()
             .iter()
             .map(|c| clipboard.target_track(c, None))
             .collect();
-        assert_eq!(targets, vec![3, 5]);
+        assert_eq!(targets, vec![None, None]);
 
         // Shift+⌘C: absolute regardless of the selected track.
         sequencer.copy_clips_to_clipboard(0, 960);
@@ -378,7 +374,7 @@ mod tests {
         let targets: Vec<usize> = clipboard
             .clips()
             .iter()
-            .map(|c| clipboard.target_track(c, Some(0)))
+            .filter_map(|c| clipboard.target_track(c, Some(0)))
             .collect();
         assert_eq!(targets, vec![3, 5]);
     }

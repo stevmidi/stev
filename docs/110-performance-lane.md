@@ -35,15 +35,16 @@ only — no recording/capture, no persistence. Key files:
   `Sequencer::select_track(None)`, `clear_marquee_workflow`), and selecting a
   track disarms the lane (`switch_track_workflow`). Armed implies no selected
   track, in the sequencer and in the view (`Display::selected_track_idx` is
-  an `Option`, `None` from `UiEvent::PerformanceLaneSelected`). The reverse
-  doesn't hold (a load has no selected track for a moment), so the flag is
+  an `Option`, `None` from `UiEvent::PerformanceLaneSelected`, and the view
+  derives "the lane is selected" from it). In the sequencer the reverse
+  doesn't hold (a load has no selected track for a moment), so its flag is
   stored, not derived.
 - **While the lane is selected, a command aimed at the selected track does
   nothing**: no lead clip (the clip view shows "No clip at the cursor"), no
   capture, no knob, no `v`, no rename, no plugin from the browser with Enter;
   no marquee, so `⇧`-arrows, a `⇧`-click and `⌘A` start none, and `⌥←`/`⌥→`
   have no track's clip edges to jump to; a marquee-scoped `⌘V` pastes nothing
-  (`PasteClipsEdit::from_sequencer`), while an all-track one pastes as ever.
+  (`ClipClipboard::target_track`), while an all-track one pastes as ever.
   `↓` selects the first track and `↑` the last
   (`cycle_selected_track_workflow`); the lane itself is reached only by a
   click. The cursor still moves with `←`/`→`, and its accent sits on the lane

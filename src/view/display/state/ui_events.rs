@@ -15,7 +15,6 @@ impl Display {
             match event {
                 UiEvent::TrackSelected { track_idx } => {
                     self.selected_track_idx = Some(track_idx);
-                    self.performance_lane_selected = false;
                     self.in_pane(Pane::Arranger, Self::reveal_selected_track);
                     #[cfg(target_os = "macos")]
                     self.sync_live_instrument_target();
@@ -28,7 +27,6 @@ impl Display {
                 // (`sync_time_selection_to_cursor`).
                 UiEvent::PerformanceLaneSelected => {
                     self.selected_track_idx = None;
-                    self.performance_lane_selected = true;
                 }
                 UiEvent::TimeSelectionSet { rect } => {
                     self.gesture.time_selection = Some(rect);

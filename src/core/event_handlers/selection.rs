@@ -60,25 +60,19 @@ impl EventHandlers {
             return;
         }
 
+        // With no selection, start one step before the end entered at.
         let forward = direction > 0;
-        let new_idx = match sequencer.selected_track_index() {
-            Some(current_idx) => {
-                let step = if forward { 1 } else { track_count - 1 };
-                (current_idx + step) % track_count
-            }
-            None if forward => 0,
-            None => track_count - 1,
-        };
+        let entry_idx = if forward { track_count - 1 } else { 0 };
+        let current_idx = sequencer.selected_track_index().unwrap_or(entry_idx);
+        let step = if forward { 1 } else { track_count - 1 };
+        let new_idx = (current_idx + step) % track_count;
         self.select_track_workflow(sequencer, new_idx);
     }
 
     /// Selects the performance lane, the arranger's other kind of selected
-    /// row: drops the lead clip and the track selection, then arms the lane
-    /// so the physical MIDI keyboard is mapped to bar-jump triggers instead
-    /// of normal note capture. While it is armed there is no selected track
-    /// (`450-performance-lane-selection.md`); selecting a track disarms it
-    /// (`switch_track_workflow`). The marquee, anchored to the selected
-    /// track, goes too.
+    /// row (`450-performance-lane-selection.md` decision 1): the lead clip,
+    /// the track selection and the marquee go, and the armed lane maps the
+    /// physical MIDI keyboard to bar-jump triggers instead of note capture.
     pub(super) fn select_performance_lane_workflow(&self, sequencer: &mut Sequencer) {
         if sequencer.is_performance_lane_armed() {
             return;
@@ -301,17 +295,16 @@ impl EventHandlers {
     /// Puts back the view an undo step recorded (`UndoStep`): before the
     /// edit after an undo, after it after a redo, whatever the user did in
     /// between. The cursor first, then the track and the lead clip (the
-    /// lead if it is still on that track, else none — `reselect_surviving_clip`;
-    /// selecting the track leaves an armed performance lane, as any track
-    /// selection does, while a step with no track, one recorded with the
-    /// lane armed, or a track that is gone leaves the selection as it is:
-    /// `450-performance-lane-selection.md` decision 4), the lead clip's cursor
+    /// lead if it is still on that track, else none; a step with no track,
+    /// or one whose track is gone, leaves the selection as it is —
+    /// `reselect_surviving_clip`), the lead clip's cursor
     /// following the arranger cursor only if the lead or the cursor
     /// changed, then the marquee, sent last so the view re-latches the
     /// cursor and track it is anchored to (`020-views-and-state.md`). The
     /// focus, the layout, the loop and playback are untouched
-    /// (`440-undo-view-state.md` decision 6), and the lane is never armed
-    /// by a step.
+    /// (`440-undo-view-state.md` decision 6); the performance lane is left
+    /// by a track put back and never armed
+    /// (`450-performance-lane-selection.md` decision 4).
     pub(super) fn restore_view_workflow(&self, sequencer: &mut Sequencer, view: ViewSnapshot) {
         // The cursor first, so a lead clip put back takes it as its own
         // (`change_lead_clip`). A lead that stays keeps its clip cursor

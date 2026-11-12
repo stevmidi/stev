@@ -431,16 +431,9 @@ impl Display {
     /// cursor, which the arrow keys move.
     ///
     /// With the performance lane selected the accent sits on the lane row
-    /// (`450-performance-lane-selection.md` decision 6), drawn with
-    /// `painter`; the track rows are drawn with `lanes_painter`, clipped to
-    /// the lane viewport. With neither a track nor the lane selected (a
-    /// load, for a moment) nothing is drawn.
-    pub(super) fn draw_selected_track_cursor(
-        &self,
-        painter: &Painter,
-        lanes_painter: &Painter,
-        rect: Rect,
-    ) {
+    /// (`450-performance-lane-selection.md` decision 6); on the track rows
+    /// it is clipped to the lane viewport.
+    pub(super) fn draw_selected_track_cursor(&self, painter: &Painter, rect: Rect) {
         if self.active_pane() == Pane::Clip {
             return;
         }
@@ -466,13 +459,16 @@ impl Display {
                 let tracks_top = rect.min.y + layout.tracks_top();
                 let (row_top, _) = track_row_y_range(tracks_top, layout.lane_h, track_lo);
                 let (_, row_bottom) = track_row_y_range(tracks_top, layout.lane_h, track_hi);
-                (lanes_painter, row_top, row_bottom)
+                (layout.lanes_painter(painter, rect), row_top, row_bottom)
             }
-            None if self.performance_lane_selected => {
+            None => {
                 let row_top = rect.min.y + layout.performance_lane_top;
-                (painter, row_top, row_top + layout.performance_lane_h)
+                (
+                    painter.clone(),
+                    row_top,
+                    row_top + layout.performance_lane_h,
+                )
             }
-            None => return,
         };
 
         let x = self.tick_to_screen_x(self.render_cursor_tick());

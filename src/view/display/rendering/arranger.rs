@@ -830,7 +830,7 @@ impl Display {
         let content_x = self.content_origin_x();
         let content_w = self.content_w();
         let accent = theme::accent();
-        let is_selected = self.performance_lane_selected;
+        let is_selected = self.performance_lane_selected();
 
         let lane_fill = lane_grid_fill(is_selected, accent);
         let gutter_fill = if is_selected {

@@ -291,10 +291,6 @@ pub(crate) struct Display {
     /// `FocusPane` lands).
     input_was_clip_view: bool,
 
-    // --- Arranger performance lane state ---
-    /// Whether the arranger performance lane is armed (mirrors the atomic).
-    performance_lane_selected: bool,
-
     // --- Tracks ---
     /// Each track's engine slot and output, mirrored from the sequencer
     /// (`UiEvent::TracksChanged`) for the track header — its output chip and
@@ -487,7 +483,6 @@ impl Display {
             raise_main_window: false,
             quit_approved: false,
             input_was_clip_view: false,
-            performance_lane_selected: false,
             overlay: None,
             published_modal: false,
             settings: SettingsModal::new(MidiTab::new(
@@ -1030,12 +1025,23 @@ impl Display {
         )
     }
 
-    /// The accent colour of the lead clip's track — the clip view's notes.
-    /// The lead clip is always on the selected track; with none there is no
-    /// lead either, and the colour is the theme accent.
-    fn lead_clip_color(&self) -> Color32 {
+    /// The selected track's accent colour; the theme accent with none.
+    fn selected_track_color(&self) -> Color32 {
         self.selected_track_idx
             .map_or_else(theme::accent, |track_idx| self.track_color(track_idx))
+    }
+
+    /// The accent colour of the lead clip's track — the clip view's notes.
+    /// The lead clip is always on the selected track.
+    fn lead_clip_color(&self) -> Color32 {
+        self.selected_track_color()
+    }
+
+    /// Whether the performance lane is the arranger's selected row. The
+    /// view has no selected track only then: every other selection change
+    /// arrives as a track (`UiEvent::TrackSelected`).
+    fn performance_lane_selected(&self) -> bool {
+        self.selected_track_idx.is_none()
     }
 
     /// The lead clip's arrangement room before the next clip on its track,
