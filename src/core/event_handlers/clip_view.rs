@@ -104,13 +104,13 @@ mod tests {
         );
     }
 
-    /// Undoing the commit of the clip open in the clip view keeps the clip
+    /// Undoing the insert of the clip open in the clip view keeps the clip
     /// view, on no clip, as after undoing a delete that took the lead clip:
     /// the lead clip goes and its shape with it, and only the user moves the
     /// keyboard (`440-undo-view-state.md` decision 6). It used to leave to
     /// the arranger.
     #[test]
-    fn uncommitting_the_open_clip_keeps_the_clip_view_on_no_clip() {
+    fn undoing_the_open_clips_insert_keeps_the_clip_view_on_no_clip() {
         let mut h = harness();
         let mut record: Record<UndoStep> = Record::new();
         let empty_clip = SequencerCommand::InsertEmptyClip { time_bounds: None };

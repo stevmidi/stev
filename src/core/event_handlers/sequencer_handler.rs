@@ -135,7 +135,7 @@ impl EventHandlers {
                 self.record_edit(
                     sequencer,
                     undo_record,
-                    CommitClipEdit::from_empty_clip(sequencer, *time_bounds),
+                    PasteClipsEdit::empty_clips(sequencer, *time_bounds),
                 );
             }
 
@@ -2373,5 +2373,59 @@ mod tests {
         assert_eq!(record.len(), 0);
         let read = agent_call(&mut h, &mut record, "get_context", json!({}));
         assert!(!read.is_error, "{}", read.text);
+    }
+
+    /// `⇧⌘M` over a marquee spanning three tracks: an empty clip on each, one
+    /// undo step, the selected track's clip the lead, and the selected track
+    /// and the marquee left as they were (the commit-never-changes-selection
+    /// rule).
+    #[test]
+    fn insert_empty_clip_fills_every_marqueed_track_and_keeps_the_selection() {
+        let mut h = harness();
+        let mut record: Record<UndoStep> = Record::new();
+        h.handlers.select_track_workflow(&mut h.sequencer, 1);
+        let marquee = rect(960, 2880, 0, 2);
+        h.sequencer.set_marquee(Some(marquee));
+
+        let insert = SequencerCommand::InsertEmptyClip {
+            time_bounds: Some(marquee),
+        };
+        run_command(&mut h, &mut record, insert);
+
+        for track_idx in 0..=2 {
+            let clips = h.sequencer.tracks()[track_idx].clips();
+            assert_eq!(clips.len(), 1, "track {track_idx}");
+            assert_eq!((clips[0].start_tick(), clips[0].end_tick()), (960, 2880));
+        }
+        assert_eq!(record.len(), 1, "one undo step");
+        assert_eq!(h.sequencer.selected_track_index(), Some(1));
+        assert_eq!(
+            h.sequencer.selected_clip_id(),
+            Some(h.sequencer.tracks()[1].clips()[0].id())
+        );
+        assert_eq!(h.sequencer.marquee(), Some(marquee));
+
+        run_command(&mut h, &mut record, SequencerCommand::Undo);
+        for track_idx in 0..=2 {
+            assert!(h.sequencer.tracks()[track_idx].clips().is_empty());
+        }
+    }
+
+    /// All or nothing: one occupied track refuses the whole insert, and
+    /// nothing enters the record.
+    #[test]
+    fn insert_empty_clip_over_an_occupied_track_does_nothing() {
+        let mut h = harness();
+        let mut record: Record<UndoStep> = Record::new();
+        h.sequencer.tracks_mut()[2].add_clip(&clip_at(1920, 960));
+        let insert = SequencerCommand::InsertEmptyClip {
+            time_bounds: Some(rect(960, 2880, 0, 2)),
+        };
+        run_command(&mut h, &mut record, insert);
+
+        assert_eq!(record.len(), 0);
+        assert!(h.sequencer.tracks()[0].clips().is_empty());
+        assert!(h.sequencer.tracks()[1].clips().is_empty());
+        assert_eq!(h.sequencer.tracks()[2].clips().len(), 1);
     }
 }

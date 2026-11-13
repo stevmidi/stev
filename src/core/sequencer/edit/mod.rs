@@ -400,7 +400,7 @@ pub(crate) enum EditResult {
         retime: Option<EventSpaceRetime>,
     },
     /// A brand-new clip is on its track (`CommitClipEdit`, forward direction
-    /// — a capture commit, an empty clip (`⇧⌘M`), or a redo of either): add
+    /// — a capture commit or a redo of one): add
     /// its shape, select it, re-seek. See `050-undo-redo.md`.
     ClipCommitted {
         /// The clip as placed.

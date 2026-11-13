@@ -1,8 +1,8 @@
-//! Undoable "a new clip appeared on a track" — the capture commit (`/`,
-//! running or stopped) and an inserted empty clip (`⇧⌘M`). Undo lifts
-//! the clip off its track by id; redo puts it back as it was when undone.
+//! Undoable "a take became a new clip on a track" — the capture commit (`/`,
+//! running or stopped). Undo lifts the clip off its track by id; redo puts
+//! it back as it was when undone. An empty clip (`⇧⌘M`) is a paste instead
+//! (`insert_empty_clips.rs`), since it can cover several tracks.
 
-use crate::core::input_event::TimeSelectionRect;
 use crate::metadata::clip_metadata::ClipMetadata;
 use crate::models::clip::Clip;
 
@@ -14,10 +14,8 @@ use super::{detach, detached_clone};
 // CommitClip
 // ---------------------------------------------------------------------------
 
-/// Puts one frozen clip on one track. Every path that creates a brand-new clip
-/// reduces to this shape, so one edit backs them all (see
-/// `050-undo-redo.md`): [`from_empty_clip`](Self::from_empty_clip) builds an
-/// empty one (`⇧⌘M`); the capture commits build the clip here via
+/// Puts one frozen clip, committed from the capture, on one track (see
+/// `050-undo-redo.md`): the capture commits build the clip here via
 /// [`Sequencer::build_committed_capture_clip`] (running) or
 /// [`Sequencer::build_stopped_capture_clip`] (stopped) and let `edit()` place
 /// it.
@@ -46,8 +44,7 @@ pub(crate) struct CommitClipEdit {
     /// Its id is what undo lifts and what redo re-adds, so the UI shape keyed
     /// on it stays valid.
     clip: Clip,
-    /// `true` until the first `edit()` of a capture commit has cleared
-    /// `capture_clip`; always `false` for an empty clip.
+    /// `true` until the first `edit()` has cleared `capture_clip`.
     consume_capture: bool,
 }
 
@@ -76,33 +73,6 @@ impl CommitClipEdit {
             clip,
             consume_capture: true,
         })
-    }
-
-    /// An empty clip on the selected track — the Arranger's `⇧⌘M`: over the
-    /// marquee's tick range, or one bar at the cursor when there is no
-    /// marquee or it has no tick width. `None` (nothing enters the record)
-    /// with no selected track, or when it would overlap a clip already there.
-    pub(crate) fn from_empty_clip(
-        sequencer: &Sequencer,
-        time_bounds: Option<TimeSelectionRect>,
-    ) -> Option<Self> {
-        let (start, length) = match time_bounds {
-            Some(rect) if rect.has_tick_range() => (rect.start, rect.end - rect.start),
-            _ => (sequencer.cursor_tick(), sequencer.meter().bar_ticks()),
-        };
-        let track_idx = sequencer.selected_track_index()?;
-        let mut clip = Clip::new();
-        clip.set_start_tick(start);
-        clip.region_mut().set_region(None, Some(length));
-        sequencer
-            .tracks()
-            .get(track_idx)?
-            .fits(&clip)
-            .then_some(Self {
-                track_idx,
-                clip,
-                consume_capture: false,
-            })
     }
 
     /// Puts the frozen clip on its track (a fresh commit, or a redo) and,
@@ -289,105 +259,6 @@ mod tests {
         );
     }
 
-    fn marquee(start: i32, end: i32) -> Option<TimeSelectionRect> {
-        Some(TimeSelectionRect {
-            start,
-            end,
-            track_start: 0,
-            track_end: 0,
-        })
-    }
-
-    fn empty_clip_span(
-        sequencer: &Sequencer,
-        time_bounds: Option<TimeSelectionRect>,
-    ) -> (i32, i32) {
-        let edit = CommitClipEdit::from_empty_clip(sequencer, time_bounds).expect("room for it");
-        (edit.clip.start_tick(), edit.clip.end_tick())
-    }
-
-    /// An empty clip over `[start, end)` on track 0, committed, like
-    /// [`commit`] does a take.
-    fn commit_empty_clip(
-        sequencer: &mut Sequencer,
-        start: i32,
-        end: i32,
-    ) -> (CommitClipEdit, ClipMetadata) {
-        let mut edit = CommitClipEdit::from_empty_clip(sequencer, marquee(start, end)).unwrap();
-        let EditResult::ClipCommitted { clip } = edit.edit(sequencer) else {
-            panic!("expected ClipCommitted");
-        };
-        (edit, clip)
-    }
-
-    #[test]
-    fn from_empty_clip_places_an_empty_clip_undo_lifts_it_and_keeps_the_buffer() {
-        let mut sequencer = test_sequencer();
-        capture_note(&mut sequencer, 600, 900);
-
-        let (mut edit, clip) = commit_empty_clip(&mut sequencer, 960, 2880);
-        assert_eq!((clip.start_tick, clip.end_tick), (960, 2880));
-        let placed = sequencer.tracks()[0].get_clip_by_id(clip.clip_id).unwrap();
-        assert!(placed.events().is_empty());
-        assert_eq!(
-            sequencer.capture_clip.events().len(),
-            2,
-            "an empty clip never consumes the take"
-        );
-
-        edit.undo(&mut sequencer);
-        assert!(clip_ids(&sequencer, 0).is_empty());
-    }
-
-    /// No marquee, or a zero-width (track-only) one: one bar at the cursor.
-    #[test]
-    fn from_empty_clip_without_a_tick_range_is_one_bar_at_the_cursor() {
-        let sequencer = test_sequencer();
-        let bar = Meter::FOUR_FOUR.bar_ticks();
-        sequencer.cursor_tick.store(bar, Ordering::Relaxed);
-
-        assert_eq!(empty_clip_span(&sequencer, None), (bar, bar * 2));
-        assert_eq!(
-            empty_clip_span(&sequencer, marquee(bar * 3, bar * 3)),
-            (bar, bar * 2)
-        );
-    }
-
-    #[test]
-    fn from_empty_clip_is_one_bar_of_the_meter() {
-        let sequencer = test_sequencer();
-        let three_four = Meter::new(3, 4).unwrap();
-        sequencer.set_meter(three_four);
-        assert_eq!(
-            empty_clip_span(&sequencer, None),
-            (0, three_four.bar_ticks())
-        );
-    }
-
-    #[test]
-    fn from_empty_clip_is_none_when_it_would_overlap_a_clip() {
-        let mut sequencer = test_sequencer();
-        sequencer.tracks_mut()[0].add_clip(&clip_at(1920, 960));
-
-        assert!(CommitClipEdit::from_empty_clip(&sequencer, marquee(960, 2880)).is_none());
-        assert!(CommitClipEdit::from_empty_clip(&sequencer, marquee(2400, 3000)).is_none());
-        assert!(
-            CommitClipEdit::from_empty_clip(&sequencer, None).is_none(),
-            "one bar at the cursor (tick 0) reaches the clip"
-        );
-        assert_eq!(
-            empty_clip_span(&sequencer, marquee(960, 1920)),
-            (960, 1920),
-            "touching the next clip is adjacent, not a collision"
-        );
-    }
-
-    #[test]
-    fn from_empty_clip_is_none_with_no_selected_track() {
-        let untracked = sequencer_with(false).0;
-        assert!(CommitClipEdit::from_empty_clip(&untracked, None).is_none());
-    }
-
     /// Regression: a non-undoable change to the live clip after the commit
     /// (here a region trim, standing in for the `Shift+-` tempo rescale that
     /// halves a clip) must survive an undo/redo round trip — redo restores
@@ -395,7 +266,8 @@ mod tests {
     #[test]
     fn redo_restores_the_clip_as_it_was_when_undone_not_as_committed() {
         let mut sequencer = test_sequencer();
-        let (mut edit, clip) = commit_empty_clip(&mut sequencer, 0, 960);
+        capture_note(&mut sequencer, 0, 480);
+        let (mut edit, clip) = commit(&mut sequencer);
         let id = clip.clip_id;
 
         sequencer.tracks_mut()[0]
@@ -416,15 +288,22 @@ mod tests {
     #[test]
     fn the_held_clip_is_detached_from_the_live_clips_region() {
         let mut sequencer = test_sequencer();
-        let (mut edit, clip) = commit_empty_clip(&mut sequencer, 0, 960);
+        capture_note(&mut sequencer, 0, 480);
+        let (mut edit, clip) = commit(&mut sequencer);
         let id = clip.clip_id;
+        let committed_end = edit.clip.region().end();
+        assert_ne!(committed_end, 480, "the trim below must change the clip");
 
         sequencer.tracks_mut()[0]
             .get_clip_by_id_mut(id)
             .unwrap()
             .region_mut()
             .set_region(None, Some(480));
-        assert_eq!(edit.clip.region().end(), 960, "live trim does not leak in");
+        assert_eq!(
+            edit.clip.region().end(),
+            committed_end,
+            "live trim does not leak in"
+        );
 
         edit.undo(&mut sequencer);
         assert_eq!(edit.clip.region().end(), 480, "undo picks up the live clip");

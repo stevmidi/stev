@@ -5,13 +5,12 @@
 //! [`EditResult`] describing exactly which clips were
 //! updated / added / removed so the handler fires minimal UI events. The
 //! compound edits (`InsertSilenceEdit`, `DeleteTimeEdit`, `DuplicateTimeEdit`,
-//! `DuplicateClipsEdit`, `PasteClipsEdit` (also Merge Clips and the MIDI clip import), `MuteInRangeEdit`, `MoveClipEdit`,
+//! `DuplicateClipsEdit`, `PasteClipsEdit` (also Merge Clips, the MIDI clip import and `⇧⌘M`'s empty clips), `MuteInRangeEdit`, `MoveClipEdit`,
 //! `MoveRangeEdit`) are built by composing the simpler ones (`SplitClipsEdit`,
 //! `DeleteInRangeEdit`); `ResizeClipEdit` moves one clip's edges
 //! and nothing else, and `RetimeClipEdit` retimes one clip with the tempo
 //! (Enter's fit, `⌥=`/`⌥-`); `CommitClipEdit` is the one that puts a
-//! brand-new clip (a capture commit, an empty clip) on
-//! a track; `CreateClipsEdit` is the agent bridge's new clips, a paste that
+//! take, committed as a brand-new clip, on a track; `CreateClipsEdit` is the agent bridge's new clips, a paste that
 //! keeps the selection. See `050-undo-redo.md` and `020-views-and-state.md`.
 
 use std::collections::HashSet;
@@ -33,6 +32,7 @@ mod delete_time;
 mod duplicate_clips;
 mod duplicate_time;
 mod import_clip;
+mod insert_empty_clips;
 mod insert_silence;
 mod merge_clips;
 mod move_clip;

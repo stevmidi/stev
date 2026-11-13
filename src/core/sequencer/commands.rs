@@ -52,10 +52,11 @@ pub(crate) enum SequencerCommand {
     CommitClipClickByTicks(i32),
 
     // --- Clip operations ---
-    /// Inserts an empty clip on the selected track (`CommitClipEdit::from_empty_clip`,
-    /// undoable): spanning the marquee's tick range when `time_bounds` has
-    /// one, otherwise one bar from the cursor. A no-op when it would overlap
-    /// a clip. Backs `⇧⌘/Ctrl+M` in the Arranger.
+    /// Inserts empty clips (`PasteClipsEdit::empty_clips`, one undo step):
+    /// over the marquee's tick range on every track it spans when
+    /// `time_bounds` has one, otherwise one bar from the cursor on the
+    /// selected track. A no-op when any of them would overlap a clip (all or
+    /// nothing, as in Ableton). Backs `⇧⌘/Ctrl+M` in the Arranger.
     InsertEmptyClip {
         /// The marquee selection, or `None` for one bar at the cursor.
         time_bounds: Option<TimeSelectionRect>,

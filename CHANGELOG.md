@@ -33,6 +33,8 @@ Breaking entries are marked **Breaking** and say what to do about them.
 - **Breaking** for forks: the capture code moved into `src/core/sequencer/capture/` (`capture.rs` is now `capture/mod.rs`, beside `stopped_capture.rs`, `take_framing.rs`, `capture_fixture.rs`, and `window.rs` and `phrase_tokens.rs` from `region/`); `region/` is flattened (`region/mod.rs` is now `sequencer/region.rs`, `region/tempo.rs` is now `sequencer/tempo.rs`); and `src/shapes/clip_shape.rs` and `event_shape.rs` moved into `src/view/display/`. A fork that changed those files rebases its changes onto the new paths; nothing in the app behaves differently.
 - Undo and redo never move the keyboard. Undoing the commit of the clip open in the clip view, or the add of the selected track from it, keeps the clip view (on no clip, or on the track taking its place) instead of going back to the arranger. A project that fails to open leaves the keyboard where it was too.
 
+- ⇧⌘M (Insert an empty clip) with a marquee over several tracks puts an empty clip on each of them, as the other marquee commands act on every track in the marquee, and undoes in one step. As in Ableton, it does nothing if any of the clips would overlap a clip already there. Without a marquee it still puts one bar at the cursor on the selected track.
+
 - Selecting the performance lane deselects the track. While the lane is selected there is no selected track, no clip in the clip view and no marquee, so the keys that act on the selected track (Delete on a marquee, a paste of clips copied from a marquee, `v`, the knobs, ⌥←/→) do nothing instead of acting on the track you left. ↓ goes to the first track and ↑ to the last. An undo that puts a track's selection back leaves the lane.
 
 ### Fixed
