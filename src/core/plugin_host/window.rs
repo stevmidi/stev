@@ -7,9 +7,11 @@
 //! plugin (CLAP `gui.set_parent`, VST3 `IPlugView::attached`). Plugin-initiated
 //! resizes (e.g. zooming the editor) are forwarded here via `set_content_size`
 //! when the plugin asks for one — from the CLAP editor's `pump` after
-//! `request_resize`, from inside VST3's `IPlugFrame::resizeView`. Still no
-//! delegate / the other direction: the window is not user-resizable (no
-//! `Resizable` style mask), so there is nothing to forward back to the plugin.
+//! `request_resize`, from inside VST3's `IPlugFrame::resizeView`. The other
+//! direction is left out by decision (issue #8): the window has no `Resizable`
+//! style mask, so its edge can't be dragged. A plugin that resizes offers its
+//! own grip or zoom setting, which comes through the path above, and a
+//! fixed-size one couldn't follow a drag anyway.
 //!
 //! The window floats above the main app window ([`PluginWindow::set_level`],
 //! driven from each editor's `pump` through [`editor_level`]) while Stev

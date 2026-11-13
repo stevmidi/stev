@@ -937,18 +937,23 @@ shared from there rather than copied (`420-large-projects.md` decision 7):
   it exists only so a plugin with an audio input bus is handed real buffers.
   Stev hosts instruments, not audio-FX — nothing routes audio *into* a
   plugin.
-- **Embedded editor window forwards a plugin-initiated resize, but not the
-  reverse.** `HostGuiImpl::request_resize` (`host.rs`) — fired when the plugin
+- **Embedded editor window follows the plugin's resizes; its edge stays
+  fixed.** `HostGuiImpl::request_resize` (`host.rs`) — fired when the plugin
   asks its host parent to change size, e.g. zooming the editor — stashes the
   size (`resize_pending`/`resize_width`/`resize_height`, same
   atomics-plus-`wake_ui`-plus-drain-in-`pump` pattern as `gui_closed`) for
   `ClapEditor::pump` to apply via `PluginWindow::set_content_size`, so the
   window now grows/shrinks to match. Floating GUIs are unaffected either way
   (the plugin owns its own OS window and resizes it directly; `pump` discards
-  the request when `self.window` is `None`). The other direction is still
-  missing: `PluginWindow` has no `Resizable` style mask and no delegate, so
-  the user cannot drag-resize the window and have that forwarded back to the
-  plugin via `gui.set_size` / `gui.adjust_size`.
+  the request when `self.window` is `None`). VST3's `IPlugFrame::resizeView`
+  resizes the window on the spot (`180`). The other direction, dragging the
+  window's edge and forwarding the size to the plugin (`gui.adjust_size` /
+  `gui.set_size`, `IPlugView::checkSizeConstraint` / `onSize`), is left out
+  by decision (issue #8, closed 2026-11-13): `PluginWindow` has no
+  `Resizable` style mask. A plugin that resizes ships its own grip or zoom
+  setting, which already arrives through the path above, and a fixed-size
+  plugin couldn't follow a drag anyway (Ableton doesn't drag those either).
+  Players who need a bigger editor use the plugin's zoom or macOS Zoom.
 - **Plugin state is captured only on a save** (and for the crash recovery
   copy, `410`) — the unsaved prompt hears of a change only from the plugin
   (a preset, a turn, its dirty flag; `060` § Unsaved changes), so a plugin
