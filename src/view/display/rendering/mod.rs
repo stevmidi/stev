@@ -1295,7 +1295,9 @@ impl eframe::App for Display {
         self.reset_clip_frame_snapshots();
         // ⌥ decides a band drag's release, so it is read before the release
         // is handled, and every frame: a still pointer sends no motion.
-        self.sync_clip_move_copy(ctx.input(|i| i.modifiers.alt));
+        let alt = ctx.input(|i| i.modifiers.alt);
+        self.sync_clip_move_copy(alt);
+        self.sync_note_drag_copy(alt);
         self.handle_input_events(ctx);
         // A held pitch drag past the note area's edge keeps scrolling with
         // the pointer still, so it asks for the next frame itself.
@@ -1340,13 +1342,15 @@ impl eframe::App for Display {
             ctx.set_cursor_icon(CursorIcon::ResizeHorizontal);
         }
         // A note's edge: the resize arrows on hover and through its drag;
-        // the closed hand once a body press becomes a move. With ⌘/Ctrl held
+        // the closed hand once a body press becomes a move, the copy cursor
+        // while ⌥ is held on it. With ⌘/Ctrl held
         // anywhere on a note, and through the velocity drag, the vertical
         // arrows: a press there drags the velocity up and down.
         match &self.gesture.note_drag {
             Some(drag) if drag.is_resize() => {
                 ctx.set_cursor_icon(CursorIcon::ResizeHorizontal);
             }
+            Some(drag) if drag.dragging && drag.copy => ctx.set_cursor_icon(CursorIcon::Copy),
             Some(drag) if drag.dragging => ctx.set_cursor_icon(CursorIcon::Grabbing),
             Some(_) => {}
             None if self.gesture.velocity_drag.is_some()

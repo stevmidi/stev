@@ -1,6 +1,6 @@
 # ⌥-Drag Copies Clips
 
-**Status: design agreed 2026-11-12; built 2026-11-13 (issue #28).** In the arranger, holding ⌥ while dragging a clip by its header band, or a marquee block, drops a copy and leaves the source where it was: the Finder, Logic and Ableton gesture. It is the band move drag (`020` § Clip Band Press & Move Drag) with a different commit, and the mouse twin of `⌘/Ctrl+D` with a destination the hand picks.
+**Status: design agreed 2026-11-12; built 2026-11-13 (issue #28). Phase 2, the piano roll's notes, built 2026-11-13 (§ Phase 2).** In the arranger, holding ⌥ while dragging a clip by its header band, or a marquee block, drops a copy and leaves the source where it was: the Finder, Logic and Ableton gesture. It is the band move drag (`020` § Clip Band Press & Move Drag) with a different commit, and the mouse twin of `⌘/Ctrl+D` with a destination the hand picks.
 
 ## Background
 
@@ -19,7 +19,7 @@ Today the only ways to copy clips are `⌘C`/`⌘V` (two keys and a cursor move)
 5. **One edit for both kinds, built on the paste.** A copy keeps no clip id (a move does, which is why moves have two edits), so a whole-clip copy is a marquee copy over the clip's span on its one track. New `CopyRangeEdit` (`clip_edits/copy_range.rs`), a thin newtype over `PasteClipsEdit` in the shape of `DuplicateClipsEdit`: it takes the rect's slice (`Sequencer::copy_range_to_clipboard`) and lands each piece through `PasteClipsEdit::from_targets` at `start + delta_ticks` on `track + delta_tracks`. All placement, carving, freezing for redo and undo are the paste's. Its result is `EditResult::ClipsDuplicated` with the shifted rect as `new_selection`, so its workflow, its UI events and its selection already exist; build checks whether the variant wants a more general name once it has two users. *As built*: no edit type and no result variant of its own. `ClipsDuplicated`'s handling leaves the cursor where it was and decision 4 moves it to the copy, so the copy is `PasteClipsEdit::copying` (as Merge Clips is `PasteClipsEdit::merging`) with a new lead, `PasteLead::Range(rect)`, which `paste_clips_workflow` selects as a marquee move does (`select_range_workflow`); its results are the paste's `ClipsPasted`/`ClipsUnpasted`. The refusals are `TimeSelectionRect::shifted_on_lanes`, shared with `MoveRangeEdit::new`. Folding `ClipsDuplicated` into a lead the same way is a possible later tidy-up.
 6. **Not in this design.**
    - **No keyboard twin.** `⌘←`/`⌘→` moves a marquee by keyboard; a copying `⌥⌘←`/`⌥⌘→` would collide with `⌥←`/`⌥→`, the clip-edge jump, and a keyboard-armed drag refuses ⌥ arrows today. `⌘D` is the keyboard copy.
-   - **No ⌥-drag of notes in the piano roll.** The same idea in the other view (`020` § Note Move & Resize Drag), and the obvious next step; a phase of its own if wanted, designed then.
+   - **No ⌥-drag of notes in the piano roll.** The same idea in the other view (`020` § Note Move & Resize Drag), and the obvious next step; a phase of its own if wanted, designed then. *Since built*: § Phase 2.
    - **A ⌥-press that never crosses the drag threshold is a plain click**: it selects the clip, or reselects the one clicked inside a marquee, as without ⌥. A drag released with no net delta copies nothing, as a move with none moves nothing (`ClipMoveDrag::has_moved`): a copy exactly on its source is pointless.
 
 ## Things to check while building
@@ -32,6 +32,20 @@ Today the only ways to copy clips are `⌘C`/`⌘V` (two keys and a cursor move)
 - **Tests** (`copy_range.rs`, beside `duplicate_clips.rs`'s): a whole-clip copy to a later tick on the same track and to another track; a partial-marquee copy copies only the piece, with the full event list kept; a multi-track block keeps its track spacing; a copy overlapping its own source trims the source and wins; landing on another clip carves it; `None` for an empty range or one over no clip; undo puts everything back; redo lands the same ids (frozen). In the sequencer handler: the selection after a copy is the shifted rect with the copy as lead, and `⌘Z` puts back the selection from before (`440`'s test pair). In the view's pure gesture code: release with ⌥ copies, without ⌥ moves, and a ⌥ change mid-drag decides by the state at release.
 - **Docs**: `020` § Clip Band Press & Move Drag (the copy commit, the ⌥ rule), `010` (the mouse bindings), `030` (the copy cursor), `050` (`CopyRangeEdit`), the Keyboard tab's hand-listed `FIXED` rows (`src/view/display/keyboard_tab.rs`: the mouse is listed there), and a `CHANGELOG.md` line.
 
+## Phase 2: the piano roll's notes
+
+The same gesture on notes, so both views copy by the same hand: hold ⌥ while dragging a note's body (the selection, or the note alone) and a copy stays where the notes were. Built 2026-11-13.
+
+The note drag differs from the band drag in one way that shapes this: it is **applied live**, each pointer move sending a `DragNotes` step that the sequencer applies to the notes as the gesture found them (`020` § Note Move & Resize Drag, `050`), where the band drag is a ghost committed at release. So the copy is live too.
+
+7. **⌥ is read live, and the copy follows it live.** As decision 1: ⌥ at press means nothing, the key can go down or up mid-drag, and what it says at release is what stays. Because the drag is applied live, the copies appear the moment ⌥ goes down and go when it comes up, with the pointer still (`Display::sync_note_drag_copy`, each frame beside `sync_clip_move_copy`, sends a step of its own on a change; `NoteMouseDrag::set_copy`). The pointer is the copy cursor while ⌥ is held on a latched move.
+8. **The dragged notes land; the copies stay.** A step with `copy` leaves fresh copies of the dragged notes exactly where the gesture found them (start, end, pitch, velocity, mute; `Clip::note_copies`) and moves the notes themselves, keeping their ids. So the selection, which holds those ids, follows the copy to where it lands, and ⌥-drags chain as in decision 4, with nothing to reselect. The copies are made once per gesture, by the first step that copies, and kept from step to step and for redo (`DragNotesEdit::copies`), so ⌥ toggled twice brings back the same notes and redo lands the same ids.
+9. **The landing notes win.** Overlaps are resolved for the dragged notes only, as for a move: a dragged note landing on a same-pitch copy (or any note) trims the earlier one to its start, and replaces it on an equal start (decision 3's rule). The copies' overlaps with the other notes are left as the originals had them.
+10. **A move only, one undo step.** A resize ignores ⌥ (a copy of a note stretched from its own edge is meaningless). The gesture stays one undo step (`drag_id`), undo takes out the move and the copies together, and a drag back home copies nothing (`NoteDrag::is_noop`), so Esc, which sends the drag home, cancels a copy too. No new edit, command or result: `copy: bool` on `InputEvent::DragNotes`, `SequencerCommand::DragNotes` and `DragNotesEdit`.
+
+Not in this phase: a ghost of the notes left behind before the step comes back (the copies arrive with the step's `EventsUpdated`, a frame or two after ⌥), and copying the wheel moves or knob moves under the notes (the drag moves only notes).
+
 ## Phases
 
-One phase: the arranger copy (decisions 1–5). The piano-roll note copy, if it comes, is designed separately (decision 6).
+1. The arranger copy (decisions 1–5). Built.
+2. The piano-roll note copy (decisions 7–10). Built.

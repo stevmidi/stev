@@ -311,6 +311,7 @@ impl Display {
             dragging: false,
             drag: note_drag_for(part),
             auditioned_pitch: press_note,
+            copy: false,
         });
     }
 
@@ -375,13 +376,7 @@ impl Display {
         drag.dragging = true;
         if next != drag.drag {
             drag.drag = next;
-            self.input_event_tx
-                .send(InputEvent::DragNotes {
-                    event_ids: drag.target_ids(),
-                    drag: next,
-                    drag_id: drag.drag_id,
-                })
-                .ok();
+            self.input_event_tx.send(drag.step()).ok();
         }
         if pitch != auditioned_pitch {
             drag.auditioned_pitch = pitch;
@@ -526,13 +521,24 @@ impl Display {
             return;
         };
         if !drag.drag.is_noop() {
-            self.input_event_tx
-                .send(InputEvent::DragNotes {
-                    event_ids: drag.target_ids(),
-                    drag: drag.drag.with_deltas(0, 0),
-                    drag_id: drag.drag_id,
-                })
-                .ok();
+            let home = NoteMouseDrag {
+                drag: drag.drag.with_deltas(0, 0),
+                ..drag
+            };
+            self.input_event_tx.send(home.step()).ok();
+        }
+    }
+
+    /// Takes ⌥'s state for a live note drag, once a frame before the input
+    /// is handled (`460-copy-drag.md` § Phase 2): pressing or releasing ⌥
+    /// with the pointer still sends no `MouseMoved`, and the drag is applied
+    /// live, so a change on a move away from its press sends a step of its
+    /// own — the copies appear or go at once.
+    pub(in crate::view::display) fn sync_note_drag_copy(&mut self, alt: bool) {
+        if let Some(drag) = self.gesture.note_drag.as_mut()
+            && drag.set_copy(alt)
+        {
+            self.input_event_tx.send(drag.step()).ok();
         }
     }
 

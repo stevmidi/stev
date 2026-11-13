@@ -384,6 +384,7 @@ const CASES: &[Case] = &[
                 delta_ticks: 24,
                 delta_pitch: 1,
             },
+            copy: false,
             drag_id: 1,
         },
     },

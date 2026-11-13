@@ -340,6 +340,9 @@ pub(crate) enum SequencerCommand {
         event_ids: Vec<Uuid>,
         /// The whole drag so far, from the press.
         drag: NoteDrag,
+        /// ⌥ is held on a move: copies of the notes stay where they were
+        /// (`460-copy-drag.md` § Phase 2).
+        copy: bool,
         /// Identifies the gesture so its steps merge into one undo step.
         drag_id: u64,
     },

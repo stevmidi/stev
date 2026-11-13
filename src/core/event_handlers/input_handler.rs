@@ -564,11 +564,13 @@ impl EventHandlers {
             InputEvent::DragNotes {
                 event_ids,
                 drag,
+                copy,
                 drag_id,
             } => {
                 self.send_sequencer(SequencerCommand::DragNotes {
                     event_ids: event_ids.clone(),
                     drag: *drag,
+                    copy: *copy,
                     drag_id: *drag_id,
                 });
             }

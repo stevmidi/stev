@@ -535,12 +535,16 @@ pub(crate) enum InputEvent {
         velocity: i32,
     },
     /// A step of a note move / resize drag in `Clip`, sent on each pointer
-    /// move that changes it. Maps 1:1 to `SequencerCommand::DragNotes`.
+    /// move that changes it, or on a ⌥ change mid-move. Maps 1:1 to
+    /// `SequencerCommand::DragNotes`.
     DragNotes {
         /// The dragged notes' `NoteOn` ids.
         event_ids: Vec<Uuid>,
         /// The whole drag so far, from the press.
         drag: NoteDrag,
+        /// ⌥ is held on a move: copies of the notes stay where they were
+        /// (`460-copy-drag.md` § Phase 2).
+        copy: bool,
         /// Identifies the gesture so its steps merge into one undo step.
         drag_id: u64,
     },

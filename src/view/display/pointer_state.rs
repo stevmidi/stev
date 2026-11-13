@@ -13,6 +13,7 @@ use uuid::Uuid;
 
 use super::browser::BrowserPlugin;
 use crate::{
+    core::input_event::InputEvent,
     models::clip::{Clip, ClipEdge, NoteBounds, NoteDrag},
     shapes::clip_shape::ClipShape,
 };
@@ -148,6 +149,11 @@ pub(super) struct NoteMouseDrag {
     /// The pressed note's pitch last auditioned, so a move sounds each new
     /// pitch once.
     pub(super) auditioned_pitch: u8,
+    /// ⌥ is held on a move right now, so each step leaves copies of the
+    /// notes where they were (`460-copy-drag.md` § Phase 2). Read live each
+    /// frame ([`set_copy`](Self::set_copy)), never latched at press. Always
+    /// false for a resize.
+    pub(super) copy: bool,
 }
 
 impl NoteMouseDrag {
@@ -159,6 +165,27 @@ impl NoteMouseDrag {
     /// Whether an edge was pressed — a resize, not a move.
     pub(super) fn is_resize(&self) -> bool {
         !matches!(self.drag, NoteDrag::Move { .. })
+    }
+
+    /// The step this drag sends: its whole drag so far, copying or not.
+    pub(super) fn step(&self) -> InputEvent {
+        InputEvent::DragNotes {
+            event_ids: self.target_ids(),
+            drag: self.drag,
+            copy: self.copy,
+            drag_id: self.drag_id,
+        }
+    }
+
+    /// Takes ⌥'s state (`alt`) for this frame; a resize never copies.
+    /// Returns whether the change needs a step of its own: ⌥ went down or
+    /// up on a move that is live and away from its press, so the notes
+    /// already there gain or lose their copies with the pointer still.
+    pub(super) fn set_copy(&mut self, alt: bool) -> bool {
+        let copy = alt && !self.is_resize();
+        let changed = copy != self.copy;
+        self.copy = copy;
+        changed && self.dragging && !self.drag.is_noop()
     }
 }
 
@@ -503,5 +530,67 @@ mod tests {
         assert!(sx > 0.0);
         // Settled on the new axis: everything passes.
         assert_eq!(filter.filter(4.0, 0.0), (4.0, 0.0));
+    }
+
+    /// A note drag of `drag` from a press on one note, latched or not.
+    fn note_drag(drag: NoteDrag, dragging: bool) -> NoteMouseDrag {
+        let id = Uuid::new_v4();
+        NoteMouseDrag {
+            pressed_id: id,
+            origin: vec![(id, (0, 240, 60))],
+            drag_id: 1,
+            pressed_velocity: 100,
+            press_tick: 0,
+            press_note: 60,
+            press_x: 0.0,
+            press_y: 0.0,
+            deferred_click_tick: None,
+            dragging,
+            drag,
+            auditioned_pitch: 60,
+            copy: false,
+        }
+    }
+
+    const MOVED: NoteDrag = NoteDrag::Move {
+        delta_ticks: 240,
+        delta_pitch: 0,
+    };
+
+    /// ⌥ going down and up on a live move away from its press each send a
+    /// step, and the step carries the copy; holding it sends nothing more.
+    #[test]
+    fn alt_changing_on_a_live_move_sends_a_step() {
+        let mut drag = note_drag(MOVED, true);
+        assert!(drag.set_copy(true));
+        assert!(matches!(
+            drag.step(),
+            InputEvent::DragNotes { copy: true, .. }
+        ));
+        assert!(!drag.set_copy(true));
+        assert!(drag.set_copy(false));
+        assert!(matches!(
+            drag.step(),
+            InputEvent::DragNotes { copy: false, .. }
+        ));
+    }
+
+    /// Before the drag latches, or back at its press, ⌥ is only noted: the
+    /// next move's step carries it.
+    #[test]
+    fn alt_before_the_drag_moves_sends_no_step_but_is_kept() {
+        let mut press = note_drag(MOVED, false);
+        assert!(!press.set_copy(true));
+        assert!(press.copy);
+        let mut home = note_drag(MOVED.with_deltas(0, 0), true);
+        assert!(!home.set_copy(true));
+        assert!(home.copy);
+    }
+
+    #[test]
+    fn a_resize_never_copies() {
+        let mut drag = note_drag(NoteDrag::ResizeEnd { delta_ticks: 240 }, true);
+        assert!(!drag.set_copy(true));
+        assert!(!drag.copy);
     }
 }

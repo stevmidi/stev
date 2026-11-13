@@ -453,6 +453,7 @@ const FIXED: &[FixedGroup] = &[
         &[
             ("Double-click", "Clip: insert a note"),
             ("Drag", "Clip: move, or resize by an edge"),
+            ("⌥ drag", "Clip: copy the notes"),
             ("⌘ drag", "Clip: change the velocity"),
             ("Band drag", "Clip: move the clip's start / end"),
             ("Legend drag", "Clip: zoom / scroll the note rows"),

@@ -421,6 +421,7 @@ impl EventHandlers {
             SequencerCommand::DragNotes {
                 event_ids,
                 drag,
+                copy,
                 drag_id,
             } => {
                 let top = top_step(undo_record).map(UndoStep::sequencer_edit);
@@ -429,6 +430,7 @@ impl EventHandlers {
                     top,
                     event_ids.clone(),
                     *drag,
+                    *copy,
                     *drag_id,
                 );
                 self.record_edit(sequencer, undo_record, edit);
@@ -1439,6 +1441,56 @@ mod tests {
         assert_eq!(record.len(), 1, "back to start leaves only the insert");
     }
 
+    /// A ⌥-drag (`460-copy-drag.md` § Phase 2): the dragged note lands and a
+    /// copy stays where it was, ⌥ let go mid-drag takes the copy away and
+    /// pressed again brings back the same one, the selection is left as it
+    /// was, and the gesture is one undo step whose redo lands the same copy.
+    #[test]
+    fn an_alt_note_drag_leaves_a_copy_in_one_undo_step() {
+        let (mut h, clip_id, note_id) = harness_with_clip();
+        let mut record: Record<UndoStep> = Record::new();
+        let selection = selected_events(&h, clip_id);
+        let step = |delta_ticks, copy| SequencerCommand::DragNotes {
+            event_ids: vec![note_id],
+            drag: Move {
+                delta_ticks,
+                delta_pitch: 0,
+            },
+            copy,
+            drag_id: 1,
+        };
+        // Every `NoteOn` as `(id, tick)`, in event order.
+        let note_ons = |h: &Harness| {
+            let clip = h.sequencer.tracks()[0].get_clip_by_id(clip_id).unwrap();
+            clip.events()
+                .iter()
+                .filter(|e| e.event_type() == Some(EventType::NoteOn))
+                .map(|e| (e.id(), e.tick()))
+                .collect::<Vec<_>>()
+        };
+
+        run_command(&mut h, &mut record, step(480, true));
+        let copied = note_ons(&h);
+        let [(copy_id, 0), (moved_id, 480)] = copied[..] else {
+            panic!("a copy at 0 and the note at 480: {copied:?}");
+        };
+        assert_eq!(moved_id, note_id);
+        assert_ne!(copy_id, note_id);
+
+        run_command(&mut h, &mut record, step(480, false));
+        assert_eq!(note_ons(&h), vec![(note_id, 480)]);
+        run_command(&mut h, &mut record, step(960, true));
+        let landed = vec![(copy_id, 0), (note_id, 960)];
+        assert_eq!(note_ons(&h), landed);
+        assert_eq!(record.len(), 1);
+        assert_eq!(selected_events(&h, clip_id), selection);
+
+        run_command(&mut h, &mut record, SequencerCommand::Undo);
+        assert_eq!(note_ons(&h), vec![(note_id, 0)]);
+        run_command(&mut h, &mut record, SequencerCommand::Redo);
+        assert_eq!(note_ons(&h), landed);
+    }
+
     /// A step that can't merge — the record was saved mid-drag — is its own
     /// undo step, still applied to the notes as the gesture found them, and
     /// undoing it goes back to before the gesture.
@@ -1546,6 +1598,7 @@ mod tests {
         SequencerCommand::DragNotes {
             event_ids: event_ids.to_vec(),
             drag,
+            copy: false,
             drag_id: 1,
         }
     }

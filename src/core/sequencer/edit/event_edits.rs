@@ -408,6 +408,12 @@ impl ReplaceClipNotesEdit {
 /// (the record was just saved) still undoes to before the gesture. A step
 /// back to no change annuls the gesture's undo step. It targets explicit ids
 /// and keeps the event selection it was built with.
+///
+/// A step with `copy` (⌥ held on a move, `460-copy-drag.md` § Phase 2)
+/// also leaves copies of the notes where the gesture found them
+/// ([`Clip::apply_note_drag`]), so the dragged notes — the selection
+/// — are the ones that land. The copies are made once per gesture and kept,
+/// from step to step and for a redo, so they keep their ids.
 pub(crate) struct DragNotesEdit {
     /// The target clip, its selection (reported unchanged), and the snapshot
     /// — for a later step, the gesture's, from construction.
@@ -416,20 +422,27 @@ pub(crate) struct DragNotesEdit {
     event_ids: Vec<Uuid>,
     /// The whole drag so far, from the press.
     drag: NoteDrag,
+    /// Whether this step leaves copies behind (⌥ held now).
+    copy: bool,
+    /// The copies left behind, made from the gesture's snapshot by the
+    /// first step that copies and kept from then on.
+    copies: Option<Vec<(Event, Event)>>,
     /// Identifies the gesture, so its steps merge into one undo step.
     drag_id: u64,
 }
 
 impl DragNotesEdit {
-    /// `drag` applied to `event_ids` in the selected clip, as a step of
-    /// gesture `drag_id`: a later step when `top`, the edit on top of the
-    /// undo record, is this gesture's. `None` with no clip selected or no
-    /// ids, or for a first step that changes nothing.
+    /// `drag` applied to `event_ids` in the selected clip, leaving copies
+    /// behind with `copy`, as a step of gesture `drag_id`: a later step when
+    /// `top`, the edit on top of the undo record, is this gesture's. `None`
+    /// with no clip selected or no ids, or for a first step that changes
+    /// nothing.
     pub(crate) fn from_sequencer(
         sequencer: &Sequencer,
         top: Option<&SequencerEdit>,
         event_ids: Vec<Uuid>,
         drag: NoteDrag,
+        copy: bool,
         drag_id: u64,
     ) -> Option<Self> {
         let previous = top.and_then(|edit| match edit {
@@ -445,6 +458,8 @@ impl DragNotesEdit {
             state,
             event_ids,
             drag,
+            copy,
+            copies: previous.and_then(|previous| previous.copies.clone()),
             drag_id,
         })
     }
@@ -454,12 +469,16 @@ impl DragNotesEdit {
         self.drag_id == other.drag_id
     }
 
-    /// Takes a later step's drag, which already holds the whole gesture.
+    /// Takes a later step's drag and copy, which already hold the whole
+    /// gesture, and its copies.
     pub(super) fn absorb(&mut self, other: &Self) {
         self.drag = other.drag;
+        self.copy = other.copy;
+        self.copies.clone_from(&other.copies);
     }
 
-    /// Whether this step leaves the notes where the gesture found them.
+    /// Whether this step leaves the notes where the gesture found them (and
+    /// so copies nothing either: a copy on its source is pointless).
     pub(super) fn is_noop(&self) -> bool {
         self.drag.is_noop()
     }
@@ -469,6 +488,8 @@ impl DragNotesEdit {
     pub(super) fn edit(&mut self, sequencer: &mut Sequencer) -> EditResult {
         let state = &mut self.state;
         let (event_ids, drag, held) = (&self.event_ids, self.drag, state.pre_events.take());
+        let copying = self.copy && !drag.is_noop();
+        let copies = &mut self.copies;
         let selection = &state.selected_event_ids;
         let Some(pre_events) = sequencer.edit_clip_events(state.track_idx, state.clip_id, |clip| {
             let pre_events = match held {
@@ -479,7 +500,14 @@ impl DragNotesEdit {
                 None => Arc::clone(clip.shared_events()),
             };
             clip.restore_event_selection(selection);
-            clip.apply_note_drag(event_ids, drag);
+            let left_behind = if copying {
+                copies
+                    .get_or_insert_with(|| clip.note_copies(event_ids))
+                    .clone()
+            } else {
+                Vec::new()
+            };
+            clip.apply_note_drag(event_ids, drag, left_behind);
             pre_events
         }) else {
             return EditResult::NoOp;
