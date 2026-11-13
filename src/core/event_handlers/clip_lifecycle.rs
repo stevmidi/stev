@@ -6,10 +6,9 @@ use std::slice;
 
 use undo::Record;
 
+use crate::core::agent::span_label;
 use crate::core::input_event::TimeSelectionRect;
-use crate::core::sequencer::{
-    CommitClipEdit, InsertCaptureEdit, SequencerEdit, UndoStep, span_label,
-};
+use crate::core::sequencer::{CommitClipEdit, InsertCaptureEdit, SequencerEdit, UndoStep};
 
 use super::*;
 
@@ -108,7 +107,7 @@ mod tests {
     use undo::Record;
 
     use crate::core::event_handlers::test_harness::{Harness, harness, run_command, statuses};
-    use crate::core::sequencer::test_support::rect;
+    use crate::core::sequencer::test_support::{rect, spans};
     use crate::core::sequencer::{SequencerCommand, UndoStep};
     use crate::core::time::Meter;
 
@@ -121,15 +120,6 @@ mod tests {
             h.sequencer.handle_midi_input(&[0x90, 60, 100], t);
             h.sequencer.handle_midi_input(&[0x80, 60, 0], t + 480);
         }
-    }
-
-    /// The `(start, end)` of every clip on track 0.
-    fn clip_spans(h: &Harness) -> Vec<(i32, i32)> {
-        h.sequencer.tracks()[0]
-            .clips()
-            .iter()
-            .map(|c| (c.start_tick(), c.end_tick()))
-            .collect()
     }
 
     /// A stopped `/` with a marquee lands exactly over it, says so in the
@@ -151,13 +141,13 @@ mod tests {
             },
         );
 
-        assert_eq!(clip_spans(&h), vec![(BAR * 2, BAR * 4)]);
+        assert_eq!(spans(&h.sequencer, 0), vec![(BAR * 2, BAR * 4)]);
         assert_eq!(record.len(), 1);
         assert!(statuses(&h).contains(&"Captured bars 3–4 (marquee)".to_owned()));
         assert_eq!(h.sequencer.marquee(), Some(marquee));
 
         run_command(&mut h, &mut record, SequencerCommand::Undo);
-        assert!(clip_spans(&h).is_empty());
+        assert!(spans(&h.sequencer, 0).is_empty());
         assert_eq!(h.sequencer.marquee(), Some(marquee));
     }
 
@@ -181,8 +171,11 @@ mod tests {
         );
 
         assert!(record.is_empty());
-        assert!(clip_spans(&h).is_empty());
-        assert_eq!(statuses(&h), vec!["The marquee is outside the loop"]);
+        assert!(spans(&h.sequencer, 0).is_empty());
+        assert_eq!(
+            statuses(&h),
+            vec!["While looping, the marquee must be inside the loop"]
+        );
     }
 
     /// A track-only marquee (no tick range) frames nothing: the commit is
@@ -202,7 +195,7 @@ mod tests {
         );
 
         assert_eq!(record.len(), 1);
-        assert_eq!(clip_spans(&h)[0].0, 0, "at the cursor");
+        assert_eq!(spans(&h.sequencer, 0)[0].0, 0, "at the cursor");
         assert!(statuses(&h).iter().all(|line| !line.contains("marquee")));
     }
 }

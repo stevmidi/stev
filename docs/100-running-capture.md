@@ -131,8 +131,8 @@ the buffer cleared by decision — redo is the way back. See `050-undo-redo.md`.
   retained span reaches at least `m.len` past the anchor so a marquee past the last note
   keeps its length. The event list is what it would be without the marquee. A marquee not
   inside the loop region while looping, or one over a clip on the selected track, is
-  refused (`Sequencer::marquee_capture_refusal`, a footer line) and the builder returns
-  `None` for it.
+  refused before the builder runs (`Sequencer::marquee_capture_refusal`, a footer line);
+  the builder's own `Track::fits` still refuses an overlap.
 - Anchor: `cursor_tick`
 - Window size:
   - **playback wrapping** (`playback_is_looping()`) → the *remainder of the current loop

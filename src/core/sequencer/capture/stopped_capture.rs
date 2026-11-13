@@ -725,11 +725,6 @@ mod tests {
         }
     }
 
-    /// The first note-on inside `clip`'s window, from the window's start.
-    fn first_window_note_offset(clip: &Clip) -> i32 {
-        window_note_ons(clip)[0]
-    }
-
     /// A stopped marquee gives the length and the place: a later clip is
     /// exactly the marquee — no tail, floor or whole-bar rounding — at its
     /// start, detection still finds where the phrase starts, and the whole
@@ -757,7 +752,7 @@ mod tests {
             length,
             Meter::FOUR_FOUR,
         );
-        assert_eq!(first_window_note_offset(&clip), bar * 3 + 300 - detected);
+        assert_eq!(window_note_ons(&clip)[0], bar * 3 + 300 - detected);
     }
 
     /// A marquee shorter than the phrase cuts into it; the rest stays as
@@ -793,7 +788,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(clip.region_length(), bar * 8);
-        assert_eq!(first_window_note_offset(&clip), 0);
+        assert_eq!(window_note_ons(&clip)[0], 0);
         assert_eq!(window_note_ons(&clip).len(), 4);
     }
 

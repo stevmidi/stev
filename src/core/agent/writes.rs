@@ -17,8 +17,8 @@ use crate::core::sequencer::{
     CreateClipsEdit, ReplaceClipNotesEdit, Sequencer, SequencerEdit, SetTempoEdit,
 };
 use crate::core::time::{
-    Meter, PPQN, TEMPO_BPM_MAX, TEMPO_BPM_MIN, bpm_tenths_to_tempo_us, clamp_bpm_tenths,
-    format_bpm, sixteenth_straight_ticks,
+    PPQN, TEMPO_BPM_MAX, TEMPO_BPM_MIN, bpm_tenths_to_tempo_us, clamp_bpm_tenths, format_bpm,
+    sixteenth_straight_ticks,
 };
 use crate::core::xorshift::XorShift;
 use crate::models::clip::{Clip, nearest_grid_tick, nearest_swung_grid_tick};
@@ -28,7 +28,7 @@ use super::reads::{
     NOTES_MAX_BARS, clip_summary, clips_in, loop_region, position_arg, range_text, short_id,
     track_index, track_title,
 };
-use super::units::{NoteRow, counted, format_beats, parse_beats, parse_rows};
+use super::units::{NoteRow, bars_text, counted, format_beats, parse_beats, parse_rows};
 use super::{AgentAnswer, AgentReply, AgentWrite};
 
 /// The most clips one `create_clips` call writes.
@@ -412,17 +412,6 @@ fn default_swing(sequencer: &Sequencer, track_idx: usize, start: i32, end: i32) 
                 .map(|(_, clip)| clip)
         })
         .map_or(50, Clip::swing_pct)
-}
-
-/// The bars `[start, end)` covers, for the footer: `bar 17`, `bars 17–20`.
-fn bars_text(start: i32, end: i32, meter: Meter) -> String {
-    let first = start.div_euclid(meter.bar_ticks()) + 1;
-    let last = (end - 1).div_euclid(meter.bar_ticks()) + 1;
-    if first == last {
-        format!("bar {first}")
-    } else {
-        format!("bars {first}–{last}")
-    }
 }
 
 /// One clip of a `create_clips` call, read and checked.

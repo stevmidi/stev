@@ -38,10 +38,9 @@ use uuid::Uuid;
 
 use crate::{
     core::{
-        agent::units::format_position,
         config,
         midi::message::{midi3, parse_controller},
-        time::{self, Meter},
+        time,
     },
     models::{
         clip::Clip,
@@ -109,31 +108,9 @@ impl MarqueeRefusal {
     /// The footer line saying why nothing was captured.
     pub(crate) fn message(self) -> &'static str {
         match self {
-            Self::OutsideLoop => "The marquee is outside the loop",
+            Self::OutsideLoop => "While looping, the marquee must be inside the loop",
             Self::OverlapsClip => "The marquee overlaps a clip",
         }
-    }
-}
-
-/// The span `[start, end)` as the footer names a marquee-framed capture
-/// (`470-marquee-capture.md` decision 7), in `meter`'s bars from 1: `bar 3`
-/// or `bars 3–4` when both edges sit on bar lines, otherwise the two edges
-/// as the ruler counts positions (`3+2–5`).
-pub(crate) fn span_label(start: i32, end: i32, meter: Meter) -> String {
-    let bar = meter.bar_ticks();
-    if start.rem_euclid(bar) == 0 && end.rem_euclid(bar) == 0 {
-        let (first, last) = (start.div_euclid(bar) + 1, end.div_euclid(bar));
-        if first >= last {
-            format!("bar {first}")
-        } else {
-            format!("bars {first}–{last}")
-        }
-    } else {
-        format!(
-            "{}–{}",
-            format_position(start, meter),
-            format_position(end, meter)
-        )
     }
 }
 
@@ -172,8 +149,8 @@ impl Sequencer {
     /// kept exactly as without it, but the region is the marquee's span —
     /// its phases of the last pass when looping, its stretch of arrangement
     /// time when linear — placed at its start, never clamped to the room
-    /// there. `None` too when [`marquee_capture_refusal`](Self::marquee_capture_refusal)
-    /// refuses it.
+    /// there. The `/` asks [`marquee_capture_refusal`](Self::marquee_capture_refusal)
+    /// first, which says why a marquee can't frame one.
     ///
     /// [`CommitClipEdit`]: crate::core::sequencer::edit::CommitClipEdit
     pub(crate) fn build_committed_capture_clip(
@@ -189,12 +166,7 @@ impl Sequencer {
 
         // Where the clip goes and how long its region is.
         let (start_tick, region_length) = match marquee {
-            Some((start, end)) => {
-                if self.marquee_outside_loop((start, end)) {
-                    return None;
-                }
-                (start, end - start)
-            }
+            Some((start, end)) => (start, end - start),
             None => {
                 let cursor_tick = self.cursor_tick();
                 (cursor_tick, self.cursor_region_length(cursor_tick, track))
@@ -256,18 +228,15 @@ impl Sequencer {
         if !self.capture_clip.has_notes() {
             return None;
         }
-        if self.is_running() && self.marquee_outside_loop(marquee) {
+        let (start, end) = marquee;
+        if self.is_running()
+            && self.playback_is_looping()
+            && (start < self.region_start() || end > self.region_end())
+        {
             return Some(MarqueeRefusal::OutsideLoop);
         }
-        let (start, end) = marquee;
         let track = self.tracks.get(self.selected_track_index()?)?;
         (!track.find_clip_ids_in(start, end).is_empty()).then_some(MarqueeRefusal::OverlapsClip)
-    }
-
-    /// Whether playback is looping and the marquee span `[start, end)` isn't
-    /// inside the loop region, so no pass lines up with it.
-    fn marquee_outside_loop(&self, (start, end): (i32, i32)) -> bool {
-        self.playback_is_looping() && (start < self.region_start() || end > self.region_end())
     }
 
     /// Routes one live-input message into the capture buffer at `tick`, the
@@ -3348,7 +3317,7 @@ mod tests {
     }
 
     /// Looping, a marquee not inside the loop lines up with no pass: the
-    /// builder commits nothing and the running `/` says why.
+    /// running `/` refuses it and says why.
     #[test]
     fn a_looping_marquee_outside_the_loop_is_refused() {
         let bar = Meter::FOUR_FOUR.bar_ticks();
@@ -3357,7 +3326,6 @@ mod tests {
         note_each_bar(&mut seq, 2);
         let marquee = (bar, bar * 3);
 
-        assert!(seq.build_committed_capture_clip(Some(marquee)).is_none());
         assert_eq!(
             seq.marquee_capture_refusal(marquee),
             Some(MarqueeRefusal::OutsideLoop)
@@ -3438,19 +3406,5 @@ mod tests {
         seq.running.store(true, Ordering::Relaxed);
         assert_eq!(seq.marquee_capture_refusal((bar * 4, bar * 6)), None);
         assert!(seq.build_committed_capture_clip(Some((0, bar))).is_none());
-    }
-
-    /// The footer's span: bars from 1 on bar lines, the ruler's positions
-    /// otherwise, in the project's meter.
-    #[test]
-    fn span_label_names_bars_or_positions() {
-        let four = Meter::FOUR_FOUR;
-        let bar = four.bar_ticks();
-        assert_eq!(span_label(bar * 2, bar * 4, four), "bars 3–4");
-        assert_eq!(span_label(bar * 2, bar * 3, four), "bar 3");
-        assert_eq!(span_label(bar * 2 + time::PPQN * 2, bar * 4, four), "3+2–5");
-        let seven_eight = Meter::new(7, 8).unwrap();
-        let bar = seven_eight.bar_ticks();
-        assert_eq!(span_label(0, bar * 2, seven_eight), "bars 1–2");
     }
 }

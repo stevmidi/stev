@@ -46,6 +46,34 @@ pub(crate) fn format_position(tick: i32, meter: Meter) -> String {
     }
 }
 
+/// The bars `[start, end)` covers, for the footer: `bar 17`, `bars 17–20`.
+pub(crate) fn bars_text(start: i32, end: i32, meter: Meter) -> String {
+    let first = start.div_euclid(meter.bar_ticks()) + 1;
+    let last = (end - 1).div_euclid(meter.bar_ticks()) + 1;
+    if first == last {
+        format!("bar {first}")
+    } else {
+        format!("bars {first}–{last}")
+    }
+}
+
+/// The span `[start, end)` as the footer names a marquee-framed capture
+/// (`470-marquee-capture.md` decision 7): [`bars_text`] when both edges sit
+/// on bar lines, otherwise the two edges as the ruler counts positions
+/// (`3+2–5`).
+pub(crate) fn span_label(start: i32, end: i32, meter: Meter) -> String {
+    let bar = meter.bar_ticks();
+    if start.rem_euclid(bar) == 0 && end.rem_euclid(bar) == 0 {
+        bars_text(start, end, meter)
+    } else {
+        format!(
+            "{}–{}",
+            format_position(start, meter),
+            format_position(end, meter)
+        )
+    }
+}
+
 /// A position typed as [`format_position`] writes it (`9`, `9+3`,
 /// `9 + 2.5`), or `None`. Bars count from 1; the beat offset may run past
 /// the bar (`9+5` in 4/4 is `10+1`) but not below zero.
@@ -291,5 +319,19 @@ mod tests {
         assert!(error.starts_with("line 2:"), "{error}");
         let error = parse_rows("Q4 0 1 90").unwrap_err();
         assert!(error.contains("isn't a pitch"), "{error}");
+    }
+
+    /// The footer's span: bars from 1 on bar lines, the ruler's positions
+    /// otherwise, in the project's meter.
+    #[test]
+    fn span_label_names_bars_or_positions() {
+        let four = Meter::FOUR_FOUR;
+        let bar = four.bar_ticks();
+        assert_eq!(span_label(bar * 2, bar * 4, four), "bars 3–4");
+        assert_eq!(span_label(bar * 2, bar * 3, four), "bar 3");
+        assert_eq!(span_label(bar * 2 + PPQN * 2, bar * 4, four), "3+2–5");
+        let seven_eight = Meter::new(7, 8).unwrap();
+        let bar = seven_eight.bar_ticks();
+        assert_eq!(span_label(0, bar * 2, seven_eight), "bars 1–2");
     }
 }

@@ -33,11 +33,12 @@ mod reads;
 mod stdio;
 #[cfg(unix)]
 mod tools;
-pub(crate) mod units;
+mod units;
 mod writes;
 
 #[cfg(unix)]
 pub(crate) use stdio::{remove_socket, run_mcp_server, socket_path};
+pub(crate) use units::span_label;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
