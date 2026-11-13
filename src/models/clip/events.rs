@@ -219,6 +219,20 @@ impl Clip {
         self.update_delta_ticks();
     }
 
+    /// Keeps only what was played over event ticks `[start, end)`, a punch-in
+    /// (`470-marquee-capture.md` decision 9): a note that starts inside
+    /// stays, closed on the span's last tick if it runs past, as
+    /// [`crop`](Self::crop) closes one at a window's end; a note that starts
+    /// outside goes, and so does every other event outside. Nothing is
+    /// rebased.
+    pub(crate) fn punch_in(&mut self, start: i32, end: i32) {
+        self.retain_events(|event| (start..end).contains(&event.tick()));
+        self.remove_orphan_note_offs();
+        self.close_open_notes_at(end - 1);
+        self.calculate_note_lengths();
+        self.update_delta_ticks();
+    }
+
     /// Pulls notes played a hair on either side of the region edge back inside
     /// it, as a group so their relative timing survives: a note within
     /// `tolerance` of `region_end` (played early, would be cropped) *and* a
@@ -502,6 +516,48 @@ mod tests {
         let mut clip = clip_with_region(bar + 100, bar * 3);
         clip.align_window_start_to_bar(three_four);
         assert_eq!(clip.region().start(), bar * 2);
+    }
+
+    // --- punch_in ---
+
+    /// A punch-in keeps the notes that start inside its span, closes one
+    /// running past the end on the span's last tick, and drops the notes
+    /// and wheel moves outside it.
+    #[test]
+    fn a_punch_in_keeps_what_starts_inside_and_closes_it_at_the_end() {
+        let mut clip = Clip::new();
+        let mod_at = |tick: i32, value: u8| Event::new(tick, 0, vec![0xB0, 1, value]);
+        clip.restore_events(vec![
+            on(100, 60), // starts before the span: goes, off and all
+            mod_at(150, 20),
+            on(400, 62), // inside
+            off(450, 60),
+            mod_at(500, 90),
+            off(600, 62),
+            on(900, 64), // runs past the end: closed at 999
+            off(1200, 64),
+            on(1100, 65), // starts after: goes
+            off(1150, 65),
+        ]);
+        clip.sort_events_by_tick();
+
+        clip.punch_in(300, 1000);
+
+        let kept: Vec<(i32, Vec<u8>)> = clip
+            .events()
+            .iter()
+            .map(|e| (e.tick(), e.midi_message().to_vec()))
+            .collect();
+        assert_eq!(
+            kept,
+            vec![
+                (400, vec![0x90, 62, 100]),
+                (500, vec![0xB0, 1, 90]),
+                (600, vec![0x80, 62, 0]),
+                (900, vec![0x90, 64, 100]),
+                (999, vec![0x80, 64, 0]),
+            ]
+        );
     }
 
     // --- crop ---

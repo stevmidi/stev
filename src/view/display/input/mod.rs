@@ -1422,16 +1422,16 @@ impl Display {
                     time_bounds: self.gesture.time_selection,
                 })
                 .is_ok(),
-            // `/` — the capture. The arranger's marquee rides along and
-            // frames a new clip instead of the loop (`470-marquee-capture.md`);
-            // the clip view has none of its own.
+            // `/` — the capture. The pane's time selection rides along
+            // (`470-marquee-capture.md`): the arranger's marquee frames a new
+            // clip instead of the loop, or punches in; the clip view's span
+            // punches in.
             InputEvent::Action(Action::Commit) => {
-                let marquee = self
-                    .gesture
-                    .time_selection
-                    .filter(|_| self.view_state() == ViewState::Arranger);
+                let in_clip_view = self.view_state() == ViewState::Clip;
+                let marquee = self.gesture.time_selection.filter(|_| !in_clip_view);
+                let clip_span = self.gesture.duplicate_span.filter(|_| in_clip_view);
                 self.input_event_tx
-                    .send(InputEvent::Commit { marquee })
+                    .send(InputEvent::Commit { marquee, clip_span })
                     .is_ok()
             }
             // Ableton's "Insert MIDI Clip" (⇧⌘/Ctrl+M): an empty clip over

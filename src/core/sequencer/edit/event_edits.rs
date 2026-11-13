@@ -59,10 +59,15 @@ pub(crate) struct InsertCaptureEdit {
 }
 
 impl InsertCaptureEdit {
-    /// The running `/` with a lead clip. `None` when nothing would land in
-    /// the clip, so nothing enters the record.
-    pub(crate) fn from_running_capture(sequencer: &Sequencer) -> Option<Self> {
-        Self::consuming(sequencer, sequencer.build_running_capture_insert()?)
+    /// The running `/` with a lead clip, punched in over `punch_in` when a
+    /// marquee frames it ([`Sequencer::build_running_capture_insert`]).
+    /// `None` when nothing would land in the clip, so nothing enters the
+    /// record.
+    pub(crate) fn from_running_capture(
+        sequencer: &Sequencer,
+        punch_in: Option<(i32, i32)>,
+    ) -> Option<Self> {
+        Self::consuming(sequencer, sequencer.build_running_capture_insert(punch_in)?)
     }
 
     /// Enter in a take session (`archive/290-framing-a-take.md`): the framed notes

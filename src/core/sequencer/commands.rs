@@ -46,11 +46,15 @@ pub(crate) enum SequencerCommand {
     /// or insert it into the lead clip — the last pass while running, the
     /// detected phrase while stopped. See `sequencer_handler.rs` and
     /// `220-capture-without-pending-view.md`. An arranger marquee with a tick
-    /// range frames a new clip instead of the loop
-    /// (`470-marquee-capture.md`).
+    /// range frames a new clip instead of the loop, and it or the clip view's
+    /// span punches in a running insert (`470-marquee-capture.md`).
     Commit {
         /// The arranger's marquee, `None` without one and in the clip view.
         marquee: Option<TimeSelectionRect>,
+        /// The clip view's span (the piano roll's marquee) in the lead
+        /// clip's event ticks, `None` without one and in the arranger: a
+        /// running insert punches in over it.
+        clip_span: Option<(i32, i32)>,
     },
     /// Place the clip cursor at an absolute tick — the clip-view equivalent of
     /// a timeline click.

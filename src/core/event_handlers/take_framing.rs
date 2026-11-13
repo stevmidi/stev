@@ -258,7 +258,10 @@ mod tests {
         run_command(
             &mut h,
             &mut record,
-            SequencerCommand::Commit { marquee: None },
+            SequencerCommand::Commit {
+                marquee: None,
+                clip_span: None,
+            },
         );
         assert!(h.sequencer.is_framing_take());
         assert_eq!(h.handlers.view_state(), ViewState::Clip);
@@ -297,7 +300,10 @@ mod tests {
         run_command(
             &mut h,
             &mut record,
-            SequencerCommand::Commit { marquee: None },
+            SequencerCommand::Commit {
+                marquee: None,
+                clip_span: None,
+            },
         );
         assert!(h.sequencer.is_framing_take());
 
@@ -333,7 +339,10 @@ mod tests {
         run_command(
             &mut h,
             &mut record,
-            SequencerCommand::Commit { marquee: None },
+            SequencerCommand::Commit {
+                marquee: None,
+                clip_span: None,
+            },
         );
 
         // The cursor a quarter into the take: between its two notes.
@@ -357,7 +366,10 @@ mod tests {
         run_command(
             &mut h,
             &mut record,
-            SequencerCommand::Commit { marquee: None },
+            SequencerCommand::Commit {
+                marquee: None,
+                clip_span: None,
+            },
         );
         assert_eq!(lead_pitches(&h), vec![60, 64, 67]);
     }
@@ -372,14 +384,20 @@ mod tests {
         run_command(
             &mut h,
             &mut record,
-            SequencerCommand::Commit { marquee: None },
+            SequencerCommand::Commit {
+                marquee: None,
+                clip_span: None,
+            },
         );
 
         run_command(&mut h, &mut record, SequencerCommand::QuantizeEvents);
         run_command(
             &mut h,
             &mut record,
-            SequencerCommand::Commit { marquee: None },
+            SequencerCommand::Commit {
+                marquee: None,
+                clip_span: None,
+            },
         );
         assert!(record.is_empty());
         assert!(h.sequencer.is_framing_take());
@@ -400,7 +418,10 @@ mod tests {
         run_command(
             &mut h,
             &mut record,
-            SequencerCommand::Commit { marquee: None },
+            SequencerCommand::Commit {
+                marquee: None,
+                clip_span: None,
+            },
         );
 
         let synth = stub_instrument(Vec::new());
@@ -427,7 +448,10 @@ mod tests {
         run_command(
             &mut h,
             &mut record,
-            SequencerCommand::Commit { marquee: None },
+            SequencerCommand::Commit {
+                marquee: None,
+                clip_span: None,
+            },
         );
         assert!(h.sequencer.is_framing_take());
 
@@ -473,7 +497,10 @@ mod tests {
         run_command(
             &mut h,
             &mut record,
-            SequencerCommand::Commit { marquee: None },
+            SequencerCommand::Commit {
+                marquee: None,
+                clip_span: None,
+            },
         );
         run_command(
             &mut h,
@@ -487,7 +514,10 @@ mod tests {
         run_command(
             &mut h,
             &mut record,
-            SequencerCommand::Commit { marquee: None },
+            SequencerCommand::Commit {
+                marquee: None,
+                clip_span: None,
+            },
         );
         assert!(h.sequencer.is_framing_take());
         while h.ui_events.try_recv().is_ok() {}

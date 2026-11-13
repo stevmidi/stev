@@ -133,6 +133,14 @@ the buffer cleared by decision — redo is the way back. See `050-undo-redo.md`.
   inside the loop region while looping, or one over a clip on the selected track, is
   refused before the builder runs (`Sequencer::marquee_capture_refusal`, a footer line);
   the builder's own `Track::fits` still refuses an overlap.
+- **The insert with an arranger marquee** (`470` decision 9, the punch-in): the overdub's
+  window, anchor and pass are chosen exactly as without it; then the marquee cut to the
+  lead clip (`Sequencer::punch_in_span`, in arrangement ticks, shifted by the anchor into
+  the window's ticks) keeps only what started inside it (`Clip::punch_in`: a note running
+  past is closed on the span's last tick, as `crop` closes one), and `wheel_end` is at most
+  the marquee's end. A marquee that misses the clip is refused (`MarqueeRefusal::OutsideClip`). In the clip view
+  the piano roll's span does the same, mapped from the clip's event ticks into the arrangement
+  first (`Sequencer::clip_span_in_arrangement`).
 - Anchor: `cursor_tick`
 - Window size:
   - **playback wrapping** (`playback_is_looping()`) → the *remainder of the current loop

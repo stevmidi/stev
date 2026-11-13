@@ -349,13 +349,18 @@ pub(crate) enum InputEvent {
         /// The marquee selection.
         rect: TimeSelectionRect,
     },
-    /// `/`, the capture action, with the arranger's marquee stamped on by the
-    /// view (`None` without one and in the clip view): forwarded to
-    /// `SequencerCommand::Commit`, where a marquee with a tick range frames
-    /// a new clip (`470-marquee-capture.md`).
+    /// `/`, the capture action, with the view's time selection stamped on:
+    /// the arranger's marquee, or in the clip view the piano roll's span
+    /// (`gesture.duplicate_span`). Forwarded to `SequencerCommand::Commit`,
+    /// where a marquee with a tick range frames a new clip or punches in a
+    /// running insert, and a clip span punches in a running insert
+    /// (`470-marquee-capture.md`).
     Commit {
-        /// The arranger's marquee, if any.
+        /// The arranger's marquee, if any (`None` in the clip view).
         marquee: Option<TimeSelectionRect>,
+        /// The clip view's span `(start, end)` in the open clip's event
+        /// ticks, if any (`None` in the arranger).
+        clip_span: Option<(i32, i32)>,
     },
     /// Insert an empty clip on every track the marquee spans, over its tick
     /// range, or one bar at the cursor on the selected track with none

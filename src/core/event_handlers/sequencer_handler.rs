@@ -97,8 +97,8 @@ impl EventHandlers {
             return;
         }
         match cmd {
-            SequencerCommand::Commit { marquee } => {
-                self.commit_workflow(sequencer, undo_record, *marquee);
+            SequencerCommand::Commit { marquee, clip_span } => {
+                self.commit_workflow(sequencer, undo_record, *marquee, *clip_span);
             }
 
             SequencerCommand::InsertEmptyClip { time_bounds } => {
@@ -960,7 +960,10 @@ mod tests {
         run_command(
             &mut h,
             &mut record,
-            SequencerCommand::Commit { marquee: None },
+            SequencerCommand::Commit {
+                marquee: None,
+                clip_span: None,
+            },
         );
         assert_eq!(h.handlers.view_state(), ViewState::Clip);
         assert!(record.is_empty());

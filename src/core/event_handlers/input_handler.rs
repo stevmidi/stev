@@ -113,8 +113,11 @@ impl EventHandlers {
                 self.send_transport(TransportCommand::TogglePlayback);
             }
 
-            InputEvent::Commit { marquee } => {
-                self.send_sequencer(SequencerCommand::Commit { marquee: *marquee });
+            InputEvent::Commit { marquee, clip_span } => {
+                self.send_sequencer(SequencerCommand::Commit {
+                    marquee: *marquee,
+                    clip_span: *clip_span,
+                });
             }
 
             InputEvent::Action(Action::MuteNotes) => self.handle_mute(),
@@ -908,10 +911,12 @@ mod tests {
         };
         h.handlers.handle_input_event(&InputEvent::Commit {
             marquee: Some(marquee),
+            clip_span: Some((0, 480)),
         });
         assert!(matches!(
             h.sequencer_commands.try_recv(),
-            Ok(SequencerCommand::Commit { marquee: Some(m) }) if m == marquee
+            Ok(SequencerCommand::Commit { marquee: Some(m), clip_span: Some((0, 480)) })
+                if m == marquee
         ));
     }
 
