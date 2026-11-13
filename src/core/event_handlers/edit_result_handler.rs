@@ -160,20 +160,6 @@ impl EventHandlers {
                 );
                 self.set_marquee_workflow(sequencer, new_selection);
             }
-            EditResult::RangeCopied {
-                carve_updated,
-                carve_added,
-                carve_removed,
-                pasted,
-                new_selection,
-            } => {
-                self.copy_range_workflow(
-                    sequencer,
-                    CarveResult::new(&carve_updated, &carve_added, &carve_removed),
-                    &pasted,
-                    new_selection,
-                );
-            }
             EditResult::ClipMoved {
                 from,
                 to,

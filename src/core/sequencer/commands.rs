@@ -577,7 +577,7 @@ pub(crate) enum SequencerCommand {
     },
     /// Arranger band drag released with ⌥ held: copy everything inside
     /// `rect` to `delta_ticks` / `delta_tracks` away, leaving the source,
-    /// carving out what the copy lands on (`CopyRangeEdit`, undoable,
+    /// carving out what the copy lands on (`PasteClipsEdit::copying`, undoable,
     /// `460-copy-drag.md`). A whole-clip drag sends the clip's own span and
     /// track as the rect. The selection follows the copy.
     CopyRange {

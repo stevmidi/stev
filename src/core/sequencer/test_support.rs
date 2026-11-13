@@ -107,6 +107,26 @@ pub(crate) fn clip_at(start_tick: i32, length: i32) -> Clip {
     clip
 }
 
+/// A clip with a note every 500 ticks, so a piece's region window can be
+/// checked to still frame exactly its own material, its full event list
+/// kept.
+pub(crate) fn clip_with_marker_notes(start_tick: i32, length: i32) -> Clip {
+    let mut clip = clip_at(start_tick, length);
+    for offset in (0..length).step_by(500) {
+        clip.add_event(Event::new(offset, 0, vec![0x90, 60, 100]));
+    }
+    clip
+}
+
+/// `(start, end)` of every clip on a track, in order.
+pub(crate) fn spans(sequencer: &Sequencer, track_idx: usize) -> Vec<(i32, i32)> {
+    sequencer.tracks()[track_idx]
+        .clips()
+        .iter()
+        .map(|c| (c.start_tick(), c.end_tick()))
+        .collect()
+}
+
 /// An arranger marquee over ticks `[start, end)` × tracks
 /// `track_start..=track_end`.
 pub(crate) fn rect(

@@ -77,6 +77,35 @@ impl TimeSelectionRect {
         self.end > self.start
     }
 
+    /// This block moved by a band drag's release delta: the rect a move or
+    /// a ⌥-drag copy lands on. `None` when there is nothing to land — no
+    /// tick width, a zero delta, a backwards track span or one off the
+    /// `track_count` lanes, or a shift before tick 0 or off the lanes —
+    /// the refusals `MoveRangeEdit::new` and `PasteClipsEdit::copying`
+    /// share.
+    pub(crate) fn shifted_on_lanes(
+        &self,
+        delta_ticks: i32,
+        delta_tracks: i32,
+        track_count: usize,
+    ) -> Option<Self> {
+        let track_start = self.track_start as i32 + delta_tracks;
+        let track_end = self.track_end as i32 + delta_tracks;
+        let refused = !self.has_tick_range()
+            || (delta_ticks == 0 && delta_tracks == 0)
+            || self.start + delta_ticks < 0
+            || self.track_start > self.track_end
+            || self.track_end >= track_count
+            || track_start < 0
+            || track_end >= track_count as i32;
+        (!refused).then(|| Self {
+            start: self.start + delta_ticks,
+            end: self.end + delta_ticks,
+            track_start: track_start as usize,
+            track_end: track_end as usize,
+        })
+    }
+
     /// The normalized selection spanning ticks `tick_a`..`tick_b` and tracks
     /// `track_a`..=`track_b`, each pair in either order.
     pub(crate) fn spanning(tick_a: i32, tick_b: i32, track_a: usize, track_b: usize) -> Self {
@@ -623,7 +652,7 @@ pub(crate) enum InputEvent {
     },
     /// Arranger band drag — whole-clip or marquee — released with ⌥ held:
     /// copy the grabbed block there and leave the source
-    /// (`460-copy-drag.md`, `CopyRangeEdit`, undoable). A whole-clip drag
+    /// (`460-copy-drag.md`, `PasteClipsEdit::copying`, undoable). A whole-clip drag
     /// names the clip's own span and track as `rect`. ⌥ is read live
     /// through the drag and decided at release.
     CopyRange {
@@ -1023,6 +1052,27 @@ mod tests {
             (sel.start, sel.end, sel.track_start, sel.track_end),
             (1000, 2000, 1, 3)
         );
+    }
+
+    #[test]
+    fn a_shift_lands_the_block_moved_by_the_delta() {
+        let block = TimeSelectionRect::spanning(1000, 2000, 1, 2);
+        assert_eq!(
+            block.shifted_on_lanes(500, 1, 8),
+            Some(TimeSelectionRect::spanning(1500, 2500, 2, 3))
+        );
+    }
+
+    #[test]
+    fn a_shift_with_nothing_to_land_is_refused() {
+        let block = TimeSelectionRect::spanning(1000, 2000, 1, 2);
+        assert_eq!(block.shifted_on_lanes(0, 0, 8), None); // on itself
+        assert_eq!(block.shifted_on_lanes(-1500, 0, 8), None); // before 0
+        assert_eq!(block.shifted_on_lanes(0, -2, 8), None); // above the lanes
+        assert_eq!(block.shifted_on_lanes(0, 6, 8), None); // below them
+        assert_eq!(block.shifted_on_lanes(0, 0, 2), None); // already off
+        let point = TimeSelectionRect::spanning(1000, 1000, 1, 1);
+        assert_eq!(point.shifted_on_lanes(500, 0, 8), None); // no width
     }
 
     #[test]

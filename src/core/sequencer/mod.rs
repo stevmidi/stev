@@ -70,13 +70,13 @@ pub(crate) use audio_export::{AudioExportPlan, StemPlan};
 pub(crate) use capture::TakePlace;
 pub(crate) use commands::SequencerCommand;
 pub(crate) use edit::{
-    AddTrackEdit, ClearControllerSpanEdit, CommitClipEdit, CopyRangeEdit, CreateClipsEdit,
-    DeleteInRangeEdit, DeleteSelectedEventsEdit, DeleteTimeEdit, DragEventsVelocityEdit,
-    DragNotesEdit, DuplicateClipsEdit, DuplicateTimeEdit, EditResult, InsertCaptureEdit,
-    InsertNotesEdit, InsertSilenceEdit, MoveClipEdit, MoveRangeEdit, MuteInRangeEdit,
-    MuteSelectedEventsEdit, NudgeSelectedEventsEdit, NudgeSelectedEventsLengthEdit, PasteClipsEdit,
-    PasteLead, QuantizeEventsEdit, RemoveTrackEdit, RenameTrackEdit, ReplaceClipNotesEdit,
-    ResizeClipEdit, RetimeClipEdit, SequencerEdit, SetKnobParamEdit, SetMeterEdit, SetTempoEdit,
+    AddTrackEdit, ClearControllerSpanEdit, CommitClipEdit, CreateClipsEdit, DeleteInRangeEdit,
+    DeleteSelectedEventsEdit, DeleteTimeEdit, DragEventsVelocityEdit, DragNotesEdit,
+    DuplicateClipsEdit, DuplicateTimeEdit, EditResult, InsertCaptureEdit, InsertNotesEdit,
+    InsertSilenceEdit, MoveClipEdit, MoveRangeEdit, MuteInRangeEdit, MuteSelectedEventsEdit,
+    NudgeSelectedEventsEdit, NudgeSelectedEventsLengthEdit, PasteClipsEdit, PasteLead,
+    QuantizeEventsEdit, RemoveTrackEdit, RenameTrackEdit, ReplaceClipNotesEdit, ResizeClipEdit,
+    RetimeClipEdit, SequencerEdit, SetKnobParamEdit, SetMeterEdit, SetTempoEdit,
     SetTrackOutputEdit, SplitClipsEdit, StepOutput, TempoGesture, TransposeSelectedEventsEdit,
     UndoStep, ViewSnapshot, top_step,
 };

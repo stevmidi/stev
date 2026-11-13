@@ -282,7 +282,9 @@ impl EventHandlers {
     /// selection clears), a clip the edit names (Merge Clips, wherever the
     /// cursor sits), a named clip selected as its span (the MIDI clip
     /// import, landing like a dropped band drag — `select_clip_span_workflow`),
-    /// or the lead left as it was (the agent bridge's writes).
+    /// a pasted block selected as a moved one is (the ⌥-drag copy —
+    /// `select_range_workflow`), or the lead left as it was (the agent
+    /// bridge's writes).
     pub(super) fn paste_clips_workflow(
         &self,
         sequencer: &mut Sequencer,
@@ -305,6 +307,12 @@ impl EventHandlers {
             }
             PasteLead::ClipSpan { track_idx, clip_id } => {
                 self.select_clip_span_workflow(sequencer, track_idx, clip_id);
+            }
+            PasteLead::Range(rect) => {
+                // Cleared first, as for a move, so the reselect is a real
+                // state change.
+                self.clear_clip_selection_workflow(sequencer);
+                self.select_range_workflow(sequencer, rect, pasted);
             }
             PasteLead::KeepSelection => {
                 let (track_idx, clip_id) = (
@@ -405,29 +413,6 @@ impl EventHandlers {
         self.send_clips_added_ui_event(moved_to);
 
         self.select_range_workflow(sequencer, new_selection, moved_to);
-    }
-
-    /// Forward direction of a ⌥-drag copy (`CopyRangeEdit`): a paste's
-    /// events (`carve` mirrors `paste_clips_workflow`'s buckets), then the
-    /// selection follows the copy as `move_range_workflow`'s follows the
-    /// block — cursor on its start, its first track, the copy under the
-    /// cursor as lead, the marquee on `new_selection` — so a second ⌥-drag
-    /// inside it copies the copy (`460-copy-drag.md` decision 4). Cleared
-    /// first, as for a move, so the reselect is a real state change.
-    pub(super) fn copy_range_workflow(
-        &self,
-        sequencer: &mut Sequencer,
-        carve: CarveResult,
-        pasted: &[ClipMetadata],
-        new_selection: TimeSelectionRect,
-    ) {
-        sequencer.reset();
-        self.clear_clip_selection_workflow(sequencer);
-
-        self.send_carve_ui_events(&carve);
-        self.send_clips_added_ui_event(pasted);
-
-        self.select_range_workflow(sequencer, new_selection, pasted);
     }
 
     /// Undo of a marquee move: `unmoved` is every piece at the destination

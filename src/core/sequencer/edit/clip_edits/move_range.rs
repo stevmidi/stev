@@ -49,6 +49,8 @@ use super::{CarveBuckets, interior_clip_ids, metadata_for};
 pub(crate) struct MoveRangeEdit {
     /// The marquee, frozen at press time.
     rect: TimeSelectionRect,
+    /// The rect the marquee sits on after the move.
+    to: TimeSelectionRect,
     /// Tick shift applied to every piece.
     delta_ticks: i32,
     /// Lane shift applied to every piece.
@@ -78,17 +80,7 @@ impl MoveRangeEdit {
         delta_ticks: i32,
         delta_tracks: i32,
     ) -> Option<Self> {
-        let track_count = sequencer.tracks().len();
-        if !rect.has_tick_range()
-            || (delta_ticks == 0 && delta_tracks == 0)
-            || rect.start + delta_ticks < 0
-            || rect.track_start > rect.track_end
-            || rect.track_end >= track_count
-            || rect.track_start as i32 + delta_tracks < 0
-            || rect.track_end as i32 + delta_tracks >= track_count as i32
-        {
-            return None;
-        }
+        let to = rect.shifted_on_lanes(delta_ticks, delta_tracks, sequencer.tracks().len())?;
 
         let source_ids: Vec<(usize, Uuid)> = sequencer.clip_ids_in(rect).collect();
         if source_ids.is_empty() {
@@ -97,6 +89,7 @@ impl MoveRangeEdit {
 
         Some(Self {
             rect,
+            to,
             delta_ticks,
             delta_tracks,
             source_ids,
@@ -109,16 +102,6 @@ impl MoveRangeEdit {
             pieces: None,
             carves: None,
         })
-    }
-
-    /// The rect the marquee should sit on after the move.
-    fn shifted_rect(&self) -> TimeSelectionRect {
-        TimeSelectionRect {
-            start: self.rect.start + self.delta_ticks,
-            end: self.rect.end + self.delta_ticks,
-            track_start: (self.rect.track_start as i32 + self.delta_tracks) as usize,
-            track_end: (self.rect.track_end as i32 + self.delta_tracks) as usize,
-        }
     }
 
     /// Splits the edges, lifts every piece, then carves + drops each at its
@@ -219,7 +202,7 @@ impl MoveRangeEdit {
             carve_updated: carved.updated,
             carve_added: carved.added,
             carve_removed: carved.removed,
-            new_selection: self.shifted_rect(),
+            new_selection: self.to,
         }
     }
 
@@ -301,21 +284,11 @@ impl MoveRangeEdit {
 #[cfg(test)]
 mod tests {
 
-    use crate::models::event::Event;
-
-    use crate::core::sequencer::test_support::{clip_at, rect, test_sequencer};
+    use crate::core::sequencer::test_support::{
+        clip_at, clip_with_marker_notes, rect, test_sequencer,
+    };
 
     use super::*;
-
-    /// A clip with a note every 500 ticks, so a piece's region window can be
-    /// checked to still frame exactly its own material.
-    fn clip_with_marker_notes(start_tick: i32, length: i32) -> Clip {
-        let mut clip = clip_at(start_tick, length);
-        for offset in (0..length).step_by(500) {
-            clip.add_event(Event::new(offset, 0, vec![0x90, 60, 100]));
-        }
-        clip
-    }
 
     fn starts(sequencer: &Sequencer, track_idx: usize) -> Vec<(i32, i32)> {
         sequencer.tracks()[track_idx]

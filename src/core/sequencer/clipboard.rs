@@ -47,6 +47,13 @@ impl ClipClipboard {
         &self.clips
     }
 
+    /// The copied pieces, owned: for a throwaway clipboard whose pieces
+    /// land as they are (`PasteClipsEdit::copying`), already detached with
+    /// ids of their own, so nothing is cloned again.
+    pub(in crate::core::sequencer) fn into_clips(self) -> Vec<ClipboardClip> {
+        self.clips
+    }
+
     /// The track `piece` should land on when pasted with `selected_track`
     /// as the paste target: `selected_track + (piece.track_idx - anchor)`
     /// when the clipboard has a track anchor, the piece's absolute source

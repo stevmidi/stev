@@ -10,8 +10,8 @@ use undo::Record;
 
 use crate::core::agent::{AgentAnswer, AgentReply, answer};
 use crate::core::sequencer::{
-    ClearControllerSpanEdit, CommitClipEdit, CopyRangeEdit, DeleteSelectedEventsEdit,
-    DeleteTimeEdit, DragEventsVelocityEdit, DragNotesEdit, DuplicateClipsEdit, DuplicateTimeEdit,
+    ClearControllerSpanEdit, CommitClipEdit, DeleteSelectedEventsEdit, DeleteTimeEdit,
+    DragEventsVelocityEdit, DragNotesEdit, DuplicateClipsEdit, DuplicateTimeEdit,
     InsertCaptureEdit, InsertNotesEdit, InsertSilenceEdit, MoveClipEdit, MoveRangeEdit,
     MuteInRangeEdit, MuteSelectedEventsEdit, NudgeSelectedEventsEdit,
     NudgeSelectedEventsLengthEdit, PasteClipsEdit, QuantizeEventsEdit, RenameTrackEdit,
@@ -260,7 +260,7 @@ impl EventHandlers {
                 self.record_edit(
                     sequencer,
                     undo_record,
-                    CopyRangeEdit::new(sequencer, *rect, *delta_ticks, *delta_tracks),
+                    PasteClipsEdit::copying(sequencer, *rect, *delta_ticks, *delta_tracks),
                 );
             }
 
