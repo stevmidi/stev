@@ -8,6 +8,19 @@
 //! The text editing itself — caret, selection, IME, the clipboard — is an
 //! egui [`TextEdit`]; this module decides how it looks and what its keys and
 //! presses mean to the rest of the app.
+//!
+//! The fields themselves are the submodules: the header chips (what the two
+//! share in `header_chip.rs`, the BPM chip's drag and field in
+//! `tempo_field.rs`, the meter's in `meter_field.rs`), and the inline renames
+//! of a track (`track_rename.rs`) and a browser row (`browser_rename.rs`).
+//! Save As's name and the Keyboard tab's search are a bare [`TextField`]
+//! held by their own modal.
+
+pub(super) mod browser_rename;
+pub(super) mod header_chip;
+pub(super) mod meter_field;
+pub(super) mod tempo_field;
+pub(super) mod track_rename;
 
 use egui::text_selection::CCursorRange;
 use egui::{
@@ -242,7 +255,7 @@ mod tests {
 
     use crate::core::input_event::{InputEvent, KeyModifiers};
     use crate::view::display::browser::BROWSER_FONT_SIZE;
-    use crate::view::display::track_rename::TRACK_NAME_FONT_SIZE;
+    use crate::view::display::fields::track_rename::TRACK_NAME_FONT_SIZE;
     use crate::view::theme::FONT_SIZE_HEADER_VALUE;
     use crate::view::theme::fonts::font_definitions;
 

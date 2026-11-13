@@ -3,7 +3,7 @@
 //!
 //! They sit in their own module rather than beside a renderer because three
 //! separate subtrees each own a piece: `input/modal.rs` moves the focus,
-//! `settings_modal.rs` resets it on opening, and `rendering/modals/` draws
+//! `settings/mod.rs` resets it on opening, and `rendering/modals/` draws
 //! it.
 //! See `020-views-and-state.md`.
 
@@ -12,7 +12,7 @@
 /// alone.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum Overlay {
-    /// The settings modal (`settings_modal.rs`).
+    /// The settings modal (`settings/mod.rs`).
     Settings,
     /// A project load restoring its plugins, one per frame
     /// (`instrument_restore.rs`). Takes no input of its own: it swallows
@@ -106,13 +106,13 @@ pub(crate) enum SettingsTab {
     /// The colour theme list.
     Appearance,
     /// Every command and its keys, with the fixed keys after them
-    /// (`keyboard_tab.rs`).
+    /// (`settings/keyboard_tab.rs`).
     Keyboard,
     /// *Allow AI agents*, what it does and how to connect a client
-    /// (`ai_tab.rs`, `360-mcp-server.md`).
+    /// (`settings/ai_tab.rs`, `360-mcp-server.md`).
     Ai,
     /// The version, the links, the VST logo and (macOS) Check for updates
-    /// (`about_tab.rs`).
+    /// (`settings/about_tab.rs`).
     About,
 }
 

@@ -4,17 +4,17 @@
 //! the theme list, the Keyboard tab's rows), Enter connects a port, records
 //! a shortcut, flips *Allow AI agents* or (About, macOS) checks for
 //! updates, and a click or wheel is resolved by
-//! `settings_modal.rs`. The showing tab sees a key before the modal's Esc
+//! `settings/mod.rs`. The showing tab sees a key before the modal's Esc
 //! and `?` do, so the Keyboard tab's Esc clears a search first and its `?`
 //! is typing; every other key there is the search field's. A Keyboard tab
 //! row recording a shortcut sees every key before this does
 //! (`handle_shortcut_recorder_input_event`, earlier in the input chain).
 //! See `020-views-and-state.md`.
 
-use crate::view::display::about_tab::UPDATE_CHECK;
-use crate::view::display::keyboard_tab::is_keyboard_tab_key;
 use crate::view::display::modal_focus::SettingsTab;
-use crate::view::display::settings_modal::{is_settings_chord, settings_tab_step};
+use crate::view::display::settings::about_tab::UPDATE_CHECK;
+use crate::view::display::settings::keyboard_tab::is_keyboard_tab_key;
+use crate::view::display::settings::{is_settings_chord, settings_tab_step};
 
 use super::*;
 

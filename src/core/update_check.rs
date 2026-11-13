@@ -6,7 +6,7 @@
 //! `archive/330-macos-app.md` § The About tab.
 //!
 //! It builds everywhere, but the About tab offers it only on macOS
-//! (`about_tab.rs`, `UPDATE_CHECK`).
+//! (`settings/about_tab.rs`, `UPDATE_CHECK`).
 
 use std::{process::Command, thread};
 

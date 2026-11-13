@@ -10,7 +10,7 @@ use crate::core::audio::mix;
 
 use super::output_menu::{draw_hover_wash, draw_truncated};
 use super::*;
-use crate::view::display::track_rename::{TRACK_NAME_FONT_SIZE, track_number_label};
+use crate::view::display::fields::track_rename::{TRACK_NAME_FONT_SIZE, track_number_label};
 
 impl Display {
     /// Paints the arranger lane fills, gutter, per-track header chrome and the

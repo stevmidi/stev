@@ -14,11 +14,11 @@ use crate::core::config::PROJECT_NAME_MAX_CHARS;
 use crate::core::keymap::Action;
 use crate::core::paths::TEMPLATES_DIR_NAME;
 use crate::core::project::project_name_from_input;
-use crate::view::display::keyboard_tab::chords_label;
+use crate::view::display::fields::{FieldStyle, MODAL_MARGIN};
 use crate::view::display::project_dialog::{
     DialogButton, ProjectDialog, SaveAs, SaveAsFocus, SaveAsHit,
 };
-use crate::view::display::text_field::{FieldStyle, MODAL_MARGIN};
+use crate::view::display::settings::keyboard_tab::chords_label;
 
 use super::*;
 

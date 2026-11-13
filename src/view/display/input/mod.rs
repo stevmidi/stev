@@ -29,8 +29,8 @@ pub(super) use midi_drag::DragPointer;
 
 use self::gestures::past_drag_threshold;
 use super::browser::BrowserPress;
-use super::keyboard_tab::is_keyboard_tab_key;
-use super::settings_modal::is_settings_chord;
+use super::settings::is_settings_chord;
+use super::settings::keyboard_tab::is_keyboard_tab_key;
 
 use super::*;
 
@@ -684,7 +684,7 @@ impl Display {
             return true;
         }
         // ⌘/Ctrl+, opens the settings modal over the arranger or the clip
-        // view, from any key focus (`settings_modal.rs`); inside it the
+        // view, from any key focus (`settings/mod.rs`); inside it the
         // modal keymap closes it again. View-local: the view it returns
         // to and the tab it opens on are the view's.
         if is_settings_chord(key, modifiers) {
@@ -692,7 +692,7 @@ impl Display {
             return true;
         }
         // `?` opens Settings on the Keyboard tab, from any key focus
-        // (`keyboard_tab.rs`); inside it `?` is typing, for the search.
+        // (`settings/keyboard_tab.rs`); inside it `?` is typing, for the search.
         if is_keyboard_tab_key(key, modifiers) {
             self.open_settings_on(SettingsTab::Keyboard);
             return true;
@@ -745,7 +745,7 @@ impl Display {
                 true
             }
             // ⌘⇧N (Finder's New Folder) shows the browser with the keyboard
-            // and opens the new folder's name field (`browser_rename.rs`),
+            // and opens the new folder's name field (`fields/browser_rename.rs`),
             // from any key focus. View-local, like ⌘O.
             InputEvent::Action(Action::NewProjectFolder) => {
                 self.open_new_folder_field();

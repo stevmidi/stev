@@ -324,7 +324,7 @@ pub(super) enum KnobHit {
 }
 
 /// A drag on a dial: which knob, and the travel since its anchor (the
-/// tempo chip's drag's shape — `tempo_field.rs`).
+/// tempo chip's drag's shape — `fields/tempo_field.rs`).
 #[derive(Clone, Copy, Debug)]
 struct KnobDrag {
     /// The knob's track.

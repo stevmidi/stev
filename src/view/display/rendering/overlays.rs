@@ -12,9 +12,9 @@ use egui::{
 
 use crate::core::time::{Meter, format_bpm, sixteenth_straight_ticks, ticks_to_millis_f64};
 use crate::view::display::browser::browser_toggle_rect;
-use crate::view::display::header_chip::HeaderChipRects;
+use crate::view::display::fields::field_rect;
+use crate::view::display::fields::header_chip::HeaderChipRects;
 use crate::view::display::status_message::export_progress_text;
-use crate::view::display::text_field::field_rect;
 
 use super::*;
 
@@ -45,7 +45,7 @@ impl Display {
 
     /// Paints the header info panel (tempo, meter, position, clock time, DSP / OVR
     /// chips), and notes where the BPM and meter chips went
-    /// (`tempo_field.rs`, `meter_field.rs`).
+    /// (`fields/tempo_field.rs`, `fields/meter_field.rs`).
     pub(super) fn draw_header(&mut self, painter: &Painter, rect: Rect) {
         let h = theme::HEADER_H;
         let sw = rect.width();
@@ -75,8 +75,8 @@ impl Display {
         // in the same borderless `bg@0.40` chip language as the footer hints.
         // The group is centred in the header so the row stays balanced as more
         // readouts (loop, …) get appended here later. BPM is
-        // a control too (`tempo_field.rs`) and stays first, the meter (also a
-        // control, `meter_field.rs`) second: the paint loop below records
+        // a control too (`fields/tempo_field.rs`) and stays first, the meter (also a
+        // control, `fields/meter_field.rs`) second: the paint loop below records
         // where their chips went.
         //
         // Each readout carries a template of its widest everyday value, and

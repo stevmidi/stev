@@ -22,17 +22,17 @@ use crate::core::project::{
     rename_project, rename_project_folder, rename_template,
 };
 
-use super::Display;
-use super::browser::{BROWSER_FONT_SIZE, BrowserItem, browser_text_x};
-use super::pane::KeyFocus;
-use super::status_message::StatusMessage;
-use super::text_field::{FieldEvent, FieldStyle, ROW_MARGIN, TextField, field_event, field_rect};
+use super::{FieldEvent, FieldStyle, ROW_MARGIN, TextField, field_event, field_rect};
+use crate::view::display::Display;
+use crate::view::display::browser::{BROWSER_FONT_SIZE, BrowserItem, browser_text_x};
+use crate::view::display::pane::KeyFocus;
+use crate::view::display::status_message::StatusMessage;
 
 /// Right inset of the field from the panel's edge.
 const FIELD_RIGHT_X: f32 = 6.0;
 
 /// The open rename field.
-pub(super) struct BrowserRename {
+pub(in crate::view::display) struct BrowserRename {
     /// The project, template, `.mid` or folder row being renamed, or the new
     /// folder's.
     item: BrowserItem,
@@ -43,7 +43,7 @@ pub(super) struct BrowserRename {
 impl Display {
     /// ⌘R in the panel: opens the field over the selected row, when that is
     /// a project, a template, a `.mid` file or a folder; nothing on any other row.
-    pub(super) fn open_browser_rename(&mut self) {
+    pub(in crate::view::display) fn open_browser_rename(&mut self) {
         let tree = &mut self.browser.tree;
         let Some(item) = tree.selected().cloned() else {
             return;
@@ -62,7 +62,7 @@ impl Display {
     /// the keyboard, lists the new folder's row first under Projects and
     /// opens the empty field over it. The folder is made on Enter; Esc, a
     /// blank name or the row leaving the screen makes nothing.
-    pub(super) fn open_new_folder_field(&mut self) {
+    pub(in crate::view::display) fn open_new_folder_field(&mut self) {
         if self.browser.visible {
             self.key_focus = KeyFocus::Browser;
         } else {
@@ -109,7 +109,7 @@ impl Display {
 
     /// Once a frame, before input: closes the field, renaming nothing, when
     /// its row is off screen — so it never takes the keyboard unseen.
-    pub(super) fn drop_stale_browser_rename(&mut self) {
+    pub(in crate::view::display) fn drop_stale_browser_rename(&mut self) {
         if self.browser.rename.is_some() && self.browser_rename_rect().is_none() {
             self.close_browser_rename();
         }
@@ -118,7 +118,10 @@ impl Display {
     /// While the field is open it gets first look at every event
     /// ([`field_event`]; the typing itself egui's text field reads on its
     /// own). Returns whether the event was consumed.
-    pub(super) fn handle_browser_rename_input_event(&mut self, event: &InputEvent) -> bool {
+    pub(in crate::view::display) fn handle_browser_rename_input_event(
+        &mut self,
+        event: &InputEvent,
+    ) -> bool {
         if self.browser.rename.is_none() {
             return false;
         }
@@ -218,7 +221,7 @@ impl Display {
 
     /// Shows the open field over its row, on the panel's layer. Its first
     /// frame takes the egui focus and selects the text.
-    pub(super) fn show_browser_rename(&mut self, ui: &mut Ui) {
+    pub(in crate::view::display) fn show_browser_rename(&mut self, ui: &mut Ui) {
         let Some(rect) = self.browser_rename_rect() else {
             return;
         };

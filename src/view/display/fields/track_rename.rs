@@ -7,7 +7,7 @@
 //! sequencer thread. See `020-views-and-state.md` § Track rename.
 //!
 //! The field and its keymap are the app's one text field
-//! (`text_field.rs`); this module decides where it goes and what a commit
+//! (`mod.rs`); this module decides where it goes and what a commit
 //! does.
 
 use egui::{FontId, Id, Rect, Ui};
@@ -16,16 +16,16 @@ use crate::core::config::TRACK_NAME_MAX_CHARS;
 use crate::core::input_event::InputEvent;
 use crate::models::track::track_name_from_input;
 
-use super::pane::KeyFocus;
-use super::text_field::{FieldEvent, FieldStyle, ROW_MARGIN, TextField, field_event, field_rect};
-use super::{Display, Pane};
+use super::{FieldEvent, FieldStyle, ROW_MARGIN, TextField, field_event, field_rect};
+use crate::view::display::pane::KeyFocus;
+use crate::view::display::{Display, Pane};
 
 /// Text size of a track's name — on the header's name row and in the rename
 /// field over it, so the text doesn't jump when the field opens.
-pub(super) const TRACK_NAME_FONT_SIZE: f32 = 12.0;
+pub(in crate::view::display) const TRACK_NAME_FONT_SIZE: f32 = 12.0;
 
 /// The open rename field.
-pub(super) struct TrackRename {
+pub(in crate::view::display) struct TrackRename {
     /// The track being renamed, by position.
     track_idx: usize,
     /// The field — the track's name to start with.
@@ -36,7 +36,7 @@ pub(super) struct TrackRename {
 
 /// The track's number — what its header shows while it is unnamed, and the
 /// rename field's hint.
-pub(super) fn track_number_label(track_idx: usize) -> String {
+pub(in crate::view::display) fn track_number_label(track_idx: usize) -> String {
     (track_idx + 1).to_string()
 }
 
@@ -45,7 +45,7 @@ impl Display {
     /// menu, whose `Rename` may have asked): the track's name, selected, or
     /// empty with its number as the hint while unnamed. Nothing when the row
     /// isn't on screen ([`rename_field_rect`](Self::rename_field_rect)).
-    pub(super) fn open_track_rename(&mut self, track_idx: usize) {
+    pub(in crate::view::display) fn open_track_rename(&mut self, track_idx: usize) {
         if self.rename_field_rect(track_idx).is_none() {
             return;
         }
@@ -62,7 +62,7 @@ impl Display {
     }
 
     /// The track the rename field is open on, if any.
-    pub(super) fn renaming_track(&self) -> Option<usize> {
+    pub(in crate::view::display) fn renaming_track(&self) -> Option<usize> {
         self.track_rename.as_ref().map(|rename| rename.track_idx)
     }
 
@@ -83,7 +83,7 @@ impl Display {
     /// when its row is off screen or the arranger lost the keyboard this
     /// frame (`left_arranger` — the caller then drops the header focus the
     /// field handed back, too).
-    pub(super) fn drop_stale_track_rename(&mut self, left_arranger: bool) {
+    pub(in crate::view::display) fn drop_stale_track_rename(&mut self, left_arranger: bool) {
         if let Some(track_idx) = self.renaming_track()
             && (left_arranger || self.rename_field_rect(track_idx).is_none())
         {
@@ -107,7 +107,7 @@ impl Display {
 
     /// Closes the field and hands the keyboard back to whoever had it. On
     /// its own: a cancel, keeping the old name (Esc, a track add / remove).
-    pub(super) fn close_track_rename(&mut self) -> Option<TrackRename> {
+    pub(in crate::view::display) fn close_track_rename(&mut self) -> Option<TrackRename> {
         let rename = self.track_rename.take()?;
         self.key_focus = rename.return_focus;
         Some(rename)
@@ -116,7 +116,10 @@ impl Display {
     /// While the rename field is open it gets first look at every event
     /// ([`field_event`]; the typing itself egui's text field reads on its
     /// own). Returns whether the event was consumed.
-    pub(super) fn handle_track_rename_input_event(&mut self, event: &InputEvent) -> bool {
+    pub(in crate::view::display) fn handle_track_rename_input_event(
+        &mut self,
+        event: &InputEvent,
+    ) -> bool {
         let Some(track_idx) = self.renaming_track() else {
             return false;
         };
@@ -133,7 +136,7 @@ impl Display {
 
     /// Shows the open rename field over its track's name row, in the canvas
     /// `ui`. Its first frame takes the egui focus and selects the text.
-    pub(super) fn show_track_rename(&mut self, ui: &mut Ui) {
+    pub(in crate::view::display) fn show_track_rename(&mut self, ui: &mut Ui) {
         let Some(track_idx) = self.renaming_track() else {
             return;
         };

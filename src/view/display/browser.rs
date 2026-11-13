@@ -48,7 +48,7 @@ use crate::core::{
     settings::{load_settings, update_settings},
 };
 
-use super::browser_rename::BrowserRename;
+use super::fields::browser_rename::BrowserRename;
 use super::state::scrolled_offset;
 use super::*;
 
@@ -1027,7 +1027,7 @@ pub(super) struct BrowserPanel {
     /// drag (`GestureState::plugin_drag`).
     pub(super) press: Option<BrowserPress>,
     /// The open rename field (⌘R on a project, template, clip or folder
-    /// row), see `browser_rename.rs`.
+    /// row), see `fields/browser_rename.rs`.
     pub(super) rename: Option<BrowserRename>,
     /// The project ⌘C copied or ⌘X cut, which ⌘V pastes into the selected
     /// folder (`430-browser-clipboard.md`): the browser's own, apart from

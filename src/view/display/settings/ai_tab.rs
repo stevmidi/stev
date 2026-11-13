@@ -12,7 +12,7 @@ use egui::Context;
 
 use crate::core::agent::MCP_FLAG;
 
-use super::Display;
+use crate::view::display::Display;
 
 /// In the path of an app macOS runs from a temporary, read-only copy (App
 /// Translocation): a downloaded app opened where it was unzipped instead of
@@ -20,25 +20,25 @@ use super::Display;
 const TRANSLOCATED: &str = "/AppTranslocation/";
 
 /// The settings modal's AI tab state, held as `SettingsModal::ai`.
-pub(super) struct AiTab {
+pub(in crate::view::display) struct AiTab {
     /// *Allow AI agents*, as saved (`SettingsData::agent_bridge`).
-    pub(super) agent_bridge: bool,
+    pub(in crate::view::display) agent_bridge: bool,
     /// To the `"agent-bridge"` thread: the switch flipped. `None` until
     /// `main` attaches it ([`Display::attach_agent_bridge`]).
     agent_bridge_tx: Option<Sender<bool>>,
     /// What the tab can offer for connecting Claude Code, decided once.
-    pub(super) setup: ClaudeCodeSetup,
+    pub(in crate::view::display) setup: ClaudeCodeSetup,
     /// A click asked for the command on the clipboard; this frame's
     /// [`Display::sync_ai_copy`] puts it there.
     copy_pending: bool,
     /// The command was copied since the modal opened.
-    pub(super) copied: bool,
+    pub(in crate::view::display) copied: bool,
 }
 
 /// Whether the AI tab can show the command that adds Stev to Claude Code,
 /// and if not, why.
 #[derive(Debug, Clone, PartialEq)]
-pub(super) enum ClaudeCodeSetup {
+pub(in crate::view::display) enum ClaudeCodeSetup {
     /// No MCP server on this platform (it is Unix-only), or the running
     /// binary's path couldn't be read.
     Unsupported,
@@ -72,14 +72,14 @@ impl Default for AiTab {
 impl AiTab {
     /// Takes the `"agent-bridge"` thread's control channel and the saved
     /// switch.
-    pub(super) fn attach(&mut self, tx: Sender<bool>, enabled: bool) {
+    pub(in crate::view::display) fn attach(&mut self, tx: Sender<bool>, enabled: bool) {
         self.agent_bridge_tx = Some(tx);
         self.agent_bridge = enabled;
     }
 
     /// Flips the switch and tells the `"agent-bridge"` thread, which opens
     /// or closes its socket at once. Returns the new state, for saving.
-    pub(super) fn toggle(&mut self) -> bool {
+    pub(in crate::view::display) fn toggle(&mut self) -> bool {
         self.agent_bridge = !self.agent_bridge;
         if let Some(tx) = &self.agent_bridge_tx {
             tx.send(self.agent_bridge).ok();
@@ -88,7 +88,7 @@ impl AiTab {
     }
 
     /// The command, when the tab shows one.
-    pub(super) fn command(&self) -> Option<&str> {
+    pub(in crate::view::display) fn command(&self) -> Option<&str> {
         match &self.setup {
             ClaudeCodeSetup::Command(command) => Some(command),
             ClaudeCodeSetup::Unsupported | ClaudeCodeSetup::Translocated => None,
@@ -97,7 +97,7 @@ impl AiTab {
 
     /// A click on the command: marks it copied and has this frame put it on
     /// the clipboard.
-    pub(super) fn request_copy(&mut self) {
+    pub(in crate::view::display) fn request_copy(&mut self) {
         self.copy_pending = true;
         self.copied = true;
     }
@@ -137,7 +137,7 @@ fn shell_quote(text: &str) -> String {
 impl Display {
     /// Once a frame: puts the Claude Code command on the clipboard when a
     /// click on it asked.
-    pub(super) fn sync_ai_copy(&mut self, ctx: &Context) {
+    pub(in crate::view::display) fn sync_ai_copy(&mut self, ctx: &Context) {
         if let Some(command) = self.settings.ai.take_copy() {
             ctx.copy_text(command);
         }

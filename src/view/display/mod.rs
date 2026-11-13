@@ -42,30 +42,39 @@
 //! - `browser.rs` — the browser side panel (`BrowserPanel`, the `BrowserTree`
 //!   model) and its keyboard / pointer handling; drawn by
 //!   `rendering/browser.rs`.
+//! - `settings/` — the settings modal (`SettingsModal`): opening it, its tab
+//!   chords and scroll in `mod.rs`, one file per tab's state (`midi_tab.rs`,
+//!   `keyboard_tab.rs`, `ai_tab.rs`, `about_tab.rs`); drawn by
+//!   `rendering/modals/settings.rs`.
+//! - `fields/` — the app's text fields: the shared `TextField` in `mod.rs`,
+//!   then one file per field (the header's BPM and meter chips and what they
+//!   share, the track and browser renames).
+//! - `project_dialog.rs` — the project dialogs (Save As, the unsaved-changes
+//!   prompt and the rest), each holding the keyboard while open.
+//! - `knob_panel.rs` / `knob_params.rs` — the knob panel beside the clip
+//!   view and its link to the selected track's plugin parameters.
+//! - `footer_hint.rs` — the footer's shortcut hint for the control under the
+//!   pointer.
+//! - `ui_event.rs` — `UiEvent`, what the `"sequencer"` thread tells the UI
+//!   has changed.
 //!
 //! See `020-views-and-state.md` for the state model and `030-ui-design.md` for
 //! the layout.
 
-mod about_tab;
-mod ai_tab;
 mod browser;
-mod browser_rename;
 mod clip_lane;
 mod computer_keys;
+mod fields;
 mod footer_hint;
 mod gesture_state;
 mod grid;
-mod header_chip;
 mod input;
 #[cfg(target_os = "macos")]
 mod instrument;
 #[cfg(target_os = "macos")]
 mod instrument_restore;
-mod keyboard_tab;
 mod knob_panel;
 mod knob_params;
-mod meter_field;
-mod midi_tab;
 mod modal_focus;
 mod output_menu;
 mod pane;
@@ -74,24 +83,22 @@ mod project_dialog;
 mod project_state;
 mod render_state;
 mod rendering;
-mod settings_modal;
+mod settings;
 mod state;
 mod status_message;
-mod tempo_field;
-mod text_field;
-mod track_rename;
 mod ui_event;
 
 use self::browser::{BrowserItem, BrowserPanel, BrowserPlugin, clamp_browser_width, footer_rect};
 use self::clip_lane::ClipLane;
+use self::fields::meter_field::MeterChip;
+use self::fields::tempo_field::TempoChip;
+use self::fields::track_rename::TrackRename;
 use self::gesture_state::GestureState;
 use self::grid::{GridSurface, GridTiers, grid_tiers};
 use self::input::DragPointer;
 #[cfg(target_os = "macos")]
 use self::instrument::InstrumentHost;
 use self::knob_panel::KnobPanel;
-use self::meter_field::MeterChip;
-use self::midi_tab::MidiTab;
 use self::output_menu::OutputMenuHit;
 use self::pane::{
     KeyFocus, Pane, PaneRects, PanelSize, clip_event_tick_at, clip_pane_frame_value, pane_rects,
@@ -99,10 +106,9 @@ use self::pane::{
 use self::project_dialog::ProjectDialog;
 use self::project_state::ProjectViewState;
 use self::render_state::RenderState;
-use self::settings_modal::SettingsModal;
+use self::settings::SettingsModal;
+use self::settings::midi_tab::MidiTab;
 use self::status_message::StatusMessage;
-use self::tempo_field::TempoChip;
-use self::track_rename::TrackRename;
 pub(crate) use modal_focus::{MidiSettingsFocus, Overlay, PortSide, SettingsTab};
 use pointer_state::{
     AxisFilter, ClipMoveDrag, ClipMoveKind, ClipResizeDrag, ClipResizeEdge, KeyZoomDrag,
@@ -261,13 +267,13 @@ pub(crate) struct Display {
     /// `020-views-and-state.md` § Views (Track header focus).
     key_focus: KeyFocus,
     /// The open track rename field, if any — it has the keyboard while open.
-    /// See `track_rename.rs`.
+    /// See `fields/track_rename.rs`.
     track_rename: Option<TrackRename>,
     /// The header's BPM chip as a control: its drag and its field (which has
-    /// the keyboard while open). See `tempo_field.rs`.
+    /// the keyboard while open). See `fields/tempo_field.rs`.
     tempo_chip: TempoChip,
     /// The header's meter chip as a control: its field (which has the
-    /// keyboard while open). See `meter_field.rs`.
+    /// keyboard while open). See `fields/meter_field.rs`.
     meter_chip: MeterChip,
     /// The knob panel beside the clip view: its drag, wheel turn and CC
     /// field (which has the keyboard while open). See `knob_panel.rs`.

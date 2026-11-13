@@ -1269,7 +1269,7 @@ impl eframe::App for Display {
     /// reports none during a drag, so the cursor line and the import ghost
     /// would otherwise freeze where the pointer last was
     /// (`input/midi_drag.rs`). On macOS, the app menu's requests, its
-    /// Settings… `⌘,` among them (`settings_modal.rs`).
+    /// Settings… `⌘,` among them (`settings/mod.rs`).
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
         self.inject_drag_pointer(ctx, raw_input);
         #[cfg(target_os = "macos")]
@@ -1675,7 +1675,7 @@ mod tests {
     use super::{TRACK_HEADER_PAD_Y, TRACK_NAME_CAP_INSET};
     use crate::core::audio::meter::ChannelLevel;
     use crate::core::config::MAX_TRACKS;
-    use crate::view::display::track_rename::TRACK_NAME_FONT_SIZE;
+    use crate::view::display::fields::track_rename::TRACK_NAME_FONT_SIZE;
     use crate::view::theme::fonts::font_definitions;
 
     /// The physical-pixel span `[top, bottom)` a `width`-point line centred

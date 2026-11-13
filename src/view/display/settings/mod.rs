@@ -1,12 +1,16 @@
 //! The settings modal (`⌘/Ctrl+,`), an overlay over the view: opening and
 //! closing it, its tab chords, the theme list's scroll window, its mouse,
-//! and applying a theme. The MIDI tab's own state is `midi_tab.rs`, the
-//! Keyboard tab's `keyboard_tab.rs`, the AI tab's `ai_tab.rs`, the About
-//! tab's `about_tab.rs`; the
-//! keys inside a tab are
-//! `input/modal.rs`; drawing and the click hit-test
-//! share one layout in `rendering/modals/settings.rs`. See
-//! `020-views-and-state.md` and `030-ui-design.md` § Settings modal.
+//! and applying a theme. Each tab's own state is a submodule beside this one:
+//! the MIDI tab's `midi_tab.rs`, the Keyboard tab's `keyboard_tab.rs`, the AI
+//! tab's `ai_tab.rs`, the About tab's `about_tab.rs`. The keys inside a tab
+//! are `input/modal.rs`; drawing and the click hit-test share one layout in
+//! `rendering/modals/settings.rs`. See `020-views-and-state.md` and
+//! `030-ui-design.md` § Settings modal.
+
+pub(super) mod about_tab;
+pub(super) mod ai_tab;
+pub(super) mod keyboard_tab;
+pub(super) mod midi_tab;
 
 #[cfg(target_os = "macos")]
 use egui::{Event, Modifiers, RawInput};
@@ -19,11 +23,11 @@ use crate::core::settings::clamp_midi_out_offset_ms;
 use crate::view::appkit::{AppMenuRequest, take_app_menu_request};
 use crate::view::theme;
 
-use super::about_tab::{AboutLink, AboutTab};
-use super::ai_tab::AiTab;
+use self::about_tab::{AboutLink, AboutTab};
+use self::ai_tab::AiTab;
+use self::keyboard_tab::{KeyboardTab, TabClick};
+use self::midi_tab::MidiTab;
 use super::browser::scroll_to_show;
-use super::keyboard_tab::{KeyboardTab, TabClick};
-use super::midi_tab::MidiTab;
 use super::{Display, MidiSettingsFocus, Overlay, PortSide, SettingsTab};
 
 /// Theme rows the Appearance tab shows at once; the rest scroll.

@@ -14,8 +14,8 @@ use crate::shapes::event_shape::EventShape;
 
 use super::Display;
 use super::browser::BrowserCategory;
-use super::keyboard_tab::{KEYBOARD_TAB_ROW, chords_label};
 use super::output_menu::OutputMenuHit;
+use super::settings::keyboard_tab::{KEYBOARD_TAB_ROW, chords_label};
 
 /// A clickable control under the pointer: what shows the pointing hand,
 /// bar the track header's S/M buttons (their own hover state).

@@ -27,39 +27,39 @@ use crate::core::keymap::{Action, Chord, Keymap, refusal};
 use crate::core::settings::update_settings;
 use crate::view::computer_keyboard;
 
-use super::browser::scroll_to_show;
-use super::modal_focus::SettingsTab;
-use super::settings_modal::{scroll_by, window_start};
-use super::status_message::StatusMessage;
-use super::text_field::TextField;
-use super::{Display, Overlay};
+use super::{scroll_by, window_start};
+use crate::view::display::browser::scroll_to_show;
+use crate::view::display::fields::TextField;
+use crate::view::display::modal_focus::SettingsTab;
+use crate::view::display::status_message::StatusMessage;
+use crate::view::display::{Display, Overlay};
 
 /// The Keyboard tab's view-local state. Session-only; a fresh search each
 /// time the modal opens (the default).
 #[derive(Default)]
-pub(super) struct KeyboardTab {
+pub(in crate::view::display) struct KeyboardTab {
     /// The search field.
-    pub(super) search: TextField,
+    pub(in crate::view::display) search: TextField,
     /// The selected row, counted among the rows the search matches. A
     /// change to the search puts it back at 0; a rebinding can leave it
     /// past the last match, which then selects nothing.
-    pub(super) selection: usize,
+    pub(in crate::view::display) selection: usize,
     /// The first visible line of the list (headers count).
-    pub(super) scroll: usize,
+    pub(in crate::view::display) scroll: usize,
     /// The command whose row waits for a key press, while one does.
-    pub(super) recording: Option<Recording>,
+    pub(in crate::view::display) recording: Option<Recording>,
     /// Whether Reset all was clicked once and waits for the confirming
     /// second click.
-    pub(super) reset_all_armed: bool,
+    pub(in crate::view::display) reset_all_armed: bool,
     /// Whether the search field or the list has the keyboard.
-    pub(super) focus: KeyboardFocus,
+    pub(in crate::view::display) focus: KeyboardFocus,
 }
 
 /// Which part of the Keyboard tab has the keyboard. Only the focused part
 /// takes keys: with the list focused nothing can be typed in the search,
 /// and the field shows no caret.
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
-pub(super) enum KeyboardFocus {
+pub(in crate::view::display) enum KeyboardFocus {
     /// The search field: typing filters the list (the tab opens here).
     #[default]
     Search,
@@ -70,17 +70,17 @@ pub(super) enum KeyboardFocus {
 
 /// A command's row waiting for its new chord.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(super) struct Recording {
+pub(in crate::view::display) struct Recording {
     /// The command being rebound.
-    pub(super) action: Action,
+    pub(in crate::view::display) action: Action,
     /// A chord pressed that another command has, and that command: a
     /// second press of the chord confirms, any other key cancels.
-    pub(super) replacing: Option<(Chord, Action)>,
+    pub(in crate::view::display) replacing: Option<(Chord, Action)>,
 }
 
 /// Where a click in the settings modal lands, as the Keyboard tab sees it.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(super) enum TabClick {
+pub(in crate::view::display) enum TabClick {
     /// Row `row`, counted among the rows the search matches; `keys` when on
     /// its chords.
     Row {
@@ -99,7 +99,7 @@ pub(super) enum TabClick {
 
 /// What the Keyboard tab did with a key press or a click.
 #[derive(Debug, PartialEq)]
-pub(super) enum TabKey {
+pub(in crate::view::display) enum TabKey {
     /// Not the tab's: the modal's, or the search field's.
     Left,
     /// Taken, the keymap unchanged.
@@ -126,7 +126,7 @@ impl KeyboardTab {
     ///   the field; Enter records the selected command; `⌫` (or Delete)
     ///   unbinds it and `⌘⌫` resets it. Every other key is taken and does
     ///   nothing, so nothing is typed, but Esc and `⌘,` reach the modal.
-    pub(super) fn handle_key(
+    pub(in crate::view::display) fn handle_key(
         &mut self,
         key: Key,
         modifiers: KeyModifiers,
@@ -200,7 +200,7 @@ impl KeyboardTab {
     /// asks for a second press, and any other chord becomes the command's
     /// only one. Waiting for that second press: the same chord binds it, any
     /// other key cancels.
-    pub(super) fn record(
+    pub(in crate::view::display) fn record(
         &mut self,
         recording: Recording,
         chord: Chord,
@@ -256,7 +256,11 @@ impl KeyboardTab {
     /// search field takes the focus back; Reset all arms, or, armed, puts
     /// every command back on its defaults. Anything else is left to the
     /// modal.
-    pub(super) fn click(&mut self, click: TabClick, keymap: &mut Keymap) -> TabKey {
+    pub(in crate::view::display) fn click(
+        &mut self,
+        click: TabClick,
+        keymap: &mut Keymap,
+    ) -> TabKey {
         let armed = std::mem::take(&mut self.reset_all_armed);
         self.recording = None;
         match click {
@@ -301,14 +305,19 @@ impl KeyboardTab {
 
     /// The selection and the scroll back at the top — when the search
     /// changes what the list holds.
-    pub(super) fn reset_list(&mut self) {
+    pub(in crate::view::display) fn reset_list(&mut self) {
         self.selection = 0;
         self.scroll = 0;
     }
 
     /// A wheel scroll: `rows` lines down (up when negative), kept inside a
     /// list showing `visible` lines.
-    pub(super) fn scroll(&mut self, rows: isize, visible: usize, keymap: &Keymap) {
+    pub(in crate::view::display) fn scroll(
+        &mut self,
+        rows: isize,
+        visible: usize,
+        keymap: &Keymap,
+    ) {
         let len = shortcut_lines(&self.search.text, keymap).len();
         self.scroll = scroll_by(self.scroll, rows, len, visible);
     }
@@ -349,29 +358,29 @@ fn refusal_for(action: Action, chord: Chord) -> Option<&'static str> {
 
 /// One row of the tab: a label and the keys that do it.
 #[derive(Debug, Clone, PartialEq)]
-pub(super) struct ShortcutRow {
+pub(in crate::view::display) struct ShortcutRow {
     /// The group the row is listed under.
-    pub(super) category: &'static str,
+    pub(in crate::view::display) category: &'static str,
     /// What the keys do.
-    pub(super) label: &'static str,
+    pub(in crate::view::display) label: &'static str,
     /// The keys, spelled out for this platform ([`key_label`]); [`UNBOUND`]
     /// for a command with none, which the search then finds too.
-    pub(super) keys: String,
+    pub(in crate::view::display) keys: String,
     /// The command, or `None` for a key that is not one: listed, never
     /// rebindable.
-    pub(super) action: Option<Action>,
+    pub(in crate::view::display) action: Option<Action>,
     /// A command with no chord.
-    pub(super) unbound: bool,
+    pub(in crate::view::display) unbound: bool,
     /// A command whose chords differ from its defaults.
-    pub(super) changed: bool,
+    pub(in crate::view::display) changed: bool,
     /// A command with a chord the computer keyboard takes while it plays
     /// ([`computer_keyboard::shadows`]).
-    pub(super) piano: bool,
+    pub(in crate::view::display) piano: bool,
 }
 
 /// One line of the list: a group's heading, or a row under it.
 #[derive(Debug, Clone, PartialEq)]
-pub(super) enum ShortcutLine {
+pub(in crate::view::display) enum ShortcutLine {
     /// A group heading, drawn uppercase.
     Header(&'static str),
     /// A row.
@@ -380,7 +389,7 @@ pub(super) enum ShortcutLine {
 
 /// [`FIXED`]'s row for `?`, the way into this tab — the header's `?` chip's
 /// footer hint too.
-pub(super) const KEYBOARD_TAB_ROW: (&str, &str) = ("?", "Keyboard shortcuts");
+pub(in crate::view::display) const KEYBOARD_TAB_ROW: (&str, &str) = ("?", "Keyboard shortcuts");
 
 /// One read-only group of [`FIXED`]: its heading and `(keys, label)` rows,
 /// the keys written with macOS's `⌘` `⌥` `⇧` like a chord label.
@@ -516,7 +525,7 @@ const FIXED: &[FixedGroup] = &[
 /// the tab is always reachable. ⇧ is ignored: it is part of typing `?` on
 /// most layouts, and egui-winit reports the logical key, so this is `⇧/` on
 /// US layouts and `⇧+` on Nordic ones.
-pub(super) fn is_keyboard_tab_key(key: Key, modifiers: KeyModifiers) -> bool {
+pub(in crate::view::display) fn is_keyboard_tab_key(key: Key, modifiers: KeyModifiers) -> bool {
     Chord::from_press(key, modifiers).opens_keyboard_tab()
 }
 
@@ -555,13 +564,13 @@ fn key_label_for(keys: &str, mac: bool) -> String {
 }
 
 /// `chord` as shown on this platform: `Cmd+Shift+Z`, `\`.
-pub(super) fn chord_label(chord: Chord) -> String {
+pub(in crate::view::display) fn chord_label(chord: Chord) -> String {
     key_label(&chord_glyphs(chord))
 }
 
 /// A command's `chords` as shown on this platform, two spaces apart:
 /// `\  /`. The tab's rows and the footer's hints.
-pub(super) fn chords_label(chords: &[Chord]) -> String {
+pub(in crate::view::display) fn chords_label(chords: &[Chord]) -> String {
     chords
         .iter()
         .map(|&chord| chord_label(chord))
@@ -638,7 +647,7 @@ fn row_matches(row: &ShortcutRow, query: &str) -> bool {
 /// The list the tab shows for the search `query` over `keymap`: the
 /// matching rows, each group's heading over its first match. Empty when
 /// nothing matches.
-pub(super) fn shortcut_lines(query: &str, keymap: &Keymap) -> Vec<ShortcutLine> {
+pub(in crate::view::display) fn shortcut_lines(query: &str, keymap: &Keymap) -> Vec<ShortcutLine> {
     let query = query.trim().to_lowercase();
     let mut lines = Vec::new();
     let mut category = None;
@@ -657,7 +666,7 @@ pub(super) fn shortcut_lines(query: &str, keymap: &Keymap) -> Vec<ShortcutLine> 
 
 /// The line each row of `lines` is on, in order — row `i` is on line
 /// `row_lines(lines)[i]`, and a line is a row where it is found here.
-pub(super) fn row_lines(lines: &[ShortcutLine]) -> Vec<usize> {
+pub(in crate::view::display) fn row_lines(lines: &[ShortcutLine]) -> Vec<usize> {
     lines
         .iter()
         .enumerate()
@@ -684,7 +693,7 @@ fn scroll_to_show_line(
 
 impl Display {
     /// Whether the settings modal is up on its Keyboard tab.
-    pub(super) fn keyboard_tab_showing(&self) -> bool {
+    pub(in crate::view::display) fn keyboard_tab_showing(&self) -> bool {
         self.overlay == Some(Overlay::Settings) && self.settings.tab == SettingsTab::Keyboard
     }
 
@@ -692,7 +701,10 @@ impl Display {
     /// chords: while a Keyboard tab row waits for a key, every key press —
     /// and every clipboard event, which is a key egui-winit turned into one
     /// ([`recorded_chord`]) — is its. Returns whether it took `event`.
-    pub(super) fn handle_shortcut_recorder_input_event(&mut self, event: &InputEvent) -> bool {
+    pub(in crate::view::display) fn handle_shortcut_recorder_input_event(
+        &mut self,
+        event: &InputEvent,
+    ) -> bool {
         let Some(recording) = self.settings.keys.recording else {
             return false;
         };
@@ -710,7 +722,11 @@ impl Display {
     }
 
     /// A key press on the Keyboard tab; returns whether the tab took it.
-    pub(super) fn handle_keyboard_tab_key(&mut self, key: Key, modifiers: KeyModifiers) -> bool {
+    pub(in crate::view::display) fn handle_keyboard_tab_key(
+        &mut self,
+        key: Key,
+        modifiers: KeyModifiers,
+    ) -> bool {
         let visible = self.keyboard_visible_lines();
         let result = self
             .settings
@@ -721,7 +737,7 @@ impl Display {
 
     /// Acts on what the Keyboard tab did: a changed keymap is saved; a
     /// refusal shows in the footer. Returns whether the tab took the event.
-    pub(super) fn apply_tab_key(&mut self, result: TabKey) -> bool {
+    pub(in crate::view::display) fn apply_tab_key(&mut self, result: TabKey) -> bool {
         match result {
             TabKey::Left => return false,
             TabKey::Taken => {}

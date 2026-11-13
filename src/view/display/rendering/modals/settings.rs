@@ -1,10 +1,10 @@
-//! The settings modal (`settings_modal.rs`): one fixed-size panel with a tab
+//! The settings modal (`settings/mod.rs`): one fixed-size panel with a tab
 //! strip along its top and the showing tab below — MIDI (the input / output
 //! port lists and the output-offset row), Appearance (the theme list),
 //! Keyboard (the search field over every command and fixed key,
-//! `keyboard_tab.rs`), AI (*Allow AI agents*, what it is and how to connect
-//! a client, `ai_tab.rs`) or About (the version, the links, the VST logo
-//! and, on macOS, Check for updates, `about_tab.rs`). The layout is shared
+//! `settings/keyboard_tab.rs`), AI (*Allow AI agents*, what it is and how to connect
+//! a client, `settings/ai_tab.rs`) or About (the version, the links, the VST logo
+//! and, on macOS, Check for updates, `settings/about_tab.rs`). The layout is shared
 //! with the click hit-test ([`settings_hit_at`](Display::settings_hit_at)),
 //! so the two can't drift.
 
@@ -15,16 +15,18 @@ use egui::emath::GuiRounding;
 use egui::{Context, Id, Pos2, Theme, Ui};
 
 use crate::core::update_check::{CURRENT_VERSION, UpdateCheck};
-use crate::view::display::about_tab::{AboutLink, UPDATE_CHECK, UpdateState, VST_LOGO_SIZE};
-use crate::view::display::ai_tab::{AiTab, ClaudeCodeSetup};
+use crate::view::display::settings::about_tab::{
+    AboutLink, UPDATE_CHECK, UpdateState, VST_LOGO_SIZE,
+};
+use crate::view::display::settings::ai_tab::{AiTab, ClaudeCodeSetup};
 
-use crate::view::display::keyboard_tab::{
+use crate::view::display::fields::{FieldStyle, MODAL_MARGIN};
+use crate::view::display::modal_focus::{PortSide, SettingsTab};
+use crate::view::display::settings::keyboard_tab::{
     KeyboardFocus, Recording, ShortcutLine, ShortcutRow, row_lines, shortcut_lines,
 };
-use crate::view::display::midi_tab::{MidiTab, PORT_ROWS, PortList};
-use crate::view::display::modal_focus::{PortSide, SettingsTab};
-use crate::view::display::settings_modal::{SettingsHit, THEME_ROWS, window_start};
-use crate::view::display::text_field::{FieldStyle, MODAL_MARGIN};
+use crate::view::display::settings::midi_tab::{MidiTab, PORT_ROWS, PortList};
+use crate::view::display::settings::{SettingsHit, THEME_ROWS, window_start};
 
 use super::*;
 
@@ -1091,8 +1093,8 @@ mod tests {
     use egui::{Rect, pos2, vec2};
 
     use super::{Display, ListRows};
-    use crate::view::display::midi_tab::{MidiTab, PORT_ROWS};
-    use crate::view::display::settings_modal::THEME_ROWS;
+    use crate::view::display::settings::THEME_ROWS;
+    use crate::view::display::settings::midi_tab::{MidiTab, PORT_ROWS};
 
     /// Tab label widths as short and long as the real ones.
     const LABEL_W: [f32; 5] = [40.0, 140.0, 110.0, 25.0, 70.0];

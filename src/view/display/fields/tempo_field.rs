@@ -18,9 +18,9 @@ use crate::core::time::{
     bpm_tenths_to_tempo_us, clamp_bpm_tenths, format_bpm, parse_bpm_tenths, tempo_us_to_bpm_tenths,
 };
 
-use super::Display;
 use super::header_chip::{HeaderChipRects, show_header_field};
-use super::text_field::{FieldEvent, TextField, field_event};
+use super::{FieldEvent, TextField, field_event};
+use crate::view::display::Display;
 
 /// Vertical pixels of drag per tempo step.
 const DRAG_PX_PER_STEP: f32 = 3.0;
@@ -49,11 +49,11 @@ struct TempoDrag {
 /// The BPM chip's state: where it is, what the pointer is doing on it, and
 /// the open field.
 #[derive(Default)]
-pub(super) struct TempoChip {
+pub(in crate::view::display) struct TempoChip {
     /// Where it was painted last frame; `None` before the first frame.
-    pub(super) rects: Option<HeaderChipRects>,
+    pub(in crate::view::display) rects: Option<HeaderChipRects>,
     /// The pointer is over it with no button held — the resize cursor icon.
-    pub(super) hover: bool,
+    pub(in crate::view::display) hover: bool,
     /// The drag in progress.
     drag: Option<TempoDrag>,
     /// The open field.
@@ -62,17 +62,17 @@ pub(super) struct TempoChip {
 
 impl TempoChip {
     /// Whether a drag is in progress.
-    pub(super) fn dragging(&self) -> bool {
+    pub(in crate::view::display) fn dragging(&self) -> bool {
         self.drag.is_some()
     }
 
     /// Whether the field is open.
-    pub(super) fn editing(&self) -> bool {
+    pub(in crate::view::display) fn editing(&self) -> bool {
         self.field.is_some()
     }
 
     /// Whether `(x, y)` is on the chip.
-    pub(super) fn contains(&self, x: f32, y: f32) -> bool {
+    pub(in crate::view::display) fn contains(&self, x: f32, y: f32) -> bool {
         self.rects.is_some_and(|rects| rects.contains(x, y))
     }
 }
@@ -91,14 +91,14 @@ fn dragged_bpm_tenths(anchor_tenths: i32, dy_up: f32, fine: bool) -> (i32, bool)
 
 impl Display {
     /// The project tempo, µs per quarter.
-    pub(super) fn tempo_us(&self) -> i32 {
+    pub(in crate::view::display) fn tempo_us(&self) -> i32 {
         self.tempo.load(Ordering::Relaxed)
     }
 
     /// A press on the chip: starts a drag from the current tempo. ⇧ is
     /// read on the first move (a change from `fine: false` re-anchors where
     /// nothing has moved yet).
-    pub(super) fn begin_tempo_drag(&mut self) {
+    pub(in crate::view::display) fn begin_tempo_drag(&mut self) {
         let start_tempo_us = self.tempo_us();
         let start_tenths = tempo_us_to_bpm_tenths(start_tempo_us);
         self.tempo_chip.hover = false;
@@ -116,7 +116,7 @@ impl Display {
     /// tempo for the travel since the anchor, sent when it changed. ⇧ going
     /// down or up re-anchors at the tempo reached, and so does hitting the
     /// tempo range's end.
-    pub(super) fn extend_tempo_drag(&mut self, dy: f32, fine: bool) {
+    pub(in crate::view::display) fn extend_tempo_drag(&mut self, dy: f32, fine: bool) {
         let Some(drag) = self.tempo_chip.drag.as_mut() else {
             return;
         };
@@ -147,13 +147,13 @@ impl Display {
     }
 
     /// The button came up: the drag is done, its steps already sent.
-    pub(super) fn finish_tempo_drag(&mut self) {
+    pub(in crate::view::display) fn finish_tempo_drag(&mut self) {
         self.tempo_chip.drag = None;
     }
 
     /// Esc mid drag: the tempo goes back to where the drag found it, and the
     /// gesture leaves no undo step (the edit merge annuls it).
-    pub(super) fn cancel_tempo_drag(&mut self) {
+    pub(in crate::view::display) fn cancel_tempo_drag(&mut self) {
         let Some(drag) = self.tempo_chip.drag.take() else {
             return;
         };
@@ -168,13 +168,13 @@ impl Display {
     }
 
     /// Updates whether the pointer is over the chip, for the cursor icon.
-    pub(super) fn update_tempo_hover(&mut self, x: f32, y: f32) {
+    pub(in crate::view::display) fn update_tempo_hover(&mut self, x: f32, y: f32) {
         self.tempo_chip.hover = self.tempo_chip.contains(x, y);
     }
 
     /// A double-click on the chip: opens the field over its value, the
     /// tempo in it selected. Ends the drag its second press started.
-    pub(super) fn open_tempo_field(&mut self) {
+    pub(in crate::view::display) fn open_tempo_field(&mut self) {
         self.tempo_chip.drag = None;
         self.close_output_menu();
         self.tempo_chip.field = Some(TextField::new(format_bpm(self.tempo_us())));
@@ -202,7 +202,10 @@ impl Display {
     /// While the field is open it gets first look at every event, by the
     /// inline text fields' rule ([`field_event`]). Returns whether the
     /// event was consumed.
-    pub(super) fn handle_tempo_field_input_event(&mut self, event: &InputEvent) -> bool {
+    pub(in crate::view::display) fn handle_tempo_field_input_event(
+        &mut self,
+        event: &InputEvent,
+    ) -> bool {
         if !self.tempo_chip.editing() {
             return false;
         }
@@ -218,7 +221,7 @@ impl Display {
     /// Shows the open field over the chip's value, in the canvas `ui`, in
     /// the header's value font. Its first frame takes the egui focus and
     /// selects the text.
-    pub(super) fn show_tempo_field(&mut self, ui: &mut Ui, font: FontId) {
+    pub(in crate::view::display) fn show_tempo_field(&mut self, ui: &mut Ui, font: FontId) {
         if let Some(field) = self.tempo_chip.field.as_mut() {
             show_header_field(ui, font, self.tempo_chip.rects, field, "tempo-field");
         }

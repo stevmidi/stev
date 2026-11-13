@@ -424,7 +424,7 @@ impl ChordDto {
 
 /// One row of [`ACTIONS`]: everything the keymap and the Keyboard tab know
 /// about an action. The label and category are the Keyboard tab's
-/// (`view/display/keyboard_tab.rs`); the id is `settings.json`'s.
+/// (`view/display/settings/keyboard_tab.rs`); the id is `settings.json`'s.
 pub(crate) struct ActionInfo {
     /// The action.
     pub(crate) action: Action,

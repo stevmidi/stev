@@ -30,7 +30,7 @@ Today the only ways to copy clips are `⌘C`/`⌘V` (two keys and a cursor move)
 - **The audio export run** (`130`): checked, nothing to do. `audio_export_command` is an allow list, so `CopyRange` is blocked during a run as `MoveRange` is, without being named.
 - **The performance lane** (`450`): a band press selects the track and so leaves the lane, as for a move; nothing new expected.
 - **Tests** (`copy_range.rs`, beside `duplicate_clips.rs`'s): a whole-clip copy to a later tick on the same track and to another track; a partial-marquee copy copies only the piece, with the full event list kept; a multi-track block keeps its track spacing; a copy overlapping its own source trims the source and wins; landing on another clip carves it; `None` for an empty range or one over no clip; undo puts everything back; redo lands the same ids (frozen). In the sequencer handler: the selection after a copy is the shifted rect with the copy as lead, and `⌘Z` puts back the selection from before (`440`'s test pair). In the view's pure gesture code: release with ⌥ copies, without ⌥ moves, and a ⌥ change mid-drag decides by the state at release.
-- **Docs**: `020` § Clip Band Press & Move Drag (the copy commit, the ⌥ rule), `010` (the mouse bindings), `030` (the copy cursor), `050` (`CopyRangeEdit`), the Keyboard tab's hand-listed `FIXED` rows (`src/view/display/keyboard_tab.rs`: the mouse is listed there), and a `CHANGELOG.md` line.
+- **Docs**: `020` § Clip Band Press & Move Drag (the copy commit, the ⌥ rule), `010` (the mouse bindings), `030` (the copy cursor), `050` (`CopyRangeEdit`), the Keyboard tab's hand-listed `FIXED` rows (`src/view/display/settings/keyboard_tab.rs`: the mouse is listed there), and a `CHANGELOG.md` line.
 
 ## Phase 2: the piano roll's notes
 

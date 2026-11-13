@@ -17,12 +17,12 @@ use crate::core::logging::log_path;
 use crate::core::paths::logs_dir;
 use crate::core::update_check::{UpdateCheck, start_update_check};
 
-use super::Display;
+use crate::view::display::Display;
 
 /// Whether the About tab offers Check for updates: only on macOS, the one
 /// platform a binary ships for. Everything else about the check compiles on
 /// every platform; this decides whether its button is drawn, hit and keyed.
-pub(super) const UPDATE_CHECK: bool = cfg!(target_os = "macos");
+pub(in crate::view::display) const UPDATE_CHECK: bool = cfg!(target_os = "macos");
 
 /// The logo's height in points, as `scripts/make-vst-logo.sh` renders it.
 const VST_LOGO_HEIGHT: usize = 48;
@@ -31,15 +31,15 @@ const VST_LOGO_HEIGHT: usize = 48;
 /// order: the standard (a black box) at 1x and 2x, then the negative (a white
 /// box) at 1x and 2x.
 const VST_LOGO_RGBA: [&[u8]; 4] = [
-    include_bytes!("../../../docs/images/vst/VST_Compatible_Logo_Steinberg@1x.rgba"),
-    include_bytes!("../../../docs/images/vst/VST_Compatible_Logo_Steinberg@2x.rgba"),
-    include_bytes!("../../../docs/images/vst/VST_Compatible_Logo_Steinberg_negative@1x.rgba"),
-    include_bytes!("../../../docs/images/vst/VST_Compatible_Logo_Steinberg_negative@2x.rgba"),
+    include_bytes!("../../../../docs/images/vst/VST_Compatible_Logo_Steinberg@1x.rgba"),
+    include_bytes!("../../../../docs/images/vst/VST_Compatible_Logo_Steinberg@2x.rgba"),
+    include_bytes!("../../../../docs/images/vst/VST_Compatible_Logo_Steinberg_negative@1x.rgba"),
+    include_bytes!("../../../../docs/images/vst/VST_Compatible_Logo_Steinberg_negative@2x.rgba"),
 ];
 
 /// The logo's size in points: its 1x file's, whose width is read back from
 /// the file's length.
-pub(super) const VST_LOGO_SIZE: Vec2 = vec2(
+pub(in crate::view::display) const VST_LOGO_SIZE: Vec2 = vec2(
     (VST_LOGO_RGBA[0].len() / (4 * VST_LOGO_HEIGHT)) as f32,
     VST_LOGO_HEIGHT as f32,
 );
@@ -72,11 +72,11 @@ pub(crate) enum AboutLink {
 
 impl AboutLink {
     /// The links always shown, in their rows' order.
-    pub(super) const LISTED: [AboutLink; 3] =
+    pub(in crate::view::display) const LISTED: [AboutLink; 3] =
         [AboutLink::Website, AboutLink::Repository, AboutLink::Log];
 
     /// The text a listed link reads as.
-    pub(super) fn label(self) -> &'static str {
+    pub(in crate::view::display) fn label(self) -> &'static str {
         match self {
             AboutLink::Website => "stevmidi.com",
             AboutLink::Repository => "github.com/stevmidi/stev",
@@ -90,7 +90,7 @@ impl AboutLink {
 
 /// Where the update check stands.
 #[derive(Default)]
-pub(super) enum UpdateState {
+pub(in crate::view::display) enum UpdateState {
     /// Not asked for since launch.
     #[default]
     Idle,
@@ -105,7 +105,7 @@ pub(super) enum UpdateState {
 /// The VST Compatible logo's textures, each loaded the first time it is
 /// drawn, in [`VST_LOGO_RGBA`] order.
 #[derive(Default)]
-pub(super) struct VstLogo {
+pub(in crate::view::display) struct VstLogo {
     /// The loaded textures.
     textures: [OnceCell<TextureHandle>; 4],
 }
@@ -114,7 +114,12 @@ impl VstLogo {
     /// The texture for a dark (`dark`) or light background at `hidpi` (2x)
     /// or 1x. On a dark background the standard logo's black box sits
     /// quietly; on a light one the negative's white box does.
-    pub(super) fn texture(&self, ctx: &Context, dark: bool, hidpi: bool) -> &TextureHandle {
+    pub(in crate::view::display) fn texture(
+        &self,
+        ctx: &Context,
+        dark: bool,
+        hidpi: bool,
+    ) -> &TextureHandle {
         let idx = 2 * usize::from(!dark) + usize::from(hidpi);
         self.textures[idx].get_or_init(|| {
             let scale = 1 + usize::from(hidpi);
@@ -129,17 +134,17 @@ impl VstLogo {
 
 /// The About tab's state. Session-only.
 #[derive(Default)]
-pub(super) struct AboutTab {
+pub(in crate::view::display) struct AboutTab {
     /// The update check's progress.
-    pub(super) update: UpdateState,
+    pub(in crate::view::display) update: UpdateState,
     /// The VST Compatible logo.
-    pub(super) logo: VstLogo,
+    pub(in crate::view::display) logo: VstLogo,
 }
 
 impl AboutTab {
     /// Whether a check is asked for or running — the button reads
     /// "Checking…" and takes no press.
-    pub(super) fn is_checking(&self) -> bool {
+    pub(in crate::view::display) fn is_checking(&self) -> bool {
         matches!(
             self.update,
             UpdateState::Requested | UpdateState::Checking(_)
@@ -147,14 +152,14 @@ impl AboutTab {
     }
 
     /// Asks for a check, unless one is already running.
-    pub(super) fn request_check(&mut self) {
+    pub(in crate::view::display) fn request_check(&mut self) {
         if !self.is_checking() {
             self.update = UpdateState::Requested;
         }
     }
 
     /// The page of the newer release a check found.
-    pub(super) fn release_url(&self) -> Option<&str> {
+    pub(in crate::view::display) fn release_url(&self) -> Option<&str> {
         match &self.update {
             UpdateState::Done(UpdateCheck::Available { url, .. }) => Some(url),
             _ => None,
@@ -191,7 +196,7 @@ fn show_log() {
 
 impl Display {
     /// Opens `link`: a page in the browser, or the log file in Finder.
-    pub(super) fn open_about_link(&self, link: AboutLink) {
+    pub(in crate::view::display) fn open_about_link(&self, link: AboutLink) {
         let url = match link {
             AboutLink::Website => WEBSITE_URL,
             AboutLink::Repository => REPOSITORY_URL,
@@ -207,7 +212,7 @@ impl Display {
 
     /// Once a frame: starts an asked-for update check, and takes a running
     /// one's answer when it arrives. The check wakes the frame itself.
-    pub(super) fn sync_update_check(&mut self, ctx: &Context) {
+    pub(in crate::view::display) fn sync_update_check(&mut self, ctx: &Context) {
         let update = &mut self.settings.about.update;
         match update {
             UpdateState::Requested => {

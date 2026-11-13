@@ -72,9 +72,9 @@ use super::Display;
 #[cfg(target_os = "macos")]
 use super::Overlay;
 use super::browser::scroll_to_show;
+use super::fields::{FieldEvent, TextField, field_key};
 use super::project_state::ProjectViewState;
-use super::settings_modal::{scroll_by, wheel_rows, window_start};
-use super::text_field::{FieldEvent, TextField, field_key};
+use super::settings::{scroll_by, wheel_rows, window_start};
 
 /// The open project dialog.
 pub(super) enum ProjectDialog {
@@ -1012,7 +1012,7 @@ mod tests {
     use egui::Key;
 
     use crate::core::input_event::KeyModifiers;
-    use crate::view::display::text_field::TextField;
+    use crate::view::display::fields::TextField;
 
     use super::{
         DialogButton, DialogKey, LIST_MAX_ROWS, SaveAs, SaveAsFocus, SaveAsHit, button_key,

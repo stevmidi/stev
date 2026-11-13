@@ -10,7 +10,7 @@
 # Needs resvg (cargo install resvg) and python3, whose standard library turns
 # resvg's PNGs into raw pixels. The height is in points; the width follows the
 # logo's aspect, and the app reads it back from each file's length, so keep
-# HEIGHT in step with VST_LOGO_HEIGHT in src/view/display/about_tab.rs.
+# HEIGHT in step with VST_LOGO_HEIGHT in src/view/display/settings/about_tab.rs.
 set -euo pipefail
 
 repo=${0:A:h:h}

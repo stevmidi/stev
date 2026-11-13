@@ -4,31 +4,31 @@
 //!
 //! Held by the settings modal as `SettingsModal::midi`, beside the Keyboard
 //! tab's state; every method that drives it stays on
-//! [`Display`](super::Display) and reaches in through `self.settings.midi`.
+//! [`Display`](crate::view::display::Display) and reaches in through `self.settings.midi`.
 //! See `020-views-and-state.md` and `160-midi-out-offset.md`.
 
 use crossbeam_channel::Sender;
 
 use crate::core::midi::port::matching_port_index;
 
-use super::browser::scroll_to_show;
-use super::settings_modal::window_start;
-use super::{MidiSettingsFocus, PortSide};
+use super::window_start;
+use crate::view::display::browser::scroll_to_show;
+use crate::view::display::{MidiSettingsFocus, PortSide};
 
 /// Port rows a MIDI port list shows at once; a longer list scrolls.
-pub(super) const PORT_ROWS: usize = 4;
+pub(in crate::view::display) const PORT_ROWS: usize = 4;
 
 /// One MIDI port list: input or output.
-pub(super) struct PortList {
+pub(in crate::view::display) struct PortList {
     /// The port names, refreshed live from `UiEvent::MidiPortsRefreshed`.
-    pub(super) ports: Vec<String>,
+    pub(in crate::view::display) ports: Vec<String>,
     /// The cursor row.
-    pub(super) selection: usize,
+    pub(in crate::view::display) selection: usize,
     /// First row of the `PORT_ROWS` window — moved only as far as it takes
     /// to keep the cursor in view, so a click never makes it jump.
     scroll: usize,
     /// The connected (or wanted) port, for the badge.
-    pub(super) current: Option<String>,
+    pub(in crate::view::display) current: Option<String>,
     /// Fires an immediate reconnect on connect.
     reconnect_tx: Sender<String>,
 }
@@ -46,59 +46,59 @@ impl PortList {
     }
 
     /// Replaces the port names (hot-plug), keeping the cursor inside them.
-    pub(super) fn set_ports(&mut self, ports: Vec<String>) {
+    pub(in crate::view::display) fn set_ports(&mut self, ports: Vec<String>) {
         self.ports = ports;
         self.select(self.selection);
     }
 
     /// Puts the cursor on the connected port, or the first row.
-    pub(super) fn select_current(&mut self) {
+    pub(in crate::view::display) fn select_current(&mut self) {
         self.select(matching_port_index(&self.ports, self.current.as_deref()).unwrap_or(0));
     }
 
     /// Puts the cursor on row `idx`, kept inside the list and in view.
-    pub(super) fn select(&mut self, idx: usize) {
+    pub(in crate::view::display) fn select(&mut self, idx: usize) {
         self.selection = idx.min(self.ports.len().saturating_sub(1));
         self.scroll = scroll_to_show(self.scroll, self.selection, PORT_ROWS);
     }
 
     /// Moves the cursor by `step` rows, stopping at either end.
-    pub(super) fn move_selection(&mut self, step: isize) {
+    pub(in crate::view::display) fn move_selection(&mut self, step: isize) {
         self.select(self.selection.saturating_add_signed(step));
     }
 
     /// The first row the window shows — pulled back when the list has
     /// shrunk under it.
-    pub(super) fn window_start(&self) -> usize {
+    pub(in crate::view::display) fn window_start(&self) -> usize {
         window_start(self.scroll, self.ports.len(), PORT_ROWS)
     }
 
     /// How many port rows the window shows.
-    pub(super) fn visible(&self) -> usize {
+    pub(in crate::view::display) fn visible(&self) -> usize {
         self.ports.len().min(PORT_ROWS)
     }
 
     /// The index of the connected port in the list, if it is there.
-    pub(super) fn current_index(&self) -> Option<usize> {
+    pub(in crate::view::display) fn current_index(&self) -> Option<usize> {
         matching_port_index(&self.ports, self.current.as_deref())
     }
 
     /// The connected port when it isn't in the list (unplugged) — shown as
     /// a ghost row under it.
-    pub(super) fn missing(&self) -> Option<&str> {
+    pub(in crate::view::display) fn missing(&self) -> Option<&str> {
         self.current
             .as_deref()
             .filter(|_| self.current_index().is_none())
     }
 
     /// The connected port's name, empty for none — what gets saved.
-    pub(super) fn current_name(&self) -> String {
+    pub(in crate::view::display) fn current_name(&self) -> String {
         self.current.clone().unwrap_or_default()
     }
 
     /// Connects the port under the cursor: it becomes the current one and
     /// the `"midiwatcher"` reconnects to it.
-    pub(super) fn connect(&mut self) {
+    pub(in crate::view::display) fn connect(&mut self) {
         let port = self.ports.get(self.selection).cloned().unwrap_or_default();
         self.current = Some(port.clone());
         self.reconnect_tx.send(port).ok();
@@ -106,23 +106,23 @@ impl PortList {
 }
 
 /// The settings modal's MIDI tab state, held as `SettingsModal::midi`.
-pub(super) struct MidiTab {
+pub(in crate::view::display) struct MidiTab {
     /// The input-port list.
-    pub(super) input: PortList,
+    pub(in crate::view::display) input: PortList,
     /// The output-port list.
-    pub(super) output: PortList,
+    pub(in crate::view::display) output: PortList,
     /// Which row the arrow keys act on.
-    pub(super) focus: MidiSettingsFocus,
+    pub(in crate::view::display) focus: MidiSettingsFocus,
     /// Editable mirror of the persisted MIDI-output offset, in milliseconds.
     /// Applied and saved on every nudge.
-    pub(super) out_offset_ms: i32,
+    pub(in crate::view::display) out_offset_ms: i32,
 }
 
 impl MidiTab {
     /// Builds the tab state with its reconnect channel ends, the ports
     /// already connected at startup, and the persisted output offset. The port
     /// lists start empty and fill from the first `MidiPortsRefreshed`.
-    pub(super) fn new(
+    pub(in crate::view::display) fn new(
         midi_in_reconnect_tx: Sender<String>,
         midi_out_reconnect_tx: Sender<String>,
         midi_in_current_port: Option<String>,
@@ -138,7 +138,7 @@ impl MidiTab {
     }
 
     /// The `side` port list.
-    pub(super) fn list(&self, side: PortSide) -> &PortList {
+    pub(in crate::view::display) fn list(&self, side: PortSide) -> &PortList {
         match side {
             PortSide::In => &self.input,
             PortSide::Out => &self.output,
@@ -146,7 +146,7 @@ impl MidiTab {
     }
 
     /// The `side` port list, to change.
-    pub(super) fn list_mut(&mut self, side: PortSide) -> &mut PortList {
+    pub(in crate::view::display) fn list_mut(&mut self, side: PortSide) -> &mut PortList {
         match side {
             PortSide::In => &mut self.input,
             PortSide::Out => &mut self.output,

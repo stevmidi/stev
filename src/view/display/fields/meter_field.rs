@@ -10,27 +10,27 @@ use egui::{FontId, Ui};
 use crate::core::input_event::InputEvent;
 use crate::core::time::Meter;
 
-use super::Display;
 use super::header_chip::{HeaderChipRects, show_header_field};
-use super::text_field::{FieldEvent, TextField, field_event};
+use super::{FieldEvent, TextField, field_event};
+use crate::view::display::Display;
 
 /// The meter chip's state: where it is and the open field.
 #[derive(Default)]
-pub(super) struct MeterChip {
+pub(in crate::view::display) struct MeterChip {
     /// Where it was painted last frame; `None` before the first frame.
-    pub(super) rects: Option<HeaderChipRects>,
+    pub(in crate::view::display) rects: Option<HeaderChipRects>,
     /// The open field.
     field: Option<TextField>,
 }
 
 impl MeterChip {
     /// Whether the field is open.
-    pub(super) fn editing(&self) -> bool {
+    pub(in crate::view::display) fn editing(&self) -> bool {
         self.field.is_some()
     }
 
     /// Whether `(x, y)` is on the chip.
-    pub(super) fn contains(&self, x: f32, y: f32) -> bool {
+    pub(in crate::view::display) fn contains(&self, x: f32, y: f32) -> bool {
         self.rects.is_some_and(|rects| rects.contains(x, y))
     }
 }
@@ -38,7 +38,7 @@ impl MeterChip {
 impl Display {
     /// A double-click on the chip: opens the field over its value, the meter
     /// in it selected.
-    pub(super) fn open_meter_field(&mut self) {
+    pub(in crate::view::display) fn open_meter_field(&mut self) {
         self.close_output_menu();
         self.meter_chip.field = Some(TextField::new(self.meter().to_string()));
     }
@@ -62,7 +62,10 @@ impl Display {
     /// While the field is open it gets first look at every event, by the
     /// inline text fields' rule ([`field_event`]). Returns whether the
     /// event was consumed.
-    pub(super) fn handle_meter_field_input_event(&mut self, event: &InputEvent) -> bool {
+    pub(in crate::view::display) fn handle_meter_field_input_event(
+        &mut self,
+        event: &InputEvent,
+    ) -> bool {
         if !self.meter_chip.editing() {
             return false;
         }
@@ -83,7 +86,7 @@ impl Display {
     /// Shows the open field over the chip's value, in the canvas `ui`, in
     /// the header's value font. Its first frame takes the egui focus and
     /// selects the text.
-    pub(super) fn show_meter_field(&mut self, ui: &mut Ui, font: FontId) {
+    pub(in crate::view::display) fn show_meter_field(&mut self, ui: &mut Ui, font: FontId) {
         if let Some(field) = self.meter_chip.field.as_mut() {
             show_header_field(ui, font, self.meter_chip.rects, field, "meter-field");
         }
