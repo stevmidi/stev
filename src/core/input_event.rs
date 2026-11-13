@@ -351,8 +351,8 @@ pub(crate) enum InputEvent {
     },
     /// Insert an empty clip on every track the marquee spans, over its tick
     /// range, or one bar at the cursor on the selected track with none
-    /// (`⇧⌘/Ctrl+M`). Forwarded
-    /// whole to `SequencerCommand::InsertEmptyClip`, which resolves it.
+    /// (`⇧⌘/Ctrl+M`). Forwarded whole to `SequencerCommand::InsertEmptyClip`,
+    /// which resolves it.
     InsertEmptyClip {
         /// The marquee selection, or `None` for one bar at the cursor.
         time_bounds: Option<TimeSelectionRect>,

@@ -1424,8 +1424,7 @@ impl Display {
                 .is_ok(),
             // Ableton's "Insert MIDI Clip" (⇧⌘/Ctrl+M): an empty clip over
             // the marquee on each track it spans, or one bar at the cursor
-            // with none. Plain ⌘M is
-            // left to the OS (macOS minimize).
+            // with none. Plain ⌘M is left to the OS (macOS minimize).
             InputEvent::Action(Action::InsertEmptyClip) => self
                 .input_event_tx
                 .send(InputEvent::InsertEmptyClip {

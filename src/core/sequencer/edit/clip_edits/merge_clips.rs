@@ -63,15 +63,14 @@ impl PasteClipsEdit {
             targets.push((track_idx, clip));
         }
 
-        let selected_track_idx = sequencer.selected_track_index();
-        let lead = targets
-            .iter()
-            .find(|(track_idx, _)| Some(*track_idx) == selected_track_idx)
-            .map(|(track_idx, clip)| (*track_idx, clip.id()))
-            .or_else(|| selected_track_idx.zip(sequencer.selected_clip_id()))
-            .map_or(PasteLead::CursorRule, |(track_idx, clip_id)| {
-                PasteLead::Clip { track_idx, clip_id }
-            });
+        let lead = PasteLead::on_selected_track(sequencer, &targets).unwrap_or_else(|| {
+            sequencer
+                .selected_track_index()
+                .zip(sequencer.selected_clip_id())
+                .map_or(PasteLead::CursorRule, |(track_idx, clip_id)| {
+                    PasteLead::Clip { track_idx, clip_id }
+                })
+        });
         Self::from_targets(sequencer, targets, lead)
     }
 }

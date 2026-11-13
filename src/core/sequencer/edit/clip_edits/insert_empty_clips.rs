@@ -17,15 +17,14 @@ impl PasteClipsEdit {
     /// Ableton: `None` (nothing enters the record) when any of them would
     /// overlap a clip already there, a spanned track doesn't exist, or there
     /// is no marquee and no selected track. Nothing is carved: every clip
-    /// was checked to fit. The lead is the new clip on the selected track;
-    /// when the selected track is outside the marquee the lead stays as it
-    /// was, since making another track's clip the lead would select that
-    /// track (`PasteLead::KeepSelection`). The marquee is kept either way.
+    /// was checked to fit. The lead is the new clip on the selected track
+    /// ([`PasteLead::on_selected_track`]), or, with the selected track
+    /// outside the marquee, stays as it was (`PasteLead::KeepSelection`).
+    /// The marquee is kept either way.
     pub(crate) fn empty_clips(
         sequencer: &Sequencer,
         time_bounds: Option<TimeSelectionRect>,
     ) -> Option<Self> {
-        let selected = sequencer.selected_track_index();
         let (start, length, track_range) = match time_bounds {
             Some(rect) if rect.has_tick_range() => (
                 rect.start,
@@ -33,7 +32,7 @@ impl PasteClipsEdit {
                 rect.track_start..=rect.track_end,
             ),
             _ => {
-                let track_idx = selected?;
+                let track_idx = sequencer.selected_track_index()?;
                 (
                     sequencer.cursor_tick(),
                     sequencer.meter().bar_ticks(),
@@ -52,15 +51,8 @@ impl PasteClipsEdit {
             })
             .collect::<Option<Vec<_>>>()?;
 
-        let lead = targets
-            .iter()
-            .find(|(track_idx, _)| Some(*track_idx) == selected)
-            .map_or(PasteLead::KeepSelection, |(track_idx, clip)| {
-                PasteLead::Clip {
-                    track_idx: *track_idx,
-                    clip_id: clip.id(),
-                }
-            });
+        let lead =
+            PasteLead::on_selected_track(sequencer, &targets).unwrap_or(PasteLead::KeepSelection);
         Self::from_targets(sequencer, targets, lead)
     }
 }
@@ -70,7 +62,9 @@ mod tests {
     use std::sync::atomic::Ordering;
 
     use crate::core::sequencer::edit::EditResult;
-    use crate::core::sequencer::test_support::{clip_at, note_off, note_on, test_sequencer};
+    use crate::core::sequencer::test_support::{
+        clip_at, note_off, note_on, rect, spans, test_sequencer,
+    };
     use crate::core::time::Meter;
 
     use super::*;
@@ -83,21 +77,9 @@ mod tests {
         sequencer
     }
 
+    /// A marquee over ticks `[start, end)` × tracks `tracks.0..=tracks.1`.
     fn marquee(start: i32, end: i32, tracks: (usize, usize)) -> Option<TimeSelectionRect> {
-        Some(TimeSelectionRect {
-            start,
-            end,
-            track_start: tracks.0,
-            track_end: tracks.1,
-        })
-    }
-
-    fn spans(sequencer: &Sequencer, track_idx: usize) -> Vec<(i32, i32)> {
-        sequencer.tracks()[track_idx]
-            .clips()
-            .iter()
-            .map(|c| (c.start_tick(), c.end_tick()))
-            .collect()
+        Some(rect(start, end, tracks.0, tracks.1))
     }
 
     /// Applies the insert and returns the `(track, start, end)` of each new

@@ -46,6 +46,26 @@ pub(crate) struct PasteClipsEdit {
     lead: PasteLead,
 }
 
+impl PasteLead {
+    /// The target on the selected track as the lead, if one is there: a
+    /// paste of built clips names it, since naming a clip on another track
+    /// would select that track too (`select_clip_workflow`). `None` leaves
+    /// the caller its own fallback.
+    pub(in crate::core::sequencer::edit) fn on_selected_track(
+        sequencer: &Sequencer,
+        targets: &[(usize, Clip)],
+    ) -> Option<Self> {
+        let selected = sequencer.selected_track_index()?;
+        targets
+            .iter()
+            .find(|(track_idx, _)| *track_idx == selected)
+            .map(|(track_idx, clip)| PasteLead::Clip {
+                track_idx: *track_idx,
+                clip_id: clip.id(),
+            })
+    }
+}
+
 impl PasteClipsEdit {
     /// `⌘/Ctrl+V`: paste the session clipboard at the cursor tick, on the
     /// selected track when the clipboard is track-anchored (`None` then
@@ -93,9 +113,9 @@ impl PasteClipsEdit {
     /// A paste of ready-positioned clips: each `(track index, clip)` lands
     /// as it is (absolute `start_tick`, its own id and detached region),
     /// carving what it overlaps, then `lead` picks the lead clip. Targets
-    /// past the last track are dropped; `None` if none is left. Merge Clips
-    /// (`merge_clips.rs`) and the MIDI clip import (`import_clip.rs`) paste
-    /// their clips through this.
+    /// past the last track are dropped; `None` if none is left. Every paste
+    /// of clips built elsewhere (Merge Clips, the MIDI clip import, the
+    /// empty clips, the ⌥-drag copy, the agent bridge's clips) ends here.
     pub(in crate::core::sequencer::edit) fn from_targets(
         sequencer: &Sequencer,
         mut targets: Vec<(usize, Clip)>,

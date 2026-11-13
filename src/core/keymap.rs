@@ -101,7 +101,8 @@ pub(crate) enum Action {
     InsertSilence,
     /// Delete the selection's time, closing the gap (arranger).
     DeleteTime,
-    /// Insert an empty clip over the marquee, or a bar at the cursor.
+    /// Insert an empty clip over the marquee on each track it spans, or a
+    /// bar at the cursor.
     InsertEmptyClip,
     /// Add an empty MIDI track after the selected one.
     AddTrack,
