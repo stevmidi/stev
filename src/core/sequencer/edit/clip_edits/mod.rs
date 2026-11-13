@@ -12,7 +12,8 @@
 //! clip's edges and nothing else, and `RetimeClipEdit` retimes one clip with
 //! the tempo (Enter's fit, `⌥=`/`⌥-`); `CommitClipEdit` is the one that puts
 //! a take, committed as a brand-new clip, on a track; `CreateClipsEdit` is
-//! the agent bridge's new clips, a paste that keeps the selection. See `050-undo-redo.md` and `020-views-and-state.md`.
+//! the agent bridge's new clips, a paste that keeps the selection. See
+//! `050-undo-redo.md` and `020-views-and-state.md`.
 
 use std::collections::HashSet;
 
