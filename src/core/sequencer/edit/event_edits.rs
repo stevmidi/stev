@@ -426,7 +426,7 @@ pub(crate) struct DragNotesEdit {
     copy: bool,
     /// The copies left behind, made from the gesture's snapshot by the
     /// first step that copies and kept from then on.
-    copies: Option<Vec<(Event, Event)>>,
+    copies: Option<Arc<[(Event, Event)]>>,
     /// Identifies the gesture, so its steps merge into one undo step.
     drag_id: u64,
 }
@@ -500,12 +500,10 @@ impl DragNotesEdit {
                 None => Arc::clone(clip.shared_events()),
             };
             clip.restore_event_selection(selection);
-            let left_behind = if copying {
-                copies
-                    .get_or_insert_with(|| clip.note_copies(event_ids))
-                    .clone()
+            let left_behind: &[(Event, Event)] = if copying {
+                copies.get_or_insert_with(|| clip.note_copies(event_ids).into())
             } else {
-                Vec::new()
+                &[]
             };
             clip.apply_note_drag(event_ids, drag, left_behind);
             pre_events

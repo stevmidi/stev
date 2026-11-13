@@ -169,9 +169,15 @@ impl NoteMouseDrag {
 
     /// The step this drag sends: its whole drag so far, copying or not.
     pub(super) fn step(&self) -> InputEvent {
+        self.step_with(self.drag)
+    }
+
+    /// [`step`](Self::step) with `drag` in place of the drag so far — Esc's
+    /// step back home.
+    pub(super) fn step_with(&self, drag: NoteDrag) -> InputEvent {
         InputEvent::DragNotes {
             event_ids: self.target_ids(),
-            drag: self.drag,
+            drag,
             copy: self.copy,
             drag_id: self.drag_id,
         }

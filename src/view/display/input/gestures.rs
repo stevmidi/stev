@@ -521,11 +521,8 @@ impl Display {
             return;
         };
         if !drag.drag.is_noop() {
-            let home = NoteMouseDrag {
-                drag: drag.drag.with_deltas(0, 0),
-                ..drag
-            };
-            self.input_event_tx.send(home.step()).ok();
+            let home = drag.step_with(drag.drag.with_deltas(0, 0));
+            self.input_event_tx.send(home).ok();
         }
     }
 

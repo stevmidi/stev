@@ -203,21 +203,29 @@ impl Clip {
         let pairing = self.pair_note_events();
         let mut spans = self.note_spans(&pairing);
 
-        let mut targets = Vec::new();
-        for (note_on, note_off) in notes {
-            let on_idx = self.events.len();
-            spans.push(NoteSpan {
-                on_idx,
-                off_idx: Some(on_idx + 1),
-                pitch: note_on.note_number().unwrap_or(0),
-                start: note_on.tick(),
-                end: note_off.tick(),
-            });
-            targets.push(on_idx);
-            self.events_mut().extend([note_on, note_off]);
-        }
-
+        let targets: Vec<usize> = notes
+            .into_iter()
+            .map(|(note_on, note_off)| self.append_note(&mut spans, note_on, note_off))
+            .collect();
         self.resolve_overlaps(spans, &targets);
+    }
+
+    /// Appends `note_on` and its `note_off` to the event list (unsorted) and
+    /// their [`NoteSpan`] to `spans`, for a [`resolve_overlaps`] pass to
+    /// follow. Returns the `NoteOn`'s index.
+    ///
+    /// [`resolve_overlaps`]: Self::resolve_overlaps
+    fn append_note(&mut self, spans: &mut Vec<NoteSpan>, note_on: Event, note_off: Event) -> usize {
+        let on_idx = self.events.len();
+        spans.push(NoteSpan {
+            on_idx,
+            off_idx: Some(on_idx + 1),
+            pitch: note_on.note_number().unwrap_or(0),
+            start: note_on.tick(),
+            end: note_off.tick(),
+        });
+        self.events_mut().extend([note_on, note_off]);
+        on_idx
     }
 
     /// The selected notes for the note clipboard, earliest first, each placed
@@ -321,7 +329,7 @@ impl Clip {
         &mut self,
         event_ids: &[Uuid],
         drag: NoteDrag,
-        left_behind: Vec<(Event, Event)>,
+        left_behind: &[(Event, Event)],
     ) {
         let targets = self.note_on_indices(event_ids);
         if targets.is_empty() {
@@ -367,15 +375,7 @@ impl Clip {
 
         let mut spans = self.note_spans(&pairing);
         for (note_on, note_off) in left_behind {
-            let on_idx = self.events.len();
-            spans.push(NoteSpan {
-                on_idx,
-                off_idx: Some(on_idx + 1),
-                pitch: note_on.note_number().unwrap_or(0),
-                start: note_on.tick(),
-                end: note_off.tick(),
-            });
-            self.events_mut().extend([note_on, note_off]);
+            self.append_note(&mut spans, note_on.clone(), note_off.clone());
         }
         self.resolve_overlaps(spans, &targets);
     }
@@ -682,7 +682,7 @@ mod tests {
                 delta_ticks: 240,
                 delta_pitch: 2,
             },
-            Vec::new(),
+            &[],
         );
         assert_eq!(notes(&clip), vec![(240, 480, 62), (720, 960, 66)]);
     }
@@ -696,7 +696,7 @@ mod tests {
                 delta_ticks: -1000,
                 delta_pitch: 20,
             },
-            Vec::new(),
+            &[],
         );
         // The earlier note stops at the window start, the higher one at 127.
         assert_eq!(notes(&clip), vec![(0, 240, 127), (720, 960, 67)]);
@@ -711,7 +711,7 @@ mod tests {
                 delta_ticks: 100,
                 delta_pitch: 0,
             },
-            Vec::new(),
+            &[],
         );
         assert_eq!(notes(&clip), vec![(2000, 2100, 60)]);
     }
@@ -725,7 +725,7 @@ mod tests {
                 delta_ticks: 480,
                 delta_pitch: 0,
             },
-            Vec::new(),
+            &[],
         );
         assert_eq!(notes(&clip), vec![(0, 240, 64), (480, 720, 60)]);
     }
@@ -741,7 +741,7 @@ mod tests {
                 delta_ticks: 720,
                 delta_pitch: 0,
             },
-            Vec::new(),
+            &[],
         );
         assert_eq!(notes(&clip), vec![(480, 720, 60), (720, 960, 60)]);
         assert_eq!(length_of(&clip, ids[1]), 240);
@@ -756,7 +756,7 @@ mod tests {
                 delta_ticks: 480,
                 delta_pitch: 0,
             },
-            Vec::new(),
+            &[],
         );
         assert_eq!(notes(&clip), vec![(480, 720, 60)]);
         assert!(clip.events.iter().any(|e| e.id() == ids[0]));
@@ -774,7 +774,7 @@ mod tests {
                 delta_ticks: 240,
                 delta_pitch: 0,
             },
-            Vec::new(),
+            &[],
         );
         assert_eq!(notes(&clip).len(), before);
     }
@@ -792,7 +792,7 @@ mod tests {
                 delta_ticks: 960,
                 delta_pitch: 2,
             },
-            copies,
+            &copies,
         );
         assert_eq!(
             notes(&clip),
@@ -819,7 +819,7 @@ mod tests {
             delta_ticks: 240,
             delta_pitch: 0,
         };
-        clip.apply_note_drag(&ids, drag, copies);
+        clip.apply_note_drag(&ids, drag, &copies);
         assert_eq!(notes(&clip), vec![(0, 240, 60), (240, 720, 60)]);
         assert_eq!(length_of(&clip, ids[0]), 480);
     }
@@ -842,60 +842,40 @@ mod tests {
     #[test]
     fn resize_end_grows_and_shrinks_with_clamps() {
         let (mut clip, ids) = clip_with(&[(0, 240, 60), (1800, 1900, 64)]);
-        clip.apply_note_drag(&ids, NoteDrag::ResizeEnd { delta_ticks: 240 }, Vec::new());
+        clip.apply_note_drag(&ids, NoteDrag::ResizeEnd { delta_ticks: 240 }, &[]);
         // The second stops at the window end.
         assert_eq!(notes(&clip), vec![(0, 480, 60), (1800, 1920, 64)]);
         assert_eq!(length_of(&clip, ids[0]), 480);
 
-        clip.apply_note_drag(&ids, NoteDrag::ResizeEnd { delta_ticks: -1000 }, Vec::new());
+        clip.apply_note_drag(&ids, NoteDrag::ResizeEnd { delta_ticks: -1000 }, &[]);
         assert_eq!(notes(&clip), vec![(0, 1, 60), (1800, 1801, 64)]);
     }
 
     #[test]
     fn resize_end_into_a_later_same_pitch_note_stops_at_its_start() {
         let (mut clip, ids) = clip_with(&[(0, 240, 60), (480, 720, 60)]);
-        clip.apply_note_drag(
-            &ids[..1],
-            NoteDrag::ResizeEnd { delta_ticks: 600 },
-            Vec::new(),
-        );
+        clip.apply_note_drag(&ids[..1], NoteDrag::ResizeEnd { delta_ticks: 600 }, &[]);
         assert_eq!(notes(&clip), vec![(0, 480, 60), (480, 720, 60)]);
     }
 
     #[test]
     fn resize_start_keeps_the_end_with_clamps() {
         let (mut clip, ids) = clip_with(&[(240, 480, 60)]);
-        clip.apply_note_drag(
-            &ids,
-            NoteDrag::ResizeStart { delta_ticks: -120 },
-            Vec::new(),
-        );
+        clip.apply_note_drag(&ids, NoteDrag::ResizeStart { delta_ticks: -120 }, &[]);
         assert_eq!(notes(&clip), vec![(120, 480, 60)]);
         assert_eq!(length_of(&clip, ids[0]), 360);
 
-        clip.apply_note_drag(
-            &ids,
-            NoteDrag::ResizeStart { delta_ticks: -1000 },
-            Vec::new(),
-        );
+        clip.apply_note_drag(&ids, NoteDrag::ResizeStart { delta_ticks: -1000 }, &[]);
         assert_eq!(notes(&clip), vec![(0, 480, 60)]);
 
-        clip.apply_note_drag(
-            &ids,
-            NoteDrag::ResizeStart { delta_ticks: 1000 },
-            Vec::new(),
-        );
+        clip.apply_note_drag(&ids, NoteDrag::ResizeStart { delta_ticks: 1000 }, &[]);
         assert_eq!(notes(&clip), vec![(479, 480, 60)]);
     }
 
     #[test]
     fn resize_start_over_an_earlier_same_pitch_note_trims_it() {
         let (mut clip, ids) = clip_with(&[(0, 480, 60), (480, 720, 60)]);
-        clip.apply_note_drag(
-            &ids[1..],
-            NoteDrag::ResizeStart { delta_ticks: -240 },
-            Vec::new(),
-        );
+        clip.apply_note_drag(&ids[1..], NoteDrag::ResizeStart { delta_ticks: -240 }, &[]);
         assert_eq!(notes(&clip), vec![(0, 240, 60), (240, 720, 60)]);
     }
 
@@ -913,7 +893,7 @@ mod tests {
             NoteDrag::ResizeEnd { delta_ticks: 240 },
         ] {
             let (mut clip, ids) = clip_with(&spans);
-            clip.apply_note_drag(&ids, drag, Vec::new());
+            clip.apply_note_drag(&ids, drag, &[]);
             let mut predicted = drag.dragged_spans(&spans, (0, 1920));
             predicted.sort_unstable();
             assert_eq!(notes(&clip), predicted, "{drag:?}");
@@ -964,7 +944,7 @@ mod tests {
                 delta_ticks: 240,
                 delta_pitch: 0,
             },
-            Vec::new(),
+            &[],
         );
         assert_eq!(notes(&clip), vec![(0, 240, 60)]);
     }
