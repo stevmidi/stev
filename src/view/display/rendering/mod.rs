@@ -1343,9 +1343,9 @@ impl eframe::App for Display {
         }
         // A note's edge: the resize arrows on hover and through its drag;
         // the closed hand once a body press becomes a move, the copy cursor
-        // while ⌥ is held on it. With ⌘/Ctrl held
-        // anywhere on a note, and through the velocity drag, the vertical
-        // arrows: a press there drags the velocity up and down.
+        // while ⌥ is held on it. With ⌘/Ctrl held anywhere on a note, and
+        // through the velocity drag, the vertical arrows: a press there drags
+        // the velocity up and down.
         match &self.gesture.note_drag {
             Some(drag) if drag.is_resize() => {
                 ctx.set_cursor_icon(CursorIcon::ResizeHorizontal);

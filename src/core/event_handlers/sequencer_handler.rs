@@ -1491,6 +1491,34 @@ mod tests {
         assert_eq!(note_ons(&h), landed);
     }
 
+    /// ⌥ pressed only partway through a drag still leaves the copy where
+    /// the gesture found the note, not where the earlier steps had put it.
+    #[test]
+    fn alt_pressed_mid_note_drag_copies_from_where_the_gesture_began() {
+        let (mut h, clip_id, note_id) = harness_with_clip();
+        let mut record: Record<UndoStep> = Record::new();
+        let step = |delta_ticks, copy| SequencerCommand::DragNotes {
+            event_ids: vec![note_id],
+            drag: Move {
+                delta_ticks,
+                delta_pitch: 0,
+            },
+            copy,
+            drag_id: 1,
+        };
+        run_command(&mut h, &mut record, step(480, false));
+        run_command(&mut h, &mut record, step(960, true));
+        let clip = h.sequencer.tracks()[0].get_clip_by_id(clip_id).unwrap();
+        let starts: Vec<i32> = clip
+            .events()
+            .iter()
+            .filter(|e| e.event_type() == Some(EventType::NoteOn))
+            .map(|e| e.tick())
+            .collect();
+        assert_eq!(starts, vec![0, 960]);
+        assert_eq!(record.len(), 1);
+    }
+
     /// A step that can't merge — the record was saved mid-drag — is its own
     /// undo step, still applied to the notes as the gesture found them, and
     /// undoing it goes back to before the gesture.
