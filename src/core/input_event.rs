@@ -931,8 +931,9 @@ pub(crate) enum InputEvent {
         /// The `clock_tick` it landed on.
         tick: i32,
     },
-    /// The plugin on `track_idx` loaded a preset (`060-persistence.md`
-    /// § Unsaved changes). Not undoable.
+    /// The plugin on `track_idx` changed its state: a preset, its dirty
+    /// flag, a turn in its editor of a parameter no knob holds
+    /// (`060-persistence.md` § Unsaved changes). Not undoable.
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     PluginStateChanged {
         /// The plugin's track.

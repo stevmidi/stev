@@ -496,8 +496,9 @@ pub(crate) enum SequencerCommand {
         tick: i32,
     },
 
-    /// The plugin on `track_idx` loaded a preset: a change for the unsaved
-    /// prompt (`060-persistence.md` § Unsaved changes).
+    /// The plugin on `track_idx` changed its state (a preset, its dirty
+    /// flag, a turn in its editor of a parameter no knob holds): a change
+    /// for the unsaved prompt (`060-persistence.md` § Unsaved changes).
     PluginStateChanged {
         /// The plugin's track.
         track_idx: usize,

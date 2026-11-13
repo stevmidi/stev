@@ -821,7 +821,7 @@ shared from there rather than copied (`420-large-projects.md` decision 7):
   A corrupt / partial blob is logged and ignored — the plugin stays at its
   default, project load never fails.
 - `StevClapHost` declares the `state` host extension; its `mark_dirty` sets a
-  flag `take_parameter_gestures` reports as `ParameterGesture::Dirty`, which the
+  flag `take_parameter_gestures` reports as `ParameterGesture::ValuesChanged`, which the
   unsaved prompt counts (state itself is captured fresh on every save). A
   preset counts through `rescan` too (`060` § Unsaved changes).
 - The restore path passes `picked: None` to `load_slot_instrument` so it

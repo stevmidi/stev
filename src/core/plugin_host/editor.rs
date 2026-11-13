@@ -49,16 +49,13 @@ pub(crate) enum ParameterGesture {
     Move(ParamId, f64, u64),
     /// A turn ended (VST3 `endEdit`).
     End(ParamId),
-    /// The plugin's values changed as a whole (VST3 `restartComponent` with
-    /// `kParamValuesChanged`, a CLAP `rescan` of its values): a preset it
-    /// loaded. A change to the project in its own right, with or without a
-    /// knob on anything it moved.
+    /// The plugin's state changed as a whole: its values (VST3
+    /// `restartComponent` with `kParamValuesChanged`, a CLAP `rescan` of its
+    /// values), a preset it loaded, or it says its state is dirty (CLAP
+    /// `mark_dirty`, VST3 `IComponentHandler2::setDirty`), as a plugin may
+    /// that changes its sound without reporting values. A change to the
+    /// project in its own right, with or without a knob on anything it moved.
     ValuesChanged,
-    /// The plugin says its state changed since it was last saved or loaded
-    /// (CLAP `mark_dirty`, VST3 `IComponentHandler2::setDirty`): the word of
-    /// a plugin that loads a preset, or edits a setting, without reporting
-    /// its values. Counted like [`ValuesChanged`](Self::ValuesChanged).
-    Dirty,
 }
 
 /// One hosted plugin's main-thread half. See the module docs.

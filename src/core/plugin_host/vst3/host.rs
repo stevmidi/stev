@@ -134,6 +134,9 @@ pub(super) struct ComponentHandler {
     /// `setParamNormalized` back through `performEdit` must not have Stev's
     /// own move read as the user's turn.
     pub(super) host_edit: AtomicBool,
+    /// Set by `setDirty(true)`, taken by [`take_gestures`](Self::take_gestures):
+    /// a plugin may call it on every edit, and once a frame is enough.
+    dirty: AtomicBool,
     /// The plugin's edit controller while it lives
     /// ([`remember_controller`](Self::remember_controller)), not counted:
     /// the controller holds this handler, so a counted reference would be a
@@ -156,6 +159,7 @@ impl ComponentHandler {
             params,
             gestures: unbounded(),
             host_edit: AtomicBool::new(false),
+            dirty: AtomicBool::new(false),
             controller: AtomicPtr::new(null_mut()),
             repaint,
         }
@@ -196,9 +200,14 @@ impl ComponentHandler {
         self.wake();
     }
 
-    /// Everything the plugin reported since the last call, oldest first.
+    /// Everything the plugin reported since the last call, oldest first,
+    /// then one [`ParameterGesture::ValuesChanged`] if it said it was dirty.
     pub(super) fn take_gestures(&self) -> Vec<ParameterGesture> {
-        self.gestures.1.try_iter().collect()
+        let mut gestures: Vec<_> = self.gestures.1.try_iter().collect();
+        if self.dirty.swap(false, Ordering::Relaxed) {
+            gestures.push(ParameterGesture::ValuesChanged);
+        }
+        gestures
     }
 
     /// Wakes the reactive UI, so the knob panel follows the plugin at once.
@@ -250,12 +259,17 @@ impl IComponentHandlerTrait for ComponentHandler {
 
 impl IComponentHandler2Trait for ComponentHandler {
     /// The plugin says its state changed (`true`) or was saved (`false`).
-    /// A change is reported as [`ParameterGesture::Dirty`], which the
-    /// unsaved prompt counts (`060-persistence.md` § Unsaved changes); a
-    /// save is Stev's own and needs nothing.
+    /// A change is reported, once until it is taken, as
+    /// [`ParameterGesture::ValuesChanged`], which the unsaved prompt counts
+    /// (`060-persistence.md` § Unsaved changes); a save is Stev's own and
+    /// needs nothing. Not while the host itself sets a parameter, as for
+    /// every report.
     unsafe fn setDirty(&self, state: TBool) -> tresult {
-        if state != 0 {
-            self.report(ParameterGesture::Dirty);
+        if state != 0
+            && !self.host_edit.load(Ordering::Relaxed)
+            && !self.dirty.swap(true, Ordering::Relaxed)
+        {
+            self.wake();
         }
         kResultOk
     }
@@ -454,28 +468,20 @@ mod tests {
         }
     }
 
-    fn handler() -> ComponentHandler {
-        let (params, _receiver) = bridge();
-        ComponentHandler::new(params, Arc::new(OnceLock::new()))
-    }
-
     #[test]
-    fn set_dirty_reports_a_change_and_ignores_a_save() {
-        let handler = handler();
+    fn set_dirty_reports_one_change_a_take_and_ignores_a_save() {
+        let (params, _receiver) = bridge();
+        let handler = ComponentHandler::new(params, Arc::new(OnceLock::new()));
         // SAFETY: plain calls on a live handler, as a plugin makes them.
         unsafe {
             handler.setDirty(0);
             handler.setDirty(1);
+            handler.setDirty(1);
         }
-        assert_eq!(handler.take_gestures(), vec![ParameterGesture::Dirty]);
-    }
-
-    #[test]
-    fn set_dirty_while_the_host_sets_a_parameter_is_not_reported() {
-        let handler = handler();
-        handler.host_edit.store(true, Ordering::Relaxed);
-        // SAFETY: as above.
-        unsafe { handler.setDirty(1) };
+        assert_eq!(
+            handler.take_gestures(),
+            vec![ParameterGesture::ValuesChanged]
+        );
         assert!(handler.take_gestures().is_empty());
     }
 

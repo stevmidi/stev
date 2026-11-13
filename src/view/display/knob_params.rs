@@ -136,9 +136,9 @@ impl Display {
     /// end hold the knob against playback (decision 6), and its moves are
     /// counted by the unsaved prompt and captured (decisions 9 and 10). A
     /// turn of any other parameter is counted by the unsaved prompt alone,
-    /// never captured. New values all at once are a preset, and a plugin
-    /// marking its state dirty is its word that something changed: the
-    /// unsaved prompt counts both. Every one of these sends the plugin's
+    /// never captured. New values all at once, a preset or the plugin
+    /// marking its state dirty, are its word that something changed, and
+    /// the unsaved prompt counts them. Every one of these sends the plugin's
     /// state to the crash recovery copy once the plugin is quiet
     /// (`410-crash-recovery.md` decision 6).
     fn handle_parameter_gesture(&mut self, slot: usize, gesture: ParameterGesture) {
@@ -160,9 +160,7 @@ impl Display {
                 if let Some(knob) = knob_with_id(&self.tracks[track_idx].knob_params, param) {
                     self.count_knob_turn(track_idx, knob, value, at_ns);
                 } else {
-                    self.input_event_tx
-                        .send(InputEvent::PluginStateChanged { track_idx })
-                        .ok();
+                    self.count_plugin_change(track_idx);
                 }
             }
             ParameterGesture::End(param) => {
@@ -172,13 +170,19 @@ impl Display {
                     self.capture_soon(slot);
                 }
             }
-            ParameterGesture::ValuesChanged | ParameterGesture::Dirty => {
-                self.input_event_tx
-                    .send(InputEvent::PluginStateChanged { track_idx })
-                    .ok();
+            ParameterGesture::ValuesChanged => {
+                self.count_plugin_change(track_idx);
                 self.capture_soon(slot);
             }
         }
+    }
+
+    /// Tells the sequencer the plugin on `track_idx` changed its state, for
+    /// the unsaved prompt (`060-persistence.md` § Unsaved changes).
+    fn count_plugin_change(&self, track_idx: usize) {
+        self.input_event_tx
+            .send(InputEvent::PluginStateChanged { track_idx })
+            .ok();
     }
 
     /// The armed knob `knob` of `track_idx` takes `param`, the control just

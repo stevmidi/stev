@@ -327,14 +327,15 @@ impl<'a> MainThreadHandler<'a> for ClapHostMainThread<'a> {}
 impl<'a> HostStateImpl for ClapHostMainThread<'a> {
     /// The plugin says its state changed since the last save/load. Marked
     /// for [`ClapEditor`](super::ClapEditor) to report as
-    /// [`ParameterGesture::Dirty`](crate::core::plugin_host::editor::ParameterGesture::Dirty),
+    /// [`ParameterGesture::ValuesChanged`](crate::core::plugin_host::editor::ParameterGesture::ValuesChanged),
     /// which the unsaved prompt counts (`060-persistence.md` § Unsaved
-    /// changes), and the UI woken to read it. The state itself is captured
-    /// fresh on every save.
+    /// changes), and the UI woken to read it, once until it is read. The
+    /// state itself is captured fresh on every save.
     fn mark_dirty(&self) {
-        debug!("clap host: plugin marked its state dirty");
-        self.state_dirty.set(true);
-        self.shared.wake_ui();
+        if !self.state_dirty.replace(true) {
+            debug!("clap host: plugin marked its state dirty");
+            self.shared.wake_ui();
+        }
     }
 }
 
