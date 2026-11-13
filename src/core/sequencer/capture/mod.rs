@@ -313,7 +313,7 @@ impl Sequencer {
                 span: (start, end),
                 ruler_origin,
             })
-        } else if RunningCaptureTarget::InsertFromArranger.lands(&self.capture_clip) {
+        } else if RunningCaptureTarget::InsertFromArranger.lands(&self.kept_capture()) {
             Err(MarqueeRefusal::OutsideClip)
         } else {
             Ok(CaptureFraming::Unframed)
@@ -3667,6 +3667,21 @@ mod tests {
         seq.running.store(false, Ordering::Relaxed);
         assert_eq!(
             framing(&seq, bar * 3, bar * 4),
+            Ok(CaptureFraming::Unframed)
+        );
+    }
+
+    /// A buffer holding only moves of a parameter no knob holds lands
+    /// nothing (they're dropped on the way, `kept_capture`), so a marquee
+    /// outside the lead clip isn't refused over it.
+    #[test]
+    fn a_marquee_outside_the_lead_clip_over_unheld_knob_moves_is_not_refused() {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        let seq = punch_into_lead_clip(&[param_at(400, CUTOFF, 0.5)]);
+        seq.running.store(true, Ordering::Relaxed);
+        let marquee = CaptureFrame::Marquee(rect(bar * 3, bar * 4, 0, 0));
+        assert_eq!(
+            seq.capture_framing(Some(marquee)),
             Ok(CaptureFraming::Unframed)
         );
     }
