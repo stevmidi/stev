@@ -54,6 +54,11 @@ pub(crate) enum ParameterGesture {
     /// loaded. A change to the project in its own right, with or without a
     /// knob on anything it moved.
     ValuesChanged,
+    /// The plugin says its state changed since it was last saved or loaded
+    /// (CLAP `mark_dirty`, VST3 `IComponentHandler2::setDirty`): the word of
+    /// a plugin that loads a preset, or edits a setting, without reporting
+    /// its values. Counted like [`ValuesChanged`](Self::ValuesChanged).
+    Dirty,
 }
 
 /// One hosted plugin's main-thread half. See the module docs.

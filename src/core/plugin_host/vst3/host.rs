@@ -7,8 +7,9 @@
 //!   It is how a plugin learns the host's name and asks the host to create
 //!   `IMessage` / `IAttributeList` objects for component↔controller
 //!   communication.
-//! - [`ComponentHandler`] (`IComponentHandler`) — given to the edit controller.
-//!   A plugin whose UI moves a parameter reports it here.
+//! - [`ComponentHandler`] (`IComponentHandler`, `IComponentHandler2`) — given
+//!   to the edit controller. A plugin whose UI moves a parameter, or whose
+//!   state changes, reports it here.
 //! - [`HostEventList`] (`IEventList`) — the per-block note input the plugin
 //!   reads inside `process`.
 //!
@@ -28,12 +29,13 @@ use crossbeam_channel::{Receiver, Sender, unbounded};
 use log::debug;
 use vst3::Steinberg::Vst::{Event, String128};
 use vst3::Steinberg::Vst::{
-    IAttributeList_iid, IComponentHandler, IComponentHandlerTrait, IEditController,
-    IEditControllerTrait, IEventList, IEventListTrait, IHostApplication, IHostApplicationTrait,
-    IMessage_iid, ParamID, ParamValue, RestartFlags_,
+    IAttributeList_iid, IComponentHandler, IComponentHandler2, IComponentHandler2Trait,
+    IComponentHandlerTrait, IEditController, IEditControllerTrait, IEventList, IEventListTrait,
+    IHostApplication, IHostApplicationTrait, IMessage_iid, ParamID, ParamValue, RestartFlags_,
 };
 use vst3::Steinberg::{
-    FUnknown, TUID, int32, kInvalidArgument, kNoInterface, kNotImplemented, kResultOk, tresult,
+    FIDString, FUnknown, TBool, TUID, int32, kInvalidArgument, kNoInterface, kNotImplemented,
+    kResultOk, tresult,
 };
 use vst3::{Class, ComPtr, ComRef, ComWrapper};
 
@@ -143,7 +145,7 @@ pub(super) struct ComponentHandler {
 }
 
 impl Class for ComponentHandler {
-    type Interfaces = (IComponentHandler,);
+    type Interfaces = (IComponentHandler, IComponentHandler2);
 }
 
 impl ComponentHandler {
@@ -242,6 +244,34 @@ impl IComponentHandlerTrait for ComponentHandler {
         } else {
             self.wake();
         }
+        kResultOk
+    }
+}
+
+impl IComponentHandler2Trait for ComponentHandler {
+    /// The plugin says its state changed (`true`) or was saved (`false`).
+    /// A change is reported as [`ParameterGesture::Dirty`], which the
+    /// unsaved prompt counts (`060-persistence.md` § Unsaved changes); a
+    /// save is Stev's own and needs nothing.
+    unsafe fn setDirty(&self, state: TBool) -> tresult {
+        if state != 0 {
+            self.report(ParameterGesture::Dirty);
+        }
+        kResultOk
+    }
+
+    /// Stev opens a plugin's editor only on `v`, never at the plugin's asking.
+    unsafe fn requestOpenEditor(&self, _name: FIDString) -> tresult {
+        kNotImplemented
+    }
+
+    /// Group edits are accepted and ignored: each change in the group is
+    /// still reported through `beginEdit` / `performEdit` / `endEdit`.
+    unsafe fn startGroupEdit(&self) -> tresult {
+        kResultOk
+    }
+
+    unsafe fn finishGroupEdit(&self) -> tresult {
         kResultOk
     }
 }
@@ -399,6 +429,7 @@ unsafe fn query_interface(obj: *mut FUnknown, iid: &TUID) -> Option<*mut c_void>
 
 #[cfg(test)]
 mod tests {
+    use super::super::params::bridge;
     use super::*;
     use vst3::Steinberg::Vst::Event_::EventTypes_::kNoteOnEvent;
     use vst3::Steinberg::Vst::{Event__type0, NoteOnEvent};
@@ -421,6 +452,31 @@ mod tests {
                 },
             },
         }
+    }
+
+    fn handler() -> ComponentHandler {
+        let (params, _receiver) = bridge();
+        ComponentHandler::new(params, Arc::new(OnceLock::new()))
+    }
+
+    #[test]
+    fn set_dirty_reports_a_change_and_ignores_a_save() {
+        let handler = handler();
+        // SAFETY: plain calls on a live handler, as a plugin makes them.
+        unsafe {
+            handler.setDirty(0);
+            handler.setDirty(1);
+        }
+        assert_eq!(handler.take_gestures(), vec![ParameterGesture::Dirty]);
+    }
+
+    #[test]
+    fn set_dirty_while_the_host_sets_a_parameter_is_not_reported() {
+        let handler = handler();
+        handler.host_edit.store(true, Ordering::Relaxed);
+        // SAFETY: as above.
+        unsafe { handler.setDirty(1) };
+        assert!(handler.take_gestures().is_empty());
     }
 
     #[test]

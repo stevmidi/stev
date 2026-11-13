@@ -820,19 +820,20 @@ shared from there rather than copied (`420-large-projects.md` decision 7):
   before activate** (a fresh instance is expected to receive its preset there).
   A corrupt / partial blob is logged and ignored — the plugin stays at its
   default, project load never fails.
-- `StevClapHost` declares the `state` host extension; its `mark_dirty` is a
-  log-only no-op (state is captured fresh on every save, not tracked). A preset
-  counts for the unsaved prompt through `rescan` instead (`060` § Unsaved
-  changes).
+- `StevClapHost` declares the `state` host extension; its `mark_dirty` sets a
+  flag `take_parameter_gestures` reports as `ParameterGesture::Dirty`, which the
+  unsaved prompt counts (state itself is captured fresh on every save). A
+  preset counts through `rescan` too (`060` § Unsaved changes).
 - The restore path passes `picked: None` to `load_slot_instrument` so it
   does **not** re-emit `SetTrackOutput` — the sequencer already holds
   the right `TrackOutput` (with its state) from `apply_to_sequencer`, and
   re-announcing would clobber it.
-- Presets are captured only on ⌘S. Changes made in an editor after the last
-  save are not persisted on quit, and don't trigger the unsaved-changes
-  prompt on their own: many plugins write a different state blob for the
-  same preset every time, so the check leaves state out (`060` § Unsaved
-  changes).
+- Presets are written to the project only by a save. A change made in an
+  editor after the last save prompts on quit when the plugin reports it: a
+  preset, a turned control, or its own dirty flag (`060` § Unsaved changes;
+  the blobs themselves are left out, since many plugins write a different one
+  for the same preset every time). A plugin that reports nothing doesn't
+  prompt.
 - **Native CLAP notes (#21).** Each load logs the dialects of every note input.
   If the first one accepts `CLAP`, `ClapVoice` holds a `NoteIds` and sends notes
   as `NoteOnEvent` / `NoteOffEvent` with ids, on port 0; pitch bend, CCs and
@@ -948,11 +949,10 @@ shared from there rather than copied (`420-large-projects.md` decision 7):
   missing: `PluginWindow` has no `Resizable` style mask and no delegate, so
   the user cannot drag-resize the window and have that forwarded back to the
   plugin via `gui.set_size` / `gui.adjust_size`.
-- **Plugin state is captured only on ⌘S** — a preset changed in an editor after
-  the last save is not persisted on quit (no autosave hook), and the
-  unsaved-changes prompt doesn't catch it (`060` § Unsaved changes: state
-  blobs aren't stable enough to compare; the plugins' own change
-  notifications would be the way). The `params`
+- **Plugin state is captured only on a save** (and for the crash recovery
+  copy, `410`) — the unsaved prompt hears of a change only from the plugin
+  (a preset, a turn, its dirty flag; `060` § Unsaved changes), so a plugin
+  that changes its sound silently is lost on a quit without ⌘S. The `params`
   extension is still not implemented; `state` alone covers the common synths.
 - **Stuck-note safety** — `Sequencer::release_instrument_notes` (transport stop /
   seek) sends an explicit Note Off (channel 0) for exactly the clip-driven notes

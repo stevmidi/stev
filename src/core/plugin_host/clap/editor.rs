@@ -254,9 +254,10 @@ impl InstrumentEditor for ClapEditor {
         self.params.follow(id, value);
     }
 
-    /// What `process` reported, then that a rescan changed the values. It is read
-    /// here because the plugin can't be called back from inside its own
-    /// `rescan`, and this runs whether or not the editor is open.
+    /// What `process` reported, then that a rescan changed the values, then
+    /// that the plugin marked its state dirty. It is read here because the
+    /// plugin can't be called back from inside its own `rescan`, and this
+    /// runs whether or not the editor is open.
     fn take_parameter_gestures(&mut self) -> Vec<ParameterGesture> {
         let mut gestures = self.params.take_gestures();
         if self.instance.access_handler(|mt| mt.take_values_rescan())
@@ -266,6 +267,9 @@ impl InstrumentEditor for ClapEditor {
             self.params
                 .reread(|id| params.get_value(&plugin, ClapId::from_raw(id)?));
             gestures.push(ParameterGesture::ValuesChanged);
+        }
+        if self.instance.access_handler(|mt| mt.take_state_dirty()) {
+            gestures.push(ParameterGesture::Dirty);
         }
         gestures
     }

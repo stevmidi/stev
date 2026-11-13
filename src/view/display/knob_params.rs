@@ -134,10 +134,13 @@ impl Display {
     /// (`400-parameter-knobs.md` decision 3). A turn of a parameter one of
     /// that track's knobs holds is the hand's, as a drag is: its start and
     /// end hold the knob against playback (decision 6), and its moves are
-    /// counted by the unsaved prompt and captured (decisions 9 and 10). New
-    /// values all at once are a preset, which the unsaved prompt counts too,
-    /// and whose state goes to the crash recovery copy once the plugin is
-    /// quiet (`410-crash-recovery.md` decision 6). Anything else is the plugin's own business.
+    /// counted by the unsaved prompt and captured (decisions 9 and 10). A
+    /// turn of any other parameter is counted by the unsaved prompt alone,
+    /// never captured. New values all at once are a preset, and a plugin
+    /// marking its state dirty is its word that something changed: the
+    /// unsaved prompt counts both. Every one of these sends the plugin's
+    /// state to the crash recovery copy once the plugin is quiet
+    /// (`410-crash-recovery.md` decision 6).
     fn handle_parameter_gesture(&mut self, slot: usize, gesture: ParameterGesture) {
         let Some(track_idx) = self.tracks.iter().position(|lane| lane.slot == slot) else {
             return;
@@ -156,14 +159,20 @@ impl Display {
             ParameterGesture::Move(param, value, at_ns) => {
                 if let Some(knob) = knob_with_id(&self.tracks[track_idx].knob_params, param) {
                     self.count_knob_turn(track_idx, knob, value, at_ns);
+                } else {
+                    self.input_event_tx
+                        .send(InputEvent::PluginStateChanged { track_idx })
+                        .ok();
                 }
             }
             ParameterGesture::End(param) => {
                 if let Some(knob) = knob_with_id(&self.tracks[track_idx].knob_params, param) {
                     self.release_knob(track_idx, knob);
+                } else {
+                    self.capture_soon(slot);
                 }
             }
-            ParameterGesture::ValuesChanged => {
+            ParameterGesture::ValuesChanged | ParameterGesture::Dirty => {
                 self.input_event_tx
                     .send(InputEvent::PluginStateChanged { track_idx })
                     .ok();

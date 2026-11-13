@@ -7,7 +7,8 @@
 //! - **gui** — floating-window lifecycle callbacks (`closed`, resize requests).
 //! - **timer** — the plugin registers periodic timers that the UI thread ticks
 //!   from [`ClapEditor::pump`](crate::core::plugin_host::InstrumentEditor::pump).
-//! - **state** — the plugin flags unsaved changes (`mark_dirty`).
+//! - **state** — the plugin flags unsaved changes (`mark_dirty`), which the
+//!   unsaved prompt counts.
 //! - **params** — `request_flush` is `request_process`: the engine's callback
 //!   never stops, so waking the voice gets the plugin its `process` call, which
 //!   does what a flush would, and `flush` itself is never called. `rescan` marks
@@ -281,6 +282,9 @@ pub(crate) struct ClapHostMainThread<'a> {
     /// [`take_values_rescan`](Self::take_values_rescan). The plugin is inside
     /// a call of its own then, so it isn't read back from there.
     values_rescan: Cell<bool>,
+    /// Set by `mark_dirty`; drained by
+    /// [`take_state_dirty`](Self::take_state_dirty), as `values_rescan` is.
+    state_dirty: Cell<bool>,
 }
 
 impl<'a> ClapHostMainThread<'a> {
@@ -290,6 +294,7 @@ impl<'a> ClapHostMainThread<'a> {
             shared,
             timers: RefCell::new(Timers::default()),
             values_rescan: Cell::new(false),
+            state_dirty: Cell::new(false),
         }
     }
 
@@ -309,19 +314,27 @@ impl<'a> ClapHostMainThread<'a> {
     pub(crate) fn take_values_rescan(&self) -> bool {
         self.values_rescan.take()
     }
+
+    /// Clears and returns whether the plugin marked its state dirty since
+    /// the last call.
+    pub(crate) fn take_state_dirty(&self) -> bool {
+        self.state_dirty.take()
+    }
 }
 
 impl<'a> MainThreadHandler<'a> for ClapHostMainThread<'a> {}
 
 impl<'a> HostStateImpl for ClapHostMainThread<'a> {
-    /// The plugin says its state changed since the last save/load. We capture
-    /// the state fresh from the editor on every project save (see
-    /// [`ClapEditor::save_state`](crate::core::plugin_host::InstrumentEditor::save_state)),
-    /// so there is nothing to track here — just log it. The unsaved prompt
-    /// doesn't use it either: it fires for any edit, and a preset is heard
-    /// through `rescan` (`060-persistence.md` § Unsaved changes).
+    /// The plugin says its state changed since the last save/load. Marked
+    /// for [`ClapEditor`](super::ClapEditor) to report as
+    /// [`ParameterGesture::Dirty`](crate::core::plugin_host::editor::ParameterGesture::Dirty),
+    /// which the unsaved prompt counts (`060-persistence.md` § Unsaved
+    /// changes), and the UI woken to read it. The state itself is captured
+    /// fresh on every save.
     fn mark_dirty(&self) {
         debug!("clap host: plugin marked its state dirty");
+        self.state_dirty.set(true);
+        self.shared.wake_ui();
     }
 }
 
@@ -427,6 +440,17 @@ mod tests {
     fn shared_and_wake() -> (ClapHostShared, Arc<UiWake>) {
         let wake = Arc::new(UiWake::new(Arc::new(OnceLock::new())));
         (ClapHostShared::new(Arc::clone(&wake)), wake)
+    }
+
+    #[test]
+    fn a_dirty_state_is_taken_exactly_once_and_wakes_the_ui() {
+        let (shared, wake) = shared_and_wake();
+        let main = ClapHostMainThread::new(&shared);
+        assert!(!main.take_state_dirty());
+        main.mark_dirty();
+        assert!(wake.take());
+        assert!(main.take_state_dirty());
+        assert!(!main.take_state_dirty());
     }
 
     #[test]
