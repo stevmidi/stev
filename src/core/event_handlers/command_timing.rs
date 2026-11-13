@@ -541,6 +541,15 @@ const CASES: &[Case] = &[
         },
     },
     Case {
+        name: "CopyRange (all, a bar on)",
+        setup: none,
+        command: |h| SequencerCommand::CopyRange {
+            rect: everything(h),
+            delta_ticks: BAR,
+            delta_tracks: 0,
+        },
+    },
+    Case {
         name: "ProjectAction::New",
         setup: none,
         command: |_| SequencerCommand::ProjectAction {

@@ -621,6 +621,19 @@ pub(crate) enum InputEvent {
         /// Lane shift, already clamped so the track span stays on the lanes.
         delta_tracks: i32,
     },
+    /// Arranger band drag — whole-clip or marquee — released with ⌥ held:
+    /// copy the grabbed block there and leave the source
+    /// (`460-copy-drag.md`, `CopyRangeEdit`, undoable). A whole-clip drag
+    /// names the clip's own span and track as `rect`. ⌥ is read live
+    /// through the drag and decided at release.
+    CopyRange {
+        /// The grabbed block: the marquee, or the clip's span on its track.
+        rect: TimeSelectionRect,
+        /// Grid-snapped tick shift, `>= -rect.start`.
+        delta_ticks: i32,
+        /// Lane shift, already clamped so the track span stays on the lanes.
+        delta_tracks: i32,
+    },
     /// The header's BPM chip: a typed value (Enter in its field) or a step of
     /// a vertical drag on it, already an absolute tempo. One undo step per
     /// typed value or per drag (`SetTempoEdit`).

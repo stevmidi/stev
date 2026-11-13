@@ -238,7 +238,8 @@ pub(super) enum ClipMoveKind {
 /// have armed a marquee nudge — either way doubling as the drag-active flag.
 /// Purely a ghost preview: nothing here reaches the sequencer until
 /// `MouseReleased` (mouse drag) or `MoveModifierReleased` (keyboard nudge) sends one
-/// `InputEvent::MoveClip` / `MoveRange` — see `020-views-and-state.md`.
+/// `InputEvent::MoveClip` / `MoveRange`, or `CopyRange` with ⌥ held at a
+/// mouse release — see `020-views-and-state.md`.
 ///
 /// The dragged block is a tick span × an inclusive track range: the clip's
 /// own bounds on its one track for a `Clip` drag, the marquee's rect for a
@@ -278,6 +279,12 @@ pub(super) struct ClipMoveDrag {
     /// Latched once the pointer has moved `DRAG_THRESHOLD_PX` off
     /// the press point — before that a press is just a band click.
     pub(super) dragging: bool,
+    /// ⌥ is held right now, so a release copies the block instead of
+    /// moving it (`460-copy-drag.md` decision 1). Read live each frame
+    /// (`Display::sync_clip_move_copy`), never latched at press: the key can
+    /// go down or up mid-drag and the release does what it says then.
+    /// Always false for a keyboard nudge.
+    pub(super) copy: bool,
     /// Live ghost position: the grid-snapped start tick of the block under
     /// the pointer.
     pub(super) target_start_tick: i32,

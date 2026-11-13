@@ -575,6 +575,19 @@ pub(crate) enum SequencerCommand {
         /// Lane shift.
         delta_tracks: i32,
     },
+    /// Arranger band drag released with ⌥ held: copy everything inside
+    /// `rect` to `delta_ticks` / `delta_tracks` away, leaving the source,
+    /// carving out what the copy lands on (`CopyRangeEdit`, undoable,
+    /// `460-copy-drag.md`). A whole-clip drag sends the clip's own span and
+    /// track as the rect. The selection follows the copy.
+    CopyRange {
+        /// The grabbed block, frozen at press time.
+        rect: TimeSelectionRect,
+        /// Grid-snapped tick shift.
+        delta_ticks: i32,
+        /// Lane shift.
+        delta_tracks: i32,
+    },
 
     // --- Project ---
     /// Run `action` — a new project, a load, quitting — unless

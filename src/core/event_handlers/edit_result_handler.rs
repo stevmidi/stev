@@ -160,6 +160,20 @@ impl EventHandlers {
                 );
                 self.set_marquee_workflow(sequencer, new_selection);
             }
+            EditResult::RangeCopied {
+                carve_updated,
+                carve_added,
+                carve_removed,
+                pasted,
+                new_selection,
+            } => {
+                self.copy_range_workflow(
+                    sequencer,
+                    CarveResult::new(&carve_updated, &carve_added, &carve_removed),
+                    &pasted,
+                    new_selection,
+                );
+            }
             EditResult::ClipMoved {
                 from,
                 to,
@@ -466,6 +480,46 @@ mod tests {
             assert_eq!(h.sequencer.selected_track_index(), Some(0), "{name}");
             assert_eq!(marquee_sent(&h), Some(Some(copy)), "{name}");
         }
+    }
+
+    /// A ⌥-drag copy leaves the selection on the copy — cursor on its
+    /// start, its track, the copy as lead, the marquee shifted onto it —
+    /// so drags chain; `⌘Z` puts back the selection from before the drag
+    /// and redo the one after (`460-copy-drag.md` decision 4).
+    #[test]
+    fn a_copy_drag_selects_the_copy_and_undoes_to_the_source() {
+        let marquee = rect(0, 1920, 0, 0);
+        let (mut h, source) = harness_with(0, marquee);
+        let mut record: Record<UndoStep> = Record::new();
+        let drag = SequencerCommand::CopyRange {
+            rect: marquee,
+            delta_ticks: 3840,
+            delta_tracks: 1,
+        };
+        run_command(&mut h, &mut record, drag);
+        let copy_rect = rect(3840, 5760, 1, 1);
+        assert_eq!(h.sequencer.marquee(), Some(copy_rect));
+        assert_eq!(h.sequencer.cursor_tick(), 3840);
+        assert_eq!(h.sequencer.selected_track_index(), Some(1));
+        let copy = h.sequencer.selected_clip_id().unwrap();
+        assert_ne!(copy, source);
+        assert!(h.sequencer.tracks()[0].get_clip_by_id(source).is_some());
+        assert!(h.sequencer.tracks()[1].get_clip_by_id(copy).is_some());
+        move_on(&mut h);
+
+        run_command(&mut h, &mut record, SequencerCommand::Undo);
+        assert_eq!(h.sequencer.cursor_tick(), 0);
+        assert_eq!(h.sequencer.selected_track_index(), Some(0));
+        assert_eq!(h.sequencer.selected_clip_id(), Some(source));
+        assert_eq!(marquee_sent(&h), Some(Some(marquee)));
+        assert!(h.sequencer.tracks()[1].clips().is_empty());
+
+        move_on(&mut h);
+        run_command(&mut h, &mut record, SequencerCommand::Redo);
+        assert_eq!(h.sequencer.cursor_tick(), 3840);
+        assert_eq!(h.sequencer.selected_track_index(), Some(1));
+        assert_eq!(h.sequencer.selected_clip_id(), Some(copy));
+        assert_eq!(marquee_sent(&h), Some(Some(copy_rect)));
     }
 
     /// A marquee move's undo puts the cursor back where the move found it,

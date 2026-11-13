@@ -40,9 +40,9 @@ mod track_edits;
 mod undo_step;
 
 pub(crate) use clip_edits::{
-    CommitClipEdit, CreateClipsEdit, DeleteInRangeEdit, DeleteTimeEdit, DuplicateClipsEdit,
-    DuplicateTimeEdit, InsertSilenceEdit, MoveClipEdit, MoveRangeEdit, MuteInRangeEdit,
-    PasteClipsEdit, ResizeClipEdit, RetimeClipEdit, SplitClipsEdit,
+    CommitClipEdit, CopyRangeEdit, CreateClipsEdit, DeleteInRangeEdit, DeleteTimeEdit,
+    DuplicateClipsEdit, DuplicateTimeEdit, InsertSilenceEdit, MoveClipEdit, MoveRangeEdit,
+    MuteInRangeEdit, PasteClipsEdit, ResizeClipEdit, RetimeClipEdit, SplitClipsEdit,
 };
 pub(crate) use event_edits::{
     ClearControllerSpanEdit, DeleteSelectedEventsEdit, DragEventsVelocityEdit, DragNotesEdit,
@@ -262,6 +262,25 @@ pub(crate) enum EditResult {
         /// The copied clips added after the marquee.
         pasted: Vec<ClipMetadata>,
         /// Arranger time selection the view should advance to.
+        new_selection: TimeSelectionRect,
+    },
+    /// Forward direction of a ⌥-drag copy (`CopyRangeEdit`, the arranger
+    /// band drag released with ⌥ held): exactly `ClipsPasted`'s buckets —
+    /// it *is* a `PasteClipsEdit` — plus `new_selection`, the grabbed rect
+    /// shifted by the drag. Unlike `ClipsDuplicated`, whose cursor stays put,
+    /// the selection follows the copy as a move's does (cursor on its start,
+    /// its first track, the copy as lead), so ⌥-drags chain. Its undo is the
+    /// paste's own `ClipsUnpasted`.
+    RangeCopied {
+        /// Range-delete: trimmed originals (ids kept).
+        carve_updated: Vec<ClipMetadata>,
+        /// Range-delete: new right-hand pieces.
+        carve_added: Vec<ClipMetadata>,
+        /// Range-delete: clips cleared whole.
+        carve_removed: Vec<ClipMetadata>,
+        /// The copied clips.
+        pasted: Vec<ClipMetadata>,
+        /// Where the copy sits: the marquee after the drop.
         new_selection: TimeSelectionRect,
     },
     /// Forward direction of a clip move (`MoveClipEdit`, the arranger band
@@ -680,6 +699,7 @@ macro_rules! sequencer_edit_dispatch {
 
 sequencer_edit_dispatch!(
     CommitClip(CommitClipEdit),
+    CopyRange(CopyRangeEdit),
     CreateClips(CreateClipsEdit),
     DuplicateClips(DuplicateClipsEdit),
     DuplicateTime(DuplicateTimeEdit),
@@ -724,6 +744,7 @@ impl SequencerEdit {
     pub(crate) fn restores_view(&self) -> bool {
         match self {
             SequencerEdit::CommitClip(_)
+            | SequencerEdit::CopyRange(_)
             | SequencerEdit::CreateClips(_)
             | SequencerEdit::DuplicateClips(_)
             | SequencerEdit::DuplicateTime(_)

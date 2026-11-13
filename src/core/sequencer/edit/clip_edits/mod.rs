@@ -5,7 +5,7 @@
 //! [`EditResult`] describing exactly which clips were
 //! updated / added / removed so the handler fires minimal UI events. The
 //! compound edits (`InsertSilenceEdit`, `DeleteTimeEdit`, `DuplicateTimeEdit`,
-//! `DuplicateClipsEdit`, `PasteClipsEdit` (also Merge Clips and the MIDI clip import), `MuteInRangeEdit`, `MoveClipEdit`,
+//! `DuplicateClipsEdit`, `CopyRangeEdit`, `PasteClipsEdit` (also Merge Clips and the MIDI clip import), `MuteInRangeEdit`, `MoveClipEdit`,
 //! `MoveRangeEdit`) are built by composing the simpler ones (`SplitClipsEdit`,
 //! `DeleteInRangeEdit`); `ResizeClipEdit` moves one clip's edges
 //! and nothing else, and `RetimeClipEdit` retimes one clip with the tempo
@@ -26,6 +26,7 @@ use super::super::Sequencer;
 use super::EditResult;
 
 mod commit_clip;
+mod copy_range;
 mod create_clips;
 mod delete_in_range;
 mod delete_time;
@@ -43,6 +44,7 @@ mod retime_clip;
 mod split;
 
 pub(crate) use commit_clip::CommitClipEdit;
+pub(crate) use copy_range::CopyRangeEdit;
 pub(crate) use create_clips::CreateClipsEdit;
 pub(crate) use delete_in_range::DeleteInRangeEdit;
 pub(crate) use delete_time::DeleteTimeEdit;

@@ -407,6 +407,29 @@ impl EventHandlers {
         self.select_range_workflow(sequencer, new_selection, moved_to);
     }
 
+    /// Forward direction of a ⌥-drag copy (`CopyRangeEdit`): a paste's
+    /// events (`carve` mirrors `paste_clips_workflow`'s buckets), then the
+    /// selection follows the copy as `move_range_workflow`'s follows the
+    /// block — cursor on its start, its first track, the copy under the
+    /// cursor as lead, the marquee on `new_selection` — so a second ⌥-drag
+    /// inside it copies the copy (`460-copy-drag.md` decision 4). Cleared
+    /// first, as for a move, so the reselect is a real state change.
+    pub(super) fn copy_range_workflow(
+        &self,
+        sequencer: &mut Sequencer,
+        carve: CarveResult,
+        pasted: &[ClipMetadata],
+        new_selection: TimeSelectionRect,
+    ) {
+        sequencer.reset();
+        self.clear_clip_selection_workflow(sequencer);
+
+        self.send_carve_ui_events(&carve);
+        self.send_clips_added_ui_event(pasted);
+
+        self.select_range_workflow(sequencer, new_selection, pasted);
+    }
+
     /// Undo of a marquee move: `unmoved` is every piece at the destination
     /// it is leaving, `restored` every source clip back at its pre-move
     /// bounds (`ClipAdded`'s add-or-replace covers a leftover shape the UI

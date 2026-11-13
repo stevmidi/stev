@@ -666,6 +666,18 @@ impl EventHandlers {
                 });
             }
 
+            InputEvent::CopyRange {
+                rect,
+                delta_ticks,
+                delta_tracks,
+            } => {
+                self.send_sequencer(SequencerCommand::CopyRange {
+                    rect: *rect,
+                    delta_ticks: *delta_ticks,
+                    delta_tracks: *delta_tracks,
+                });
+            }
+
             InputEvent::SetTrackVolume {
                 track_idx,
                 volume_db,

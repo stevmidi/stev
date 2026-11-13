@@ -22,6 +22,8 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ### Added
 
+- Hold ⌥ while dragging a clip by its header, or a marquee selection, to drop a copy and leave the original where it was, as in Finder, Logic and Ableton. The pointer shows the copy cursor while ⌥ is held, and you can press or let go of ⌥ during the drag: the release decides. The copy overwrites what it lands on, stays selected so it can be ⌥-dragged again, and undoes in one step.
+
 - Copy, cut and paste projects in the browser. Select a project and press ⌘C or ⌘X, then select a folder (or a project in it) and press ⌘V: a copy is copied there, a cut is moved. ⌥⌘V moves a copied project too, as in Finder. A name that's taken gets `_2`, so ⌘C then ⌘V in the same folder duplicates a project. Nothing moves until you paste: the cut project shows dimmed, and Esc cancels. A moved project stays in Recent, and if it's the open one, ⌘S saves it in its new folder and Save As starts there. Only projects copy and move, not folders, templates or clips.
 
 ### Changed

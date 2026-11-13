@@ -770,6 +770,7 @@ impl Display {
             press_track_idx: track_idx,
             grab_offset_ticks: press_tick - start_tick,
             dragging: false,
+            copy: false,
             target_start_tick: start_tick,
             delta_tracks: 0,
             press_x: x,
@@ -833,6 +834,7 @@ impl Display {
                     press_track_idx: rect.track_start,
                     grab_offset_ticks: 0,
                     dragging: true,
+                    copy: false,
                     target_start_tick: nudged_ghost_start(rect.start, step),
                     delta_tracks: 0,
                     press_x: 0.0,
@@ -906,9 +908,10 @@ impl Display {
         });
     }
 
-    /// Release of a clip band drag: the single commit point. Sends one
-    /// `InputEvent::MoveClip` (whole-clip drag) or `InputEvent::MoveRange`
-    /// (marquee drag) when the ghost actually sits somewhere new (past the
+    /// Release of a clip band drag: the single commit point. Sends the one
+    /// event `release_event` builds — `InputEvent::MoveClip` (whole-clip
+    /// drag), `InputEvent::MoveRange` (marquee drag) or, with ⌥ held,
+    /// `InputEvent::CopyRange` (either) — when the ghost actually sits somewhere new (past the
     /// drag threshold *and* off the block's own position); a drag returned
     /// home (crossed the threshold, ended back at zero net delta) sends
     /// nothing either — a completed drag, just a no-op one, same as a
@@ -934,25 +937,7 @@ impl Display {
         let Some(drag) = self.gesture.clip_move_drag.take() else {
             return;
         };
-        if drag.dragging && drag.has_moved() {
-            let event = match drag.kind {
-                ClipMoveKind::Clip(clip_id) => InputEvent::MoveClip {
-                    track_idx: drag.track_start,
-                    clip_id,
-                    to_track_idx: (drag.track_start as i32 + drag.delta_tracks) as usize,
-                    to_start_tick: drag.target_start_tick,
-                },
-                ClipMoveKind::Marquee => InputEvent::MoveRange {
-                    rect: TimeSelectionRect {
-                        start: drag.start_tick,
-                        end: drag.end_tick,
-                        track_start: drag.track_start,
-                        track_end: drag.track_end,
-                    },
-                    delta_ticks: drag.delta_ticks(),
-                    delta_tracks: drag.delta_tracks,
-                },
-            };
+        if let Some(event) = release_event(&drag) {
             self.input_event_tx.send(event).ok();
         } else if !drag.dragging
             && drag.kind == ClipMoveKind::Marquee
@@ -966,6 +951,18 @@ impl Display {
                 .ok();
         }
         self.update_clip_move_hover(drag.last_x, drag.last_y);
+    }
+
+    /// Takes ⌥'s state for a live mouse band drag, once a frame before the
+    /// input is handled (`460-copy-drag.md`): pressing or releasing ⌥ with
+    /// the pointer still sends no `MouseMoved`, so the drag can't take it
+    /// from the motion alone. A keyboard nudge never copies.
+    pub(in crate::view::display) fn sync_clip_move_copy(&mut self, alt: bool) {
+        if let Some(drag) = self.gesture.clip_move_drag.as_mut()
+            && !drag.via_keyboard
+        {
+            drag.copy = alt;
+        }
     }
 
     /// Updates which clip band (if any) is under the pointer, for the grab
@@ -1528,14 +1525,54 @@ fn clip_hull_selection(
         })
 }
 
+/// The event a band drag's release sends, `None` when the ghost never left
+/// the block's own position (a click, or a drag returned home). With ⌥ held
+/// (`ClipMoveDrag::copy`) it is a copy of the grabbed block, the clip's own
+/// span and track for a whole-clip drag (`460-copy-drag.md` decision 5);
+/// otherwise a move, by id for a whole clip.
+fn release_event(drag: &ClipMoveDrag) -> Option<InputEvent> {
+    if !(drag.dragging && drag.has_moved()) {
+        return None;
+    }
+    let rect = TimeSelectionRect {
+        start: drag.start_tick,
+        end: drag.end_tick,
+        track_start: drag.track_start,
+        track_end: drag.track_end,
+    };
+    Some(match drag.kind {
+        _ if drag.copy => InputEvent::CopyRange {
+            rect,
+            delta_ticks: drag.delta_ticks(),
+            delta_tracks: drag.delta_tracks,
+        },
+        ClipMoveKind::Clip(clip_id) => InputEvent::MoveClip {
+            track_idx: drag.track_start,
+            clip_id,
+            to_track_idx: (drag.track_start as i32 + drag.delta_tracks) as usize,
+            to_start_tick: drag.target_start_tick,
+        },
+        ClipMoveKind::Marquee => InputEvent::MoveRange {
+            rect,
+            delta_ticks: drag.delta_ticks(),
+            delta_tracks: drag.delta_tracks,
+        },
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         EDGE_SCROLL_MAX_SPEED, EDGE_SCROLL_MIN_SPEED, TimeSelectionRect, clamped_track_delta,
         clip_hull_selection, edge_scroll_speed, extended_edges, marquee_under_press,
         next_clip_edge, nudged_ghost_start, nudged_tick_selection, nudged_track_selection,
-        past_drag_threshold, shift_click_selection, snapped_move_start, snapped_span,
+        past_drag_threshold, release_event, shift_click_selection, snapped_move_start,
+        snapped_span,
     };
+    use uuid::Uuid;
+
+    use crate::core::input_event::InputEvent;
+    use crate::view::display::{ClipMoveDrag, ClipMoveKind};
 
     fn sel(
         start: i32,
@@ -1866,5 +1903,105 @@ mod tests {
     #[test]
     fn duplicate_span_inside_one_grid_step_is_none() {
         assert_eq!(snapped_span(500, 700, 480), None);
+    }
+
+    /// A mouse band drag over ticks 1000..2000 on track 2, latched and
+    /// released 480 ticks on and one lane down.
+    fn dragged(kind: ClipMoveKind, copy: bool) -> ClipMoveDrag {
+        ClipMoveDrag {
+            kind,
+            via_keyboard: false,
+            pressed_clip_id: None,
+            start_tick: 1000,
+            end_tick: 2000,
+            track_start: 2,
+            track_end: 2,
+            press_track_idx: 2,
+            grab_offset_ticks: 0,
+            dragging: true,
+            copy,
+            target_start_tick: 1480,
+            delta_tracks: 1,
+            press_x: 0.0,
+            press_y: 0.0,
+            last_x: 0.0,
+            last_y: 0.0,
+        }
+    }
+
+    /// Whether `event` copies the block `dragged` grabbed, 480 ticks on
+    /// and one lane down.
+    fn copies_the_block(event: Option<InputEvent>) -> bool {
+        matches!(
+            event,
+            Some(InputEvent::CopyRange {
+                rect,
+                delta_ticks: 480,
+                delta_tracks: 1,
+            }) if Some(rect) == sel(1000, 2000, 2, 2)
+        )
+    }
+
+    /// With ⌥ held at release both kinds of drag copy, a whole clip as its
+    /// own span on its track.
+    #[test]
+    fn a_release_with_alt_copies_the_block() {
+        let clip = ClipMoveKind::Clip(Uuid::new_v4());
+        assert!(copies_the_block(release_event(&dragged(clip, true))));
+        assert!(copies_the_block(release_event(&dragged(
+            ClipMoveKind::Marquee,
+            true
+        ))));
+    }
+
+    #[test]
+    fn a_release_without_alt_moves_the_block() {
+        let id = Uuid::new_v4();
+        assert!(matches!(
+            release_event(&dragged(ClipMoveKind::Clip(id), false)),
+            Some(InputEvent::MoveClip {
+                track_idx: 2,
+                clip_id,
+                to_track_idx: 3,
+                to_start_tick: 1480,
+            }) if clip_id == id
+        ));
+        assert!(matches!(
+            release_event(&dragged(ClipMoveKind::Marquee, false)),
+            Some(InputEvent::MoveRange {
+                rect,
+                delta_ticks: 480,
+                delta_tracks: 1,
+            }) if Some(rect) == sel(1000, 2000, 2, 2)
+        ));
+    }
+
+    /// ⌥ pressed or let go mid-drag: the state at release decides, not
+    /// the state at press.
+    #[test]
+    fn alt_changed_mid_drag_decides_by_its_state_at_release() {
+        let mut drag = dragged(ClipMoveKind::Marquee, true);
+        drag.copy = false;
+        assert!(matches!(
+            release_event(&drag),
+            Some(InputEvent::MoveRange { .. })
+        ));
+        drag.copy = true;
+        assert!(copies_the_block(release_event(&drag)));
+    }
+
+    /// A ⌥-click, or a ⌥-drag returned home, copies nothing.
+    #[test]
+    fn an_alt_release_with_no_net_delta_copies_nothing() {
+        let mut click = dragged(ClipMoveKind::Marquee, true);
+        click.dragging = false;
+        click.target_start_tick = 1000;
+        click.delta_tracks = 0;
+        assert!(release_event(&click).is_none());
+        let home = ClipMoveDrag {
+            dragging: true,
+            ..click
+        };
+        assert!(release_event(&home).is_none());
     }
 }

@@ -1293,6 +1293,9 @@ impl eframe::App for Display {
         }
 
         self.reset_clip_frame_snapshots();
+        // ⌥ decides a band drag's release, so it is read before the release
+        // is handled, and every frame: a still pointer sends no motion.
+        self.sync_clip_move_copy(ctx.input(|i| i.modifiers.alt));
         self.handle_input_events(ctx);
         // A held pitch drag past the note area's edge keeps scrolling with
         // the pointer still, so it asks for the next frame itself.
@@ -1369,12 +1372,14 @@ impl eframe::App for Display {
         // the arrow between press and release. Only for a *mouse* drag: a
         // keyboard nudge (`via_keyboard`) has nothing in hand, so the
         // pointer keeps its ordinary arrow / hover-hand meaning throughout.
-        if self
-            .gesture
-            .clip_move_drag
-            .is_some_and(|drag| !drag.via_keyboard)
-        {
-            ctx.set_cursor_icon(CursorIcon::Grabbing);
+        // With ⌥ held once the drag has latched, the copy cursor, so the
+        // release's meaning is on screen (a ⌥-click never flashes it).
+        if let Some(drag) = self.gesture.clip_move_drag.filter(|d| !d.via_keyboard) {
+            ctx.set_cursor_icon(if drag.dragging && drag.copy {
+                CursorIcon::Copy
+            } else {
+                CursorIcon::Grabbing
+            });
         } else if self.gesture.clip_move_hover.is_some() {
             ctx.set_cursor_icon(CursorIcon::Grab);
         }
