@@ -10,7 +10,12 @@
 //!   dance VST3 requires to wire a component to its edit controller.
 //! - [`voice`] is the `Send` audio-thread half, [`editor`] the `!Send`
 //!   main-thread half, and [`events`] turns MIDI into VST3 note events.
-//! - [`host`] is the set of COM objects handed *to* the plugin.
+//! - [`host`] is the set of COM objects handed *to* the plugin, and
+//!   [`message`] the `IMessage` / `IAttributeList` objects the two halves
+//!   exchange messages through.
+//! - [`params`] carries a parameter change from the edit controller to the
+//!   audio half; [`state`] saves and restores the preset, through the
+//!   in-memory `IBStream` in [`stream`].
 //!
 //! See `docs/180-vst3-host.md`.
 

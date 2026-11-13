@@ -1,5 +1,5 @@
 //! `EventHandlers` workflows for the take session (`archive/290-framing-a-take.md`
-//! § Phase 2, `sequencer/take_framing.rs`): the stopped `/` into a lead clip
+//! § Phase 2, `sequencer/capture/take_framing.rs`): the stopped `/` into a lead clip
 //! opens it, and while it is open [`take_framing_command`](EventHandlers::take_framing_command)
 //! stands in front of every [`SequencerCommand`]. The session has no keys of
 //! its own: Enter inserts, Esc cancels, and `[`/`]`, the window band and the

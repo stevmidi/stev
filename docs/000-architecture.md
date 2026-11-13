@@ -38,6 +38,17 @@ The `"audio-engine"` thread (`src/core/audio/`) builds the `cpal` default-output
 src/core/
   config.rs              — Constants (BPM_DEFAULT=90, BARS_IN_VIEWPORT=32 (default arranger zoom), ARRANGER_MIN_PX_PER_BEAT, MAX_PX_PER_BEAT + ZOOM_KEY_STEP (shared by the arranger and clip views), PHRASE_DETECTION_WINDOW_BARS=4, MAX_TRACKS=16 (capacity of every per-track array), DEFAULT_TRACK_COUNT=4, TEMPO_US_DEFAULT, etc.)
   time.rs                — Tick/bar/beat math, PPQN, MICROSECONDS_PER_MINUTE, tempo helpers, the `Meter` time signature (unit-tested)
+  clock.rs / timer.rs    — The "clock" thread's `Clock` (the BPM pulse) and the periodic firing source behind it
+  thread_priority.rs     — Best-effort scheduling priority for the timing threads, "clock" and "midiout"
+  timing_probe.rs        — Test-only: the ignored release test measuring clock jitter and MIDI-out lateness (see 260)
+  input_event.rs         — `InputEvent`, what the "main" thread hands `EventHandlers` each frame
+  keymap.rs              — The command keymap: every rebindable `Action`, its default chords, the key → command lookup
+  view_state.rs          — `ViewState`, which screen the app is showing
+  shared_atomics.rs / shared_channels.rs — Every piece of cross-thread state that isn't a channel message / every channel, created up front
+  setup.rs               — The `setup_*` construction helpers `main.rs` calls, one per subsystem
+  note_logger.rs         — The MIDI-out note-off safety net
+  update_check.rs        — The About tab's Check for updates (the "update-check" thread)
+  xorshift.rs            — A tiny dependency-free random generator (the agent bridge's humanising, the timing probe)
   audio/                 — Unified audio engine: "audio-engine" thread + one cpal stream, AudioSource trait, shared AudioClock, MetronomeSource (synthesized click voice), WavWriter (the audio export's stereo float WAV files, `130` § Audio export)
   metronome.rs           — Metronome: per-tick beat/click-class decision + mute gate (sequencer-thread-local), pushes ClickEvents to the engine ring
   plugin_host/           — macOS only. Per-track instrument plugin host: format-agnostic core (InstrumentMixer added to the audio engine as an AudioSource, InstrumentVoice/InstrumentEditor traits, transport snapshot, merged catalog, "plugin-host" voice-reclaim thread, the audio export's tap and "audio-export" writer thread) + one submodule per format (clap/, vst3/). vst3/ scans bundles in child processes (see 180). See 130-plugin-host.md
@@ -47,14 +58,14 @@ src/core/
   logging.rs             — the `log` backend (stderr + stev.log, rotated at launch to stev.1.log) and the panic hook; `080` § Logging
   settings.rs            — SettingsData (midi_in_port, midi_out_port, midi_out_offset_ms, agent_bridge, …); load_settings / update_settings → settings.json in paths::config_dir()
   midi/                  — input.rs (MidiInputForwarder + channel routing), input_tick.rs (sub-tick timestamping of live input — see 150-clock-position-sync.md), output.rs (MidiOutputConnection), out_queue.rs (MidiOutMessage + MidiOutQueue, the MIDI-out delay queue — see 160-midi-out-offset.md), message.rs (Midi3 = [u8;3] for the instrument route; note-edge and wheel parsing; `is_recorded`, what a take keeps off the input — see 090), port.rs (VIRTUAL_PORT_NAME, port_base_name)
-  project/               — dto.rs (serializable ProjectData + Sequencer mapping, ProjectSnapshot), fingerprint.rs (what counts as a change, hashed straight from the sequencer, unchanged clips' hashes reused), storage.rs (.stev filesystem CRUD), recovery.rs (the crash recovery copy on disk, the second-instance lock), writer.rs (the `"storage"` thread's jobs: saves and the copy's), smf.rs (.mid reader + writer)
-  sequencer/             — Sequencer state, capture, clip ops, region/phrase token logic, SequencerCommand enum, performance_lane (armed state, live-trigger routing)
-  event_handlers/        — EventHandlers: input_handler, transport_handler, sequencer_handler, performance_lane_handler; workflows split by concern — selection, clip_view, clip_lifecycle, clip_range_edits, edit_result_handler, project, command_helpers
+  project/               — dto.rs (serializable ProjectData + Sequencer mapping, ProjectSnapshot), fingerprint.rs (what counts as a change, hashed straight from the sequencer, unchanged clips' hashes reused), storage.rs (.stev filesystem CRUD), recovery.rs (the crash recovery copy on disk, the second-instance lock), writer.rs (the `"storage"` thread's jobs: saves and the copy's), smf.rs (.mid reader + writer), recent.rs (the recent projects), action.rs (`ProjectAction`, what the unsaved-changes prompt guards), staged.rs (`StagedProject`, a project whose plugins load before it is shown); test-only recovery_timing.rs and stress.rs
+  sequencer/             — Sequencer state, capture/ (the running and stopped `/`, phrase detection, the take session), region.rs (clip edges, the clip cursor), tempo.rs (Enter's tempo fit), clip ops, edit/ (the undo layer), SequencerCommand enum, performance_lane (armed state, live-trigger routing)
+  event_handlers/        — EventHandlers: input_handler, transport_handler, sequencer_handler, performance_lane_handler; workflows split by concern — selection, clip_view, clip_edges, clip_lifecycle, clip_range_edits, take_framing, tracks, edit_result_handler, project, save, recovery, audio_export, command_helpers, ui_helpers; test-only test_harness, command_timing, long_take_timing
   transport.rs           — TransportCommand / TransportEvent / TickOutcome enums (TickOutcome::Wrapped re-anchors a loop wrap synchronously in the tick pump)
 src/main.rs              — Wiring entrypoint; owns native_options() (eframe::NativeOptions)
 src/models/              — Clip, Event, Track, Region, PerformanceLane, Selection, ControllerTracker (controllers.rs — see 050 § Invariants) (pure data, no I/O)
-src/view/                — Display (egui/eframe rendering), InputPoller, UiEvent enum, computer_keyboard.rs (the letter keys as a piano: keymap + held notes, pure)
-src/shapes/ / metadata/  — Rendering primitives; render-side clip snapshots (ClipMetadata, ClipView) built by core
+src/view/              — Display (egui/eframe rendering; its clip / event shape models in display/clip_shape.rs and display/event_shape.rs), InputPoller, UiEvent enum, computer_keyboard.rs (the letter keys as a piano: keymap + held notes, pure), appkit.rs (macOS: the main window's content view, the app menu, quitting through the unsaved check), theme/ (the palettes and the UI font)
+src/metadata/          — Render-side clip snapshots (ClipMetadata, ClipView) built by core
 ```
 
 Key enums: `TransportCommand`, `TransportEvent`, `SequencerCommand`, `ViewState` (Arranger/Clip — the settings modal is an overlay on `Display`, not a view), `InputEvent`.
@@ -131,7 +142,7 @@ for the house style.
 
 Tests cover pure and pure-logic functions in `src/models/`, `src/core/time.rs`, `src/core/transport.rs`, and pure geometry helpers within `src/view/` that don't touch `Display` state (e.g. `src/view/display/rendering/piano_keys.rs`). The rest of `src/core/sequencer/` and `src/view/` (anything needing live channels, a running eframe context, or `Display` fields) is not unit-tested. All behavioural validation beyond unit tests is done by running the binary.
 
-**Capture fixtures** (`fixtures/captures/*.json`, `src/core/sequencer/capture_fixture.rs`): real takes kept as test data for the phrase-start detection. A debug build run with `STEV_CAPTURE_DIR=<dir>` dumps every stopped `/` capture there. After correcting the start with `[` and saving, `STEV_CAPTURE_DIR=<dir> STEV_PROJECT=<file.stev> cargo test extract_picked_starts -- --ignored --nocapture` writes the corrected start into each fixture. Copy the fixtures into `fixtures/captures/`, where `the_detection_picks_every_fixture_start` pins the detection to them (`220`).
+**Capture fixtures** (`fixtures/captures/*.json`, `src/core/sequencer/capture/capture_fixture.rs`): real takes kept as test data for the phrase-start detection. A debug build run with `STEV_CAPTURE_DIR=<dir>` dumps every stopped `/` capture there. After correcting the start with `[` and saving, `STEV_CAPTURE_DIR=<dir> STEV_PROJECT=<file.stev> cargo test extract_picked_starts -- --ignored --nocapture` writes the corrected start into each fixture. Copy the fixtures into `fixtures/captures/`, where `the_detection_picks_every_fixture_start` pins the detection to them (`220`).
 
 **Timing probe** (`src/core/timing_probe.rs`): an ignored release test that measures the `"clock"` timer's jitter and how late the real `"midiout"` loop writes clip messages, idle or under load, into a recorder or through a MIDI loopback. `cargo test --release timing_probe -- --ignored --nocapture`; settings and design in `260-porting.md` § Timing.
 

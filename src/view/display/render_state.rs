@@ -11,10 +11,11 @@
 use egui::Rect;
 
 use super::clip_lane::ClipLane;
+use super::clip_shape::ClipShape;
+use super::event_shape::EventShape;
 use super::pane::{ClipPanel, Pane};
 use super::status_message::StatusMessage;
 use crate::metadata::clip_view::ControllerMoves;
-use crate::shapes::{clip_shape::ClipShape, event_shape::EventShape};
 
 /// The render state, grouped out of [`Display`](super::Display). `canvas_rect`
 /// and the shape lists are rebuilt each frame / on `UiEvent`s; `arranger_scroll_x`

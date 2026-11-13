@@ -107,11 +107,6 @@ mod view {
     pub mod input_poller;
     pub mod theme;
 }
-/// Rendering primitives — the reconciled clip / event shape models.
-mod shapes {
-    pub mod clip_shape;
-    pub mod event_shape;
-}
 
 /// Resizable desktop window, `2560×1440` default inner size, vsync-paced render
 /// loop (`glow_options.vsync` — eframe's default, left as is). No fullscreen /

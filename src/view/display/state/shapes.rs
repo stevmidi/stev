@@ -1,6 +1,7 @@
 //! `Display`'s clip / event shape lists — the render models reconciled against
-//! `UiEvent`s (add / update / remove; select for events). The shapes are `ClipShape` /
-//! `EventShape` from [`crate::shapes`].
+//! `UiEvent`s (add / update / remove; select for events). The shapes are
+//! [`ClipShape`] /
+//! [`EventShape`].
 
 use super::*;
 
@@ -97,7 +98,7 @@ impl Display {
 mod tests {
     use uuid::Uuid;
 
-    use crate::{metadata::clip_metadata::ClipMetadata, shapes::clip_shape::ClipShape};
+    use crate::{metadata::clip_metadata::ClipMetadata, view::display::clip_shape::ClipShape};
 
     fn metadata(muted: bool) -> ClipMetadata {
         ClipMetadata {

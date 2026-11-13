@@ -2,8 +2,10 @@
 //! [`EditResult`] (what changed, so the handler can fire the right UI events).
 //!
 //! Every data mutation the user can undo is an `impl undo::Edit` type in
-//! `clip_edits/` or `event_edits.rs`, wrapped in a `SequencerEdit` variant by
-//! the `sequencer_edit_dispatch!` macro here. `edit()` and `undo()` both return
+//! `clip_edits/` (whole clips), `event_edits.rs` (the events inside one clip),
+//! `track_edits.rs` (the track list), `tempo_edit.rs` or `meter_edit.rs`; the
+//! undo record's entry is `undo_step.rs`. Each is wrapped in a
+//! `SequencerEdit` variant by the `sequencer_edit_dispatch!` macro here. `edit()` and `undo()` both return
 //! an `EditResult`; `event_handlers/edit_result_handler.rs` turns that into
 //! `UiEvent`s. Only the gestures that send an edit per pointer move or tap
 //! merge — `DragEventsVelocity`, `ResizeClip`, `DragNotes` and `SetTempo` (one

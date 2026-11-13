@@ -12,16 +12,19 @@
 //!   accessors / simple mutators.
 //! - `playback.rs` — the per-tick pump (`tick` / `chase_notes`) and the
 //!   note-release + re-seek paths every discontinuity goes through.
-//! - `capture.rs` — turning the running capture buffer into committed clips
-//!   (`090-recording-midi-input.md`, `100-running-capture.md`).
-//! - `capture_fixture.rs` — debug builds: dumping stopped captures as test
-//!   fixtures for the phrase-start detection (`220`).
-//! - `stopped_capture.rs` / `region/` — the stopped `/`: framing a take by
-//!   phrase detection into a new clip or an insert (`040-phrase-detection.md`,
-//!   `220-capture-without-pending-view.md`).
-//! - `take_framing.rs` — the take session the stopped `/` into a clip opens:
-//!   framing the notes to insert, heard in place (`archive/290-framing-a-take.md`).
+//! - `commands.rs` — the [`SequencerCommand`] enum, the thread's inbound
+//!   vocabulary.
+//! - `capture/` — the capture buffer into clips: the running `/` in `mod.rs`
+//!   (`090-recording-midi-input.md`, `100-running-capture.md`), the stopped
+//!   `/`'s phrase detection and the take session beside it
+//!   (`040-phrase-detection.md`, `220-capture-without-pending-view.md`).
+//! - `region.rs` — the selected clip's edge targets and trims, and the clip
+//!   cursor.
+//! - `tempo.rs` — first-clip tempo detection and the clip-relative tempo
+//!   rescale behind Enter's fit.
 //! - `selection.rs` / `view.rs` — clip & event selection, clip-view snapshots.
+//! - `clipboard.rs` — the clip and note clipboards and the copies that fill
+//!   them.
 //! - `mix.rs` — the not-undoable per-track mixer writers.
 //! - `knobs.rs` — what the knobs drive, set by a load, and the hand's turns
 //!   for the unsaved check (`400-parameter-knobs.md`).
@@ -33,11 +36,11 @@
 //!   (`110-performance-lane.md`).
 //! - `instrument_event.rs` / `instrument_notes.rs` — the CLAP clip-event feed
 //!   and the note-tracking safety net (`130-plugin-host.md`).
+//! - `test_support.rs` (tests) — fixtures shared by the sequencer's unit
+//!   tests.
 
 mod audio_export;
 mod capture;
-#[cfg(debug_assertions)]
-mod capture_fixture;
 mod clipboard;
 mod commands;
 mod edit;
@@ -51,8 +54,7 @@ mod playback;
 mod region;
 mod selection;
 mod state;
-mod stopped_capture;
-mod take_framing;
+mod tempo;
 #[cfg(test)]
 pub(crate) mod test_support;
 mod view;

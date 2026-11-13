@@ -9,7 +9,8 @@
 //! concern split:
 //!
 //! - `input/` — the per-frame input dispatch, the drag state machines
-//!   (`gestures.rs`), the modal keymaps (`modal.rs`).
+//!   (`gestures.rs`), the modal keymaps (`modal.rs`), the knob panel's and
+//!   controller lanes' focus, the `.mid` and plugin drags.
 //! - `rendering/` — everything painted: arranger, piano roll, timeline,
 //!   overlays, the modals.
 //! - `state/` — reconciling the shape lists against `UiEvent`s, scroll, the
@@ -22,6 +23,9 @@
 //!   (`active_pane`, `in_pane`). See `archive/210-docked-clip-panel.md`.
 //! - `grid.rs` — the zoom-adaptive timeline grid (`GridTiers`): one pure rule
 //!   for the grid lines, ruler labels, snap and cursor-follow paging.
+//! - `clip_shape.rs` / `event_shape.rs` — the render models of one arranger
+//!   clip rectangle and one piano-roll note bar, kept in step with the
+//!   sequencer by `state/shapes.rs`.
 //! - `pointer_state.rs` / `modal_focus.rs` — the small view-local state types
 //!   the three subtrees above share: the pointer hover/drag/hit-test payloads
 //!   and the modal focus enums. Kept here, not under a renderer, because input,
@@ -63,7 +67,9 @@
 
 mod browser;
 mod clip_lane;
+mod clip_shape;
 mod computer_keys;
+mod event_shape;
 mod fields;
 mod footer_hint;
 mod gesture_state;
@@ -90,6 +96,8 @@ mod ui_event;
 
 use self::browser::{BrowserItem, BrowserPanel, BrowserPlugin, clamp_browser_width, footer_rect};
 use self::clip_lane::ClipLane;
+use self::clip_shape::ClipShape;
+use self::event_shape::EventShape;
 use self::fields::meter_field::MeterChip;
 use self::fields::tempo_field::TempoChip;
 use self::fields::track_rename::TrackRename;
@@ -149,7 +157,6 @@ use crate::{
         clip_metadata::{ClipMetadata, note_thumbnails_from_spans},
         clip_view::{ClipView, ControllerMoves, EventMetadata},
     },
-    shapes::{clip_shape::ClipShape, event_shape::EventShape},
     view::{computer_keyboard::ComputerKeyboard, input_poller::InputPoller, theme},
 };
 

@@ -1,5 +1,5 @@
 //! The piano roll's render model for one note bar — the
-//! [`ClipShape`](crate::shapes::clip_shape::ClipShape) analogue for events.
+//! [`ClipShape`](super::clip_shape::ClipShape) analogue for events.
 //!
 //! `Display` keeps a `Vec<EventShape>` it reconciles against the open clip's
 //! events, so the per-frame paint reads plain geometry. The note colour is

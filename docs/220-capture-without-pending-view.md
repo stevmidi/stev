@@ -4,7 +4,7 @@
 
 ## Goal
 
-Keep the valuable part of the retired modal `PendingClip` view, the phrase **detection** (`region/phrase_tokens.rs`, `region/window.rs`, `region/tempo.rs`), and replace the modal session with ordinary, undoable edits on a committed clip.
+Keep the valuable part of the retired modal `PendingClip` view, the phrase **detection** (`capture/phrase_tokens.rs`, `capture/window.rs`, `sequencer/tempo.rs`), and replace the modal session with ordinary, undoable edits on a committed clip.
 
 ## Principles
 

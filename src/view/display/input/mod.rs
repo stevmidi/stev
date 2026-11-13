@@ -3,7 +3,10 @@
 //! resolves anything view-local (scroll, cursor placement, the drag
 //! rectangles, the `⌘/Ctrl+L` / `Delete` operand) against `Display` state and
 //! forwards the rest to `EventHandlers`. `gestures.rs` holds the drag state
-//! machines; `modal.rs` the settings modal's keymap and mouse. See
+//! machines; `modal.rs` the settings modal's keymap and mouse; `knob_focus.rs`
+//! and `wheel_lane.rs` the keys of the knob panel's and the controller lanes'
+//! focus; `midi_drag.rs` and `plugin_drag.rs` the drags of a `.mid` file and
+//! of a plugin out of the browser. See
 //! `020-views-and-state.md`.
 
 use egui::Key;

@@ -4,8 +4,8 @@ Running capture operates on **continuous clock ticks** while transport playback 
 Window calculations therefore must account for both absolute tick history and loop-relative
 placement.
 
-Key files: `src/core/sequencer/capture.rs`, `src/core/sequencer/region/window.rs`
-(the `calculate_*` window maths; `region/mod.rs` keeps the cursor/region mutators).
+Key files: `src/core/sequencer/capture/mod.rs`, `src/core/sequencer/capture/window.rs`
+(the `calculate_*` window maths; `sequencer/region.rs` keeps the cursor/region mutators).
 
 ### Core model
 
@@ -111,7 +111,7 @@ when `region_start < clip.start_tick()`, silently dropping events. The correct s
 
 ### Commit paths
 
-There are two running-capture commit paths in `capture.rs`:
+There are two running-capture commit paths in `capture/mod.rs`:
 
 #### `build_committed_capture_clip` + `CommitClipEdit` — arranger, new clip
 
@@ -121,7 +121,7 @@ half — everything below, ending with the positioned clip and a `Track::fits` c
 neither the track nor the buffer — and `CommitClipEdit::from_running_capture` freezes that
 clip; its `edit()` does the `add_clip` and clears the capture buffer (once — a redo never
 wipes a take started since), its `undo()` lifts the clip by id. `None` from the builder
-(empty capture, or a gap under one grid step) means nothing enters the undo record. `commit_clip_to_track` is a `#[cfg(test)]` shim in `capture.rs`'s
+(empty capture, or a gap under one grid step) means nothing enters the undo record. `commit_clip_to_track` is a `#[cfg(test)]` shim in `capture/mod.rs`'s
 tests that runs the real edit. Undo leaves
 the buffer cleared by decision — redo is the way back. See `050-undo-redo.md`.
 - Anchor: `cursor_tick`
@@ -372,7 +372,7 @@ Looping takes need the loop length because capture events are stamped with the f
 
 ### Regression coverage
 
-Tests for `calculate_running_region` in `src/core/sequencer/region/window.rs`:
+Tests for `calculate_running_region` in `src/core/sequencer/capture/window.rs`:
 
 - first-bar note with 3-bar loop / 2-bar capture keeps window at loop start,
 - **a note past the window's end does not pull it forward (pinned start)**,
@@ -385,7 +385,7 @@ Tests for `calculate_running_region` in `src/core/sequencer/region/window.rs`:
 Test for `playback_is_looping` in `src/core/sequencer/state.rs`: the flag alone is not
 enough — playback at/after `region_end` or before `region_start` is not looping.
 
-Tests for `normalize_running_capture` in `src/core/sequencer/capture.rs`:
+Tests for `normalize_running_capture` in `src/core/sequencer/capture/mod.rs`:
 
 - bar-1 note in buffer lands in bar 1 of normalized clip,
 - bar-2 note in buffer lands in bar 2 of normalized clip,
@@ -393,7 +393,7 @@ Tests for `normalize_running_capture` in `src/core/sequencer/capture.rs`:
 - all events after crop are within `[0, region_length)`.
 
 Tests for `commit_clip_to_track` (the test shim over `build_committed_capture_clip` +
-`CommitClipEdit`) in `src/core/sequencer/capture.rs`, plus
+`CommitClipEdit`) in `src/core/sequencer/capture/mod.rs`, plus
 `build_committed_capture_clip_does_not_touch_the_track_or_buffer`:
 
 - new clip is placed at `cursor_tick`,
@@ -451,7 +451,7 @@ are dropped, non-note events fold like any tick.
 The test helper `make_sequencer` parks `playback_tick` at `region_start`, so the loop flag
 means playback *is* wrapping; a linear-take test flips the flag or parks playback outside.
 
-Tests for the running insert in `src/core/sequencer/capture.rs`, named
+Tests for the running insert in `src/core/sequencer/capture/mod.rs`, named
 `insert_running_capture_*` and driven through the real `InsertCaptureEdit` by a
 test-module helper:
 
@@ -478,7 +478,7 @@ test-module helper:
   was (the commit-never-changes-the-selection pair).
 
 Tests for the notes held into a take (*Notes held into a take*), in
-`src/core/sequencer/capture.rs`, driven through `handle_midi_input` and
+`src/core/sequencer/capture/mod.rs`, driven through `handle_midi_input` and
 `begin_running_take`:
 
 - **a chord held before the start, released while playing, with the clock loops ahead →

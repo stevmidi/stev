@@ -3,18 +3,17 @@
 //! pure, placed by `CommitClipEdit`). With a lead clip the stopped `/` opens a
 //! take session instead (`take_framing.rs`), which frames the same capture
 //! source. Phrase-token detection — where the last phrase starts — is in
-//! `region/`. See `220-capture-without-pending-view.md`,
+//! `phrase_tokens.rs`. See `220-capture-without-pending-view.md`,
 //! `archive/290-framing-a-take.md` and `040-phrase-detection.md`.
 
 use crate::{
     core::{
         config,
+        sequencer::Sequencer,
         time::{self, Meter},
     },
     models::clip::Clip,
 };
-
-use super::Sequencer;
 
 #[cfg(debug_assertions)]
 use super::capture_fixture::CaptureFixture;
@@ -100,7 +99,7 @@ impl Sequencer {
     /// [`CAPTURE_BUFFER_BARS`](config::CAPTURE_BUFFER_BARS). A fresh clip —
     /// its own region and cursor, never the capture buffer's shared ones —
     /// so the builders can frame it in place.
-    pub(super) fn detection_capture_source(&self) -> Clip {
+    pub(in crate::core::sequencer) fn detection_capture_source(&self) -> Clip {
         let mut capture = Clip::new();
         capture.restore_events(self.capture_clip.events().to_vec());
         self.keep_knob_moves(&mut capture);
@@ -112,7 +111,7 @@ impl Sequencer {
     /// The detected phrase as a clip: every event of the capture source in
     /// absolute tick space, the window from the detected phrase start to the
     /// last `NoteOff` plus two beats (at least a bar), placed at the cursor.
-    pub(super) fn build_detected_phrase_clip(&self) -> Clip {
+    pub(in crate::core::sequencer) fn build_detected_phrase_clip(&self) -> Clip {
         let capture = self.detection_capture_source();
         let meter = self.meter();
         let (region_start_tick, end) =
@@ -132,7 +131,7 @@ impl Sequencer {
 
     /// `capture` (a [`detection_capture_source`](Self::detection_capture_source))
     /// with its window set to `[start, end)`.
-    pub(super) fn framed(mut capture: Clip, start: i32, end: i32) -> Clip {
+    pub(in crate::core::sequencer) fn framed(mut capture: Clip, start: i32, end: i32) -> Clip {
         capture.region_mut().set_region(Some(start), Some(end));
         capture
     }

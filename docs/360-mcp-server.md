@@ -225,7 +225,7 @@ Each phase is one branch and one merge, with its tests, docs and changelog line.
 - The footer: `Agent: 2 new clips, bars 17–20`, `Agent: new notes on track 1, bars 9–16`, `Agent: tempo 96.0 BPM`.
 - The server instructions are the designed text less step 7 (`check_notes`), which phase 3 puts back.
 
-**Phase 3 as built** (`src/core/agent/checks.rs`, `get_capture` in `reads.rs`, `Sequencer::capture_take` in `sequencer/capture.rs`):
+**Phase 3 as built** (`src/core/agent/checks.rs`, `get_capture` in `reads.rs`, `Sequencer::capture_take` in `sequencer/capture/mod.rs`):
 
 - `check_notes` reads the call through the writes' own prepare step (`prepare_clips`, `prepare_replace`), unhumanised, so its rows are the ones the write would put down; a `clip` argument makes it a `replace_clip_notes` check, else a `create_clips` one. It runs whatever holds the edit: decision 13 is for writes.
 - A clash is a written note whose pitch class none of the other audible tracks sounds in its beat (the beat as the timeline counts it, cut at the bar line), while they sound something; with nothing else sounding there is nothing to clash with. The other tracks are read as they will be after the write: the other new clips of the same call count, and notes inside a written span on its own track are left out (the carve, or the clip being replaced).

@@ -1,5 +1,7 @@
-//! MIDI I/O: the live-input forwarder, the output connection, and the shared
-//! port-name helpers they both rely on.
+//! MIDI I/O: the live-input forwarder (`input.rs`) and its sub-tick
+//! timestamping (`input_tick.rs`), the output connection (`output.rs`) and its
+//! deadline-ordered delay queue (`out_queue.rs`), the raw byte helpers
+//! (`message.rs`), and the port-name helpers both sides rely on (`port.rs`).
 
 pub(crate) mod input;
 pub(crate) mod input_tick;

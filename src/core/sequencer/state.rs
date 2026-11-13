@@ -19,10 +19,10 @@ use crossbeam_channel::Sender;
 use rtrb::Producer;
 
 use super::audio_export::{AudioExportRun, ExportMark};
+use super::capture::take_framing::TakeFraming;
 use super::clipboard::ClipClipboard;
 use super::instrument_event::ClipInstrumentEvent;
 use super::instrument_notes::InstrumentNotes;
-use super::take_framing::TakeFraming;
 use crate::core::midi::{
     message::{Controller, Midi3},
     out_queue::MidiOutMessage,
@@ -122,7 +122,7 @@ pub(crate) struct Sequencer {
 
     // --- Recording state ---
     /// The rolling buffer every incoming note is fed into, ready to be
-    /// committed (`capture.rs`).
+    /// committed (`capture/mod.rs`).
     pub(super) capture_clip: Clip,
     /// The start tick of a running take whose carried events — what was
     /// held into it (`begin_running_take`) — are still in cursor ticks,

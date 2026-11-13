@@ -40,7 +40,7 @@ the region length and the free-running clock does not — leaving the two at the
 *same phase within the region*. Across a long loop the clock legitimately sits
 whole loop lengths ahead of playback, and running capture depends on that
 absolute progression surviving: its window math picks the loop containing the
-last note (`src/core/sequencer/region/window.rs`, `100-running-capture.md`).
+last note (`src/core/sequencer/capture/window.rs`, `100-running-capture.md`).
 
 So **a loop wrap must not move the clock's loop index**. Only a genuine
 discontinuity — a seek, play-from-cursor, or a region whose bounds moved under
@@ -145,7 +145,7 @@ them and both stay:
    bookkeeping to re-arm the click after a non-unit step in the position it
    counts from — a clock realignment while stopped; a wrap or jump while
    running; the clock ↔ playback switch on a start or stop.
-2. `last_inserted_event_tick` (`src/core/sequencer/region/window.rs`) anchors the
+2. `last_inserted_event_tick` (`src/core/sequencer/capture/window.rs`) anchors the
    capture window on insertion order rather than tick magnitude, so events left
    from a pre-snap clock context can't displace it (regression test
    `calculate_running_region_stale_high_tick_event_does_not_displace_window`).
@@ -187,7 +187,7 @@ own like that, not `clock_tick`.
 - `src/core/transport.rs` — `make_transport_with_clock` keeps the clock receiver
   so the send paths are asserted: payload, ungated send while stopped, gated
   silence while stopped, gated send while running.
-- `src/core/sequencer/capture.rs` — a three-pass and a twelve-pass running take
+- `src/core/sequencer/capture/mod.rs` — a three-pass and a twelve-pass running take
   stamped the way a free-running clock stamps them must commit exactly one cycle.
 - `src/core/midi/input_tick.rs` — the sub-tick interpolation and the midir
   epoch calibration.

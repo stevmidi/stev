@@ -12,14 +12,14 @@
 //!   `clamp_*`) sizes the window of a just-recorded phrase from its last note
 //!   plus a tail, floored at one bar. See `040-phrase-detection.md`.
 //!
-//! `stopped_capture.rs` and `capture.rs` are the callers; the region/cursor
-//! mutators that consume the results live in `mod.rs`.
+//! `stopped_capture.rs`, `take_framing.rs` and `mod.rs` (the running capture)
+//! are the callers; the region/cursor
+//! mutators that consume the results live in `sequencer/region.rs`.
 
+use crate::core::sequencer::Sequencer;
 use crate::core::time::{self, Meter};
 use crate::models::clip::Clip;
 use crate::models::event::{Event, EventType};
-
-use super::Sequencer;
 
 impl Sequencer {
     /// Computes the `(start, end)` capture window for a running-capture clip relative to the

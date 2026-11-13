@@ -19,6 +19,12 @@
 //! - [`catalog`] — the merged installed-plugin list the Track modal offers.
 //! - [`window`] / [`editor_keys`] — the native editor window and how keys reach
 //!   Stev while a plugin has OS keyboard focus.
+//! - [`meter`] — the track meters' ballistics: peak, RMS and peak hold.
+//! - [`note_ids`] — note ids, for the formats whose notes carry them.
+//! - [`shutdown`] — the cross-thread shutdown coordination every format shares.
+//! - [`ui_wake`] — waking the reactive UI from the audio thread.
+//! - `test_voice.rs` (tests) — a format-free voice for the mixer's and the
+//!   export tap's tests.
 //!
 //! [`clap`] and [`vst3`] are the formats implemented today. VST3 additionally
 //! needs [`run_if_scan_child`] called at the very top of `main` — its catalog

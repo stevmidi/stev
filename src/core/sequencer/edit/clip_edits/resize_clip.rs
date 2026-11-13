@@ -16,7 +16,7 @@ use super::super::EditResult;
 // ---------------------------------------------------------------------------
 
 /// Moves one clip from `before` to `after` bounds. The caller computes
-/// `after` (the `Sequencer::selected_clip_*` helpers in `region/mod.rs` own
+/// `after` (the `Sequencer::selected_clip_*` helpers in `sequencer/region.rs` own
 /// the clamping against neighbours); this edit only applies and reverses it.
 ///
 /// A mouse edge drag sends one edit per pointer move, all carrying the drag's

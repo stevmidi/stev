@@ -10,10 +10,10 @@
 
 use crate::core::keymap::{Action, Chord, Keymap};
 use crate::models::clip::min_max;
-use crate::shapes::event_shape::EventShape;
 
 use super::Display;
 use super::browser::BrowserCategory;
+use super::event_shape::EventShape;
 use super::output_menu::OutputMenuHit;
 use super::settings::keyboard_tab::{KEYBOARD_TAB_ROW, chords_label};
 

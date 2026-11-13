@@ -2,20 +2,7 @@
 //!
 //! This is the sequencer-side of what `models/clip/cursor_region.rs` does for
 //! one clip: resolve "the selected clip", apply the edit, keep the transport in
-//! step.
-//!
-//! ## Module split
-//!
-//! - `mod.rs` — the region/cursor accessors and mutators: clip edge targets
-//!   and trims, the clip cursor.
-//! - `tempo.rs` — first-clip tempo detection and clip-relative tempo rescale.
-//! - `window.rs` — the pure `calculate_*` helpers that derive bar-aligned
-//!   capture / phrase windows (`100-running-capture.md`, `040-phrase-detection.md`).
-//! - `phrase_tokens.rs` — phrase-token detection: where the last phrase starts.
-
-mod phrase_tokens;
-mod tempo;
-mod window;
+//! step: the clip edge targets and trims, and the clip cursor.
 
 use uuid::Uuid;
 

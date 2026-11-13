@@ -32,8 +32,8 @@ The sequencer side already takes `Option`: `selected_track_index()` and `selecte
 | Reader | With the lane selected |
 |---|---|
 | Lead clip (`lead_clip`, `current_clip_view`, `selection.rs`, `view.rs`) | None. The clip view shows "No clip at the cursor". |
-| Capture: `/` running and stopped, the take session (`capture.rs`, `stopped_capture.rs`, `take_framing.rs`, `commit_clip.rs`) | Returns `None`, nothing happens. Nothing was captured either: while armed the keyboard goes to `handle_performance_lane_midi_input`, not the capture buffer (`sequencer_pump.rs`). |
-| Clip edits on the lead or selected track (`resize_clip.rs`, `retime_clip.rs`, `split.rs` at the cursor, `event_edits.rs`, `export.rs`'s SMF export, `region/mod.rs`) | Return `None`, nothing happens. |
+| Capture: `/` running and stopped, the take session (`capture/mod.rs`, `stopped_capture.rs`, `take_framing.rs`, `commit_clip.rs`) | Returns `None`, nothing happens. Nothing was captured either: while armed the keyboard goes to `handle_performance_lane_midi_input`, not the capture buffer (`sequencer_pump.rs`). |
+| Clip edits on the lead or selected track (`resize_clip.rs`, `retime_clip.rs`, `split.rs` at the cursor, `event_edits.rs`, `export.rs`'s SMF export, `sequencer/region.rs`) | Return `None`, nothing happens. |
 | Marquee edits (`delete_in_range.rs`, `merge_clips.rs`, `duplicate_time.rs`) | Take their tracks from the rect; the selected track is only used to keep the lead, or as a fallback span. No marquee exists with the lane selected (decision 3). |
 | Paste (`paste.rs`) | Checked 2026-11-12: with no selected track every piece lands at the cursor on the track it was copied from (`ClipClipboard::target_track`, pinned by `paste_does_not_need_a_selected_track`), for a scoped copy (`⌘C`) as for an all-track one. A scoped `⌘V` does nothing instead (decision 8); the all-track paste is unchanged. |
 | Note preview and audition (`playback.rs`) | No channel, no sound. |

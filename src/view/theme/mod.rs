@@ -8,7 +8,8 @@
 //! (`SettingsData.theme_index`) and re-applied at startup. Layout / font-size
 //! constants live at the bottom. See `030-ui-design.md`.
 //!
-//! The 30 palettes themselves and the `ThemePalette` shape are in `palettes.rs`.
+//! The 30 palettes themselves and the `ThemePalette` shape are in `palettes.rs`;
+//! the UI font (IBM Plex Sans) is installed by `fonts.rs`.
 //!
 //! egui's own light/dark theme is pinned to the active palette
 //! ([`pin_egui_theme`]), never left to follow the OS appearance.

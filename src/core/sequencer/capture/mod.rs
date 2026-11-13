@@ -7,6 +7,29 @@
 //! into an existing clip, from either pane. The
 //! window that gets frozen is derived from the loop region — see
 //! `100-running-capture.md` for the invariants.
+//!
+//! ## Module split
+//!
+//! - `mod.rs` — the capture buffer's input, the running `/` (commit and
+//!   insert), and the types a take is handed on in (`CaptureInsert`,
+//!   `CaptureTake`, `TakePlace`).
+//! - `stopped_capture.rs` — the stopped `/`: framing a take by phrase
+//!   detection into a new clip (`040-phrase-detection.md`,
+//!   `220-capture-without-pending-view.md`).
+//! - `take_framing.rs` — the take session the stopped `/` into a clip opens:
+//!   framing the notes to insert, heard in place (`archive/290-framing-a-take.md`).
+//! - `window.rs` — the pure `calculate_*` helpers that derive bar-aligned
+//!   capture / phrase windows (`100-running-capture.md`, `040-phrase-detection.md`).
+//! - `phrase_tokens.rs` — phrase-token detection: where the last phrase starts.
+//! - `capture_fixture.rs` (debug builds) — real takes kept as test data for
+//!   the phrase-start detection (`fixtures/captures/`).
+
+#[cfg(debug_assertions)]
+mod capture_fixture;
+mod phrase_tokens;
+mod stopped_capture;
+pub(super) mod take_framing;
+mod window;
 
 use std::time::Instant;
 

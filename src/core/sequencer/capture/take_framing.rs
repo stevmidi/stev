@@ -19,13 +19,17 @@ use std::sync::Arc;
 
 use uuid::Uuid;
 
-use crate::core::{time::PPQN, view_state::ViewState};
+use crate::core::{
+    sequencer::{EdgeTarget, Sequencer},
+    time::PPQN,
+    view_state::ViewState,
+};
 use crate::models::{
     clip::{Clip, ClipEdge},
     event::{Event, EventType},
 };
 
-use super::{CaptureInsert, EdgeTarget, Sequencer};
+use super::CaptureInsert;
 
 /// How far before the window start a note may start and still be in the
 /// take — a 32nd, so a chord played just ahead of the beat `[` is on comes
@@ -159,14 +163,14 @@ impl Sequencer {
 
     /// The take of the open session, which [`selected_clip`](Self::selected_clip)
     /// returns while it is open.
-    pub(super) fn framed_take(&self) -> Option<&Clip> {
+    pub(in crate::core::sequencer) fn framed_take(&self) -> Option<&Clip> {
         self.take_framing.as_ref().map(|framing| &framing.take)
     }
 
     /// Mutable access to the open session's take. (Checked first by
     /// `selected_clip_mut`: returning a borrow out of an `if let` on `self`
     /// would keep `self` borrowed on the fallback path.)
-    pub(super) fn framed_take_mut(&mut self) -> Option<&mut Clip> {
+    pub(in crate::core::sequencer) fn framed_take_mut(&mut self) -> Option<&mut Clip> {
         self.take_framing.as_mut().map(|framing| &mut framing.take)
     }
 

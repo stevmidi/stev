@@ -17,6 +17,7 @@
 use crate::{
     core::{
         config::{PHRASE_DETECTION_WINDOW_BARS, PHRASE_LAST_TOKEN_REFINE_MIN_BARS},
+        sequencer::Sequencer,
         time::{self, Meter},
     },
     models::{
@@ -24,8 +25,6 @@ use crate::{
         event::{Event, EventType},
     },
 };
-
-use super::Sequencer;
 
 /// A possible phrase boundary and the evidence for it: the silence before it,
 /// and the take's median inter-note silence for comparison.

@@ -4,7 +4,8 @@
 //! guards (`action`), the [`StagedProject`] an open with plugins hands
 //! the view first (`staged`), the [`fingerprint()`] that says what counts as a
 //! change (`fingerprint`), the crash recovery copy on disk (`recovery`), and
-//! the `"storage"` thread's jobs, saves and the copy's (`writer`).
+//! the `"storage"` thread's jobs, saves and the copy's (`writer`). Test-only:
+//! the recovery timing (`recovery_timing`) and the stress project (`stress`).
 //! See `060-persistence.md`, `410-crash-recovery.md` and
 //! `420-large-projects.md`.
 

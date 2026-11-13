@@ -12,10 +12,10 @@
 use uuid::Uuid;
 
 use super::browser::BrowserPlugin;
+use super::clip_shape::ClipShape;
 use crate::{
     core::input_event::InputEvent,
     models::clip::{Clip, ClipEdge, NoteBounds, NoteDrag},
-    shapes::clip_shape::ClipShape,
 };
 
 /// A `.mid` being dragged over the window — from the file manager or out of

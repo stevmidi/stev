@@ -2,9 +2,10 @@
 //! thread.
 //!
 //! It holds only channel senders and `Arc` refs (`080-conventions.md`); all
-//! business logic lives in `sequencer/` or `transport.rs`. `handle_*_command`
-//! in `input_handler.rs` / `transport_handler.rs` / `sequencer_handler.rs`
-//! matches every command; anything that grows past a line or is shared between
+//! business logic lives in `sequencer/` or `transport.rs`. `handle_input_event`
+//! in `input_handler.rs` and `handle_transport_command` /
+//! `handle_sequencer_command` in `transport_handler.rs` / `sequencer_handler.rs`
+//! match every input and command; anything that grows past a line or is shared between
 //! arms is extracted to a per-concern file here — `selection.rs`,
 //! `clip_edges.rs`, `clip_lifecycle.rs`, `clip_range_edits.rs`, `clip_view.rs`,
 //! `project.rs`, `save.rs`, `recovery.rs`, `tracks.rs`,

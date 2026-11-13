@@ -26,9 +26,9 @@ use crate::core::project::{file_stem, is_midi_file, load_midi_clip};
 use crate::core::time::Meter;
 use crate::metadata::clip_metadata::ClipMetadata;
 use crate::models::clip::Clip;
-use crate::shapes::clip_shape::ClipShape;
 #[cfg(target_os = "macos")]
 use crate::view::appkit::content_view;
+use crate::view::display::clip_shape::ClipShape;
 
 use super::*;
 

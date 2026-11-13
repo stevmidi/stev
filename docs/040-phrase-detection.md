@@ -1,6 +1,6 @@
 # Phrase Detection
 
-How the stopped `/` finds the phrase to commit. It frames the capture buffer by phrase detection, then either places a new clip (`Sequencer::build_stopped_capture_clip`, pure, in `src/core/sequencer/stopped_capture.rs`, recorded by `CommitClipEdit`) or, with a lead clip, opens a take session on the same source, framed from the same detected start (`sequencer/take_framing.rs`, `archive/290-framing-a-take.md`; its Enter is an `InsertCaptureEdit`). The detection itself is in `region/phrase_tokens.rs` and `region/window.rs`.
+How the stopped `/` finds the phrase to commit. It frames the capture buffer by phrase detection, then either places a new clip (`Sequencer::build_stopped_capture_clip`, pure, in `src/core/sequencer/capture/stopped_capture.rs`, recorded by `CommitClipEdit`) or, with a lead clip, opens a take session on the same source, framed from the same detected start (`sequencer/capture/take_framing.rs`, `archive/290-framing-a-take.md`; its Enter is an `InsertCaptureEdit`). The detection itself is in `capture/phrase_tokens.rs` and `capture/window.rs`.
 
 The detection rules the stopped `/` uses (`220-capture-without-pending-view.md`). Detection is a first guess either way: a new clip keeps the source outside its window, so its edges (`[`/`]`, the arranger edge drag, the clip view's window band) move over the rest of the take; an insert is framed in the take session before it lands (`archive/290`).
 
@@ -12,7 +12,7 @@ The detection rules the stopped `/` uses (`220-capture-without-pending-view.md`)
 
 ## Phrase start
 
-`region/phrase_tokens.rs` owns `phrase_token_starts()` and the boundary scorer, over the last `PHRASE_DETECTION_WINDOW_BARS` (4) of the source.
+`capture/phrase_tokens.rs` owns `phrase_token_starts()` and the boundary scorer, over the last `PHRASE_DETECTION_WINDOW_BARS` (4) of the source.
 
 - It identifies candidate phrase boundaries from **positive silence gaps between note pairs** (`previous NoteOff` / `NoteOn.end_tick()` to next `NoteOn`), not raw NoteOn-to-NoteOn distance, so a long single note pair does not become its own phrase token just because its onset happened early.
 - Each boundary candidate is scored from silence prominence, metric placement (bar/half-bar/beat proximity with tolerance), and plausible phrase span.
@@ -33,6 +33,6 @@ The detection rules the stopped `/` uses (`220-capture-without-pending-view.md`)
 
 ## Fitting the tempo (Enter)
 
-- **`RetimeClipEdit::fit_sole_clip`** (Enter, only while the project has exactly one clip, `220`) calls `fit_first_clip_tempo` (`region/tempo.rs`), which fits the clip to the **nearest whole bar of what was played** — `((played + bar/2) / bar).max(1) * bar` — and makes that the project tempo via `Clip::adjust_to_tempo`. The target is the played length, *not* the loop region (which needn't match the phrase), so the tempo lands near the player's natural speed regardless of loop size.
+- **`RetimeClipEdit::fit_sole_clip`** (Enter, only while the project has exactly one clip, `220`) calls `fit_first_clip_tempo` (`sequencer/tempo.rs`), which fits the clip to the **nearest whole bar of what was played** — `((played + bar/2) / bar).max(1) * bar` — and makes that the project tempo via `Clip::adjust_to_tempo`. The target is the played length, *not* the loop region (which needn't match the phrase), so the tempo lands near the player's natural speed regardless of loop size.
 - **`octave_correct_clip_tempo`** runs straight after: a fitted tempo `>= config::FIRST_CLIP_TEMPO_US_SLOW` (~50 BPM) is reinterpreted an octave up — `adjust_to_tempo` with `tempo/2` doubles the BPM and the clip's bar count; `<= FIRST_CLIP_TEMPO_US_FAST` (~140 BPM) goes an octave down (`tempo*2`, half the bars). 40 BPM over 1 bar was almost always 80 over 2; 160 over 4 was 80 over 2. The clip keeps its wall-clock timing — only the metric reading changes; it's the automatic form of `⌥=`/`⌥-`. **Single step**: anything still out of band is left for the user to rescale by hand.
 - Undoing the fit restores the clip, its events and the tempo together (`050-undo-redo.md`).

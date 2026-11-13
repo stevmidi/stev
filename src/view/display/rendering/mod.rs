@@ -3,8 +3,9 @@
 //! (its lower lane's switch and wheel curves), `piano_keys.rs`
 //! (the keyboard gutter), `timeline.rs` (the ruler / region strip),
 //! `overlays.rs` (cursor line, playhead), `modals/` (the settings
-//! modal and the project dialogs), `browser.rs` (the browser
-//! side panel). This file owns `render` — the per-frame entry — and the
+//! modal, the plugin-restore overlay and the project dialogs), `browser.rs`
+//! (the browser side panel), `knob_panel.rs` (the knob panel beside the clip
+//! view), `output_menu.rs` (a track header's output chip and its menu). This file owns `render` — the per-frame entry — and the
 //! shared layout maths. See `030-ui-design.md`.
 
 mod arranger;
