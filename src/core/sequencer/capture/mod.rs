@@ -39,6 +39,7 @@ use uuid::Uuid;
 use crate::{
     core::{
         config,
+        input_event::CaptureFrame,
         midi::message::{midi3, parse_controller},
         time,
     },
@@ -94,7 +95,7 @@ pub(crate) enum TakePlace {
 }
 
 /// Why a marquee-framed `/` was refused
-/// ([`Sequencer::marquee_capture_refusal`], `470-marquee-capture.md`).
+/// ([`Sequencer::capture_framing`], `470-marquee-capture.md`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum MarqueeRefusal {
     /// Running and looping, the marquee isn't inside the loop region, so it
@@ -114,6 +115,44 @@ impl MarqueeRefusal {
             Self::OutsideLoop => "While looping, the marquee must be inside the loop",
             Self::OverlapsClip => "The marquee overlaps a clip",
             Self::OutsideClip => "The marquee is outside the clip",
+        }
+    }
+}
+
+/// What frames a `/` ([`Sequencer::capture_framing`], `470-marquee-capture.md`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CaptureFraming {
+    /// Nothing: the loop frames a new clip, a running insert lands the
+    /// whole pass, a stopped one opens the take session.
+    Unframed,
+    /// A new clip framed by the arranger marquee `[start, end)` (decisions
+    /// 3–4).
+    NewClip((i32, i32)),
+    /// A running insert punched in over `span`, arrangement ticks inside the
+    /// lead clip (decisions 9 and 11).
+    PunchIn {
+        /// The span that lands.
+        span: (i32, i32),
+        /// The arrangement tick the footer counts bars from, as the
+        /// framing pane's ruler does.
+        ruler_origin: i32,
+    },
+}
+
+impl CaptureFraming {
+    /// The marquee a new clip is framed by.
+    pub(crate) fn new_clip(self) -> Option<(i32, i32)> {
+        match self {
+            Self::NewClip(span) => Some(span),
+            _ => None,
+        }
+    }
+
+    /// The span a running insert punches in over.
+    pub(crate) fn punch_in(self) -> Option<(i32, i32)> {
+        match self {
+            Self::PunchIn { span, .. } => Some(span),
+            _ => None,
         }
     }
 }
@@ -153,7 +192,7 @@ impl Sequencer {
     /// kept exactly as without it, but the region is the marquee's span —
     /// its phases of the last pass when looping, its stretch of arrangement
     /// time when linear — placed at its start, never clamped to the room
-    /// there. The `/` asks [`marquee_capture_refusal`](Self::marquee_capture_refusal)
+    /// there. The `/` asks [`capture_framing`](Self::capture_framing)
     /// first, which says why a marquee can't frame one.
     ///
     /// [`CommitClipEdit`]: crate::core::sequencer::edit::CommitClipEdit
@@ -221,20 +260,73 @@ impl Sequencer {
         length.min(available).max(time::min_clip_length_ticks())
     }
 
-    /// Why a `/` framed by the marquee span `[start, end)` can't go ahead,
-    /// or `None` when it can (`470-marquee-capture.md`). Into a new clip:
-    /// running and looping, the marquee must lie inside the loop region to
-    /// line up with a pass (decision 3); and the clip it frames must not
-    /// overlap a clip on the selected track, since a length the user chose
-    /// is never quietly shortened (decision 8). Running into the lead clip,
-    /// the marquee must meet the clip ([`punch_in_span`](Self::punch_in_span),
-    /// decision 9). `None` on a buffer that would commit nothing anyway.
-    pub(crate) fn marquee_capture_refusal(&self, marquee: (i32, i32)) -> Option<MarqueeRefusal> {
-        if self.selected_clip_id().is_some() {
-            let lands = RunningCaptureTarget::InsertFromArranger.lands(&self.capture_clip);
-            return (lands && self.punch_in_span(marquee).is_none())
-                .then_some(MarqueeRefusal::OutsideClip);
+    /// What the view's `frame` does to a `/` now, or why it is refused
+    /// (`470-marquee-capture.md`):
+    ///
+    /// - Without a lead clip, the arranger's marquee with a tick range frames
+    ///   a new clip ([`new_clip_refusal`](Self::new_clip_refusal)).
+    /// - Running into the lead clip, the marquee or the clip view's span
+    ///   (mapped from the clip's event ticks) punches in over its cut to the
+    ///   clip, refused when it misses the clip (decisions 9 and 11). Its
+    ///   `ruler_origin` is where the footer counts bars from: 0 for the
+    ///   arranger, the bar line at or before the clip's window start for the
+    ///   clip view, as that view's ruler counts.
+    /// - Anything else is unframed: a track-only marquee, a stopped `/` into
+    ///   the lead clip (the take session has its own band).
+    ///
+    /// Never refused on a buffer that would commit nothing anyway.
+    pub(crate) fn capture_framing(
+        &self,
+        frame: Option<CaptureFrame>,
+    ) -> Result<CaptureFraming, MarqueeRefusal> {
+        let marquee = |frame| match frame {
+            Some(CaptureFrame::Marquee(rect)) if rect.has_tick_range() => {
+                Some((rect.start, rect.end))
+            }
+            _ => None,
+        };
+        let Some(clip) = self.selected_clip() else {
+            return match marquee(frame) {
+                Some(span) => self
+                    .new_clip_refusal(span)
+                    .map_or(Ok(CaptureFraming::NewClip(span)), Err),
+                None => Ok(CaptureFraming::Unframed),
+            };
+        };
+        if !self.is_running() {
+            return Ok(CaptureFraming::Unframed);
         }
+        let (span, ruler_origin) = match (frame, marquee(frame)) {
+            (_, Some(span)) => (span, 0),
+            (Some(CaptureFrame::ClipSpan((start, end))), None) => {
+                let window_start = clip.region().start();
+                let offset = clip.start_tick() - window_start;
+                let ruler_origin = offset + self.meter().bar_line_at_or_before(window_start);
+                ((start + offset, end + offset), ruler_origin)
+            }
+            _ => return Ok(CaptureFraming::Unframed),
+        };
+        let start = span.0.max(clip.start_tick());
+        let end = span.1.min(clip.end_tick());
+        if start < end {
+            Ok(CaptureFraming::PunchIn {
+                span: (start, end),
+                ruler_origin,
+            })
+        } else if RunningCaptureTarget::InsertFromArranger.lands(&self.capture_clip) {
+            Err(MarqueeRefusal::OutsideClip)
+        } else {
+            Ok(CaptureFraming::Unframed)
+        }
+    }
+
+    /// Why a new clip framed by the marquee span `[start, end)` can't go
+    /// ahead, or `None` when it can: running and looping, the marquee must
+    /// lie inside the loop region to line up with a pass (decision 3); and
+    /// the clip it frames must not overlap a clip on the selected track,
+    /// since a length the user chose is never quietly shortened (decision
+    /// 8). `None` on a buffer without a note, which commits nothing anyway.
+    fn new_clip_refusal(&self, marquee: (i32, i32)) -> Option<MarqueeRefusal> {
         if !self.capture_clip.has_notes() {
             return None;
         }
@@ -247,37 +339,6 @@ impl Sequencer {
         }
         let track = self.tracks.get(self.selected_track_index()?)?;
         (!track.find_clip_ids_in(start, end).is_empty()).then_some(MarqueeRefusal::OverlapsClip)
-    }
-
-    /// The marquee span `[start, end)` cut to the lead clip's span in the
-    /// arrangement: where a running `/` into it punches in
-    /// (`470-marquee-capture.md` decision 9). `None` without a lead clip or
-    /// when the marquee misses it.
-    pub(crate) fn punch_in_span(&self, marquee: (i32, i32)) -> Option<(i32, i32)> {
-        let clip = self.selected_clip()?;
-        let start = marquee.0.max(clip.start_tick());
-        let end = marquee.1.min(clip.end_tick());
-        (start < end).then_some((start, end))
-    }
-
-    /// The clip view's span `[start, end)`, in the lead clip's event ticks,
-    /// as arrangement ticks: where the punch-in it frames lands
-    /// (`470-marquee-capture.md` decision 9). `None` without a lead clip.
-    pub(crate) fn clip_span_in_arrangement(&self, span: (i32, i32)) -> Option<(i32, i32)> {
-        let clip = self.selected_clip()?;
-        let offset = clip.start_tick() - clip.region().start();
-        Some((span.0 + offset, span.1 + offset))
-    }
-
-    /// The arrangement tick the clip view's ruler counts the lead clip's
-    /// bars from: the bar line at or before its window's start, bar 1 there
-    /// (`timeline.rs`'s `ruler_bar_number`). A clip-view punch-in's footer
-    /// names its bars from here.
-    pub(crate) fn lead_clip_ruler_origin(&self) -> Option<i32> {
-        let clip = self.selected_clip()?;
-        let window_start = clip.region().start();
-        let bar = self.meter().bar_ticks();
-        Some(clip.start_tick() - window_start + window_start.div_euclid(bar) * bar)
     }
 
     /// Routes one live-input message into the capture buffer at `tick`, the
@@ -450,8 +511,7 @@ impl Sequencer {
     /// latch to the window's end. Either way never past the clip's end.
     ///
     /// `punch_in` is a span of arrangement ticks inside the clip
-    /// ([`punch_in_span`](Self::punch_in_span)) when an arranger marquee
-    /// frames the `/` (`470-marquee-capture.md` decision 9): the window is
+    /// ([`CaptureFraming::PunchIn`]) when a marquee frames the `/` (`470-marquee-capture.md` decision 9): the window is
     /// chosen as without it, then only what was played inside the span
     /// lands ([`Clip::punch_in`]), and the wheels latch to its end at the
     /// latest.
@@ -786,6 +846,7 @@ mod tests {
     use crate::{
         core::{
             config,
+            input_event::CaptureFrame,
             midi::{message::Controller, out_queue::MidiOutMessage},
             sequencer::edit::{
                 CommitClipEdit, EditResult, InsertCaptureEdit, ResizeClipEdit, SequencerEdit,
@@ -3384,10 +3445,10 @@ mod tests {
         let marquee = (bar, bar * 3);
 
         assert_eq!(
-            seq.marquee_capture_refusal(marquee),
+            marquee_refusal(&seq, marquee),
             Some(MarqueeRefusal::OutsideLoop)
         );
-        assert_eq!(seq.marquee_capture_refusal((0, bar)), None);
+        assert_eq!(marquee_refusal(&seq, (0, bar)), None);
     }
 
     /// Linear, the region is the marquee's stretch of arrangement time: each
@@ -3449,10 +3510,10 @@ mod tests {
 
         assert!(seq.build_committed_capture_clip(Some(marquee)).is_none());
         assert_eq!(
-            seq.marquee_capture_refusal(marquee),
+            marquee_refusal(&seq, marquee),
             Some(MarqueeRefusal::OverlapsClip)
         );
-        assert_eq!(seq.marquee_capture_refusal((bar * 4, bar * 6)), None);
+        assert_eq!(marquee_refusal(&seq, (bar * 4, bar * 6)), None);
     }
 
     /// An empty buffer commits nothing, marquee or not, and isn't refused.
@@ -3461,7 +3522,7 @@ mod tests {
         let bar = Meter::FOUR_FOUR.bar_ticks();
         let seq = make_sequencer(0, bar * 2);
         seq.running.store(true, Ordering::Relaxed);
-        assert_eq!(seq.marquee_capture_refusal((bar * 4, bar * 6)), None);
+        assert_eq!(marquee_refusal(&seq, (bar * 4, bar * 6)), None);
         assert!(seq.build_committed_capture_clip(Some((0, bar))).is_none());
     }
 
@@ -3568,44 +3629,72 @@ mod tests {
         assert!(InsertCaptureEdit::from_running_capture(&seq, Some((bar, bar * 2))).is_none());
     }
 
-    /// The punch-in span is the marquee cut to the lead clip; a marquee that
-    /// misses the clip is refused, unless the buffer would land nothing.
+    /// `/`'s refusal of an arranger marquee over `span`, if any.
+    fn marquee_refusal(seq: &Sequencer, span: (i32, i32)) -> Option<MarqueeRefusal> {
+        let marquee = CaptureFrame::Marquee(rect(span.0, span.1, 0, 0));
+        seq.capture_framing(Some(marquee)).err()
+    }
+
+    /// Running into the lead clip, the marquee punches in over its cut to
+    /// the clip; one that misses the clip is refused, unless the buffer
+    /// would land nothing; stopped, it frames nothing.
     #[test]
-    fn a_marquee_outside_the_lead_clip_is_refused() {
+    fn a_marquee_into_the_lead_clip_punches_in_over_its_cut() {
         let bar = Meter::FOUR_FOUR.bar_ticks();
+        let framing = |seq: &Sequencer, start, end| {
+            seq.capture_framing(Some(CaptureFrame::Marquee(rect(start, end, 0, 0))))
+        };
         let seq = punch_into_lead_clip(&[]);
-        assert_eq!(seq.marquee_capture_refusal((bar * 3, bar * 4)), None);
+        seq.running.store(true, Ordering::Relaxed);
+        assert_eq!(
+            framing(&seq, bar * 3, bar * 4),
+            Ok(CaptureFraming::Unframed)
+        );
 
         let seq = punch_into_lead_clip(&pitched_note(60, 100, 300));
+        seq.running.store(true, Ordering::Relaxed);
         assert_eq!(
-            seq.marquee_capture_refusal((bar * 3, bar * 4)),
-            Some(MarqueeRefusal::OutsideClip)
+            framing(&seq, bar * 3, bar * 4),
+            Err(MarqueeRefusal::OutsideClip)
         );
-        assert_eq!(seq.marquee_capture_refusal((bar, bar * 4)), None);
-        assert_eq!(seq.punch_in_span((bar, bar * 4)), Some((bar, bar * 2)));
-        assert_eq!(seq.punch_in_span((bar * 2, bar * 4)), None);
+        assert_eq!(
+            framing(&seq, bar, bar * 4),
+            Ok(CaptureFraming::PunchIn {
+                span: (bar, bar * 2),
+                ruler_origin: 0
+            })
+        );
+        seq.running.store(false, Ordering::Relaxed);
+        assert_eq!(
+            framing(&seq, bar * 3, bar * 4),
+            Ok(CaptureFraming::Unframed)
+        );
     }
 
     /// The clip view's span is in the lead clip's event ticks: it maps into
     /// the arrangement through the clip's start and window, and the footer
     /// counts bars from the bar holding the window's start, as that view's
-    /// ruler does.
+    /// ruler does. Without a lead clip it frames nothing.
     #[test]
     fn a_clip_view_span_maps_through_the_lead_clips_window() {
         let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut seq = make_sequencer(0, bar * 4);
+        seq.running.store(true, Ordering::Relaxed);
         add_and_select_clip(&mut seq, bar * 2, bar * 2);
         seq.selected_clip_mut()
             .unwrap()
             .region_mut()
             .set_region(Some(bar + 960), Some(bar * 3 + 960));
+        let span = Some(CaptureFrame::ClipSpan((bar + 960, bar * 2)));
 
         assert_eq!(
-            seq.clip_span_in_arrangement((bar + 960, bar * 2)),
-            Some((bar * 2, bar * 3 - 960))
+            seq.capture_framing(span),
+            Ok(CaptureFraming::PunchIn {
+                span: (bar * 2, bar * 3 - 960),
+                ruler_origin: bar * 2 - 960
+            })
         );
-        assert_eq!(seq.lead_clip_ruler_origin(), Some(bar * 2 - 960));
         seq.select_clip(None);
-        assert_eq!(seq.clip_span_in_arrangement((0, bar)), None);
+        assert_eq!(seq.capture_framing(span), Ok(CaptureFraming::Unframed));
     }
 }

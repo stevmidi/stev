@@ -12,7 +12,9 @@
 use egui::Key;
 
 use crate::core::config::{TRACK_VOLUME_DB_DEFAULT, ZOOM_KEY_STEP};
-use crate::core::input_event::{KeyModifiers, is_marquee_nudge_key, is_pane_focus_key};
+use crate::core::input_event::{
+    CaptureFrame, KeyModifiers, is_marquee_nudge_key, is_pane_focus_key,
+};
 use crate::core::keymap::{Action, Chord, NEW_PROJECT, SAVE, SAVE_AS};
 #[cfg(target_os = "macos")]
 use crate::core::plugin_host::take_editor_keys;
@@ -1427,11 +1429,12 @@ impl Display {
             // clip instead of the loop, or punches in; the clip view's span
             // punches in.
             InputEvent::Action(Action::Commit) => {
-                let in_clip_view = self.view_state() == ViewState::Clip;
-                let marquee = self.gesture.time_selection.filter(|_| !in_clip_view);
-                let clip_span = self.gesture.duplicate_span.filter(|_| in_clip_view);
+                let frame = match self.view_state() {
+                    ViewState::Arranger => self.gesture.time_selection.map(CaptureFrame::Marquee),
+                    ViewState::Clip => self.gesture.duplicate_span.map(CaptureFrame::ClipSpan),
+                };
                 self.input_event_tx
-                    .send(InputEvent::Commit { marquee, clip_span })
+                    .send(InputEvent::Commit { frame })
                     .is_ok()
             }
             // Ableton's "Insert MIDI Clip" (⇧⌘/Ctrl+M): an empty clip over

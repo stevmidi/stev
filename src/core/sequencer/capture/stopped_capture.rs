@@ -206,11 +206,12 @@ mod tests {
     use crate::{
         core::{
             config,
+            input_event::CaptureFrame,
             sequencer::{
                 ClipInstrumentEvent, CommitClipEdit, ResizeClipEdit, RetimeClipEdit, SequencerEdit,
                 capture::MarqueeRefusal,
                 test_support::{
-                    clip_at, instrument_track_0, note_off, note_on, sequencer_with,
+                    clip_at, instrument_track_0, note_off, note_on, rect, sequencer_with,
                     tick_and_collect, tick_and_collect_messages,
                 },
             },
@@ -804,9 +805,10 @@ mod tests {
             seq.build_stopped_capture_clip(Some((bar, bar * 3)))
                 .is_none()
         );
+        let marquee = CaptureFrame::Marquee(rect(bar, bar * 3, 0, 0));
         assert_eq!(
-            seq.marquee_capture_refusal((bar, bar * 3)),
-            Some(MarqueeRefusal::OverlapsClip)
+            seq.capture_framing(Some(marquee)),
+            Err(MarqueeRefusal::OverlapsClip)
         );
     }
 }

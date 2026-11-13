@@ -8,7 +8,7 @@ use crossbeam_channel::Sender;
 use uuid::Uuid;
 
 use crate::core::agent::{AgentReply, AgentRequest};
-use crate::core::input_event::TimeSelectionRect;
+use crate::core::input_event::{CaptureFrame, TimeSelectionRect};
 use crate::core::midi::message::Controller;
 use crate::core::project::{LibraryChange, ProjectAction, SaveOutcome};
 use crate::core::sequencer::{AudioExportOutcome, TempoGesture};
@@ -47,14 +47,11 @@ pub(crate) enum SequencerCommand {
     /// detected phrase while stopped. See `sequencer_handler.rs` and
     /// `220-capture-without-pending-view.md`. An arranger marquee with a tick
     /// range frames a new clip instead of the loop, and it or the clip view's
-    /// span punches in a running insert (`470-marquee-capture.md`).
+    /// span punches in a running insert (`470-marquee-capture.md`,
+    /// [`Sequencer::capture_framing`](super::Sequencer::capture_framing)).
     Commit {
-        /// The arranger's marquee, `None` without one and in the clip view.
-        marquee: Option<TimeSelectionRect>,
-        /// The clip view's span (the piano roll's marquee) in the lead
-        /// clip's event ticks, `None` without one and in the arranger: a
-        /// running insert punches in over it.
-        clip_span: Option<(i32, i32)>,
+        /// The focused pane's time selection, if any.
+        frame: Option<CaptureFrame>,
     },
     /// Place the clip cursor at an absolute tick — the clip-view equivalent of
     /// a timeline click.

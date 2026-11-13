@@ -406,10 +406,7 @@ mod tests {
         running(&mut h, plan(&[(0, "01 Synth.wav")], Vec::new()));
         for cmd in [
             SequencerCommand::ToggleTrackMute { track_idx: 0 },
-            SequencerCommand::Commit {
-                marquee: None,
-                clip_span: None,
-            },
+            SequencerCommand::Commit { frame: None },
             SequencerCommand::ExportAudio {
                 time_bounds: Some(rect(0, BAR, 0, 0)),
                 name: "Sketch".to_owned(),

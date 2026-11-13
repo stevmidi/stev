@@ -118,6 +118,21 @@ impl TimeSelectionRect {
     }
 }
 
+/// The time selection a `/` carries, from whichever pane has the keyboard
+/// (`470-marquee-capture.md`); focusing one pane drops the other's, so there
+/// is only ever one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CaptureFrame {
+    /// The arranger's marquee, in arrangement ticks: frames a new clip
+    /// instead of the loop, or punches in a running insert (decisions 3, 4
+    /// and 9).
+    Marquee(TimeSelectionRect),
+    /// The clip view's span (the piano roll's marquee, `gesture.duplicate_span`)
+    /// `(start, end)` in the open clip's event ticks: punches in a running
+    /// insert (decision 11).
+    ClipSpan((i32, i32)),
+}
+
 /// One resolved user input, ready for `EventHandlers`. See the module docs for
 /// the `...InTimeSelectionOrClip` / `...InSelection` operand conventions.
 #[derive(Clone, Debug)]
@@ -349,18 +364,11 @@ pub(crate) enum InputEvent {
         /// The marquee selection.
         rect: TimeSelectionRect,
     },
-    /// `/`, the capture action, with the view's time selection stamped on:
-    /// the arranger's marquee, or in the clip view the piano roll's span
-    /// (`gesture.duplicate_span`). Forwarded to `SequencerCommand::Commit`,
-    /// where a marquee with a tick range frames a new clip or punches in a
-    /// running insert, and a clip span punches in a running insert
-    /// (`470-marquee-capture.md`).
+    /// `/`, the capture action, with the view's time selection stamped on
+    /// (`470-marquee-capture.md`). Forwarded to `SequencerCommand::Commit`.
     Commit {
-        /// The arranger's marquee, if any (`None` in the clip view).
-        marquee: Option<TimeSelectionRect>,
-        /// The clip view's span `(start, end)` in the open clip's event
-        /// ticks, if any (`None` in the arranger).
-        clip_span: Option<(i32, i32)>,
+        /// The focused pane's time selection, if any.
+        frame: Option<CaptureFrame>,
     },
     /// Insert an empty clip on every track the marquee spans, over its tick
     /// range, or one bar at the cursor on the selected track with none

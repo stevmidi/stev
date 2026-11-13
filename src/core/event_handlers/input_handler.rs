@@ -113,11 +113,8 @@ impl EventHandlers {
                 self.send_transport(TransportCommand::TogglePlayback);
             }
 
-            InputEvent::Commit { marquee, clip_span } => {
-                self.send_sequencer(SequencerCommand::Commit {
-                    marquee: *marquee,
-                    clip_span: *clip_span,
-                });
+            InputEvent::Commit { frame } => {
+                self.send_sequencer(SequencerCommand::Commit { frame: *frame });
             }
 
             InputEvent::Action(Action::MuteNotes) => self.handle_mute(),
@@ -897,7 +894,7 @@ impl EventHandlers {
 #[cfg(test)]
 mod tests {
     use crate::core::event_handlers::test_harness::harness;
-    use crate::core::input_event::{InputEvent, TimeSelectionRect};
+    use crate::core::input_event::{CaptureFrame, InputEvent, TimeSelectionRect};
     use crate::core::sequencer::SequencerCommand;
 
     #[test]
@@ -909,14 +906,11 @@ mod tests {
             track_start: 0,
             track_end: 0,
         };
-        h.handlers.handle_input_event(&InputEvent::Commit {
-            marquee: Some(marquee),
-            clip_span: Some((0, 480)),
-        });
+        let frame = Some(CaptureFrame::Marquee(marquee));
+        h.handlers.handle_input_event(&InputEvent::Commit { frame });
         assert!(matches!(
             h.sequencer_commands.try_recv(),
-            Ok(SequencerCommand::Commit { marquee: Some(m), clip_span: Some((0, 480)) })
-                if m == marquee
+            Ok(SequencerCommand::Commit { frame: f }) if f == frame
         ));
     }
 
