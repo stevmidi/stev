@@ -17,12 +17,14 @@ Keep the valuable part of the retired modal `PendingClip` view, the phrase **det
 
 ### `/` commits
 
-| Transport | Lead clip under cursor | Result |
-|---|---|---|
-| Playing | none | Commit the last pass, cropped (unchanged, `100`). |
-| Playing | yes | Insert the last pass into that clip where it was heard, as an overdub: neither cursor anchors it (`InsertCaptureEdit::from_running_capture`; the window rules of `100`, undoable since phase 4). |
-| Stopped | none | **Commit a new clip framed by phrase detection** (`CommitClipEdit::from_stopped_capture`). |
-| Stopped | yes | **Open a take session** on the take (`archive/290-framing-a-take.md` § Phase 2): framed like a clip, heard in place; Enter inserts it at the clip cursor (`InsertCaptureEdit::from_insert`), Esc cancels. |
+| Transport | Lead clip under cursor | Result | With an arranger marquee (`470`) |
+|---|---|---|---|
+| Playing | none | Commit the last pass, cropped (unchanged, `100`). | The region is the marquee's span (its phases of the pass looping, its stretch of time linear), placed at its start; refused outside the loop or over a clip. |
+| Playing | yes | Insert the last pass into that clip where it was heard, as an overdub: neither cursor anchors it (`InsertCaptureEdit::from_running_capture`; the window rules of `100`, undoable since phase 4). | Ignored for now (the punch-in overdub is `470` phase 2). |
+| Stopped | none | **Commit a new clip framed by phrase detection** (`CommitClipEdit::from_stopped_capture`). | Exactly the marquee's length at its start; detection still finds the start; refused over a clip. |
+| Stopped | yes | **Open a take session** on the take (`archive/290-framing-a-take.md` § Phase 2): framed like a clip, heard in place; Enter inserts it at the clip cursor (`InsertCaptureEdit::from_insert`), Esc cancels. | Ignored: the session has its own window band. |
+
+A marquee frames the capture only when it has a tick range; a track-only one is no marquee. A marquee commit says what it captured in the footer ("Captured bars 3–4 (marquee)") and keeps the marquee; see `470-marquee-capture.md`.
 
 The stopped commit places the clip at the arranger cursor on the selected track. It keeps the detected window: detected start, and tail at last NoteOff + 2 beats. **The project's first clip keeps that window exactly** and leaves the tempo alone (see "Fitting the tempo"). **Every later clip is rounded to the nearest whole bars**, floored to the room before the next clip. The clip is **not cropped**: the last `CAPTURE_BUFFER_BARS` (8) of the capture stay in it as material outside its window. The event space is rebased so the window starts on a bar line (`Clip::align_window_start_to_bar`), which gives quantize, swing and the clip view the phrase's grid. A commit never changes the event selection and never touches the loop region.
 

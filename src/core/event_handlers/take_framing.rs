@@ -255,7 +255,11 @@ mod tests {
         let mut record = Record::new();
         let before = played_into_a_lead_clip(&mut h);
 
-        run_command(&mut h, &mut record, SequencerCommand::Commit);
+        run_command(
+            &mut h,
+            &mut record,
+            SequencerCommand::Commit { marquee: None },
+        );
         assert!(h.sequencer.is_framing_take());
         assert_eq!(h.handlers.view_state(), ViewState::Clip);
         assert!(record.is_empty());
@@ -290,7 +294,11 @@ mod tests {
         let mut h = harness();
         let mut record = Record::new();
         played_into_a_lead_clip(&mut h);
-        run_command(&mut h, &mut record, SequencerCommand::Commit);
+        run_command(
+            &mut h,
+            &mut record,
+            SequencerCommand::Commit { marquee: None },
+        );
         assert!(h.sequencer.is_framing_take());
 
         let (track_idx, knob) = (0, 0);
@@ -322,7 +330,11 @@ mod tests {
         let mut h = harness();
         let mut record = Record::new();
         let before = played_into_a_lead_clip(&mut h);
-        run_command(&mut h, &mut record, SequencerCommand::Commit);
+        run_command(
+            &mut h,
+            &mut record,
+            SequencerCommand::Commit { marquee: None },
+        );
 
         // The cursor a quarter into the take: between its two notes.
         run_command(
@@ -342,7 +354,11 @@ mod tests {
         assert_eq!(lead_events(&h), before);
         assert!(record.is_empty());
 
-        run_command(&mut h, &mut record, SequencerCommand::Commit);
+        run_command(
+            &mut h,
+            &mut record,
+            SequencerCommand::Commit { marquee: None },
+        );
         assert_eq!(lead_pitches(&h), vec![60, 64, 67]);
     }
 
@@ -353,10 +369,18 @@ mod tests {
         let mut h = harness();
         let mut record = Record::new();
         let before = played_into_a_lead_clip(&mut h);
-        run_command(&mut h, &mut record, SequencerCommand::Commit);
+        run_command(
+            &mut h,
+            &mut record,
+            SequencerCommand::Commit { marquee: None },
+        );
 
         run_command(&mut h, &mut record, SequencerCommand::QuantizeEvents);
-        run_command(&mut h, &mut record, SequencerCommand::Commit);
+        run_command(
+            &mut h,
+            &mut record,
+            SequencerCommand::Commit { marquee: None },
+        );
         assert!(record.is_empty());
         assert!(h.sequencer.is_framing_take());
 
@@ -373,7 +397,11 @@ mod tests {
         let mut h = harness();
         let mut record = Record::new();
         played_into_a_lead_clip(&mut h);
-        run_command(&mut h, &mut record, SequencerCommand::Commit);
+        run_command(
+            &mut h,
+            &mut record,
+            SequencerCommand::Commit { marquee: None },
+        );
 
         let synth = stub_instrument(Vec::new());
         run_command(
@@ -396,7 +424,11 @@ mod tests {
         let mut h = harness();
         let mut record = Record::new();
         played_into_a_lead_clip(&mut h);
-        run_command(&mut h, &mut record, SequencerCommand::Commit);
+        run_command(
+            &mut h,
+            &mut record,
+            SequencerCommand::Commit { marquee: None },
+        );
         assert!(h.sequencer.is_framing_take());
 
         let save = SequencerCommand::SaveProject {
@@ -438,7 +470,11 @@ mod tests {
         let reply_without_a_session = quit_reply(&h);
         assert!(reply_without_a_session.is_some());
 
-        run_command(&mut h, &mut record, SequencerCommand::Commit);
+        run_command(
+            &mut h,
+            &mut record,
+            SequencerCommand::Commit { marquee: None },
+        );
         run_command(
             &mut h,
             &mut record,
@@ -448,7 +484,11 @@ mod tests {
         assert_eq!(h.handlers.view_state(), ViewState::Arranger);
         assert_eq!(lead_events(&h), before);
 
-        run_command(&mut h, &mut record, SequencerCommand::Commit);
+        run_command(
+            &mut h,
+            &mut record,
+            SequencerCommand::Commit { marquee: None },
+        );
         assert!(h.sequencer.is_framing_take());
         while h.ui_events.try_recv().is_ok() {}
         run_command(&mut h, &mut record, quit());

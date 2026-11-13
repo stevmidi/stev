@@ -113,7 +113,9 @@ impl EventHandlers {
                 self.send_transport(TransportCommand::TogglePlayback);
             }
 
-            InputEvent::Action(Action::Commit) => self.send_sequencer(SequencerCommand::Commit),
+            InputEvent::Commit { marquee } => {
+                self.send_sequencer(SequencerCommand::Commit { marquee: *marquee });
+            }
 
             InputEvent::Action(Action::MuteNotes) => self.handle_mute(),
 
@@ -892,18 +894,24 @@ impl EventHandlers {
 #[cfg(test)]
 mod tests {
     use crate::core::event_handlers::test_harness::harness;
-    use crate::core::input_event::InputEvent;
-    use crate::core::keymap::Action;
+    use crate::core::input_event::{InputEvent, TimeSelectionRect};
     use crate::core::sequencer::SequencerCommand;
 
     #[test]
-    fn the_commit_action_commits() {
+    fn the_commit_carries_the_marquee() {
         let h = harness();
-        h.handlers
-            .handle_input_event(&InputEvent::Action(Action::Commit));
+        let marquee = TimeSelectionRect {
+            start: 0,
+            end: 960,
+            track_start: 0,
+            track_end: 0,
+        };
+        h.handlers.handle_input_event(&InputEvent::Commit {
+            marquee: Some(marquee),
+        });
         assert!(matches!(
             h.sequencer_commands.try_recv(),
-            Ok(SequencerCommand::Commit)
+            Ok(SequencerCommand::Commit { marquee: Some(m) }) if m == marquee
         ));
     }
 

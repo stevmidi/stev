@@ -5,8 +5,9 @@
 //! clip at the cursor (placed on the track — undoably — by `CommitClipEdit`);
 //! `build_running_capture_insert` picks the slice `InsertCaptureEdit` inserts
 //! into an existing clip, from either pane. The
-//! window that gets frozen is derived from the loop region — see
-//! `100-running-capture.md` for the invariants.
+//! window that gets frozen is derived from the loop region, or from the
+//! arranger marquee when one frames a new clip — see
+//! `100-running-capture.md` for the invariants and `470-marquee-capture.md`.
 //!
 //! ## Module split
 //!
@@ -37,14 +38,15 @@ use uuid::Uuid;
 
 use crate::{
     core::{
+        agent::units::format_position,
         config,
         midi::message::{midi3, parse_controller},
-        time,
+        time::{self, Meter},
     },
     models::{
         clip::Clip,
         event::{Event, EventType},
-        track::TrackOutput,
+        track::{Track, TrackOutput},
     },
 };
 
@@ -92,6 +94,49 @@ pub(crate) enum TakePlace {
     Stopped,
 }
 
+/// Why a marquee-framed `/` into a new clip was refused
+/// ([`Sequencer::marquee_capture_refusal`], `470-marquee-capture.md`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MarqueeRefusal {
+    /// Running and looping, the marquee isn't inside the loop region, so it
+    /// can't line up with a pass (decision 3).
+    OutsideLoop,
+    /// The clip would overlap a clip on the selected track (decision 8).
+    OverlapsClip,
+}
+
+impl MarqueeRefusal {
+    /// The footer line saying why nothing was captured.
+    pub(crate) fn message(self) -> &'static str {
+        match self {
+            Self::OutsideLoop => "The marquee is outside the loop",
+            Self::OverlapsClip => "The marquee overlaps a clip",
+        }
+    }
+}
+
+/// The span `[start, end)` as the footer names a marquee-framed capture
+/// (`470-marquee-capture.md` decision 7), in `meter`'s bars from 1: `bar 3`
+/// or `bars 3–4` when both edges sit on bar lines, otherwise the two edges
+/// as the ruler counts positions (`3+2–5`).
+pub(crate) fn span_label(start: i32, end: i32, meter: Meter) -> String {
+    let bar = meter.bar_ticks();
+    if start.rem_euclid(bar) == 0 && end.rem_euclid(bar) == 0 {
+        let (first, last) = (start.div_euclid(bar) + 1, end.div_euclid(bar));
+        if first >= last {
+            format!("bar {first}")
+        } else {
+            format!("bars {first}–{last}")
+        }
+    } else {
+        format!(
+            "{}–{}",
+            format_position(start, meter),
+            format_position(end, meter)
+        )
+    }
+}
+
 /// Whether a running-capture commit produces a fresh clip or is inserted into
 /// an existing one — see [`normalize_running_capture`](Sequencer::normalize_running_capture).
 #[derive(Clone, Copy)]
@@ -122,46 +167,41 @@ impl Sequencer {
     /// commit never enters the undo record. [`CommitClipEdit`] does the add
     /// and clears the buffer.
     ///
+    /// `marquee` is the arranger marquee's tick span `[start, end)`, when it
+    /// frames the capture (`470-marquee-capture.md` decision 3): the take is
+    /// kept exactly as without it, but the region is the marquee's span —
+    /// its phases of the last pass when looping, its stretch of arrangement
+    /// time when linear — placed at its start, never clamped to the room
+    /// there. `None` too when [`marquee_capture_refusal`](Self::marquee_capture_refusal)
+    /// refuses it.
+    ///
     /// [`CommitClipEdit`]: crate::core::sequencer::edit::CommitClipEdit
-    pub(crate) fn build_committed_capture_clip(&self) -> Option<(usize, Clip)> {
+    pub(crate) fn build_committed_capture_clip(
+        &self,
+        marquee: Option<(i32, i32)>,
+    ) -> Option<(usize, Clip)> {
         if !self.capture_clip.has_notes() {
             return None;
         }
 
-        let cursor_tick = self.cursor_tick();
-        let min_len = time::min_clip_length_ticks();
         let track_idx = self.selected_track_index()?;
         let track = self.tracks.get(track_idx)?;
 
-        // Space available before the next clip on this track — the committed
-        // clip must not overlap it (the placeholder used to shrink itself here).
-        let available = track
-            .next_clip_start_after(cursor_tick)
-            .map(|next_start| next_start - cursor_tick)
-            .unwrap_or(i32::MAX);
-
-        // Region (playable) length — the clip itself keeps the whole last
-        // pass, see `normalize_running_capture`.
-        //   Playback wrapping: the remainder of the current loop cycle from
-        //   where the cursor sits — cursor at the loop start gives a full
-        //   cycle, cursor a bar in gives one bar less. Clamped to `available`,
-        //   floored to `min_clip_length_ticks` — a beat, the shortest a clip can
-        //   be (a collapsed loop region can be zero-width).
-        //   Linear (loop off, or a start after the region end that never
-        //   wraps): the content played, last note-on rounded up to the next
-        //   bar, likewise clamped and floored.
-        // See `100-running-capture.md`.
-        let anchor_tick = self.capture_anchor_tick(cursor_tick);
-        let region_length = if self.playback_is_looping() {
-            let loop_len = self.capture_loop_length();
-            let phase = (cursor_tick - self.region_start()).rem_euclid(loop_len);
-            (loop_len - phase).min(available).max(min_len)
-        } else {
-            self.linear_content_length(anchor_tick)
-                .min(available)
-                .max(min_len)
+        // Where the clip goes and how long its region is.
+        let (start_tick, region_length) = match marquee {
+            Some((start, end)) => {
+                if self.marquee_outside_loop((start, end)) {
+                    return None;
+                }
+                (start, end - start)
+            }
+            None => {
+                let cursor_tick = self.cursor_tick();
+                (cursor_tick, self.cursor_region_length(cursor_tick, track))
+            }
         };
 
+        let anchor_tick = self.capture_anchor_tick(start_tick);
         let mut clip = self.normalize_running_capture(
             anchor_tick,
             region_length,
@@ -169,11 +209,65 @@ impl Sequencer {
         )?;
         clip.detect_and_store_swing();
 
-        clip.set_start_tick(cursor_tick);
+        clip.set_start_tick(start_tick);
 
         // A gap under the minimum clip length: the floor above made the clip wider than
         // the space, and `Track::add_clip` would refuse it.
         track.fits(&clip).then_some((track_idx, clip))
+    }
+
+    /// The region (playable) length of a running commit at the cursor, with
+    /// no marquee — the clip itself keeps the whole last pass, see
+    /// `normalize_running_capture`.
+    ///   Playback wrapping: the remainder of the current loop cycle from
+    ///   where the cursor sits — cursor at the loop start gives a full
+    ///   cycle, cursor a bar in gives one bar less.
+    ///   Linear (loop off, or a start after the region end that never
+    ///   wraps): the content played, last note-on rounded up to the next
+    ///   bar.
+    /// Either way clamped to the room before the next clip on `track` and
+    /// floored to `min_clip_length_ticks` — a beat, the shortest a clip can
+    /// be (a collapsed loop region can be zero-width). See
+    /// `100-running-capture.md`.
+    fn cursor_region_length(&self, cursor_tick: i32, track: &Track) -> i32 {
+        // The committed clip must not overlap the next clip on the track.
+        let available = track
+            .next_clip_start_after(cursor_tick)
+            .map(|next_start| next_start - cursor_tick)
+            .unwrap_or(i32::MAX);
+        let length = if self.playback_is_looping() {
+            let loop_len = self.capture_loop_length();
+            let phase = (cursor_tick - self.region_start()).rem_euclid(loop_len);
+            loop_len - phase
+        } else {
+            self.linear_content_length(self.capture_anchor_tick(cursor_tick))
+        };
+        length.min(available).max(time::min_clip_length_ticks())
+    }
+
+    /// Why a `/` framed by the marquee span `[start, end)` into a new clip
+    /// can't go ahead, or `None` when it can (`470-marquee-capture.md`):
+    /// running and looping, the marquee must lie inside the loop region to
+    /// line up with a pass (decision 3); and the clip it frames must not
+    /// overlap a clip on the selected track, since a length the user chose
+    /// is never quietly shortened (decision 8). `None` on a buffer without a
+    /// note, which commits nothing anyway.
+    pub(crate) fn marquee_capture_refusal(&self, marquee: (i32, i32)) -> Option<MarqueeRefusal> {
+        if !self.capture_clip.has_notes() {
+            return None;
+        }
+        if self.is_running() && self.marquee_outside_loop(marquee) {
+            return Some(MarqueeRefusal::OutsideLoop);
+        }
+        let (start, end) = marquee;
+        let track = self.tracks.get(self.selected_track_index()?)?;
+        (!track.find_clip_ids_in(start, end).is_empty()).then_some(MarqueeRefusal::OverlapsClip)
+    }
+
+    /// Whether playback is looping and the marquee span `[start, end)` isn't
+    /// inside the loop region, so no pass lines up with it.
+    fn marquee_outside_loop(&self, (start, end): (i32, i32)) -> bool {
+        self.playback_is_looping() && (start < self.region_start() || end > self.region_end())
     }
 
     /// Routes one live-input message into the capture buffer at `tick`, the
@@ -520,7 +614,9 @@ impl Sequencer {
                 let before_anchor = (anchor_tick - first_on).max(0);
                 let pre_roll = (before_anchor + bar - 1) / bar * bar;
                 let retained_start = anchor_tick - pre_roll;
-                let retained_end = anchor_tick + self.linear_content_length(anchor_tick);
+                // At least the region: a marquee may run past the content.
+                let retained_end =
+                    anchor_tick + self.linear_content_length(anchor_tick).max(region_length);
                 capture.carry_wheels_onto(retained_start);
                 capture.hold_start_values(retained_start);
 
@@ -692,7 +788,8 @@ mod tests {
         /// clip, places it and clears the buffer through the real
         /// [`CommitClipEdit`] path, returning the placed clip's metadata.
         fn commit_clip_to_track(&mut self) -> Option<ClipMetadata> {
-            let mut edit = SequencerEdit::CommitClip(CommitClipEdit::from_running_capture(self)?);
+            let mut edit =
+                SequencerEdit::CommitClip(CommitClipEdit::from_running_capture(self, None)?);
             match edit.edit(self) {
                 EditResult::ClipCommitted { clip } => Some(clip),
                 _ => None,
@@ -978,7 +1075,7 @@ mod tests {
         seq.capture_clip.add_event(note_on(600));
         seq.capture_clip.add_event(note_off(900));
 
-        let (track_idx, clip) = seq.build_committed_capture_clip().unwrap();
+        let (track_idx, clip) = seq.build_committed_capture_clip(None).unwrap();
 
         assert_eq!(track_idx, seq.selected_track_index().unwrap());
         assert_eq!(clip.start_tick(), 0);
@@ -2075,8 +2172,8 @@ mod tests {
             seq.capture_clip.add_event(mod_at(tick, 90));
         }
 
-        assert!(seq.build_committed_capture_clip().is_none());
-        assert!(seq.build_stopped_capture_clip().is_none());
+        assert!(seq.build_committed_capture_clip(None).is_none());
+        assert!(seq.build_stopped_capture_clip(None).is_none());
         add_and_select_clip(&mut seq, 0, bar * 2);
         assert!(!seq.open_take_framing(ViewState::Clip));
     }
@@ -2210,8 +2307,8 @@ mod tests {
             seq.capture_clip.add_event(cc_at(tick, 14, 90));
         }
 
-        assert!(seq.build_committed_capture_clip().is_none());
-        assert!(seq.build_stopped_capture_clip().is_none());
+        assert!(seq.build_committed_capture_clip(None).is_none());
+        assert!(seq.build_stopped_capture_clip(None).is_none());
         add_and_select_clip(&mut seq, 0, bar * 2);
         assert!(!seq.open_take_framing(ViewState::Clip));
     }
@@ -2233,7 +2330,7 @@ mod tests {
             seq.capture_clip.add_event(event);
         }
 
-        let (_, clip) = seq.build_committed_capture_clip().unwrap();
+        let (_, clip) = seq.build_committed_capture_clip(None).unwrap();
 
         assert_eq!(
             wheel_moves(clip.events()),
@@ -2352,8 +2449,8 @@ mod tests {
         let mut seq = sequencer_with_knob(bar * 2);
         turn(&mut seq, 0.2, &[(100, 0.4), (400, 0.9)]);
 
-        assert!(seq.build_committed_capture_clip().is_none());
-        assert!(seq.build_stopped_capture_clip().is_none());
+        assert!(seq.build_committed_capture_clip(None).is_none());
+        assert!(seq.build_stopped_capture_clip(None).is_none());
         add_and_select_clip(&mut seq, 0, bar * 2);
         assert!(!seq.open_take_framing(ViewState::Clip));
     }
@@ -2368,7 +2465,7 @@ mod tests {
         seq.capture_clip.add_event(note_off(300));
         turn(&mut seq, 0.2, &[(bar, 0.3), (bar + 400, 0.9)]);
 
-        let (_, clip) = seq.build_committed_capture_clip().unwrap();
+        let (_, clip) = seq.build_committed_capture_clip(None).unwrap();
 
         assert_eq!(
             param_moves(clip.events()),
@@ -2391,7 +2488,7 @@ mod tests {
         }
         turn(&mut seq, 0.2, &[(bar / 4, 0.5)]);
 
-        let (_, clip) = seq.build_stopped_capture_clip().unwrap();
+        let (_, clip) = seq.build_stopped_capture_clip(None).unwrap();
 
         assert!(!param_moves(clip.events()).is_empty());
     }
@@ -2450,7 +2547,7 @@ mod tests {
         turn(&mut seq, 0.2, &[(400, 0.9)]);
         seq.set_track_knobs(0, UNASSIGNED_KNOBS);
 
-        let (_, clip) = seq.build_committed_capture_clip().unwrap();
+        let (_, clip) = seq.build_committed_capture_clip(None).unwrap();
 
         assert!(param_moves(clip.events()).is_empty());
     }
@@ -3187,5 +3284,173 @@ mod tests {
         let track1 = seq.track_id_by_index(1);
         seq.select_track(track1);
         assert!(seq.kick_live_meter(&[0x90, 60, 100]));
+    }
+
+    // --- The marquee frames the capture (`470-marquee-capture.md`) ---
+
+    /// One note-on a bar, 100 ticks in, for bars `0..bars`.
+    fn note_each_bar(seq: &mut Sequencer, bars: i32) {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        for i in 0..bars {
+            seq.capture_clip.add_event(note_on(bar * i + 100));
+            seq.capture_clip.add_event(note_off(bar * i + 400));
+        }
+    }
+
+    /// Looping, the marquee's span of the pass plays, at the marquee: two
+    /// bars of an eight-bar loop with the cursor at its start, and the whole
+    /// pass is still in the clip for the edges to reveal.
+    #[test]
+    fn a_looping_marquee_frames_its_span_of_the_pass_at_its_start() {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        let mut seq = make_sequencer(0, bar * 8);
+        note_each_bar(&mut seq, 8);
+
+        let (_, clip) = seq
+            .build_committed_capture_clip(Some((bar * 2, bar * 4)))
+            .unwrap();
+
+        assert_eq!(clip.start_tick(), bar * 2);
+        assert_eq!(
+            (clip.region().start(), clip.region().end()),
+            (bar * 2, bar * 4)
+        );
+        assert_eq!(
+            region_note_on_ticks(&clip),
+            vec![bar * 2 + 100, bar * 3 + 100]
+        );
+        assert_eq!(note_on_ticks(&clip).len(), 8, "the whole pass is kept");
+    }
+
+    /// The marquee frames the pass as the loop sees it: a note anticipating
+    /// the wrap belongs to the next pass's downbeat, outside a marquee over
+    /// the loop's last bar, as without a marquee.
+    #[test]
+    fn a_marquee_over_the_last_bar_leaves_a_wrap_anticipating_note_to_the_downbeat() {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        let mut seq = make_sequencer(0, bar * 2);
+        seq.capture_clip.add_event(note_on(bar + 100));
+        seq.capture_clip.add_event(note_off(bar + 400));
+        let early = bar * 2 - config::LATE_NOTE_TOLERANCE_TICKS / 2;
+        seq.capture_clip.add_event(note_on(early));
+        seq.capture_clip.add_event(note_off(early + 300));
+
+        let (_, clip) = seq
+            .build_committed_capture_clip(Some((bar, bar * 2)))
+            .unwrap();
+
+        assert_eq!(
+            note_on_ticks(&clip),
+            vec![0],
+            "the next pass, from its downbeat"
+        );
+        assert!(region_note_on_ticks(&clip).is_empty());
+    }
+
+    /// Looping, a marquee not inside the loop lines up with no pass: the
+    /// builder commits nothing and the running `/` says why.
+    #[test]
+    fn a_looping_marquee_outside_the_loop_is_refused() {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        let mut seq = make_sequencer(0, bar * 2);
+        seq.running.store(true, Ordering::Relaxed);
+        note_each_bar(&mut seq, 2);
+        let marquee = (bar, bar * 3);
+
+        assert!(seq.build_committed_capture_clip(Some(marquee)).is_none());
+        assert_eq!(
+            seq.marquee_capture_refusal(marquee),
+            Some(MarqueeRefusal::OutsideLoop)
+        );
+        assert_eq!(seq.marquee_capture_refusal((0, bar)), None);
+    }
+
+    /// Linear, the region is the marquee's stretch of arrangement time: each
+    /// note still plays where it was played, and every note is kept.
+    #[test]
+    fn a_linear_marquee_frames_its_span_in_arrangement_time() {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        let mut seq = make_sequencer(0, bar * 8);
+        seq.loop_enabled.store(false, Ordering::Relaxed);
+        for t in [bar + 100, bar * 3 + 100, bar * 5 + 100] {
+            seq.capture_clip.add_event(note_on(t));
+            seq.capture_clip.add_event(note_off(t + 300));
+        }
+
+        let (_, clip) = seq
+            .build_committed_capture_clip(Some((bar * 2, bar * 4)))
+            .unwrap();
+
+        assert_eq!(clip.start_tick(), bar * 2);
+        assert_eq!(clip.region_length(), bar * 2);
+        let played: Vec<i32> = region_note_on_ticks(&clip)
+            .into_iter()
+            .map(|t| clip.start_tick() + t - clip.region().start())
+            .collect();
+        assert_eq!(played, vec![bar * 3 + 100], "heard where it was played");
+        assert_eq!(note_on_ticks(&clip).len(), 3, "nothing is cropped");
+    }
+
+    /// A linear marquee past the last note is still the marquee's length: a
+    /// silent region, the take kept before it.
+    #[test]
+    fn a_linear_marquee_past_the_take_keeps_its_length() {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        let mut seq = make_sequencer(0, bar * 8);
+        seq.loop_enabled.store(false, Ordering::Relaxed);
+        note_each_bar(&mut seq, 2);
+
+        let (_, clip) = seq
+            .build_committed_capture_clip(Some((bar * 6, bar * 9)))
+            .unwrap();
+
+        assert_eq!(clip.start_tick(), bar * 6);
+        assert_eq!(clip.region_length(), bar * 3);
+        assert!(region_note_on_ticks(&clip).is_empty());
+        assert_eq!(note_on_ticks(&clip).len(), 2);
+    }
+
+    /// A marquee clip over a clip is refused, never shortened to the room.
+    #[test]
+    fn a_marquee_over_a_clip_is_refused() {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        let mut seq = make_sequencer(0, bar * 8);
+        seq.running.store(true, Ordering::Relaxed);
+        seq.selected_track_mut()
+            .unwrap()
+            .add_clip(&clip_at(bar * 3, bar));
+        note_each_bar(&mut seq, 8);
+        let marquee = (bar * 2, bar * 4);
+
+        assert!(seq.build_committed_capture_clip(Some(marquee)).is_none());
+        assert_eq!(
+            seq.marquee_capture_refusal(marquee),
+            Some(MarqueeRefusal::OverlapsClip)
+        );
+        assert_eq!(seq.marquee_capture_refusal((bar * 4, bar * 6)), None);
+    }
+
+    /// An empty buffer commits nothing, marquee or not, and isn't refused.
+    #[test]
+    fn a_marquee_over_an_empty_buffer_is_not_refused() {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        let seq = make_sequencer(0, bar * 2);
+        seq.running.store(true, Ordering::Relaxed);
+        assert_eq!(seq.marquee_capture_refusal((bar * 4, bar * 6)), None);
+        assert!(seq.build_committed_capture_clip(Some((0, bar))).is_none());
+    }
+
+    /// The footer's span: bars from 1 on bar lines, the ruler's positions
+    /// otherwise, in the project's meter.
+    #[test]
+    fn span_label_names_bars_or_positions() {
+        let four = Meter::FOUR_FOUR;
+        let bar = four.bar_ticks();
+        assert_eq!(span_label(bar * 2, bar * 4, four), "bars 3–4");
+        assert_eq!(span_label(bar * 2, bar * 3, four), "bar 3");
+        assert_eq!(span_label(bar * 2 + time::PPQN * 2, bar * 4, four), "3+2–5");
+        let seven_eight = Meter::new(7, 8).unwrap();
+        let bar = seven_eight.bar_ticks();
+        assert_eq!(span_label(0, bar * 2, seven_eight), "bars 1–2");
     }
 }

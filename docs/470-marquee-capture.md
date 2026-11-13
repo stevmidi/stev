@@ -1,6 +1,6 @@
 # The Marquee Frames a Capture
 
-**Status: design agreed 2026-11-12; not built.** With an arranger marquee, `/` takes the capture's length (and, while running, its place) from the marquee instead of from the loop region. Over an 8-bar loop, marquee bars 3–4 and `/` commits what was played there as a 2-bar clip at bar 3. Without a marquee nothing changes: the loop frames the capture as today.
+**Status: design agreed 2026-11-12; phase 1 (new clips) built 2026-11-13 (`marquee-capture`); phase 2 not built.** With an arranger marquee, `/` takes the capture's length (and, while running, its place) from the marquee instead of from the loop region. Over an 8-bar loop, marquee bars 3–4 and `/` commits what was played there as a 2-bar clip at bar 3. Without a marquee nothing changes: the loop frames the capture as today.
 
 ## Background
 

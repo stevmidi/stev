@@ -33,7 +33,7 @@ mod reads;
 mod stdio;
 #[cfg(unix)]
 mod tools;
-mod units;
+pub(crate) mod units;
 mod writes;
 
 #[cfg(unix)]

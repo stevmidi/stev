@@ -45,8 +45,13 @@ pub(crate) enum SequencerCommand {
     /// The capture action (the `/` key): commit what was just played to a new clip,
     /// or insert it into the lead clip — the last pass while running, the
     /// detected phrase while stopped. See `sequencer_handler.rs` and
-    /// `220-capture-without-pending-view.md`.
-    Commit,
+    /// `220-capture-without-pending-view.md`. An arranger marquee with a tick
+    /// range frames a new clip instead of the loop
+    /// (`470-marquee-capture.md`).
+    Commit {
+        /// The arranger's marquee, `None` without one and in the clip view.
+        marquee: Option<TimeSelectionRect>,
+    },
     /// Place the clip cursor at an absolute tick — the clip-view equivalent of
     /// a timeline click.
     CommitClipClickByTicks(i32),

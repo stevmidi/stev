@@ -10,12 +10,11 @@ use undo::Record;
 
 use crate::core::agent::{AgentAnswer, AgentReply, answer};
 use crate::core::sequencer::{
-    ClearControllerSpanEdit, CommitClipEdit, DeleteSelectedEventsEdit, DeleteTimeEdit,
-    DragEventsVelocityEdit, DragNotesEdit, DuplicateClipsEdit, DuplicateTimeEdit,
-    InsertCaptureEdit, InsertNotesEdit, InsertSilenceEdit, MoveClipEdit, MoveRangeEdit,
-    MuteInRangeEdit, MuteSelectedEventsEdit, NudgeSelectedEventsEdit,
+    ClearControllerSpanEdit, DeleteSelectedEventsEdit, DeleteTimeEdit, DragEventsVelocityEdit,
+    DragNotesEdit, DuplicateClipsEdit, DuplicateTimeEdit, InsertNotesEdit, InsertSilenceEdit,
+    MoveClipEdit, MoveRangeEdit, MuteInRangeEdit, MuteSelectedEventsEdit, NudgeSelectedEventsEdit,
     NudgeSelectedEventsLengthEdit, PasteClipsEdit, QuantizeEventsEdit, RenameTrackEdit,
-    SequencerEdit, SetMeterEdit, SetTempoEdit, SetTrackOutputEdit, SplitClipsEdit, TempoGesture,
+    SetMeterEdit, SetTempoEdit, SetTrackOutputEdit, SplitClipsEdit, TempoGesture,
     TransposeSelectedEventsEdit, UndoStep, top_step,
 };
 use crate::core::time::TapTempo;
@@ -98,37 +97,8 @@ impl EventHandlers {
             return;
         }
         match cmd {
-            SequencerCommand::Commit => {
-                // Into the lead clip if there is one, otherwise a new clip:
-                // the last pass while running, the detected phrase while
-                // stopped. Stopped into the lead clip opens a take session
-                // instead, which inserts on Enter.
-                let into_lead_clip = sequencer.selected_clip_id().is_some();
-                let running = sequencer.is_running();
-                let edit = match (into_lead_clip, running) {
-                    (true, true) => {
-                        InsertCaptureEdit::from_running_capture(sequencer).map(SequencerEdit::from)
-                    }
-                    (true, false) => {
-                        if self.view_state() == ViewState::Arranger {
-                            sequencer.sync_selected_clip_cursor_with_arranger();
-                        }
-                        self.open_take_framing_workflow(sequencer);
-                        None
-                    }
-                    (false, true) => {
-                        CommitClipEdit::from_running_capture(sequencer).map(SequencerEdit::from)
-                    }
-                    (false, false) => {
-                        #[cfg(debug_assertions)]
-                        sequencer.write_stopped_capture_fixture();
-                        CommitClipEdit::from_stopped_capture(sequencer).map(SequencerEdit::from)
-                    }
-                };
-                if self.record_edit(sequencer, undo_record, edit) && !into_lead_clip && !running {
-                    // The project's first clip: loop over it.
-                    self.loop_sole_clip_workflow(sequencer, true);
-                }
+            SequencerCommand::Commit { marquee } => {
+                self.commit_workflow(sequencer, undo_record, *marquee);
             }
 
             SequencerCommand::InsertEmptyClip { time_bounds } => {
@@ -987,7 +957,11 @@ mod tests {
         while h.transport_commands.try_recv().is_ok() {}
 
         let mut record: Record<UndoStep> = Record::new();
-        run_command(&mut h, &mut record, SequencerCommand::Commit);
+        run_command(
+            &mut h,
+            &mut record,
+            SequencerCommand::Commit { marquee: None },
+        );
         assert_eq!(h.handlers.view_state(), ViewState::Clip);
         assert!(record.is_empty());
 

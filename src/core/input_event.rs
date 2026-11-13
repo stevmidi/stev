@@ -349,6 +349,14 @@ pub(crate) enum InputEvent {
         /// The marquee selection.
         rect: TimeSelectionRect,
     },
+    /// `/`, the capture action, with the arranger's marquee stamped on by the
+    /// view (`None` without one and in the clip view): forwarded to
+    /// `SequencerCommand::Commit`, where a marquee with a tick range frames
+    /// a new clip (`470-marquee-capture.md`).
+    Commit {
+        /// The arranger's marquee, if any.
+        marquee: Option<TimeSelectionRect>,
+    },
     /// Insert an empty clip on every track the marquee spans, over its tick
     /// range, or one bar at the cursor on the selected track with none
     /// (`⇧⌘/Ctrl+M`). Forwarded whole to `SequencerCommand::InsertEmptyClip`,

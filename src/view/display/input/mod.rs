@@ -1422,6 +1422,18 @@ impl Display {
                     time_bounds: self.gesture.time_selection,
                 })
                 .is_ok(),
+            // `/` — the capture. The arranger's marquee rides along and
+            // frames a new clip instead of the loop (`470-marquee-capture.md`);
+            // the clip view has none of its own.
+            InputEvent::Action(Action::Commit) => {
+                let marquee = self
+                    .gesture
+                    .time_selection
+                    .filter(|_| self.view_state() == ViewState::Arranger);
+                self.input_event_tx
+                    .send(InputEvent::Commit { marquee })
+                    .is_ok()
+            }
             // Ableton's "Insert MIDI Clip" (⇧⌘/Ctrl+M): an empty clip over
             // the marquee on each track it spans, or one bar at the cursor
             // with none. Plain ⌘M is left to the OS (macOS minimize).

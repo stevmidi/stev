@@ -28,30 +28,33 @@ impl Sequencer {
     /// the clip as material outside its window, rebased so the window starts
     /// on a bar line in event space. Pure. `None` on a buffer without a note,
     /// no selected track, or no room at the cursor.
-    pub(crate) fn build_stopped_capture_clip(&self) -> Option<(usize, Clip)> {
+    ///
+    /// `marquee` is the arranger marquee's tick span `[start, end)`, when it
+    /// frames the capture (`470-marquee-capture.md` decision 4): a length
+    /// and a place only. Detection still finds the start, over the
+    /// marquee's length back from the last note-on instead of the loop's;
+    /// the window is then exactly the marquee's length — no tail, floor or
+    /// rounding — and the clip goes at the marquee's start. `None` too when
+    /// it would overlap a clip there.
+    pub(crate) fn build_stopped_capture_clip(
+        &self,
+        marquee: Option<(i32, i32)>,
+    ) -> Option<(usize, Clip)> {
         if !self.capture_clip.has_notes() {
             return None;
         }
         let track_idx = self.selected_track_index()?;
-        let mut clip = self.build_detected_phrase_clip();
-
-        // The project's first clip keeps its exact detected window: its
-        // tempo changes only when Enter fits it (`RetimeClipEdit`) — the
-        // length it ends up with *is* the tempo, so rounding it here would
-        // throw away what the user sets by ear. Every later clip is nearest
-        // whole bars, but never past the next clip: floored to the bars that fit
-        // there, or the bare gap when not even one bar does.
-        let bar = self.meter().bar_ticks();
-        let raw = clip.region_length();
-        let length = if self.number_of_clips() == 0 {
-            raw
-        } else {
-            time::snap_to_grid(raw, bar).max(bar)
+        let mut clip = match marquee {
+            Some((start, end)) => self.build_marquee_phrase_clip(start, end - start),
+            None => {
+                let mut clip = self.build_detected_phrase_clip();
+                let length = self.rounded_phrase_length(&clip);
+                let region_start = clip.region().start();
+                clip.region_mut()
+                    .set_region(None, Some(region_start + length));
+                clip
+            }
         };
-        let length = self.fit_length_before_next_clip(clip.start_tick(), length);
-        let region_start = clip.region().start();
-        clip.region_mut()
-            .set_region(None, Some(region_start + length));
 
         // Put the window start on a bar line in event space, so the clip's
         // grid (quantize, swing, the clip view) is the phrase's.
@@ -129,6 +132,37 @@ impl Sequencer {
         clip
     }
 
+    /// The detected phrase window's length as a new clip keeps it, with no
+    /// marquee: the project's first clip keeps its exact detected window —
+    /// its tempo changes only when Enter fits it (`RetimeClipEdit`), and
+    /// the length it ends up with *is* the tempo, so rounding it here would
+    /// throw away what the user sets by ear. Every later clip is nearest
+    /// whole bars, but never past the next clip: floored to the bars that
+    /// fit there, or the bare gap when not even one bar does.
+    fn rounded_phrase_length(&self, clip: &Clip) -> i32 {
+        let bar = self.meter().bar_ticks();
+        let raw = clip.region_length();
+        let length = if self.number_of_clips() == 0 {
+            raw
+        } else {
+            time::snap_to_grid(raw, bar).max(bar)
+        };
+        self.fit_length_before_next_clip(clip.start_tick(), length)
+    }
+
+    /// The phrase a marquee of `length` ticks frames, placed at `start_tick`
+    /// (`470-marquee-capture.md` decision 4): the detected start over a raw
+    /// window `length` back from the last note-on, the end exactly `length`
+    /// after it. Like [`build_detected_phrase_clip`](Self::build_detected_phrase_clip),
+    /// every event of the capture source stays in the clip.
+    fn build_marquee_phrase_clip(&self, start_tick: i32, length: i32) -> Clip {
+        let capture = self.detection_capture_source();
+        let (region_start_tick, _) = Self::detected_phrase_window(&capture, length, self.meter());
+        let mut clip = Self::framed(capture, region_start_tick, region_start_tick + length);
+        clip.set_start_tick(start_tick);
+        clip
+    }
+
     /// `capture` (a [`detection_capture_source`](Self::detection_capture_source))
     /// with its window set to `[start, end)`.
     pub(in crate::core::sequencer) fn framed(mut capture: Clip, start: i32, end: i32) -> Clip {
@@ -174,6 +208,7 @@ mod tests {
             config,
             sequencer::{
                 ClipInstrumentEvent, CommitClipEdit, ResizeClipEdit, RetimeClipEdit, SequencerEdit,
+                capture::MarqueeRefusal,
                 test_support::{
                     clip_at, instrument_track_0, note_off, note_on, sequencer_with,
                     tick_and_collect, tick_and_collect_messages,
@@ -248,7 +283,7 @@ mod tests {
     /// Records the stopped `/` on `record` and selects the clip it placed at
     /// the cursor.
     fn commit_stopped(seq: &mut Sequencer, record: &mut Record<SequencerEdit>) {
-        let edit = CommitClipEdit::from_stopped_capture(seq).expect("a clip to commit");
+        let edit = CommitClipEdit::from_stopped_capture(seq, None).expect("a clip to commit");
         record.edit(seq, SequencerEdit::CommitClip(edit));
         let cursor = seq.cursor_tick();
         let id = seq
@@ -278,13 +313,13 @@ mod tests {
         add_clip(&mut seq, bar * 40, bar);
         fill_capture_roughly(&mut seq, bar * 3 / 2);
         seq.cursor_tick.store(0, Ordering::Relaxed);
-        let (_, plain) = seq.build_stopped_capture_clip().unwrap();
+        let (_, plain) = seq.build_stopped_capture_clip(None).unwrap();
 
         let last = seq.capture_clip.events().last().unwrap().tick();
         let late = last + Meter::FOUR_FOUR.bars_to_ticks(config::CAPTURE_BUFFER_BARS) + bar;
         seq.capture_clip
             .add_event(Event::new(late, 0, vec![0xE0, 0x00, 0x40]));
-        let (_, with_bend) = seq.build_stopped_capture_clip().unwrap();
+        let (_, with_bend) = seq.build_stopped_capture_clip(None).unwrap();
 
         assert_eq!(with_bend.region_length(), plain.region_length());
         assert_eq!(window_note_ons(&with_bend), window_note_ons(&plain));
@@ -302,7 +337,7 @@ mod tests {
         fill_capture_roughly(&mut seq, bar * 3 / 2);
         seq.cursor_tick.store(0, Ordering::Relaxed);
 
-        let (_, clip) = seq.build_stopped_capture_clip().unwrap();
+        let (_, clip) = seq.build_stopped_capture_clip(None).unwrap();
 
         assert_eq!(clip.start_tick(), 0);
         assert_eq!(clip.region_length(), bar * 2);
@@ -322,7 +357,7 @@ mod tests {
         add_clip(&mut seq, bar * 20, bar);
         fill_capture_roughly(&mut seq, bar * 3 / 2);
         seq.cursor_tick.store(0, Ordering::Relaxed);
-        let (_, clip) = seq.build_stopped_capture_clip().unwrap();
+        let (_, clip) = seq.build_stopped_capture_clip(None).unwrap();
         assert_eq!(clip.region_length(), bar * 2);
         assert_eq!(clip.region().start() % bar, 0);
 
@@ -433,7 +468,7 @@ mod tests {
         }
         seq.cursor_tick.store(0, Ordering::Relaxed);
 
-        let (_, clip) = seq.build_stopped_capture_clip().unwrap();
+        let (_, clip) = seq.build_stopped_capture_clip(None).unwrap();
 
         assert_eq!(
             window_note_ons(&clip).len(),
@@ -496,7 +531,7 @@ mod tests {
         let captured = seq.capture_clip.events().len();
         seq.cursor_tick.store(0, Ordering::Relaxed);
 
-        let (_, clip) = seq.build_stopped_capture_clip().unwrap();
+        let (_, clip) = seq.build_stopped_capture_clip(None).unwrap();
 
         assert_eq!(clip.events().len(), captured, "nothing is cropped away");
         assert_eq!(
@@ -524,7 +559,7 @@ mod tests {
         fill_capture_roughly(&mut seq, bar * 5 / 2);
         seq.cursor_tick.store(0, Ordering::Relaxed);
 
-        let (_, clip) = seq.build_stopped_capture_clip().unwrap();
+        let (_, clip) = seq.build_stopped_capture_clip(None).unwrap();
 
         assert_eq!(clip.region_length(), bar);
         assert!(seq.selected_track().unwrap().fits(&clip));
@@ -541,7 +576,7 @@ mod tests {
         seq.cursor_tick.store(0, Ordering::Relaxed);
 
         let mut record: Record<SequencerEdit> = Record::new();
-        let edit = CommitClipEdit::from_stopped_capture(&seq).unwrap();
+        let edit = CommitClipEdit::from_stopped_capture(&seq, None).unwrap();
         record.edit(&mut seq, SequencerEdit::CommitClip(edit));
 
         let (id, len) = {
@@ -578,7 +613,7 @@ mod tests {
         }
         seq.cursor_tick.store(0, Ordering::Relaxed);
 
-        let edit = CommitClipEdit::from_stopped_capture(&seq).unwrap();
+        let edit = CommitClipEdit::from_stopped_capture(&seq, None).unwrap();
         let mut record: Record<SequencerEdit> = Record::new();
         record.edit(&mut seq, SequencerEdit::CommitClip(edit));
         let (start, len) = {
@@ -677,5 +712,106 @@ mod tests {
         // 62 ends where the walk meets its own note-off, not twice.
         let rest = tick_and_collect_messages(&mut seq, &mut rx, bar / 8);
         assert_eq!(rest, vec![(0x80, 62)]);
+    }
+
+    // --- The marquee frames the capture (`470-marquee-capture.md`) ---
+
+    /// `count` quarter notes from `start`, each an eighth long.
+    fn quarters(seq: &mut Sequencer, start: i32, count: i32) {
+        for i in 0..count {
+            let t = start + i * time::PPQN;
+            seq.capture_clip.add_event(note_on(t));
+            seq.capture_clip.add_event(note_off(t + time::PPQN / 2));
+        }
+    }
+
+    /// The first note-on inside `clip`'s window, from the window's start.
+    fn first_window_note_offset(clip: &Clip) -> i32 {
+        window_note_ons(clip)[0]
+    }
+
+    /// A stopped marquee gives the length and the place: a later clip is
+    /// exactly the marquee — no tail, floor or whole-bar rounding — at its
+    /// start, detection still finds where the phrase starts, and the whole
+    /// source stays in the clip.
+    #[test]
+    fn a_stopped_marquee_is_exactly_its_length_at_its_start() {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        let mut seq = make_seq();
+        add_clip(&mut seq, bar * 20, bar);
+        seq.capture_clip.add_event(note_on(100));
+        seq.capture_clip.add_event(note_off(400));
+        quarters(&mut seq, bar * 3 + 300, 4);
+        let captured = seq.capture_clip.events().len();
+        let length = bar * 3 / 2;
+
+        let (_, clip) = seq
+            .build_stopped_capture_clip(Some((bar * 8, bar * 8 + length)))
+            .unwrap();
+
+        assert_eq!(clip.start_tick(), bar * 8);
+        assert_eq!(clip.region_length(), length);
+        assert_eq!(clip.events().len(), captured, "nothing is cropped away");
+        let (detected, _) = Sequencer::detected_phrase_window(
+            &seq.detection_capture_source(),
+            length,
+            Meter::FOUR_FOUR,
+        );
+        assert_eq!(first_window_note_offset(&clip), bar * 3 + 300 - detected);
+    }
+
+    /// A marquee shorter than the phrase cuts into it; the rest stays as
+    /// material past the window.
+    #[test]
+    fn a_stopped_marquee_shorter_than_the_phrase_cuts_into_it() {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        let mut seq = make_seq();
+        quarters(&mut seq, bar, 8);
+
+        let (_, clip) = seq.build_stopped_capture_clip(Some((0, bar))).unwrap();
+
+        assert_eq!(clip.region_length(), bar);
+        assert_eq!(window_note_ons(&clip).len(), 4);
+        assert!(
+            clip.events()
+                .iter()
+                .any(|e| e.tick() >= clip.region().end()),
+            "the phrase's second bar is kept past the window"
+        );
+    }
+
+    /// A marquee longer than the take starts where the take does, as a
+    /// long loop does, and keeps the marquee's length.
+    #[test]
+    fn a_stopped_marquee_longer_than_the_take_starts_at_its_first_note() {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        let mut seq = make_seq();
+        quarters(&mut seq, bar * 2 + 300, 4);
+
+        let (_, clip) = seq
+            .build_stopped_capture_clip(Some((bar, bar * 9)))
+            .unwrap();
+
+        assert_eq!(clip.region_length(), bar * 8);
+        assert_eq!(first_window_note_offset(&clip), 0);
+        assert_eq!(window_note_ons(&clip).len(), 4);
+    }
+
+    /// A stopped marquee over a clip is refused, never shortened.
+    #[test]
+    fn a_stopped_marquee_over_a_clip_commits_nothing() {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        let mut seq = make_seq();
+        add_clip(&mut seq, bar * 2, bar);
+        quarters(&mut seq, 300, 4);
+
+        assert!(
+            seq.build_stopped_capture_clip(Some((bar, bar * 3)))
+                .is_none()
+        );
+        assert_eq!(
+            seq.marquee_capture_refusal((bar, bar * 3)),
+            Some(MarqueeRefusal::OverlapsClip)
+        );
     }
 }

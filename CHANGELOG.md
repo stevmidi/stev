@@ -22,6 +22,7 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ### Added
 
+- With a marquee in the arranger, `/` captures into it instead of the loop. Playing over an 8-bar loop, marquee bars 3–4 and `/` commits what you played there as a 2-bar clip at bar 3; stopped, the clip is exactly the marquee's length at its start, the phrase start still found for you. Nothing you played is cut: the rest of the take stays in the clip for `[`/`]` or an edge drag to bring back. The footer says what was captured ("Captured bars 3–4 (marquee)"), and the marquee stays so you can capture into it again. `/` with a marquee outside the loop, or over a clip, does nothing and says why. Into a selected clip `/` works as before.
 - Hold ⌥ while dragging a clip by its header, or a marquee selection, to drop a copy and leave the original where it was, as in Finder, Logic and Ableton. The pointer shows the copy cursor while ⌥ is held, and you can press or let go of ⌥ during the drag: the release decides. The copy overwrites what it lands on, stays selected so it can be ⌥-dragged again, and undoes in one step.
 - The same in the clip view: hold ⌥ while dragging notes and a copy stays where they were. The copy appears and goes as you press and let go of ⌥, the dragged notes stay selected so they can be ⌥-dragged again, and undo takes it all out in one step.
 

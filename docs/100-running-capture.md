@@ -124,6 +124,15 @@ wipes a take started since), its `undo()` lifts the clip by id. `None` from the 
 (empty capture, or a gap under one grid step) means nothing enters the undo record. `commit_clip_to_track` is a `#[cfg(test)]` shim in `capture/mod.rs`'s
 tests that runs the real edit. Undo leaves
 the buffer cleared by decision — redo is the way back. See `050-undo-redo.md`.
+- **With an arranger marquee** (`470-marquee-capture.md`; `SequencerCommand::Commit` carries
+  it, a tick range only): the anchor is the marquee's start and the region length its width,
+  not clamped to `available` or floored; the clip goes at the marquee's start. Looping, the
+  region is `[phase(m.start), phase(m.start) + m.len)` of the same last pass; linear, the
+  retained span reaches at least `m.len` past the anchor so a marquee past the last note
+  keeps its length. The event list is what it would be without the marquee. A marquee not
+  inside the loop region while looping, or one over a clip on the selected track, is
+  refused (`Sequencer::marquee_capture_refusal`, a footer line) and the builder returns
+  `None` for it.
 - Anchor: `cursor_tick`
 - Window size:
   - **playback wrapping** (`playback_is_looping()`) → the *remainder of the current loop

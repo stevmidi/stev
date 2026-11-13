@@ -52,8 +52,13 @@ impl CommitClipEdit {
     /// The running-capture commit: builds the clip the capture would freeze
     /// into (`None` on an empty buffer or when it wouldn't fit before the next
     /// clip, so nothing enters the record) and arms the buffer clear.
-    pub(crate) fn from_running_capture(sequencer: &Sequencer) -> Option<Self> {
-        let (track_idx, clip) = sequencer.build_committed_capture_clip()?;
+    /// `marquee` frames it when the arranger has one
+    /// (`470-marquee-capture.md`).
+    pub(crate) fn from_running_capture(
+        sequencer: &Sequencer,
+        marquee: Option<(i32, i32)>,
+    ) -> Option<Self> {
+        let (track_idx, clip) = sequencer.build_committed_capture_clip(marquee)?;
         Some(Self {
             track_idx,
             clip,
@@ -65,9 +70,12 @@ impl CommitClipEdit {
     /// detection frames from the capture
     /// ([`Sequencer::build_stopped_capture_clip`]), with the buffer clear
     /// armed like the running commit. `None` on an empty buffer or no room at
-    /// the cursor.
-    pub(crate) fn from_stopped_capture(sequencer: &Sequencer) -> Option<Self> {
-        let (track_idx, clip) = sequencer.build_stopped_capture_clip()?;
+    /// the cursor. `marquee` frames it as for the running commit.
+    pub(crate) fn from_stopped_capture(
+        sequencer: &Sequencer,
+        marquee: Option<(i32, i32)>,
+    ) -> Option<Self> {
+        let (track_idx, clip) = sequencer.build_stopped_capture_clip(marquee)?;
         Some(Self {
             track_idx,
             clip,
@@ -158,7 +166,8 @@ mod tests {
     }
 
     fn commit(sequencer: &mut Sequencer) -> (CommitClipEdit, ClipMetadata) {
-        let mut edit = CommitClipEdit::from_running_capture(sequencer).expect("a take to commit");
+        let mut edit =
+            CommitClipEdit::from_running_capture(sequencer, None).expect("a take to commit");
         let EditResult::ClipCommitted { clip } = edit.edit(sequencer) else {
             panic!("expected ClipCommitted");
         };
@@ -239,7 +248,7 @@ mod tests {
     #[test]
     fn from_running_capture_is_none_on_an_empty_buffer() {
         let sequencer = test_sequencer();
-        assert!(CommitClipEdit::from_running_capture(&sequencer).is_none());
+        assert!(CommitClipEdit::from_running_capture(&sequencer, None).is_none());
     }
 
     #[test]
@@ -251,7 +260,7 @@ mod tests {
         sequencer.tracks_mut()[0].add_clip(&clip_at(min_len / 2, min_len * 4));
         capture_note(&mut sequencer, 10, 20);
 
-        assert!(CommitClipEdit::from_running_capture(&sequencer).is_none());
+        assert!(CommitClipEdit::from_running_capture(&sequencer, None).is_none());
         assert_eq!(
             sequencer.capture_clip.events().len(),
             2,
