@@ -193,7 +193,6 @@ the [roadmap](docs/280-roadmap.md):
 - track automation lanes and controller-data editing
 - mixing: EQ, compression, effect plugins, sends, a mixer panel. Stev arranges;
   a DAW mixes
-- offline audio export: the stem export plays the selection in real time
 - MIDI clock, Ableton Link or other external sync
 - notation
 - whole-arrangement MIDI file export and multi-track import (one clip at a time
