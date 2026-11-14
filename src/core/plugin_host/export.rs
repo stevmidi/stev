@@ -79,7 +79,9 @@ pub(super) struct ExportRings {
 }
 
 /// Builds the tap, the writer's rings and what they share. Each ring holds
-/// about a second of stereo at `sample_rate`, the writer's slack.
+/// about a second of stereo at `sample_rate`, the writer's slack. Sized once,
+/// at the rate the engine opened at: after a restart onto a higher rate the
+/// slack is shorter, which only matters if the writer stalls.
 pub(super) fn export_tap(
     marks: Consumer<ExportMark>,
     sample_rate: f64,

@@ -52,11 +52,12 @@ pub(super) fn load(
     track: usize,
     entry: &PluginCatalogEntry,
     state: Option<&[u8]>,
+    sample_rate: f64,
 ) -> Result<LoadedInstrument, String> {
     let loaded = component::load(
         &entry.bundle_path,
         &entry.plugin_id,
-        handle.sample_rate,
+        sample_rate,
         MAX_FRAMES as u32,
         state,
         Arc::clone(&handle.repaint),
@@ -80,7 +81,7 @@ pub(super) fn load(
         loaded.params,
         loaded.midi_map,
         loaded.tail_samples,
-        handle.sample_rate,
+        sample_rate,
     )
     .staggered_for(track);
     let editor = Vst3Editor::new(loaded.main, &entry.name, track, parameters);

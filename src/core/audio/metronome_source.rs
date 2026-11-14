@@ -61,6 +61,14 @@ impl AudioSource for MetronomeSource {
         "click"
     }
 
+    /// A click in flight is cut, and the clicks queued for the old stream
+    /// are dropped rather than played late in one burst.
+    fn restarted(&mut self, sample_rate: f64) {
+        self.voice = ClickVoice::new(sample_rate as f32);
+        while self.rx.pop().is_ok() {}
+        self.pending.clear();
+    }
+
     fn render_into(&mut self, mix: &mut [Vec<f32>; 2], ctx: &RenderCtx<'_>) {
         let RenderCtx {
             frames,
@@ -116,6 +124,7 @@ mod tests {
         let ctx = RenderCtx {
             frames,
             first_frame: 0,
+            schedule_delay: 256,
             clock: &clock,
             pool: &pool,
             load: &load,
@@ -140,6 +149,22 @@ mod tests {
 
         assert!(mix[0].iter().any(|s| s.abs() > 0.0));
         assert_eq!(mix[0], mix[1]);
+    }
+
+    #[test]
+    fn a_restart_drops_the_clicks_queued_for_the_old_stream() {
+        let (mut tx, rx) = RingBuffer::new(4);
+        let mut src = MetronomeSource::new(rx, 48_000.0);
+        tx.push(ClickEvent {
+            class: ClickClass::Strong,
+            at: Instant::now(),
+        })
+        .unwrap();
+
+        src.restarted(44_100.0);
+
+        let mix = render(&mut src, 512);
+        assert!(mix[0].iter().all(|s| *s == 0.0));
     }
 
     #[test]

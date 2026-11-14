@@ -84,6 +84,9 @@ pub(crate) enum PluginHostCommand {
         track: usize,
         /// The built voice, of whichever plugin format the track picked.
         voice: Box<dyn InstrumentVoice>,
+        /// The sample rate the plugin was activated at. A voice at another
+        /// rate than the stream's is held silent.
+        sample_rate: f64,
     },
     /// Remove `track`'s voice — the callback hands it back to the
     /// `"plugin-host"` thread to drop off the audio thread.
@@ -117,8 +120,7 @@ fn within_block_offset(target_frame: i64, sub_start: i64, frames: usize) -> u32 
 /// block, unless that track already has events queued later than that — then
 /// at the latest of them (and after it, by `seq`). A stop / seek note-off must
 /// follow a clip note-on the sequencer sent just before it, which is still
-/// held up to [`SCHEDULE_DELAY_FRAMES`](crate::core::audio::SCHEDULE_DELAY_FRAMES)
-/// ahead; at the block head it would play first and strand the note-on.
+/// held up to [`RenderCtx::schedule_delay`] ahead; at the block head it would play first and strand the note-on.
 fn immediate_target_frame(pending: &[PendingEvent], track: usize, block_start: i64) -> i64 {
     pending
         .iter()
@@ -182,7 +184,13 @@ pub(super) struct InstrumentMixer {
     meter_resets_seen: [u32; MAX_TRACKS],
     /// The output sample rate, Hz: what turns a block's frames into the
     /// meters' time step.
-    sample_rate: f32,
+    sample_rate: f64,
+    /// The rate each slot's voice was activated at. A voice whose rate isn't
+    /// the stream's — the device's rate changed under it — is held silent
+    /// rather than played at the wrong pitch and speed, until a new voice
+    /// replaces it (`480-audio-settings.md` phase 1). An empty slot's entry
+    /// means nothing.
+    voice_rates: [f64; MAX_TRACKS],
 }
 
 impl InstrumentMixer {
@@ -215,7 +223,8 @@ impl InstrumentMixer {
             export,
             meters: [[MeterBallistics::default(); 2]; MAX_TRACKS],
             meter_resets_seen: [0; MAX_TRACKS],
-            sample_rate: sample_rate as f32,
+            sample_rate,
+            voice_rates: [sample_rate; MAX_TRACKS],
         }
     }
 
@@ -286,12 +295,21 @@ impl InstrumentMixer {
             // Either way the slot's previous voice, if any, goes to the reclaim
             // thread rather than being dropped here.
             let (track, old) = match cmd {
-                PluginHostCommand::Insert { track, voice } => (
+                PluginHostCommand::Insert {
                     track,
-                    self.voices
-                        .get_mut(track)
-                        .and_then(|slot| slot.replace(voice)),
-                ),
+                    voice,
+                    sample_rate,
+                } => {
+                    if let Some(rate) = self.voice_rates.get_mut(track) {
+                        *rate = sample_rate;
+                    }
+                    (
+                        track,
+                        self.voices
+                            .get_mut(track)
+                            .and_then(|slot| slot.replace(voice)),
+                    )
+                }
                 PluginHostCommand::Remove { track } => {
                     (track, self.voices.get_mut(track).and_then(Option::take))
                 }
@@ -330,6 +348,21 @@ impl InstrumentMixer {
 impl AudioSource for InstrumentMixer {
     fn name(&self) -> &'static str {
         INSTRUMENTS_SOURCE
+    }
+
+    /// The events queued for the old stream are dropped, those still in the
+    /// feeds too: they would all land at once, late. Every voice is sent the
+    /// note reset instead, so nothing hangs from a note-off lost in the
+    /// drop-out (`480-audio-settings.md` decision 9). A rate change leaves
+    /// the voices activated at the old rate held silent (see `voice_rates`).
+    fn restarted(&mut self, sample_rate: f64) {
+        self.sample_rate = sample_rate;
+        self.pending.clear();
+        while self.clip_midi_rx.pop().is_ok() {}
+        while self.live_midi_rx.pop().is_ok() {}
+        for voice in self.voices.iter_mut().flatten() {
+            voice.queue_note_reset();
+        }
     }
 
     /// Renders one block of every loaded instrument and sums it into `mix`. The
@@ -430,16 +463,23 @@ impl AudioSource for InstrumentMixer {
         // in both hosted formats — what they forbid is *concurrent* calls on
         // one instance, not a different thread per instance. See
         // `170-multicore-scheduling.md`.
+        //
+        // A voice held at another rate than the stream's is never called
+        // into either, and renders nothing.
+        let held: [bool; MAX_TRACKS] =
+            std::array::from_fn(|track| self.voice_rates[track] != self.sample_rate);
         let mut awake = 0;
-        for voice in self.voices.iter_mut().flatten() {
-            voice.wake_on_request(frames);
-            awake += usize::from(!voice.mix().sleeping);
+        for (track, voice) in self.voices.iter_mut().enumerate() {
+            if let Some(voice) = voice {
+                voice.wake_on_request(frames);
+                awake += usize::from(!voice.mix().sleeping && !held[track]);
+            }
         }
         ctx.pool
-            .for_each(self.voices.as_mut_slice(), awake, |_track, slot| {
+            .for_each(self.voices.as_mut_slice(), awake, |track, slot| {
                 if let Some(voice) = slot {
                     // A sleeping voice is never called into, so it isn't timed.
-                    let (rendered, render_time) = if voice.mix().sleeping {
+                    let (rendered, render_time) = if voice.mix().sleeping || held[track] {
                         (false, Duration::ZERO)
                     } else {
                         let started = Instant::now();
@@ -528,7 +568,7 @@ impl AudioSource for InstrumentMixer {
             m.gain_r = target_r;
         }
 
-        let decay = BlockDecay::new(frames, self.sample_rate);
+        let decay = BlockDecay::new(frames, self.sample_rate as f32);
         for (track, (peaks, sums_of_squares)) in measured.into_iter().enumerate() {
             self.meter_block(track, peaks, sums_of_squares, frames, &decay);
         }
@@ -609,6 +649,7 @@ mod tests {
             let ctx = RenderCtx {
                 frames: BLOCK,
                 first_frame: block * BLOCK as u64,
+                schedule_delay: BLOCK as u32,
                 clock: &clock,
                 pool: &pool,
                 load: &load,
@@ -669,6 +710,7 @@ mod tests {
         let insert = |level| PluginHostCommand::Insert {
             track: 0,
             voice: Box::new(ConstantVoice::new(level)),
+            sample_rate: RATE,
         };
         commands.push(insert(1.0)).ok().unwrap();
         render(&mut mixer, 0.5);
@@ -704,6 +746,35 @@ mod tests {
         render(&mut mixer, 1.0);
         let [l, _] = peak_db(&track_mix);
         assert!((l + PEAK_FALL_DB_PER_S).abs() < 0.5, "{l}");
+    }
+
+    #[test]
+    fn a_rate_change_holds_the_voices_built_at_the_old_rate_silent() {
+        let (mut mixer, track_mix) = mixer_with_voice(1.0);
+        mixer.restarted(RATE);
+        render(&mut mixer, 0.1);
+        assert_eq!(peak_db(&track_mix), [0.0; 2], "same rate: still playing");
+
+        let (mut mixer, track_mix) = mixer_with_voice(1.0);
+        mixer.restarted(44_100.0);
+        render(&mut mixer, 0.1);
+        assert_eq!(track_mix.audio_level(0), [ChannelLevel::default(); 2]);
+    }
+
+    #[test]
+    fn a_voice_built_at_the_new_rate_plays_after_a_rate_change() {
+        let (mut mixer, track_mix, mut commands) = mixer_with_commands();
+        mixer.restarted(44_100.0);
+        commands
+            .push(PluginHostCommand::Insert {
+                track: 0,
+                voice: Box::new(ConstantVoice::new(1.0)),
+                sample_rate: 44_100.0,
+            })
+            .ok()
+            .unwrap();
+        render(&mut mixer, 0.1);
+        assert_eq!(peak_db(&track_mix), [0.0; 2]);
     }
 
     #[test]

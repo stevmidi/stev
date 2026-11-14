@@ -25,7 +25,7 @@ use std::time::{Duration, Instant};
 use crossbeam_channel::{Receiver, Sender};
 use rtrb::Consumer;
 
-use crate::core::audio::{AudioLoad, wav::WavWriter};
+use crate::core::audio::{AudioLoad, StreamRate, wav::WavWriter};
 use crate::core::sequencer::{AudioExportJob, AudioExportOutcome, SequencerCommand};
 use crate::core::shared_atomics::AudioExportAtomics;
 
@@ -53,8 +53,8 @@ pub(super) struct ExportWriter {
     progress: Arc<AudioExportAtomics>,
     /// The engine's meter: its overrun, xrun and stream-error counts.
     load: Arc<AudioLoad>,
-    /// The device rate the files are written at.
-    sample_rate: f64,
+    /// The running stream's rate, which each export's files are written at.
+    rate: Arc<StreamRate>,
     /// The last export stopped before the mixer ended it, so the mixer may
     /// have pushed more of it since.
     abandoned: bool,
@@ -81,21 +81,21 @@ pub(super) fn start_export_writer(
 }
 
 impl ExportWriter {
-    /// A writer on the mixer's `rings` and `shared` state, writing at
-    /// `sample_rate`.
+    /// A writer on the mixer's `rings` and `shared` state, writing at the
+    /// stream's `rate`.
     pub(super) fn new(
         rings: ExportRings,
         shared: Arc<ExportShared>,
         progress: Arc<AudioExportAtomics>,
         load: Arc<AudioLoad>,
-        sample_rate: f64,
+        rate: Arc<StreamRate>,
     ) -> Self {
         ExportWriter {
             rings,
             shared,
             progress,
             load,
-            sample_rate,
+            rate,
             abandoned: false,
         }
     }
@@ -112,11 +112,14 @@ impl ExportWriter {
         // The counts read "this export", like the header's do "this take".
         self.load.reset_counts();
         let stream_errors = self.load.stream_errors();
+        // An engine restart under the export ends it (a stream error), so the
+        // rate holds for the whole run.
+        let sample_rate = self.rate.get();
 
         let mut error = None;
         let mut open = |path: &Path| {
             let opened = File::create(path)
-                .and_then(|file| WavWriter::new(BufWriter::new(file), self.sample_rate));
+                .and_then(|file| WavWriter::new(BufWriter::new(file), sample_rate));
             keep_first_error(&mut error, opened)
         };
         let mut stems: Vec<(usize, OpenWav)> = job
@@ -139,7 +142,7 @@ impl ExportWriter {
             if mixed > 0 {
                 frames += mixed;
                 last_heard = Instant::now();
-                let ms = (frames as f64 * 1000.0 / self.sample_rate) as u32;
+                let ms = (frames as f64 * 1000.0 / sample_rate) as u32;
                 self.progress.written_ms.store(ms, Ordering::Relaxed);
             }
             if ended {
@@ -250,7 +253,7 @@ mod tests {
             shared,
             Arc::new(AudioExportAtomics::default()),
             Arc::new(AudioLoad::new()),
-            1_000.0,
+            Arc::new(StreamRate::new(1_000)),
         );
         (writer, tap, marks)
     }

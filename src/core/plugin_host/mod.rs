@@ -89,7 +89,7 @@ use transport::TransportState;
 use ui_wake::UiWake;
 use voice::InstrumentVoice;
 
-use crate::core::audio::{AudioSource, EngineHandle};
+use crate::core::audio::{AudioSource, EngineHandle, StreamRate};
 use crate::core::config::MAX_TRACKS;
 use crate::core::midi::message::Midi3;
 use crate::core::sequencer::{AudioExportJob, ClipInstrumentEvent, ExportMark, SequencerCommand};
@@ -137,8 +137,9 @@ pub(crate) struct PluginAudioHandle {
     pub(crate) voice_dropped_rx: Receiver<usize>,
     /// App-exit coordination — see [`HostShutdown`].
     pub(crate) shutdown: Arc<HostShutdown>,
-    /// Device sample rate the engine opened at — plugins are built against it.
-    sample_rate: f64,
+    /// The rate the engine's stream runs at — each plugin is activated at it
+    /// as it loads.
+    rate: Arc<StreamRate>,
     /// Shared egui context slot, for a plugin to wake the reactive UI (CLAP's
     /// main-thread callback requests).
     repaint: Arc<OnceLock<egui::Context>>,
@@ -190,7 +191,7 @@ pub(crate) fn start_plugin_host(
         loop_enabled: Arc::clone(&atomics.loop_enabled),
     };
 
-    let (export, export_rings, export_shared) = export_tap(export_mark_rx, engine.sample_rate);
+    let (export, export_rings, export_shared) = export_tap(export_mark_rx, engine.rate.get());
     let mixer = InstrumentMixer::new(
         cmd_rx,
         dead_tx,
@@ -200,7 +201,7 @@ pub(crate) fn start_plugin_host(
         Arc::clone(&atomics.track_mix),
         Arc::clone(&shutdown),
         export,
-        engine.sample_rate,
+        engine.rate.get(),
     );
     engine.add_source(Box::new(mixer) as Box<dyn AudioSource>)?;
 
@@ -217,7 +218,7 @@ pub(crate) fn start_plugin_host(
         export_shared,
         Arc::clone(&atomics.audio_export),
         Arc::clone(&engine.load),
-        engine.sample_rate,
+        Arc::clone(&engine.rate),
     );
     start_export_writer(audio_export_jobs, writer, sequencer_command_tx);
 
@@ -227,7 +228,7 @@ pub(crate) fn start_plugin_host(
         cmd_tx,
         voice_dropped_rx,
         shutdown,
-        sample_rate: engine.sample_rate,
+        rate: Arc::clone(&engine.rate),
         repaint,
         ui_wake,
     })
@@ -307,6 +308,8 @@ pub(crate) struct PreparedInstrument {
     track: usize,
     /// The audio-thread half, until the mixer takes it.
     voice: Box<dyn InstrumentVoice>,
+    /// The rate the plugin was activated at.
+    sample_rate: f64,
     /// The main-thread half.
     editor: Box<dyn InstrumentEditor>,
 }
@@ -321,11 +324,16 @@ impl PreparedInstrument {
         let PreparedInstrument {
             track,
             voice,
+            sample_rate,
             editor,
         } = self;
         handle
             .cmd_tx
-            .push(PluginHostCommand::Insert { track, voice })
+            .push(PluginHostCommand::Insert {
+                track,
+                voice,
+                sample_rate,
+            })
             .map_err(|_| "plugin host audio thread is gone (command ring full)".to_string())?;
         Ok(editor)
     }
@@ -353,9 +361,11 @@ pub(crate) fn prepare_instrument(
     entry: &PluginCatalogEntry,
     state: Option<&[u8]>,
 ) -> Result<PreparedInstrument, String> {
+    // Read once, so the voice is known to run at the rate it was built at.
+    let sample_rate = handle.rate.get();
     let (mut voice, editor) = match entry.format {
-        PluginFormat::Clap => clap::load(handle, track, entry, state)?,
-        PluginFormat::Vst3 => vst3::load(handle, track, entry, state)?,
+        PluginFormat::Clap => clap::load(handle, track, entry, state, sample_rate)?,
+        PluginFormat::Vst3 => vst3::load(handle, track, entry, state, sample_rate)?,
     };
     // Every format starts from silence, whatever its restored state believes
     // is held. Queued here, on the main thread, before `Insert`.
@@ -369,6 +379,7 @@ pub(crate) fn prepare_instrument(
     Ok(PreparedInstrument {
         track,
         voice,
+        sample_rate,
         editor,
     })
 }

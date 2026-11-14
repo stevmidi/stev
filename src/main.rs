@@ -227,10 +227,12 @@ fn main() {
     // built-in metronome click. On macOS the plugin host mixer is added below as a
     // second source.
     #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
-    let mut audio_engine = start_audio_engine(shared_channels.metronome_click_rx);
-    if let Some(engine) = audio_engine.as_ref() {
-        display.attach_audio_load(engine.load.clone());
-    }
+    let mut audio_engine = start_audio_engine(
+        shared_channels.metronome_click_rx,
+        shared_channels.ui_event_tx.clone(),
+        repaint_ctx.clone(),
+    );
+    display.attach_audio_load(audio_engine.load.clone());
     display.attach_agent_bridge(shared_channels.agent_bridge_tx, settings.agent_bridge);
 
     // macOS instrument plugin host: hand the mixer to the running engine. Plugins
@@ -240,9 +242,9 @@ fn main() {
     #[cfg(target_os = "macos")]
     let mut plugin_host_started = false;
     #[cfg(target_os = "macos")]
-    if let Some(engine) = audio_engine.as_mut() {
+    {
         match start_plugin_host(
-            engine,
+            &mut audio_engine,
             shared_channels.clip_instrument_midi_rx,
             shared_channels.live_instrument_midi_rx,
             shared_channels.export_mark_rx,
@@ -260,9 +262,6 @@ fn main() {
             }
             Err(e) => error!("plugin host disabled: {e}"),
         }
-    } else {
-        // No writer will take an export's files: let the send fail.
-        drop(shared_channels.audio_export_job_rx);
     }
     // No plugin host off macOS — drop the consumers so the taps fail fast
     // (fill the ring, then every push fails) instead of running forever

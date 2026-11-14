@@ -88,6 +88,10 @@ pub(crate) struct OverrunRecord {
     /// Of those, how many joined the device's audio workgroup. Header only,
     /// like `workers`.
     pub(crate) workers_joined: usize,
+    /// Which of the app's streams the block ran in: every engine restart
+    /// starts a new one (`480-audio-settings.md` decision 12), and the
+    /// journal a new session header with it.
+    pub(crate) session: u32,
 }
 
 impl OverrunRecord {
@@ -142,7 +146,8 @@ pub(crate) fn journal_path() -> PathBuf {
 /// audio thread holds the producer.
 fn drain_loop(mut rx: Consumer<OverrunRecord>, dropped: Arc<AtomicU32>) {
     let mut file: Option<File> = None;
-    let mut wrote_header = false;
+    // The session the last header was written for.
+    let mut header_session = None;
     let mut batch: Vec<OverrunRecord> = Vec::new();
     loop {
         thread::sleep(DRAIN_INTERVAL);
@@ -165,12 +170,12 @@ fn drain_loop(mut rx: Consumer<OverrunRecord>, dropped: Arc<AtomicU32>) {
         let Some(out) = file.as_mut() else {
             continue;
         };
-        if !wrote_header {
-            let _ = writeln!(out, "{}", session_header(&batch[0]));
-            wrote_header = true;
-        }
         let (write, suppressed) = plan_burst(batch.len());
         for record in &batch[..write] {
+            if header_session != Some(record.session) {
+                let _ = writeln!(out, "{}", session_header(record));
+                header_session = Some(record.session);
+            }
             let _ = writeln!(out, "{}", format_record(record));
         }
         // Whatever the ring couldn't hold since the last drain belongs to this
@@ -204,7 +209,7 @@ fn plan_burst(count: usize) -> (usize, usize) {
     (write, count - write)
 }
 
-/// The once-per-session line that precedes the first record: what build, what
+/// The line that precedes each session's first record: what build, what
 /// block size / rate the stream opened at, and how many of the worker threads
 /// joined the device's audio workgroup — what the "`instruments` high, every
 /// track small" shape is read against (see `170-multicore-scheduling.md`).
@@ -312,6 +317,7 @@ mod tests {
             tracks_us,
             workers: 7,
             workers_joined: 6,
+            session: 1,
         }
     }
 

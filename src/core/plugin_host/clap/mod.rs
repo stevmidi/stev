@@ -44,21 +44,19 @@ pub(super) fn load(
     track: usize,
     entry: &PluginCatalogEntry,
     state: Option<&[u8]>,
+    sample_rate: f64,
 ) -> Result<LoadedInstrument, String> {
     let loaded = engine::load(
         &entry.bundle_path,
         &entry.plugin_id,
-        handle.sample_rate,
+        sample_rate,
         MAX_FRAMES as u32,
         Arc::clone(&handle.ui_wake),
         state,
     )?;
 
-    let (editor_params, voice_params) = params::bridge(
-        loaded.params,
-        handle.sample_rate,
-        Arc::clone(&handle.ui_wake),
-    );
+    let (editor_params, voice_params) =
+        params::bridge(loaded.params, sample_rate, Arc::clone(&handle.ui_wake));
     let voice = ClapVoice::new(
         loaded.processor,
         MAX_FRAMES,

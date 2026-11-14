@@ -74,8 +74,16 @@ methods take a track's position and look the slot up in its `tracks` mirror
   it requests `DESIRED_BUFFER_FRAMES` (256) as `cpal::BufferSize::Fixed`, clamped
   by `pick_buffer_size` to the device's range and probe-tested with
   `probe_buffer_size_supported` (a throwaway no-op stream), falling back to the
-  device default if rejected. `SCHEDULE_DELAY_FRAMES` (256, in `core/audio/mod.rs`)
-  is the constant clip-event scheduling delay — roughly one buffer.
+  device default if rejected. `RenderCtx::schedule_delay` is the clip-event
+  scheduling delay: one buffer of the running stream (256 frames as asked for).
+- **Sample rate** is the running stream's (`StreamRate`, shared from the
+  engine): `prepare_instrument` reads it once, activates the plugin at it, and
+  sends it with the voice (`PluginHostCommand::Insert::sample_rate`). When an
+  outside change restarts the engine at another rate (`480-audio-settings.md`),
+  the mixer holds every voice activated at the old rate silent
+  (`InstrumentMixer::voice_rates`) until a new voice replaces it; a restart
+  also drops the events queued for the old stream and sends every voice the
+  note reset (`AudioSource::restarted`).
 - **Per-track plugins.** From the browser panel's **Plugins** category (Enter
   on the selected track, or a drag onto any track — `Display::put_plugin_on_track`,
   `020` § Views) the user puts a plugin on a track, setting its output to
@@ -451,7 +459,7 @@ boundary.
    &clock, now)` per sub-block (`frames` ≤ engine `MAX_FRAMES`; in practice one).
 4. **`InstrumentMixer::render_into`** (`core/plugin_host/mixer.rs`):
    - Each clip event's `At(at)` becomes `RenderCtx::scheduled_frame(at)` =
-     `frame_for(at) + SCHEDULE_DELAY_FRAMES`, never before the block start;
+     `frame_for(at) + schedule_delay`, never before the block start;
      every live event becomes `first_frame`; an `Immediate` event becomes
      `first_frame` *or the latest `target_frame` its track already has in
      `pending`*, whichever is later (`immediate_target_frame`) — so a stop / seek
@@ -906,9 +914,9 @@ shared from there rather than copied (`420-large-projects.md` decision 7):
   only, and must not fire the command under it; `Display::drops_editor_key`).
   Does **not** apply to a floating plugin GUI (rare — most plugins don't
   support it): it owns its own native window, not an `EditorWindow`.
-- **Clip event latency is a constant one buffer** (`SCHEDULE_DELAY_FRAMES` in
-  `core/audio/mod.rs` = 256 frames ≈ 5.3 ms at 48 kHz, matching the engine's requested
-  `DESIRED_BUFFER_FRAMES`). Clip
+- **Clip event latency is a constant one buffer** (`RenderCtx::schedule_delay`,
+  one buffer of the running stream: 256 frames ≈ 5.3 ms at 48 kHz with the
+  engine's requested `DESIRED_BUFFER_FRAMES`). Clip
   events are placed at their exact output sample within that budget; the delay
   is what buys the mixer room to do so even for an event that arrived up to a
   buffer late. It is a **floor** — an event that arrives later still degrades to
@@ -996,7 +1004,7 @@ shared from there rather than copied (`420-large-projects.md` decision 7):
   seeked into the following clip and fired its opening note-on into the plugin.
   `release_instrument_notes` then sent a matching `EventTime::Immediate` note-off,
   but that is dispatched a block *ahead* of the leaked `EventTime::At` note-on
-  (which carries the one-buffer `SCHEDULE_DELAY_FRAMES`), so it missed — leaving
+  (which carries the one-buffer schedule delay), so it missed — leaving
   one unmatched note-on per affected wrap. See `010-keybindings.md` § Loop State and
   `150-clock-position-sync.md`. The same overtaking hit any stop, seek or wrap
   landing within one buffer of a clip note-on (rare, timing-dependent stuck

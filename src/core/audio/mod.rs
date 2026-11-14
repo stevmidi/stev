@@ -27,6 +27,7 @@ pub(crate) mod wav;
 mod worker_pool;
 mod workgroup;
 
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Instant;
 
 pub(crate) use clock::AudioClock;
@@ -52,15 +53,33 @@ pub(crate) const MAX_FRAMES: usize = 4096;
 /// own default.
 pub(crate) const DESIRED_BUFFER_FRAMES: u32 = 256;
 
-/// Delay added to every scheduled event's target frame — the metronome click
-/// and instrument clip events alike, both through
-/// [`RenderCtx::scheduled_frame`] — so an event that arrived up to one buffer late
-/// still lands at a positive in-block offset instead of clamped to 0. The cost
-/// is that constant latency (~5.3 ms at 48 kHz / 256); a later event still
-/// degrades gracefully to block offset 0. One buffer, matching
-/// [`DESIRED_BUFFER_FRAMES`]. Live keyboard events bypass it — see
-/// `plugin_host::mixer`.
-pub(crate) const SCHEDULE_DELAY_FRAMES: u32 = DESIRED_BUFFER_FRAMES;
+/// The rate the engine assumes before a device has opened, and keeps while
+/// none is open (`480-audio-settings.md`).
+pub(crate) const FALLBACK_SAMPLE_RATE: u32 = 48_000;
+
+/// The sample rate the running stream opened at, shared with whoever builds
+/// something against it outside the engine: the plugin host's loads and the
+/// audio export's files. The engine stores it on every restart
+/// (`480-audio-settings.md` decision 5); a reader takes it fresh each time.
+pub(crate) struct StreamRate(AtomicU32);
+
+impl StreamRate {
+    /// A rate of `hz` until the engine stores another.
+    pub(crate) fn new(hz: u32) -> Self {
+        Self(AtomicU32::new(hz))
+    }
+
+    /// The running rate, Hz. Only the macOS plugin host reads it.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pub(crate) fn get(&self) -> f64 {
+        f64::from(self.0.load(Ordering::Relaxed))
+    }
+
+    /// Records the rate a new stream opened at.
+    fn set(&self, hz: u32) {
+        self.0.store(hz, Ordering::Relaxed);
+    }
+}
 
 /// Everything a source needs to know about the block it is rendering, other
 /// than the mix buffers themselves. Passed by reference so the parameter list
@@ -72,6 +91,15 @@ pub(crate) struct RenderCtx<'a> {
     pub(crate) frames: usize,
     /// `steady` sample index of `mix[..][0]`.
     pub(crate) first_frame: u64,
+    /// Delay added to every scheduled event's target frame — the metronome
+    /// click and instrument clip events alike, both through
+    /// [`scheduled_frame`](Self::scheduled_frame) — so an event that arrived
+    /// up to one buffer late still lands at a positive in-block offset instead
+    /// of clamped to 0. One buffer of the *running* stream (~5.3 ms at 48 kHz
+    /// / 256), so it follows a restart onto another buffer size; a later event
+    /// still degrades gracefully to block offset 0. Live keyboard events
+    /// bypass it — see `plugin_host::mixer`.
+    pub(crate) schedule_delay: u32,
     /// Maps an intended wall-clock [`Instant`] onto the `steady` timeline.
     pub(crate) clock: &'a AudioClock,
     /// Spreads an independent per-item workload across the calling thread and
@@ -93,6 +121,14 @@ pub(crate) trait AudioSource: Send {
     /// and zeroed for `[0, ctx.frames)` by the engine.
     fn render_into(&mut self, mix: &mut [Vec<f32>; 2], ctx: &RenderCtx<'_>);
 
+    /// The engine rebuilt its stream (another device, a new rate:
+    /// `480-audio-settings.md` decision 5), which now runs at `sample_rate`.
+    /// Called on the `"audio-engine"` thread while no stream is running, so
+    /// it may allocate. Whatever was scheduled against the old stream is
+    /// stale, and a note-off lost in the drop-out would leave a note hanging:
+    /// a source drops what it had queued and starts from silence.
+    fn restarted(&mut self, sample_rate: f64);
+
     /// Short label for the overrun journal's per-source split (`"click"`,
     /// `"instruments"`). `'static` so it can ride the journal's `Copy`
     /// record without an allocation on the audio thread.
@@ -105,11 +141,11 @@ pub(crate) const INSTRUMENTS_SOURCE: &str = "instruments";
 
 impl RenderCtx<'_> {
     /// The frame an event intended for wall-clock `at` should sound at: its
-    /// place on the `steady` timeline plus [`SCHEDULE_DELAY_FRAMES`], so the
+    /// place on the `steady` timeline plus [`schedule_delay`](Self::schedule_delay), so the
     /// click and a hosted synth playing the same beat land on the same output
     /// sample. Never before this block — a straggler plays now, not in the
     /// past.
     pub(crate) fn scheduled_frame(&self, at: Instant) -> i64 {
-        (self.clock.frame_for(at) + i64::from(SCHEDULE_DELAY_FRAMES)).max(self.first_frame as i64)
+        (self.clock.frame_for(at) + i64::from(self.schedule_delay)).max(self.first_frame as i64)
     }
 }

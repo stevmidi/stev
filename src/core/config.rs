@@ -147,9 +147,10 @@ pub const INSTRUMENT_MIDI_RING_CAPACITY: usize = 512;
 /// Default delay applied to clip MIDI leaving the output port, in
 /// milliseconds. The audio path already schedules the metronome click and every
 /// instrument plugin one whole buffer into the future
-/// (`SCHEDULE_DELAY_FRAMES`, ~5.3 ms at 48 kHz / 256), so an undelayed port
+/// (`RenderCtx::schedule_delay`, ~5.3 ms at 48 kHz / 256), so an undelayed port
 /// write reaches external gear that much *early*. This is the nearest whole
-/// millisecond to that buffer. The audio device's own output latency and
+/// millisecond to that buffer, at the 256 frames the engine asks for; a device
+/// that runs another buffer moves it (`480-audio-settings.md`). The audio device's own output latency and
 /// whatever the external synth adds are both unknown to us, so this is only a
 /// starting point — the user dials the rest in by ear against the click. See
 /// `160-midi-out-offset.md`.

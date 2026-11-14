@@ -15,8 +15,9 @@ behaviour manually — see the checklist at the end.
 A clip note bound for an external synth used to leave the app the instant the
 sequencer thread processed its tick. A clip note bound for a hosted CLAP
 instrument, or a metronome click, does not: both are placed at a target output
-frame `AudioClock::frame_for(at) + SCHEDULE_DELAY_FRAMES` — one whole buffer
-(`DESIRED_BUFFER_FRAMES = 256`, ≈5.3 ms at 48 kHz) into the future, and then sit
+frame `AudioClock::frame_for(at) + RenderCtx::schedule_delay` — one whole buffer
+of the running stream (`DESIRED_BUFFER_FRAMES = 256` as asked for, ≈5.3 ms at
+48 kHz) into the future, and then sit
 behind the audio device's own output latency on top of that.
 
 So MIDI OUT ran **early** against everything the app plays itself: at least the
@@ -36,7 +37,7 @@ up to ~1.3 ms idle and ~4.5 ms loaded.
 
 Two of the three terms are unknown to the app:
 
-1. `SCHEDULE_DELAY_FRAMES` — known exactly.
+1. `RenderCtx::schedule_delay` — known exactly.
 2. The audio device's output latency — **not** known. `Mixer::render`
    (`src/core/audio/engine.rs`) takes `Instant::now()` at callback entry and
    ignores cpal's `OutputCallbackInfo::timestamp().playback`. Reading that would
@@ -70,7 +71,7 @@ MIDI out (`MidiOutMessage::at`). Everything else is `MidiOutMessage::now`:
 
 | Sender | Why immediate |
 |---|---|
-| `MidiInputForwarder` live thru (`midi/input.rs`) | Playing a key must not feel laggy — same rationale as the CLAP live-note path bypassing `SCHEDULE_DELAY_FRAMES` |
+| `MidiInputForwarder` live thru (`midi/input.rs`) | Playing a key must not feel laggy — same rationale as the CLAP live-note path bypassing the schedule delay |
 | `Sequencer::chase_notes` | A seek has no tick instant; the instrument path uses `EventTime::Immediate` here and MIDI out matches it |
 | `NoteLogger::release_notes` | The stuck-note safety net; delaying a release is never right |
 | `Sequencer::reset_wheels` / `silence_leaving_track` | A stop or a track leaving: the wheel resets go with the note releases. A seek's wheel *chase* is ordinary clip playback (`Track::tick` drains it) and carries the next tick's instant |
@@ -126,7 +127,10 @@ into `SharedAtomics.midi_out_offset_ms` and read by the `"midiout"` thread per
 message — so a change applies to the next note with no restart.
 
 - Default `config::MIDI_OUT_OFFSET_DEFAULT_MS = 5` (nearest whole ms to one
-  256-frame buffer at 48 kHz). `SettingsData::Default` is **hand-written**, not
+  256-frame buffer at 48 kHz). It assumes the 256 frames the engine asks for:
+  a device that runs another buffer moves the schedule delay, and the offset
+  is then off by the difference until the user dials it in again
+  (`480-audio-settings.md` § Not in this design). `SettingsData::Default` is **hand-written**, not
   derived, so a fresh install lands on 5 rather than `i32::default()`; the
   `#[serde(default = "…")]` does the same for an upgrading user's existing file.
 - Range `0..=MIDI_OUT_OFFSET_MAX_MS` (200), clamped in

@@ -5,7 +5,7 @@
 //! the user's MIDI-output offset, so notes bound for external gear leave in step
 //! with the plugin and click paths instead of running ahead of them — those two
 //! are scheduled a whole audio buffer into the future
-//! ([`SCHEDULE_DELAY_FRAMES`](crate::core::audio::SCHEDULE_DELAY_FRAMES)) while
+//! ([`RenderCtx::schedule_delay`](crate::core::audio::RenderCtx::schedule_delay)) while
 //! an undelayed port write goes out immediately. See `160-midi-out-offset.md`.
 
 use std::collections::VecDeque;

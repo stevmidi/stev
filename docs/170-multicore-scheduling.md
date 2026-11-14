@@ -263,17 +263,18 @@ does inside `process()`. Any
 later attempt at worker priority should rerun this table. The workgroup alone
 measured neutral on Intel, which is what it should be there. The `"clock"` and `"midiout"` threads, which render nothing, do take the policy (`260` § The fixes); a rerun of this table with them on (2026-10-14) came out the same.
 
-**Acceptance test, still open.** The September shape ("`instruments` high but
-every track small") did not appear in any of these runs, the "neither" run
-included, so this load doesn't reproduce it, and whether the join removes it
-is unproven. Next time it shows up in a journal, the session header says
-whether the workers were in the workgroup.
+**Acceptance test, still open: issue #32.** The September shape
+("`instruments` high but every track small") did not appear in any of these
+runs, the "neither" run included, so this load doesn't reproduce it, and
+whether the join removes it is unproven. The journal has since shown it about
+1,500 times with every worker in the workgroup (#32).
 
-**Not handled: a cancelled workgroup.** If the device restarts its IO (a sample
-rate or buffer change in Audio MIDI Setup), CoreAudio may cancel the workgroup
-the workers joined, leaving them outside the IO thread's group. The engine
-doesn't follow device changes either, so this waits for that work; a restart
-of the app re-joins.
+**A device change re-joins.** The engine rebuilds its stream on a device
+change, a rate change or the system default moving
+(`480-audio-settings.md`), and rebuilds the `WorkerPool` with it: the old
+workers leave their group as their threads exit, and the new ones join the
+new device's workgroup. So the workers are never left in a workgroup
+CoreAudio cancelled, or in another device's.
 
 ## Not done yet
 
@@ -332,7 +333,7 @@ tier needs no reactivation.
   smaller change that comes first. (The **audio workgroup**, the other one
   listed here before, is in: *Audio workgroup*.)
 - **It cuts across the timebase work.** Sample-accurate scheduling, `pending` +
-  `SCHEDULE_DELAY_FRAMES`, `150-clock-position-sync.md`'s
+  `RenderCtx::schedule_delay`, `150-clock-position-sync.md`'s
   `clock_tick ≡ playback_tick (mod region_length)` invariant and
   `160-midi-out-offset.md` all exist to land clip MIDI, the click and CLAP audio
   on one instant. Pre-rendered audio still *plays out* at the correct sample, so
