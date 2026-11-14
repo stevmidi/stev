@@ -20,6 +20,8 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-11-14
+
 ### Added
 
 - With a marquee in the arranger, `/` captures into it instead of the loop. Playing over an 8-bar loop, marquee bars 3–4 and `/` commits what you played there as a 2-bar clip at bar 3; stopped, the clip is exactly the marquee's length at its start, the phrase start still found for you. Nothing you played is cut: the rest of the take stays in the clip for `[`/`]` or an edge drag to bring back. The footer says what was captured ("Captured bars 3–4 (marquee)"), and the marquee stays so you can capture into it again. `/` with a marquee outside the loop, or over a clip, does nothing and says why.
