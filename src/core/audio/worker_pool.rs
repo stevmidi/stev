@@ -172,14 +172,14 @@ impl PoolShared {
             if index >= job.len {
                 return;
             }
-            // A panicking item would otherwise leave a worker's `ack` unset and
-            // spin the audio thread forever, so it is contained here and the
+            // A panicking item would otherwise leave a worker `TAKEN` for good
+            // and spin the audio thread forever, so it is contained here and the
             // item simply produces nothing. On the non-panicking path this
             // costs nothing.
             //
             // SAFETY: `index` was claimed by this runner alone, and `job.ctx`
-            // stays live until the caller's barrier — which every runner
-            // reaches before the caller returns.
+            // stays live until the caller's barrier, which waits for every
+            // worker that took the section to be `IDLE` again.
             let _ = catch_unwind(AssertUnwindSafe(|| unsafe { (job.run)(job.ctx, index) }));
         }
     }
@@ -248,7 +248,7 @@ impl WorkerPool {
     /// no workers) runs everything inline with no handshake at all.
     ///
     /// `f` must not block: every runner is a real-time thread, and the caller
-    /// waits for all of them.
+    /// waits for every worker that took the section.
     ///
     /// Returns how long the caller waited at the barrier after its own share,
     /// for workers still rendering — zero when it ran everything inline.
@@ -275,9 +275,9 @@ impl WorkerPool {
             return Duration::ZERO;
         }
 
-        // Lives on this stack frame for the whole section — every runner has
-        // acked by the time `for_each` returns, so no dereference can outlive
-        // it.
+        // Lives on this stack frame for the whole section — every worker is
+        // `IDLE` (revoked, or done with it) by the time `for_each` returns, so
+        // no dereference can outlive it.
         let ctx = JobCtx {
             items: items.as_mut_ptr(),
             f,
@@ -481,12 +481,22 @@ mod tests {
     fn a_worker_slow_to_wake_does_not_hold_up_the_section() {
         let pool = WorkerPool::new(1, || sleep(Duration::from_millis(500)));
         let caller = current().id();
+        // Counted rather than asserted inside: a panicking item is caught by
+        // the pool, which would swallow the message.
+        let off_caller = AtomicU32::new(0);
         let mut items = vec![0u32; 4];
         let started = Instant::now();
         let waited = pool.for_each(&mut items, 2, |index, item| {
-            assert_eq!(current().id(), caller, "the sleeping worker ran an item");
+            if current().id() != caller {
+                off_caller.fetch_add(1, Ordering::Relaxed);
+            }
             *item = index as u32 + 1;
         });
+        assert_eq!(
+            off_caller.load(Ordering::Relaxed),
+            0,
+            "the sleeping worker ran an item"
+        );
         assert!(
             started.elapsed() < Duration::from_millis(250),
             "waited {:?} for a worker that never woke",
