@@ -1,6 +1,6 @@
 # Offline Audio Export
 
-**Status: drafted 2026-11-14, not agreed, nothing built; phase 1 measured the same day (§ Measured). Issue: #11 (reopened 2026-11-14 after being closed as not planned the same day).** The stem export (`⌘/Ctrl+⇧+R`, `130` § Audio export) stops being a playback run through the device and becomes an **offline render**: the audio device is let go, and a render loop steps the sequencer and the mixer through the selection block by block in *virtual time*, as fast as the plugins can compute. The files are the same files (a WAV per stem plus `Mix.wav`, the selection exactly), exact to the sample however slow the machine, and usually done well before real time. Nothing new renders audio and nothing new schedules events: it is the playback path with another caller.
+**Status: design agreed 2026-11-14; phase 1 (measuring) done the same day (§ Measured); phases 2–4 not built. Issue: #11 (reopened 2026-11-14 after being closed as not planned the same day).** The stem export (`⌘/Ctrl+⇧+R`, `130` § Audio export) stops being a playback run through the device and becomes an **offline render**: the audio device is let go, and a render loop steps the sequencer and the mixer through the selection block by block in *virtual time*, as fast as the plugins can compute. The files are the same files (a WAV per stem plus `Mix.wav`, the selection exactly), exact to the sample however slow the machine, and usually done well before real time. Nothing new renders audio and nothing new schedules events: it is the playback path with another caller.
 
 ## Background
 
@@ -41,7 +41,7 @@ So the premise #11 was closed on doesn't hold on this machine, and the result li
 
 ## Decisions
 
-1. **Offline replaces the real-time run.** One export, not a choice between two. `⌘/Ctrl+⇧+R`, the plan (`Sequencer::audio_export_plan`), the folder, the file names, the selection as the length, the stems at unity and the mix at the sketch's levels, the click left out, no tails: all as built. What goes is in § What goes away. The real-time run has one thing offline rendering can't do, a plugin that needs real time (§ Open questions 1).
+1. **Offline replaces the real-time run.** One export, not a choice between two. `⌘/Ctrl+⇧+R`, the plan (`Sequencer::audio_export_plan`), the folder, the file names, the selection as the length, the stems at unity and the mix at the sketch's levels, the click left out, no tails: all as built. What goes is in § What goes away. The real-time run could do one thing an offline render can't, play a plugin that needs real time (decision 7). Keeping it as a second path for that was turned down: two paths to keep equal, when being one path was the point of the original design.
 2. **Virtual time, not a new clock.** For the run, the engine owns a time that advances only as blocks are rendered:
    - `t0` is an `Instant` taken at the run's start. Block `k` covers `[t0 + k × N / rate, t0 + (k + 1) × N / rate)`, with `N` the block size.
    - The sequencer's tick `n` of the run carries `at = t0 + n × tick length`, the tick length worked out from the tempo in integers, so it never drifts. The tempo can't change mid-run (the run blocks the command, as today).
@@ -67,10 +67,10 @@ So the premise #11 was closed on doesn't hold on this machine, and the result li
    - **CLAP:** the `render` extension (`CLAP_RENDER_OFFLINE`), set on the main thread. Not among the `clack-extensions` features enabled today.
 
    The switch reuses `480`'s path whole. A voice already carries the rate it was activated at, and the UI asks back and reactivates any voice whose rate isn't the stream's. That becomes rate *and mode*: the wanted mode is offline from the moment an export is asked for until it ends. So the order is: the voices come back and are reactivated offline, one per frame under the panel ("Preparing export", "Serum 2", "3 of 8"), and go in together; the run starts; at its end the stream reopens and the same path brings them back to real time ("Restarting audio"). The mixer holds a voice in the wrong mode silent, as it does one at the wrong rate, so the run can't start on a voice that hasn't switched.
-7. **A plugin that won't switch.** One that refuses the offline setup is reloaded from its live state, as one that refuses a rate change is (`480` § Things to check). One that says it can't render offline at all (CLAP's `has_hard_realtime_requirement`: hardware-backed DSP) is § Open questions 1.
+7. **A plugin that won't switch.** One that refuses the offline setup is reloaded from its live state, as one that refuses a rate change is (`480` § Things to check). One that says it can't render offline at all (CLAP's `has_hard_realtime_requirement`: hardware-backed DSP) refuses the export, and the footer names it ("Can't export: <plugin> needs real time"). Rare, and the author has none; if one is ever reported, that is the time to think again.
 8. **The block size is the running stream's buffer.** The run renders in blocks of the size playback used, so a plugin whose smoothing or modulation steps per block renders as it played. `schedule_delay` stays that one buffer.
 9. **The writer waits and is waited for.** The tap's rings drop a block they have no room for and flag it (`130` § The tap), because the audio thread can't wait. The engine thread can: before a block it checks that every ring has room and yields until the `"audio-export"` thread has caught up. Nothing is ever dropped, and the "samples dropped" warning goes. The writer's 3 s stall timeout stays, as the guard for a run that stops advancing.
-10. **No sound while it runs.** The device is closed for the run. Live input already had no plugin target during an export (`LiveInputRouter::route`), so nothing that could be played is lost. The footer shows the progress; Esc cancels and removes the files, as now.
+10. **No sound while it runs.** The device is closed for the run, and external gear on MIDI Out tracks is quiet too (decision 5). Live input already had no plugin target during an export (`LiveInputRouter::route`), so nothing that could be played is lost. The footer shows the progress; Esc cancels and removes the files, as now.
 11. **Nothing about the device can end the run.** An outside change while the device is closed (unplugged, the rate changed) is met when the stream reopens, by the ordinary restart. The files are written at the rate the run started at. `480` decision 10 (the Audio tab locked during an export) stays: a pick there would restart the engine under the run.
 12. **The same commands are blocked.** `audio_export_command` and `audio_export_transport_command` stand as built: a mute or a fader halfway through would still make the stems disagree with the mix.
 
@@ -111,11 +111,9 @@ So the premise #11 was closed on doesn't hold on this machine, and the result li
 3. **Offline mode.** The voice's activation mode beside its rate, VST3's `kOffline`, CLAP's `render` extension, the "Preparing export" panel, the fallback reload. The comparisons against a real-time export from the last build that had one.
 4. **Tidy.** `130` § Audio export rewritten as built, `280`, the README, `000`'s thread table, the changelog; this file archived.
 
-## Open questions
+## Settled when agreeing (2026-11-14)
 
-To settle before this is agreed:
-
-1. **A plugin that needs real time.** Three ways to meet one: refuse the export and name the plugin; render it anyway and say so in the result; or keep the real-time run as a second path for projects that have one. The first is the smallest and the author has no such plugin. Keeping the real-time run means keeping everything § What goes away removes.
-2. **Does offline replace the real-time run, or sit beside it?** Decision 1 says replace. The case for keeping both is question 1 and hearing the export as it is written; the case against is two paths to keep equal, when being one path was the point of the original design.
-3. **Is silence during the run acceptable** (decision 10), including external gear on MIDI Out tracks going quiet (decision 5)?
-4. **Phase 2 without phase 3?** If the plugins on the list render correctly faster than real time, offline mode could wait, and with it the two reactivation rounds per export. Every DAW sets the mode, so the default here is to build it.
+1. **Offline replaces the real-time run** (decision 1). No second path and no choice between two.
+2. **A plugin that needs real time refuses the export**, named in the footer (decision 7).
+3. **Silence during the run is accepted**, external gear on MIDI Out tracks included (decisions 5 and 10). Neither reaches the files today.
+4. **Offline mode is built whatever phase 2 shows** (decision 6). A plugin that drops notes when rendered fast while told it is live does so silently, and the author's plugin list can't speak for other people's samplers. No release is cut between phases 2 and 3 unless phase 2's hand test is clean.
