@@ -301,7 +301,11 @@ fn restart_message(
     Some(match cause {
         RestartCause::DeviceLost => format!("{}; using {name}", lost()),
         RestartCause::RateChanged if previous.is_some_and(|p| p.device.name == *name) => {
-            if chosen_rate == Some(now.sample_rate) {
+            // Stev reopened at the rate it ran at, the one picked: the
+            // outside change was undone, not a new rate taken.
+            if chosen_rate == Some(now.sample_rate)
+                && previous.is_some_and(|p| p.sample_rate == now.sample_rate)
+            {
                 format!(
                     "Device rate set back to {} (chosen in Settings)",
                     khz(now.sample_rate)
@@ -1277,6 +1281,18 @@ mod tests {
             )
             .as_deref(),
             Some("Device rate set back to 48 kHz (chosen in Settings)")
+        );
+        // A device moving to the picked rate by itself, from another, set
+        // nothing back.
+        assert_eq!(
+            restart_message(
+                RestartCause::RateChanged,
+                Some(&at_44),
+                Some(&at_48),
+                Some(48_000)
+            )
+            .as_deref(),
+            Some("Device rate changed to 48 kHz")
         );
         // With no rate picked, the device's own rate is news either way.
         assert_eq!(

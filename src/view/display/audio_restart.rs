@@ -11,8 +11,18 @@
 //! ready to go back in. `Display` drives it from `instrument.rs`.
 
 use std::collections::VecDeque;
+use std::time::{Duration, Instant};
+
+use log::warn;
 
 use super::instrument_restore::{progress_fraction, progress_step};
+
+/// How long a restart waiting for voices from the mixer, with none in hand,
+/// holds the app after the last one came (or was asked for). The mixer
+/// hands them back from the audio callback, within a buffer or two; one
+/// that doesn't (the stream stopped before the callback ran) leaves the
+/// restart waiting for a device, and the panel lets the app go meanwhile.
+pub(super) const STALLED_AFTER: Duration = Duration::from_secs(1);
 
 /// The plugins of one audio restart, by engine slot: asked back from the
 /// mixer, back and waiting to be reactivated, or ready to go back in.
@@ -27,6 +37,8 @@ pub(super) struct AudioRestart<A, R> {
     ready: Vec<(usize, R)>,
     /// How many plugins the restart has had: the panel's "of 8".
     total: usize,
+    /// When a voice was last asked for or came back.
+    last_news: Option<Instant>,
 }
 
 /// The voice a restart was holding for a slot whose plugin was removed
@@ -47,26 +59,45 @@ impl<A, R> AudioRestart<A, R> {
             arrived: VecDeque::new(),
             ready: Vec::new(),
             total: 0,
+            last_news: None,
         }
     }
 
-    /// `slot`'s voice has been asked back.
-    pub(super) fn ask(&mut self, slot: usize) {
+    /// `slot`'s voice has been asked back, `now`.
+    pub(super) fn ask(&mut self, slot: usize, now: Instant) {
         self.asked.push(slot);
         self.total += 1;
+        self.last_news = Some(now);
     }
 
-    /// `slot`'s voice came back, to be reactivated. One that wasn't asked
-    /// for (a voice stale on insert, asked back before this restart began)
-    /// is taken as well, and counted.
-    pub(super) fn arrive(&mut self, slot: usize, voice: A) {
+    /// `slot`'s voice came back, `now`, to be reactivated. One that wasn't
+    /// asked for isn't expected (every voice the mixer hands back was asked
+    /// for, and a restart ends only once none is out); it is taken all the
+    /// same, and counted, rather than lost.
+    pub(super) fn arrive(&mut self, slot: usize, voice: A, now: Instant) {
         match self.asked.iter().position(|s| *s == slot) {
             Some(pos) => {
                 self.asked.remove(pos);
             }
-            None => self.total += 1,
+            None => {
+                warn!("audio restart: a voice came back for slot {slot}, which wasn't asked for");
+                self.total += 1;
+            }
         }
         self.arrived.push_back((slot, voice));
+        self.last_news = Some(now);
+    }
+
+    /// Whether the restart holds the app, `now`: its panel up and input
+    /// dropped. It does while it has a voice in hand, and while it waits
+    /// for voices that came or were asked for less than [`STALLED_AFTER`]
+    /// ago; a restart whose voices stopped coming lets the app go, and goes
+    /// on when they come.
+    pub(super) fn holds_app(&self, now: Instant) -> bool {
+        !self.arrived.is_empty()
+            || self
+                .last_news
+                .is_none_or(|at| now.saturating_duration_since(at) < STALLED_AFTER)
     }
 
     /// The next voice to reactivate.
@@ -138,22 +169,25 @@ impl<A, R> AudioRestart<A, R> {
 
 #[cfg(test)]
 mod tests {
-    use super::{AudioRestart, Held};
+    use std::time::{Duration, Instant};
+
+    use super::{AudioRestart, Held, STALLED_AFTER};
 
     type Restart = AudioRestart<&'static str, &'static str>;
 
     #[test]
     fn reactivates_in_arrival_order_and_counts_the_steps() {
+        let now = Instant::now();
         let mut restart = Restart::new();
-        restart.ask(0);
-        restart.ask(3);
-        restart.ask(5);
+        restart.ask(0, now);
+        restart.ask(3, now);
+        restart.ask(5, now);
         assert_eq!(restart.step(), (1, 3));
         assert_eq!(restart.next_slot(), Some(0));
         assert!(!restart.is_done());
 
-        restart.arrive(3, "voice 3");
-        restart.arrive(0, "voice 0");
+        restart.arrive(3, "voice 3", now);
+        restart.arrive(0, "voice 0", now);
         assert_eq!(restart.next_slot(), Some(3));
         assert_eq!(restart.pop_arrived(), Some((3, "voice 3")));
         restart.ready(3, "ready 3");
@@ -166,7 +200,7 @@ mod tests {
         assert_eq!(restart.next_slot(), Some(5));
         assert!(!restart.is_done());
 
-        restart.arrive(5, "voice 5");
+        restart.arrive(5, "voice 5", now);
         assert_eq!(restart.pop_arrived(), Some((5, "voice 5")));
         restart.ready(5, "ready 5");
         assert!(restart.is_done());
@@ -177,22 +211,24 @@ mod tests {
 
     #[test]
     fn a_voice_nobody_asked_for_joins_the_count() {
+        let now = Instant::now();
         let mut restart = Restart::new();
-        restart.ask(1);
-        restart.arrive(2, "voice 2");
+        restart.ask(1, now);
+        restart.arrive(2, "voice 2", now);
         assert_eq!(restart.step(), (1, 2));
         assert!(!restart.is_done());
     }
 
     #[test]
     fn forgetting_a_removed_plugin_hands_back_what_was_held() {
+        let now = Instant::now();
         let mut restart = Restart::new();
-        restart.ask(0);
-        restart.ask(1);
-        restart.ask(2);
-        restart.ask(4);
-        restart.arrive(1, "voice 1");
-        restart.arrive(2, "voice 2");
+        restart.ask(0, now);
+        restart.ask(1, now);
+        restart.ask(2, now);
+        restart.ask(4, now);
+        restart.arrive(1, "voice 1", now);
+        restart.arrive(2, "voice 2", now);
         assert_eq!(restart.pop_arrived(), Some((1, "voice 1")));
         restart.ready(1, "ready 1");
 
@@ -204,5 +240,25 @@ mod tests {
         assert_eq!(restart.step(), (1, 1));
         assert_eq!(restart.next_slot(), Some(4));
         assert!(restart.into_ready().is_empty());
+    }
+
+    #[test]
+    fn a_restart_whose_voices_stop_coming_lets_the_app_go() {
+        let now = Instant::now();
+        let mut restart = Restart::new();
+        restart.ask(0, now);
+        restart.ask(1, now);
+        assert!(restart.holds_app(now));
+        assert!(restart.holds_app(now + STALLED_AFTER - Duration::from_millis(1)));
+        assert!(!restart.holds_app(now + STALLED_AFTER));
+
+        // A voice coming late takes the app again: there is work in hand,
+        // then the wait for the last starts over.
+        let later = now + STALLED_AFTER * 3;
+        restart.arrive(0, "voice 0", later);
+        assert!(restart.holds_app(later + STALLED_AFTER * 2));
+        assert_eq!(restart.pop_arrived(), Some((0, "voice 0")));
+        assert!(restart.holds_app(later));
+        assert!(!restart.holds_app(later + STALLED_AFTER));
     }
 }

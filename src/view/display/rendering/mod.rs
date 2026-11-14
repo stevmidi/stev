@@ -1254,9 +1254,10 @@ impl eframe::App for Display {
     /// a stale copy of the last shown frame, so polling it from here would
     /// replay old key events. A project load's plugin restore steps here too,
     /// one plugin per frame (`restore_next_instrument`), after the pump has
-    /// drained the catalog scan, and so does an audio restart's
-    /// reactivation (`restart_next_instrument`). egui's theme is pinned here too, following
-    /// a palette change before the frame is drawn (`theme::pin_egui_theme`).
+    /// drained the catalog scan, and so does an audio restart's reactivation
+    /// (`restart_next_instrument`). egui's theme is pinned here too,
+    /// following a palette change before the frame is drawn
+    /// (`theme::pin_egui_theme`).
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         theme::pin_egui_theme(ctx);
         #[cfg(target_os = "macos")]

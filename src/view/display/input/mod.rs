@@ -574,8 +574,7 @@ impl Display {
     pub(in crate::view::display) fn progress_panel_up(&self) -> bool {
         #[cfg(target_os = "macos")]
         {
-            self.overlay == Some(Overlay::RestoringInstruments)
-                || self.instruments.restart.is_some()
+            self.overlay == Some(Overlay::RestoringInstruments) || self.audio_restart_holds_app()
         }
         #[cfg(not(target_os = "macos"))]
         false

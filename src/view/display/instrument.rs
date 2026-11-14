@@ -35,7 +35,7 @@ use crate::core::plugin_host::{
 use crate::models::track::{InstrumentRef, TrackOutput};
 
 use super::Display;
-use super::audio_restart::AudioRestart;
+use super::audio_restart::{AudioRestart, STALLED_AFTER};
 use super::browser::BrowserPlugin;
 use super::instrument_restore::InstrumentRestore;
 use super::modal_focus::Overlay;
@@ -727,7 +727,9 @@ impl Display {
                 .is_ok();
             if asked {
                 loaded.sample_rate = None;
-                restart.get_or_insert_with(AudioRestart::new).ask(slot);
+                restart
+                    .get_or_insert_with(AudioRestart::new)
+                    .ask(slot, Instant::now());
             }
         }
     }
@@ -758,7 +760,7 @@ impl Display {
         self.instruments
             .restart
             .get_or_insert_with(AudioRestart::new)
-            .arrive(slot, voice);
+            .arrive(slot, voice, Instant::now());
     }
 
     /// Per frame, from `logic`: reactivates the audio restart's next plugin
@@ -767,7 +769,9 @@ impl Display {
     /// is loaded again from its state (`reload_slot_instrument`). Once
     /// every plugin is ready they all go back in together
     /// (`finish_restart`). Asks for the frame that paints the panel's next
-    /// step; a voice still on its way wakes the UI when it comes.
+    /// step; a voice still on its way wakes the UI when it comes, and one
+    /// that doesn't come wakes it after [`STALLED_AFTER`], to let the app go
+    /// (`AudioRestart::holds_app`).
     pub(super) fn restart_next_instrument(&mut self, ctx: &egui::Context) {
         let Some(restart) = &mut self.instruments.restart else {
             return;
@@ -777,6 +781,7 @@ impl Display {
             return;
         }
         let Some((slot, voice)) = restart.pop_arrived() else {
+            ctx.request_repaint_after(STALLED_AFTER);
             return;
         };
         let ready = self.reactivate_slot_instrument(slot, voice);
@@ -951,9 +956,21 @@ impl Display {
         }
     }
 
-    /// The audio restart under way, if any, for the panel: the plugin it
-    /// names, the step ("3 of 8") and how much is done.
+    /// Whether an audio restart holds the app now: its panel up, input
+    /// dropped (`AudioRestart::holds_app`).
+    pub(super) fn audio_restart_holds_app(&self) -> bool {
+        self.instruments
+            .restart
+            .as_ref()
+            .is_some_and(|restart| restart.holds_app(Instant::now()))
+    }
+
+    /// The audio restart holding the app, if one is, for the panel: the
+    /// plugin it names, the step ("3 of 8") and how much is done.
     pub(super) fn audio_restart(&self) -> Option<(&str, (usize, usize), f32)> {
+        if !self.audio_restart_holds_app() {
+            return None;
+        }
         let restart = self.instruments.restart.as_ref()?;
         let name = restart
             .next_slot()
