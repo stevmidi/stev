@@ -45,7 +45,7 @@ A **self-updater** (Sparkle) downloading and installing in place needs level 2's
 
 The stem export is built (`⌘/Ctrl+⇧+R`, as built in `130` § Audio export, phase plan in `archive/300-export-to-audio.md`). Two follow-ups were left out of it on purpose:
 
-- **Offline rendering:** quick and glitch-free, but each plugin must accept the CLAP/VST3 offline-processing flag, and the render must reproduce the transport exactly as playback does (`BlockTransport`, note chase, the wheels).
+- **Offline rendering** (#11): quicker than the real-time run, and that is its only gain. The files are already glitch-free, since the tap takes the samples before the device (`130` § Audio export). It needs a second way to drive the transport, a render loop that pulls the sequencer to each block where playback is pushed by the `"clock"` timer, reproducing playback exactly (`BlockTransport`, note chase, the wheels, parameter moves); each plugin switched to the CLAP/VST3 offline mode; and it gives up listening along. Deferred until exports of long arrangements become a regular wait in real use.
 - **Tails that end on silence:** the files ringing out past the selection until the output is measured silent, and the export waiting for the same silence before it starts. Designed as phase 4 of `archive/300-export-to-audio.md` (detector, thresholds, caps) and deferred 2026-10-19: DAW users don't expect it, Ableton doesn't do it, and the selection already sets the length. If a tail from playback just before the start ever reaches the files, try its smaller cousin first: a short fixed pause before the start.
 
 ### Website extras
