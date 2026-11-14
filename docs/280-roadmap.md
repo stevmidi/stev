@@ -43,9 +43,7 @@ A **self-updater** (Sparkle) downloading and installing in place needs level 2's
 
 ### Export to audio: what's left
 
-The stem export is built (`⌘/Ctrl+⇧+R`, as built in `130` § Audio export, phase plan in `archive/300-export-to-audio.md`). Two follow-ups were left out of it on purpose:
-
-- **Offline rendering** (#11): quicker than the real-time run, and that is its only gain. The files are already glitch-free, since the tap takes the samples before the device (`130` § Audio export). It needs a second way to drive the transport, a render loop that pulls the sequencer to each block where playback is pushed by the `"clock"` timer, reproducing playback exactly (`BlockTransport`, note chase, the wheels, parameter moves); each plugin switched to the CLAP/VST3 offline mode; and it gives up listening along. Deferred until exports of long arrangements become a regular wait in real use.
+The stem export is built (`⌘/Ctrl+⇧+R`, as built in `130` § Audio export, phase plan in `archive/300-export-to-audio.md`). One follow-up was left out of it on purpose (offline rendering, the other, is in § Not planned):
 - **Tails that end on silence:** the files ringing out past the selection until the output is measured silent, and the export waiting for the same silence before it starts. Designed as phase 4 of `archive/300-export-to-audio.md` (detector, thresholds, caps) and deferred 2026-10-19: DAW users don't expect it, Ableton doesn't do it, and the selection already sets the length. If a tail from playback just before the start ever reaches the files, try its smaller cousin first: a short fixed pause before the start.
 
 ### Website extras
@@ -71,6 +69,7 @@ Mirrored in the README's *Not planned* list, so nobody expects these. Some may c
 - a built-in sampler or other built-in instrument: sampler and instrument plugins cover it, loaded through the plugin host (`130`)
 - track automation lanes and drawing controller data: the piano roll shows the clip's pitch bend, mod wheel and parameter moves in a lane (`380`, `400`) that only clears a span or the whole lane; no lane draws values and no automation lives on the arranger's tracks
 - mixing: built-in EQ, compression or other effects, effect plugins, sends, a mixer panel (Stev arranges, a DAW mixes: § Principle; the hand-off is a stem export)
+- offline audio export (#11, closed 2026-11-14): the stem export stays a real-time run. Speed is its only gain, since the files are already glitch-free (the tap takes the samples before the device, `130` § Audio export), and it would need a second way to drive the transport, a render loop pulling the sequencer block by block where playback is pushed by the `"clock"` timer and matching it exactly (`BlockTransport`, note chase, the wheels, parameter moves), with each plugin switched to its CLAP/VST3 offline mode. Users expect it today; the real-time run is kept anyway, as it fits the app and keeps the architecture simple
 - MIDI clock / Ableton Link / external sync
 - notation
 - whole-arrangement MIDI file export and multi-track import (one clip at a time each way, `060`)
