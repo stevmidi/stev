@@ -87,21 +87,17 @@ impl Display {
     /// export runs the tab is read-only: those keys are taken and do
     /// nothing. Returns whether it took the key.
     fn handle_audio_tab_key(&mut self, key: Key, modifiers: KeyModifiers) -> bool {
-        let tab_key = matches!(
-            key,
-            Key::Tab
-                | Key::Enter
-                | Key::ArrowUp
-                | Key::ArrowDown
-                | Key::ArrowLeft
-                | Key::ArrowRight
-        );
-        if self.is_exporting_audio() {
-            return tab_key;
-        }
+        let locked = self.is_exporting_audio();
         let audio = &mut self.settings.audio;
         let in_list = audio.focus == AudioSettingsFocus::Device;
         match key {
+            Key::Tab
+            | Key::Enter
+            | Key::ArrowUp
+            | Key::ArrowDown
+            | Key::ArrowLeft
+            | Key::ArrowRight
+                if locked => {}
             Key::Tab if modifiers.shift => audio.focus = audio.focus.previous(),
             Key::Tab => audio.focus = audio.focus.next(),
             Key::Enter => {

@@ -17,13 +17,13 @@ use std::time::Duration;
 use egui::emath::GuiRounding;
 use egui::{Context, Id, Pos2, Theme, Ui};
 
-use crate::core::audio::khz_number;
+use crate::core::audio::{buffer_ms, khz_number};
 use crate::core::update_check::{CURRENT_VERSION, UpdateCheck};
 use crate::view::display::settings::about_tab::{
     AboutLink, UPDATE_CHECK, UpdateState, VST_LOGO_SIZE,
 };
 use crate::view::display::settings::ai_tab::{AiTab, ClaudeCodeSetup};
-use crate::view::display::settings::audio_tab::{AudioChoice, AudioTab, DEVICE_ROWS, buffer_label};
+use crate::view::display::settings::audio_tab::{AudioChoice, AudioTab, DEVICE_ROWS};
 
 use crate::view::display::fields::{FieldStyle, MODAL_MARGIN};
 use crate::view::display::modal_focus::{AudioSettingsFocus, PortSide, SettingsTab};
@@ -109,6 +109,34 @@ struct AudioTabLayout {
     buffer: Section,
     /// The readout of what runs: three lines.
     readout: Section,
+}
+
+/// How a list row or choice is drawn.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct RowLook {
+    /// Under its list's cursor: tinted.
+    cursor: bool,
+    /// Its list has the focus: the cursor's tint and text accented.
+    focused: bool,
+    /// The connected port, active theme or audio choice in use: the bar.
+    active: bool,
+    /// Read-only (the Audio tab while an export runs): text and bar
+    /// `fg_dim`.
+    locked: bool,
+}
+
+impl RowLook {
+    /// The text's colour, and the active bar's: `fg_dim` while locked,
+    /// `region()` when active, `accent` on the focused cursor, else `fg`.
+    fn color(self) -> Color32 {
+        if self.locked {
+            theme::fg_dim()
+        } else if self.active {
+            theme::region()
+        } else {
+            accent_if(self.cursor && self.focused, theme::fg())
+        }
+    }
 }
 
 /// How many choices a row of them is divided into, so the rates and the
@@ -326,7 +354,7 @@ impl Display {
         let rate = Self::settings_section(content, device.area.max.y, 1, 1);
         let mut buffer = Self::settings_section(content, rate.area.max.y, 1, 2);
         buffer.rows.first.max.y += Self::SETTINGS_ROW_H;
-        let readout = Self::settings_section(content, buffer.area.max.y, 0, 3);
+        let readout = Self::settings_section(content, buffer.area.max.y, 3, 3);
         AudioTabLayout {
             device,
             rate,
@@ -763,18 +791,32 @@ impl Display {
         is_focused: bool,
         is_active: bool,
     ) {
-        if is_cursor {
-            Self::draw_settings_cursor(painter, row, is_focused);
-        }
-        if is_active {
-            Self::draw_active_bar(painter, row, theme::region());
-        }
-        let color = if is_active {
-            theme::region()
-        } else {
-            accent_if(is_cursor && is_focused, theme::fg())
+        let look = RowLook {
+            cursor: is_cursor,
+            focused: is_focused,
+            active: is_active,
+            locked: false,
         };
-        Self::draw_settings_text(painter, row, text, Self::FONT_LIST, color);
+        Self::draw_row(painter, row, text, None, look);
+    }
+
+    /// Paints one row or choice as `look` has it: the cursor's tint, the
+    /// active bar along its left edge, and `text` — on the upper half with
+    /// `lower` dim and smaller under it, when there is a second line.
+    fn draw_row(painter: &Painter, rect: Rect, text: &str, lower: Option<&str>, look: RowLook) {
+        if look.cursor {
+            Self::draw_settings_cursor(painter, rect, look.focused);
+        }
+        let color = look.color();
+        if look.active {
+            Self::draw_active_bar(painter, rect, color);
+        }
+        let Some(lower) = lower else {
+            return Self::draw_settings_text(painter, rect, text, Self::FONT_LIST, color);
+        };
+        let (upper, under) = rect.split_top_bottom_at_fraction(0.5);
+        Self::draw_settings_text(painter, upper, text, Self::FONT_LIST, color);
+        Self::draw_settings_text(painter, under, lower, Self::FONT_HINT, theme::fg_dim());
     }
 
     /// Paints a MIDI section header, accented while its row has the focus.
@@ -830,8 +872,13 @@ impl Display {
         let layout = Self::audio_tab_layout(content, audio);
         let locked = self.is_exporting_audio();
         let focus = (!locked).then_some(audio.focus);
-        // The cursor, only while the tab can be used.
-        let cursor = |is_cursor: bool| is_cursor && !locked;
+        // A choice's look: no cursor while the tab can't be used.
+        let look = |cursor: bool, focused: bool, active: bool| RowLook {
+            cursor: cursor && !locked,
+            focused,
+            active,
+            locked,
+        };
         if audio.awaiting_measurements() {
             painter
                 .ctx()
@@ -855,14 +902,12 @@ impl Display {
         let start = audio.window_start();
         for i in 0..layout.device.rows.count {
             let idx = start + i;
-            Self::draw_audio_row(
+            Self::draw_row(
                 painter,
                 layout.device.rows.row(i),
                 &audio.row_label(idx),
-                cursor(idx == audio.device_cursor),
-                focused,
-                active == Some(idx),
-                locked,
+                None,
+                look(idx == audio.device_cursor, focused, active == Some(idx)),
             );
         }
         if let Some(missing) = audio.missing() {
@@ -888,18 +933,8 @@ impl Display {
         let row = layout.rate.rows.first;
         let active = audio.active_rate();
         for (i, &hz) in audio.rates().iter().enumerate().take(CHOICE_COLUMNS) {
-            let is_cursor = cursor(i == audio.rate_cursor);
-            let is_active = active == Some(i);
-            let chip = choice_rect(row, i);
-            Self::draw_audio_row(
-                painter,
-                chip,
-                &khz_number(hz),
-                is_cursor,
-                focused,
-                is_active,
-                locked,
-            );
+            let look = look(i == audio.rate_cursor, focused, active == Some(i));
+            Self::draw_row(painter, choice_rect(row, i), &khz_number(hz), None, look);
         }
         if audio.rates().is_empty() {
             Self::draw_settings_text(
@@ -917,17 +952,10 @@ impl Display {
         let active = audio.active_buffer();
         let hz = audio.running.as_ref().map_or(0, |r| r.sample_rate);
         for (i, &frames) in audio.buffers().iter().enumerate().take(CHOICE_COLUMNS) {
-            let is_cursor = cursor(i == audio.buffer_cursor);
-            let is_active = active == Some(i);
-            Self::draw_buffer_choice(
-                painter,
-                choice_rect(row, i),
-                buffer_label(frames, hz),
-                is_cursor,
-                focused,
-                is_active,
-                locked,
-            );
+            let look = look(i == audio.buffer_cursor, focused, active == Some(i));
+            let ms = buffer_ms(frames, hz);
+            let rect = choice_rect(row, i);
+            Self::draw_row(painter, rect, &frames.to_string(), Some(&ms), look);
         }
         if audio.buffers().is_empty() {
             let text = if audio.running.is_some() {
@@ -941,13 +969,7 @@ impl Display {
 
         Self::draw_settings_header(painter, layout.readout, "RUNNING", false);
         let readout = audio.readout();
-        let lines = ListRows {
-            first: Rect::from_min_size(
-                pos2(content.min.x, layout.readout.header.max.y),
-                vec2(content.width(), Self::SETTINGS_ROW_H),
-            ),
-            count: 3,
-        };
+        let lines = layout.readout.rows;
         Self::draw_settings_text(
             painter,
             lines.row(0),
@@ -969,28 +991,6 @@ impl Display {
         }
     }
 
-    /// Paints one Audio tab choice, a device row or a rate, as a list row
-    /// ([`draw_settings_row`](Self::draw_settings_row)) — or, `locked` for
-    /// an export, read-only: the text `fg_dim` and the one in use keeping its
-    /// bar, in `fg_dim` too.
-    fn draw_audio_row(
-        painter: &Painter,
-        row: Rect,
-        text: &str,
-        is_cursor: bool,
-        is_focused: bool,
-        is_active: bool,
-        locked: bool,
-    ) {
-        if !locked {
-            return Self::draw_settings_row(painter, row, text, is_cursor, is_focused, is_active);
-        }
-        if is_active {
-            Self::draw_active_bar(painter, row, theme::fg_dim());
-        }
-        Self::draw_settings_text(painter, row, text, Self::FONT_LIST, theme::fg_dim());
-    }
-
     /// The bar along `row`'s left edge marking the connected port, the
     /// active theme or the audio choice in use, in `color`.
     fn draw_active_bar(painter: &Painter, row: Rect, color: Color32) {
@@ -999,32 +999,6 @@ impl Display {
             (row.min.y + 2.0)..=(row.max.y - 2.0),
             Stroke::new(3.0_f32, color),
         );
-    }
-
-    /// Paints one buffer size: the cursor's tint and the active bar as a
-    /// list row has them, the frames on the upper line and their length in
-    /// ms, dim and smaller, on the lower; read-only when `locked`, as
-    /// [`draw_audio_row`](Self::draw_audio_row) has it.
-    fn draw_buffer_choice(
-        painter: &Painter,
-        rect: Rect,
-        (frames, ms): (String, String),
-        is_cursor: bool,
-        is_focused: bool,
-        is_active: bool,
-        locked: bool,
-    ) {
-        Self::draw_audio_row(painter, rect, "", is_cursor, is_focused, is_active, locked);
-        let color = if locked {
-            theme::fg_dim()
-        } else if is_active {
-            theme::region()
-        } else {
-            accent_if(is_cursor && is_focused, theme::fg())
-        };
-        let (upper, lower) = rect.split_top_bottom_at_fraction(0.5);
-        Self::draw_settings_text(painter, upper, &frames, Self::FONT_LIST, color);
-        Self::draw_settings_text(painter, lower, &ms, Self::FONT_HINT, theme::fg_dim());
     }
 
     /// The MIDI tab: the input and output port lists and the output-offset

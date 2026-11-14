@@ -337,9 +337,6 @@ struct Running {
     /// The device's persistent ID, compared against the system default on
     /// every poll; `None` if the device wouldn't say, and then not followed.
     device_id: Option<DeviceId>,
-    /// Whether it is the device the user chose, which the poll never moves
-    /// off; otherwise it is the system default, followed.
-    on_chosen: bool,
 }
 
 /// The `"audio-engine"` thread's state: the user's choice, the open stream,
@@ -460,15 +457,17 @@ impl EngineThread {
         {
             self.list_devices();
         }
-        let default = self.host.default_output_device();
         let Some(running) = &self.running else {
             let due = self
                 .failed_at
                 .is_none_or(|at| at.elapsed() >= FAILED_OPEN_RETRY);
-            let any = default.is_some() || self.chosen_device().is_some();
-            return (any && due).then_some(RestartCause::Retry);
+            let any = due
+                && (self.host.default_output_device().is_some() || self.chosen_device().is_some());
+            return any.then_some(RestartCause::Retry);
         };
-        if running.on_chosen {
+        // On the chosen device the poll follows nothing: its going away
+        // comes through the error callback.
+        if self.opened.as_ref().is_some_and(|opened| opened.on_chosen) {
             return None;
         }
         let retry_chosen = self
@@ -477,7 +476,7 @@ impl EngineThread {
         if retry_chosen && self.chosen_device().is_some() {
             return Some(RestartCause::Returned);
         }
-        let default_id = default.and_then(|d| d.id().ok())?;
+        let default_id = self.host.default_output_device()?.id().ok()?;
         let moved = running
             .device_id
             .as_ref()
@@ -518,10 +517,10 @@ impl EngineThread {
     }
 
     /// The chosen device, if one is and it is connected, with its ID.
-    fn chosen_device(&self) -> Option<(Device, Option<DeviceId>)> {
+    fn chosen_device(&self) -> Option<(Device, DeviceId)> {
         let id: DeviceId = self.prefs.device.as_ref()?.id.parse().ok()?;
         let device = self.host.device_by_id(&id)?;
-        Some((device, Some(id)))
+        Some((device, id))
     }
 
     /// Drops the stream, takes the mixer back and opens a new stream as the
@@ -560,7 +559,7 @@ impl EngineThread {
                 // Only a stream that plays is the rate plugins are built at.
                 self.status.set_sample_rate(opened.sample_rate);
                 self.notify_restart(cause, Some(&opened));
-                if running.on_chosen {
+                if opened.on_chosen {
                     self.chosen_failed_at = None;
                 }
                 self.running = Some(running);
@@ -619,7 +618,7 @@ impl EngineThread {
         let chosen = use_chosen.then(|| self.chosen_device()).flatten();
         let on_chosen = chosen.is_some();
         let (device, device_id) = match chosen {
-            Some(chosen) => chosen,
+            Some((device, id)) => (device, Some(id)),
             None => default_device(&self.host).ok_or("no output device")?,
         };
         let supported = device
@@ -719,7 +718,6 @@ impl EngineThread {
         let running = Running {
             _stream: stream,
             device_id,
-            on_chosen,
         };
         Ok((running, opened))
     }

@@ -23,9 +23,10 @@ pub(crate) enum Overlay {
 }
 
 /// The settings modal's Audio tab: which section the keys act on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum AudioSettingsFocus {
     /// The output-device list: ↑/↓ move its cursor.
+    #[default]
     Device,
     /// The sample rates: ←/→ move along them.
     Rate,

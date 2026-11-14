@@ -275,12 +275,10 @@ impl Display {
 
     /// Chooses `choice` in the Audio tab, applied at once: the engine
     /// restarts on it and the sequencer saves it (`480-audio-settings.md`
-    /// decision 2). Nothing while an audio export runs (decision 10), or
-    /// when it is what was already chosen.
+    /// decision 2). Nothing when it is what was already chosen. Only
+    /// reached while the tab can be used: during an audio export its clicks
+    /// and keys are refused (decision 10).
     pub(super) fn choose_audio(&mut self, choice: AudioChoice) {
-        if self.is_exporting_audio() {
-            return;
-        }
         let Some(prefs) = self.settings.audio.choose(choice) else {
             return;
         };

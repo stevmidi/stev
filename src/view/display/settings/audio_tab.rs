@@ -12,9 +12,7 @@
 
 use std::sync::Arc;
 
-use crate::core::audio::{
-    AudioControl, AudioDevice, AudioPrefs, RunningAudio, StreamStatus, buffer_ms, khz,
-};
+use crate::core::audio::{AudioControl, AudioDevice, AudioPrefs, RunningAudio, StreamStatus, khz};
 
 use super::window_start;
 use crate::view::display::AudioSettingsFocus;
@@ -36,6 +34,7 @@ pub(in crate::view::display) enum AudioChoice {
 }
 
 /// The settings modal's Audio tab state, held as `SettingsModal::audio`.
+#[derive(Default)]
 pub(in crate::view::display) struct AudioTab {
     /// Every output device, refreshed live from
     /// `UiEvent::AudioDevicesRefreshed`.
@@ -61,24 +60,6 @@ pub(in crate::view::display) struct AudioTab {
     control: Option<AudioControl>,
     /// The engine's live measurements, for the readout.
     pub(in crate::view::display) status: Option<Arc<StreamStatus>>,
-}
-
-impl Default for AudioTab {
-    fn default() -> Self {
-        Self {
-            devices: Vec::new(),
-            default_name: None,
-            running: None,
-            prefs: AudioPrefs::default(),
-            focus: AudioSettingsFocus::Device,
-            device_cursor: 0,
-            device_scroll: 0,
-            rate_cursor: 0,
-            buffer_cursor: 0,
-            control: None,
-            status: None,
-        }
-    }
 }
 
 impl AudioTab {
@@ -352,12 +333,6 @@ fn readout(
     }
 }
 
-/// A buffer size's two lines for its choice: the frames, and their length at
-/// `hz`.
-pub(in crate::view::display) fn buffer_label(frames: u32, hz: u32) -> (String, String) {
-    (frames.to_string(), buffer_ms(frames, hz))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -486,14 +461,6 @@ mod tests {
                 "asked for 96 kHz; the device runs at 48 kHz · \
                  asked for 64; the device runs at 512"
             )
-        );
-    }
-
-    #[test]
-    fn a_buffer_choice_reads_frames_over_ms() {
-        assert_eq!(
-            buffer_label(256, 48_000),
-            ("256".to_string(), "5.3 ms".to_string())
         );
     }
 }
