@@ -1,6 +1,6 @@
 # Offline Audio Export
 
-**Status: drafted 2026-11-14, not agreed, nothing built. Issue: #11 (reopened 2026-11-14 after being closed as not planned the same day).** The stem export (`⌘/Ctrl+⇧+R`, `130` § Audio export) stops being a playback run through the device and becomes an **offline render**: the audio device is let go, and a render loop steps the sequencer and the mixer through the selection block by block in *virtual time*, as fast as the plugins can compute. The files are the same files (a WAV per stem plus `Mix.wav`, the selection exactly), exact to the sample however slow the machine, and usually done well before real time. Nothing new renders audio and nothing new schedules events: it is the playback path with another caller.
+**Status: drafted 2026-11-14, not agreed, nothing built; phase 1 measured the same day (§ Measured). Issue: #11 (reopened 2026-11-14 after being closed as not planned the same day).** The stem export (`⌘/Ctrl+⇧+R`, `130` § Audio export) stops being a playback run through the device and becomes an **offline render**: the audio device is let go, and a render loop steps the sequencer and the mixer through the selection block by block in *virtual time*, as fast as the plugins can compute. The files are the same files (a WAV per stem plus `Mix.wav`, the selection exactly), exact to the sample however slow the machine, and usually done well before real time. Nothing new renders audio and nothing new schedules events: it is the playback path with another caller.
 
 ## Background
 
@@ -13,7 +13,7 @@ The export today is "an ordinary playback run with a tap on the mixer" (`130` §
 
 So an offline run needs no second transport. A driver calls the same `tick` with instants it makes up (`t0 + n × tick length`), and renders blocks against a clock anchored at `t0` that is never observed again. The mixer's own tests already render this way (`render` in `plugin_host/mixer.rs` builds a `RenderCtx` by hand and calls `render_into` with no device). What is new is the stepping between two threads, not the timing.
 
-**"Speed is the only gain: the files are already glitch-free."** They are click-free. Whether they are exact is unmeasured. The tap's timeline is `steady`, which counts only frames that were rendered (`Mixer::render`). If the device drops a cycle on an xrun, those frames are never rendered, the clock's anchor slides to absorb the gap, and from there on every event (and the end mark) lands one buffer early against the grid. The waveform stays continuous, so listening finds nothing, but the file comes out shorter than the selection and its later bars no longer sit on a DAW's grid at the project tempo. All stems shift together, so they still agree with each other and with `Mix.wav`. This is read from the code, not measured (§ Things to check: The shortened file); if it holds, the real-time export is exact only on a machine that never drops a cycle, and the machines that most need the export (an old Mac with a heavy project) are the ones that do.
+**"Speed is the only gain: the files are already glitch-free."** They are click-free. They are not exact on a machine that overruns (§ Measured). The tap's timeline is `steady`, which counts only frames that were rendered (`Mixer::render`). If the device drops a cycle on an xrun, those frames are never rendered, the clock's anchor slides to absorb the gap, and from there on every event (and the end mark) lands one buffer early against the grid. The waveform stays continuous, so listening finds nothing, but the file comes out shorter than the selection and its later bars no longer sit on a DAW's grid at the project tempo. All stems shift together, so they still agree with each other and with `Mix.wav`. The real-time export is exact only on a machine that keeps up, and the machines that most need the export (an old Mac with a heavy project) are the ones that don't.
 
 What offline rendering then gives:
 
@@ -22,6 +22,22 @@ What offline rendering then gives:
 - **Less to go wrong.** A device unplugged, a rate changed in Audio MIDI Setup, an overrun, a full ring: none of them can touch a run that has no device and can wait.
 
 What it costs is in § Decisions 6 and 7: the plugins have to be told, and what they render offline is not always what they played.
+
+## Measured
+
+2026-11-14, the 2018 Mac mini, a Scarlett 4i4 at 48 kHz, `_debug/audio-workgroup-join.stev` (seven plugin tracks: Serum 2, Vital, Spire), bars 1 to 6 at 96 bpm: 12.5 s, 600,000 frames.
+
+| Buffer | Overruns during the run (`audio-overruns.log`) | Frames in every file | Against 600,000 |
+|---|---|---|---|
+| 256 | 44 | 595,241 | 4,759 short (99.1 ms, 18.6 buffers) |
+| 2048 | 0 | 600,026 | 26 over (0.5 ms) |
+
+- **Overruns shorten the files.** 99 ms over five bars is about two thirds of a 16th note at this tempo by bar 6. All eight files are the same length, so the stems still agree with each other.
+- **The loss follows the overruns through the run.** Three note attacks in one stem sat about 2,500 frames early by 5.6 s and about 3,700 by 12.0 s, against the first; the journal has the overruns spread the same way, with some twenty in the last second. Thin evidence (the material is mostly sustained), but it rules out a start mark that merely landed late.
+- **Less than a buffer per overrun**, about 0.4 on average. The xrun count from the footer wasn't noted, so it isn't known how many of the 44 dropped a device cycle.
+- **The clean run is 26 frames long, not exact.** 43 ppm. Either the interface's clock against the system's (musical time is credited from the system clock, the file is counted in device samples) or the smoothed anchor between the two marks; one run can't tell them apart. Negligible here, 13 ms over five minutes if it is clock skew. An offline render has neither.
+
+So the premise #11 was closed on doesn't hold on this machine, and the result line's "overruns while playing" note understates what an overrun does to the files.
 
 ## Decisions
 
@@ -75,7 +91,6 @@ What it costs is in § Decisions 6 and 7: the plugins have to be told, and what 
 
 ## Things to check while building
 
-- **The shortened file.** Before anything else, measure the premise: on the 2018 Mac mini, export a selection with a preset that xruns, and compare each WAV's frame count with the selection's length at the project tempo and the file's rate. Short by a multiple of the buffer confirms it. If the files are exact after all, the case for this design rests on speed alone, and that should be weighed again before phase 2.
 - **Plugins rendering faster than real time without offline mode.** Phase 1 renders with the plugins still in real-time mode. Try the test machine's list (Omnisphere, Kontakt, Serum 2, Repro, Spire, Nexus, DUNE 3): which drop notes, which don't care. It says how much decision 6 buys and which plugins to watch.
 - **Offline mode against what was heard.** Some plugins switch to a higher quality offline. Compare a real-time export from today's build with an offline one for each plugin on the list. A file that sounds *better* than playback is acceptable; one that sounds different in kind (another voice count, a changed envelope) is a finding to write down per plugin.
 - **A second `setupProcessing` with another mode.** `480` found the plugins on the list took a second `setupProcessing` for a rate. A mode change is the same call with another field, but it is a less travelled path in a plugin.
@@ -90,7 +105,8 @@ What it costs is in § Decisions 6 and 7: the plugins have to be told, and what 
 
 ## Phases
 
-1. **Measure.** The shortened-file test above, on today's build. No code.
+1. **Measure.** Whether an overrun shortens today's files. No code.
+   - *Done 2026-11-14:* it does (§ Measured).
 2. **The offline run, plugins left in real-time mode.** `Mixer::render` split into the block render and its device-facing half; the engine's export command, the stream dropped and reopened; the sequencer's stepped arm and the clock's ticks held off; virtual instants for ticks, marks and Esc; MIDI Out and the metronome kept out; the writer waited for; the device watch and the overrun report removed. Tests: the stepped sequencer against the clocked one (same events, same frames), a rendered export's length to the sample, a cancel. The plugin list tried by hand for dropped notes.
 3. **Offline mode.** The voice's activation mode beside its rate, VST3's `kOffline`, CLAP's `render` extension, the "Preparing export" panel, the fallback reload. The comparisons against a real-time export from the last build that had one.
 4. **Tidy.** `130` § Audio export rewritten as built, `280`, the README, `000`'s thread table, the changelog; this file archived.
