@@ -1,16 +1,21 @@
 //! The `"audio-export"` thread (`130-plugin-host.md` § Audio export): spawned with the
 //! plugin host, it waits for an [`AudioExportJob`], opens a WAV file per stem
-//! plus the mix, drains the mixer's export rings (`export.rs`) into them
-//! until the mixer reports the end, finishes the files and tells the
-//! `"sequencer"` thread how it went (`SequencerCommand::AudioExportWritten`).
-//! On the way it publishes how far it has got for the footer
-//! (`AudioExportAtomics::written_ms`; the UI repaints on its own while the
-//! transport runs). It stops early, reporting why, if the audio output
-//! changes or stops.
+//! plus the mix, has the engine render the export offline ([`ExportRender`],
+//! `490-offline-export.md`), drains the mixer's export rings (`export.rs`)
+//! into the files until the mixer reports the end, finishes them and tells
+//! the `"sequencer"` thread how it went
+//! (`SequencerCommand::AudioExportWritten`). On the way it publishes how far
+//! it has got for the footer (`AudioExportAtomics::written_ms`; the UI
+//! repaints on its own while the transport reads as running).
+//!
+//! The render waits for the writer, never the other way round: the tap holds
+//! a block until its rings have room. The writer only gives a run up when
+//! nothing has come for [`STALL_TIMEOUT`], and then says so
+//! (`ExportShared::give_up`), so the render stops too.
 //!
 //! A file that fails to open or write stops being written, and what it got
 //! stays on disk; its ring is still drained, so the rest of the export goes
-//! on and the mixer never fills up waiting. Removing the files of a
+//! on and the render never waits on it. Removing the files of a
 //! cancelled or stopped run is the `"sequencer"` thread's, which knows about
 //! the cancel.
 
@@ -22,40 +27,119 @@ use std::sync::atomic::Ordering;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crossbeam_channel::{Receiver, Sender};
+use crossbeam_channel::{Receiver, Sender, bounded};
 use rtrb::Consumer;
 
-use crate::core::audio::{AudioLoad, StreamStatus, wav::WavWriter};
-use crate::core::sequencer::{AudioExportJob, AudioExportOutcome, SequencerCommand};
+use crate::core::audio::{OfflineRun, StreamStatus, wav::WavWriter};
+use crate::core::sequencer::{
+    AudioExportJob, AudioExportOutcome, ExportStep, SequencerCommand, StepAnswer,
+};
 use crate::core::shared_atomics::AudioExportAtomics;
 
 use super::export::{CHANNELS, ExportRings, ExportShared};
 
-/// How long the writer sleeps when the rings are drained and the export
-/// hasn't ended. A tenth of the rings' second of slack.
-const DRAIN_INTERVAL: Duration = Duration::from_millis(100);
+/// How long the writer sleeps between passes over the rings. The render
+/// runs as fast as the plugins compute and waits when a ring is full, so
+/// this bounds its speed: a ring holds a second of audio.
+const DRAIN_INTERVAL: Duration = Duration::from_millis(5);
 
-/// How long the mixer may send nothing before the writer decides the audio
-/// output has stopped. Far past the start mark's latency (a few
-/// milliseconds) and any block.
+/// How long the mixer may send nothing before the writer decides the render
+/// has stopped advancing. Far past the stream's teardown before the first
+/// block, and any block.
 const STALL_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// How long the render waits for the `"sequencer"` thread's answer to a
+/// step, and for the run's seek to land, before giving the run up.
+const STEP_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// How long the render sleeps before asking again when the run's seek
+/// hasn't landed.
+const STEP_RETRY: Duration = Duration::from_millis(1);
 
 /// One file being written: its writer, until an error stops it.
 type OpenWav = Option<WavWriter<BufWriter<File>>>;
 
+/// One export as the `"audio-engine"` thread renders it offline
+/// ([`OfflineRun`], `490-offline-export.md` decision 3): before each block
+/// it has the `"sequencer"` thread play the run's ticks due before it, and
+/// it is done when the mixer has ended the export.
+pub(super) struct ExportRender {
+    /// The export's id.
+    id: u32,
+    /// The instant of the run's first tick.
+    start: Instant,
+    /// What the mixer and the writer say about the export.
+    shared: Arc<ExportShared>,
+    /// Steps to the `"sequencer"` thread.
+    steps: Sender<ExportStep>,
+    /// The answers' sender, cloned into each step, and their receiver. The
+    /// run's own, so a late answer to another run's step can't be read here.
+    answers: (Sender<StepAnswer>, Receiver<StepAnswer>),
+}
+
+impl ExportRender {
+    /// The render of export `id`, its first tick at `start`.
+    fn new(id: u32, start: Instant, shared: Arc<ExportShared>, steps: Sender<ExportStep>) -> Self {
+        ExportRender {
+            id,
+            start,
+            shared,
+            steps,
+            answers: bounded(1),
+        }
+    }
+}
+
+impl OfflineRun for ExportRender {
+    fn start(&self) -> Instant {
+        self.start
+    }
+
+    /// Asks the `"sequencer"` thread for the ticks due before `until` and
+    /// waits for its answer, asking again while the run's seek hasn't
+    /// landed. Gives up when there is no run any more, no answer or no seek
+    /// within [`STEP_TIMEOUT`], or the writer has given up.
+    fn advance(&mut self, until: Instant) -> bool {
+        let asked = Instant::now();
+        loop {
+            let step = ExportStep {
+                until,
+                answer: self.answers.0.clone(),
+            };
+            if self.shared.gave_up(self.id) || self.steps.send(step).is_err() {
+                return false;
+            }
+            match self.answers.1.recv_timeout(STEP_TIMEOUT) {
+                Ok(StepAnswer::Advanced) => return true,
+                Ok(StepAnswer::NotYet) if asked.elapsed() < STEP_TIMEOUT => {
+                    thread::sleep(STEP_RETRY);
+                }
+                Ok(StepAnswer::NotYet | StepAnswer::Gone) | Err(_) => return false,
+            }
+        }
+    }
+
+    fn is_done(&self) -> bool {
+        self.shared.has_ended(self.id) || self.shared.gave_up(self.id)
+    }
+}
+
 /// The writer's ends of everything it reads and reports through.
-pub(super) struct ExportWriter {
+pub(super) struct ExportWriter<R> {
     /// The mixer's export rings.
     rings: ExportRings,
     /// What the mixer reports besides the samples.
     shared: Arc<ExportShared>,
     /// The run's mirror, which the progress goes out on.
     progress: Arc<AudioExportAtomics>,
-    /// The engine's meter: its overrun, xrun and stream-error counts.
-    load: Arc<AudioLoad>,
-    /// The running stream: its rate, which each export's files are written
-    /// at, and its restarts, any of which ends the export.
+    /// The running stream: its rate, which each export is rendered and its
+    /// files written at.
     stream: Arc<StreamStatus>,
+    /// Handed to each export's [`ExportRender`].
+    steps: Sender<ExportStep>,
+    /// Has the engine render an export offline
+    /// (`AudioControl::render_offline`).
+    render: R,
     /// The last export stopped before the mixer ended it, so the mixer may
     /// have pushed more of it since.
     abandoned: bool,
@@ -63,11 +147,13 @@ pub(super) struct ExportWriter {
 
 /// Spawns the `"audio-export"` thread. It runs one job at a time and exits
 /// when `jobs` disconnects.
-pub(super) fn start_export_writer(
+pub(super) fn start_export_writer<R>(
     jobs: Receiver<AudioExportJob>,
-    mut writer: ExportWriter,
+    mut writer: ExportWriter<R>,
     done_tx: Sender<SequencerCommand>,
-) {
+) where
+    R: FnMut(ExportRender) -> bool + Send + 'static,
+{
     thread::Builder::new()
         .name("audio-export".to_string())
         .spawn(move || {
@@ -81,41 +167,39 @@ pub(super) fn start_export_writer(
         .expect("failed to spawn audio-export thread");
 }
 
-impl ExportWriter {
+impl<R: FnMut(ExportRender) -> bool> ExportWriter<R> {
     /// A writer on the mixer's `rings` and `shared` state, writing at the
-    /// rate of `stream`.
+    /// rate of `stream`, whose exports `render` has the engine render and
+    /// step the sequencer through `steps`.
     pub(super) fn new(
         rings: ExportRings,
         shared: Arc<ExportShared>,
         progress: Arc<AudioExportAtomics>,
-        load: Arc<AudioLoad>,
         stream: Arc<StreamStatus>,
+        steps: Sender<ExportStep>,
+        render: R,
     ) -> Self {
         ExportWriter {
             rings,
             shared,
             progress,
-            load,
             stream,
+            steps,
+            render,
             abandoned: false,
         }
     }
 
-    /// Writes one export: opens the files, drains the rings into them until
-    /// the mixer has ended the export — or the audio output went wrong — and
-    /// finishes them.
+    /// Writes one export: opens the files, has the engine render the run,
+    /// drains the rings into the files until the mixer has ended the export
+    /// — or nothing more comes — and finishes them.
     fn write(&mut self, job: &AudioExportJob) -> AudioExportOutcome {
-        // Whatever a stopped export left behind. The job comes before the
-        // run plays, so its own start mark is still to come.
+        // Whatever a stopped export left behind. Its render was told
+        // (`give_up`), and this one's hasn't been asked for yet.
         if self.abandoned {
             self.discard_leftovers();
         }
-        // The counts read "this export", like the header's do "this take".
-        self.load.reset_counts();
-        let stream_errors = self.load.stream_errors();
-        // An engine restart under the export ends it, so the rate holds for
-        // the whole run.
-        let restarts = self.stream.restarts();
+        // The rate the plugins run at, which the engine renders at.
         let sample_rate = self.stream.sample_rate();
 
         let mut error = None;
@@ -130,6 +214,15 @@ impl ExportWriter {
             .map(|(slot, path)| (*slot, open(path)))
             .collect();
         let mut mix = open(&job.mix);
+
+        // An engine that is gone renders nothing, which the stall below
+        // finds.
+        (self.render)(ExportRender::new(
+            job.id,
+            job.start,
+            Arc::clone(&self.shared),
+            self.steps.clone(),
+        ));
 
         let mut frames = 0;
         let mut last_heard = Instant::now();
@@ -150,9 +243,9 @@ impl ExportWriter {
             if ended {
                 break None;
             }
-            let device_changed =
-                self.load.stream_errors() != stream_errors || self.stream.restarts() != restarts;
-            if let Some(reason) = stop_reason(device_changed, last_heard.elapsed()) {
+            if let Some(reason) = stop_reason(last_heard.elapsed()) {
+                // The render stops pushing, and waiting for room.
+                self.shared.give_up(job.id);
                 break Some(reason);
             }
             thread::sleep(DRAIN_INTERVAL);
@@ -171,9 +264,6 @@ impl ExportWriter {
                 .map(|(slot, _)| *slot)
                 .filter(|&slot| self.shared.is_silent(slot))
                 .collect(),
-            overflowed: self.shared.overflowed(),
-            overruns: self.load.overruns(),
-            xruns: self.load.xruns(),
         }
     }
 
@@ -185,17 +275,10 @@ impl ExportWriter {
     }
 }
 
-/// Why a run should stop before its end, if it should: the stream reported an
-/// error or the engine restarted it (the device went away or changed), or the mixer has sent nothing for
-/// [`STALL_TIMEOUT`] (the output stopped).
-fn stop_reason(device_changed: bool, quiet_for: Duration) -> Option<&'static str> {
-    if device_changed {
-        Some("the audio device changed")
-    } else if quiet_for >= STALL_TIMEOUT {
-        Some("the audio output stopped")
-    } else {
-        None
-    }
+/// Why a run should stop before its end, if it should: the mixer has sent
+/// nothing for [`STALL_TIMEOUT`], so the render has stopped advancing.
+fn stop_reason(quiet_for: Duration) -> Option<&'static str> {
+    (quiet_for >= STALL_TIMEOUT).then_some("the render stalled")
 }
 
 /// Moves everything in `ring` into `wav` and returns how many frames that
@@ -239,6 +322,7 @@ mod tests {
     use std::io::Cursor;
     use std::path::PathBuf;
 
+    use crossbeam_channel::unbounded;
     use rtrb::{Producer, RingBuffer};
 
     use crate::core::audio::wav::HEADER_LEN;
@@ -247,16 +331,22 @@ mod tests {
     use super::super::export::{ExportTap, export_tap};
     use super::*;
 
-    /// A writer at 1 kHz and the tap feeding it, with its marks ring.
-    fn writer() -> (ExportWriter, ExportTap, Producer<ExportMark>) {
+    /// A writer whose render is asked for and never comes.
+    type TestWriter = ExportWriter<fn(ExportRender) -> bool>;
+
+    /// A writer at 1 kHz and the tap feeding it, with its marks ring. The
+    /// engine it asks to render is none: a test pushes through the tap
+    /// itself.
+    fn writer() -> (TestWriter, ExportTap, Producer<ExportMark>) {
         let (marks, marks_rx) = RingBuffer::new(4);
         let (tap, rings, shared) = export_tap(marks_rx, 1_000.0);
         let writer = ExportWriter::new(
             rings,
             shared,
             Arc::new(AudioExportAtomics::default()),
-            Arc::new(AudioLoad::new()),
             Arc::new(StreamStatus::new(1_000)),
+            unbounded().0,
+            (|_| true) as fn(ExportRender) -> bool,
         );
         (writer, tap, marks)
     }
@@ -275,7 +365,7 @@ mod tests {
         marks.push(ExportMark::End { at: end }).unwrap();
         // Frames 0–3 of an eight-frame block.
         tap.take_marks(|at| if at == start { 0 } else { 4 });
-        let span = tap.begin_block(0, 8);
+        let span = tap.begin_block(0, 8, true);
         if let Some(span) = span.clone() {
             tap.tap_silence(0, span);
         }
@@ -289,6 +379,7 @@ mod tests {
         fs::create_dir(&folder).unwrap();
         let job = AudioExportJob {
             id,
+            start: Instant::now(),
             stems: vec![(0, folder.join("01 Synth.wav"))],
             mix: folder.join("Mix.wav"),
         };
@@ -327,16 +418,88 @@ mod tests {
     }
 
     #[test]
-    fn a_run_stops_when_the_stream_errs_or_goes_quiet() {
-        assert_eq!(stop_reason(false, Duration::from_millis(100)), None);
-        assert_eq!(
-            stop_reason(true, Duration::ZERO),
-            Some("the audio device changed")
+    fn a_run_stops_when_the_render_goes_quiet() {
+        assert_eq!(stop_reason(Duration::from_millis(100)), None);
+        assert_eq!(stop_reason(STALL_TIMEOUT), Some("the render stalled"));
+    }
+
+    /// A render of export 1 and the `"sequencer"` thread's end of its steps.
+    fn render() -> (ExportRender, Arc<ExportShared>, Receiver<ExportStep>) {
+        let (_marks, marks_rx) = RingBuffer::new(4);
+        let (_tap, _rings, shared) = export_tap(marks_rx, 1_000.0);
+        let (steps, asked) = unbounded();
+        let render = ExportRender::new(1, Instant::now(), Arc::clone(&shared), steps);
+        (render, shared, asked)
+    }
+
+    /// Answers each step on `asked` with the next of `answers`, as the
+    /// `"sequencer"` thread would, and returns how many steps were asked.
+    fn answering(
+        asked: Receiver<ExportStep>,
+        answers: Vec<StepAnswer>,
+    ) -> thread::JoinHandle<usize> {
+        thread::spawn(move || {
+            let mut answers = answers.into_iter();
+            let mut steps = 0;
+            for step in asked {
+                steps += 1;
+                let Some(answer) = answers.next() else { break };
+                step.answer.send(answer).ok();
+            }
+            steps
+        })
+    }
+
+    #[test]
+    fn the_render_waits_for_the_sequencers_answer_to_each_step() {
+        let (mut render, _shared, asked) = render();
+        let until = render.start() + Duration::from_millis(5);
+        let sequencer = thread::spawn(move || {
+            let step = asked.recv().unwrap();
+            step.answer.send(StepAnswer::Advanced).unwrap();
+            step.until
+        });
+        assert!(render.advance(until));
+        assert_eq!(sequencer.join().unwrap(), until);
+    }
+
+    #[test]
+    fn the_render_asks_again_until_the_runs_seek_has_landed() {
+        let (mut render, _shared, asked) = render();
+        let sequencer = answering(
+            asked,
+            vec![StepAnswer::NotYet, StepAnswer::NotYet, StepAnswer::Advanced],
         );
-        assert_eq!(
-            stop_reason(false, STALL_TIMEOUT),
-            Some("the audio output stopped")
-        );
+        assert!(render.advance(render.start()));
+        drop(render);
+        assert_eq!(sequencer.join().unwrap(), 3);
+    }
+
+    #[test]
+    fn the_render_gives_up_when_the_run_is_gone() {
+        let (mut render, _shared, asked) = render();
+        let sequencer = answering(asked, vec![StepAnswer::Gone]);
+        assert!(!render.advance(render.start()));
+        drop(render);
+        assert_eq!(sequencer.join().unwrap(), 1);
+
+        // No `"sequencer"` thread to ask.
+        let (mut render, _shared, asked) = self::render();
+        drop(asked);
+        assert!(!render.advance(render.start()));
+    }
+
+    #[test]
+    fn the_render_is_done_when_the_mixer_ended_it_or_the_writer_gave_up() {
+        let (mut render, shared, asked) = render();
+        assert!(!render.is_done());
+        shared.give_up(2);
+        assert!(!render.is_done(), "another export's");
+        shared.give_up(1);
+        assert!(render.is_done());
+        // And asks for nothing more.
+        assert!(!render.advance(render.start()));
+        assert!(asked.try_recv().is_err());
     }
 
     #[test]

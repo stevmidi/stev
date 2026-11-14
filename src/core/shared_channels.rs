@@ -25,7 +25,9 @@ use crate::{
         },
         note_logger::NoteLoggerCommand,
         project::StorageJob,
-        sequencer::{AudioExportJob, ClipInstrumentEvent, ExportMark, SequencerCommand},
+        sequencer::{
+            AudioExportJob, ClipInstrumentEvent, ExportMark, ExportStep, SequencerCommand,
+        },
         transport::{TransportCommand, TransportEvent},
     },
     view::display::UiEvent,
@@ -119,6 +121,14 @@ pub(crate) struct SharedChannels {
     pub(crate) audio_export_job_tx: Sender<AudioExportJob>,
     /// Receiving half of the pair documented above.
     pub(crate) audio_export_job_rx: Receiver<AudioExportJob>,
+    /// The audio export's offline render (the `"audio-engine"` thread,
+    /// through the plugin host's `ExportRender`; macOS only) → the
+    /// `"sequencer"` thread: play the run's ticks due before a block, each
+    /// answered on the step's own channel before the block is rendered
+    /// (`490-offline-export.md` decision 3). Elsewhere the sender is dropped.
+    pub(crate) export_step_tx: Sender<ExportStep>,
+    /// Receiving half of the pair documented above.
+    pub(crate) export_step_rx: Receiver<ExportStep>,
     /// `"sequencer"` thread's `RecoveryKeeper` → `"storage"` thread: every
     /// save, and every write and delete of the crash recovery copy, in order
     /// (`420-large-projects.md` decision 3, `410-crash-recovery.md`

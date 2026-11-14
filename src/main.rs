@@ -250,6 +250,7 @@ fn main() {
         shared_channels.live_instrument_midi_rx,
         shared_channels.export_mark_rx,
         shared_channels.audio_export_job_rx,
+        shared_channels.export_step_tx,
         shared_channels.sequencer_command_tx.clone(),
         &shared_atomics,
         repaint_ctx.clone(),
@@ -271,6 +272,7 @@ fn main() {
         drop(shared_channels.live_instrument_midi_rx);
         drop(shared_channels.export_mark_rx);
         drop(shared_channels.audio_export_job_rx);
+        drop(shared_channels.export_step_tx);
     }
 
     start_clock_thread(clock, shared_channels.tick_tx);
@@ -324,6 +326,7 @@ fn main() {
         shared_channels.transport_event_rx,
         shared_channels.sequencer_command_rx,
         shared_channels.transport_command_rx,
+        shared_channels.export_step_rx,
         recovery,
         storage,
     );

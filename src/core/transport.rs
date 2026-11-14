@@ -37,6 +37,11 @@ pub(crate) enum TransportEvent {
     PlaybackTickResetWithChase(i32),
     /// The transport stopped.
     Stopped,
+    /// An audio export's own seek is done (`TransportCommand::StartExport`).
+    /// Sent behind that seek's events, so by the time it is handled every
+    /// jump queued before the run has reached the tracks, and the run's has:
+    /// from here it can be stepped (`490-offline-export.md` decision 4).
+    ExportSeeked,
 }
 
 /// What [`Transport::tick`] did on this tick.
@@ -98,11 +103,21 @@ pub(crate) enum TransportCommand {
     /// is off) so the next press turns it back on in place.
     ToggleLoop,
     /// Turns looping on or off, whatever it was, leaving the region. The
-    /// audio export turns it off for its run and puts it back after
+    /// audio export puts it back with this after its run
     /// (`130-plugin-host.md` § Audio export).
     SetLoop {
         /// Whether playback wraps at the region end.
         enabled: bool,
+    },
+    /// Readies the transport for an audio export's offline run
+    /// (`490-offline-export.md`): looping off, playback moved to `tick` (the
+    /// selection's start) with the notes sounding there chased, the cursor
+    /// left alone, and the transport reading as running. Nothing plays from
+    /// the clock meanwhile: the render steps the run, and
+    /// [`TransportEvent::ExportSeeked`] tells it the tracks are in place.
+    StartExport {
+        /// The selection's start tick.
+        tick: i32,
     },
     /// Sets the transport cursor to an absolute tick and re-syncs clip
     /// selection to whatever clip (if any) now sits under the cursor.
@@ -249,6 +264,14 @@ impl Transport {
         self.playback_tick.store(tick, Ordering::Relaxed);
         self.transport_event_tx
             .send(TransportEvent::PlaybackTickResetWithChase(tick))
+            .ok();
+    }
+
+    /// Says an audio export's seek is done, behind the events of the seek
+    /// itself ([`TransportEvent::ExportSeeked`]).
+    pub(crate) fn announce_export_seeked(&self) {
+        self.transport_event_tx
+            .send(TransportEvent::ExportSeeked)
             .ok();
     }
 

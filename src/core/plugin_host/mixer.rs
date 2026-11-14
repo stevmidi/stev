@@ -47,7 +47,9 @@
 //! While an audio export runs, the summing pass also feeds its tap
 //! ([`ExportTap`], `130-plugin-host.md` § Audio export): each exported voice's raw
 //! samples, and their gained sum, between the frames the sequencer's start
-//! and end marks resolve to, scheduled the way a clip event's `At` is.
+//! and end marks resolve to, scheduled the way a clip event's `At` is. The
+//! export is rendered offline (`RenderCtx::offline`,
+//! `490-offline-export.md`), and only such a block is tapped.
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -390,9 +392,11 @@ impl AudioSource for InstrumentMixer {
     /// drop-out (`480-audio-settings.md` decision 9). A rate change leaves
     /// the voices activated at the old rate held silent (see `voice_rates`)
     /// until the UI has them back (`PluginHostCommand::Return`), reactivates
-    /// them and inserts them again.
+    /// them and inserts them again. An export the offline run left unended
+    /// (it was given up) is let go, so a device's block is never tapped.
     fn restarted(&mut self, sample_rate: f64) {
         self.sample_rate = sample_rate;
+        self.export.abandon();
         self.pending.clear();
         while self.clip_midi_rx.pop().is_ok() {}
         while self.live_midi_rx.pop().is_ok() {}
@@ -408,6 +412,7 @@ impl AudioSource for InstrumentMixer {
         let RenderCtx {
             frames,
             first_frame,
+            offline,
             ..
         } = *ctx;
 
@@ -554,7 +559,7 @@ impl AudioSource for InstrumentMixer {
         // negligible next to the render pass above. An exported voice is
         // tapped here too, silence for a slot with nothing to play, and every
         // slot is metered.
-        let export_span = self.export.begin_block(block_start, frames);
+        let export_span = self.export.begin_block(block_start, frames, offline);
         // Each slot's gained peaks and sums of squares, for its meter; an
         // empty or silent slot stays at zero.
         let mut measured = [([0.0f32; 2], [0.0f32; 2]); MAX_TRACKS];
@@ -701,6 +706,7 @@ mod tests {
                 frames: BLOCK,
                 first_frame: block * BLOCK as u64,
                 schedule_delay: BLOCK as u32,
+                offline: false,
                 clock: &clock,
                 pool: &pool,
                 load: &load,

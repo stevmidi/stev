@@ -109,9 +109,12 @@ impl Sequencer {
     /// events for `Instrument` tracks are tagged with it so the CLAP host can
     /// place them at the exact output sample, rather than at block offset 0.
     /// An audio export's start and end marks carry it the same way
-    /// (`audio_export.rs`).
+    /// (`audio_export.rs`). During an export `at` is the run's virtual time,
+    /// which the `"midiout"` queue would wait out in real time: MIDI Out
+    /// tracks send nothing (`490-offline-export.md` decision 5).
     pub(crate) fn tick(&mut self, at: Instant) {
         self.mark_audio_export(at);
+        let exporting = self.is_exporting_audio();
         self.ticks_into_take = self.ticks_into_take.saturating_add(1);
         // Read audibility once, before the `&mut` loop below.
         let audible = self.track_audibility();
@@ -151,6 +154,10 @@ impl Sequencer {
                 if !track_audible && note_on {
                     continue;
                 }
+                // Silent, meter included, while an export renders.
+                if exporting && matches!(track.output(), TrackOutput::MidiOut { .. }) {
+                    continue;
+                }
                 // Kicks the track's meter, stamped when the note is due
                 // rather than when it is heard: the output offset's few
                 // milliseconds are less than a frame.
@@ -187,8 +194,10 @@ impl Sequencer {
     /// After a seek: for every audible clip covering `playback_tick`, re-sends
     /// the `NoteOn`s whose notes are still sounding there, so held notes at the
     /// destination don't go silent. Instrument tracks get `EventTime::Immediate`
-    /// (a seek has no future instant); `MidiOut` tracks are sent undelayed.
+    /// (a seek has no future instant); `MidiOut` tracks are sent undelayed,
+    /// and nothing during an audio export, which leaves them silent.
     pub(crate) fn chase_notes(&mut self, playback_tick: i32) {
+        let exporting = self.is_exporting_audio();
         let audible = self.track_audibility();
         for (track, track_audible) in self.tracks.iter().zip(audible) {
             if !track_audible {
@@ -224,7 +233,7 @@ impl Sequencer {
                             VoiceMessage::Midi(msg, NoteSource::Clip),
                             EventTime::Immediate,
                         );
-                    } else {
+                    } else if !exporting {
                         // A seek, like the `EventTime::Immediate` above — there
                         // is no tick instant to offset from, so it goes now.
                         self.send_midi_out_now(event.into_midi_message(), channel);
@@ -376,13 +385,11 @@ impl Sequencer {
     }
 
     /// Re-seeks every track to `tick` (each track's wheels then chase what
-    /// is in force there — `Track::seek`), and an audio export's count of
-    /// the ticks they play with them.
+    /// is in force there — `Track::seek`).
     pub(crate) fn reset_to_tick(&mut self, tick: i32) {
         for track in self.tracks.iter_mut() {
             track.seek(tick);
         }
-        self.seek_audio_export(tick);
     }
 }
 

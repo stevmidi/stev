@@ -62,7 +62,8 @@ mod view;
 use capture::CaptureInsert;
 
 pub(crate) use audio_export::{
-    AudioExportJob, AudioExportOutcome, AudioExportRefusal, AudioExportRun, ExportMark,
+    AudioExportJob, AudioExportOutcome, AudioExportRefusal, AudioExportRun, ExportMark, ExportStep,
+    StepAnswer,
 };
 // Only the plugin host's export tap (macOS) reads the slots from outside.
 #[cfg(target_os = "macos")]

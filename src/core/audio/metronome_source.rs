@@ -125,6 +125,7 @@ mod tests {
             frames,
             first_frame: 0,
             schedule_delay: 256,
+            offline: false,
             clock: &clock,
             pool: &pool,
             load: &load,

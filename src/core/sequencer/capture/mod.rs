@@ -3362,7 +3362,7 @@ mod tests {
         instrument_track_0(&mut seq);
         seq.tracks_mut()[0].add_clip(&clip_at(0, 480));
         let plan = seq.audio_export_plan(Some(rect(0, 480, 0, 0))).unwrap();
-        seq.begin_audio_export(plan, PathBuf::new());
+        seq.begin_audio_export(plan, PathBuf::new(), Instant::now());
 
         let track0 = seq.track_id_by_index(0);
         seq.select_track(track0);

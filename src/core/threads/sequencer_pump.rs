@@ -5,14 +5,16 @@
 //! leaks the next clip's note-on — see `150-clock-position-sync.md`), drains
 //! MIDI input, and dispatches every [`SequencerCommand`] / [`TransportCommand`]
 //! through `EventHandlers` against the thread-local `Sequencer` / `Transport` /
-//! `Metronome`. It also owns the `Record<UndoStep>` undo stack
+//! `Metronome`. While an audio export renders, the clock's ticks play nothing
+//! and the run is stepped instead, by the offline render's [`ExportStep`]s
+//! (`490-offline-export.md` decision 4). It also owns the `Record<UndoStep>` undo stack
 //! (`050-undo-redo.md`) and the [`OpenProject`]: what the unsaved-changes
 //! check compares against (`060-persistence.md`), a project read from disk
 //! while the view loads its plugins (`130-plugin-host.md`), and the
 //! [`RecoveryKeeper`] whose check the tick arm runs
 //! (`410-crash-recovery.md`).
 
-use crossbeam_channel::{Receiver, select};
+use crossbeam_channel::{Receiver, never, select};
 use undo::Record;
 
 use std::iter;
@@ -26,14 +28,15 @@ use crate::core::event_handlers::{
 use crate::core::metronome::Metronome;
 use crate::core::midi::input::RecordedMidi;
 use crate::core::project::ProjectData;
-use crate::core::sequencer::{Sequencer, SequencerCommand, UndoStep};
+use crate::core::sequencer::{ExportStep, Sequencer, SequencerCommand, UndoStep};
 use crate::core::time::TapTempo;
 use crate::core::transport::{TickOutcome, Transport, TransportCommand, TransportEvent};
 
 /// Starts the `"sequencer"` thread — the hub. Its `select!` loop ticks the
 /// transport on each [`ClockTick`], drains MIDI input, and dispatches every
 /// [`SequencerCommand`] / [`TransportCommand`] via `EventHandlers` against the
-/// thread-local `Sequencer` / `Transport` / `Metronome`.
+/// thread-local `Sequencer` / `Transport` / `Metronome`, and steps an audio
+/// export's run for each [`ExportStep`] on `export_step_rx`.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn start_sequencer_thread(
     mut sequencer: Sequencer,
@@ -45,6 +48,7 @@ pub(crate) fn start_sequencer_thread(
     transport_event_rx: Receiver<TransportEvent>,
     sequencer_command_rx: Receiver<SequencerCommand>,
     transport_command_rx: Receiver<TransportCommand>,
+    mut export_step_rx: Receiver<ExportStep>,
     recovery: RecoveryKeeper,
     storage: Storage,
 ) -> JoinHandle<()> {
@@ -78,7 +82,12 @@ pub(crate) fn start_sequencer_thread(
                             // a wrap's region start are each counted once —
                             // and from the free-running clock while stopped
                             // (`Metronome`'s module docs).
-                            let running = transport.is_running();
+                            //
+                            // An audio export's run is stepped by its render,
+                            // in virtual time: the clock's ticks play nothing
+                            // meanwhile, and the click gets none.
+                            let exporting = sequencer.is_exporting_audio();
+                            let running = transport.is_running() && !exporting;
                             let click_tick = if running {
                                 sequencer.playback_tick()
                             } else {
@@ -102,7 +111,9 @@ pub(crate) fn start_sequencer_thread(
                             if sequencer.take_playback_retimed() {
                                 metronome.playback_retimed();
                             }
-                            metronome.on_tick(tick.at, click_tick, sequencer.meter(), running);
+                            if !exporting {
+                                metronome.on_tick(tick.at, click_tick, sequencer.meter(), running);
+                            }
                         }
                         open.tick(at, &sequencer);
                     }
@@ -133,6 +144,19 @@ pub(crate) fn start_sequencer_thread(
                     recv(sequencer_command_rx) -> command => {
                         if let Ok(cmd) = command {
                             event_handlers.handle_sequencer_command(&cmd, &mut sequencer, &mut undo_record, &mut tap_tempo, &mut open);
+                        }
+                    }
+
+                    recv(export_step_rx) -> step => {
+                        match step {
+                            Ok(step) => {
+                                let answer = event_handlers.step_audio_export(step.until, &mut sequencer, &mut transport);
+                                step.answer.send(answer).ok();
+                            }
+                            // No plugin host, so no render to ask: a
+                            // disconnected channel would otherwise be ready
+                            // on every pass.
+                            Err(_) => export_step_rx = never(),
                         }
                     }
 

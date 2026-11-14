@@ -12,6 +12,10 @@
 //! device gone, its rate changed) or from the thread's own poll (the system
 //! default moved, the chosen device came back, or a device appeared while
 //! none was open). The same poll keeps the tab's device list current.
+//!
+//! The thread also renders offline ([`OfflineRun`], `490-offline-export.md`):
+//! it drops the stream, keeps the mixer and renders block by block in virtual
+//! time, then restarts the stream the ordinary way.
 
 use std::sync::Arc;
 use std::thread::Builder;
@@ -28,6 +32,7 @@ use rtrb::{Consumer, Producer, RingBuffer};
 
 use super::journal::{self, JournalWriter, MAX_JOURNAL_SOURCES, OverrunRecord};
 use super::load::micros;
+use super::offline::OfflineRun;
 use super::prefs::{buffer_choices, rate_choices};
 use super::{
     AudioClock, AudioDevice, AudioLoad, AudioPrefs, AudioSource, DeviceWorkgroup, EngineNews,
@@ -84,10 +89,10 @@ fn worker_thread_count() -> usize {
 /// where a second source is added at runtime — currently macOS (the plugin
 /// host).
 pub(crate) struct EngineHandle {
-    /// The running stream's rate, measured buffer and latency, and how many
-    /// times it has restarted: the plugin host builds its plugin processors
-    /// at the rate, the audio export writes at it ([`FALLBACK_SAMPLE_RATE`]
-    /// while no device is open), and the Audio tab reads it all out.
+    /// The running stream's rate, measured buffer and latency: the plugin
+    /// host builds its plugin processors at the rate, the audio export
+    /// writes at it ([`FALLBACK_SAMPLE_RATE`] while no device is open), and
+    /// the Audio tab reads it all out.
     pub(crate) status: Arc<StreamStatus>,
     /// How much of each block's deadline the render is actually using. Shared
     /// with the audio callback; handed to `Display` for the header readout.
@@ -124,10 +129,16 @@ impl AudioControl {
     pub(crate) fn configure(&self, prefs: AudioPrefs) {
         self.tx.send(EngineCommand::Configure(prefs)).ok();
     }
+
+    /// Has the engine render `run` offline: the stream is dropped for it and
+    /// opened again after. `false` if the engine thread is gone.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pub(crate) fn render_offline(&self, run: Box<dyn OfflineRun>) -> bool {
+        self.tx.send(EngineCommand::Render(run)).is_ok()
+    }
 }
 
 /// A command to the `"audio-engine"` thread.
-#[derive(Debug)]
 enum EngineCommand {
     /// A stream error asks for a restart. `generation` is the restart count
     /// the stream opened under, so an error from one already replaced is
@@ -140,6 +151,10 @@ enum EngineCommand {
     },
     /// The user's choice in the Audio tab.
     Configure(AudioPrefs),
+    /// An offline run to render with the stream down
+    /// (`490-offline-export.md` decision 3).
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    Render(Box<dyn OfflineRun>),
 }
 
 /// Namespace for the engine start-up entry point; the running engine lives in
@@ -248,6 +263,8 @@ enum RestartCause {
     Returned,
     /// No stream is open and a device now is.
     Retry,
+    /// An offline run is over and the stream it took away comes back.
+    Rendered,
 }
 
 impl RestartCause {
@@ -270,8 +287,9 @@ impl RestartCause {
 /// The footer line for a restart: `previous` is the last stream that opened,
 /// `now` the one this restart opened, if any, and `chosen_rate` the rate
 /// picked in the Audio tab, if one was. Nothing for the launch, for a
-/// choice in the tab that opened (the readout changes in front of the user),
-/// or for a retry that still found no device. A rate changed from outside
+/// choice in the tab or an offline run's end that opened (the readout changes
+/// in front of the user; the run has a line of its own), or for a retry that
+/// still found no device. A rate changed from outside
 /// that Stev set back to the one picked in the tab says so
 /// (`480-audio-settings.md` decision 3). Pure, unit-tested.
 fn restart_message(
@@ -280,7 +298,8 @@ fn restart_message(
     now: Option<&RunningAudio>,
     chosen_rate: Option<u32>,
 ) -> Option<String> {
-    if cause == RestartCause::Launch || (cause == RestartCause::Chosen && now.is_some()) {
+    let expected = matches!(cause, RestartCause::Chosen | RestartCause::Rendered);
+    if cause == RestartCause::Launch || (expected && now.is_some()) {
         return None;
     }
     let lost = || match previous {
@@ -292,6 +311,7 @@ fn restart_message(
             RestartCause::Launch | RestartCause::Retry => None,
             RestartCause::DeviceLost => Some(format!("{}; no audio output", lost())),
             RestartCause::Chosen
+            | RestartCause::Rendered
             | RestartCause::RateChanged
             | RestartCause::DefaultChanged
             | RestartCause::Returned => Some("No audio output".to_string()),
@@ -320,6 +340,7 @@ fn restart_message(
         RestartCause::Returned => format!("Audio switched to {name} (reconnected)"),
         RestartCause::Launch
         | RestartCause::Chosen
+        | RestartCause::Rendered
         | RestartCause::RateChanged
         | RestartCause::Retry => format!("Audio switched to {name}"),
     })
@@ -399,9 +420,8 @@ struct EngineThread {
     mixer_tx: Sender<Mixer>,
     /// The mixer, whenever no stream holds it.
     mixer_rx: Receiver<Mixer>,
-    /// The running rate and the restart count, for the plugin host and the
-    /// export: a restart ends a running export (`480-audio-settings.md`
-    /// decision 10).
+    /// The running rate, for the plugin host and the export, and the
+    /// measured buffer, which an offline run renders in blocks of.
     status: Arc<StreamStatus>,
     /// The engine's meter, which the stream's error callback counts into.
     load: Arc<AudioLoad>,
@@ -414,30 +434,40 @@ impl EngineThread {
     /// the devices. Returns only if a restart lost the mixer.
     fn run(mut self) {
         loop {
-            let cause = match self.command_rx.recv_timeout(DEVICE_POLL_INTERVAL) {
+            let (cause, run) = match self.command_rx.recv_timeout(DEVICE_POLL_INTERVAL) {
                 Ok(first) => {
                     let pending: Vec<EngineCommand> = std::iter::once(first)
                         .chain(self.command_rx.try_iter())
                         .collect();
                     self.take_commands(pending)
                 }
-                Err(RecvTimeoutError::Timeout) => self.poll(),
+                Err(RecvTimeoutError::Timeout) => (self.poll(), None),
                 Err(RecvTimeoutError::Disconnected) => return,
             };
-            if let Some(cause) = cause
-                && !self.restart(cause)
-            {
+            // An offline run ends in a restart of its own, which takes up
+            // whatever else the pile asked for.
+            let alive = match (run, cause) {
+                (Some(run), _) => self.render_offline(run),
+                (None, Some(cause)) => self.restart(cause),
+                (None, None) => true,
+            };
+            if !alive {
                 return;
             }
         }
     }
 
-    /// The restart a pile of commands calls for: the user's latest choice
-    /// (unless the stream already runs that way), else the last error from
-    /// the stream running now.
-    fn take_commands(&mut self, commands: Vec<EngineCommand>) -> Option<RestartCause> {
+    /// What a pile of commands calls for. The restart: the user's latest
+    /// choice (unless the stream already runs that way), else the last error
+    /// from the stream running now. And the offline run to render, if one
+    /// was asked for (the last; there is only ever one at a time).
+    fn take_commands(
+        &mut self,
+        commands: Vec<EngineCommand>,
+    ) -> (Option<RestartCause>, Option<Box<dyn OfflineRun>>) {
         let mut cause = None;
         let mut chosen = false;
+        let mut run = None;
         for command in commands {
             match command {
                 EngineCommand::Restart {
@@ -450,17 +480,51 @@ impl EngineThread {
                     self.chosen_refused = false;
                     chosen = true;
                 }
+                EngineCommand::Render(asked) => run = Some(asked),
             }
         }
         if chosen && cause.is_none() && self.runs_as_chosen() {
             debug!("audio engine: already running as chosen");
-            return None;
+            return (None, run);
         }
-        if chosen {
+        let cause = if chosen {
             Some(RestartCause::Chosen)
         } else {
             cause
-        }
+        };
+        (cause, run)
+    }
+
+    /// Renders `run` offline (`490-offline-export.md` decision 3): drops the
+    /// stream, keeps the mixer it hands back and has it render the run in
+    /// blocks of the stream's buffer (decision 8), then opens the stream
+    /// again through the ordinary restart. Nothing about the device can end
+    /// the run: whatever changed meanwhile is met by that restart. Returns
+    /// `false` if the mixer never came back.
+    fn render_offline(&mut self, mut run: Box<dyn OfflineRun>) -> bool {
+        // The buffer the device ran at, before its measurement goes with the
+        // stream; with no stream, the one the user chose.
+        let buffer = self
+            .status
+            .buffer_frames()
+            .unwrap_or(self.prefs.buffer_frames);
+        self.running = None;
+        // Whatever the dropped stream still reports is no longer about the
+        // stream running.
+        self.generation += 1;
+        let Some(mut mixer) = self.take_mixer() else {
+            return false;
+        };
+        let started = Instant::now();
+        // At the rate the plugins run at, which an open that failed may have
+        // left the mixer off.
+        let frames = mixer.render_offline(run.as_mut(), self.status.sample_rate(), buffer);
+        info!(
+            "audio engine: rendered {frames} frames offline in {:?}",
+            started.elapsed()
+        );
+        self.mixer_tx.send(mixer).ok();
+        self.restart(RestartCause::Rendered)
     }
 
     /// Whether the running stream already runs as the user chose.
@@ -557,9 +621,7 @@ impl EngineThread {
     /// Returns `false` if the mixer never came back, which leaves the app
     /// silent for the session.
     fn restart(&mut self, cause: RestartCause) -> bool {
-        if self.running.take().is_some() {
-            self.status.count_restart();
-        }
+        self.running = None;
         self.status.clear_measurements();
         self.generation += 1;
         let Some(mixer) = self.take_mixer() else {
@@ -723,9 +785,6 @@ impl EngineThread {
                 load.record_xrun();
                 return;
             }
-            // Every other error is counted, for the audio export to notice
-            // the output going wrong under it.
-            load.record_stream_error();
             match RestartCause::from_error(e.kind()) {
                 Some(cause) => {
                     warn!("audio engine: {e}; restarting the stream");
@@ -927,10 +986,89 @@ impl Mixer {
         }
     }
 
-    /// One audio callback: observe the clock, drain the add-source ring, sum
-    /// every source into the scratch, hard-clip to ±1.0, and convert to the
-    /// device format. Records the deadline utilisation, and the buffer and
-    /// `latency_us` (the callback's output latency) for the Audio tab.
+    /// Renders `run` with no device, in blocks of `buffer` frames (at most
+    /// [`MAX_FRAMES`]) at `sample_rate`, and returns the frames rendered.
+    /// The clock is anchored once, the run's start at the next frame, and
+    /// never observed: block `k` covers `[start + k × N / rate, start +
+    /// (k + 1) × N / rate)` whenever it is rendered. Before each block the
+    /// run brings the sources' feeds up to the block's first instant, which
+    /// is what a callback sees on a perfect day: with the schedule delay at
+    /// one block, those events land inside the block being rendered. The
+    /// mix is thrown away; the sources' own taps take what they take.
+    /// Nothing is metered against a deadline, there being none.
+    ///
+    /// The next [`restart`](Self::restart) puts the clock and the delay back
+    /// for a device.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    fn render_offline(&mut self, run: &mut dyn OfflineRun, sample_rate: f64, buffer: u32) -> u64 {
+        // A thread of ours, but the plugins are called on it all the same.
+        enter_render_thread();
+        self.take_added_sources();
+        // Only after an open that failed past `restart`: the plugins were
+        // never taken to that device's rate.
+        if self.sample_rate != sample_rate {
+            self.sample_rate = sample_rate;
+            for source in &mut self.sources {
+                source.restarted(sample_rate);
+            }
+        }
+        let frames = (buffer as usize).clamp(1, MAX_FRAMES);
+        self.schedule_delay = frames as u32;
+        let first = self.steady;
+        self.clock = AudioClock::new(sample_rate);
+        self.clock.observe(run.start(), first);
+
+        let rate = sample_rate.round().max(1.0) as u128;
+        loop {
+            let rendered = self.steady.wrapping_sub(first);
+            let nanos = u128::from(rendered) * 1_000_000_000 / rate;
+            let until = run.start() + Duration::from_nanos(nanos as u64);
+            if !run.advance(until) {
+                break;
+            }
+            self.source_elapsed.clear();
+            self.source_elapsed
+                .resize(self.sources.len(), Duration::ZERO);
+            self.render_block(frames, true);
+            if run.is_done() {
+                break;
+            }
+        }
+        self.steady.wrapping_sub(first)
+    }
+
+    /// Renders the next `frames` (at most [`MAX_FRAMES`]) of every source
+    /// into the mix scratch and moves `steady` past them, adding each
+    /// source's time to `source_elapsed`. `offline` says no device is
+    /// waiting for the block.
+    fn render_block(&mut self, frames: usize, offline: bool) {
+        for m in &mut self.mix {
+            m.clear();
+            m.resize(frames, 0.0);
+        }
+        let ctx = RenderCtx {
+            frames,
+            first_frame: self.steady,
+            schedule_delay: self.schedule_delay,
+            offline,
+            clock: &self.clock,
+            pool: &self.pool,
+            load: &self.load,
+        };
+        for (source, elapsed) in self.sources.iter_mut().zip(&mut self.source_elapsed) {
+            let source_started = Instant::now();
+            source.render_into(&mut self.mix, &ctx);
+            *elapsed += source_started.elapsed();
+        }
+        self.steady = self.steady.wrapping_add(frames as u64);
+    }
+
+    /// One audio callback, the device-facing half of the render: observe the
+    /// clock, drain the add-source ring, render the buffer block by block
+    /// ([`render_block`](Self::render_block)), hard-clip to ±1.0, and
+    /// convert to the device format. Records the deadline utilisation, and
+    /// the buffer and `latency_us` (the callback's output latency) for the
+    /// Audio tab.
     fn render<T>(&mut self, data: &mut [T], device_channels: usize, latency_us: u32)
     where
         T: SizedSample + FromSample<f32>,
@@ -971,26 +1109,7 @@ impl Mixer {
         let mut offset = 0;
         while offset < total_frames {
             let frames = (total_frames - offset).min(MAX_FRAMES);
-            let first_frame = self.steady;
-
-            for m in &mut self.mix {
-                m.clear();
-                m.resize(frames, 0.0);
-            }
-
-            let ctx = RenderCtx {
-                frames,
-                first_frame,
-                schedule_delay: self.schedule_delay,
-                clock: &self.clock,
-                pool: &self.pool,
-                load: &self.load,
-            };
-            for (source, elapsed) in self.sources.iter_mut().zip(&mut self.source_elapsed) {
-                let source_started = Instant::now();
-                source.render_into(&mut self.mix, &ctx);
-                *elapsed += source_started.elapsed();
-            }
+            self.render_block(frames, false);
 
             for f in 0..frames {
                 let base = (offset + f) * ch;
@@ -1015,7 +1134,6 @@ impl Mixer {
                 }
             }
 
-            self.steady = self.steady.wrapping_add(frames as u64);
             offset += frames;
         }
 
@@ -1165,8 +1283,31 @@ fn pick_buffer_size(supported: &SupportedBufferSize, desired: u32) -> BufferSize
     }
 }
 
+/// Renders `run` offline through a mixer of `sources`, as the engine thread
+/// does once it has its mixer back, and returns the frames rendered: for a
+/// test of a source's offline behaviour from outside this module (the
+/// plugin host's, macOS).
+#[cfg(all(test, target_os = "macos"))]
+pub(crate) fn render_offline_for_test(
+    sources: Vec<Box<dyn AudioSource>>,
+    run: &mut dyn OfflineRun,
+    sample_rate: f64,
+    buffer: u32,
+) -> u64 {
+    let mut mixer = Mixer::new(
+        sources,
+        sample_rate,
+        RingBuffer::new(1).1,
+        Arc::new(AudioLoad::new()),
+        Arc::new(StreamStatus::new(sample_rate as u32)),
+    );
+    mixer.render_offline(run, sample_rate, buffer)
+}
+
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
+
     use super::*;
 
     #[test]
@@ -1401,6 +1542,160 @@ mod tests {
         assert!(runs_as(&scarlett, &chosen, true));
         // Back to System default from a chosen device.
         assert!(!runs_as(&scarlett, &AudioPrefs::default(), false));
+    }
+
+    #[test]
+    fn an_offline_runs_end_says_nothing_unless_nothing_opened() {
+        let scarlett = opened("Scarlett 2i2", 48_000);
+        assert_eq!(
+            restart_message(
+                RestartCause::Rendered,
+                Some(&scarlett),
+                Some(&scarlett),
+                None
+            ),
+            None
+        );
+        assert_eq!(
+            restart_message(RestartCause::Rendered, Some(&scarlett), None, None).as_deref(),
+            Some("No audio output")
+        );
+    }
+
+    /// What a [`Recorder`] saw of one block.
+    #[derive(Debug, PartialEq)]
+    struct Block {
+        /// `RenderCtx::frames`.
+        frames: usize,
+        /// `RenderCtx::first_frame`.
+        first_frame: u64,
+        /// `RenderCtx::schedule_delay`.
+        schedule_delay: u32,
+        /// `RenderCtx::offline`.
+        offline: bool,
+        /// Where the run's start lands, with the delay.
+        start_frame: i64,
+    }
+
+    /// A source that renders nothing and notes each block it was asked for.
+    struct Recorder {
+        /// The instant to place with each block's clock.
+        start: Instant,
+        /// The blocks so far.
+        blocks: Arc<Mutex<Vec<Block>>>,
+    }
+
+    impl AudioSource for Recorder {
+        fn render_into(&mut self, _mix: &mut [Vec<f32>; 2], ctx: &RenderCtx<'_>) {
+            self.blocks.lock().unwrap().push(Block {
+                frames: ctx.frames,
+                first_frame: ctx.first_frame,
+                schedule_delay: ctx.schedule_delay,
+                offline: ctx.offline,
+                start_frame: ctx.clock.frame_for(self.start) + i64::from(ctx.schedule_delay),
+            });
+        }
+
+        fn restarted(&mut self, _sample_rate: f64) {}
+
+        fn name(&self) -> &'static str {
+            "recorder"
+        }
+    }
+
+    /// A run of `blocks` blocks from `start`, noting each instant it was
+    /// asked to advance to; it gives up when asked for `give_up_at`'s.
+    struct Blocks {
+        /// The run's first instant.
+        start: Instant,
+        /// How many blocks it is for.
+        blocks: usize,
+        /// The advance it refuses, counted from 0.
+        give_up_at: Option<usize>,
+        /// Every instant asked for.
+        asked: Vec<Instant>,
+    }
+
+    impl OfflineRun for Blocks {
+        fn start(&self) -> Instant {
+            self.start
+        }
+
+        fn advance(&mut self, until: Instant) -> bool {
+            self.asked.push(until);
+            self.give_up_at != Some(self.asked.len() - 1)
+        }
+
+        fn is_done(&self) -> bool {
+            self.asked.len() >= self.blocks
+        }
+    }
+
+    /// A mixer at 48 kHz whose one source records its blocks, 512 frames
+    /// into its life, and a run of `blocks` blocks.
+    fn recording(blocks: usize) -> (Mixer, Arc<Mutex<Vec<Block>>>, Blocks) {
+        let start = Instant::now();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let mut mixer = mixer();
+        mixer.sources.push(Box::new(Recorder {
+            start,
+            blocks: Arc::clone(&seen),
+        }));
+        mixer.steady = 512;
+        let run = Blocks {
+            start,
+            blocks,
+            give_up_at: None,
+            asked: Vec::new(),
+        };
+        (mixer, seen, run)
+    }
+
+    #[test]
+    fn an_offline_run_renders_block_by_block_in_its_own_time() {
+        let (mut mixer, seen, mut run) = recording(3);
+        assert_eq!(mixer.render_offline(&mut run, 48_000.0, 480), 3 * 480);
+        assert_eq!(mixer.steady, 512 + 3 * 480, "the timeline goes on");
+
+        // Each block is asked for at its first instant: 10 ms apiece.
+        let start = run.start;
+        let ms = Duration::from_millis;
+        assert_eq!(run.asked, [start, start + ms(10), start + ms(20)]);
+        // The run's start is the first frame rendered, so with one block of
+        // delay an event stamped there opens the second block.
+        let block = |k: u64| Block {
+            frames: 480,
+            first_frame: 512 + k * 480,
+            schedule_delay: 480,
+            offline: true,
+            start_frame: 512 + 480,
+        };
+        assert_eq!(*seen.lock().unwrap(), [block(0), block(1), block(2)]);
+    }
+
+    #[test]
+    fn a_run_given_up_renders_no_further() {
+        let (mut mixer, seen, mut run) = recording(10);
+        run.give_up_at = Some(2);
+        assert_eq!(mixer.render_offline(&mut run, 48_000.0, 256), 2 * 256);
+        assert_eq!(seen.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn an_offline_block_is_never_over_the_engines_largest() {
+        let (mut mixer, seen, mut run) = recording(1);
+        mixer.render_offline(&mut run, 48_000.0, 8192);
+        assert_eq!(seen.lock().unwrap()[0].frames, MAX_FRAMES);
+    }
+
+    #[test]
+    fn the_stream_after_an_offline_run_anchors_its_clock_afresh() {
+        let (mut mixer, _seen, mut run) = recording(1);
+        mixer.render_offline(&mut run, 48_000.0, 256);
+        mixer.restart(48_000.0, Arc::new(DeviceWorkgroup::default()), 128);
+        assert_eq!(mixer.schedule_delay, 128);
+        // Unanchored until the device's first callback observes it.
+        assert_eq!(mixer.clock.frame_for(run.start), 0);
     }
 
     #[test]

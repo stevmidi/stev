@@ -37,6 +37,8 @@ impl EventHandlers {
                 // doesn't dip through centre.
                 sequencer.reset_wheels();
             }
+
+            TransportEvent::ExportSeeked => sequencer.audio_export_seeked(),
         }
     }
 
@@ -134,6 +136,14 @@ impl EventHandlers {
                 transport.stop();
                 transport.jump_and_chase(*tick);
                 transport.start();
+            }
+            TransportCommand::StartExport { tick } => {
+                transport.set_loop_enabled(false);
+                sequencer.begin_running_take(*tick);
+                transport.stop();
+                transport.jump_and_chase(*tick);
+                transport.start();
+                transport.announce_export_seeked();
             }
             TransportCommand::TogglePlayback => {
                 if transport.is_running() {

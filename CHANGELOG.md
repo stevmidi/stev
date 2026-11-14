@@ -20,6 +20,10 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ## [Unreleased]
 
+### Changed
+
+- The audio export (`⌘⇧R`) renders offline instead of playing the selection in real time. The files are the selection to the sample on any machine: before, a project too heavy to play cleanly came out a little short, its later bars off a DAW's grid. A project with headroom now exports faster than real time; one that overruns in playback takes longer than real time but comes out right. There is no sound while it runs (the audio device is closed for the export and reopens after), and MIDI Out tracks stay silent too. The result no longer mentions overruns, xruns or dropped samples: there are none to have. Plugins are not yet told they are rendering offline, so listen to an export from a sample-streaming plugin before you rely on it.
+
 ## [0.16.0] - 2026-11-14
 
 ### Added

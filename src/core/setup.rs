@@ -37,7 +37,10 @@ use crate::{
         },
         note_logger::NoteLoggerCommand,
         project::StorageJob,
-        sequencer::{AudioExportJob, ClipInstrumentEvent, ExportMark, Sequencer, SequencerCommand},
+        sequencer::{
+            AudioExportJob, ClipInstrumentEvent, ExportMark, ExportStep, Sequencer,
+            SequencerCommand,
+        },
         shared_atomics::SharedAtomics,
         shared_channels::SharedChannels,
         transport::{Transport, TransportCommand, TransportEvent},
@@ -89,6 +92,7 @@ pub(crate) fn setup_shared_channels() -> SharedChannels {
     let (metronome_click_tx, metronome_click_rx) = RingBuffer::new(METRONOME_CLICK_RING_CAPACITY);
     let (export_mark_tx, export_mark_rx) = RingBuffer::new(EXPORT_MARK_RING_CAPACITY);
     let (audio_export_job_tx, audio_export_job_rx) = unbounded::<AudioExportJob>();
+    let (export_step_tx, export_step_rx) = unbounded::<ExportStep>();
     let (input_event_tx, input_event_rx) = unbounded::<InputEvent>();
     let (ui_event_tx, ui_event_rx) = unbounded::<UiEvent>();
     let (midi_in_reconnect_tx, midi_in_reconnect_rx) = bounded::<String>(1);
@@ -125,6 +129,8 @@ pub(crate) fn setup_shared_channels() -> SharedChannels {
         export_mark_rx,
         audio_export_job_tx,
         audio_export_job_rx,
+        export_step_tx,
+        export_step_rx,
         storage_job_tx,
         storage_job_rx,
         input_event_tx,

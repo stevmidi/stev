@@ -1,13 +1,16 @@
 //! `EventHandlers` workflows for the audio export (`⌘/Ctrl+⇧+R`,
-//! `130-plugin-host.md` § Audio export): the run that plays the arranger's time
-//! selection through the plugin host while the `"audio-export"` thread
-//! writes a WAV per stem plus the mix.
+//! `130-plugin-host.md` § Audio export): the run that renders the arranger's
+//! time selection through the plugin host, offline, while the
+//! `"audio-export"` thread writes a WAV per stem plus the mix.
 //!
 //! The export is not an edit, so there's no undo. It is a transport run,
 //! and it puts the transport back: looping goes off for the run and comes
-//! back after, and the cursor is never moved (the run plays from the
-//! selection's start with `PlayFromTick`, and the stop at the end returns
-//! playback to the cursor).
+//! back after, and the cursor is never moved (the run seeks to the
+//! selection's start with `StartExport`, and the stop at the end returns
+//! playback to the cursor). The run is not played by the clock: the engine
+//! renders it with the device closed and steps it block by block
+//! ([`step_audio_export`](EventHandlers::step_audio_export),
+//! `490-offline-export.md`).
 //!
 //! While it runs, [`audio_export_command`](EventHandlers::audio_export_command)
 //! and [`audio_export_transport_command`](EventHandlers::audio_export_transport_command)
@@ -22,7 +25,10 @@ use std::time::Instant;
 use crate::core::{
     input_event::TimeSelectionRect,
     project::{self, MIX_FILE_NAME},
-    sequencer::{AudioExportJob, AudioExportOutcome, AudioExportRefusal, AudioExportRun},
+    sequencer::{
+        AudioExportJob, AudioExportOutcome, AudioExportRefusal, AudioExportRun, StepAnswer,
+    },
+    transport::TickOutcome,
 };
 
 use super::*;
@@ -35,7 +41,8 @@ const FINISH_EXPORT_FIRST: &str = "Finish or cancel the export first";
 
 impl EventHandlers {
     /// `⌘/Ctrl+⇧+R`: plans the export, makes its folder, hands the files to
-    /// the `"audio-export"` thread and plays the selection with looping off
+    /// the `"audio-export"` thread, which has the engine render the run, and
+    /// puts the transport on the selection's start with looping off
     /// (`Sequencer::begin_audio_export`; the tick path sends the marks). The
     /// footer shows its progress from there (`AudioExportAtomics`), or says
     /// why it didn't start. The writer's report ends the run
@@ -89,25 +96,56 @@ impl EventHandlers {
         let mix = folder.join(MIX_FILE_NAME);
         let start_tick = plan.start_tick;
 
-        let id = sequencer.begin_audio_export(plan, folder.clone());
-        let job = AudioExportJob { id, stems, mix };
+        // The run's time starts here and moves only as it is stepped.
+        let start = Instant::now();
+        let id = sequencer.begin_audio_export(plan, folder.clone(), start);
+        let job = AudioExportJob {
+            id,
+            start,
+            stems,
+            mix,
+        };
         if self.audio_export_job_tx.send(job).is_err() {
             // It never played: no marks to close. Nothing is in the folder yet.
             sequencer.finish_audio_export();
             fs::remove_dir(&folder).ok();
             return Err(NEEDS_PLUGIN_HOST.to_owned());
         }
-        self.send_transport(TransportCommand::SetLoop { enabled: false });
-        self.send_transport(TransportCommand::PlayFromTick { tick: start_tick });
+        self.send_transport(TransportCommand::StartExport { tick: start_tick });
         Ok(())
     }
 
-    /// Esc during a run: the mixer ends the files now and the run is marked
-    /// cancelled (`Sequencer::cancel_audio_export`). The writer's report then
-    /// ends the run as usual — the transport stopped, the loop state put
-    /// back — and removes the files. A no-op with no run.
+    /// The offline render asks for the run's ticks due before `until`, a
+    /// block's first instant (the `"sequencer"` thread's step arm,
+    /// `490-offline-export.md` decision 4): each advances the transport and
+    /// plays the tracks, stamped with the run's own instant for it, exactly
+    /// as a clock tick would have been. Nothing is played before the run's
+    /// seek has landed, and the answer says so.
+    pub(crate) fn step_audio_export(
+        &self,
+        until: Instant,
+        sequencer: &mut Sequencer,
+        transport: &mut Transport,
+    ) -> StepAnswer {
+        let answer = sequencer.audio_export_step_answer();
+        if answer == StepAnswer::Advanced {
+            while let Some(at) = sequencer.next_audio_export_tick(until) {
+                // Looping is off for the run, but a wrap is a wrap.
+                if let TickOutcome::Wrapped(anchor) = transport.tick() {
+                    self.reanchor_playback(anchor, sequencer, transport);
+                }
+                sequencer.tick(at);
+            }
+        }
+        answer
+    }
+
+    /// Esc during a run: the mixer ends the files at the run's time now and
+    /// the run is marked cancelled (`Sequencer::cancel_audio_export`). The
+    /// writer's report then ends the run as usual — the transport stopped,
+    /// the loop state put back — and removes the files. A no-op with no run.
     pub(super) fn cancel_audio_export_workflow(&self, sequencer: &mut Sequencer) {
-        sequencer.cancel_audio_export(Instant::now());
+        sequencer.cancel_audio_export();
     }
 
     /// The `"audio-export"` thread is done: stops the transport (playback
@@ -120,7 +158,7 @@ impl EventHandlers {
         outcome: &AudioExportOutcome,
     ) {
         // A stopped writer gave up before the mixer ended the export.
-        sequencer.close_audio_export(Instant::now());
+        sequencer.close_audio_export();
         let Some(run) = sequencer.finish_audio_export() else {
             return;
         };
@@ -161,9 +199,9 @@ impl EventHandlers {
 
     /// The run's hold on a transport `cmd`, as for
     /// [`audio_export_command`](Self::audio_export_command). Only the run's
-    /// own `SetLoop` and `PlayFromTick` go through — nothing else that sends
-    /// them can run during an export — and the click, which never reaches
-    /// the files. The run's closing `Stop` comes after it has ended.
+    /// own `StartExport` goes through, and the click, which never reaches
+    /// the files. The run's closing `Stop` and `SetLoop` come after it has
+    /// ended.
     pub(super) fn audio_export_transport_command(
         &self,
         cmd: &TransportCommand,
@@ -173,9 +211,7 @@ impl EventHandlers {
             sequencer,
             matches!(
                 cmd,
-                TransportCommand::SetLoop { .. }
-                    | TransportCommand::PlayFromTick { .. }
-                    | TransportCommand::ToggleMetronomeMute
+                TransportCommand::StartExport { .. } | TransportCommand::ToggleMetronomeMute
             ),
         )
     }
@@ -216,9 +252,8 @@ fn remove_export(run: &AudioExportRun) {
 
 /// The footer's report on an export: cancelled, stopped and why, or the
 /// folder and what's in it (or the error), plus what the user should know
-/// about: stems that came out silent for want of a plugin, MIDI Out tracks
-/// that were heard but can't be exported, dropped samples (the one glitch
-/// that damages the files) and any overrun or xrun in what was heard.
+/// about: stems that came out silent for want of a plugin, and MIDI Out
+/// tracks that play in the selection but can't be exported.
 fn written_message(run: &AudioExportRun, outcome: &AudioExportOutcome) -> String {
     let folder = folder_name(&run.folder);
     if run.cancelled {
@@ -264,19 +299,6 @@ fn written_message(run: &AudioExportRun, outcome: &AudioExportOutcome) -> String
             numbers.join(", ")
         ));
     }
-    // Only dropped samples damage the files. An overrun or xrun glitched
-    // what was heard, but the files take the samples before the device.
-    if outcome.overflowed {
-        notes.push("samples dropped: listen before you use it".to_owned());
-    }
-    let glitches: Vec<String> = [(outcome.overruns, "overrun"), (outcome.xruns, "xrun")]
-        .into_iter()
-        .filter(|&(count, _)| count > 0)
-        .map(|(count, what)| format!("{count} {what}{}", plural(count as usize)))
-        .collect();
-    if !glitches.is_empty() {
-        notes.push(format!("{} while playing", glitches.join(", ")));
-    }
 
     if notes.is_empty() {
         head
@@ -293,8 +315,12 @@ fn plural(n: usize) -> &'static str {
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::Duration;
 
+    use crossbeam_channel::{Receiver, unbounded};
     use egui::Key;
+    use rtrb::RingBuffer;
     use undo::Record;
 
     use crate::core::input_event::{InputEvent, KeyModifiers};
@@ -326,8 +352,11 @@ mod tests {
 
     /// An export of `plan` running, as `start_audio_export` leaves it.
     fn running(h: &mut Harness, plan: AudioExportPlan) {
-        h.sequencer
-            .begin_audio_export(plan, PathBuf::from("/x/Exports/Sketch 120bpm 4-4 bar 1"));
+        h.sequencer.begin_audio_export(
+            plan,
+            PathBuf::from("/x/Exports/Sketch 120bpm 4-4 bar 1"),
+            Instant::now(),
+        );
     }
 
     fn finished(h: &mut Harness) -> AudioExportRun {
@@ -440,10 +469,80 @@ mod tests {
         assert!(blocked(&h, TransportCommand::TogglePlayback));
         assert!(blocked(&h, TransportCommand::Stop));
         assert!(blocked(&h, TransportCommand::MoveCursor { ticks: 1 }));
-        assert!(!blocked(&h, TransportCommand::SetLoop { enabled: false }));
-        assert!(!blocked(&h, TransportCommand::PlayFromTick { tick: 0 }));
+        assert!(blocked(&h, TransportCommand::PlayFromTick { tick: 0 }));
+        assert!(!blocked(&h, TransportCommand::StartExport { tick: 0 }));
         assert!(!blocked(&h, TransportCommand::ToggleMetronomeMute));
-        assert_eq!(statuses(&h), [FINISH_EXPORT_FIRST; 3]);
+        assert_eq!(statuses(&h), [FINISH_EXPORT_FIRST; 4]);
+    }
+
+    /// A transport on the harness's shared state, looping, and the far end
+    /// of its events.
+    fn transport(h: &Harness) -> (Transport, Receiver<TransportEvent>) {
+        let (events_tx, events) = unbounded();
+        let transport = Transport::new(
+            events_tx,
+            unbounded().0,
+            h.playback_tick.clone(),
+            h.cursor_tick.clone(),
+            h.running.clone(),
+            h.region.0.clone(),
+            h.region.1.clone(),
+            Arc::new(AtomicBool::new(true)),
+        );
+        (transport, events)
+    }
+
+    #[test]
+    fn the_run_is_stepped_from_the_selections_start_once_its_seek_has_landed() {
+        let mut h = harness();
+        let (mut transport, events) = transport(&h);
+        let metronome = Metronome::new(Arc::new(AtomicBool::new(true)), RingBuffer::new(1).0);
+        h.cursor_tick.store(7, Ordering::Relaxed);
+        let mut exported = plan(&[(0, "01 Synth.wav")], Vec::new());
+        (exported.start_tick, exported.end_tick) = (BAR, 2 * BAR);
+        let start = Instant::now();
+        h.sequencer
+            .begin_audio_export(exported, PathBuf::new(), start);
+        let far = start + Duration::from_secs(60);
+
+        // The run's seek is asked for but its events are still to come:
+        // nothing is played, and the render is told to ask again.
+        h.handlers.handle_transport_command(
+            &TransportCommand::StartExport { tick: BAR },
+            &mut transport,
+            &mut h.sequencer,
+            &metronome,
+        );
+        assert!(!transport.is_loop_enabled(), "no wrap in the files");
+        assert!(transport.is_running(), "the UI sees it running");
+        let step = |h: &mut Harness, transport: &mut Transport, until| {
+            h.handlers
+                .step_audio_export(until, &mut h.sequencer, transport)
+        };
+        assert_eq!(step(&mut h, &mut transport, far), StepAnswer::NotYet);
+        assert_eq!(h.playback_tick.load(Ordering::Relaxed), BAR);
+
+        for event in events.try_iter() {
+            h.handlers
+                .handle_transport_event(&event, &mut h.sequencer, &transport);
+        }
+        // At 120 bpm a tick is 520,833 ns: twenty are due before 10 ms.
+        let until = start + Duration::from_millis(10);
+        assert_eq!(step(&mut h, &mut transport, until), StepAnswer::Advanced);
+        assert_eq!(h.playback_tick.load(Ordering::Relaxed), BAR + 20);
+        assert_eq!(step(&mut h, &mut transport, until), StepAnswer::Advanced);
+        assert_eq!(h.playback_tick.load(Ordering::Relaxed), BAR + 20);
+
+        // To the selection's end, the tick that carries the end mark
+        // included, and no further however far the render asks.
+        assert_eq!(step(&mut h, &mut transport, far), StepAnswer::Advanced);
+        assert_eq!(h.playback_tick.load(Ordering::Relaxed), 2 * BAR + 1);
+        assert_eq!(step(&mut h, &mut transport, far), StepAnswer::Advanced);
+        assert_eq!(h.playback_tick.load(Ordering::Relaxed), 2 * BAR + 1);
+        assert_eq!(h.cursor_tick.load(Ordering::Relaxed), 7, "the cursor stays");
+
+        h.sequencer.finish_audio_export();
+        assert_eq!(step(&mut h, &mut transport, far), StepAnswer::Gone);
     }
 
     #[test]
@@ -527,7 +626,7 @@ mod tests {
     }
 
     #[test]
-    fn the_report_names_silent_stems_skipped_tracks_and_glitches() {
+    fn the_report_names_silent_stems_and_skipped_tracks() {
         let mut h = harness();
         running(
             &mut h,
@@ -536,16 +635,12 @@ mod tests {
         let run = finished(&mut h);
         let outcome = AudioExportOutcome {
             silent: vec![5],
-            overflowed: true,
-            overruns: 2,
-            xruns: 1,
             ..AudioExportOutcome::default()
         };
         assert_eq!(
             written_message(&run, &outcome),
             "Exported \"Sketch 120bpm 4-4 bar 1\" — 2 stems + mix \
-             (no plugin loaded: 02 Keys.wav silent; MIDI Out tracks 3, 4 left out; \
-             samples dropped: listen before you use it; 2 overruns, 1 xrun while playing)"
+             (no plugin loaded: 02 Keys.wav silent; MIDI Out tracks 3, 4 left out)"
         );
     }
 
@@ -571,13 +666,13 @@ mod tests {
         running(&mut h, plan(&[(0, "01 Bass.wav")], vec![1]));
         let run = finished(&mut h);
         let outcome = AudioExportOutcome {
-            stopped: Some("the audio device changed"),
-            overruns: 3,
+            stopped: Some("the render stalled"),
+            silent: vec![0],
             ..AudioExportOutcome::default()
         };
         assert_eq!(
             written_message(&run, &outcome),
-            "Export stopped: the audio device changed"
+            "Export stopped: the render stalled"
         );
     }
 
@@ -591,8 +686,11 @@ mod tests {
         for file in ["01 Synth.wav", MIX_FILE_NAME] {
             fs::write(folder.join(file), b"RIFF").unwrap();
         }
-        h.sequencer
-            .begin_audio_export(plan(&[(0, "01 Synth.wav")], Vec::new()), folder.clone());
+        h.sequencer.begin_audio_export(
+            plan(&[(0, "01 Synth.wav")], Vec::new()),
+            folder.clone(),
+            Instant::now(),
+        );
         h.handlers.cancel_audio_export_workflow(&mut h.sequencer);
         h.handlers
             .finish_audio_export_workflow(&mut h.sequencer, &AudioExportOutcome::default());

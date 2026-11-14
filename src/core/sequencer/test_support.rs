@@ -23,6 +23,8 @@ use crate::models::{
     track::{InstrumentRef, Track, TrackOutput},
 };
 
+#[cfg(target_os = "macos")]
+use super::ExportMark;
 use super::{ClipInstrumentEvent, Sequencer};
 
 /// A stopped sequencer with its default tracks and the default tempo (region
@@ -87,6 +89,20 @@ pub(super) fn drain(rx: &mut Consumer<ClipInstrumentEvent>) -> Vec<[u8; 3]> {
     std::iter::from_fn(|| rx.pop().ok())
         .filter_map(|e| e.message.midi())
         .collect()
+}
+
+/// A stopped sequencer and the far ends of both feeds the plugin host's
+/// mixer reads from it: the clip events and the audio export's marks.
+#[cfg(target_os = "macos")]
+pub(crate) fn sequencer_with_mixer_feeds() -> (
+    Sequencer,
+    Consumer<ClipInstrumentEvent>,
+    Consumer<ExportMark>,
+) {
+    let (mut sequencer, clip_events) = sequencer_with(false);
+    let (marks_tx, marks) = RingBuffer::new(4);
+    sequencer.export_mark_tx = marks_tx;
+    (sequencer, clip_events, marks)
 }
 
 /// [`sequencer_with`] with the loop enabled, without the ring.

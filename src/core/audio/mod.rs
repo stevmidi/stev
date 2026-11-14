@@ -19,6 +19,7 @@ mod load;
 pub(crate) mod meter;
 mod metronome_source;
 pub(crate) mod mix;
+mod offline;
 mod prefs;
 mod thread_role;
 mod topology;
@@ -33,8 +34,14 @@ use std::time::Instant;
 
 pub(crate) use clock::AudioClock;
 pub(crate) use engine::{AudioControl, AudioEngine, EngineHandle};
+// The plugin host's offline export test (macOS).
+#[cfg(all(test, target_os = "macos"))]
+pub(crate) use engine::render_offline_for_test;
 pub(crate) use load::AudioLoad;
 pub(crate) use metronome_source::{ClickClass, ClickEvent, MetronomeSource};
+// Only the plugin host's export (macOS) renders offline.
+#[cfg(target_os = "macos")]
+pub(crate) use offline::OfflineRun;
 pub(crate) use prefs::{
     AudioDevice, AudioPrefs, EngineNews, RunningAudio, buffer_ms, khz, khz_number,
 };
@@ -69,8 +76,6 @@ pub(crate) const FALLBACK_SAMPLE_RATE: u32 = 48_000;
 pub(crate) struct StreamStatus {
     /// The rate the running stream opened at, Hz.
     sample_rate: AtomicU32,
-    /// How many times a running stream has been dropped for another.
-    restarts: AtomicU32,
     /// The frames the last callback was asked for: the buffer the device
     /// actually runs at. `0` before the first callback.
     buffer_frames: AtomicU32,
@@ -81,11 +86,10 @@ pub(crate) struct StreamStatus {
 }
 
 impl StreamStatus {
-    /// A rate of `hz` and no restarts, until the engine says otherwise.
+    /// A rate of `hz`, until the engine says otherwise.
     pub(crate) fn new(hz: u32) -> Self {
         Self {
             sample_rate: AtomicU32::new(hz),
-            restarts: AtomicU32::new(0),
             buffer_frames: AtomicU32::new(0),
             latency_us: AtomicU32::new(0),
         }
@@ -95,13 +99,6 @@ impl StreamStatus {
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub(crate) fn sample_rate(&self) -> f64 {
         f64::from(self.sample_rate.load(Ordering::Relaxed))
-    }
-
-    /// How many times the stream has restarted. A change under a running
-    /// export ends it (`480-audio-settings.md` decision 10).
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-    pub(crate) fn restarts(&self) -> u32 {
-        self.restarts.load(Ordering::Relaxed)
     }
 
     /// The buffer the device runs at, frames; `None` before the first
@@ -133,11 +130,6 @@ impl StreamStatus {
     fn set_sample_rate(&self, hz: u32) {
         self.sample_rate.store(hz, Ordering::Relaxed);
     }
-
-    /// Counts a running stream dropped for a restart.
-    fn count_restart(&self) {
-        self.restarts.fetch_add(1, Ordering::Relaxed);
-    }
 }
 
 /// Everything a source needs to know about the block it is rendering, other
@@ -159,6 +151,11 @@ pub(crate) struct RenderCtx<'a> {
     /// still degrades gracefully to block offset 0. Live keyboard events
     /// bypass it — see `plugin_host::mixer`.
     pub(crate) schedule_delay: u32,
+    /// The block is rendered offline (`490-offline-export.md`): no device
+    /// waits for it, so a source may wait itself (the export tap does, for
+    /// its writer), and its frames are virtual time, heard by nobody.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pub(crate) offline: bool,
     /// Maps an intended wall-clock [`Instant`] onto the `steady` timeline.
     pub(crate) clock: &'a AudioClock,
     /// Spreads an independent per-item workload across the calling thread and

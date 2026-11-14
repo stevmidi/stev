@@ -64,6 +64,8 @@ mod export_writer;
 mod meter;
 mod mixer;
 mod note_ids;
+#[cfg(test)]
+mod offline_tests;
 mod shutdown;
 #[cfg(test)]
 mod test_voice;
@@ -92,7 +94,9 @@ use voice::{InstrumentVoice, VoiceMix};
 use crate::core::audio::{AudioSource, EngineHandle, StreamStatus};
 use crate::core::config::MAX_TRACKS;
 use crate::core::midi::message::Midi3;
-use crate::core::sequencer::{AudioExportJob, ClipInstrumentEvent, ExportMark, SequencerCommand};
+use crate::core::sequencer::{
+    AudioExportJob, ClipInstrumentEvent, ExportMark, ExportStep, SequencerCommand,
+};
 use crate::core::shared_atomics::SharedAtomics;
 
 pub(crate) use catalog::scan_catalog;
@@ -231,6 +235,7 @@ impl PluginAudioHandle {
 /// `rtrb` rings, since `rtrb` is strict single-producer and the two feeds have
 /// different producer threads). `export_mark_rx` / `audio_export_jobs` are
 /// the audio export's marks from the sequencer and files from its workflow;
+/// its offline render steps the sequencer on `export_steps`, and
 /// the writer reports back on `sequencer_command_tx`. `repaint` is the app's
 /// shared egui context
 /// slot, handed to every plugin loaded later. Any failure is returned as `Err`
@@ -242,6 +247,7 @@ pub(crate) fn start_plugin_host(
     live_midi_rx: Consumer<(usize, Midi3)>,
     export_mark_rx: Consumer<ExportMark>,
     audio_export_jobs: Receiver<AudioExportJob>,
+    export_steps: Sender<ExportStep>,
     sequencer_command_tx: Sender<SequencerCommand>,
     atomics: &SharedAtomics,
     repaint: Arc<OnceLock<egui::Context>>,
@@ -284,12 +290,15 @@ pub(crate) fn start_plugin_host(
         .spawn(move || reclaim_voices(dead_rx, voice_back_tx, reclaim_shutdown, reclaim_wake))
         .expect("failed to spawn plugin-host thread");
 
+    // Each export's writer has the engine render its run, offline.
+    let control = engine.control.clone();
     let writer = ExportWriter::new(
         export_rings,
         export_shared,
         Arc::clone(&atomics.audio_export),
-        Arc::clone(&engine.load),
         Arc::clone(&engine.status),
+        export_steps,
+        move |run| control.render_offline(Box::new(run)),
     );
     start_export_writer(audio_export_jobs, writer, sequencer_command_tx);
 
