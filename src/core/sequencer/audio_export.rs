@@ -25,7 +25,7 @@ use crate::core::{
     config::MAX_TRACKS,
     input_event::TimeSelectionRect,
     project::stem_file_name,
-    time::{PPQN, ticks_to_millis_f64},
+    time::{ticks_to_millis_f64, ticks_to_nanos},
 };
 
 use super::Sequencer;
@@ -67,21 +67,10 @@ pub(crate) enum ExportMark {
 pub(crate) struct ExportStep {
     /// Every tick of the run due before this is to be played.
     pub(crate) until: Instant,
-    /// Where the answer goes.
-    pub(crate) answer: Sender<StepAnswer>,
-}
-
-/// The `"sequencer"` thread's answer to an [`ExportStep`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-pub(crate) enum StepAnswer {
-    /// The ticks due have been played: render the block.
-    Advanced,
-    /// The run's seek hasn't reached the tracks yet: ask again, without
-    /// rendering.
-    NotYet,
-    /// No export is running: stop rendering.
-    Gone,
+    /// Where the answer goes: `true` once the ticks due have been played
+    /// and the block can be rendered, `false` when no export is running and
+    /// the render should stop.
+    pub(crate) answer: Sender<bool>,
 }
 
 /// The files one export writes, sent to the `"audio-export"` thread, which
@@ -128,41 +117,28 @@ pub(crate) struct AudioExportRun {
     /// The instant of the run's first tick. Made up: the run's time moves
     /// only as it is stepped.
     start: Instant,
-    /// The tempo the run began at, µs per quarter note: with [`PPQN`], the
-    /// tick length. It can't change mid-run (the run blocks the command).
-    tempo_us: u64,
-    /// Whether the run's own seek has put the tracks on the selection's
-    /// start (`TransportEvent::ExportSeeked`). Nothing is stepped before.
-    seeked: bool,
+    /// The tempo the run began at, µs per quarter note: the tick length. It
+    /// can't change mid-run (the run blocks the command).
+    tempo_us: i32,
     /// How many ticks of the run have been played.
     ticks: u64,
-    /// Which of its marks have gone to the mixer.
-    sent: MarksSent,
+    /// Whether its end mark has gone to the mixer, which will end the
+    /// export. The start mark went with tick 0, or goes with a close before
+    /// it: `ticks` says which.
+    ended: bool,
 }
 
 impl AudioExportRun {
     /// The instant tick `n` of the run carries: `start + n × tick length`,
-    /// from the tempo in integers, so it never drifts.
+    /// from the tempo in integers ([`ticks_to_nanos`]), so it never drifts.
     fn tick_instant(&self, n: u64) -> Instant {
-        let nanos = u128::from(n) * u128::from(self.tempo_us) * 1000 / PPQN as u128;
-        self.start + Duration::from_nanos(nanos as u64)
+        self.start + Duration::from_nanos(ticks_to_nanos(self.tempo_us, n))
     }
 
     /// The run's time now: the instant of the next tick to play.
     fn now(&self) -> Instant {
         self.tick_instant(self.ticks)
     }
-}
-
-/// How far an export's marks have gone: start, then end, each once.
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum MarksSent {
-    /// Neither yet.
-    None,
-    /// The start mark.
-    Start,
-    /// Both: the mixer will end the export.
-    End,
 }
 
 /// What an export will write: one stem per track in [`stems`](Self::stems)
@@ -256,9 +232,8 @@ impl Sequencer {
     /// Starts the run for `plan`, writing into `folder`, its first tick at
     /// `start`, and returns its id (`audio_exports_begun`): from here the
     /// clock's ticks play nothing, the run is stepped instead
-    /// ([`next_audio_export_tick`](Self::next_audio_export_tick)) once its
-    /// seek has landed, and the other threads see it running with its
-    /// length. Remembers the loop state for
+    /// ([`next_audio_export_tick`](Self::next_audio_export_tick)), and the
+    /// other threads see it running with its length. Remembers the loop state for
     /// [`finish_audio_export`](Self::finish_audio_export) to hand back.
     pub(crate) fn begin_audio_export(
         &mut self,
@@ -278,44 +253,23 @@ impl Sequencer {
             loop_was_enabled: self.is_loop_enabled(),
             cancelled: false,
             start,
-            tempo_us: self.tempo_us().max(0) as u64,
-            seeked: false,
+            tempo_us: self.tempo_us(),
             ticks: 0,
-            sent: MarksSent::None,
+            ended: false,
         });
         self.audio_exports_begun
     }
 
-    /// The run's own seek has put the tracks on the selection's start: it
-    /// can be stepped from here.
-    pub(crate) fn audio_export_seeked(&mut self) {
-        if let Some(run) = &mut self.audio_export {
-            run.seeked = true;
-        }
-    }
-
-    /// What an [`ExportStep`] gets for an answer, before any tick is played
-    /// for it: [`Gone`](StepAnswer::Gone) with no run,
-    /// [`NotYet`](StepAnswer::NotYet) until the run's seek has landed — but
-    /// not for a run already closed, whose marks the render must still take
-    /// to the mixer.
-    pub(crate) fn audio_export_step_answer(&self) -> StepAnswer {
-        match &self.audio_export {
-            None => StepAnswer::Gone,
-            Some(run) if !run.seeked && run.sent != MarksSent::End => StepAnswer::NotYet,
-            Some(_) => StepAnswer::Advanced,
-        }
-    }
-
     /// The instant of the run's next tick, if it is due before `until`: the
     /// caller advances the transport and plays it ([`tick`](Self::tick)),
-    /// and asks again. `None` once nothing more is due, before the run's
-    /// seek, and after its end mark: the transport stays on the selection's
-    /// end while the mixer renders up to it.
+    /// and asks again. `None` once nothing more is due, and after the run's
+    /// end mark: the transport stays on the selection's end while the mixer
+    /// renders up to it. The caller has the run's seek land first (the
+    /// `"sequencer"` thread's step arm).
     pub(crate) fn next_audio_export_tick(&self, until: Instant) -> Option<Instant> {
         let run = self.audio_export.as_ref()?;
-        let at = run.tick_instant(run.ticks);
-        (run.seeked && run.sent != MarksSent::End && at < until).then_some(at)
+        let at = run.now();
+        (!run.ended && at < until).then_some(at)
     }
 
     /// Whether an export is running.
@@ -352,8 +306,11 @@ impl Sequencer {
         let Some(run) = &mut self.audio_export else {
             return;
         };
+        if run.ended {
+            return;
+        }
         let now = run.now();
-        if run.sent == MarksSent::None {
+        if run.ticks == 0 {
             let start = ExportMark::Start {
                 id: self.audio_exports_begun,
                 at: now,
@@ -361,39 +318,35 @@ impl Sequencer {
             };
             self.export_mark_tx.push(start).ok();
         }
-        if run.sent != MarksSent::End {
-            self.export_mark_tx.push(ExportMark::End { at: now }).ok();
-        }
-        run.sent = MarksSent::End;
+        self.export_mark_tx.push(ExportMark::End { at: now }).ok();
+        run.ended = true;
     }
 
     /// Sends the mark for the tick the tracks play now, `at`, if it is the
     /// run's first (the selection's start) or the one a selection's length
     /// later (its end), and counts the tick. Counted in the run's own ticks,
     /// not on the transport's position: the files are the selection's length
-    /// whatever else moves. Ticks before the run's seek don't count.
+    /// whatever else moves. During a run only its steps play ticks, so
+    /// every tick counts until the end mark has gone.
     pub(super) fn mark_audio_export(&mut self, at: Instant) {
         let Some(run) = &mut self.audio_export else {
             return;
         };
-        if !run.seeked {
+        if run.ended {
             return;
         }
         let length = (run.plan.end_tick - run.plan.start_tick).max(0) as u64;
-        let mark = match run.sent {
-            MarksSent::None if run.ticks == 0 => {
-                run.sent = MarksSent::Start;
-                Some(ExportMark::Start {
-                    id: self.audio_exports_begun,
-                    at,
-                    slots: run.plan.slots(),
-                })
-            }
-            MarksSent::Start if run.ticks == length => {
-                run.sent = MarksSent::End;
-                Some(ExportMark::End { at })
-            }
-            _ => None,
+        let mark = if run.ticks == 0 {
+            Some(ExportMark::Start {
+                id: self.audio_exports_begun,
+                at,
+                slots: run.plan.slots(),
+            })
+        } else if run.ticks == length {
+            run.ended = true;
+            Some(ExportMark::End { at })
+        } else {
+            None
         };
         run.ticks += 1;
         if let Some(mark) = mark {
@@ -420,8 +373,8 @@ mod tests {
 
     use crate::core::sequencer::ClipInstrumentEvent;
     use crate::core::sequencer::test_support::{
-        clip_at, clip_with_marker_notes, drain, rect, sequencer_with_outputs, stub_instrument,
-        test_sequencer,
+        clip_at, clip_with_marker_notes, drain, rect, sequencer_with_outputs,
+        step_audio_export as step, stub_instrument, test_sequencer,
     };
     use crate::core::time::Meter;
 
@@ -543,24 +496,11 @@ mod tests {
     /// The instant tick `n` of a run from `origin` carries, at the test
     /// sequencer's tempo.
     fn tick_at(sequencer: &Sequencer, origin: Instant, n: u64) -> Instant {
-        let nanos = n * sequencer.tempo_us() as u64 * 1000 / PPQN as u64;
-        origin + Duration::from_nanos(nanos)
-    }
-
-    /// Plays every tick of the run due before `until`, as the stepped arm
-    /// does, and returns how many that was.
-    fn step(sequencer: &mut Sequencer, until: Instant) -> usize {
-        let mut played = 0;
-        while let Some(at) = sequencer.next_audio_export_tick(until) {
-            sequencer.tick(at);
-            played += 1;
-        }
-        played
+        origin + Duration::from_nanos(ticks_to_nanos(sequencer.tempo_us(), n))
     }
 
     /// A one-plugin-track sequencer running an export of ticks 10–20 from
-    /// `origin`, its seek landed, with the far end of its marks ring and the
-    /// export's id.
+    /// `origin`, with the far end of its marks ring and the export's id.
     fn exporting(origin: Instant) -> (Sequencer, Consumer<ExportMark>, u32) {
         let mut sequencer = sequencer_with_clips(1);
         let (marks_tx, marks) = RingBuffer::new(4);
@@ -569,7 +509,6 @@ mod tests {
             .audio_export_plan(Some(rect(10, 20, 0, 0)))
             .unwrap();
         let id = sequencer.begin_audio_export(plan, PathBuf::new(), origin);
-        sequencer.audio_export_seeked();
         (sequencer, marks, id)
     }
 
@@ -642,7 +581,6 @@ mod tests {
         let (mut stepped, mut stepped_events) = fixture();
         let plan = stepped.audio_export_plan(Some(rect(0, BAR, 0, 0))).unwrap();
         stepped.begin_audio_export(plan, PathBuf::new(), origin);
-        stepped.audio_export_seeked();
         let block = Duration::from_nanos(256 * 1_000_000_000 / 48_000);
         let mut played = 0;
         for k in 0..2_000 {
@@ -663,30 +601,6 @@ mod tests {
         let stepped_events = sent(&mut stepped_events);
         assert!(stepped_events.len() > 4, "the bar's notes");
         assert_eq!(stepped_events, sent(&mut clocked_events));
-    }
-
-    #[test]
-    fn nothing_is_stepped_or_marked_before_the_runs_seek() {
-        let origin = Instant::now();
-        let far = origin + Duration::from_secs(60);
-        let mut sequencer = sequencer_with_clips(1);
-        let (marks_tx, marks) = RingBuffer::new(4);
-        sequencer.export_mark_tx = marks_tx;
-        assert_eq!(sequencer.audio_export_step_answer(), StepAnswer::Gone);
-        let plan = sequencer
-            .audio_export_plan(Some(rect(10, 20, 0, 0)))
-            .unwrap();
-        sequencer.begin_audio_export(plan, PathBuf::new(), origin);
-
-        assert_eq!(sequencer.audio_export_step_answer(), StepAnswer::NotYet);
-        assert_eq!(sequencer.next_audio_export_tick(far), None);
-        // A tick from anywhere else doesn't start the files.
-        sequencer.tick(origin);
-        assert!(marks.is_empty());
-
-        sequencer.audio_export_seeked();
-        assert_eq!(sequencer.audio_export_step_answer(), StepAnswer::Advanced);
-        assert_eq!(sequencer.next_audio_export_tick(far), Some(origin));
     }
 
     #[test]
@@ -712,17 +626,6 @@ mod tests {
         assert_eq!(step(&mut sequencer, far), 0);
         sequencer.close_audio_export();
         assert!(marks.is_empty());
-    }
-
-    #[test]
-    fn a_run_closed_before_its_seek_is_still_rendered_to_its_marks() {
-        let mut sequencer = sequencer_with_clips(1);
-        let plan = sequencer.audio_export_plan(two_bars()).unwrap();
-        sequencer.begin_audio_export(plan, PathBuf::new(), Instant::now());
-        assert_eq!(sequencer.audio_export_step_answer(), StepAnswer::NotYet);
-        sequencer.cancel_audio_export();
-        // The render goes on, so the mixer takes the marks and ends it.
-        assert_eq!(sequencer.audio_export_step_answer(), StepAnswer::Advanced);
     }
 
     #[test]
@@ -766,7 +669,6 @@ mod tests {
         sequencer.begin_audio_export(plan, PathBuf::new(), origin);
         sequencer.reset_to_tick(0);
         sequencer.chase_notes(0);
-        sequencer.audio_export_seeked();
         step(&mut sequencer, far);
         assert!(!drain(&mut plugin).is_empty(), "the plugin track plays");
         assert_eq!(midi_out.try_iter().count(), 0);

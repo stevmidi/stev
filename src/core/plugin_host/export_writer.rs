@@ -31,9 +31,7 @@ use crossbeam_channel::{Receiver, Sender, bounded};
 use rtrb::Consumer;
 
 use crate::core::audio::{OfflineRun, StreamStatus, wav::WavWriter};
-use crate::core::sequencer::{
-    AudioExportJob, AudioExportOutcome, ExportStep, SequencerCommand, StepAnswer,
-};
+use crate::core::sequencer::{AudioExportJob, AudioExportOutcome, ExportStep, SequencerCommand};
 use crate::core::shared_atomics::AudioExportAtomics;
 
 use super::export::{CHANNELS, ExportRings, ExportShared};
@@ -49,12 +47,8 @@ const DRAIN_INTERVAL: Duration = Duration::from_millis(5);
 const STALL_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// How long the render waits for the `"sequencer"` thread's answer to a
-/// step, and for the run's seek to land, before giving the run up.
+/// step before giving the run up.
 const STEP_TIMEOUT: Duration = Duration::from_secs(5);
-
-/// How long the render sleeps before asking again when the run's seek
-/// hasn't landed.
-const STEP_RETRY: Duration = Duration::from_millis(1);
 
 /// One file being written: its writer, until an error stops it.
 type OpenWav = Option<WavWriter<BufWriter<File>>>;
@@ -74,7 +68,7 @@ pub(super) struct ExportRender {
     steps: Sender<ExportStep>,
     /// The answers' sender, cloned into each step, and their receiver. The
     /// run's own, so a late answer to another run's step can't be read here.
-    answers: (Sender<StepAnswer>, Receiver<StepAnswer>),
+    answers: (Sender<bool>, Receiver<bool>),
 }
 
 impl ExportRender {
@@ -96,27 +90,17 @@ impl OfflineRun for ExportRender {
     }
 
     /// Asks the `"sequencer"` thread for the ticks due before `until` and
-    /// waits for its answer, asking again while the run's seek hasn't
-    /// landed. Gives up when there is no run any more, no answer or no seek
-    /// within [`STEP_TIMEOUT`], or the writer has given up.
+    /// waits for its answer. Gives up when there is no run any more, no
+    /// answer within [`STEP_TIMEOUT`], or the writer has given up.
     fn advance(&mut self, until: Instant) -> bool {
-        let asked = Instant::now();
-        loop {
-            let step = ExportStep {
-                until,
-                answer: self.answers.0.clone(),
-            };
-            if self.shared.gave_up(self.id) || self.steps.send(step).is_err() {
-                return false;
-            }
-            match self.answers.1.recv_timeout(STEP_TIMEOUT) {
-                Ok(StepAnswer::Advanced) => return true,
-                Ok(StepAnswer::NotYet) if asked.elapsed() < STEP_TIMEOUT => {
-                    thread::sleep(STEP_RETRY);
-                }
-                Ok(StepAnswer::NotYet | StepAnswer::Gone) | Err(_) => return false,
-            }
+        let step = ExportStep {
+            until,
+            answer: self.answers.0.clone(),
+        };
+        if self.shared.gave_up(self.id) || self.steps.send(step).is_err() {
+            return false;
         }
+        self.answers.1.recv_timeout(STEP_TIMEOUT).unwrap_or(false)
     }
 
     fn is_done(&self) -> bool {
@@ -125,7 +109,7 @@ impl OfflineRun for ExportRender {
 }
 
 /// The writer's ends of everything it reads and reports through.
-pub(super) struct ExportWriter<R> {
+pub(super) struct ExportWriter {
     /// The mixer's export rings.
     rings: ExportRings,
     /// What the mixer reports besides the samples.
@@ -139,7 +123,7 @@ pub(super) struct ExportWriter<R> {
     steps: Sender<ExportStep>,
     /// Has the engine render an export offline
     /// (`AudioControl::render_offline`).
-    render: R,
+    render: Box<dyn FnMut(ExportRender) + Send>,
     /// The last export stopped before the mixer ended it, so the mixer may
     /// have pushed more of it since.
     abandoned: bool,
@@ -147,13 +131,11 @@ pub(super) struct ExportWriter<R> {
 
 /// Spawns the `"audio-export"` thread. It runs one job at a time and exits
 /// when `jobs` disconnects.
-pub(super) fn start_export_writer<R>(
+pub(super) fn start_export_writer(
     jobs: Receiver<AudioExportJob>,
-    mut writer: ExportWriter<R>,
+    mut writer: ExportWriter,
     done_tx: Sender<SequencerCommand>,
-) where
-    R: FnMut(ExportRender) -> bool + Send + 'static,
-{
+) {
     thread::Builder::new()
         .name("audio-export".to_string())
         .spawn(move || {
@@ -167,7 +149,7 @@ pub(super) fn start_export_writer<R>(
         .expect("failed to spawn audio-export thread");
 }
 
-impl<R: FnMut(ExportRender) -> bool> ExportWriter<R> {
+impl ExportWriter {
     /// A writer on the mixer's `rings` and `shared` state, writing at the
     /// rate of `stream`, whose exports `render` has the engine render and
     /// step the sequencer through `steps`.
@@ -177,7 +159,7 @@ impl<R: FnMut(ExportRender) -> bool> ExportWriter<R> {
         progress: Arc<AudioExportAtomics>,
         stream: Arc<StreamStatus>,
         steps: Sender<ExportStep>,
-        render: R,
+        render: Box<dyn FnMut(ExportRender) + Send>,
     ) -> Self {
         ExportWriter {
             rings,
@@ -331,13 +313,10 @@ mod tests {
     use super::super::export::{ExportTap, export_tap};
     use super::*;
 
-    /// A writer whose render is asked for and never comes.
-    type TestWriter = ExportWriter<fn(ExportRender) -> bool>;
-
     /// A writer at 1 kHz and the tap feeding it, with its marks ring. The
     /// engine it asks to render is none: a test pushes through the tap
     /// itself.
-    fn writer() -> (TestWriter, ExportTap, Producer<ExportMark>) {
+    fn writer() -> (ExportWriter, ExportTap, Producer<ExportMark>) {
         let (marks, marks_rx) = RingBuffer::new(4);
         let (tap, rings, shared) = export_tap(marks_rx, 1_000.0);
         let writer = ExportWriter::new(
@@ -346,7 +325,7 @@ mod tests {
             Arc::new(AudioExportAtomics::default()),
             Arc::new(StreamStatus::new(1_000)),
             unbounded().0,
-            (|_| true) as fn(ExportRender) -> bool,
+            Box::new(|_| {}),
         );
         (writer, tap, marks)
     }
@@ -432,31 +411,13 @@ mod tests {
         (render, shared, asked)
     }
 
-    /// Answers each step on `asked` with the next of `answers`, as the
-    /// `"sequencer"` thread would, and returns how many steps were asked.
-    fn answering(
-        asked: Receiver<ExportStep>,
-        answers: Vec<StepAnswer>,
-    ) -> thread::JoinHandle<usize> {
-        thread::spawn(move || {
-            let mut answers = answers.into_iter();
-            let mut steps = 0;
-            for step in asked {
-                steps += 1;
-                let Some(answer) = answers.next() else { break };
-                step.answer.send(answer).ok();
-            }
-            steps
-        })
-    }
-
     #[test]
     fn the_render_waits_for_the_sequencers_answer_to_each_step() {
         let (mut render, _shared, asked) = render();
         let until = render.start() + Duration::from_millis(5);
         let sequencer = thread::spawn(move || {
             let step = asked.recv().unwrap();
-            step.answer.send(StepAnswer::Advanced).unwrap();
+            step.answer.send(true).unwrap();
             step.until
         });
         assert!(render.advance(until));
@@ -464,24 +425,13 @@ mod tests {
     }
 
     #[test]
-    fn the_render_asks_again_until_the_runs_seek_has_landed() {
-        let (mut render, _shared, asked) = render();
-        let sequencer = answering(
-            asked,
-            vec![StepAnswer::NotYet, StepAnswer::NotYet, StepAnswer::Advanced],
-        );
-        assert!(render.advance(render.start()));
-        drop(render);
-        assert_eq!(sequencer.join().unwrap(), 3);
-    }
-
-    #[test]
     fn the_render_gives_up_when_the_run_is_gone() {
         let (mut render, _shared, asked) = render();
-        let sequencer = answering(asked, vec![StepAnswer::Gone]);
+        let sequencer = thread::spawn(move || {
+            asked.recv().unwrap().answer.send(false).unwrap();
+        });
         assert!(!render.advance(render.start()));
-        drop(render);
-        assert_eq!(sequencer.join().unwrap(), 1);
+        sequencer.join().unwrap();
 
         // No `"sequencer"` thread to ask.
         let (mut render, _shared, asked) = self::render();

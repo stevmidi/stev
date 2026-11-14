@@ -25,9 +25,7 @@ use std::time::Instant;
 use crate::core::{
     input_event::TimeSelectionRect,
     project::{self, MIX_FILE_NAME},
-    sequencer::{
-        AudioExportJob, AudioExportOutcome, AudioExportRefusal, AudioExportRun, StepAnswer,
-    },
+    sequencer::{AudioExportJob, AudioExportOutcome, AudioExportRefusal, AudioExportRun},
     transport::TickOutcome,
 };
 
@@ -115,29 +113,41 @@ impl EventHandlers {
         Ok(())
     }
 
+    /// One tick of playback at `at`: the transport advances, and the tracks
+    /// play. A loop wrap is re-anchored in between, before the tick reaches
+    /// the sequencer: deferred to the transport's events, a burst of ticks
+    /// handled in one wakeup plays past the region end into the next clip
+    /// (the stuck-note bug, `150-clock-position-sync.md`). The one tick
+    /// path, for the clock's ticks and an audio export's steps alike.
+    pub(crate) fn play_tick(
+        &self,
+        at: Instant,
+        sequencer: &mut Sequencer,
+        transport: &mut Transport,
+    ) {
+        if let TickOutcome::Wrapped(anchor) = transport.tick() {
+            self.reanchor_playback(anchor, sequencer, transport);
+        }
+        sequencer.tick(at);
+    }
+
     /// The offline render asks for the run's ticks due before `until`, a
     /// block's first instant (the `"sequencer"` thread's step arm,
-    /// `490-offline-export.md` decision 4): each advances the transport and
-    /// plays the tracks, stamped with the run's own instant for it, exactly
-    /// as a clock tick would have been. Nothing is played before the run's
-    /// seek has landed, and the answer says so.
+    /// `490-offline-export.md` decision 4): each is played as a clock tick
+    /// would have been ([`play_tick`](Self::play_tick)), stamped with the
+    /// run's own instant for it. `false` with no run, which stops the
+    /// render. The caller has handled every transport command and event
+    /// waiting, so the run's seek has landed.
     pub(crate) fn step_audio_export(
         &self,
         until: Instant,
         sequencer: &mut Sequencer,
         transport: &mut Transport,
-    ) -> StepAnswer {
-        let answer = sequencer.audio_export_step_answer();
-        if answer == StepAnswer::Advanced {
-            while let Some(at) = sequencer.next_audio_export_tick(until) {
-                // Looping is off for the run, but a wrap is a wrap.
-                if let TickOutcome::Wrapped(anchor) = transport.tick() {
-                    self.reanchor_playback(anchor, sequencer, transport);
-                }
-                sequencer.tick(at);
-            }
+    ) -> bool {
+        while let Some(at) = sequencer.next_audio_export_tick(until) {
+            self.play_tick(at, sequencer, transport);
         }
-        answer
+        sequencer.is_exporting_audio()
     }
 
     /// Esc during a run: the mixer ends the files at the run's time now and
@@ -493,7 +503,7 @@ mod tests {
     }
 
     #[test]
-    fn the_run_is_stepped_from_the_selections_start_once_its_seek_has_landed() {
+    fn the_run_is_stepped_from_the_selections_start_to_its_end() {
         let mut h = harness();
         let (mut transport, events) = transport(&h);
         let metronome = Metronome::new(Arc::new(AtomicBool::new(true)), RingBuffer::new(1).0);
@@ -505,44 +515,44 @@ mod tests {
             .begin_audio_export(exported, PathBuf::new(), start);
         let far = start + Duration::from_secs(60);
 
-        // The run's seek is asked for but its events are still to come:
-        // nothing is played, and the render is told to ask again.
+        // The run's seek, command and then events, as the step arm handles
+        // them before it plays a tick.
         h.handlers.handle_transport_command(
             &TransportCommand::StartExport { tick: BAR },
             &mut transport,
             &mut h.sequencer,
             &metronome,
         );
-        assert!(!transport.is_loop_enabled(), "no wrap in the files");
-        assert!(transport.is_running(), "the UI sees it running");
-        let step = |h: &mut Harness, transport: &mut Transport, until| {
-            h.handlers
-                .step_audio_export(until, &mut h.sequencer, transport)
-        };
-        assert_eq!(step(&mut h, &mut transport, far), StepAnswer::NotYet);
-        assert_eq!(h.playback_tick.load(Ordering::Relaxed), BAR);
-
         for event in events.try_iter() {
             h.handlers
                 .handle_transport_event(&event, &mut h.sequencer, &transport);
         }
+        assert!(!transport.is_loop_enabled(), "no wrap in the files");
+        assert!(transport.is_running(), "the UI sees it running");
+        assert_eq!(h.playback_tick.load(Ordering::Relaxed), BAR);
+
+        let step = |h: &mut Harness, transport: &mut Transport, until| {
+            h.handlers
+                .step_audio_export(until, &mut h.sequencer, transport)
+        };
         // At 120 bpm a tick is 520,833 ns: twenty are due before 10 ms.
         let until = start + Duration::from_millis(10);
-        assert_eq!(step(&mut h, &mut transport, until), StepAnswer::Advanced);
+        assert!(step(&mut h, &mut transport, until));
         assert_eq!(h.playback_tick.load(Ordering::Relaxed), BAR + 20);
-        assert_eq!(step(&mut h, &mut transport, until), StepAnswer::Advanced);
+        assert!(step(&mut h, &mut transport, until));
         assert_eq!(h.playback_tick.load(Ordering::Relaxed), BAR + 20);
 
         // To the selection's end, the tick that carries the end mark
         // included, and no further however far the render asks.
-        assert_eq!(step(&mut h, &mut transport, far), StepAnswer::Advanced);
+        assert!(step(&mut h, &mut transport, far));
         assert_eq!(h.playback_tick.load(Ordering::Relaxed), 2 * BAR + 1);
-        assert_eq!(step(&mut h, &mut transport, far), StepAnswer::Advanced);
+        assert!(step(&mut h, &mut transport, far));
         assert_eq!(h.playback_tick.load(Ordering::Relaxed), 2 * BAR + 1);
         assert_eq!(h.cursor_tick.load(Ordering::Relaxed), 7, "the cursor stays");
 
+        // With the run over the render is told to stop.
         h.sequencer.finish_audio_export();
-        assert_eq!(step(&mut h, &mut transport, far), StepAnswer::Gone);
+        assert!(!step(&mut h, &mut transport, far));
     }
 
     #[test]

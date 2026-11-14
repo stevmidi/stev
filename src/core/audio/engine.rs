@@ -131,10 +131,10 @@ impl AudioControl {
     }
 
     /// Has the engine render `run` offline: the stream is dropped for it and
-    /// opened again after. `false` if the engine thread is gone.
+    /// opened again after. With the engine thread gone, nothing renders it.
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-    pub(crate) fn render_offline(&self, run: Box<dyn OfflineRun>) -> bool {
-        self.tx.send(EngineCommand::Render(run)).is_ok()
+    pub(crate) fn render_offline(&self, run: Box<dyn OfflineRun>) {
+        self.tx.send(EngineCommand::Render(run)).ok();
     }
 }
 
@@ -999,7 +999,6 @@ impl Mixer {
     ///
     /// The next [`restart`](Self::restart) puts the clock and the delay back
     /// for a device.
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     fn render_offline(&mut self, run: &mut dyn OfflineRun, sample_rate: f64, buffer: u32) -> u64 {
         // A thread of ours, but the plugins are called on it all the same.
         enter_render_thread();
@@ -1284,16 +1283,15 @@ fn pick_buffer_size(supported: &SupportedBufferSize, desired: u32) -> BufferSize
 }
 
 /// Renders `run` offline through a mixer of `sources`, as the engine thread
-/// does once it has its mixer back, and returns the frames rendered: for a
-/// test of a source's offline behaviour from outside this module (the
-/// plugin host's, macOS).
+/// does once it has its mixer back: for a test of a source's offline
+/// behaviour from outside this module (the plugin host's, macOS).
 #[cfg(all(test, target_os = "macos"))]
 pub(crate) fn render_offline_for_test(
     sources: Vec<Box<dyn AudioSource>>,
     run: &mut dyn OfflineRun,
     sample_rate: f64,
     buffer: u32,
-) -> u64 {
+) {
     let mut mixer = Mixer::new(
         sources,
         sample_rate,
@@ -1301,7 +1299,7 @@ pub(crate) fn render_offline_for_test(
         Arc::new(AudioLoad::new()),
         Arc::new(StreamStatus::new(sample_rate as u32)),
     );
-    mixer.render_offline(run, sample_rate, buffer)
+    mixer.render_offline(run, sample_rate, buffer);
 }
 
 #[cfg(test)]

@@ -13,12 +13,12 @@ use std::time::{Duration, Instant};
 use rtrb::{Consumer, RingBuffer};
 
 use crate::core::audio::{AudioSource, OfflineRun, render_offline_for_test};
+use crate::core::sequencer::Sequencer;
 use crate::core::sequencer::test_support::{
-    clip_with_marker_notes, rect, sequencer_with_mixer_feeds, stub_instrument,
+    clip_with_marker_notes, rect, sequencer_with_mixer_feeds, step_audio_export, stub_instrument,
 };
-use crate::core::sequencer::{Sequencer, StepAnswer};
 use crate::core::shared_atomics::TrackMixAtomics;
-use crate::core::time::{Meter, PPQN};
+use crate::core::time::{Meter, ticks_to_nanos};
 
 use super::export::{CHANNELS, ExportRings, ExportShared, export_tap};
 use super::mixer::{InstrumentMixer, PluginHostCommand};
@@ -78,12 +78,7 @@ impl OfflineRun for SteppedExport {
             self.sequencer.cancel_audio_export();
         }
         self.blocks += 1;
-        if self.sequencer.audio_export_step_answer() != StepAnswer::Advanced {
-            return false;
-        }
-        while let Some(at) = self.sequencer.next_audio_export_tick(until) {
-            self.sequencer.tick(at);
-        }
+        step_audio_export(&mut self.sequencer, until);
         true
     }
 
@@ -139,7 +134,6 @@ fn export(
     let start = Instant::now();
     let id = sequencer.begin_audio_export(plan, PathBuf::new(), start);
     sequencer.reset_to_tick(from);
-    sequencer.audio_export_seeked();
 
     let mut run = SteppedExport {
         sequencer,
@@ -162,7 +156,7 @@ fn export(
 /// The frames a stretch of `ticks` at `tempo_us` comes to at `rate`: the
 /// end tick's instant, in whole nanoseconds, on the sample grid.
 fn frames_for(ticks: i32, tempo_us: i32, rate: u32) -> usize {
-    let nanos = ticks as u64 * tempo_us as u64 * 1000 / PPQN as u64;
+    let nanos = ticks_to_nanos(tempo_us, ticks as u64);
     (Duration::from_nanos(nanos).as_secs_f64() * f64::from(rate)).round() as usize
 }
 

@@ -16,7 +16,6 @@ use std::time::Instant;
 /// [`start`](Self::start)` + n / rate`, whenever it is rendered. The engine's
 /// clock is anchored there and never observed, so an event stamped with an
 /// instant on that line lands on its sample exactly.
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) trait OfflineRun: Send {
     /// The instant of the run's first frame.
     fn start(&self) -> Instant;

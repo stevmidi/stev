@@ -392,11 +392,9 @@ impl AudioSource for InstrumentMixer {
     /// drop-out (`480-audio-settings.md` decision 9). A rate change leaves
     /// the voices activated at the old rate held silent (see `voice_rates`)
     /// until the UI has them back (`PluginHostCommand::Return`), reactivates
-    /// them and inserts them again. An export the offline run left unended
-    /// (it was given up) is let go, so a device's block is never tapped.
+    /// them and inserts them again.
     fn restarted(&mut self, sample_rate: f64) {
         self.sample_rate = sample_rate;
-        self.export.abandon();
         self.pending.clear();
         while self.clip_midi_rx.pop().is_ok() {}
         while self.live_midi_rx.pop().is_ok() {}

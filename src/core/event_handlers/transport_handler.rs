@@ -37,8 +37,6 @@ impl EventHandlers {
                 // doesn't dip through centre.
                 sequencer.reset_wheels();
             }
-
-            TransportEvent::ExportSeeked => sequencer.audio_export_seeked(),
         }
     }
 
@@ -132,18 +130,11 @@ impl EventHandlers {
                 self.sync_clip_selection_to_cursor_workflow(sequencer);
             }
             TransportCommand::PlayFromTick { tick } => {
-                sequencer.begin_running_take(*tick);
-                transport.stop();
-                transport.jump_and_chase(*tick);
-                transport.start();
+                play_from_tick(*tick, transport, sequencer);
             }
             TransportCommand::StartExport { tick } => {
                 transport.set_loop_enabled(false);
-                sequencer.begin_running_take(*tick);
-                transport.stop();
-                transport.jump_and_chase(*tick);
-                transport.start();
-                transport.announce_export_seeked();
+                play_from_tick(*tick, transport, sequencer);
             }
             TransportCommand::TogglePlayback => {
                 if transport.is_running() {
@@ -165,4 +156,14 @@ impl EventHandlers {
             }
         }
     }
+}
+
+/// Stops, moves playback to `tick` with the notes sounding there chased, and
+/// starts again, leaving the cursor: `PlayFromTick`, and the seek of an audio
+/// export's run.
+fn play_from_tick(tick: i32, transport: &mut Transport, sequencer: &mut Sequencer) {
+    sequencer.begin_running_take(tick);
+    transport.stop();
+    transport.jump_and_chase(tick);
+    transport.start();
 }

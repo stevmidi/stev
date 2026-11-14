@@ -210,6 +210,18 @@ pub fn ticks_to_millis_f64(tempo: i32, ticks: i32) -> f64 {
     ticks_to_beats_f64(ticks) * f64::from(tempo) / 1000.0
 }
 
+/// Wall-clock nanoseconds for `ticks` (an amount) at `tempo_us` (µs per
+/// quarter), exact but for the last nanosecond's truncation: multiplied out
+/// before the one division, so tick `n`'s offset never drifts from `n` tick
+/// lengths. What an audio export's virtual time is counted in
+/// (`490-offline-export.md` decision 2). A tempo of zero or less is no time.
+pub(crate) const fn ticks_to_nanos(tempo_us: i32, ticks: u64) -> u64 {
+    if tempo_us <= 0 {
+        return 0;
+    }
+    (ticks as u128 * tempo_us as u128 * 1000 / PPQN as u128) as u64
+}
+
 /// Beats (fractional) → ticks (an amount), truncating.
 pub const fn beats_to_ticks(beats: f32) -> i32 {
     (beats * PPQN as f32) as i32
@@ -610,6 +622,16 @@ mod tests {
         // Use a tempo where integer division is exact: tempo=480_000, PPQN=960
         // 480_000 / 960 = 500; 500 * 960 = 480_000.
         assert_eq!(ticks_to_microseconds(480_000, PPQN), 480_000);
+    }
+
+    #[test]
+    fn ticks_to_nanos_is_exact_where_a_tick_is_no_whole_number_of_nanoseconds() {
+        // 96 bpm: a tick is 651,041.67 ns, five bars exactly 12.5 s.
+        assert_eq!(ticks_to_nanos(625_000, 1), 651_041);
+        assert_eq!(ticks_to_nanos(625_000, 19_200), 12_500_000_000);
+        // An hour at the slowest tempo is far past `u32` and `i32`.
+        assert_eq!(ticks_to_nanos(3_000_000, 1_152_000), 3_600_000_000_000);
+        assert_eq!(ticks_to_nanos(0, 960), 0);
     }
 
     #[test]

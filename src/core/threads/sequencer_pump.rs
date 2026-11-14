@@ -30,7 +30,7 @@ use crate::core::midi::input::RecordedMidi;
 use crate::core::project::ProjectData;
 use crate::core::sequencer::{ExportStep, Sequencer, SequencerCommand, UndoStep};
 use crate::core::time::TapTempo;
-use crate::core::transport::{TickOutcome, Transport, TransportCommand, TransportEvent};
+use crate::core::transport::{Transport, TransportCommand, TransportEvent};
 
 /// Starts the `"sequencer"` thread — the hub. Its `select!` loop ticks the
 /// transport on each [`ClockTick`], drains MIDI input, and dispatches every
@@ -77,43 +77,30 @@ pub(crate) fn start_sequencer_thread(
                         // taken off the channel.
                         let drained = iter::from_fn(|| tick_rx.try_recv().ok());
                         for tick in iter::once(first).chain(drained) {
+                            // An audio export's run is stepped by its render,
+                            // in virtual time: the clock's ticks play nothing
+                            // meanwhile, and the click gets none.
+                            if sequencer.is_exporting_audio() {
+                                continue;
+                            }
                             // The click counts from playback while running —
                             // read before the advance, so the start tick and
                             // a wrap's region start are each counted once —
                             // and from the free-running clock while stopped
                             // (`Metronome`'s module docs).
-                            //
-                            // An audio export's run is stepped by its render,
-                            // in virtual time: the clock's ticks play nothing
-                            // meanwhile, and the click gets none.
-                            let exporting = sequencer.is_exporting_audio();
-                            let running = transport.is_running() && !exporting;
+                            let running = transport.is_running();
                             let click_tick = if running {
                                 sequencer.playback_tick()
                             } else {
                                 tick.tick
                             };
                             if running {
-                                // A loop wrap must be re-anchored here, before
-                                // this tick reaches the sequencer — deferring it
-                                // to `transport_event_rx` lets a burst of ticks
-                                // drained in one wakeup play past the region end
-                                // into the next clip (stuck-note bug).
-                                if let TickOutcome::Wrapped(anchor) = transport.tick() {
-                                    event_handlers.reanchor_playback(
-                                        anchor,
-                                        &mut sequencer,
-                                        &transport,
-                                    );
-                                }
-                                sequencer.tick(tick.at);
+                                event_handlers.play_tick(tick.at, &mut sequencer, &mut transport);
                             }
                             if sequencer.take_playback_retimed() {
                                 metronome.playback_retimed();
                             }
-                            if !exporting {
-                                metronome.on_tick(tick.at, click_tick, sequencer.meter(), running);
-                            }
+                            metronome.on_tick(tick.at, click_tick, sequencer.meter(), running);
                         }
                         open.tick(at, &sequencer);
                     }
@@ -150,8 +137,22 @@ pub(crate) fn start_sequencer_thread(
                     recv(export_step_rx) -> step => {
                         match step {
                             Ok(step) => {
-                                let answer = event_handlers.step_audio_export(step.until, &mut sequencer, &mut transport);
-                                step.answer.send(answer).ok();
+                                // The run's own seek first. Its command was
+                                // queued, on this thread, before anything
+                                // could ask for a step, and `select!` takes
+                                // the ready channels in no order: so what
+                                // waits on the transport's two is handled
+                                // here, commands and then the events they
+                                // sent, and the tracks are on the
+                                // selection's start before a tick is played.
+                                for cmd in transport_command_rx.try_iter() {
+                                    event_handlers.handle_transport_command(&cmd, &mut transport, &mut sequencer, &metronome);
+                                }
+                                for event in transport_event_rx.try_iter() {
+                                    event_handlers.handle_transport_event(&event, &mut sequencer, &transport);
+                                }
+                                let stepped = event_handlers.step_audio_export(step.until, &mut sequencer, &mut transport);
+                                step.answer.send(stepped).ok();
                             }
                             // No plugin host, so no render to ask: a
                             // disconnected channel would otherwise be ready

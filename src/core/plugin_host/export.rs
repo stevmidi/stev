@@ -179,12 +179,6 @@ impl ExportTap {
         }
     }
 
-    /// Lets go of the export being cut, unended: the offline run rendering
-    /// it is over. The writer finds out by hearing nothing more.
-    pub(super) fn abandon(&mut self) {
-        self.armed = None;
-    }
-
     /// The part of the block `[block_start, block_start + frames)` that is
     /// inside the export, as offsets into the block; `None` when none is, and
     /// for a block that isn't rendered `offline`: a device's block is never
@@ -549,17 +543,6 @@ mod tests {
         tap.end_block(None, 8);
         assert!(shared.has_ended(ID));
         assert!(drained(&mut rings.mix).is_empty());
-    }
-
-    #[test]
-    fn an_abandoned_export_is_cut_no_further() {
-        let Fixture {
-            mut tap, shared, ..
-        } = armed(&[0], 0);
-        tap.abandon();
-        assert_eq!(tap.begin_block(0, 4, true), None);
-        tap.end_block(None, 4);
-        assert!(!shared.has_ended(ID), "it never ended");
     }
 
     #[test]

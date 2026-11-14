@@ -298,7 +298,7 @@ pub(crate) fn start_plugin_host(
         Arc::clone(&atomics.audio_export),
         Arc::clone(&engine.status),
         export_steps,
-        move |run| control.render_offline(Box::new(run)),
+        Box::new(move |run| control.render_offline(Box::new(run))),
     );
     start_export_writer(audio_export_jobs, writer, sequencer_command_tx);
 

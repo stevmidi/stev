@@ -105,6 +105,18 @@ pub(crate) fn sequencer_with_mixer_feeds() -> (
     (sequencer, clip_events, marks)
 }
 
+/// Plays every tick of `sequencer`'s audio export due before `until`, as the
+/// `"sequencer"` thread's step arm does but for the transport, and returns
+/// how many that was.
+pub(crate) fn step_audio_export(sequencer: &mut Sequencer, until: Instant) -> usize {
+    let mut played = 0;
+    while let Some(at) = sequencer.next_audio_export_tick(until) {
+        sequencer.tick(at);
+        played += 1;
+    }
+    played
+}
+
 /// [`sequencer_with`] with the loop enabled, without the ring.
 pub(crate) fn test_sequencer() -> Sequencer {
     sequencer_with(true).0
