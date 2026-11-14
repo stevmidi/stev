@@ -115,13 +115,14 @@ type LoadedInstrument = (Box<dyn InstrumentVoice>, Box<dyn InstrumentEditor>);
 const CMD_RING_CAPACITY: usize = 4 * MAX_TRACKS;
 
 /// Capacity of the `rtrb` ring the mixer hands removed voices back on, for the
-/// reclaim thread to drop off the audio thread (and returned ones, for it to
-/// pass to the UI: at most one per track, `MAX_TRACKS`, on a rate change).
-/// The worst realistic burst is one full project reload — a `Remove` per instrument track, `MAX_TRACKS` at
-/// most — before the reclaim thread's next drain; 2× that. A full ring (the
-/// reclaim thread stalled through several plugin swaps — not reachable in
-/// practice) falls back to dropping the voice on the audio thread.
-const DEAD_VOICE_RING_CAPACITY: usize = 2 * MAX_TRACKS;
+/// reclaim thread to drop off the audio thread, and returned ones, for it to
+/// pass to the UI. The worst realistic burst is a rate change landing on a
+/// project reload before the reclaim thread's next drain: a `Return` and a
+/// `Remove` per instrument track, `2 * MAX_TRACKS`, so one track's more
+/// again. A full ring (the reclaim thread stalled through several plugin
+/// swaps — not reachable in practice) falls back to dropping the voice on
+/// the audio thread.
+const DEAD_VOICE_RING_CAPACITY: usize = 3 * MAX_TRACKS;
 
 /// Handle to the running plugin host, kept by `Display`. Used to load plugins
 /// ([`load_instrument`]), send runtime commands, and coordinate app-exit
@@ -155,8 +156,8 @@ pub(crate) enum VoiceBack {
     /// Track `0`'s removed voice has been dropped: its instance can go.
     Dropped(usize),
     /// Track `0`'s voice, handed back by a [`PluginHostCommand::Return`] for
-    /// [`PluginAudioHandle::reactivate`].
-    Returned(usize, ReturnedVoice),
+    /// [`PluginAudioHandle::reactivate`] — `None` if the slot had none.
+    Returned(usize, Option<ReturnedVoice>),
 }
 
 /// A voice the mixer handed back to be reactivated, stopped, opaque to the
@@ -317,7 +318,7 @@ fn reclaim_voices(
                 }
                 VoiceExit::Returned => {
                     ui_wake.request();
-                    VoiceBack::Returned(track, ReturnedVoice(voice))
+                    VoiceBack::Returned(track, voice.map(ReturnedVoice))
                 }
             };
             voice_back_tx.send(back).ok();

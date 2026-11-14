@@ -105,8 +105,10 @@ pub(crate) enum PluginHostCommand {
 }
 
 /// A voice leaving the mixer for the `"plugin-host"` thread: its slot, the
-/// voice and why.
-pub(super) type LeavingVoice = (usize, Box<dyn InstrumentVoice>, VoiceExit);
+/// voice and why. A removed voice is always there; a `Return` is answered
+/// even from an empty slot, with `None`, so the UI never waits for a voice
+/// that isn't coming.
+pub(super) type LeavingVoice = (usize, Option<Box<dyn InstrumentVoice>>, VoiceExit);
 
 /// Why a voice left the mixer, for the `"plugin-host"` thread: to drop, or
 /// to pass back to the UI.
@@ -346,7 +348,7 @@ impl InstrumentMixer {
                     (track, voice, VoiceExit::Returned)
                 }
             };
-            if let Some(old) = old {
+            if old.is_some() || exit == VoiceExit::Returned {
                 self.dead_tx.push((track, old, exit)).ok();
             }
             // The meter belongs to the voice: a new one, or none, starts it
@@ -842,8 +844,8 @@ mod tests {
         render(&mut mixer, 0.01);
         let (track, voice, exit) = reclaimed.pop().ok().unwrap();
         assert_eq!((track, exit), (0, VoiceExit::Returned));
-        let voice = voice.into_any().downcast::<ConstantVoice>().ok().unwrap();
-        assert!(voice.stopped, "stopped on the audio thread");
+        let voice = voice.unwrap().into_any().downcast::<ConstantVoice>();
+        assert!(voice.ok().unwrap().stopped, "stopped on the audio thread");
         assert_eq!(track_mix.audio_level(0), [ChannelLevel::default(); 2]);
 
         // Back at the new rate, it plays again.
@@ -857,6 +859,19 @@ mod tests {
     }
 
     #[test]
+    fn a_return_from_an_empty_slot_is_still_answered() {
+        let (mut mixer, _track_mix, mut commands, mut reclaimed) = mixer_with_rings();
+        commands
+            .push(PluginHostCommand::Return { track: 3 })
+            .ok()
+            .unwrap();
+        render(&mut mixer, 0.01);
+        let (track, voice, exit) = reclaimed.pop().ok().unwrap();
+        assert_eq!((track, exit), (3, VoiceExit::Returned));
+        assert!(voice.is_none());
+    }
+
+    #[test]
     fn a_removed_voice_leaves_to_be_dropped() {
         let (mut mixer, _track_mix, mut commands, mut reclaimed) = mixer_with_rings();
         mixer.voices[0] = Some(Box::new(ConstantVoice::new(1.0)));
@@ -867,7 +882,12 @@ mod tests {
         render(&mut mixer, 0.01);
         let (track, voice, exit) = reclaimed.pop().ok().unwrap();
         assert_eq!((track, exit), (0, VoiceExit::Removed));
-        let voice = voice.into_any().downcast::<ConstantVoice>().ok().unwrap();
+        let voice = voice
+            .unwrap()
+            .into_any()
+            .downcast::<ConstantVoice>()
+            .ok()
+            .unwrap();
         assert!(!voice.stopped);
     }
 

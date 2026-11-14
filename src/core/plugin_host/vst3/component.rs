@@ -242,7 +242,8 @@ unsafe fn activate(
 /// deactivate, `setupProcessing` with the new rate, activate
 /// (`480-audio-settings.md` decision 8). The instance, its controller and
 /// its state are untouched. Returns the plugin's tail at the new rate
-/// (`getTailSamples` counts samples). A plugin that refuses is left inactive.
+/// (`getTailSamples` counts samples). A plugin that refuses to deactivate
+/// is left as it is, and one that refuses the new setup inactive.
 ///
 /// # Safety
 ///
@@ -260,7 +261,9 @@ pub(super) unsafe fn reactivate(
     // processing setup changed: only while inactive.
     unsafe {
         processor.setProcessing(0);
-        component.setActive(0);
+        if component.setActive(0) != kResultOk {
+            return Err("refused to deactivate".to_string());
+        }
         activate(component, &processor, sample_rate, max_frames)?;
         Ok(processor.getTailSamples())
     }

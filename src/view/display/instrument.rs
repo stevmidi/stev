@@ -708,7 +708,7 @@ impl Display {
     /// going first, as a voice always does before its instance. A plugin
     /// that won't reactivate is loaded again from its state
     /// (`reload_slot_instrument`).
-    fn take_back_voice(&mut self, slot: usize, voice: ReturnedVoice) {
+    fn take_back_voice(&mut self, slot: usize, voice: Option<ReturnedVoice>) {
         if let Some(mut editor) = self.take_pending_drop(slot) {
             drop(voice);
             editor.deactivate();
@@ -718,11 +718,26 @@ impl Display {
             self.instruments.audio.as_mut(),
             self.instruments.track_instruments.get_mut(slot),
         ) else {
+            warn!("plugin host: a voice came back for slot {slot}, with no plugin waiting for it");
             return;
         };
         if loaded.sample_rate.is_some() {
+            warn!(
+                "plugin host: a voice came back for '{}', which wasn't waiting for one",
+                loaded.entry.name
+            );
             return;
         }
+        // The mixer had no voice in the slot (or lost it): what's left of
+        // the plugin is its instance, so load it again.
+        let Some(voice) = voice else {
+            warn!(
+                "plugin host: no voice came back for '{}'; loading it again",
+                loaded.entry.name
+            );
+            self.reload_slot_instrument(slot);
+            return;
+        };
         match handle.reactivate(slot, voice, &mut *loaded.editor) {
             Ok(rate) => {
                 info!(
@@ -744,8 +759,10 @@ impl Display {
     /// Loads the plugin in `slot` again from its live state, at the
     /// stream's rate: the fallback for one that wouldn't reactivate in place
     /// (`480-audio-settings.md` decision 8). Its voice is already out of the
-    /// mixer. Its editor reopens if it was open; a plugin that won't load
-    /// either leaves its track silent, and the footer says so.
+    /// mixer. Its editor reopens if it was open. A plugin whose state can't
+    /// be saved isn't loaded, rather than coming back at its default sound,
+    /// and one that won't load either: its track is silent, and the footer
+    /// says so.
     fn reload_slot_instrument(&mut self, slot: usize) {
         let Some(TrackInstrument {
             mut editor,
@@ -760,17 +777,23 @@ impl Display {
         else {
             return;
         };
-        let state = editor.save_state().unwrap_or_default();
+        let state = editor.save_state();
         editor.teardown_gui();
         editor.deactivate();
         drop(editor);
-        self.load_installed(
-            slot,
-            &entry.bundle_path,
-            &entry.plugin_id,
-            &entry.name,
-            &state,
-        );
+        match &state {
+            Some(state) => self.load_installed(
+                slot,
+                &entry.bundle_path,
+                &entry.plugin_id,
+                &entry.name,
+                state,
+            ),
+            None => warn!(
+                "plugin host: '{}' couldn't save its state; not loading it again",
+                entry.name
+            ),
+        }
         match self.instruments.track_instruments[slot].as_mut() {
             Some(loaded) if editor_was_open => loaded.editor.show(),
             Some(_) => {}
