@@ -76,7 +76,7 @@ methods take a track's position and look the slot up in its `tracks` mirror
   `probe_buffer_size_supported` (a throwaway no-op stream), falling back to the
   device default if rejected. `RenderCtx::schedule_delay` is the clip-event
   scheduling delay: one buffer of the running stream (256 frames as asked for).
-- **Sample rate** is the running stream's (`StreamRate`, shared from the
+- **Sample rate** is the running stream's (`StreamStatus`, shared from the
   engine): `prepare_instrument` reads it once, activates the plugin at it, and
   sends it with the voice (`PluginHostCommand::Insert::sample_rate`). When an
   outside change restarts the engine at another rate (`480-audio-settings.md`),
@@ -591,12 +591,13 @@ or the export depend on anything but the arrangement
   glitches what was heard but not the files, and is only noted ("2 overruns,
   1 xrun while playing"; user-checked 2026-10-19).
 - **A device that changes or goes away.** The engine counts every stream error
-  that isn't an xrun (`AudioLoad::stream_errors`). The writer stops early and
-  reports why (`AudioExportOutcome::stopped`) when that count moves or the
-  mixer sends nothing for 3 s; the handler closes the run's marks, removes
+  that isn't an xrun (`AudioLoad::stream_errors`) and every restart of its
+  stream (`StreamStatus::restarts`, `480-audio-settings.md`). The writer stops
+  early and reports why (`AudioExportOutcome::stopped`) when either count moves
+  or the mixer sends nothing for 3 s; the handler closes the run's marks, removes
   its files and the folder, and the footer says "Export stopped: the audio device changed" (or
-  "… the audio output stopped"). The engine never follows a device or rate
-  change, so this is all the export can do.
+  "… the audio output stopped"). A restart under a running export is never
+  followed through: the export ends, and its files are written at one rate.
 
 ## Per-track teardown ordering
 

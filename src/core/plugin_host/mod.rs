@@ -89,7 +89,7 @@ use transport::TransportState;
 use ui_wake::UiWake;
 use voice::InstrumentVoice;
 
-use crate::core::audio::{AudioSource, EngineHandle, StreamRate};
+use crate::core::audio::{AudioSource, EngineHandle, StreamStatus};
 use crate::core::config::MAX_TRACKS;
 use crate::core::midi::message::Midi3;
 use crate::core::sequencer::{AudioExportJob, ClipInstrumentEvent, ExportMark, SequencerCommand};
@@ -137,9 +137,9 @@ pub(crate) struct PluginAudioHandle {
     pub(crate) voice_dropped_rx: Receiver<usize>,
     /// App-exit coordination — see [`HostShutdown`].
     pub(crate) shutdown: Arc<HostShutdown>,
-    /// The rate the engine's stream runs at — each plugin is activated at it
-    /// as it loads.
-    rate: Arc<StreamRate>,
+    /// The engine's stream — each plugin is activated at its rate as it
+    /// loads.
+    stream: Arc<StreamStatus>,
     /// Shared egui context slot, for a plugin to wake the reactive UI (CLAP's
     /// main-thread callback requests).
     repaint: Arc<OnceLock<egui::Context>>,
@@ -191,7 +191,8 @@ pub(crate) fn start_plugin_host(
         loop_enabled: Arc::clone(&atomics.loop_enabled),
     };
 
-    let (export, export_rings, export_shared) = export_tap(export_mark_rx, engine.rate.get());
+    let (export, export_rings, export_shared) =
+        export_tap(export_mark_rx, engine.status.sample_rate());
     let mixer = InstrumentMixer::new(
         cmd_rx,
         dead_tx,
@@ -201,7 +202,7 @@ pub(crate) fn start_plugin_host(
         Arc::clone(&atomics.track_mix),
         Arc::clone(&shutdown),
         export,
-        engine.rate.get(),
+        engine.status.sample_rate(),
     );
     engine.add_source(Box::new(mixer) as Box<dyn AudioSource>)?;
 
@@ -218,7 +219,7 @@ pub(crate) fn start_plugin_host(
         export_shared,
         Arc::clone(&atomics.audio_export),
         Arc::clone(&engine.load),
-        Arc::clone(&engine.rate),
+        Arc::clone(&engine.status),
     );
     start_export_writer(audio_export_jobs, writer, sequencer_command_tx);
 
@@ -228,7 +229,7 @@ pub(crate) fn start_plugin_host(
         cmd_tx,
         voice_dropped_rx,
         shutdown,
-        rate: Arc::clone(&engine.rate),
+        stream: Arc::clone(&engine.status),
         repaint,
         ui_wake,
     })
@@ -362,7 +363,7 @@ pub(crate) fn prepare_instrument(
     state: Option<&[u8]>,
 ) -> Result<PreparedInstrument, String> {
     // Read once, so the voice is known to run at the rate it was built at.
-    let sample_rate = handle.rate.get();
+    let sample_rate = handle.stream.sample_rate();
     let (mut voice, editor) = match entry.format {
         PluginFormat::Clap => clap::load(handle, track, entry, state, sample_rate)?,
         PluginFormat::Vst3 => vst3::load(handle, track, entry, state, sample_rate)?,

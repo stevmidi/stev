@@ -27,7 +27,7 @@ use super::journal::{self, JournalWriter, MAX_JOURNAL_SOURCES, OverrunRecord};
 use super::load::micros;
 use super::{
     AudioClock, AudioLoad, AudioSource, DESIRED_BUFFER_FRAMES, DeviceWorkgroup,
-    FALLBACK_SAMPLE_RATE, MAX_FRAMES, RenderCtx, StreamRate, WorkerPool, enter_render_thread,
+    FALLBACK_SAMPLE_RATE, MAX_FRAMES, RenderCtx, StreamStatus, WorkerPool, enter_render_thread,
     max_dsp_threads,
 };
 use crate::core::config::MAX_TRACKS;
@@ -44,6 +44,10 @@ const DEVICE_POLL_INTERVAL: Duration = Duration::from_millis(500);
 /// The hand-back is the stream's own teardown, so this only runs out if
 /// CoreAudio hangs; the engine then stops for the session.
 const MIXER_RETURN_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// How long the poll waits before trying again a device that failed to open.
+/// A retry rebuilds the worker pool, so it isn't one to run every poll.
+const FAILED_OPEN_RETRY: Duration = Duration::from_secs(5);
 
 /// Restart requests that can queue while one runs. A device being plugged in
 /// fires several; they are coalesced, so a full queue loses nothing.
@@ -75,10 +79,11 @@ fn worker_thread_count() -> usize {
 /// host); `load` is read on every platform.
 pub(crate) struct EngineHandle {
     /// The sample rate the running stream opened at — the plugin host builds
-    /// its plugin processors against it, and the audio export writes at it.
-    /// [`FALLBACK_SAMPLE_RATE`] while no device is open.
+    /// its plugin processors against it, and the audio export writes at it
+    /// ([`FALLBACK_SAMPLE_RATE`] while no device is open) — and how many times
+    /// the stream has restarted.
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-    pub(crate) rate: Arc<StreamRate>,
+    pub(crate) status: Arc<StreamStatus>,
     /// How much of each block's deadline the render is actually using. Shared
     /// with the audio callback; handed to `Display` for the header readout.
     pub(crate) load: Arc<AudioLoad>,
@@ -105,7 +110,7 @@ pub(crate) struct AudioEngine;
 impl AudioEngine {
     /// Spawns the `"audio-engine"` thread mixing `sources`, opens the stream on
     /// the system default output, and returns once that first open has been
-    /// tried, so [`EngineHandle::rate`] is the device's. With no device the
+    /// tried, so [`EngineHandle::status`] has the device's. With no device the
     /// app starts silent, and the engine opens one when it appears.
     /// `notify` puts a line in the footer when an outside change restarts
     /// the stream (`480-audio-settings.md` decision 11).
@@ -115,7 +120,7 @@ impl AudioEngine {
     {
         let (add_source_tx, add_source_rx) = RingBuffer::new(ADD_SOURCE_RING_CAPACITY);
         let load = Arc::new(AudioLoad::new());
-        let rate = Arc::new(StreamRate::new(FALLBACK_SAMPLE_RATE));
+        let status = Arc::new(StreamStatus::new(FALLBACK_SAMPLE_RATE));
         let (mixer_tx, mixer_rx) = bounded(1);
         let (restart_tx, restart_rx) = bounded(RESTART_QUEUE_CAPACITY);
         // The mixer waits in its channel for the first open, as it does
@@ -130,15 +135,15 @@ impl AudioEngine {
             .ok();
         let mut thread = EngineThread {
             host: default_host(),
-            stream: None,
-            device_id: None,
+            running: None,
             opened: None,
+            failed_at: None,
             generation: 0,
             restart_tx,
             restart_rx,
             mixer_tx,
             mixer_rx,
-            rate: rate.clone(),
+            status: status.clone(),
             load: load.clone(),
             notify: Box::new(notify),
         };
@@ -163,7 +168,7 @@ impl AudioEngine {
         );
 
         EngineHandle {
-            rate,
+            status,
             load,
             add_source_tx,
         }
@@ -189,9 +194,10 @@ enum RestartCause {
 impl RestartCause {
     /// The restart a stream error asks for, if any. cpal reports a device
     /// going away as `DeviceNotAvailable` and, for a stream opened on a
-    /// specific device, a rate change as `StreamInvalidated`; `DeviceChanged`
-    /// only comes from its default-following unit, which the engine doesn't
-    /// open, but would mean the same as the poll noticing.
+    /// specific device, a rate change as `StreamInvalidated`. `DeviceChanged`
+    /// (a host that re-routed the stream itself) never comes from the
+    /// CoreAudio stream the engine opens, but another host may send it, and it
+    /// means what the poll noticing would.
     fn from_error(kind: ErrorKind) -> Option<Self> {
         match kind {
             ErrorKind::DeviceNotAvailable => Some(Self::DeviceLost),
@@ -222,6 +228,9 @@ fn restart_message(
     previous: Option<&Opened>,
     now: Option<&Opened>,
 ) -> Option<String> {
+    if cause == RestartCause::Launch {
+        return None;
+    }
     let lost = || match previous {
         Some(p) => format!("{} disconnected", p.name),
         None => "The audio output disconnected".to_string(),
@@ -236,7 +245,6 @@ fn restart_message(
         };
     };
     let line = match cause {
-        RestartCause::Launch => return None,
         RestartCause::DeviceLost => format!("{}; using {}", lost(), now.name),
         RestartCause::RateChanged if previous.is_some_and(|p| p.name == now.name) => {
             format!("Device rate changed to {}", khz(now.sample_rate))
@@ -244,7 +252,7 @@ fn restart_message(
         RestartCause::DefaultChanged => {
             format!("Audio switched to {} (System default changed)", now.name)
         }
-        RestartCause::RateChanged | RestartCause::Retry => {
+        RestartCause::Launch | RestartCause::RateChanged | RestartCause::Retry => {
             format!("Audio switched to {}", now.name)
         }
     };
@@ -262,19 +270,28 @@ fn khz(hz: u32) -> String {
     format!("{} kHz", (khz * 10.0).round() / 10.0)
 }
 
+/// The open stream and the device it runs on.
+struct Running {
+    /// Held for its life. Dropping it stops the callback and hands the mixer
+    /// back on `EngineThread::mixer_tx`.
+    _stream: Stream,
+    /// The device's persistent ID, compared against the system default on
+    /// every poll; `None` if the device wouldn't say, and then not followed.
+    device_id: Option<DeviceId>,
+}
+
 /// The `"audio-engine"` thread's state: the open stream, if any, and the
 /// channels the mixer and the restart requests travel on.
 struct EngineThread {
     /// The audio host devices are looked up in.
     host: Host,
-    /// The running stream. Dropping it stops the callback and hands the mixer
-    /// back on `mixer_tx`.
-    stream: Option<Stream>,
-    /// The running stream's device, compared against the system default on
-    /// every poll.
-    device_id: Option<DeviceId>,
+    /// The running stream, if one is open.
+    running: Option<Running>,
     /// The last stream that opened, kept while none is.
     opened: Option<Opened>,
+    /// When the last open failed with a device there, so the poll doesn't
+    /// rebuild the pool every half second for a device that won't open.
+    failed_at: Option<Instant>,
     /// Counts restarts. Each stream's error callback carries the count it
     /// opened under, so an error from a stream already replaced is ignored.
     generation: u64,
@@ -288,10 +305,11 @@ struct EngineThread {
     mixer_tx: Sender<Mixer>,
     /// The mixer, whenever no stream holds it.
     mixer_rx: Receiver<Mixer>,
-    /// The running rate, for the plugin host and the export.
-    rate: Arc<StreamRate>,
-    /// The engine's meter: an outside restart counts as a stream error, which
-    /// is what ends a running export (`480-audio-settings.md` decision 10).
+    /// The running rate and the restart count, for the plugin host and the
+    /// export: a restart ends a running export (`480-audio-settings.md`
+    /// decision 10).
+    status: Arc<StreamStatus>,
+    /// The engine's meter, which the stream's error callback counts into.
     load: Arc<AudioLoad>,
     /// Puts a line in the footer.
     notify: Box<dyn Fn(String) + Send>,
@@ -324,67 +342,78 @@ impl EngineThread {
         }
     }
 
-    /// The restart the device list calls for: a device to open when none is,
-    /// or the system default having moved off the running stream's device.
+    /// The restart the device list calls for: a device to open when none is
+    /// (a device that just failed to, only every [`FAILED_OPEN_RETRY`]), or
+    /// the system default having moved off the running stream's device.
     fn poll(&self) -> Option<RestartCause> {
         let default = self.host.default_output_device();
-        if self.stream.is_none() {
-            return default.is_some().then_some(RestartCause::Retry);
-        }
+        let Some(running) = &self.running else {
+            let due = self
+                .failed_at
+                .is_none_or(|at| at.elapsed() >= FAILED_OPEN_RETRY);
+            return (default.is_some() && due).then_some(RestartCause::Retry);
+        };
         let default_id = default.and_then(|d| d.id().ok())?;
-        (self.device_id.as_ref() != Some(&default_id)).then_some(RestartCause::DefaultChanged)
+        let moved = running
+            .device_id
+            .as_ref()
+            .is_some_and(|id| *id != default_id);
+        moved.then_some(RestartCause::DefaultChanged)
     }
 
     /// Drops the stream, takes the mixer back and opens a new stream on the
     /// device as it is now, then says what happened. Returns `false` if the
     /// mixer never came back, which leaves the app silent for the session.
     fn restart(&mut self, cause: RestartCause) -> bool {
-        if self.stream.take().is_some() {
-            self.load.record_stream_error();
+        if self.running.take().is_some() {
+            self.status.count_restart();
         }
-        self.device_id = None;
         self.generation += 1;
         let Ok(mixer) = self.mixer_rx.recv_timeout(MIXER_RETURN_TIMEOUT) else {
             error!("audio engine: the stream never handed the mixer back; audio is off");
             return false;
         };
 
-        let previous = self.opened.clone();
-        let now = match self.open(mixer) {
-            Ok((stream, device_id, opened)) => {
+        match self.open(mixer) {
+            Ok((running, opened)) => {
                 info!(
                     "audio engine: {} @ {} Hz ({cause:?})",
                     opened.name, opened.sample_rate
                 );
-                self.stream = Some(stream);
-                self.device_id = device_id;
-                self.opened = Some(opened.clone());
-                Some(opened)
-            }
-            Err(e) if cause == RestartCause::Retry => {
-                debug!("audio engine: still no stream: {e}");
-                None
+                self.notify_restart(cause, Some(&opened));
+                self.running = Some(running);
+                self.opened = Some(opened);
+                self.failed_at = None;
             }
             Err(e) => {
-                error!("audio engine: no stream ({cause:?}): {e}");
-                None
+                if cause == RestartCause::Retry {
+                    debug!("audio engine: still no stream: {e}");
+                } else {
+                    error!("audio engine: no stream ({cause:?}): {e}");
+                }
+                self.notify_restart(cause, None);
+                self.failed_at = Some(Instant::now());
             }
-        };
-        if let Some(line) = restart_message(cause, previous.as_ref(), now.as_ref()) {
-            (self.notify)(line);
         }
         true
+    }
+
+    /// Puts the footer line for a restart that opened `now`, if any.
+    fn notify_restart(&self, cause: RestartCause, now: Option<&Opened>) {
+        if let Some(line) = restart_message(cause, self.opened.as_ref(), now) {
+            (self.notify)(line);
+        }
     }
 
     /// Opens a stream on the system default output at its own rate, with
     /// `mixer` moved into the callback. On any failure the mixer goes back on
     /// `mixer_tx`, through [`Returning`]'s drop.
-    fn open(&mut self, mixer: Mixer) -> Result<(Stream, Option<DeviceId>, Opened), String> {
+    fn open(&mut self, mixer: Mixer) -> Result<(Running, Opened), String> {
         let mut held = Returning {
             mixer: Some(mixer),
             home: self.mixer_tx.clone(),
         };
-        let device = default_device(&self.host).ok_or("no output device")?;
+        let (device, device_id) = default_device(&self.host).ok_or("no output device")?;
         let supported = device
             .default_output_config()
             .map_err(|e| format!("no default output config: {e}"))?;
@@ -416,7 +445,7 @@ impl EngineThread {
         let workgroup = Arc::new(DeviceWorkgroup::for_device(&device));
         held.mixer()
             .restart(f64::from(sample_rate), workgroup, schedule_delay);
-        self.rate.set(sample_rate);
+        self.status.set_sample_rate(sample_rate);
 
         let generation = self.generation;
         let restart_tx = self.restart_tx.clone();
@@ -449,7 +478,11 @@ impl EngineThread {
             name: device_name(&device),
             sample_rate,
         };
-        Ok((stream, device.id().ok(), opened))
+        let running = Running {
+            _stream: stream,
+            device_id,
+        };
+        Ok((running, opened))
     }
 }
 
@@ -458,10 +491,12 @@ impl EngineThread {
 /// the workers in the old device's workgroup; a stream on the device itself
 /// reports its rate changing and its going away, and the engine follows the
 /// default by polling (`480-audio-settings.md` § Things to check).
-fn default_device(host: &Host) -> Option<Device> {
+/// Returns it with its persistent ID, if it has one.
+fn default_device(host: &Host) -> Option<(Device, Option<DeviceId>)> {
     let default = host.default_output_device()?;
-    let specific = default.id().ok().and_then(|id| host.device_by_id(&id));
-    Some(specific.unwrap_or(default))
+    let id = default.id().ok();
+    let specific = id.as_ref().and_then(|id| host.device_by_id(id));
+    Some((specific.unwrap_or(default), id))
 }
 
 /// `device`'s name for the footer.

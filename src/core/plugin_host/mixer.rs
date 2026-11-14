@@ -466,20 +466,20 @@ impl AudioSource for InstrumentMixer {
         //
         // A voice held at another rate than the stream's is never called
         // into either, and renders nothing.
-        let held: [bool; MAX_TRACKS] =
-            std::array::from_fn(|track| self.voice_rates[track] != self.sample_rate);
+        let (rates, rate) = (&self.voice_rates, self.sample_rate);
+        let held = |track: usize| rates[track] != rate;
         let mut awake = 0;
         for (track, voice) in self.voices.iter_mut().enumerate() {
             if let Some(voice) = voice {
                 voice.wake_on_request(frames);
-                awake += usize::from(!voice.mix().sleeping && !held[track]);
+                awake += usize::from(!voice.mix().sleeping && !held(track));
             }
         }
         ctx.pool
             .for_each(self.voices.as_mut_slice(), awake, |track, slot| {
                 if let Some(voice) = slot {
                     // A sleeping voice is never called into, so it isn't timed.
-                    let (rendered, render_time) = if voice.mix().sleeping || held[track] {
+                    let (rendered, render_time) = if voice.mix().sleeping || held(track) {
                         (false, Duration::ZERO)
                     } else {
                         let started = Instant::now();

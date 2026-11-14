@@ -242,26 +242,23 @@ fn main() {
     #[cfg(target_os = "macos")]
     let mut plugin_host_started = false;
     #[cfg(target_os = "macos")]
-    {
-        match start_plugin_host(
-            &mut audio_engine,
-            shared_channels.clip_instrument_midi_rx,
-            shared_channels.live_instrument_midi_rx,
-            shared_channels.export_mark_rx,
-            shared_channels.audio_export_job_rx,
-            shared_channels.sequencer_command_tx.clone(),
-            &shared_atomics,
-            repaint_ctx.clone(),
-        ) {
-            Ok(handle) => {
-                display
-                    .attach_instrument_audio(handle, shared_atomics.live_instrument_target.clone());
-                // The catalog scan is deliberately *not* started here — see
-                // the eframe creation closure below.
-                plugin_host_started = true;
-            }
-            Err(e) => error!("plugin host disabled: {e}"),
+    match start_plugin_host(
+        &mut audio_engine,
+        shared_channels.clip_instrument_midi_rx,
+        shared_channels.live_instrument_midi_rx,
+        shared_channels.export_mark_rx,
+        shared_channels.audio_export_job_rx,
+        shared_channels.sequencer_command_tx.clone(),
+        &shared_atomics,
+        repaint_ctx.clone(),
+    ) {
+        Ok(handle) => {
+            display.attach_instrument_audio(handle, shared_atomics.live_instrument_target.clone());
+            // The catalog scan is deliberately *not* started here — see
+            // the eframe creation closure below.
+            plugin_host_started = true;
         }
+        Err(e) => error!("plugin host disabled: {e}"),
     }
     // No plugin host off macOS — drop the consumers so the taps fail fast
     // (fill the ring, then every push fails) instead of running forever

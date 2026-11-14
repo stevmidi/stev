@@ -57,27 +57,46 @@ pub(crate) const DESIRED_BUFFER_FRAMES: u32 = 256;
 /// none is open (`480-audio-settings.md`).
 pub(crate) const FALLBACK_SAMPLE_RATE: u32 = 48_000;
 
-/// The sample rate the running stream opened at, shared with whoever builds
-/// something against it outside the engine: the plugin host's loads and the
-/// audio export's files. The engine stores it on every restart
+/// What the engine shares about its stream with whoever builds something
+/// against it outside the engine: the plugin host's loads and the audio
+/// export's files. The engine updates it on every restart
 /// (`480-audio-settings.md` decision 5); a reader takes it fresh each time.
-pub(crate) struct StreamRate(AtomicU32);
+pub(crate) struct StreamStatus {
+    /// The rate the running stream opened at, Hz.
+    sample_rate: AtomicU32,
+    /// How many times a running stream has been dropped for another.
+    restarts: AtomicU32,
+}
 
-impl StreamRate {
-    /// A rate of `hz` until the engine stores another.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+impl StreamStatus {
+    /// A rate of `hz` and no restarts, until the engine says otherwise.
     pub(crate) fn new(hz: u32) -> Self {
-        Self(AtomicU32::new(hz))
+        Self {
+            sample_rate: AtomicU32::new(hz),
+            restarts: AtomicU32::new(0),
+        }
     }
 
     /// The running rate, Hz. Only the macOS plugin host reads it.
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-    pub(crate) fn get(&self) -> f64 {
-        f64::from(self.0.load(Ordering::Relaxed))
+    pub(crate) fn sample_rate(&self) -> f64 {
+        f64::from(self.sample_rate.load(Ordering::Relaxed))
+    }
+
+    /// How many times the stream has restarted. A change under a running
+    /// export ends it (`480-audio-settings.md` decision 10).
+    pub(crate) fn restarts(&self) -> u32 {
+        self.restarts.load(Ordering::Relaxed)
     }
 
     /// Records the rate a new stream opened at.
-    fn set(&self, hz: u32) {
-        self.0.store(hz, Ordering::Relaxed);
+    fn set_sample_rate(&self, hz: u32) {
+        self.sample_rate.store(hz, Ordering::Relaxed);
+    }
+
+    /// Counts a running stream dropped for a restart.
+    fn count_restart(&self) {
+        self.restarts.fetch_add(1, Ordering::Relaxed);
     }
 }
 

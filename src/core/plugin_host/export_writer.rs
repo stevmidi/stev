@@ -25,7 +25,7 @@ use std::time::{Duration, Instant};
 use crossbeam_channel::{Receiver, Sender};
 use rtrb::Consumer;
 
-use crate::core::audio::{AudioLoad, StreamRate, wav::WavWriter};
+use crate::core::audio::{AudioLoad, StreamStatus, wav::WavWriter};
 use crate::core::sequencer::{AudioExportJob, AudioExportOutcome, SequencerCommand};
 use crate::core::shared_atomics::AudioExportAtomics;
 
@@ -53,8 +53,9 @@ pub(super) struct ExportWriter {
     progress: Arc<AudioExportAtomics>,
     /// The engine's meter: its overrun, xrun and stream-error counts.
     load: Arc<AudioLoad>,
-    /// The running stream's rate, which each export's files are written at.
-    rate: Arc<StreamRate>,
+    /// The running stream: its rate, which each export's files are written
+    /// at, and its restarts, any of which ends the export.
+    stream: Arc<StreamStatus>,
     /// The last export stopped before the mixer ended it, so the mixer may
     /// have pushed more of it since.
     abandoned: bool,
@@ -82,20 +83,20 @@ pub(super) fn start_export_writer(
 
 impl ExportWriter {
     /// A writer on the mixer's `rings` and `shared` state, writing at the
-    /// stream's `rate`.
+    /// rate of `stream`.
     pub(super) fn new(
         rings: ExportRings,
         shared: Arc<ExportShared>,
         progress: Arc<AudioExportAtomics>,
         load: Arc<AudioLoad>,
-        rate: Arc<StreamRate>,
+        stream: Arc<StreamStatus>,
     ) -> Self {
         ExportWriter {
             rings,
             shared,
             progress,
             load,
-            rate,
+            stream,
             abandoned: false,
         }
     }
@@ -112,9 +113,10 @@ impl ExportWriter {
         // The counts read "this export", like the header's do "this take".
         self.load.reset_counts();
         let stream_errors = self.load.stream_errors();
-        // An engine restart under the export ends it (a stream error), so the
-        // rate holds for the whole run.
-        let sample_rate = self.rate.get();
+        // An engine restart under the export ends it, so the rate holds for
+        // the whole run.
+        let restarts = self.stream.restarts();
+        let sample_rate = self.stream.sample_rate();
 
         let mut error = None;
         let mut open = |path: &Path| {
@@ -148,8 +150,9 @@ impl ExportWriter {
             if ended {
                 break None;
             }
-            let errors_changed = self.load.stream_errors() != stream_errors;
-            if let Some(reason) = stop_reason(errors_changed, last_heard.elapsed()) {
+            let device_changed =
+                self.load.stream_errors() != stream_errors || self.stream.restarts() != restarts;
+            if let Some(reason) = stop_reason(device_changed, last_heard.elapsed()) {
                 break Some(reason);
             }
             thread::sleep(DRAIN_INTERVAL);
@@ -183,10 +186,10 @@ impl ExportWriter {
 }
 
 /// Why a run should stop before its end, if it should: the stream reported an
-/// error (the device went away or changed), or the mixer has sent nothing for
+/// error or the engine restarted it (the device went away or changed), or the mixer has sent nothing for
 /// [`STALL_TIMEOUT`] (the output stopped).
-fn stop_reason(stream_errors_changed: bool, quiet_for: Duration) -> Option<&'static str> {
-    if stream_errors_changed {
+fn stop_reason(device_changed: bool, quiet_for: Duration) -> Option<&'static str> {
+    if device_changed {
         Some("the audio device changed")
     } else if quiet_for >= STALL_TIMEOUT {
         Some("the audio output stopped")
@@ -253,7 +256,7 @@ mod tests {
             shared,
             Arc::new(AudioExportAtomics::default()),
             Arc::new(AudioLoad::new()),
-            Arc::new(StreamRate::new(1_000)),
+            Arc::new(StreamStatus::new(1_000)),
         );
         (writer, tap, marks)
     }
