@@ -13,6 +13,7 @@
 //!
 //! See `docs/180-vst3-host.md`.
 
+use std::any::Any;
 use std::ptr::null_mut;
 
 use vst3::ComPtr;
@@ -126,9 +127,9 @@ pub(super) struct Vst3Voice {
     tail_samples: u32,
     /// The mixer-owned render flags and gain ramp.
     mix: VoiceMix,
-    /// The device sample rate this plugin was activated against — fixed for
-    /// the voice's lifetime, and carried into every block's `ProcessContext`
-    /// (see [`process_context`]).
+    /// The device sample rate this plugin was activated against — fixed
+    /// until a [reactivation](Self::reactivated), and carried into every
+    /// block's `ProcessContext` (see [`process_context`]).
     sample_rate: f64,
 }
 
@@ -158,6 +159,18 @@ impl Vst3Voice {
             mix: VoiceMix::default(),
             sample_rate,
         }
+    }
+
+    /// The voice of the same plugin activated again at `sample_rate`, with
+    /// the `tail_samples` it now declares ([`reactivate`](super::component::reactivate)):
+    /// carried into every block's `ProcessContext` from here on, and back
+    /// from silence.
+    pub(super) fn reactivated(&mut self, sample_rate: f64, tail_samples: u32) {
+        self.sample_rate = sample_rate;
+        self.tail_samples = tail_samples;
+        self.note_ids = NoteIds::default();
+        self.mix = VoiceMix::default();
+        self.wake();
     }
 
     /// Spreads this voice's heartbeats by `track` — see
@@ -284,6 +297,10 @@ impl InstrumentVoice for Vst3Voice {
 
     fn mix_mut(&mut self) -> &mut VoiceMix {
         &mut self.mix
+    }
+
+    fn into_any(self: Box<Self>) -> Box<dyn Any + Send> {
+        self
     }
 }
 

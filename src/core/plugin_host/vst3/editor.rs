@@ -41,12 +41,15 @@ use vst3::Steinberg::{
 };
 use vst3::{Class, ComPtr, ComRef, ComWrapper};
 
+use crate::core::audio::MAX_FRAMES;
 use crate::core::plugin_host::editor::{InstrumentEditor, ParameterGesture, ParameterInfo};
+use crate::core::plugin_host::voice::InstrumentVoice;
 use crate::core::plugin_host::window::{FALLBACK_SIZE, PluginWindow, editor_level, editor_title};
 use crate::models::knobs::ParamId;
 
-use super::component::MainThreadHalf;
+use super::component::{MainThreadHalf, reactivate};
 use super::state;
+use super::voice::Vst3Voice;
 
 /// The `IPlugFrame` a plugin view is given, so it can ask its host to resize
 /// the window around it (an editor zoom control, a Kontakt instrument with a
@@ -315,6 +318,29 @@ impl InstrumentEditor for Vst3Editor {
 
     fn deactivate(&mut self) {
         self.terminate();
+    }
+
+    /// `setActive(false)` → `setupProcessing` → `setActive(true)` on the
+    /// component, then the voice told its new rate and tail.
+    fn reactivate(
+        &mut self,
+        voice: Box<dyn InstrumentVoice>,
+        sample_rate: f64,
+    ) -> Result<Box<dyn InstrumentVoice>, String> {
+        let mut voice = voice
+            .into_any()
+            .downcast::<Vst3Voice>()
+            .map_err(|_| "not a VST3 voice".to_string())?;
+        if self.finished {
+            return Err("already terminated".to_string());
+        }
+        // SAFETY: this is the main thread, which owns the component; it is
+        // live and active (`finished` is clear), and its voice is here, out of
+        // the mixer, so no `process` call can be in flight.
+        let tail_samples =
+            unsafe { reactivate(&self.plugin.component, sample_rate, MAX_FRAMES as u32)? };
+        voice.reactivated(sample_rate, tail_samples);
+        Ok(voice)
     }
 
     fn pump(&mut self, yield_to_main: bool) -> Option<Duration> {

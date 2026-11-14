@@ -94,6 +94,28 @@ pub(crate) enum PluginHostCommand {
         /// Engine slot (`Track::slot`) to clear.
         track: usize,
     },
+    /// Hand `track`'s voice back to the UI, stopped, to be reactivated at the
+    /// stream's new rate and inserted again (`480-audio-settings.md`
+    /// decision 8). It goes the way a removed voice does, as far as the
+    /// `"plugin-host"` thread, which passes it on instead of dropping it.
+    Return {
+        /// Engine slot (`Track::slot`) to take the voice from.
+        track: usize,
+    },
+}
+
+/// A voice leaving the mixer for the `"plugin-host"` thread: its slot, the
+/// voice and why.
+pub(super) type LeavingVoice = (usize, Box<dyn InstrumentVoice>, VoiceExit);
+
+/// Why a voice left the mixer, for the `"plugin-host"` thread: to drop, or
+/// to pass back to the UI.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum VoiceExit {
+    /// [`PluginHostCommand::Remove`], or replaced by an `Insert`.
+    Removed,
+    /// [`PluginHostCommand::Return`].
+    Returned,
 }
 
 /// A clip/live event waiting for the sub-block that contains its target sample.
@@ -140,11 +162,12 @@ pub(super) struct InstrumentMixer {
     /// on this thread. See `130-plugin-host.md`.
     cmd_rx: Consumer<PluginHostCommand>,
     /// Removed voices go here for the `"plugin-host"` reclaim thread to drop
-    /// off the audio thread (a plugin teardown must not run in this callback).
-    /// A realtime-safe `rtrb` ring, same as the feeds above; a full ring (never
-    /// reachable in practice — see `DEAD_VOICE_RING_CAPACITY`) falls back to
-    /// dropping the voice here.
-    dead_tx: Producer<(usize, Box<dyn InstrumentVoice>)>,
+    /// off the audio thread (a plugin teardown must not run in this callback),
+    /// and returned ones for it to pass to the UI. A realtime-safe `rtrb`
+    /// ring, same as the feeds above; a full ring (never reachable in practice
+    /// — see `DEAD_VOICE_RING_CAPACITY`) falls back to dropping the voice
+    /// here, which leaves a returned voice's track silent.
+    dead_tx: Producer<LeavingVoice>,
     /// [`ClipInstrumentEvent`]s from the sequencer's clip playback — a
     /// realtime-safe `rtrb` ring, same reasoning as `cmd_rx`. Each carries the
     /// intended `Instant` so the mixer can place it at the right sample.
@@ -187,9 +210,10 @@ pub(super) struct InstrumentMixer {
     sample_rate: f64,
     /// The rate each slot's voice was activated at. A voice whose rate isn't
     /// the stream's — the device's rate changed under it — is held silent
-    /// rather than played at the wrong pitch and speed, until a new voice
-    /// replaces it (`480-audio-settings.md` phase 1). An empty slot's entry
-    /// means nothing.
+    /// rather than played at the wrong pitch and speed, until the UI has
+    /// reactivated it at the new rate and inserted it again
+    /// (`480-audio-settings.md` decision 8). An empty slot's entry means
+    /// nothing.
     voice_rates: [f64; MAX_TRACKS],
 }
 
@@ -198,7 +222,7 @@ impl InstrumentMixer {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
         cmd_rx: Consumer<PluginHostCommand>,
-        dead_tx: Producer<(usize, Box<dyn InstrumentVoice>)>,
+        dead_tx: Producer<LeavingVoice>,
         clip_midi_rx: Consumer<ClipInstrumentEvent>,
         live_midi_rx: Consumer<(usize, Midi3)>,
         transport: TransportState,
@@ -289,12 +313,12 @@ impl InstrumentMixer {
         })
     }
 
-    /// Drains runtime commands: add / remove voices.
+    /// Drains runtime commands: add, remove and return voices.
     fn apply_commands(&mut self) {
         while let Ok(cmd) = self.cmd_rx.pop() {
-            // Either way the slot's previous voice, if any, goes to the reclaim
-            // thread rather than being dropped here.
-            let (track, old) = match cmd {
+            // Whatever leaves the slot goes to the reclaim thread rather than
+            // being dropped here.
+            let (track, old, exit) = match cmd {
                 PluginHostCommand::Insert {
                     track,
                     voice,
@@ -303,19 +327,27 @@ impl InstrumentMixer {
                     if let Some(rate) = self.voice_rates.get_mut(track) {
                         *rate = sample_rate;
                     }
-                    (
-                        track,
-                        self.voices
-                            .get_mut(track)
-                            .and_then(|slot| slot.replace(voice)),
-                    )
+                    let old = self
+                        .voices
+                        .get_mut(track)
+                        .and_then(|slot| slot.replace(voice));
+                    (track, old, VoiceExit::Removed)
                 }
-                PluginHostCommand::Remove { track } => {
-                    (track, self.voices.get_mut(track).and_then(Option::take))
+                PluginHostCommand::Remove { track } => (
+                    track,
+                    self.voices.get_mut(track).and_then(Option::take),
+                    VoiceExit::Removed,
+                ),
+                PluginHostCommand::Return { track } => {
+                    let mut voice = self.voices.get_mut(track).and_then(Option::take);
+                    if let Some(voice) = &mut voice {
+                        voice.stop_processing();
+                    }
+                    (track, voice, VoiceExit::Returned)
                 }
             };
             if let Some(old) = old {
-                self.dead_tx.push((track, old)).ok();
+                self.dead_tx.push((track, old, exit)).ok();
             }
             // The meter belongs to the voice: a new one, or none, starts it
             // from empty, so a project load's swap doesn't carry the old
@@ -354,7 +386,9 @@ impl AudioSource for InstrumentMixer {
     /// feeds too: they would all land at once, late. Every voice is sent the
     /// note reset instead, so nothing hangs from a note-off lost in the
     /// drop-out (`480-audio-settings.md` decision 9). A rate change leaves
-    /// the voices activated at the old rate held silent (see `voice_rates`).
+    /// the voices activated at the old rate held silent (see `voice_rates`)
+    /// until the UI has them back (`PluginHostCommand::Return`), reactivates
+    /// them and inserts them again.
     fn restarted(&mut self, sample_rate: f64) {
         self.sample_rate = sample_rate;
         self.pending.clear();
@@ -617,17 +651,30 @@ mod tests {
         Arc<TrackMixAtomics>,
         Producer<PluginHostCommand>,
     ) {
+        let (mixer, track_mix, commands, _reclaimed) = mixer_with_rings();
+        (mixer, track_mix, commands)
+    }
+
+    /// [`mixer_with_commands`], and the end the reclaim thread reads the
+    /// voices leaving the mixer from.
+    fn mixer_with_rings() -> (
+        InstrumentMixer,
+        Arc<TrackMixAtomics>,
+        Producer<PluginHostCommand>,
+        Consumer<LeavingVoice>,
+    ) {
         let track_mix = Arc::new(TrackMixAtomics::new());
         for slot in &track_mix.volume_db {
             slot.store(0.0f32.to_bits(), Ordering::Relaxed);
         }
         let (commands, cmd_rx) = RingBuffer::new(4);
+        let (dead_tx, reclaimed) = RingBuffer::new(4);
         let transport = TransportState::for_test(500_000, 0);
         let (_marks, marks_rx) = RingBuffer::new(4);
         let (export, _rings, _shared) = export_tap(marks_rx, RATE);
         let mixer = InstrumentMixer::new(
             cmd_rx,
-            RingBuffer::new(4).0,
+            dead_tx,
             RingBuffer::new(4).1,
             RingBuffer::new(4).1,
             transport,
@@ -636,7 +683,7 @@ mod tests {
             export,
             RATE,
         );
-        (mixer, track_mix, commands)
+        (mixer, track_mix, commands, reclaimed)
     }
 
     /// Renders `secs` of blocks.
@@ -775,6 +822,53 @@ mod tests {
             .unwrap();
         render(&mut mixer, 0.1);
         assert_eq!(peak_db(&track_mix), [0.0; 2]);
+    }
+
+    #[test]
+    fn a_returned_voice_leaves_stopped_for_the_ui_and_its_slot_falls_silent() {
+        let (mut mixer, track_mix, mut commands, mut reclaimed) = mixer_with_rings();
+        let insert = |level, sample_rate| PluginHostCommand::Insert {
+            track: 0,
+            voice: Box::new(ConstantVoice::new(level)),
+            sample_rate,
+        };
+        commands.push(insert(1.0, RATE)).ok().unwrap();
+        render(&mut mixer, 0.1);
+        mixer.restarted(44_100.0);
+        commands
+            .push(PluginHostCommand::Return { track: 0 })
+            .ok()
+            .unwrap();
+        render(&mut mixer, 0.01);
+        let (track, voice, exit) = reclaimed.pop().ok().unwrap();
+        assert_eq!((track, exit), (0, VoiceExit::Returned));
+        let voice = voice.into_any().downcast::<ConstantVoice>().ok().unwrap();
+        assert!(voice.stopped, "stopped on the audio thread");
+        assert_eq!(track_mix.audio_level(0), [ChannelLevel::default(); 2]);
+
+        // Back at the new rate, it plays again.
+        commands.push(insert(1.0, 44_100.0)).ok().unwrap();
+        render(&mut mixer, 0.1);
+        assert_eq!(peak_db(&track_mix), [0.0; 2]);
+        assert!(
+            reclaimed.pop().is_err(),
+            "nothing was in the slot to replace"
+        );
+    }
+
+    #[test]
+    fn a_removed_voice_leaves_to_be_dropped() {
+        let (mut mixer, _track_mix, mut commands, mut reclaimed) = mixer_with_rings();
+        mixer.voices[0] = Some(Box::new(ConstantVoice::new(1.0)));
+        commands
+            .push(PluginHostCommand::Remove { track: 0 })
+            .ok()
+            .unwrap();
+        render(&mut mixer, 0.01);
+        let (track, voice, exit) = reclaimed.pop().ok().unwrap();
+        assert_eq!((track, exit), (0, VoiceExit::Removed));
+        let voice = voice.into_any().downcast::<ConstantVoice>().ok().unwrap();
+        assert!(!voice.stopped);
     }
 
     #[test]

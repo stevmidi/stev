@@ -374,6 +374,12 @@ impl VoiceParams {
         events.sort();
     }
 
+    /// The voice now runs at `sample_rate`: what turns a report's sample
+    /// offset into its time.
+    pub(super) fn set_sample_rate(&mut self, sample_rate: f64) {
+        self.feed.ns_per_frame = 1e9 / sample_rate;
+    }
+
     /// A block begins at `now_ns`.
     pub(super) fn start_block(&mut self, now_ns: u64) {
         self.feed.block_ns = now_ns;

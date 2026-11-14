@@ -270,7 +270,13 @@ matters:
    `initialize`.
 5. `IConnectionPoint::connect` **both ways**, then `setComponentHandler`.
 6. Configure buses (below), `setupProcessing`, `setActive(true)`,
-   `setProcessing(true)`.
+   `setProcessing(true)` (`component::activate`).
+
+A change of the stream's rate reactivates the plugin in place
+(`component::reactivate`, from `Vst3Editor::reactivate`, with the voice out
+of the mixer): `setProcessing(false)`, `setActive(false)`, then step 6's
+`setupProcessing` at the new rate and on. The voice takes the new rate and
+the tail `getTailSamples` gives now (`480-audio-settings.md`).
 
 ### The Send split
 

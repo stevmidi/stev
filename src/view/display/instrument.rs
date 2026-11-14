@@ -21,7 +21,7 @@ use std::sync::atomic::{AtomicI32, Ordering};
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, TryRecvError};
-use log::{error, warn};
+use log::{error, info, warn};
 
 use crate::core::config::MAX_TRACKS;
 use uuid::Uuid;
@@ -29,8 +29,8 @@ use uuid::Uuid;
 use crate::core::input_event::InputEvent;
 use crate::core::plugin_host::catalog::PluginCatalogEntry;
 use crate::core::plugin_host::{
-    InstrumentEditor, PluginAudioHandle, PluginHostCommand, PreparedInstrument, load_instrument,
-    prepare_instrument,
+    InstrumentEditor, PluginAudioHandle, PluginHostCommand, PreparedInstrument, ReturnedVoice,
+    VoiceBack, load_instrument, prepare_instrument,
 };
 use crate::models::track::{InstrumentRef, TrackOutput};
 
@@ -78,8 +78,9 @@ pub(super) struct InstrumentHost {
     pub(super) parked_states: HashMap<ParkedKey, Vec<u8>>,
     /// Editors whose plugin was removed, by the slot it was in, awaiting the
     /// mixer's voice-dropped ack before the instance can be deactivated and
-    /// dropped.
-    pub(super) pending_instance_drop: Vec<(usize, Box<dyn InstrumentEditor>)>,
+    /// dropped — or, for one removed while its voice was out to be
+    /// reactivated (the flag), the voice itself (`take_back_voice`).
+    pub(super) pending_instance_drop: Vec<(usize, Box<dyn InstrumentEditor>, bool)>,
     /// Catalog of installed instrument plugins for the browser's Plugins
     /// category, `None`
     /// until the background scan (`plugin_catalog_rx`) delivers it.
@@ -163,6 +164,13 @@ pub(super) struct TrackInstrument {
     /// frame it closes, by whatever route, captures its state
     /// (`410-crash-recovery.md` decision 6).
     editor_was_open: bool,
+    /// The rate it was activated at. Once the stream runs at another, its
+    /// voice is asked back to be reactivated (`return_stale_voices`).
+    sample_rate: f64,
+    /// Whether its voice has been asked back (`PluginHostCommand::Return`)
+    /// and isn't in the mixer: from the ask until the voice is reactivated
+    /// and inserted again (`take_back_voice`).
+    voice_out: bool,
 }
 
 impl InstrumentHost {
@@ -216,22 +224,25 @@ impl Display {
             }
         }
 
-        // Complete teardown for slots whose voice the mixer has now dropped.
-        if let Some(handle) = &self.instruments.audio {
-            while let Ok(slot) = handle.voice_dropped_rx.try_recv() {
-                if let Some(pos) = self
-                    .instruments
-                    .pending_instance_drop
-                    .iter()
-                    .position(|(s, _)| *s == slot)
-                {
-                    let (_, mut editor) = self.instruments.pending_instance_drop.remove(pos);
-                    editor.deactivate();
-                    // `editor` drops here: GUI already torn down, instance is now
-                    // the sole owner → clean destroy.
+        // The voices that left the mixer, in the order they left: a removed
+        // one dropped, so its instance can go, or one handed back to be
+        // reactivated. Then any voice at a rate the stream no longer runs at
+        // is asked back.
+        let backs: Vec<VoiceBack> = self
+            .instruments
+            .audio
+            .as_ref()
+            .map(|handle| handle.voice_back_rx.try_iter().collect())
+            .unwrap_or_default();
+        for back in backs {
+            match back {
+                VoiceBack::Dropped(slot) => {
+                    self.finish_instance_drop(slot, None);
                 }
+                VoiceBack::Returned(slot, voice) => self.take_back_voice(slot, voice),
             }
         }
+        self.return_stale_voices();
 
         // What the editors turned: an armed knob's assignment, a knob's
         // parameter turned by hand; and what they are to show of playback
@@ -341,7 +352,7 @@ impl Display {
             load_instrument(handle, slot, &entry, Some(state))
         };
         match loaded {
-            Ok(mut editor) => {
+            Ok((mut editor, sample_rate)) => {
                 if let Some(track_idx) = picked {
                     editor.show();
                     let instrument = InstrumentRef {
@@ -357,7 +368,7 @@ impl Display {
                         })
                         .ok();
                 }
-                self.install_editor(slot, editor, entry);
+                self.install_editor(slot, editor, entry, sample_rate);
                 self.sync_live_instrument_target();
             }
             Err(e) => {
@@ -468,9 +479,15 @@ impl Display {
 
     /// Removes the plugin in `slot`: tears down its GUI, tells the mixer to
     /// drop the voice, and stashes the editor until the voice-dropped ack
-    /// arrives.
+    /// arrives. A voice out to be reactivated isn't in the mixer to drop:
+    /// the editor waits for the voice to come back instead
+    /// (`take_back_voice`).
     fn remove_slot_instrument(&mut self, slot: usize) {
-        let Some(TrackInstrument { mut editor, .. }) = self
+        let Some(TrackInstrument {
+            mut editor,
+            voice_out,
+            ..
+        }) = self
             .instruments
             .track_instruments
             .get_mut(slot)
@@ -479,13 +496,17 @@ impl Display {
             return;
         };
         editor.teardown_gui();
-        if let Some(handle) = &mut self.instruments.audio {
+        if let Some(handle) = &mut self.instruments.audio
+            && !voice_out
+        {
             handle
                 .cmd_tx
                 .push(PluginHostCommand::Remove { track: slot })
                 .ok();
         }
-        self.instruments.pending_instance_drop.push((slot, editor));
+        self.instruments
+            .pending_instance_drop
+            .push((slot, editor, voice_out));
         self.sync_live_instrument_target();
     }
 
@@ -606,18 +627,150 @@ impl Display {
     /// `restartComponent` — is dropped first: it is no hand turn and no
     /// preset, and counted as one it would make a project just opened ask to
     /// be saved (`400-parameter-knobs.md` decision 9).
+    /// `sample_rate` is the rate it was activated at.
     fn install_editor(
         &mut self,
         slot: usize,
         mut editor: Box<dyn InstrumentEditor>,
         entry: PluginCatalogEntry,
+        sample_rate: f64,
     ) {
         editor.take_parameter_gestures();
         self.instruments.track_instruments[slot] = Some(TrackInstrument {
             editor,
             entry,
             editor_was_open: false,
+            sample_rate,
+            voice_out: false,
         });
+    }
+
+    /// Finishes the teardown of the first plugin removed from `slot` that
+    /// waits for what came: its voice dropped (`voice` `None`), or handed
+    /// back to be reactivated (`take_back_voice`), which goes first, as a
+    /// voice always does before its instance. Hands the voice back if no
+    /// removed plugin waits for one.
+    fn finish_instance_drop(
+        &mut self,
+        slot: usize,
+        voice: Option<ReturnedVoice>,
+    ) -> Option<ReturnedVoice> {
+        let pending = &mut self.instruments.pending_instance_drop;
+        let returned = voice.is_some();
+        let Some(pos) = pending
+            .iter()
+            .position(|(s, _, voice_out)| *s == slot && *voice_out == returned)
+        else {
+            return voice;
+        };
+        let (_, mut editor, _) = pending.remove(pos);
+        drop(voice);
+        editor.deactivate();
+        // `editor` drops here: GUI already torn down, instance is now the
+        // sole owner → clean destroy.
+        None
+    }
+
+    /// Per frame: asks the mixer for the voice of every plugin activated at
+    /// another rate than the stream runs at now, to reactivate it
+    /// (`480-audio-settings.md` decision 8). Its track is silent meanwhile,
+    /// as the mixer holds a voice at another rate silent anyway.
+    fn return_stale_voices(&mut self) {
+        let Some(handle) = &mut self.instruments.audio else {
+            return;
+        };
+        let rate = handle.sample_rate();
+        for (slot, loaded) in self.instruments.track_instruments.iter_mut().enumerate() {
+            let Some(loaded) = loaded else {
+                continue;
+            };
+            if loaded.voice_out || loaded.sample_rate == rate {
+                continue;
+            }
+            let asked = handle
+                .cmd_tx
+                .push(PluginHostCommand::Return { track: slot })
+                .is_ok();
+            loaded.voice_out = asked;
+        }
+    }
+
+    /// The mixer handed back `slot`'s voice: reactivates its plugin at the
+    /// stream's rate and puts it back, editor, state and all. The slot's
+    /// commands reach the mixer in order, so the voice belongs to the
+    /// earliest plugin asked for one: one removed while its voice was out
+    /// (`remove_slot_instrument`), whose teardown it finishes, else the one
+    /// in the slot. A plugin that won't reactivate is loaded again from its
+    /// state instead (`reload_slot_instrument`).
+    fn take_back_voice(&mut self, slot: usize, voice: ReturnedVoice) {
+        let Some(voice) = self.finish_instance_drop(slot, Some(voice)) else {
+            return;
+        };
+        let (Some(handle), Some(Some(loaded))) = (
+            self.instruments.audio.as_mut(),
+            self.instruments.track_instruments.get_mut(slot),
+        ) else {
+            return;
+        };
+        if !loaded.voice_out {
+            return;
+        }
+        match handle.reactivate(slot, voice, &mut *loaded.editor) {
+            Ok(rate) => {
+                info!(
+                    "plugin host: reactivated '{}' at {rate} Hz",
+                    loaded.entry.name
+                );
+                loaded.sample_rate = rate;
+                loaded.voice_out = false;
+            }
+            Err(e) => {
+                warn!(
+                    "plugin host: '{}' wouldn't reactivate ({e}); loading it again",
+                    loaded.entry.name
+                );
+                self.reload_slot_instrument(slot);
+            }
+        }
+    }
+
+    /// Loads the plugin in `slot` again from its live state, at the
+    /// stream's rate: the fallback for one that wouldn't reactivate in place
+    /// (`480-audio-settings.md` decision 8). Its voice is already out of the
+    /// mixer. Its editor reopens if it was open; a plugin that won't load
+    /// either leaves its track silent, and the footer says so.
+    fn reload_slot_instrument(&mut self, slot: usize) {
+        let Some(TrackInstrument {
+            mut editor,
+            entry,
+            editor_was_open,
+            ..
+        }) = self
+            .instruments
+            .track_instruments
+            .get_mut(slot)
+            .and_then(Option::take)
+        else {
+            return;
+        };
+        let state = editor.save_state().unwrap_or_default();
+        editor.teardown_gui();
+        editor.deactivate();
+        drop(editor);
+        if let Some(idx) = self.catalog_index_of(&entry.bundle_path, &entry.plugin_id) {
+            self.load_slot_instrument(slot, idx, &state, None);
+        }
+        match self.instruments.track_instruments[slot].as_mut() {
+            Some(loaded) if editor_was_open => loaded.editor.show(),
+            Some(_) => {}
+            None => {
+                self.render.status = Some(StatusMessage::new(format!(
+                    "{} could not restart at the new sample rate and is silent",
+                    entry.name
+                )));
+                self.sync_live_instrument_target();
+            }
+        }
     }
 
     /// Puts a staged plugin into its slot: its voice to the mixer, its editor
@@ -633,7 +786,7 @@ impl Display {
             return;
         };
         match prepared.insert(handle) {
-            Ok(editor) => self.install_editor(slot, editor, entry),
+            Ok((editor, sample_rate)) => self.install_editor(slot, editor, entry, sample_rate),
             Err(e) => error!("plugin host: failed to load '{}': {e}", entry.name),
         }
     }

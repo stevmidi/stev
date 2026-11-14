@@ -10,6 +10,8 @@
 //! [`render_block`](InstrumentVoice::render_block) — once per engine sub-block
 //! on the `"audio-engine"` callback thread. See `130-plugin-host.md`.
 
+use std::any::Any;
+
 use clack_host::events::event_types::{
     MidiEvent, NoteOffEvent, NoteOnEvent, TransportEvent, TransportFlags,
 };
@@ -18,6 +20,7 @@ use clack_host::prelude::*;
 use clack_host::utils::{BeatTime, SecondsTime};
 use log::debug;
 
+use crate::core::audio::MAX_FRAMES;
 use crate::core::midi::message::{Midi3, parse_note, unit_7bit};
 use crate::core::plugin_host::buffers::{AudioIoLayout, PortBuffers, channel_total};
 use crate::core::plugin_host::note_ids::NoteIds;
@@ -79,6 +82,49 @@ impl ClapVoice {
             params,
             note_ids: note_events.then(NoteIds::default),
         }
+    }
+
+    /// The same voice on `instance` deactivated and activated again at
+    /// `sample_rate`: CLAP's own way to change the rate, keeping the instance
+    /// and its state (`480-audio-settings.md` decision 8). Main thread, with
+    /// processing stopped ([`stop_processing`](InstrumentVoice::stop_processing))
+    /// and the voice out of the mixer. A plugin that won't activate is left
+    /// deactivated, and the voice is gone.
+    pub(super) fn reactivated(
+        self,
+        instance: &mut PluginInstance<StevClapHost>,
+        sample_rate: f64,
+    ) -> Result<Self, String> {
+        let Self {
+            processor,
+            in_events,
+            in_ports,
+            out_ports,
+            bufs,
+            mut params,
+            note_ids,
+            ..
+        } = self;
+        instance.deactivate(processor.into_stopped());
+        let configuration = PluginAudioConfiguration {
+            sample_rate,
+            min_frames_count: 1,
+            max_frames_count: MAX_FRAMES as u32,
+        };
+        let processor = instance
+            .activate(|_, _| (), configuration)
+            .map_err(|e| format!("activate at {sample_rate} Hz: {e}"))?;
+        params.set_sample_rate(sample_rate);
+        Ok(Self {
+            processor: processor.into(),
+            in_events,
+            in_ports,
+            out_ports,
+            bufs,
+            mix: VoiceMix::default(),
+            params,
+            note_ids: note_ids.map(|_| NoteIds::default()),
+        })
     }
 
     /// Queues `bytes` as raw MIDI, if it's a message CLAP carries.
@@ -226,6 +272,16 @@ impl InstrumentVoice for ClapVoice {
     /// Mutable [`mix`](Self::mix), for the mixer's two passes.
     fn mix_mut(&mut self) -> &mut VoiceMix {
         &mut self.mix
+    }
+
+    /// Stops processing here, on the audio thread, where CLAP's
+    /// `stop_processing` belongs.
+    fn stop_processing(&mut self) {
+        self.processor.ensure_processing_stopped();
+    }
+
+    fn into_any(self: Box<Self>) -> Box<dyn Any + Send> {
+        self
     }
 }
 

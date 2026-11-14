@@ -81,7 +81,14 @@ methods take a track's position and look the slot up in its `tracks` mirror
   sends it with the voice (`PluginHostCommand::Insert::sample_rate`). When an
   outside change restarts the engine at another rate (`480-audio-settings.md`),
   the mixer holds every voice activated at the old rate silent
-  (`InstrumentMixer::voice_rates`) until a new voice replaces it; a restart
+  (`InstrumentMixer::voice_rates`) while the UI has it back and reactivates
+  it in place: `Display::return_stale_voices` sends
+  `PluginHostCommand::Return`, the mixer stops the voice
+  (`InstrumentVoice::stop_processing`) and hands it back through the reclaim
+  thread (`VoiceBack::Returned`), and `PluginAudioHandle::reactivate` runs
+  `InstrumentEditor::reactivate` and inserts it again at the new rate. A
+  plugin that won't reactivate is loaded again from its live state
+  (`Display::reload_slot_instrument`; `480` § Things to check). A restart
   also drops the events queued for the old stream and sends every voice the
   note reset (`AudioSource::restarted`).
 - **Per-track plugins.** From the browser panel's **Plugins** category (Enter
@@ -338,7 +345,7 @@ methods take a track's position and look the slot up in its `tracks` mirror
 
 | File | Responsibility |
 |---|---|
-| `mod.rs` | `start_plugin_host` (build `InstrumentMixer`, `EngineHandle::add_source` it into the audio engine, spawn the `"plugin-host"` thread), `start_plugin_catalog_scan` (spawns the `"plugin-catalog-scan"` thread), `load_instrument` (**the one place a format is chosen** - dispatches on `entry.format`, then `Insert`s the returned voice), `PluginAudioHandle` (`cmd_tx` / `voice_dropped_rx` / `shutdown` / `sample_rate` / `repaint` - the egui context slot `start_plugin_host` is handed once, so `load_instrument` takes no format-specific arguments - / `ui_wake`), `LoadedInstrument`, `reclaim_voices` (the `"plugin-host"` thread loop: drops removed voices, and makes the UI wakes `UiWake` asks for). Voices are built for `core::audio::MAX_FRAMES`. |
+| `mod.rs` | `start_plugin_host` (build `InstrumentMixer`, `EngineHandle::add_source` it into the audio engine, spawn the `"plugin-host"` thread), `start_plugin_catalog_scan` (spawns the `"plugin-catalog-scan"` thread), `load_instrument` (**the one place a format is chosen** - dispatches on `entry.format`, then `Insert`s the returned voice), `PluginAudioHandle` (`cmd_tx` / `voice_back_rx` / `shutdown` / `sample_rate()` / `reactivate` / `repaint` - the egui context slot `start_plugin_host` is handed once, so `load_instrument` takes no format-specific arguments - / `ui_wake`), `LoadedInstrument`, `reclaim_voices` (the `"plugin-host"` thread loop: drops removed voices, passes returned ones to the UI as `VoiceBack::Returned`, and makes the UI wakes `UiWake` asks for), `VoiceBack` / `ReturnedVoice`. Voices are built for `core::audio::MAX_FRAMES`. |
 | `voice.rs` | The `InstrumentVoice` trait and `VoiceMix` - the mixer-owned `sleeping` / `rendered` flags and gain-ramp endpoints every voice carries. Also `note_reset_messages`, the burst `queue_note_reset` queues into every new voice. They live on the voice rather than in a parallel array in the mixer because the render pass is the loop spread across worker threads, where each worker may only touch its own voice. |
 | `editor.rs` | The `InstrumentEditor` trait - the `!Send` main-thread half. `close` (= `teardown_gui`) and `toggle` (on `is_open`) are default methods, so a format supplies only `is_open`. |
 | `buffers.rs` | `AudioIoLayout` (a plugin's declared channels per input/output port or bus; `new` applies the one-stereo-output fallback) and `PortBuffers` - the `[port][channel]` buffer set every voice renders into: silent input feed, capacity-reserved outputs, `prepare_outputs(frames)`, `main_sample` (port-0-only, mono/empty/out-of-range-safe - what the mixer sums) and `main_output_silent`. Each format builds its own FFI view over it. Unit-tested. |
@@ -365,7 +372,7 @@ See also `180-vst3-host.md` for `vst3/`, the second format module.
 | `discovery.rs` | `scan_catalog()` -> `Vec<PluginCatalogEntry>` - walks the installed `.clap` bundles (via the shared `catalog::installed_bundles`), loads each bundle's factory, enumerates descriptors. Also owns `ENTRY_CACHE` / `cached_entry` - the process-wide `PluginEntry` cache shared with `engine::load` (see below). |
 | `engine.rs` | `load(bundle_path, plugin_id, sample_rate, max_frames, wake, state)` - get the bundle's entry via `discovery::cached_entry`, pick the descriptor (display name via `discovery::descriptor_name`, shared with the catalog), instantiate, apply the persisted CLAP `state` blob, query the audio-port layout (`query_audio_io` -> `AudioIoLayout`, before activation) and the parameters (`read_parameters` -> `ParamValues`), activate. Returns `LoadedPlugin { instance, processor, io, params, name }`. No hardcoded plugin consts. |
 | `host.rs` | `StevClapHost` (`HostHandlers`) + `ClapHostShared` / `ClapHostMainThread`; log + gui + timer + state + params + thread-check host extensions (params: `request_flush` wakes the voice, `rescan` marks the values to read again; thread-check: main = AppKit main thread, audio = threads marked by `core::audio::enter_render_thread` — the `cpal` callback and every `WorkerPool` worker); `Timers` helper (unit-tested). |
-| `editor.rs` | `ClapEditor` - owns one `!Send` `PluginInstance` and `impl InstrumentEditor`; `create` (lazy, on first show), `show` / `is_open`, per-frame `pump`, `save_state` (CLAP `state.save` for persistence), `teardown_gui` (GUI `destroy` + window drop + remember its position - used by both `close` and a per-track remove), `deactivate` (after the voice-dropped ack), and the knobs' parameter methods over `EditorParams`. |
+| `editor.rs` | `ClapEditor` - owns one `!Send` `PluginInstance` and `impl InstrumentEditor`; `create` (lazy, on first show), `show` / `is_open`, per-frame `pump`, `save_state` (CLAP `state.save` for persistence), `teardown_gui` (GUI `destroy` + window drop + remember its position - used by both `close` and a per-track remove), `deactivate` (after the voice-dropped ack), `reactivate` (deactivate and activate again at a new rate, through `ClapVoice::reactivated`), and the knobs' parameter methods over `EditorParams`. |
 | `params.rs` | How the knobs reach a plugin's parameters (`400` § Phase 3 as built): `ParamRange` (plain <-> normalized), `ParamValues` (every value in force, reading `ParamReport`s as `ParameterGesture`s), `ReportFeed` (the `OutputEventBuffer` `process` writes to), `bridge` -> `EditorParams` / `VoiceParams`, the two rings' ends. Unit-tested: the mapping, the output-event parsing, the bridge. |
 | `voice.rs` | `ClapVoice` - `impl InstrumentVoice`; per-plugin audio state, `new` takes the plugin's `AudioIoLayout` and builds a `PortBuffers` to match (sized with `buffers::channel_total`). `queue_param` and the block's moves and reports go through `VoiceParams`. Also the private `midi_bytes_to_clap_event` (takes a sample offset), `push_note` (a MIDI note -> native events with ids, § Native CLAP notes) and `transport_event` (`BlockTransport` -> CLAP `TransportEvent`). Unit-tested: the event translation (incl. the note-reset burst), the note translation, the transport translation. |
 
@@ -407,9 +414,9 @@ Created in `main` inside the macOS block, carried by `PluginAudioHandle`:
 
 | Channel | Direction | Payload |
 |---|---|---|
-| `cmd_tx` → `cmd_rx` | `Display` → mixer | `PluginHostCommand` (Insert / Remove) — an `rtrb` ring (same realtime-consumer reasoning as the MIDI feeds above) |
-| `dead_tx` → `dead_rx` | mixer → `"plugin-host"` reclaim thread | `(track, Box<dyn InstrumentVoice>)` — dropped off the audio thread. An `rtrb` ring (`DEAD_VOICE_RING_CAPACITY` = 16): the mixer pushes from the audio callback, so it can't be a `crossbeam_channel` whose `send` may allocate. Traffic is only user-driven Insert/Remove, never per-block |
-| `voice_dropped_tx` → `voice_dropped_rx` | `"plugin-host"` reclaim thread → `Display` | `track` — ack; `Display` then deactivates + drops the instance |
+| `cmd_tx` → `cmd_rx` | `Display` → mixer | `PluginHostCommand` (Insert / Remove / Return) — an `rtrb` ring (same realtime-consumer reasoning as the MIDI feeds above) |
+| `dead_tx` → `dead_rx` | mixer → `"plugin-host"` reclaim thread | `LeavingVoice`: `(track, Box<dyn InstrumentVoice>, VoiceExit)` — a removed voice dropped off the audio thread, a returned one passed to `Display`. An `rtrb` ring (`DEAD_VOICE_RING_CAPACITY` = 16): the mixer pushes from the audio callback, so it can't be a `crossbeam_channel` whose `send` may allocate. Traffic is only user-driven Insert/Remove and a rate change's Returns, never per-block |
+| `voice_back_tx` → `voice_back_rx` | `"plugin-host"` reclaim thread → `Display` | `VoiceBack`, in the order the voices left: `Dropped(track)`, the ack, after which `Display` deactivates + drops the instance; or `Returned(track, voice)`, to reactivate |
 | `add_source` ring | `start_plugin_host` → audio engine | `Box<dyn AudioSource>` (the `InstrumentMixer`) — handed to the running engine once, an `rtrb` ring in `core::audio::engine` |
 
 Created in `main` by `start_plugin_catalog_scan`, attached with `Display::attach_plugin_catalog_rx`:
@@ -611,13 +618,21 @@ plugin is a handshake:
    `pending_instance_drop` under the slot.
 2. Mixer takes the voice out of its slot → `dead_tx`.
 3. The `"plugin-host"` reclaim thread (`reclaim_voices`) drops the `Box<dyn InstrumentVoice>`
-   (drops the processor, off the audio thread) → `voice_dropped_tx.send(track)`.
+   (drops the processor, off the audio thread) → `VoiceBack::Dropped(track)`.
 4. `Display::pump_instrument_editors` drains the ack → `InstrumentEditor::deactivate`
    (`instance.try_deactivate`, now that the processor Arc is gone) → the editor
    drops, cleanly destroying the instance.
 
 Between steps 1 and 4 the track is silent (mixer slot empty) but the instance is
 still alive and idle — safe.
+
+A plugin removed while its voice is out of the mixer to be reactivated
+(`480-audio-settings.md`) sends no `Remove`: there is nothing in the slot to
+drop. Its `pending_instance_drop` entry is flagged, and the returned voice
+finishes it instead (`Display::take_back_voice` → `finish_instance_drop`:
+voice dropped, then `deactivate`). Both kinds of ack come on one channel in
+the order the mixer let the voices go, so each meets the earliest entry for
+its slot waiting for that kind.
 
 ## Track add / remove
 

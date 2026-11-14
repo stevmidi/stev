@@ -9,6 +9,7 @@
 //!
 //! Implemented by `clap::ClapVoice` and `vst3::Vst3Voice`. See `130-plugin-host.md`.
 
+use std::any::Any;
 use std::time::Duration;
 
 use super::transport::BlockTransport;
@@ -124,6 +125,16 @@ pub(crate) trait InstrumentVoice: Send {
 
     /// Mutable [`mix`](Self::mix), for the mixer's two passes.
     fn mix_mut(&mut self) -> &mut VoiceMix;
+
+    /// Stops the plugin processing, on the audio thread, as the mixer hands
+    /// the voice back to be reactivated at another rate
+    /// (`PluginHostCommand::Return`): CLAP's `stop_processing` may only be
+    /// called there. The default does nothing.
+    fn stop_processing(&mut self) {}
+
+    /// The voice as `Any`, for its own format's editor to take back in
+    /// [`InstrumentEditor::reactivate`](super::editor::InstrumentEditor::reactivate).
+    fn into_any(self: Box<Self>) -> Box<dyn Any + Send>;
 }
 
 /// Capacity of a voice's per-block event list, in both formats: room for a

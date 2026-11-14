@@ -23,9 +23,11 @@ use clack_host::utils::ClapId;
 use log::{debug, error, warn};
 use objc2_foundation::NSPoint;
 
+use super::ClapVoice;
 use super::host::StevClapHost;
 use super::params::EditorParams;
 use crate::core::plugin_host::editor::{InstrumentEditor, ParameterGesture, ParameterInfo};
+use crate::core::plugin_host::voice::InstrumentVoice;
 use crate::core::plugin_host::window::{FALLBACK_SIZE, PluginWindow, editor_level, editor_title};
 use crate::models::knobs::ParamId;
 
@@ -148,6 +150,10 @@ impl InstrumentEditor for ClapEditor {
     /// dropped: deactivates the now-processorless instance so its `Drop` is a
     /// clean destroy rather than a leak.
     fn deactivate(&mut self) {
+        // One that failed to reactivate is inactive already.
+        if !self.instance.is_active() {
+            return;
+        }
         // The `StoppedPluginAudioProcessor` handle has been dropped on the audio
         // thread; a few retries cover the tiny window before that is visible here.
         for _ in 0..100 {
@@ -156,6 +162,22 @@ impl InstrumentEditor for ClapEditor {
             }
             std::thread::yield_now();
         }
+    }
+
+    /// Deactivates and activates the instance again at `sample_rate`, with
+    /// the processor the voice hands back ([`ClapVoice::reactivated`]).
+    fn reactivate(
+        &mut self,
+        voice: Box<dyn InstrumentVoice>,
+        sample_rate: f64,
+    ) -> Result<Box<dyn InstrumentVoice>, String> {
+        let voice = voice
+            .into_any()
+            .downcast::<ClapVoice>()
+            .map_err(|_| "not a CLAP voice".to_string())?;
+        Ok(Box::new(
+            voice.reactivated(&mut self.instance, sample_rate)?,
+        ))
     }
 
     /// Per-frame pump: run any requested main-thread callback, tick the plugin's

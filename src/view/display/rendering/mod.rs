@@ -1588,7 +1588,7 @@ impl eframe::App for Display {
                 std::mem::forget(loaded.editor);
             }
         }
-        for (_, mut editor) in self.instruments.pending_instance_drop.drain(..) {
+        for (_, mut editor, _) in self.instruments.pending_instance_drop.drain(..) {
             editor.teardown_gui();
             std::mem::forget(editor);
         }

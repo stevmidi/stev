@@ -182,25 +182,8 @@ pub(super) fn load(
         // particular block.
         let tail_samples = processor.getTailSamples();
 
-        let mut setup = ProcessSetup {
-            processMode: kRealtime as int32,
-            symbolicSampleSize: kSample32 as int32,
-            maxSamplesPerBlock: max_frames as int32,
-            sampleRate: sample_rate,
-        };
-        if processor.setupProcessing(&mut setup) != kResultOk {
-            return Err(format!(
-                "vst3: '{plugin_id}' rejected {sample_rate} Hz / {max_frames} frames"
-            ));
-        }
-
-        if component.setActive(1) != kResultOk {
-            return Err(format!("vst3: '{plugin_id}' refused to activate"));
-        }
-        // Left on for the plugin's lifetime rather than toggled with the
-        // transport: Stev plays live notes while stopped, so a voice is
-        // never truly idle in the sense `setProcessing(false)` describes.
-        processor.setProcessing(1);
+        activate(&component, &processor, sample_rate, max_frames)
+            .map_err(|e| format!("vst3: '{plugin_id}' {e}"))?;
 
         Ok(LoadedPlugin {
             main: MainThreadHalf {
@@ -216,6 +199,70 @@ pub(super) fn load(
             midi_map,
             tail_samples,
         })
+    }
+}
+
+/// Sets `processor` up for `sample_rate` and blocks of up to `max_frames`,
+/// activates `component` and starts it processing: the end of a load, and of
+/// a [`reactivate`].
+///
+/// # Safety
+///
+/// `component` must be initialised and inactive, and `processor` the same
+/// plugin seen as its audio processor, with no `process` call in flight.
+unsafe fn activate(
+    component: &ComPtr<IComponent>,
+    processor: &ComPtr<IAudioProcessor>,
+    sample_rate: f64,
+    max_frames: u32,
+) -> Result<(), String> {
+    let mut setup = ProcessSetup {
+        processMode: kRealtime as int32,
+        symbolicSampleSize: kSample32 as int32,
+        maxSamplesPerBlock: max_frames as int32,
+        sampleRate: sample_rate,
+    };
+    // SAFETY: the caller's contract; `setup` is a local of the right type.
+    unsafe {
+        if processor.setupProcessing(&mut setup) != kResultOk {
+            return Err(format!("rejected {sample_rate} Hz / {max_frames} frames"));
+        }
+        if component.setActive(1) != kResultOk {
+            return Err("refused to activate".to_string());
+        }
+        // Left on for the plugin's lifetime rather than toggled with the
+        // transport: Stev plays live notes while stopped, so a voice is
+        // never truly idle in the sense `setProcessing(false)` describes.
+        processor.setProcessing(1);
+    }
+    Ok(())
+}
+
+/// Activates `component` again at `sample_rate`, in place: stop processing,
+/// deactivate, `setupProcessing` with the new rate, activate
+/// (`480-audio-settings.md` decision 8). The instance, its controller and
+/// its state are untouched. Returns the plugin's tail at the new rate
+/// (`getTailSamples` counts samples). A plugin that refuses is left inactive.
+///
+/// # Safety
+///
+/// Main thread, `component` initialised and active, and its voice out of the
+/// mixer, so no `process` call can be in flight.
+pub(super) unsafe fn reactivate(
+    component: &ComPtr<IComponent>,
+    sample_rate: f64,
+    max_frames: u32,
+) -> Result<u32, String> {
+    let processor = component
+        .cast::<IAudioProcessor>()
+        .ok_or("exposes no IAudioProcessor")?;
+    // SAFETY: the caller's contract, in the order the VST3 lifecycle wants a
+    // processing setup changed: only while inactive.
+    unsafe {
+        processor.setProcessing(0);
+        component.setActive(0);
+        activate(component, &processor, sample_rate, max_frames)?;
+        Ok(processor.getTailSamples())
     }
 }
 

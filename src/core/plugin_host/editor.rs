@@ -4,7 +4,7 @@
 //! `Display` holds one boxed [`InstrumentEditor`] per instrument track (see
 //! `view::display::instrument`) and pumps them all once per frame. The matching
 //! `Send` half — the audio processor — lives in the mixer as an
-//! [`InstrumentVoice`](super::voice::InstrumentVoice).
+//! [`InstrumentVoice`].
 //!
 //! Implemented by `clap::ClapEditor` and `vst3::Vst3Editor`. Deliberately
 //! **not** `Send`: the CLAP `PluginInstance` (and a VST3 `IEditController`) may
@@ -16,6 +16,7 @@
 
 use std::time::Duration;
 
+use super::voice::InstrumentVoice;
 use crate::models::knobs::ParamId;
 
 /// One of a plugin's parameters, as the knob panel shows it.
@@ -101,6 +102,18 @@ pub(crate) trait InstrumentEditor {
     /// Deactivates the plugin, once the mixer has acked that its voice is
     /// dropped. The editor is dropped immediately afterwards.
     fn deactivate(&mut self);
+
+    /// Reactivates the plugin at `sample_rate`, in place: the stream's rate
+    /// changed under it (`480-audio-settings.md` decision 8). `voice` is the
+    /// one its last activation made, which the mixer has stopped and let go
+    /// of. The instance, its editor and its state are kept. Returns the voice
+    /// to insert again, or why the plugin wouldn't reactivate; it is then
+    /// left for [`deactivate`](Self::deactivate) and dropped.
+    fn reactivate(
+        &mut self,
+        voice: Box<dyn InstrumentVoice>,
+        sample_rate: f64,
+    ) -> Result<Box<dyn InstrumentVoice>, String>;
 
     /// Per-frame servicing on the main thread: plugin timer callbacks, window
     /// state, pending resizes. `yield_to_main` while the main window shows a

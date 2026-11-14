@@ -84,10 +84,10 @@ use rtrb::{Consumer, Producer, RingBuffer};
 use catalog::{PluginCatalogEntry, PluginFormat};
 use export::export_tap;
 use export_writer::{ExportWriter, start_export_writer};
-use mixer::InstrumentMixer;
+use mixer::{InstrumentMixer, LeavingVoice, VoiceExit};
 use transport::TransportState;
 use ui_wake::UiWake;
-use voice::InstrumentVoice;
+use voice::{InstrumentVoice, VoiceMix};
 
 use crate::core::audio::{AudioSource, EngineHandle, StreamStatus};
 use crate::core::config::MAX_TRACKS;
@@ -115,7 +115,8 @@ type LoadedInstrument = (Box<dyn InstrumentVoice>, Box<dyn InstrumentEditor>);
 const CMD_RING_CAPACITY: usize = 4 * MAX_TRACKS;
 
 /// Capacity of the `rtrb` ring the mixer hands removed voices back on, for the
-/// reclaim thread to drop off the audio thread. The worst realistic burst is
+/// reclaim thread to drop off the audio thread (and returned ones, for it to
+/// pass to the UI: at most one per track, `MAX_TRACKS`, on a rate change). The worst realistic burst is
 /// one full project reload — a `Remove` per instrument track, `MAX_TRACKS` at
 /// most — before the reclaim thread's next drain; 2× that. A full ring (the
 /// reclaim thread stalled through several plugin swaps — not reachable in
@@ -131,10 +132,10 @@ pub(crate) struct PluginAudioHandle {
     /// callback thread, where a `crossbeam_channel`'s internal allocate/free
     /// isn't safe.
     pub(crate) cmd_tx: Producer<PluginHostCommand>,
-    /// The `"plugin-host"` reclaim thread acks each removed track here once its
-    /// voice has been dropped off the audio thread — the UI then drops the
-    /// matching `!Send` instance.
-    pub(crate) voice_dropped_rx: Receiver<usize>,
+    /// What the `"plugin-host"` reclaim thread did with each voice that left
+    /// the mixer, in the order they left: dropped it, for the UI to drop the
+    /// matching `!Send` instance, or passed it back to be reactivated.
+    pub(crate) voice_back_rx: Receiver<VoiceBack>,
     /// App-exit coordination — see [`HostShutdown`].
     pub(crate) shutdown: Arc<HostShutdown>,
     /// The engine's stream — each plugin is activated at its rate as it
@@ -148,10 +149,58 @@ pub(crate) struct PluginAudioHandle {
     ui_wake: Arc<UiWake>,
 }
 
+/// A voice that left the mixer, as the `"plugin-host"` thread reports it to
+/// the UI.
+pub(crate) enum VoiceBack {
+    /// Track `0`'s removed voice has been dropped: its instance can go.
+    Dropped(usize),
+    /// Track `0`'s voice, handed back by a [`PluginHostCommand::Return`] for
+    /// [`PluginAudioHandle::reactivate`].
+    Returned(usize, ReturnedVoice),
+}
+
+/// A voice the mixer handed back to be reactivated, stopped, opaque to the
+/// UI. Dropping it, on the main thread, before its instance is deactivated is
+/// a removal's order too.
+pub(crate) struct ReturnedVoice(Box<dyn InstrumentVoice>);
+
 /// Capacity of a voice's parameter rings, in both formats. A preset change in
 /// a large synth can push a parameter per control at once, so this is sized
 /// for a whole panel's worth rather than for incremental knob turns.
 const PARAM_RING_CAPACITY: usize = 4096;
+
+impl PluginAudioHandle {
+    /// The rate the stream runs at now, which a plugin loaded or reactivated
+    /// now is activated at.
+    pub(crate) fn sample_rate(&self) -> f64 {
+        self.stream.sample_rate()
+    }
+
+    /// Reactivates `editor`'s plugin, in place, at the rate the stream runs
+    /// at now, with the `voice` the mixer handed back for `track`, and sends
+    /// the voice back in, every note reset and its gain ramping in from
+    /// silence (`480-audio-settings.md` decisions 8 and 9). Returns that
+    /// rate, or why the plugin wouldn't reactivate.
+    pub(crate) fn reactivate(
+        &mut self,
+        track: usize,
+        voice: ReturnedVoice,
+        editor: &mut dyn InstrumentEditor,
+    ) -> Result<f64, String> {
+        let sample_rate = self.sample_rate();
+        let mut voice = editor.reactivate(voice.0, sample_rate)?;
+        *voice.mix_mut() = VoiceMix::default();
+        voice.queue_note_reset();
+        self.cmd_tx
+            .push(PluginHostCommand::Insert {
+                track,
+                voice,
+                sample_rate,
+            })
+            .map_err(|_| "plugin host audio thread is gone (command ring full)".to_string())?;
+        Ok(sample_rate)
+    }
+}
 
 /// Builds the instrument mixer, hands it to the running audio engine as a
 /// second source, and spawns the `"plugin-host"` thread that reclaims removed
@@ -179,7 +228,7 @@ pub(crate) fn start_plugin_host(
     let shutdown = Arc::new(HostShutdown::default());
     let (cmd_tx, cmd_rx) = RingBuffer::new(CMD_RING_CAPACITY);
     let (dead_tx, dead_rx) = RingBuffer::new(DEAD_VOICE_RING_CAPACITY);
-    let (voice_dropped_tx, voice_dropped_rx) = unbounded::<usize>();
+    let (voice_back_tx, voice_back_rx) = unbounded::<VoiceBack>();
 
     let transport = TransportState {
         running: Arc::clone(&atomics.running),
@@ -211,7 +260,7 @@ pub(crate) fn start_plugin_host(
     let reclaim_wake = Arc::clone(&ui_wake);
     thread::Builder::new()
         .name("plugin-host".to_string())
-        .spawn(move || reclaim_voices(dead_rx, voice_dropped_tx, reclaim_shutdown, reclaim_wake))
+        .spawn(move || reclaim_voices(dead_rx, voice_back_tx, reclaim_shutdown, reclaim_wake))
         .expect("failed to spawn plugin-host thread");
 
     let writer = ExportWriter::new(
@@ -227,7 +276,7 @@ pub(crate) fn start_plugin_host(
 
     Ok(PluginAudioHandle {
         cmd_tx,
-        voice_dropped_rx,
+        voice_back_rx,
         shutdown,
         stream: Arc::clone(&engine.status),
         repaint,
@@ -237,20 +286,30 @@ pub(crate) fn start_plugin_host(
 
 /// The `"plugin-host"` thread: drops plugin voices the mixer removed (a plugin
 /// teardown must not run in the audio callback) and acks the track back to the
-/// UI so it can drop the matching `!Send` instance. Voices still loaded at app
+/// UI so it can drop the matching `!Send` instance, and passes the voices it
+/// returned on to the UI, waking it. Voices still loaded at app
 /// exit are deliberately left to leak — dropping them races the plugin bundles'
 /// static destructors that `exit()` runs (see [`HostShutdown`]). It also
 /// makes the UI wakes the audio thread can't ([`UiWake`]).
 fn reclaim_voices(
-    mut dead_rx: Consumer<(usize, Box<dyn InstrumentVoice>)>,
-    voice_dropped_tx: Sender<usize>,
+    mut dead_rx: Consumer<LeavingVoice>,
+    voice_back_tx: Sender<VoiceBack>,
     shutdown: Arc<HostShutdown>,
     ui_wake: Arc<UiWake>,
 ) {
-    let drain = |rx: &mut Consumer<(usize, Box<dyn InstrumentVoice>)>| {
-        while let Ok((track, voice)) = rx.pop() {
-            drop(voice);
-            voice_dropped_tx.send(track).ok();
+    let drain = |rx: &mut Consumer<LeavingVoice>| {
+        while let Ok((track, voice, exit)) = rx.pop() {
+            let back = match exit {
+                VoiceExit::Removed => {
+                    drop(voice);
+                    VoiceBack::Dropped(track)
+                }
+                VoiceExit::Returned => {
+                    ui_wake.request();
+                    VoiceBack::Returned(track, ReturnedVoice(voice))
+                }
+            };
+            voice_back_tx.send(back).ok();
         }
     };
 
@@ -296,7 +355,7 @@ pub(crate) fn load_instrument(
     track: usize,
     entry: &PluginCatalogEntry,
     state: Option<&[u8]>,
-) -> Result<Box<dyn InstrumentEditor>, String> {
+) -> Result<InsertedInstrument, String> {
     prepare_instrument(handle, track, entry, state)?.insert(handle)
 }
 
@@ -315,13 +374,19 @@ pub(crate) struct PreparedInstrument {
     editor: Box<dyn InstrumentEditor>,
 }
 
+/// A plugin in the mixer, as the UI keeps it: its editor, and the rate it
+/// was activated at, which the UI compares with the stream's to know when to
+/// reactivate it ([`PluginAudioHandle::reactivate`]).
+pub(crate) type InsertedInstrument = (Box<dyn InstrumentEditor>, f64);
+
 impl PreparedInstrument {
-    /// Sends the voice to the mixer for its slot and hands back the editor —
-    /// the slot must be empty by then (its old voice's `Remove` sent first).
+    /// Sends the voice to the mixer for its slot and hands back the editor
+    /// and its rate — the slot must be empty by then (its old voice's
+    /// `Remove` sent first).
     pub(crate) fn insert(
         self,
         handle: &mut PluginAudioHandle,
-    ) -> Result<Box<dyn InstrumentEditor>, String> {
+    ) -> Result<InsertedInstrument, String> {
         let PreparedInstrument {
             track,
             voice,
@@ -336,7 +401,7 @@ impl PreparedInstrument {
                 sample_rate,
             })
             .map_err(|_| "plugin host audio thread is gone (command ring full)".to_string())?;
-        Ok(editor)
+        Ok((editor, sample_rate))
     }
 
     /// Drops a plugin that never reached the mixer, in the order a removed

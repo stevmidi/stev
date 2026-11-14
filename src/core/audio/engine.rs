@@ -220,14 +220,10 @@ struct Opened {
 
 /// The footer line for a restart: `previous` is the last stream that opened,
 /// `now` the one this restart opened, if any. Nothing for the launch, or for
-/// a retry that still found no device. A rate other than `published`, the one
-/// the plugins were activated at (the fallback, if no stream has opened yet),
-/// also says that they are silent (`480-audio-settings.md` phase 1).
-/// Pure, unit-tested.
+/// a retry that still found no device. Pure, unit-tested.
 fn restart_message(
     cause: RestartCause,
     previous: Option<&Opened>,
-    published: u32,
     now: Option<&Opened>,
 ) -> Option<String> {
     if cause == RestartCause::Launch {
@@ -246,7 +242,7 @@ fn restart_message(
             }
         };
     };
-    let line = match cause {
+    Some(match cause {
         RestartCause::DeviceLost => format!("{}; using {}", lost(), now.name),
         RestartCause::RateChanged if previous.is_some_and(|p| p.name == now.name) => {
             format!("Device rate changed to {}", khz(now.sample_rate))
@@ -257,11 +253,6 @@ fn restart_message(
         RestartCause::Launch | RestartCause::RateChanged | RestartCause::Retry => {
             format!("Audio switched to {}", now.name)
         }
-    };
-    Some(if now.sample_rate != published {
-        format!("{line}; plugins stay silent until Stev is restarted")
-    } else {
-        line
     })
 }
 
@@ -382,9 +373,11 @@ impl EngineThread {
                     "audio engine: {} @ {} Hz ({cause:?})",
                     opened.name, opened.sample_rate
                 );
-                self.notify_restart(cause, Some(&opened));
                 // Only a stream that plays is the rate plugins are built at.
+                // Published before the footer line, whose repaint is what
+                // has the UI reactivate the plugins at it.
                 self.status.set_sample_rate(opened.sample_rate);
+                self.notify_restart(cause, Some(&opened));
                 self.running = Some(running);
                 self.opened = Some(opened);
                 self.failed_at = None;
@@ -404,8 +397,7 @@ impl EngineThread {
 
     /// Puts the footer line for a restart that opened `now`, if any.
     fn notify_restart(&self, cause: RestartCause, now: Option<&Opened>) {
-        let published = self.status.sample_rate() as u32;
-        if let Some(line) = restart_message(cause, self.opened.as_ref(), published, now) {
+        if let Some(line) = restart_message(cause, self.opened.as_ref(), now) {
             (self.notify)(line);
         }
     }
@@ -921,15 +913,12 @@ mod tests {
     fn the_launch_and_a_fruitless_retry_say_nothing() {
         let speakers = opened("MacBook Pro Speakers", 48_000);
         assert_eq!(
-            restart_message(RestartCause::Launch, None, 48_000, Some(&speakers)),
+            restart_message(RestartCause::Launch, None, Some(&speakers)),
             None
         );
+        assert_eq!(restart_message(RestartCause::Launch, None, None), None);
         assert_eq!(
-            restart_message(RestartCause::Launch, None, 48_000, None),
-            None
-        );
-        assert_eq!(
-            restart_message(RestartCause::Retry, Some(&speakers), 48_000, None),
+            restart_message(RestartCause::Retry, Some(&speakers), None),
             None
         );
     }
@@ -943,81 +932,37 @@ mod tests {
             restart_message(
                 RestartCause::DefaultChanged,
                 Some(&speakers),
-                48_000,
                 Some(&airpods)
             )
             .as_deref(),
             Some("Audio switched to AirPods Pro (System default changed)")
         );
         assert_eq!(
-            restart_message(
-                RestartCause::DeviceLost,
-                Some(&scarlett),
-                48_000,
-                Some(&speakers)
-            )
-            .as_deref(),
+            restart_message(RestartCause::DeviceLost, Some(&scarlett), Some(&speakers)).as_deref(),
             Some("Scarlett 2i2 disconnected; using MacBook Pro Speakers")
         );
         assert_eq!(
-            restart_message(RestartCause::DeviceLost, Some(&scarlett), 48_000, None).as_deref(),
+            restart_message(RestartCause::DeviceLost, Some(&scarlett), None).as_deref(),
             Some("Scarlett 2i2 disconnected; no audio output")
         );
         assert_eq!(
-            restart_message(
-                RestartCause::Retry,
-                Some(&scarlett),
-                48_000,
-                Some(&speakers)
-            )
-            .as_deref(),
+            restart_message(RestartCause::Retry, Some(&scarlett), Some(&speakers)).as_deref(),
             Some("Audio switched to MacBook Pro Speakers")
         );
     }
 
     #[test]
-    fn a_new_rate_says_the_plugins_are_silent() {
+    fn a_new_rate_says_so_and_nothing_about_the_plugins() {
         let at_48 = opened("Scarlett 2i2", 48_000);
         let at_44 = opened("Scarlett 2i2", 44_100);
         assert_eq!(
-            restart_message(
-                RestartCause::RateChanged,
-                Some(&at_48),
-                48_000,
-                Some(&at_44)
-            )
-            .as_deref(),
-            Some("Device rate changed to 44.1 kHz; plugins stay silent until Stev is restarted")
+            restart_message(RestartCause::RateChanged, Some(&at_48), Some(&at_44)).as_deref(),
+            Some("Device rate changed to 44.1 kHz")
         );
-        let speakers = opened("MacBook Pro Speakers", 48_000);
+        // A first device, after a launch with none, says only where it went.
         assert_eq!(
-            restart_message(
-                RestartCause::DeviceLost,
-                Some(&at_44),
-                44_100,
-                Some(&speakers)
-            )
-            .as_deref(),
-            Some(
-                "Scarlett 2i2 disconnected; using MacBook Pro Speakers; \
-                 plugins stay silent until Stev is restarted"
-            )
-        );
-    }
-
-    #[test]
-    fn a_first_device_at_another_rate_than_the_fallback_says_so() {
-        // Launched with no device: the plugins were built at the fallback.
-        let scarlett = opened("Scarlett 2i2", 44_100);
-        assert_eq!(
-            restart_message(
-                RestartCause::Retry,
-                None,
-                FALLBACK_SAMPLE_RATE,
-                Some(&scarlett)
-            )
-            .as_deref(),
-            Some("Audio switched to Scarlett 2i2; plugins stay silent until Stev is restarted")
+            restart_message(RestartCause::Retry, None, Some(&at_44)).as_deref(),
+            Some("Audio switched to Scarlett 2i2")
         );
     }
 

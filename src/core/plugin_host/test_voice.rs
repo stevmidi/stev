@@ -1,6 +1,8 @@
 //! A format-free [`InstrumentVoice`] for the mixer's and the export tap's
 //! tests.
 
+use std::any::Any;
+
 use crate::core::midi::message::Midi3;
 use crate::core::sequencer::NoteSource;
 use crate::models::knobs::ParamId;
@@ -15,6 +17,8 @@ pub(super) struct ConstantVoice {
     level: f32,
     /// The mixer's state for it.
     mix: VoiceMix,
+    /// Whether [`stop_processing`](InstrumentVoice::stop_processing) ran.
+    pub(super) stopped: bool,
 }
 
 impl ConstantVoice {
@@ -23,6 +27,7 @@ impl ConstantVoice {
         ConstantVoice {
             level,
             mix: VoiceMix::default(),
+            stopped: false,
         }
     }
 }
@@ -54,5 +59,13 @@ impl InstrumentVoice for ConstantVoice {
 
     fn mix_mut(&mut self) -> &mut VoiceMix {
         &mut self.mix
+    }
+
+    fn stop_processing(&mut self) {
+        self.stopped = true;
+    }
+
+    fn into_any(self: Box<Self>) -> Box<dyn Any + Send> {
+        self
     }
 }
