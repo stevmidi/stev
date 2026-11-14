@@ -47,14 +47,24 @@ impl InstrumentRestore {
     /// The step the next load is, 1-based, and how many steps there are —
     /// "3 of 8".
     pub(super) fn step(&self) -> (usize, usize) {
-        let done = self.total - self.queue.len();
-        ((done + 1).min(self.total), self.total)
+        progress_step(self.total - self.queue.len(), self.total)
     }
 
     /// How much of the restore is done, `0.0..=1.0` — the progress bar.
     pub(super) fn fraction(&self) -> f32 {
-        (self.total - self.queue.len()) as f32 / self.total.max(1) as f32
+        progress_fraction(self.total - self.queue.len(), self.total)
     }
+}
+
+/// The step a plugin progress panel is on with `done` of `total` done,
+/// 1-based, and `total` — "3 of 8". Shared with the audio restart's panel.
+pub(super) fn progress_step(done: usize, total: usize) -> (usize, usize) {
+    ((done + 1).min(total), total)
+}
+
+/// How much of a plugin progress panel's work is done, `0.0..=1.0` — its bar.
+pub(super) fn progress_fraction(done: usize, total: usize) -> f32 {
+    done as f32 / total.max(1) as f32
 }
 
 #[cfg(test)]

@@ -196,10 +196,12 @@ impl Display {
 
     /// Whether the pointer is on something in the modal that is up a click
     /// acts on — for the pointing-hand cursor, the modal deciding the
-    /// pointer alone. A project dialog sits over the settings modal, so it
-    /// is asked first.
+    /// pointer alone. Nothing is, under a plugin progress panel. A project
+    /// dialog sits over the settings modal, so it is asked first.
     pub(in crate::view::display) fn is_pointer_on_modal_item(&self) -> bool {
-        if self.project_dialog.is_some() {
+        if self.progress_panel_up() {
+            false
+        } else if self.project_dialog.is_some() {
             self.is_pointer_on_project_dialog_item()
         } else {
             self.overlay == Some(Overlay::Settings) && self.is_pointer_on_settings_item()

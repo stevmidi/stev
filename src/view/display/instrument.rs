@@ -35,7 +35,7 @@ use crate::core::plugin_host::{
 use crate::models::track::{InstrumentRef, TrackOutput};
 
 use super::Display;
-use super::audio_restart::{AudioRestart, Held};
+use super::audio_restart::AudioRestart;
 use super::browser::BrowserPlugin;
 use super::instrument_restore::InstrumentRestore;
 use super::modal_focus::Overlay;
@@ -516,18 +516,8 @@ impl Display {
         };
         editor.teardown_gui();
         // The voice goes first, then the instance, as for any removal.
-        let voice_dropped = match held {
-            Some(Held::Arrived(voice)) => {
-                drop(voice);
-                true
-            }
-            Some(Held::Ready(voice)) => {
-                drop(voice);
-                true
-            }
-            Some(Held::Asked) | None => false,
-        };
-        if voice_dropped {
+        if let Some(voice) = held {
+            drop(voice);
             editor.deactivate();
             self.sync_live_instrument_target();
             return;
@@ -789,12 +779,19 @@ impl Display {
         let Some((slot, voice)) = restart.pop_arrived() else {
             return;
         };
-        if let Some(ready) = self.reactivate_slot_instrument(slot, voice)
-            && let Some(restart) = &mut self.instruments.restart
-        {
+        let ready = self.reactivate_slot_instrument(slot, voice);
+        let Some(restart) = &mut self.instruments.restart else {
+            return;
+        };
+        if let Some(ready) = ready {
             restart.ready(slot, ready);
         }
-        ctx.request_repaint();
+        // The last one finishes in this frame, not the next.
+        if restart.is_done() {
+            self.finish_restart();
+        } else {
+            ctx.request_repaint();
+        }
     }
 
     /// Reactivates the plugin in `slot` with the `voice` the mixer handed
@@ -846,7 +843,7 @@ impl Display {
     /// stream has left since goes in all the same, and is asked back for the
     /// next restart (`return_stale_voices`).
     fn finish_restart(&mut self) {
-        let Some(mut restart) = self.instruments.restart.take() else {
+        let Some(restart) = self.instruments.restart.take() else {
             return;
         };
         let InstrumentHost {
@@ -857,7 +854,7 @@ impl Display {
         else {
             return;
         };
-        for (slot, ready) in restart.take_ready() {
+        for (slot, ready) in restart.into_ready() {
             let Some(Some(loaded)) = track_instruments.get_mut(slot) else {
                 continue;
             };
@@ -894,17 +891,21 @@ impl Display {
         editor.teardown_gui();
         editor.deactivate();
         drop(editor);
-        let prepared = match &state {
-            Some(state) => self.prepare_installed(slot, &entry, state),
-            None => {
-                warn!(
-                    "plugin host: '{}' couldn't save its state; not loading it again",
-                    entry.name
-                );
-                None
-            }
-        };
-        let Some(prepared) = prepared else {
+        if state.is_none() {
+            warn!(
+                "plugin host: '{}' couldn't save its state; not loading it again",
+                entry.name
+            );
+        }
+        let Some((entry, prepared)) = state.and_then(|state| {
+            self.prepare_installed(
+                slot,
+                &entry.bundle_path,
+                &entry.plugin_id,
+                &entry.name,
+                &state,
+            )
+        }) else {
             self.render.status = Some(StatusMessage::new(format!(
                 "{} could not restart at the new sample rate and is silent",
                 entry.name
@@ -920,26 +921,34 @@ impl Display {
         Some(ready)
     }
 
-    /// Loads `entry`'s plugin for `slot` from `state` without putting it in
-    /// the mixer, if it is still installed.
+    /// Loads the plugin `plugin_id` in the bundle at `bundle_path` for
+    /// `slot` from `state` without putting it in the mixer, if it is
+    /// installed, with its catalog entry: a staged project's plugin, or one
+    /// an audio restart loads again. `name` names it in the log when it
+    /// isn't.
     fn prepare_installed(
         &mut self,
         slot: usize,
-        entry: &PluginCatalogEntry,
+        bundle_path: &Path,
+        plugin_id: &str,
+        name: &str,
         state: &[u8],
-    ) -> Option<PreparedInstrument> {
-        let Some(installed) = self
-            .catalog_index_of(&entry.bundle_path, &entry.plugin_id)
+    ) -> Option<(PluginCatalogEntry, PreparedInstrument)> {
+        let Some(entry) = self
+            .catalog_index_of(bundle_path, plugin_id)
             .and_then(|idx| self.plugin_catalog().get(idx).cloned())
         else {
-            warn!("plugin host: '{}' is not installed", entry.name);
+            warn!("plugin host: '{name}' is not installed");
             return None;
         };
-        let entry = installed;
         let handle = self.instruments.audio.as_mut()?;
-        prepare_instrument(handle, slot, &entry, Some(state))
-            .inspect_err(|e| error!("plugin host: failed to load '{}': {e}", entry.name))
-            .ok()
+        match prepare_instrument(handle, slot, &entry, Some(state)) {
+            Ok(prepared) => Some((entry, prepared)),
+            Err(e) => {
+                error!("plugin host: failed to load '{}': {e}", entry.name);
+                None
+            }
+        }
     }
 
     /// The audio restart under way, if any, for the panel: the plugin it
@@ -1038,27 +1047,20 @@ impl Display {
     /// with the staging. A plugin that isn't installed or fails to load is
     /// left out: the track stays silent, as with any load.
     fn prepare_staged_instrument(&mut self, slot: usize, want: &InstrumentRef) {
-        let Some(entry) = self
-            .catalog_index_of(&want.bundle_path, &want.plugin_id)
-            .and_then(|idx| self.plugin_catalog().get(idx).cloned())
-        else {
-            warn!("plugin host: '{}' is not installed", want.display_name);
-            return;
-        };
-        let Some(handle) = self.instruments.audio.as_mut() else {
-            return;
-        };
-        match prepare_instrument(handle, slot, &entry, Some(&want.state)) {
-            Ok(prepared) => {
-                if let Some(staging) = &mut self.instruments.staging {
-                    staging.prepared.push(StagedInstrument {
-                        slot,
-                        entry,
-                        prepared,
-                    });
-                }
-            }
-            Err(e) => error!("plugin host: failed to load '{}': {e}", entry.name),
+        let prepared = self.prepare_installed(
+            slot,
+            &want.bundle_path,
+            &want.plugin_id,
+            &want.display_name,
+            &want.state,
+        );
+        if let (Some((entry, prepared)), Some(staging)) = (prepared, &mut self.instruments.staging)
+        {
+            staging.prepared.push(StagedInstrument {
+                slot,
+                entry,
+                prepared,
+            });
         }
     }
 

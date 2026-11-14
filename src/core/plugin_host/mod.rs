@@ -208,28 +208,18 @@ impl PluginAudioHandle {
     }
 
     /// Sends a [`ReadyVoice`] to the mixer for `track`, whose slot must be
-    /// empty by then. Returns the rate it was activated at.
+    /// empty by then: the one way a voice goes in. Returns the rate it was
+    /// activated at.
     pub(crate) fn insert_ready(&mut self, track: usize, ready: ReadyVoice) -> Result<f64, String> {
         let ReadyVoice { voice, sample_rate } = ready;
-        self.send_insert(track, voice, sample_rate)?;
-        Ok(sample_rate)
-    }
-
-    /// Sends `voice`, activated at `sample_rate`, to the mixer for `track`,
-    /// whose slot must be empty by then.
-    fn send_insert(
-        &mut self,
-        track: usize,
-        voice: Box<dyn InstrumentVoice>,
-        sample_rate: f64,
-    ) -> Result<(), String> {
         self.cmd_tx
             .push(PluginHostCommand::Insert {
                 track,
                 voice,
                 sample_rate,
             })
-            .map_err(|_| "plugin host audio thread is gone (command ring full)".to_string())
+            .map_err(|_| "plugin host audio thread is gone (command ring full)".to_string())?;
+        Ok(sample_rate)
     }
 }
 
@@ -418,13 +408,9 @@ impl PreparedInstrument {
         self,
         handle: &mut PluginAudioHandle,
     ) -> Result<InsertedInstrument, String> {
-        let PreparedInstrument {
-            track,
-            voice,
-            sample_rate,
-            editor,
-        } = self;
-        handle.send_insert(track, voice, sample_rate)?;
+        let track = self.track;
+        let (editor, ready) = self.into_ready();
+        let sample_rate = handle.insert_ready(track, ready)?;
         Ok((editor, sample_rate))
     }
 

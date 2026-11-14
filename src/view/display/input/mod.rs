@@ -487,13 +487,10 @@ impl Display {
                 .into_iter()
                 .filter(|event| !self.drops_editor_key(event)),
         );
-        // Nothing acts while a project being opened loads its plugins — not
-        // even the project chords ahead of the overlay below: the open
-        // project must stay exactly as it is. Nor while an audio restart
-        // reactivates its plugins: its panel is up over everything, Settings
-        // included.
-        #[cfg(target_os = "macos")]
-        if self.overlay == Some(Overlay::RestoringInstruments) || self.audio_restart().is_some() {
+        // Nothing acts while a plugin progress panel is up — not even the
+        // project chords ahead of the overlay below: the open project must
+        // stay exactly as it is.
+        if self.progress_panel_up() {
             events.clear();
         }
         for event in events.drain(..) {
@@ -567,11 +564,21 @@ impl Display {
     /// audio" panel — is up. It takes the pointer as well as the keyboard,
     /// so nothing under it shows a hover.
     pub(in crate::view::display) fn modal_up(&self) -> bool {
+        self.overlay.is_some() || self.project_dialog.is_some() || self.progress_panel_up()
+    }
+
+    /// Whether a plugin progress panel holds the app (macOS): a project
+    /// being opened loads its plugins, or an audio restart reactivates them
+    /// at a new rate. Every input event is dropped while it is, and the
+    /// modal under it shows no hover.
+    pub(in crate::view::display) fn progress_panel_up(&self) -> bool {
         #[cfg(target_os = "macos")]
-        if self.audio_restart().is_some() {
-            return true;
+        {
+            self.overlay == Some(Overlay::RestoringInstruments)
+                || self.instruments.restart.is_some()
         }
-        self.overlay.is_some() || self.project_dialog.is_some()
+        #[cfg(not(target_os = "macos"))]
+        false
     }
 
     /// The track-header column's keys while it has the keyboard: plain

@@ -12,6 +12,8 @@
 
 use std::collections::VecDeque;
 
+use super::instrument_restore::{progress_fraction, progress_step};
+
 /// The plugins of one audio restart, by engine slot: asked back from the
 /// mixer, back and waiting to be reactivated, or ready to go back in.
 #[derive(Debug)]
@@ -27,12 +29,10 @@ pub(super) struct AudioRestart<A, R> {
     total: usize,
 }
 
-/// What a restart was holding for a slot whose plugin was removed
+/// The voice a restart was holding for a slot whose plugin was removed
 /// ([`AudioRestart::forget`]).
 #[derive(Debug, PartialEq)]
 pub(super) enum Held<A, R> {
-    /// Its voice was asked back and hasn't come: it will, to be dropped.
-    Asked,
     /// Its voice was back, waiting to be reactivated.
     Arrived(A),
     /// Its voice was ready to go back in.
@@ -86,17 +86,20 @@ impl<A, R> AudioRestart<A, R> {
         self.asked.is_empty() && self.arrived.is_empty()
     }
 
-    /// Takes the ready voices, to go back in.
-    pub(super) fn take_ready(&mut self) -> Vec<(usize, R)> {
-        std::mem::take(&mut self.ready)
+    /// The ready voices, to go back in.
+    pub(super) fn into_ready(self) -> Vec<(usize, R)> {
+        self.ready
     }
 
-    /// The plugin in `slot` was removed: takes what the restart held for it,
-    /// and stops counting it. `None` if it held nothing.
+    /// The plugin in `slot` was removed: takes the voice the restart held
+    /// for it, and stops counting it. `None` if it held none, including one
+    /// asked back that hasn't come yet: it comes to be dropped
+    /// (`Display::take_back_voice`).
     pub(super) fn forget(&mut self, slot: usize) -> Option<Held<A, R>> {
         let held = if let Some(pos) = self.asked.iter().position(|s| *s == slot) {
             self.asked.remove(pos);
-            Held::Asked
+            self.total -= 1;
+            return None;
         } else if let Some(pos) = self.arrived.iter().position(|(s, _)| *s == slot) {
             Held::Arrived(self.arrived.remove(pos)?.1)
         } else {
@@ -119,12 +122,12 @@ impl<A, R> AudioRestart<A, R> {
     /// The step the next reactivation is, 1-based, and how many steps there
     /// are — "3 of 8".
     pub(super) fn step(&self) -> (usize, usize) {
-        ((self.done() + 1).min(self.total), self.total)
+        progress_step(self.done(), self.total)
     }
 
     /// How much of the restart is done, `0.0..=1.0` — the progress bar.
     pub(super) fn fraction(&self) -> f32 {
-        self.done() as f32 / self.total.max(1) as f32
+        progress_fraction(self.done(), self.total)
     }
 
     /// How many plugins are ready or left out.
@@ -169,7 +172,7 @@ mod tests {
         assert!(restart.is_done());
         assert_eq!(restart.step(), (3, 3));
         assert_eq!(restart.fraction(), 1.0);
-        assert_eq!(restart.take_ready(), vec![(3, "ready 3"), (5, "ready 5")]);
+        assert_eq!(restart.into_ready(), vec![(3, "ready 3"), (5, "ready 5")]);
     }
 
     #[test]
@@ -193,13 +196,13 @@ mod tests {
         assert_eq!(restart.pop_arrived(), Some((1, "voice 1")));
         restart.ready(1, "ready 1");
 
-        assert_eq!(restart.forget(0), Some(Held::Asked));
+        assert_eq!(restart.forget(0), None);
         assert_eq!(restart.forget(2), Some(Held::Arrived("voice 2")));
         assert_eq!(restart.forget(1), Some(Held::Ready("ready 1")));
         assert_eq!(restart.forget(3), None);
         // Only slot 4 is left, and the count follows.
         assert_eq!(restart.step(), (1, 1));
         assert_eq!(restart.next_slot(), Some(4));
-        assert!(restart.take_ready().is_empty());
+        assert!(restart.into_ready().is_empty());
     }
 }
