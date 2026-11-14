@@ -188,7 +188,7 @@ the [roadmap](docs/280-roadmap.md):
 - tempo or meter changes along the timeline (one tempo and one meter per
   project)
 - detecting the meter from what you play: set it with the meter chip
-- audio tracks and audio recording
+- audio tracks and audio recording, and so no freezing or bounce-in-place: Stev is a MIDI sequencer at heart
 - a built-in sampler or instrument: plugins cover it
 - track automation lanes and controller-data editing
 - mixing: EQ, compression, effect plugins, sends, a mixer panel. Stev arranges;

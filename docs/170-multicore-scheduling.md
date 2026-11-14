@@ -381,8 +381,9 @@ Any one of these, not the general wish for headroom:
 2. Per-track effect *chains* arrive. That is also when the fan-in shape this
    pool relies on (*Why it is tractable here*) stops holding, so the two changes
    want designing together.
-3. The single-most-expensive-voice floor is the thing being hit, and freeze /
-   bounce-in-place has been rejected as the answer for it.
+3. The single-most-expensive-voice floor is the thing being hit. Freeze /
+   bounce-in-place is not the answer: it needs audio tracks, which Stev will
+   not have (`280` § Not planned).
 
 If it is picked up, the tiers should be a property of the *voice*, not a global
 mode, and the first cut should anticipate exactly one block — enough to prove the
@@ -454,7 +455,11 @@ from falling off a cliff during its release tail.
 Parallelism redistributes; it does not reduce total work. The floor is the
 **single most expensive voice** — one plugin that alone exceeds the block
 deadline is still a dropout with any number of cores. The levers for that are
-elsewhere and none of them are implemented: a larger buffer, look-ahead
-processing for non-armed tracks (*Considered, deferred* above), freeze /
-bounce-in-place, or a track *disable* that unloads the plugin outright as
-distinct from mute (which deliberately keeps processing so tails ring out).
+elsewhere: a larger buffer (the Audio tab, `480-audio-settings.md`) and
+look-ahead processing for non-armed tracks (*Considered, deferred* above).
+Freeze / bounce-in-place is ruled out (2026-11-14): it needs audio tracks, and
+Stev is a MIDI sequencer at heart (`280` § Not planned). A track *disable* was
+rejected the same day: the heavy track has to keep playing with the
+arrangement, and a muted track already stops costing CPU once its plugin goes
+idle (`130` § Idle voices are skipped), unless the plugin never reports
+silence.

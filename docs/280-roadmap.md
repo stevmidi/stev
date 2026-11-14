@@ -67,7 +67,7 @@ Mirrored in the README's *Not planned* list, so nobody expects these. Some may c
 
 - tempo or meter changes along the timeline (one tempo and one meter per project; the meter is stored as a list so changes could extend the format later, `060`)
 - detecting the meter from a take: Enter fits the tempo in the project's meter and the meter chip sets it. Probed 2026-10-27 over the pinned takes and dropped. A free noodle doesn't reveal its meter: its phrase ends on a rest of unknown length, so 10–12 played eighths fit two bars of 3/4 as well as two of 4/4, and the accents were at noise level. A cleanly repeating riff does (one 3/4 test take repeated its rhythm exactly every three beats), but its whole-bar length fits 4/4 just as well, and a three-beat riff can be meant over 4/4. Too narrow and too subjective to save one click on the chip; Ableton's Capture doesn't detect the meter either
-- audio tracks and audio recording
+- audio tracks and audio recording, and so no freezing or bounce-in-place either: Stev is a MIDI sequencer at heart (decided 2026-11-14). A plugin too heavy for the machine is met with a larger buffer (`170` § What this cannot fix)
 - a built-in sampler or other built-in instrument: sampler and instrument plugins cover it, loaded through the plugin host (`130`)
 - track automation lanes and drawing controller data: the piano roll shows the clip's pitch bend, mod wheel and parameter moves in a lane (`380`, `400`) that only clears a span or the whole lane; no lane draws values and no automation lives on the arranger's tracks
 - mixing: built-in EQ, compression or other effects, effect plugins, sends, a mixer panel (Stev arranges, a DAW mixes: § Principle; the hand-off is a stem export)
