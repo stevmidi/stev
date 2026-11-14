@@ -511,7 +511,8 @@ impl AudioSource for InstrumentMixer {
                 awake += usize::from(!voice.mix().sleeping && !held(track));
             }
         }
-        ctx.pool
+        let barrier = ctx
+            .pool
             .for_each(self.voices.as_mut_slice(), awake, |track, slot| {
                 if let Some(voice) = slot {
                     // A sleeping voice is never called into, so it isn't timed.
@@ -545,6 +546,7 @@ impl AudioSource for InstrumentMixer {
                 .map_or(Duration::ZERO, |v| v.mix().render_time);
             ctx.load.record_track(track, render_time);
         }
+        ctx.load.record_barrier(barrier);
 
         // --- Summing pass ---
         // Order-dependent, and writing one shared accumulator, so it stays on

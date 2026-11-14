@@ -70,6 +70,10 @@ pub(crate) struct AudioLoad {
     /// The most recent block's render time per track, in microseconds,
     /// indexed by track.
     tracks_us: [AtomicU32; MAX_TRACKS],
+    /// The most recent block's wait at the worker pool's barrier, in
+    /// microseconds: the render pass's time on workers still rendering after
+    /// the callback's own share.
+    barrier_us: AtomicU32,
 }
 
 /// A render time, in whole microseconds, saturating at `u32::MAX` (~71
@@ -89,6 +93,7 @@ impl AudioLoad {
             xruns: AtomicU32::new(0),
             stream_errors: AtomicU32::new(0),
             tracks_us: [const { AtomicU32::new(0) }; MAX_TRACKS],
+            barrier_us: AtomicU32::new(0),
         }
     }
 
@@ -141,6 +146,20 @@ impl AudioLoad {
         if let Some(slot) = self.tracks_us.get(track) {
             slot.store(micros(elapsed), Ordering::Relaxed);
         }
+    }
+
+    /// (audio thread) Records this block's wait at the worker pool's barrier,
+    /// as returned by [`WorkerPool::for_each`](super::WorkerPool::for_each);
+    /// written every block, like the tracks.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pub(crate) fn record_barrier(&self, waited: Duration) {
+        self.barrier_us.store(micros(waited), Ordering::Relaxed);
+    }
+
+    /// The most recent block's barrier wait, in microseconds. Read by the
+    /// overrun journal alongside [`track_last_us`](Self::track_last_us).
+    pub(crate) fn barrier_last_us(&self) -> u32 {
+        self.barrier_us.load(Ordering::Relaxed)
     }
 
     /// The most recent block's render time for `track`, in microseconds —
@@ -404,6 +423,16 @@ mod tests {
         load.record_track(0, budget());
         load.record_track(0, Duration::ZERO);
         assert_eq!(load.track_last_us(0), 0);
+    }
+
+    #[test]
+    fn the_barrier_wait_holds_the_last_block_figure() {
+        let load = AudioLoad::new();
+        assert_eq!(load.barrier_last_us(), 0);
+        load.record_barrier(Duration::from_micros(4_200));
+        assert_eq!(load.barrier_last_us(), 4_200);
+        load.record_barrier(Duration::ZERO);
+        assert_eq!(load.barrier_last_us(), 0);
     }
 
     #[test]

@@ -38,15 +38,15 @@
 //! block: the caller runs whatever it didn't take, and the late worker finds
 //! its job gone (`docs/170-multicore-scheduling.md`, issue #32). What is left
 //! is a worker that took the job and then lost its CPU — mid-item, its voice's
-//! own timer shows it. The time the caller spends at the barrier is added up
-//! for the overrun journal ([`WorkerPool::take_barrier_wait`]).
+//! own timer shows it. [`WorkerPool::for_each`] returns the time the caller
+//! spent at the barrier, for the overrun journal.
 
 use std::cell::UnsafeCell;
 use std::hint::spin_loop;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::ptr::null;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 use std::thread::{Builder, JoinHandle, park_timeout};
 use std::time::{Duration, Instant};
 
@@ -192,10 +192,6 @@ pub(crate) struct WorkerPool {
     shared: Arc<PoolShared>,
     /// The `"audio-worker-N"` thread handles.
     threads: Vec<JoinHandle<()>>,
-    /// Nanoseconds the calling thread has spent at the barrier, after its own
-    /// share, since the last [`take_barrier_wait`](Self::take_barrier_wait).
-    /// Only the calling thread touches it; an atomic keeps the pool `Sync`.
-    barrier_wait_ns: AtomicU64,
 }
 
 impl WorkerPool {
@@ -234,24 +230,12 @@ impl WorkerPool {
             })
             .collect();
 
-        Self {
-            shared,
-            threads,
-            barrier_wait_ns: AtomicU64::new(0),
-        }
+        Self { shared, threads }
     }
 
     /// Worker threads in the pool, not counting the calling thread.
     pub(crate) fn worker_count(&self) -> usize {
         self.threads.len()
-    }
-
-    /// (calling thread) How long [`for_each`](Self::for_each) has waited at its
-    /// barrier, after running its own share, since the last call — the time
-    /// the block spent on workers still rendering. Resets to zero. The engine
-    /// takes it once per callback for the overrun journal.
-    pub(crate) fn take_barrier_wait(&self) -> Duration {
-        Duration::from_nanos(self.barrier_wait_ns.swap(0, Ordering::Relaxed))
     }
 
     /// Runs `f(index, item)` for every element of `items`, spread across the
@@ -265,15 +249,18 @@ impl WorkerPool {
     ///
     /// `f` must not block: every runner is a real-time thread, and the caller
     /// waits for all of them.
+    ///
+    /// Returns how long the caller waited at the barrier after its own share,
+    /// for workers still rendering — zero when it ran everything inline.
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-    pub(crate) fn for_each<T, F>(&self, items: &mut [T], runners: usize, f: F)
+    pub(crate) fn for_each<T, F>(&self, items: &mut [T], runners: usize, f: F) -> Duration
     where
         T: Send,
         F: Fn(usize, &mut T) + Sync,
     {
         let len = items.len();
         if len == 0 {
-            return;
+            return Duration::ZERO;
         }
         let helpers = self
             .shared
@@ -285,7 +272,7 @@ impl WorkerPool {
             for (index, item) in items.iter_mut().enumerate() {
                 f(index, item);
             }
-            return;
+            return Duration::ZERO;
         }
 
         // Lives on this stack frame for the whole section — every runner has
@@ -334,11 +321,11 @@ impl WorkerPool {
                 spin_loop();
             }
         }
-        let waited = barrier.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64;
-        self.barrier_wait_ns.fetch_add(waited, Ordering::Relaxed);
+        let waited = barrier.elapsed();
 
         // Explicit, so it is obvious that `ctx` must outlive the barrier above.
         drop(ctx);
+        waited
     }
 }
 
@@ -496,7 +483,7 @@ mod tests {
         let caller = current().id();
         let mut items = vec![0u32; 4];
         let started = Instant::now();
-        pool.for_each(&mut items, 2, |index, item| {
+        let waited = pool.for_each(&mut items, 2, |index, item| {
             assert_eq!(current().id(), caller, "the sleeping worker ran an item");
             *item = index as u32 + 1;
         });
@@ -506,7 +493,7 @@ mod tests {
             started.elapsed()
         );
         assert_eq!(items, vec![1, 2, 3, 4]);
-        assert!(pool.take_barrier_wait() < Duration::from_millis(250));
+        assert!(waited < Duration::from_millis(250));
 
         // Once awake, the worker finds its section revoked and the pool still
         // works.
@@ -516,14 +503,13 @@ mod tests {
     }
 
     #[test]
-    fn the_barrier_wait_is_taken_once_and_inline_runs_add_none() {
+    fn an_inline_run_waits_at_no_barrier() {
         let pool = WorkerPool::new(2, || ());
         let mut items = vec![0u32; 4];
-        pool.for_each(&mut items, 1, |_, item| *item = 1);
-        assert_eq!(pool.take_barrier_wait(), Duration::ZERO);
-        pool.for_each(&mut items, 3, |_, item| *item = 2);
-        pool.take_barrier_wait();
-        assert_eq!(pool.take_barrier_wait(), Duration::ZERO, "taking resets it");
+        assert_eq!(
+            pool.for_each(&mut items, 1, |_, item| *item = 1),
+            Duration::ZERO
+        );
     }
 
     #[test]

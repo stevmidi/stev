@@ -1020,24 +1020,17 @@ impl Mixer {
         }
 
         let elapsed = started.elapsed();
-        // Taken every callback, so the figure is always this block's.
-        let barrier = self.pool.take_barrier_wait();
         if self.load.record(elapsed, total_frames, self.sample_rate) {
             self.journal
-                .push(self.overrun_record(elapsed, total_frames, barrier));
+                .push(self.overrun_record(elapsed, total_frames));
         }
     }
 
     /// The journal's view of the block that just overran: whole-callback time,
-    /// the per-source split just measured, the per-track split the
-    /// instrument mixer left in [`AudioLoad`], and the time the worker pool's
-    /// barrier held the block. Fixed-size and `Copy` — nothing here allocates.
-    fn overrun_record(
-        &self,
-        elapsed: Duration,
-        total_frames: usize,
-        barrier: Duration,
-    ) -> OverrunRecord {
+    /// the per-source split just measured, and the per-track split and barrier
+    /// wait the instrument mixer left in [`AudioLoad`]. Fixed-size and `Copy` —
+    /// nothing here allocates.
+    fn overrun_record(&self, elapsed: Duration, total_frames: usize) -> OverrunRecord {
         let mut sources = [("", 0u32); MAX_JOURNAL_SOURCES];
         let mut source_count = 0u8;
         for ((source, elapsed), slot) in self
@@ -1060,7 +1053,7 @@ impl Mixer {
             sources,
             source_count,
             tracks_us,
-            barrier_us: micros(barrier),
+            barrier_us: self.load.barrier_last_us(),
             workers: self.pool.worker_count(),
             workers_joined: self.workgroup.joined(),
             session: self.session,
@@ -1424,9 +1417,9 @@ mod tests {
     fn a_restart_starts_a_new_journal_session_at_the_new_rate() {
         let mut mixer = mixer();
         mixer.restart(44_100.0, Arc::new(DeviceWorkgroup::default()), 512);
-        let first = mixer.overrun_record(Duration::from_millis(20), 512, Duration::ZERO);
+        let first = mixer.overrun_record(Duration::from_millis(20), 512);
         mixer.restart(96_000.0, Arc::new(DeviceWorkgroup::default()), 128);
-        let second = mixer.overrun_record(Duration::from_millis(20), 128, Duration::ZERO);
+        let second = mixer.overrun_record(Duration::from_millis(20), 128);
         assert_eq!(first.sample_rate, 44_100.0);
         assert_eq!(second.sample_rate, 96_000.0);
         assert_ne!(first.session, second.session);
