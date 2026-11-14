@@ -13,37 +13,54 @@
 //!
 //! ## The handshake
 //!
-//! One section (`for_each` call) runs as a strict ping-pong per worker:
+//! Each worker has one state word, `IDLE → PUBLISHED → TAKEN → IDLE`. One
+//! section (`for_each` call) runs:
 //!
 //! 1. the caller writes the type-erased [`Job`] and resets the claim cursor;
-//! 2. it bumps `seq` on each participating worker and unparks it;
-//! 3. every runner — workers *and* the caller — claims item indices off the
-//!    shared `next` cursor with `fetch_add` and runs them until exhausted;
-//! 4. each worker stores its `seq` into its `ack`;
-//! 5. the caller spins until every participating worker has acked.
+//! 2. it sets each participating worker's state to `PUBLISHED` and unparks it;
+//! 3. a worker that wakes swaps `PUBLISHED → TAKEN`; from then on it may read
+//!    the job;
+//! 4. every runner — the workers that took the job *and* the caller — claims
+//!    item indices off the shared `next` cursor with `fetch_add` and runs them
+//!    until exhausted, and each worker then stores `IDLE`;
+//! 5. the caller, done with its share, **revokes** every worker still
+//!    `PUBLISHED` (`PUBLISHED → IDLE`) and spins only on those that took the
+//!    job, until they are `IDLE` again.
 //!
-//! Step 5 is what makes step 1 sound: a worker only touches `job` between
-//! observing its `seq` change and storing its `ack`, and the caller never
-//! rewrites `job` until every one of those windows has closed. There is
-//! therefore no such thing as a straggler from a previous section, and the
-//! `JobCtx` on the caller's stack is guaranteed to outlive every dereference of
-//! it. The flip side is that the caller waits for the slowest worker to *wake*,
-//! which is what the `on_start` hook given to [`WorkerPool::new`] is for: the
-//! engine uses it to join each worker to the device's audio workgroup — see
-//! `docs/170-multicore-scheduling.md`.
+//! The two swaps in steps 3 and 5 race on one word, so exactly one wins: a
+//! worker either took the job and is waited for, or was revoked and never
+//! reads it. A worker only touches `job` while `TAKEN`, and the caller never
+//! rewrites `job` until every worker is `IDLE`, so there is no such thing as a
+//! straggler from a previous section, and the `JobCtx` on the caller's stack
+//! outlives every dereference of it.
+//!
+//! The revoke is what keeps a worker that is slow to wake from holding up the
+//! block: the caller runs whatever it didn't take, and the late worker finds
+//! its job gone (`docs/170-multicore-scheduling.md`, issue #32). What is left
+//! is a worker that took the job and then lost its CPU — mid-item, its voice's
+//! own timer shows it. The time the caller spends at the barrier is added up
+//! for the overrun journal ([`WorkerPool::take_barrier_wait`]).
 
 use std::cell::UnsafeCell;
 use std::hint::spin_loop;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::ptr::null;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, AtomicUsize, Ordering};
 use std::thread::{Builder, JoinHandle, park_timeout};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use super::enter_render_thread;
 
-/// How long a worker spins on its `seq` *after finishing a section* before it
+/// A worker's state between sections, or after it was revoked: it must not
+/// read `job`.
+const IDLE: u8 = 0;
+/// The caller has published a section for this worker, which hasn't woken yet.
+const PUBLISHED: u8 = 1;
+/// The worker took the section and may read `job` until it stores [`IDLE`].
+const TAKEN: u8 = 2;
+
+/// How long a worker spins on its state *after finishing a section* before it
 /// parks — just long enough to catch a section already on its way, since the
 /// caller unparks only after publishing and the store is often visible first.
 ///
@@ -117,13 +134,12 @@ unsafe fn run_job<T, F: Fn(usize, &mut T)>(ctx: *const (), index: usize) {
     (ctx.f)(index, item);
 }
 
-/// Per-worker handshake state. `seq` is written only by the caller, `ack` only
-/// by that worker.
+/// Per-worker handshake state: [`IDLE`], [`PUBLISHED`] or [`TAKEN`]. The
+/// caller moves it `IDLE → PUBLISHED` and revokes `PUBLISHED → IDLE`; the
+/// worker moves it `PUBLISHED → TAKEN → IDLE`.
 struct WorkerSlot {
-    /// Section number the caller has published for this worker.
-    seq: AtomicU64,
-    /// Section number this worker has finished.
-    ack: AtomicU64,
+    /// The state word both sides swap on.
+    state: AtomicU8,
 }
 
 /// Shared state between the calling (audio) thread and the workers.
@@ -132,9 +148,6 @@ struct PoolShared {
     job: UnsafeCell<Job>,
     /// Claim cursor: `fetch_add` hands each item index to exactly one runner.
     next: AtomicUsize,
-    /// Section counter, written only by the caller.
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-    seq: AtomicU64,
     /// Cleared on drop to retire the workers.
     running: AtomicBool,
     /// Per-worker handshake slots.
@@ -142,10 +155,11 @@ struct PoolShared {
 }
 
 // SAFETY: `job` is the only non-atomic field. The caller writes it only while
-// every worker's `ack` equals its `seq` — i.e. while no worker is inside the
-// window where it may read `job` — and each worker's read is ordered after its
-// own `seq` acquire-load, which pairs with the caller's release-store. The raw
-// pointer inside `Job` is never dereferenced outside that window.
+// every worker's state is `IDLE` — i.e. while no worker is inside the window
+// where it may read `job` — and each worker's read is ordered after its own
+// `PUBLISHED → TAKEN` swap (acquire), which reads the caller's release-store of
+// `PUBLISHED`. The raw pointer inside `Job` is never dereferenced outside that
+// window.
 unsafe impl Send for PoolShared {}
 unsafe impl Sync for PoolShared {}
 
@@ -178,6 +192,10 @@ pub(crate) struct WorkerPool {
     shared: Arc<PoolShared>,
     /// The `"audio-worker-N"` thread handles.
     threads: Vec<JoinHandle<()>>,
+    /// Nanoseconds the calling thread has spent at the barrier, after its own
+    /// share, since the last [`take_barrier_wait`](Self::take_barrier_wait).
+    /// Only the calling thread touches it; an atomic keeps the pool `Sync`.
+    barrier_wait_ns: AtomicU64,
 }
 
 impl WorkerPool {
@@ -194,12 +212,10 @@ impl WorkerPool {
         let shared = Arc::new(PoolShared {
             job: UnsafeCell::new(Job::EMPTY),
             next: AtomicUsize::new(0),
-            seq: AtomicU64::new(0),
             running: AtomicBool::new(true),
             workers: (0..worker_count)
                 .map(|_| WorkerSlot {
-                    seq: AtomicU64::new(0),
-                    ack: AtomicU64::new(0),
+                    state: AtomicU8::new(IDLE),
                 })
                 .collect(),
         });
@@ -218,12 +234,24 @@ impl WorkerPool {
             })
             .collect();
 
-        Self { shared, threads }
+        Self {
+            shared,
+            threads,
+            barrier_wait_ns: AtomicU64::new(0),
+        }
     }
 
     /// Worker threads in the pool, not counting the calling thread.
     pub(crate) fn worker_count(&self) -> usize {
         self.threads.len()
+    }
+
+    /// (calling thread) How long [`for_each`](Self::for_each) has waited at its
+    /// barrier, after running its own share, since the last call — the time
+    /// the block spent on workers still rendering. Resets to zero. The engine
+    /// takes it once per callback for the overrun journal.
+    pub(crate) fn take_barrier_wait(&self) -> Duration {
+        Duration::from_nanos(self.barrier_wait_ns.swap(0, Ordering::Relaxed))
     }
 
     /// Runs `f(index, item)` for every element of `items`, spread across the
@@ -273,18 +301,16 @@ impl WorkerPool {
             len,
         };
 
-        // SAFETY: no worker may read `job` until its `seq` is bumped below, and
-        // the previous section's barrier already established that none is still
-        // reading the last one.
+        // SAFETY: no worker may read `job` until it takes the section published
+        // below, and the previous section's barrier left every worker `IDLE`,
+        // so none is still reading the last one.
         unsafe { *self.shared.job.get() = job };
         self.shared.next.store(0, Ordering::Relaxed);
 
-        let seq = self.shared.seq.load(Ordering::Relaxed) + 1;
-        self.shared.seq.store(seq, Ordering::Relaxed);
         for (slot, thread) in self.shared.workers[..helpers].iter().zip(&self.threads) {
-            // Release: pairs with the worker's acquire-load, publishing `job`
-            // and the reset cursor along with the new sequence number.
-            slot.seq.store(seq, Ordering::Release);
+            // Release: pairs with the worker's acquire swap, publishing `job`
+            // and the reset cursor along with the state.
+            slot.state.store(PUBLISHED, Ordering::Release);
             thread.thread().unpark();
         }
 
@@ -292,11 +318,24 @@ impl WorkerPool {
         // finishes its share around the time the workers finish theirs.
         self.shared.run_claimed(&job);
 
+        let barrier = Instant::now();
         for slot in &self.shared.workers[..helpers] {
-            while slot.ack.load(Ordering::Acquire) != seq {
+            // Not woken yet: revoke, so it never reads `job` and nobody waits
+            // for its wake-up — the items it would have run are done.
+            if slot
+                .state
+                .compare_exchange(PUBLISHED, IDLE, Ordering::Relaxed, Ordering::Relaxed)
+                .is_ok()
+            {
+                continue;
+            }
+            // It took the section: wait until it is out of it.
+            while slot.state.load(Ordering::Acquire) != IDLE {
                 spin_loop();
             }
         }
+        let waited = barrier.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64;
+        self.barrier_wait_ns.fetch_add(waited, Ordering::Relaxed);
 
         // Explicit, so it is obvious that `ctx` must outlive the barrier above.
         drop(ctx);
@@ -316,36 +355,37 @@ impl Drop for WorkerPool {
 }
 
 /// One `"audio-worker-N"` thread's body: park until a section is published,
-/// claim and run items, ack, repeat; exits when `running` clears.
+/// take it, claim and run items, go idle, repeat; exits when `running` clears.
+/// A section revoked before this worker woke is simply never seen.
 fn worker_loop(shared: &PoolShared, index: usize) {
     // Per-thread, and this thread runs plugin DSP — see `super::thread_role`.
     enter_render_thread();
 
     let slot = &shared.workers[index];
-    let mut last_seq = 0u64;
 
     loop {
         if !shared.running.load(Ordering::Acquire) {
             return;
         }
 
-        // Acquire: pairs with the caller's release-store, so the `job` read
-        // below sees the section this sequence number belongs to.
-        let seq = slot.seq.load(Ordering::Acquire);
-        if seq != last_seq {
-            last_seq = seq;
-
-            // SAFETY: the caller wrote `job` before the `seq` store this load
-            // observed, and cannot write it again until this worker's `ack`
-            // below.
+        // Acquire: pairs with the caller's release-store of `PUBLISHED`, so
+        // the `job` read below sees the section just published. Losing the
+        // race to the caller's revoke means it ran this worker's share itself.
+        if slot
+            .state
+            .compare_exchange(PUBLISHED, TAKEN, Ordering::Acquire, Ordering::Relaxed)
+            .is_ok()
+        {
+            // SAFETY: the caller wrote `job` before publishing, and cannot
+            // write it again until this worker stores `IDLE` below.
             let job = unsafe { *shared.job.get() };
             shared.run_claimed(&job);
-            slot.ack.store(seq, Ordering::Release);
+            slot.state.store(IDLE, Ordering::Release);
 
             // Only here — right after a section — is another one plausibly
             // imminent enough to be worth spinning for. See `SPIN_ROUNDS`.
             let mut spins = 0;
-            while spins < SPIN_ROUNDS && slot.seq.load(Ordering::Acquire) == last_seq {
+            while spins < SPIN_ROUNDS && slot.state.load(Ordering::Relaxed) != PUBLISHED {
                 spin_loop();
                 spins += 1;
             }
@@ -353,7 +393,9 @@ fn worker_loop(shared: &PoolShared, index: usize) {
         }
 
         // Genuinely idle: sleep, don't spin. `unpark` carries a token, so a
-        // publish landing between the load above and this call still wakes us.
+        // publish landing between the swap above and this call still wakes
+        // us. A revoked section leaves its token behind: one wake-up for
+        // nothing, then back here.
         park_timeout(PARK_TIMEOUT);
     }
 }
@@ -361,7 +403,7 @@ fn worker_loop(shared: &PoolShared, index: usize) {
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::AtomicU32;
-    use std::thread::current;
+    use std::thread::{current, sleep};
 
     use super::*;
 
@@ -445,6 +487,45 @@ mod tests {
         assert!(items.iter().all(|v| *v == 9));
     }
 
+    /// Issue #32: a worker that hasn't woken when the caller finishes is
+    /// revoked, not waited for. A worker stuck in its start hook stands in for
+    /// one the scheduler is slow to run.
+    #[test]
+    fn a_worker_slow_to_wake_does_not_hold_up_the_section() {
+        let pool = WorkerPool::new(1, || sleep(Duration::from_millis(500)));
+        let caller = current().id();
+        let mut items = vec![0u32; 4];
+        let started = Instant::now();
+        pool.for_each(&mut items, 2, |index, item| {
+            assert_eq!(current().id(), caller, "the sleeping worker ran an item");
+            *item = index as u32 + 1;
+        });
+        assert!(
+            started.elapsed() < Duration::from_millis(250),
+            "waited {:?} for a worker that never woke",
+            started.elapsed()
+        );
+        assert_eq!(items, vec![1, 2, 3, 4]);
+        assert!(pool.take_barrier_wait() < Duration::from_millis(250));
+
+        // Once awake, the worker finds its section revoked and the pool still
+        // works.
+        sleep(Duration::from_millis(600));
+        pool.for_each(&mut items, 2, |_, item| *item = 7);
+        assert!(items.iter().all(|v| *v == 7));
+    }
+
+    #[test]
+    fn the_barrier_wait_is_taken_once_and_inline_runs_add_none() {
+        let pool = WorkerPool::new(2, || ());
+        let mut items = vec![0u32; 4];
+        pool.for_each(&mut items, 1, |_, item| *item = 1);
+        assert_eq!(pool.take_barrier_wait(), Duration::ZERO);
+        pool.for_each(&mut items, 3, |_, item| *item = 2);
+        pool.take_barrier_wait();
+        assert_eq!(pool.take_barrier_wait(), Duration::ZERO, "taking resets it");
+    }
+
     #[test]
     fn each_worker_holds_its_start_guard_for_its_life() {
         /// Counts itself in on creation and out on drop.
@@ -461,9 +542,12 @@ mod tests {
             hook_live.fetch_add(1, Ordering::Relaxed);
             Guard(hook_live.clone())
         });
-        // A section makes every worker run once, so each has started by now.
-        let mut items = vec![0u32; 4];
-        pool.for_each(&mut items, 4, |_, item| *item = 1);
+        // Workers start on their own time — a section no longer waits for one
+        // that hasn't woken — so give them a moment.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while live.load(Ordering::Relaxed) < 3 && Instant::now() < deadline {
+            sleep(Duration::from_millis(1));
+        }
         assert_eq!(pool.worker_count(), 3);
         assert_eq!(live.load(Ordering::Relaxed), 3);
         drop(pool);

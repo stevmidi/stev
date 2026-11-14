@@ -44,21 +44,29 @@ line to `~/Library/Logs/stev/audio-overruns.log` (path printed at engine
 start; see `000-architecture.md` § audio engine):
 
 ```
-2026-09-21 14:03:11.482  OVERRUN  256f  used 6120/5333 µs (114%)  | click 3 µs  | instruments 6050 µs [t3 5900, t1 120]  | other 67 µs
+2026-09-21 14:03:11.482  OVERRUN  256f  used 6120/5333 µs (114%)  | click 3 µs  | instruments 6050 µs [t3 5900, t1 120] barrier 5810 µs  | other 67 µs
 ```
 
 Read it left to right: how far over (`used/budget`), then which source, then —
 inside `instruments` — which track, heaviest first, 1-based as the arranger
-numbers them. `other` is what no source accounts for: the mix-down, format
+numbers them, and `barrier`: how long the callback waited at the worker pool's
+barrier after its own share, for workers still rendering (part of
+`instruments`, not another source; shown when the session has workers). A
+worker on a heavy track makes it high, so read it against the tracks: a barrier
+near a track's figure is that track; a barrier well above every track is time
+lost between them. `other` is what no source accounts for: the mix-down, format
 conversion and the worker-pool hand-off. Three shapes to recognise:
 
 - **one track dominates** (`t3 5900` of 6050) — that plugin, on that block;
   next stop is Instruments' Time Profiler on the IO thread, or the plugin's own
   settings (oversampling, voice count);
 - **`instruments` high but every track small** — the render pass was cheap and
-  the time went between the voices: the pool hand-off, a worker pre-empted
-  while the callback waited. *Audio workgroup* below is the intended fix; check
-  the session header's worker count before reading this shape;
+  the time went between the voices. Until 2026-11-14 this was the barrier
+  waiting for a worker slow to *wake*, even with nothing left for it to do
+  (issue #32, *The cost that is left* below); the revoke removed that. If it
+  still appears, `barrier` says whether the wait was at the barrier (a worker
+  that took the section and then lost its CPU before claiming an item) or
+  elsewhere in the mixer's pass;
 - **`other` high** — outside every source: mix-down or conversion, which
   should be constant and tiny, so look for an outside cause (denormals not
   flushed, a debug build, the machine throttling).
@@ -139,25 +147,32 @@ and a block with three doesn't wake a worker per empty track slot.
 
 ### The handshake, and why it is sound
 
-One `for_each` call is a section. Per participating worker it is a strict
-ping-pong:
+One `for_each` call is a section. Each worker has one state word,
+`IDLE → PUBLISHED → TAKEN → IDLE`:
 
 1. the caller writes the type-erased `Job` and resets the shared claim cursor;
-2. it bumps that worker's `seq` (release) and unparks it;
-3. every runner — workers *and the caller* — `fetch_add`s indices off the shared
-   cursor and runs them until exhausted;
-4. each worker stores its `seq` into its `ack` (release);
-5. the caller spins (never parks — it is the real-time thread) until every
-   participating worker has acked.
+2. it stores `PUBLISHED` (release) in each participating worker's state and
+   unparks it;
+3. a worker that wakes swaps `PUBLISHED → TAKEN` (acquire); only then may it
+   read `job`;
+4. every runner — the workers that took the section *and the caller* —
+   `fetch_add`s indices off the shared cursor and runs them until exhausted;
+   each worker then stores `IDLE` (release);
+5. the caller, done with its share, **revokes** each worker still `PUBLISHED`
+   (swaps it back to `IDLE`), and spins (never parks — it is the real-time
+   thread) only on the workers that took the section, until they are `IDLE`.
 
-Step 5 is what makes step 1 sound. A worker touches `job` only between observing
-its own `seq` change and storing its `ack`, and the caller never rewrites `job`
-until every one of those windows has closed. **There is therefore no such thing
-as a straggler from a previous section** — the failure mode that makes the
-obvious "publish a generation counter and let workers pick it up" design unsound,
-because a late worker can otherwise mix one section's job pointer with the next
-section's cursor. It also means the `JobCtx` on the caller's stack outlives every
-dereference of it, which is what licenses the raw-pointer payload.
+Steps 3 and 5 swap the same word, so exactly one wins: a worker either took the
+section and is waited for, or was revoked and never reads `job`. A worker
+touches `job` only while `TAKEN`, and the caller never rewrites `job` until
+every worker is `IDLE`. **There is therefore no such thing as a straggler from a
+previous section** — the failure mode that makes the obvious "publish a
+generation counter and let workers pick it up" design unsound, because a late
+worker can otherwise mix one section's job pointer with the next section's
+cursor. It also means the `JobCtx` on the caller's stack outlives every
+dereference of it, which is what licenses the raw-pointer payload. A revoked
+worker's unpark token is left behind: it wakes once for nothing and parks
+again.
 
 The payload is a `*mut T`, never a `&mut [T]`: runners hold `&mut` to disjoint
 indices concurrently, so no reference spanning the whole slice may exist while
@@ -165,7 +180,7 @@ they run. The claim cursor handing each index out exactly once is what makes eac
 of those `&mut` unique.
 
 An item that panics is contained (`catch_unwind` in `run_claimed`) — otherwise a
-worker's `ack` would never land and the audio thread would spin forever.
+worker would never get back to `IDLE` and the audio thread would spin forever.
 
 ### Invariants to keep
 
@@ -185,10 +200,19 @@ worker's `ack` would never land and the audio thread would spin forever.
 
 ### The cost that is left
 
-The caller waits for the slowest worker to *wake*. A parked worker costs ~10–50
-µs to wake and the scheduler may deschedule one at any time. That is the residual
-risk of this design, and it is what the audio workgroup (*Audio workgroup*
-below) exists to bound.
+Until 2026-11-14 the caller waited for every worker it had unparked to *wake*
+and ack, even once it had run every item itself. A parked worker usually wakes
+in ~10–50 µs, but not always: the overrun journal held ~1,600 blocks (from
+2026-10-14, every worker in the device workgroup) where `instruments` ran
+milliseconds over while all the tracks' times *added together* fitted the
+budget in 98% of them — mostly two to four voices, the caller able to render
+the lot alone (issue #32). The workgroup did not bound the wake-up; the revoke
+in step 5 removes the wait instead.
+
+What is left is a worker that took the section and then lost its CPU. Mid-item,
+that voice's own timer shows it, so the journal names the track; between the
+swap and claiming an item, the barrier waits with every track small, and the
+journal's `barrier` figure shows it.
 
 **Idle workers must not spin.** A worker spins (`SPIN_ROUNDS`, single-digit µs)
 only in the moment *after finishing a section*, when another might already be on
@@ -263,11 +287,13 @@ does inside `process()`. Any
 later attempt at worker priority should rerun this table. The workgroup alone
 measured neutral on Intel, which is what it should be there. The `"clock"` and `"midiout"` threads, which render nothing, do take the policy (`260` § The fixes); a rerun of this table with them on (2026-10-14) came out the same.
 
-**Acceptance test, still open: issue #32.** The September shape
-("`instruments` high but every track small") did not appear in any of these
-runs, the "neither" run included, so this load doesn't reproduce it, and
-whether the join removes it is unproven. The journal has since shown it about
-1,500 times with every worker in the workgroup (#32).
+**The join did not remove the September shape** ("`instruments` high but every
+track small"). It did not appear in any of these runs, the "neither" run
+included, so this load doesn't reproduce it; the journal then showed it about
+1,600 times with every worker in the workgroup. The cause was the barrier
+waiting for workers to wake, not where they ran, and the revoke fixed it (issue
+#32, *The cost that is left* above). The join stays for what it is meant to do
+on Apple Silicon.
 
 **A device change re-joins.** The engine rebuilds its stream on a device
 change, a rate change or the system default moving

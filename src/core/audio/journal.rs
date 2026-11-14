@@ -82,6 +82,11 @@ pub(crate) struct OverrunRecord {
     /// Per-instrument-track render time in microseconds, indexed by track;
     /// zero for a track that didn't render this block.
     pub(crate) tracks_us: [u32; MAX_TRACKS],
+    /// Microseconds the callback spent at the worker pool's barrier, waiting
+    /// for workers still rendering after its own share was done. Part of the
+    /// `instruments` time, the only source the pool serves; shown only for a
+    /// session with workers.
+    pub(crate) barrier_us: u32,
     /// Worker threads in the pool. The same for every record of a session, so
     /// only the session header shows it.
     pub(crate) workers: usize,
@@ -234,7 +239,11 @@ fn timestamp(at: SystemTime) -> String {
 /// One journal line. Pure, unit-tested. Reads as:
 ///
 /// `<time>  OVERRUN  256f  used 6120/5333 µs (115%)  | click 3 µs |
-/// instruments 6050 µs [t3 5900, t1 120] | other 67 µs`
+/// instruments 6050 µs [t3 5900, t1 120] barrier 5800 µs | other 67 µs`
+///
+/// `barrier` is the part of `instruments` the callback spent waiting for
+/// workers after its own share; it isn't another source, so `other` doesn't
+/// subtract it.
 ///
 /// `other` is the callback time no source accounts for — the mix-down, format
 /// conversion and any worker-pool hand-off — so a spike there rather than in a
@@ -260,6 +269,9 @@ fn format_record(r: &OverrunRecord) -> String {
         let _ = write!(line, "  | {name} {us} µs");
         if *name == INSTRUMENTS_SOURCE {
             line.push_str(&format_tracks(&r.tracks_us));
+            if r.workers > 0 {
+                let _ = write!(line, " barrier {} µs", r.barrier_us);
+            }
         }
     }
     let other = r.total_us.saturating_sub(accounted);
@@ -315,6 +327,7 @@ mod tests {
             sources,
             source_count: 2,
             tracks_us,
+            barrier_us: 5800,
             workers: 7,
             workers_joined: 6,
             session: 1,
@@ -338,7 +351,7 @@ mod tests {
         );
         assert!(line.contains("| click 3 µs"), "{line}");
         assert!(
-            line.contains("| instruments 6050 µs [t3 5900, t1 120]"),
+            line.contains("| instruments 6050 µs [t3 5900, t1 120] barrier 5800 µs  |"),
             "{line}"
         );
         // 6120 − (3 + 6050) = 67
@@ -364,6 +377,15 @@ mod tests {
         assert!(!line.contains("instruments"), "{line}");
         r.total_us = 1; // less than the sources claim
         assert!(format_record(&r).ends_with("| other 0 µs"));
+    }
+
+    #[test]
+    fn a_session_without_workers_shows_no_barrier() {
+        let mut r = record();
+        r.workers = 0;
+        let line = format_record(&r);
+        assert!(!line.contains("barrier"), "{line}");
+        assert!(line.ends_with("| other 67 µs"), "{line}");
     }
 
     #[test]
