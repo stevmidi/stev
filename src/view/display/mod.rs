@@ -117,7 +117,9 @@ use self::render_state::RenderState;
 use self::settings::SettingsModal;
 use self::settings::midi_tab::MidiTab;
 use self::status_message::StatusMessage;
-pub(crate) use modal_focus::{MidiSettingsFocus, Overlay, PortSide, SettingsTab};
+pub(crate) use modal_focus::{
+    AudioSettingsFocus, MidiSettingsFocus, Overlay, PortSide, SettingsTab,
+};
 use pointer_state::{
     AxisFilter, ClipMoveDrag, ClipMoveKind, ClipResizeDrag, ClipResizeEdge, KeyZoomDrag,
     LoadedMidi, MarqueeAnchor, MidiDrag, NoteMouseDrag, NotePart, PluginDrag, TrackButton,
@@ -134,7 +136,7 @@ use crossbeam_channel::{Receiver, Sender};
 use egui::{Color32, Rect, pos2};
 use uuid::Uuid;
 
-use crate::core::audio::AudioLoad;
+use crate::core::audio::{AudioLoad, AudioPrefs, EngineHandle};
 use crate::core::keymap::Keymap;
 use crate::core::midi::input_tick::InputClock;
 use crate::core::midi::message::Midi3;
@@ -538,10 +540,15 @@ impl Display {
     }
 
     /// Hands over the audio engine's load meter, so the header can show how
-    /// much of each audio block's deadline the render is using. Called once
-    /// from `main` when the engine started; left `None` if it didn't.
-    pub(crate) fn attach_audio_load(&mut self, load: Arc<AudioLoad>) {
-        self.audio_load = Some(load);
+    /// much of each audio block's deadline the render is using, and its
+    /// control line and live measurements with the choice it started with
+    /// (`prefs`), for the settings modal's Audio tab. Called once from
+    /// `main` when the engine started.
+    pub(crate) fn attach_audio_engine(&mut self, engine: &EngineHandle, prefs: AudioPrefs) {
+        self.audio_load = Some(engine.load.clone());
+        self.settings
+            .audio
+            .attach(engine.control.clone(), engine.status.clone(), prefs);
     }
 
     /// Hands over the `"agent-bridge"` thread's control channel and the

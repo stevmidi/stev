@@ -16,8 +16,8 @@ A clip note bound for an external synth used to leave the app the instant the
 sequencer thread processed its tick. A clip note bound for a hosted CLAP
 instrument, or a metronome click, does not: both are placed at a target output
 frame `AudioClock::frame_for(at) + RenderCtx::schedule_delay` — one whole buffer
-of the running stream (`DESIRED_BUFFER_FRAMES = 256` as asked for, ≈5.3 ms at
-48 kHz) into the future, and then sit
+of the running stream (the Audio tab's buffer size, 256 frames unless the user
+picks another, ≈5.3 ms at 48 kHz) into the future, and then sit
 behind the audio device's own output latency on top of that.
 
 So MIDI OUT ran **early** against everything the app plays itself: at least the
@@ -127,9 +127,10 @@ into `SharedAtomics.midi_out_offset_ms` and read by the `"midiout"` thread per
 message — so a change applies to the next note with no restart.
 
 - Default `config::MIDI_OUT_OFFSET_DEFAULT_MS = 5` (nearest whole ms to one
-  256-frame buffer at 48 kHz). It assumes the 256 frames the engine asks for:
-  a device that runs another buffer moves the schedule delay, and the offset
-  is then off by the difference until the user dials it in again
+  256-frame buffer at 48 kHz). It assumes the default 256 frames: another
+  buffer, picked in the Audio tab or run by the device, moves the schedule
+  delay, and the offset is then off by the difference until the user dials it
+  in again; the Audio tab's readout shows the output latency to dial it by
   (`480-audio-settings.md` § Not in this design). `SettingsData::Default` is **hand-written**, not
   derived, so a fresh install lands on 5 rather than `i32::default()`; the
   `#[serde(default = "…")]` does the same for an upgrading user's existing file.

@@ -1,14 +1,17 @@
 //! Device discovery, the single `cpal` output stream, and the `"audio-engine"`
 //! thread that owns it — and rebuilds it whenever the device changes under it
-//! (`480-audio-settings.md` decision 5).
+//! or the user picks another in the Audio tab (`480-audio-settings.md`
+//! decision 5).
 //!
-//! The thread waits on a channel of restart requests. Each one drops the
-//! stream, which hands the [`Mixer`] back ([`Returning`]), resolves the
-//! device as it is now, rebuilds the [`WorkerPool`] so its workers join that
-//! device's workgroup, and opens a new stream at the device's rate. A request
-//! comes from the stream's error callback (the device gone, its rate
-//! changed) or from the thread's own poll (the system default moved to
-//! another device, or a device appeared while none was open).
+//! The thread waits on a channel of commands. Each restart drops the stream,
+//! which hands the [`Mixer`] back ([`Returning`]), resolves the device as it
+//! is now (the chosen one, else the system default), rebuilds the
+//! [`WorkerPool`] so its workers join that device's workgroup, and opens a
+//! new stream at the chosen rate and buffer. A restart comes from the Audio
+//! tab ([`AudioControl::configure`]), from the stream's error callback (the
+//! device gone, its rate changed) or from the thread's own poll (the system
+//! default moved, the chosen device came back, or a device appeared while
+//! none was open). The same poll keeps the tab's device list current.
 
 use std::sync::Arc;
 use std::thread::Builder;
@@ -16,19 +19,20 @@ use std::time::{Duration, Instant, SystemTime};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{
-    BufferSize, Device, DeviceId, Error, ErrorKind, FromSample, Host, I24, SampleFormat,
-    SizedSample, Stream, StreamConfig, SupportedBufferSize, default_host,
+    BufferSize, Device, DeviceId, Error, ErrorKind, FromSample, Host, I24, OutputCallbackInfo,
+    SampleFormat, SizedSample, Stream, StreamConfig, SupportedBufferSize, default_host,
 };
-use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, bounded};
+use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, bounded, unbounded};
 use log::{debug, error, info, warn};
 use rtrb::{Consumer, Producer, RingBuffer};
 
 use super::journal::{self, JournalWriter, MAX_JOURNAL_SOURCES, OverrunRecord};
 use super::load::micros;
+use super::prefs::{buffer_choices, rate_choices};
 use super::{
-    AudioClock, AudioLoad, AudioSource, DESIRED_BUFFER_FRAMES, DeviceWorkgroup,
-    FALLBACK_SAMPLE_RATE, MAX_FRAMES, RenderCtx, StreamStatus, WorkerPool, enter_render_thread,
-    max_dsp_threads,
+    AudioClock, AudioDevice, AudioLoad, AudioPrefs, AudioSource, DeviceWorkgroup, EngineNews,
+    FALLBACK_SAMPLE_RATE, MAX_FRAMES, RenderCtx, RunningAudio, StreamStatus, WorkerPool,
+    enter_render_thread, khz, max_dsp_threads,
 };
 use crate::core::config::MAX_TRACKS;
 
@@ -37,8 +41,13 @@ use crate::core::config::MAX_TRACKS;
 const ADD_SOURCE_RING_CAPACITY: usize = 4;
 
 /// How often the engine thread looks at the system default output (to follow
-/// it) and, with no stream open, whether a device has appeared.
+/// it), for the chosen device coming back and, with no stream open, whether
+/// a device has appeared.
 const DEVICE_POLL_INTERVAL: Duration = Duration::from_millis(500);
+
+/// How often the poll lists every output device for the Audio tab. A restart
+/// lists them at once.
+const DEVICE_LIST_INTERVAL: Duration = Duration::from_secs(2);
 
 /// How long a restart waits for the dropped stream to hand the mixer back.
 /// The hand-back is the stream's own teardown, so this only runs out if
@@ -49,9 +58,6 @@ const MIXER_RETURN_TIMEOUT: Duration = Duration::from_secs(5);
 /// A retry rebuilds the worker pool, so it isn't one to run every poll.
 const FAILED_OPEN_RETRY: Duration = Duration::from_secs(5);
 
-/// Restart requests that can queue while one runs. A device being plugged in
-/// fires several; they are coalesced, so a full queue loses nothing.
-const RESTART_QUEUE_CAPACITY: usize = 8;
 /// How many worker threads the engine's [`WorkerPool`] gets.
 ///
 /// Three caps, all of them real:
@@ -74,19 +80,20 @@ fn worker_thread_count() -> usize {
     max_dsp_threads().saturating_sub(1).min(MAX_TRACKS - 1)
 }
 
-/// Handle to the running engine, kept by `main`. Most accessors are only used
+/// Handle to the running engine, kept by `main`. `add_source` is only used
 /// where a second source is added at runtime — currently macOS (the plugin
-/// host); `load` is read on every platform.
+/// host).
 pub(crate) struct EngineHandle {
-    /// The sample rate the running stream opened at — the plugin host builds
-    /// its plugin processors against it, and the audio export writes at it
-    /// ([`FALLBACK_SAMPLE_RATE`] while no device is open) — and how many times
-    /// the stream has restarted.
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    /// The running stream's rate, measured buffer and latency, and how many
+    /// times it has restarted: the plugin host builds its plugin processors
+    /// at the rate, the audio export writes at it ([`FALLBACK_SAMPLE_RATE`]
+    /// while no device is open), and the Audio tab reads it all out.
     pub(crate) status: Arc<StreamStatus>,
     /// How much of each block's deadline the render is actually using. Shared
     /// with the audio callback; handed to `Display` for the header readout.
     pub(crate) load: Arc<AudioLoad>,
+    /// Where the Audio tab sends the user's choices.
+    pub(crate) control: AudioControl,
     /// Ring for handing a new [`AudioSource`] to the running mixer (the
     /// instrument mixer, on macOS).
     add_source_tx: Producer<Box<dyn AudioSource>>,
@@ -103,29 +110,68 @@ impl EngineHandle {
     }
 }
 
+/// The Audio tab's line to the engine thread: a choice there restarts the
+/// stream on it (`480-audio-settings.md` decision 2).
+#[derive(Clone)]
+pub(crate) struct AudioControl {
+    /// The engine thread's command channel.
+    tx: Sender<EngineCommand>,
+}
+
+impl AudioControl {
+    /// Has the engine run as `prefs` say from now on: it restarts the stream
+    /// unless it already runs that way.
+    pub(crate) fn configure(&self, prefs: AudioPrefs) {
+        self.tx.send(EngineCommand::Configure(prefs)).ok();
+    }
+}
+
+/// A command to the `"audio-engine"` thread.
+#[derive(Debug)]
+enum EngineCommand {
+    /// A stream error asks for a restart. `generation` is the restart count
+    /// the stream opened under, so an error from one already replaced is
+    /// ignored.
+    Restart {
+        /// The restart count the reporting stream opened under.
+        generation: u64,
+        /// What happened to it.
+        cause: RestartCause,
+    },
+    /// The user's choice in the Audio tab.
+    Configure(AudioPrefs),
+}
+
 /// Namespace for the engine start-up entry point; the running engine lives in
 /// its thread, reached through [`EngineHandle`].
 pub(crate) struct AudioEngine;
 
 impl AudioEngine {
-    /// Spawns the `"audio-engine"` thread mixing `sources`, opens the stream on
-    /// the system default output, and returns once that first open has been
-    /// tried, so [`EngineHandle::status`] has the device's. With no device the
-    /// app starts silent, and the engine opens one when it appears.
-    /// `notify` is called after every restart, once [`EngineHandle::status`]
-    /// has the new stream's rate, with the line for the footer when an
-    /// outside change restarted the stream (`480-audio-settings.md`
-    /// decision 11). The caller wakes the UI each time: that is what has it
-    /// reactivate the plugins at a new rate.
-    pub(crate) fn start<N>(sources: Vec<Box<dyn AudioSource>>, notify: N) -> EngineHandle
+    /// Spawns the `"audio-engine"` thread mixing `sources`, opens the stream as
+    /// `prefs` say (the saved Audio tab choices), and returns once that first
+    /// open has been tried, so [`EngineHandle::status`] has the device's rate.
+    /// With no device the app starts silent, and the engine opens one when it
+    /// appears. `notify` gets every [`EngineNews`]: after each restart (once
+    /// [`EngineHandle::status`] has the new rate), with the line for the
+    /// footer when an outside change caused it (`480-audio-settings.md`
+    /// decision 11), and whenever the device list changes. The caller wakes
+    /// the UI each time: that is what has it reactivate the plugins at a new
+    /// rate.
+    pub(crate) fn start<N>(
+        sources: Vec<Box<dyn AudioSource>>,
+        prefs: AudioPrefs,
+        notify: N,
+    ) -> EngineHandle
     where
-        N: Fn(Option<String>) + Send + 'static,
+        N: Fn(EngineNews) + Send + 'static,
     {
         let (add_source_tx, add_source_rx) = RingBuffer::new(ADD_SOURCE_RING_CAPACITY);
         let load = Arc::new(AudioLoad::new());
         let status = Arc::new(StreamStatus::new(FALLBACK_SAMPLE_RATE));
         let (mixer_tx, mixer_rx) = bounded(1);
-        let (restart_tx, restart_rx) = bounded(RESTART_QUEUE_CAPACITY);
+        // Unbounded so neither the tab nor a stream's error callback ever
+        // blocks on it; a pile-up is coalesced.
+        let (command_tx, command_rx) = unbounded();
         // The mixer waits in its channel for the first open, as it does
         // between any two streams.
         mixer_tx
@@ -134,16 +180,21 @@ impl AudioEngine {
                 f64::from(FALLBACK_SAMPLE_RATE),
                 add_source_rx,
                 load.clone(),
+                status.clone(),
             ))
             .ok();
         let mut thread = EngineThread {
             host: default_host(),
+            prefs,
             running: None,
             opened: None,
+            listed: None,
+            listed_at: None,
             failed_at: None,
+            chosen_failed_at: None,
             generation: 0,
-            restart_tx,
-            restart_rx,
+            command_tx: command_tx.clone(),
+            command_rx,
             mixer_tx,
             mixer_rx,
             status: status.clone(),
@@ -173,6 +224,7 @@ impl AudioEngine {
         EngineHandle {
             status,
             load,
+            control: AudioControl { tx: command_tx },
             add_source_tx,
         }
     }
@@ -183,6 +235,8 @@ impl AudioEngine {
 enum RestartCause {
     /// The app is starting: the first open.
     Launch,
+    /// The user picked a device, a rate or a buffer in the Audio tab.
+    Chosen,
     /// The device the stream ran on went away (`ErrorKind::DeviceNotAvailable`).
     DeviceLost,
     /// The device's sample rate changed under the stream, in Audio MIDI Setup
@@ -190,6 +244,8 @@ enum RestartCause {
     RateChanged,
     /// The system default output moved to another device.
     DefaultChanged,
+    /// The chosen device, missing until now, is connected again.
+    Returned,
     /// No stream is open and a device now is.
     Retry,
 }
@@ -211,58 +267,66 @@ impl RestartCause {
     }
 }
 
-/// What a stream opened on: the device's name and its rate. Kept through a
-/// gap with no stream, so the next open can say what changed.
-#[derive(Clone, Debug, PartialEq)]
-struct Opened {
-    /// The device's name, as macOS shows it.
-    name: String,
-    /// Its rate, Hz.
-    sample_rate: u32,
-}
-
 /// The footer line for a restart: `previous` is the last stream that opened,
-/// `now` the one this restart opened, if any. Nothing for the launch, or for
-/// a retry that still found no device. Pure, unit-tested.
+/// `now` the one this restart opened, if any. Nothing for the launch, for a
+/// choice in the tab that opened (the readout changes in front of the user),
+/// or for a retry that still found no device. Pure, unit-tested.
 fn restart_message(
     cause: RestartCause,
-    previous: Option<&Opened>,
-    now: Option<&Opened>,
+    previous: Option<&RunningAudio>,
+    now: Option<&RunningAudio>,
 ) -> Option<String> {
-    if cause == RestartCause::Launch {
+    if cause == RestartCause::Launch || (cause == RestartCause::Chosen && now.is_some()) {
         return None;
     }
     let lost = || match previous {
-        Some(p) => format!("{} disconnected", p.name),
+        Some(p) => format!("{} disconnected", p.device.name),
         None => "The audio output disconnected".to_string(),
     };
     let Some(now) = now else {
         return match cause {
             RestartCause::Launch | RestartCause::Retry => None,
             RestartCause::DeviceLost => Some(format!("{}; no audio output", lost())),
-            RestartCause::RateChanged | RestartCause::DefaultChanged => {
-                Some("No audio output".to_string())
-            }
+            RestartCause::Chosen
+            | RestartCause::RateChanged
+            | RestartCause::DefaultChanged
+            | RestartCause::Returned => Some("No audio output".to_string()),
         };
     };
+    let name = &now.device.name;
     Some(match cause {
-        RestartCause::DeviceLost => format!("{}; using {}", lost(), now.name),
-        RestartCause::RateChanged if previous.is_some_and(|p| p.name == now.name) => {
+        RestartCause::DeviceLost => format!("{}; using {name}", lost()),
+        RestartCause::RateChanged if previous.is_some_and(|p| p.device.name == *name) => {
             format!("Device rate changed to {}", khz(now.sample_rate))
         }
         RestartCause::DefaultChanged => {
-            format!("Audio switched to {} (System default changed)", now.name)
+            format!("Audio switched to {name} (System default changed)")
         }
-        RestartCause::Launch | RestartCause::RateChanged | RestartCause::Retry => {
-            format!("Audio switched to {}", now.name)
-        }
+        RestartCause::Returned => format!("Audio switched to {name} (reconnected)"),
+        RestartCause::Launch
+        | RestartCause::Chosen
+        | RestartCause::RateChanged
+        | RestartCause::Retry => format!("Audio switched to {name}"),
     })
 }
 
-/// `44100` as "44.1 kHz", `48000` as "48 kHz". Pure, unit-tested.
-fn khz(hz: u32) -> String {
-    let khz = f64::from(hz) / 1000.0;
-    format!("{} kHz", (khz * 10.0).round() / 10.0)
+/// Whether a stream opened as `opened` already runs as `prefs` ask, with the
+/// chosen device connected (`chosen_connected`) or not: then a choice in the
+/// tab needs no restart. A rate the device doesn't offer would open at the
+/// device's own rate, so it matches whatever runs. Pure, unit-tested.
+fn runs_as(opened: &RunningAudio, prefs: &AudioPrefs, chosen_connected: bool) -> bool {
+    let device = match &prefs.device {
+        Some(chosen) if chosen_connected => opened.on_chosen && opened.device.id == chosen.id,
+        _ => !opened.on_chosen,
+    };
+    let rate = prefs
+        .sample_rate
+        .is_none_or(|hz| hz == opened.sample_rate || !opened.rates.contains(&hz));
+    let buffer = match opened.buffer {
+        Some(frames) => frames == prefs.buffer_frames,
+        None => opened.buffers.is_empty(),
+    };
+    device && rate && buffer
 }
 
 /// The open stream and the device it runs on.
@@ -273,27 +337,39 @@ struct Running {
     /// The device's persistent ID, compared against the system default on
     /// every poll; `None` if the device wouldn't say, and then not followed.
     device_id: Option<DeviceId>,
+    /// Whether it is the device the user chose, which the poll never moves
+    /// off; otherwise it is the system default, followed.
+    on_chosen: bool,
 }
 
-/// The `"audio-engine"` thread's state: the open stream, if any, and the
-/// channels the mixer and the restart requests travel on.
+/// The `"audio-engine"` thread's state: the user's choice, the open stream,
+/// if any, and the channels the mixer and the commands travel on.
 struct EngineThread {
     /// The audio host devices are looked up in.
     host: Host,
+    /// What the user chose in the Audio tab.
+    prefs: AudioPrefs,
     /// The running stream, if one is open.
     running: Option<Running>,
     /// The last stream that opened, kept while none is.
-    opened: Option<Opened>,
+    opened: Option<RunningAudio>,
+    /// The device list as last sent to the tab, with the default's name.
+    listed: Option<(Vec<AudioDevice>, Option<String>)>,
+    /// When the devices were last listed.
+    listed_at: Option<Instant>,
     /// When the last open failed with a device there, so the poll doesn't
     /// rebuild the pool every half second for a device that won't open.
     failed_at: Option<Instant>,
+    /// When the chosen device, connected, last failed to open, so the poll
+    /// doesn't switch back to it every half second.
+    chosen_failed_at: Option<Instant>,
     /// Counts restarts. Each stream's error callback carries the count it
     /// opened under, so an error from a stream already replaced is ignored.
     generation: u64,
     /// Handed to each stream's error callback.
-    restart_tx: Sender<(u64, RestartCause)>,
-    /// Restart requests from the error callbacks.
-    restart_rx: Receiver<(u64, RestartCause)>,
+    command_tx: Sender<EngineCommand>,
+    /// Commands from the tab and the error callbacks.
+    command_rx: Receiver<EngineCommand>,
     /// Where a dropped stream's callback (or a stream that failed to build)
     /// sends the mixer back. Holds at most the one mixer, so a send never
     /// blocks.
@@ -306,25 +382,21 @@ struct EngineThread {
     status: Arc<StreamStatus>,
     /// The engine's meter, which the stream's error callback counts into.
     load: Arc<AudioLoad>,
-    /// Wakes the UI after a restart, with a line for the footer if any.
-    notify: Box<dyn Fn(Option<String>) + Send>,
+    /// Tells the UI what happened, and wakes it.
+    notify: Box<dyn Fn(EngineNews) + Send>,
 }
 
 impl EngineThread {
-    /// The thread's loop: act on restart requests, coalesced, and between
-    /// them poll the system default. Returns only if a restart lost the mixer.
+    /// The thread's loop: act on commands, coalesced, and between them poll
+    /// the devices. Returns only if a restart lost the mixer.
     fn run(mut self) {
         loop {
-            let cause = match self.restart_rx.recv_timeout(DEVICE_POLL_INTERVAL) {
+            let cause = match self.command_rx.recv_timeout(DEVICE_POLL_INTERVAL) {
                 Ok(first) => {
-                    // Only the last of a pile-up is acted on, and only from
-                    // the stream running now.
-                    let generation = self.generation;
-                    std::iter::once(first)
-                        .chain(self.restart_rx.try_iter())
-                        .filter(|(g, _)| *g == generation)
-                        .map(|(_, cause)| cause)
-                        .last()
+                    let pending: Vec<EngineCommand> = std::iter::once(first)
+                        .chain(self.command_rx.try_iter())
+                        .collect();
+                    self.take_commands(pending)
                 }
                 Err(RecvTimeoutError::Timeout) => self.poll(),
                 Err(RecvTimeoutError::Disconnected) => return,
@@ -337,17 +409,74 @@ impl EngineThread {
         }
     }
 
+    /// The restart a pile of commands calls for: the user's latest choice
+    /// (unless the stream already runs that way), else the last error from
+    /// the stream running now.
+    fn take_commands(&mut self, commands: Vec<EngineCommand>) -> Option<RestartCause> {
+        let mut cause = None;
+        let mut chosen = false;
+        for command in commands {
+            match command {
+                EngineCommand::Restart {
+                    generation,
+                    cause: error,
+                } if generation == self.generation => cause = Some(error),
+                EngineCommand::Restart { .. } => {}
+                EngineCommand::Configure(prefs) => {
+                    self.prefs = prefs;
+                    chosen = true;
+                }
+            }
+        }
+        if chosen && cause.is_none() && self.runs_as_chosen() {
+            debug!("audio engine: already running as chosen");
+            return None;
+        }
+        if chosen {
+            Some(RestartCause::Chosen)
+        } else {
+            cause
+        }
+    }
+
+    /// Whether the running stream already runs as the user chose.
+    fn runs_as_chosen(&self) -> bool {
+        self.running.is_some()
+            && self
+                .opened
+                .as_ref()
+                .is_some_and(|opened| runs_as(opened, &self.prefs, self.chosen_device().is_some()))
+    }
+
     /// The restart the device list calls for: a device to open when none is
-    /// (a device that just failed to, only every [`FAILED_OPEN_RETRY`]), or
-    /// the system default having moved off the running stream's device.
-    fn poll(&self) -> Option<RestartCause> {
+    /// (a device that just failed to, only every [`FAILED_OPEN_RETRY`]), the
+    /// chosen device back while the stream runs on the default, or the
+    /// system default having moved off the stream's device. Lists the
+    /// devices for the tab on the way, every [`DEVICE_LIST_INTERVAL`].
+    fn poll(&mut self) -> Option<RestartCause> {
+        if self
+            .listed_at
+            .is_none_or(|at| at.elapsed() >= DEVICE_LIST_INTERVAL)
+        {
+            self.list_devices();
+        }
         let default = self.host.default_output_device();
         let Some(running) = &self.running else {
             let due = self
                 .failed_at
                 .is_none_or(|at| at.elapsed() >= FAILED_OPEN_RETRY);
-            return (default.is_some() && due).then_some(RestartCause::Retry);
+            let any = default.is_some() || self.chosen_device().is_some();
+            return (any && due).then_some(RestartCause::Retry);
         };
+        if running.on_chosen {
+            return None;
+        }
+        let retry_chosen = self
+            .chosen_failed_at
+            .is_none_or(|at| at.elapsed() >= FAILED_OPEN_RETRY);
+        if retry_chosen && self.chosen_device().is_some() {
+            return Some(RestartCause::Returned);
+        }
         let default_id = default.and_then(|d| d.id().ok())?;
         let moved = running
             .device_id
@@ -356,31 +485,84 @@ impl EngineThread {
         moved.then_some(RestartCause::DefaultChanged)
     }
 
-    /// Drops the stream, takes the mixer back and opens a new stream on the
-    /// device as it is now, then says what happened. Returns `false` if the
-    /// mixer never came back, which leaves the app silent for the session.
+    /// Lists every output device and the default's name, and tells the tab
+    /// when that changed.
+    fn list_devices(&mut self) {
+        self.listed_at = Some(Instant::now());
+        let devices: Vec<AudioDevice> = match self.host.output_devices() {
+            Ok(devices) => devices
+                .filter_map(|device| {
+                    let id = device.id().ok()?;
+                    Some(AudioDevice {
+                        id: id.to_string(),
+                        name: device_name(&device),
+                    })
+                })
+                .collect(),
+            Err(e) => {
+                debug!("audio engine: could not list the output devices: {e}");
+                Vec::new()
+            }
+        };
+        let default_name = self.host.default_output_device().map(|d| device_name(&d));
+        let listed = Some((devices, default_name));
+        if listed != self.listed {
+            self.listed = listed.clone();
+            if let Some((devices, default_name)) = listed {
+                (self.notify)(EngineNews::Devices {
+                    devices,
+                    default_name,
+                });
+            }
+        }
+    }
+
+    /// The chosen device, if one is and it is connected, with its ID.
+    fn chosen_device(&self) -> Option<(Device, Option<DeviceId>)> {
+        let id: DeviceId = self.prefs.device.as_ref()?.id.parse().ok()?;
+        let device = self.host.device_by_id(&id)?;
+        Some((device, Some(id)))
+    }
+
+    /// Drops the stream, takes the mixer back and opens a new stream as the
+    /// user chose on the devices as they are now (the system default when the
+    /// chosen device is missing or won't open), then says what happened.
+    /// Returns `false` if the mixer never came back, which leaves the app
+    /// silent for the session.
     fn restart(&mut self, cause: RestartCause) -> bool {
         if self.running.take().is_some() {
             self.status.count_restart();
         }
+        self.status.clear_measurements();
         self.generation += 1;
-        let Ok(mixer) = self.mixer_rx.recv_timeout(MIXER_RETURN_TIMEOUT) else {
-            error!("audio engine: the stream never handed the mixer back; audio is off");
-            (self.notify)(Some(
-                "Audio stopped; restart Stev to bring it back".to_string(),
-            ));
+        let Some(mixer) = self.take_mixer() else {
             return false;
         };
 
-        match self.open(mixer) {
+        let chosen_there = self.chosen_device().is_some();
+        let mut result = self.open(mixer, true);
+        if let Err(e) = &result
+            && chosen_there
+        {
+            warn!("audio engine: the chosen device won't open ({e}); trying the default");
+            self.chosen_failed_at = Some(Instant::now());
+            let Some(mixer) = self.take_mixer() else {
+                return false;
+            };
+            result = self.open(mixer, false);
+        }
+        match result {
             Ok((running, opened)) => {
                 info!(
-                    "audio engine: {} @ {} Hz ({cause:?})",
-                    opened.name, opened.sample_rate
+                    "audio engine: {} @ {} Hz, buffer {:?} ({cause:?})",
+                    opened.device.name, opened.sample_rate, opened.buffer
                 );
                 // Only a stream that plays is the rate plugins are built at.
                 self.status.set_sample_rate(opened.sample_rate);
                 self.notify_restart(cause, Some(&opened));
+                if running.on_chosen {
+                    self.chosen_failed_at = None;
+                }
                 self.running = Some(running);
                 self.opened = Some(opened);
                 self.failed_at = None;
@@ -395,33 +577,79 @@ impl EngineThread {
                 self.failed_at = Some(Instant::now());
             }
         }
+        // A device plugged in or out is in the list at once.
+        self.list_devices();
         true
     }
 
-    /// Wakes the UI after a restart that opened `now`, if anything, with
-    /// its footer line, if any.
-    fn notify_restart(&self, cause: RestartCause, now: Option<&Opened>) {
-        (self.notify)(restart_message(cause, self.opened.as_ref(), now));
+    /// The mixer, back from the stream just dropped (or one that failed to
+    /// build). `None`, said in the footer, if it never comes.
+    fn take_mixer(&self) -> Option<Mixer> {
+        let mixer = self.mixer_rx.recv_timeout(MIXER_RETURN_TIMEOUT).ok();
+        if mixer.is_none() {
+            error!("audio engine: the stream never handed the mixer back; audio is off");
+            (self.notify)(EngineNews::Restarted {
+                running: None,
+                message: Some("Audio stopped; restart Stev to bring it back".to_string()),
+            });
+        }
+        mixer
     }
 
-    /// Opens a stream on the system default output at its own rate, with
-    /// `mixer` moved into the callback. On any failure the mixer goes back on
-    /// `mixer_tx`, through [`Returning`]'s drop.
-    fn open(&mut self, mixer: Mixer) -> Result<(Running, Opened), String> {
+    /// Tells the UI a restart opened `now`, if anything, with its footer
+    /// line, if any.
+    fn notify_restart(&self, cause: RestartCause, now: Option<&RunningAudio>) {
+        (self.notify)(EngineNews::Restarted {
+            running: now.cloned(),
+            message: restart_message(cause, self.opened.as_ref(), now),
+        });
+    }
+
+    /// Opens a stream with `mixer` moved into the callback: on the chosen
+    /// device when `use_chosen` and it is connected, else on the system
+    /// default; at the chosen rate when the device offers it, else at its
+    /// own; with the chosen buffer clamped to the device's range. On any
+    /// failure the mixer goes back on `mixer_tx`, through [`Returning`]'s
+    /// drop.
+    fn open(&mut self, mixer: Mixer, use_chosen: bool) -> Result<(Running, RunningAudio), String> {
         let mut held = Returning {
             mixer: Some(mixer),
             home: self.mixer_tx.clone(),
         };
-        let (device, device_id) = default_device(&self.host).ok_or("no output device")?;
+        let chosen = use_chosen.then(|| self.chosen_device()).flatten();
+        let on_chosen = chosen.is_some();
+        let (device, device_id) = match chosen {
+            Some(chosen) => chosen,
+            None => default_device(&self.host).ok_or("no output device")?,
+        };
         let supported = device
             .default_output_config()
             .map_err(|e| format!("no default output config: {e}"))?;
+        let ranges: Vec<(u32, u32)> = device
+            .supported_output_configs()
+            .map(|configs| {
+                configs
+                    .map(|c| (c.min_sample_rate(), c.max_sample_rate()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        // The device's own rate unless the user chose one it offers: building
+        // the stream sets the device to it (decision 3).
+        let sample_rate = self
+            .prefs
+            .sample_rate
+            .filter(|hz| ranges.iter().any(|(min, max)| (min..=max).contains(&hz)))
+            .unwrap_or(supported.sample_rate());
+        let buffer_range = match supported.buffer_size() {
+            SupportedBufferSize::Range { min, max } => Some((*min, *max)),
+            SupportedBufferSize::Unknown => None,
+        };
 
-        let sample_rate = supported.sample_rate();
         let channels = supported.channels() as usize;
         let sample_format = supported.sample_format();
-        let buffer_size = pick_buffer_size(supported.buffer_size(), DESIRED_BUFFER_FRAMES);
+        let buffer_size = pick_buffer_size(supported.buffer_size(), self.prefs.buffer_frames);
         let mut config: StreamConfig = supported.into();
+        config.sample_rate = sample_rate;
         config.buffer_size = buffer_size;
         // `pick_buffer_size`'s clamp against the device's reported range
         // doesn't guarantee the driver accepts every value in it — probe with
@@ -436,17 +664,17 @@ impl EngineThread {
         }
         // A device that picks its own buffer has it measured on the first
         // callback instead.
-        let schedule_delay = match config.buffer_size {
-            BufferSize::Fixed(frames) => frames,
-            BufferSize::Default => 0,
+        let buffer = match config.buffer_size {
+            BufferSize::Fixed(frames) => Some(frames),
+            BufferSize::Default => None,
         };
 
         let workgroup = Arc::new(DeviceWorkgroup::for_device(&device));
         held.mixer()
-            .restart(f64::from(sample_rate), workgroup, schedule_delay);
+            .restart(f64::from(sample_rate), workgroup, buffer.unwrap_or(0));
 
         let generation = self.generation;
-        let restart_tx = self.restart_tx.clone();
+        let command_tx = self.command_tx.clone();
         let load = self.load.clone();
         let on_error = move |e: Error| {
             // Overloads come in on the real-time thread, and they are a count
@@ -461,7 +689,9 @@ impl EngineThread {
             match RestartCause::from_error(e.kind()) {
                 Some(cause) => {
                     warn!("audio engine: {e}; restarting the stream");
-                    restart_tx.try_send((generation, cause)).ok();
+                    command_tx
+                        .send(EngineCommand::Restart { generation, cause })
+                        .ok();
                 }
                 None => error!("audio engine stream error: {e}"),
             }
@@ -472,13 +702,24 @@ impl EngineThread {
             .play()
             .map_err(|e| format!("stream.play() failed: {e}"))?;
 
-        let opened = Opened {
-            name: device_name(&device),
+        let opened = RunningAudio {
+            device: AudioDevice {
+                id: device_id
+                    .as_ref()
+                    .map(DeviceId::to_string)
+                    .unwrap_or_default(),
+                name: device_name(&device),
+            },
+            on_chosen,
             sample_rate,
+            rates: rate_choices(&ranges),
+            buffer,
+            buffers: buffer_choices(buffer_range),
         };
         let running = Running {
             _stream: stream,
             device_id,
+            on_chosen,
         };
         Ok((running, opened))
     }
@@ -497,7 +738,7 @@ fn default_device(host: &Host) -> Option<(Device, Option<DeviceId>)> {
     Some((specific.unwrap_or(default), id))
 }
 
-/// `device`'s name for the footer.
+/// `device`'s name for the list and the footer.
 fn device_name(device: &Device) -> String {
     device
         .description()
@@ -549,6 +790,8 @@ struct Mixer {
     sample_rate: f64,
     /// Deadline-utilisation meter, shared with the header readout.
     load: Arc<AudioLoad>,
+    /// Where each callback leaves its buffer and latency for the Audio tab.
+    status: Arc<StreamStatus>,
     /// Handed to every source through [`RenderCtx`], so a source with
     /// independent per-item work can spread it across cores instead of running
     /// the whole block on this one thread.
@@ -585,6 +828,7 @@ impl Mixer {
         sample_rate: f64,
         add_source_rx: Consumer<Box<dyn AudioSource>>,
         load: Arc<AudioLoad>,
+        status: Arc<StreamStatus>,
     ) -> Self {
         let capacity = initial.len() + ADD_SOURCE_RING_CAPACITY;
         let mut sources = Vec::with_capacity(capacity);
@@ -595,6 +839,7 @@ impl Mixer {
             clock: AudioClock::new(sample_rate),
             sample_rate,
             load,
+            status,
             pool: WorkerPool::new(0, || ()),
             workgroup: Arc::new(DeviceWorkgroup::default()),
             schedule_delay: 0,
@@ -645,8 +890,9 @@ impl Mixer {
 
     /// One audio callback: observe the clock, drain the add-source ring, sum
     /// every source into the scratch, hard-clip to ±1.0, and convert to the
-    /// device format. Records the deadline utilisation.
-    fn render<T>(&mut self, data: &mut [T], device_channels: usize)
+    /// device format. Records the deadline utilisation, and the buffer and
+    /// `latency_us` (the callback's output latency) for the Audio tab.
+    fn render<T>(&mut self, data: &mut [T], device_channels: usize, latency_us: u32)
     where
         T: SizedSample + FromSample<f32>,
     {
@@ -674,6 +920,7 @@ impl Mixer {
         if self.schedule_delay == 0 {
             self.schedule_delay = total_frames as u32;
         }
+        self.status.record_callback(total_frames as u32, latency_us);
 
         let now = Instant::now();
         self.clock.observe(now, self.steady);
@@ -845,7 +1092,11 @@ where
 {
     device.build_output_stream(
         *config,
-        move |data: &mut [T], _| mixer.mixer().render(data, channels),
+        move |data: &mut [T], info: &OutputCallbackInfo| {
+            let at = info.timestamp();
+            let latency = micros(at.playback.duration_since(at.callback));
+            mixer.mixer().render(data, channels, latency)
+        },
         on_error,
         None,
     )
@@ -896,19 +1147,28 @@ mod tests {
         }
     }
 
-    fn opened(name: &str, sample_rate: u32) -> Opened {
-        Opened {
-            name: name.to_string(),
+    fn opened(name: &str, sample_rate: u32) -> RunningAudio {
+        RunningAudio {
+            device: AudioDevice {
+                id: format!("coreaudio:{name}"),
+                name: name.to_string(),
+            },
+            on_chosen: false,
             sample_rate,
+            rates: vec![44_100, 48_000, 96_000],
+            buffer: Some(256),
+            buffers: vec![64, 128, 256, 512],
         }
     }
 
-    #[test]
-    fn rates_read_in_khz() {
-        assert_eq!(khz(44_100), "44.1 kHz");
-        assert_eq!(khz(48_000), "48 kHz");
-        assert_eq!(khz(88_200), "88.2 kHz");
-        assert_eq!(khz(96_000), "96 kHz");
+    fn mixer() -> Mixer {
+        Mixer::new(
+            Vec::new(),
+            48_000.0,
+            RingBuffer::new(1).1,
+            Arc::new(AudioLoad::new()),
+            Arc::new(StreamStatus::new(48_000)),
+        )
     }
 
     #[test]
@@ -969,16 +1229,87 @@ mod tests {
     }
 
     #[test]
+    fn a_choice_in_the_tab_says_nothing_unless_nothing_opened() {
+        let speakers = opened("MacBook Pro Speakers", 48_000);
+        let scarlett = opened("Scarlett 2i2", 96_000);
+        assert_eq!(
+            restart_message(RestartCause::Chosen, Some(&speakers), Some(&scarlett)),
+            None
+        );
+        assert_eq!(
+            restart_message(RestartCause::Chosen, Some(&speakers), None).as_deref(),
+            Some("No audio output")
+        );
+    }
+
+    #[test]
+    fn the_chosen_device_coming_back_says_so() {
+        let speakers = opened("MacBook Pro Speakers", 48_000);
+        let scarlett = opened("Scarlett 2i2", 48_000);
+        assert_eq!(
+            restart_message(RestartCause::Returned, Some(&speakers), Some(&scarlett)).as_deref(),
+            Some("Audio switched to Scarlett 2i2 (reconnected)")
+        );
+    }
+
+    #[test]
+    fn a_choice_matching_the_stream_needs_no_restart() {
+        let speakers = opened("MacBook Pro Speakers", 48_000);
+        let prefs = AudioPrefs::default();
+        assert!(runs_as(&speakers, &prefs, false));
+        // The rate it already runs at, or one the device doesn't offer.
+        for hz in [48_000, 22_050] {
+            let prefs = AudioPrefs {
+                sample_rate: Some(hz),
+                ..AudioPrefs::default()
+            };
+            assert!(runs_as(&speakers, &prefs, false), "{hz}");
+        }
+    }
+
+    #[test]
+    fn another_rate_buffer_or_device_needs_a_restart() {
+        let speakers = opened("MacBook Pro Speakers", 48_000);
+        let faster = AudioPrefs {
+            sample_rate: Some(96_000),
+            ..AudioPrefs::default()
+        };
+        assert!(!runs_as(&speakers, &faster, false));
+        let smaller = AudioPrefs {
+            buffer_frames: 128,
+            ..AudioPrefs::default()
+        };
+        assert!(!runs_as(&speakers, &smaller, false));
+        let scarlett = AudioPrefs {
+            device: Some(AudioDevice {
+                id: "coreaudio:Scarlett".into(),
+                name: "Scarlett 2i2".into(),
+            }),
+            ..AudioPrefs::default()
+        };
+        assert!(!runs_as(&speakers, &scarlett, true));
+        // Missing, so the default the stream follows is what it would get.
+        assert!(runs_as(&speakers, &scarlett, false));
+    }
+
+    #[test]
+    fn the_chosen_device_runs_as_chosen_and_the_default_does_not() {
+        let mut scarlett = opened("Scarlett 2i2", 48_000);
+        scarlett.on_chosen = true;
+        let chosen = AudioPrefs {
+            device: Some(scarlett.device.clone()),
+            ..AudioPrefs::default()
+        };
+        assert!(runs_as(&scarlett, &chosen, true));
+        // Back to System default from a chosen device.
+        assert!(!runs_as(&scarlett, &AudioPrefs::default(), false));
+    }
+
+    #[test]
     fn a_dropped_callback_hands_the_mixer_back() {
         let (home, back) = bounded(1);
-        let mixer = Mixer::new(
-            Vec::new(),
-            48_000.0,
-            RingBuffer::new(1).1,
-            Arc::new(AudioLoad::new()),
-        );
         drop(Returning {
-            mixer: Some(mixer),
+            mixer: Some(mixer()),
             home,
         });
         assert!(back.try_recv().is_ok());
@@ -986,12 +1317,7 @@ mod tests {
 
     #[test]
     fn a_restart_starts_a_new_journal_session_at_the_new_rate() {
-        let mut mixer = Mixer::new(
-            Vec::new(),
-            48_000.0,
-            RingBuffer::new(1).1,
-            Arc::new(AudioLoad::new()),
-        );
+        let mut mixer = mixer();
         mixer.restart(44_100.0, Arc::new(DeviceWorkgroup::default()), 512);
         let first = mixer.overrun_record(Duration::from_millis(20), 512);
         mixer.restart(96_000.0, Arc::new(DeviceWorkgroup::default()), 128);

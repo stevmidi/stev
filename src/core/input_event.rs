@@ -29,6 +29,7 @@ use uuid::Uuid;
 
 use crate::{
     core::{
+        audio::AudioPrefs,
         keymap::Action,
         midi::message::Controller,
         project::{LibraryChange, ProjectAction},
@@ -835,6 +836,12 @@ pub(crate) enum InputEvent {
     SaveAgentBridge {
         /// Whether agents may connect.
         enabled: bool,
+    },
+    /// The settings modal's Audio tab chose a device, rate or buffer: save
+    /// it. The view has already told the engine.
+    SaveAudioPrefs {
+        /// The choice, whole.
+        prefs: AudioPrefs,
     },
     /// The theme changed (the settings modal's Appearance tab):
     /// save it as the theme the app starts with. The view has already

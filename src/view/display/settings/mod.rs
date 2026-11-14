@@ -1,7 +1,7 @@
 //! The settings modal (`⌘/Ctrl+,`), an overlay over the view: opening and
 //! closing it, its tab chords, the theme list's scroll window, its mouse,
 //! and applying a theme. Each tab's own state is a submodule beside this one:
-//! the MIDI tab's `midi_tab.rs`, the Keyboard tab's `keyboard_tab.rs`, the AI
+//! the Audio tab's `audio_tab.rs`, the MIDI tab's `midi_tab.rs`, the Keyboard tab's `keyboard_tab.rs`, the AI
 //! tab's `ai_tab.rs`, the About tab's `about_tab.rs`. The keys inside a tab
 //! are `input/modal.rs`; drawing and the click hit-test share one layout in
 //! `rendering/modals/settings.rs`. See `020-views-and-state.md` and
@@ -9,6 +9,7 @@
 
 pub(super) mod about_tab;
 pub(super) mod ai_tab;
+pub(super) mod audio_tab;
 pub(super) mod keyboard_tab;
 pub(super) mod midi_tab;
 
@@ -25,19 +26,23 @@ use crate::view::theme;
 
 use self::about_tab::{AboutLink, AboutTab};
 use self::ai_tab::AiTab;
+use self::audio_tab::{AudioChoice, AudioTab};
 use self::keyboard_tab::{KeyboardTab, TabClick};
 use self::midi_tab::MidiTab;
 use super::browser::scroll_to_show;
-use super::{Display, MidiSettingsFocus, Overlay, PortSide, SettingsTab};
+use super::{AudioSettingsFocus, Display, MidiSettingsFocus, Overlay, PortSide, SettingsTab};
 
 /// Theme rows the Appearance tab shows at once; the rest scroll.
 pub(super) const THEME_ROWS: usize = 14;
 
 /// The settings modal's view-local state. Session-only: it opens on the tab
-/// last used, MIDI after launch. Whether it is up is `Display::overlay`.
+/// last used, Audio after launch. Whether it is up is `Display::overlay`.
 pub(super) struct SettingsModal {
     /// The tab showing.
     pub(super) tab: SettingsTab,
+    /// The Audio tab — the device list, the rates and buffer sizes, the
+    /// choice, the focus and cursors, and the engine's reports.
+    pub(super) audio: AudioTab,
     /// The MIDI tab — port lists, the row selections and focus,
     /// connected-port badges, the output-offset mirror, and the reconnect
     /// channel ends.
@@ -60,11 +65,12 @@ pub(super) struct SettingsModal {
 }
 
 impl SettingsModal {
-    /// The modal as the app starts: on the MIDI tab, holding `midi`, every
+    /// The modal as the app starts: on the Audio tab, holding `midi`, every
     /// list at its top.
     pub(super) fn new(midi: MidiTab) -> Self {
         SettingsModal {
             tab: SettingsTab::default(),
+            audio: AudioTab::default(),
             midi,
             theme_scroll: 0,
             wheel: 0.0,
@@ -81,6 +87,10 @@ impl SettingsModal {
 pub(super) enum SettingsHit {
     /// A tab in the strip.
     Tab(SettingsTab),
+    /// An Audio section — its header or an empty slot: focuses it.
+    AudioSection(AudioSettingsFocus),
+    /// An Audio device row, rate or buffer size: chooses it.
+    Audio(AudioChoice),
     /// A MIDI section — its header, the offset row, or the empty and ghost
     /// slots of a port list: focuses that row.
     Section(MidiSettingsFocus),
@@ -156,13 +166,16 @@ pub(super) fn window_start(scroll: usize, len: usize, visible: usize) -> usize {
 
 impl Display {
     /// Opens the settings modal over the view on the tab last used:
-    /// the MIDI focus back on IN PORT, each port list's cursor on its
+    /// the Audio focus back on the device list with every cursor on what
+    /// runs, the MIDI focus back on IN PORT, each port list's cursor on its
     /// connected port, the theme list scrolled to the active theme, the
     /// Keyboard tab's search empty, the AI tab's command no longer marked
-    /// copied. The port lists are already current — the
-    /// `"midiwatcher"` keeps them so.
+    /// copied. The port and device lists are already current — the
+    /// `"midiwatcher"` and the `"audio-engine"` keep them so.
     pub(super) fn open_settings(&mut self) {
         self.overlay = Some(Overlay::Settings);
+        self.settings.audio.focus = AudioSettingsFocus::Device;
+        self.settings.audio.select_current();
         self.settings.keys = KeyboardTab::default();
         self.settings.ai.copied = false;
         self.settings.midi.focus = MidiSettingsFocus::InPort;
@@ -260,6 +273,23 @@ impl Display {
             .ok();
     }
 
+    /// Chooses `choice` in the Audio tab, applied at once: the engine
+    /// restarts on it and the sequencer saves it (`480-audio-settings.md`
+    /// decision 2). Nothing while an audio export runs (decision 10), or
+    /// when it is what was already chosen.
+    pub(super) fn choose_audio(&mut self, choice: AudioChoice) {
+        if self.is_exporting_audio() {
+            return;
+        }
+        let Some(prefs) = self.settings.audio.choose(choice) else {
+            return;
+        };
+        self.settings.audio.apply(&prefs);
+        self.input_event_tx
+            .send(InputEvent::SaveAudioPrefs { prefs })
+            .ok();
+    }
+
     /// Flips *Allow AI agents*: the `"agent-bridge"` thread opens or closes
     /// its socket at once, and the handler saves the setting. See
     /// `360-mcp-server.md`.
@@ -314,6 +344,8 @@ impl Display {
         };
         match hit {
             SettingsHit::Tab(tab) => self.settings.tab = tab,
+            SettingsHit::AudioSection(focus) => self.settings.audio.focus = focus,
+            SettingsHit::Audio(choice) => self.choose_audio(choice),
             SettingsHit::Section(focus) => self.settings.midi.focus = focus,
             SettingsHit::AgentBridge => self.toggle_agent_bridge(),
             SettingsHit::CopyCommand => self.settings.ai.request_copy(),
@@ -337,12 +369,12 @@ impl Display {
 
     /// A wheel or trackpad scroll in the settings modal: scrolls the theme
     /// list or the Keyboard tab's list a row per row height of travel. The
-    /// MIDI tab's lists follow their cursors only; the AI and About tabs
-    /// don't scroll.
+    /// Audio and MIDI tabs' lists follow their cursors only; the AI and
+    /// About tabs don't scroll.
     pub(super) fn scroll_settings(&mut self, delta_y: f32) {
         if matches!(
             self.settings.tab,
-            SettingsTab::Midi | SettingsTab::Ai | SettingsTab::About
+            SettingsTab::Audio | SettingsTab::Midi | SettingsTab::Ai | SettingsTab::About
         ) {
             return;
         }
@@ -351,7 +383,7 @@ impl Display {
             return;
         }
         match self.settings.tab {
-            SettingsTab::Midi | SettingsTab::Ai | SettingsTab::About => {}
+            SettingsTab::Audio | SettingsTab::Midi | SettingsTab::Ai | SettingsTab::About => {}
             SettingsTab::Appearance => {
                 self.settings.theme_scroll = scroll_by(
                     self.settings.theme_scroll,

@@ -226,13 +226,15 @@ fn main() {
     // The unified audio engine: one cpal output stream, seeded with the
     // built-in metronome click. On macOS the plugin host mixer is added below as a
     // second source.
+    let audio_prefs = settings.audio_prefs();
     #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
     let mut audio_engine = start_audio_engine(
         shared_channels.metronome_click_rx,
+        audio_prefs.clone(),
         shared_channels.ui_event_tx.clone(),
         repaint_ctx.clone(),
     );
-    display.attach_audio_load(audio_engine.load.clone());
+    display.attach_audio_engine(&audio_engine, audio_prefs);
     display.attach_agent_bridge(shared_channels.agent_bridge_tx, settings.agent_bridge);
 
     // macOS instrument plugin host: hand the mixer to the running engine. Plugins

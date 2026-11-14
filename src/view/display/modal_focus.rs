@@ -1,5 +1,5 @@
 //! The modal overlays' enums: which overlay is up, and for the settings
-//! modal which tab it shows and which MIDI row the arrow keys act on.
+//! modal which tab it shows and which Audio or MIDI section the keys act on.
 //!
 //! They sit in their own module rather than beside a renderer because three
 //! separate subtrees each own a piece: `input/modal.rs` moves the focus,
@@ -20,6 +20,39 @@ pub(crate) enum Overlay {
     /// puts it up ahead of the staging, to hold that gap too.
     #[cfg(target_os = "macos")]
     RestoringInstruments,
+}
+
+/// The settings modal's Audio tab: which section the keys act on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AudioSettingsFocus {
+    /// The output-device list: ↑/↓ move its cursor.
+    Device,
+    /// The sample rates: ←/→ move along them.
+    Rate,
+    /// The buffer sizes: ←/→ move along them.
+    Buffer,
+}
+
+impl AudioSettingsFocus {
+    /// The next section, as Tab and ↓ from a row of choices move: OUTPUT
+    /// DEVICE → SAMPLE RATE → BUFFER SIZE → OUTPUT DEVICE.
+    pub(crate) fn next(self) -> AudioSettingsFocus {
+        match self {
+            AudioSettingsFocus::Device => AudioSettingsFocus::Rate,
+            AudioSettingsFocus::Rate => AudioSettingsFocus::Buffer,
+            AudioSettingsFocus::Buffer => AudioSettingsFocus::Device,
+        }
+    }
+
+    /// The previous section, as ⇧Tab and ↑ from a row of choices move: the
+    /// reverse of [`next`](Self::next).
+    pub(crate) fn previous(self) -> AudioSettingsFocus {
+        match self {
+            AudioSettingsFocus::Device => AudioSettingsFocus::Buffer,
+            AudioSettingsFocus::Rate => AudioSettingsFocus::Device,
+            AudioSettingsFocus::Buffer => AudioSettingsFocus::Rate,
+        }
+    }
 }
 
 /// The settings modal's MIDI tab: which row the arrow keys act on.
@@ -99,9 +132,12 @@ impl PortSide {
 /// here, its label, and a draw function (`rendering/modals/settings.rs`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum SettingsTab {
-    /// MIDI input / output ports and the output offset — the tab after
+    /// The output device, sample rate and buffer size, and what runs
+    /// (`settings/audio_tab.rs`, `480-audio-settings.md`) — the tab after
     /// launch.
     #[default]
+    Audio,
+    /// MIDI input / output ports and the output offset.
     Midi,
     /// The colour theme list.
     Appearance,
@@ -118,7 +154,8 @@ pub(crate) enum SettingsTab {
 
 impl SettingsTab {
     /// Every tab, in tab-strip order.
-    pub(crate) const ALL: [SettingsTab; 5] = [
+    pub(crate) const ALL: [SettingsTab; 6] = [
+        SettingsTab::Audio,
         SettingsTab::Midi,
         SettingsTab::Appearance,
         SettingsTab::Keyboard,
@@ -129,6 +166,7 @@ impl SettingsTab {
     /// The tab strip's label.
     pub(crate) fn label(self) -> &'static str {
         match self {
+            SettingsTab::Audio => "AUDIO",
             SettingsTab::Midi => "MIDI",
             SettingsTab::Appearance => "APPEARANCE",
             SettingsTab::Keyboard => "KEYBOARD",
@@ -147,7 +185,17 @@ impl SettingsTab {
 
 #[cfg(test)]
 mod tests {
-    use super::{MidiSettingsFocus, PortSide, SettingsTab};
+    use super::{AudioSettingsFocus, MidiSettingsFocus, PortSide, SettingsTab};
+
+    #[test]
+    fn the_audio_sections_cycle_both_ways() {
+        let mut focus = AudioSettingsFocus::Device;
+        for _ in 0..3 {
+            assert_eq!(focus.next().previous(), focus);
+            focus = focus.next();
+        }
+        assert_eq!(focus, AudioSettingsFocus::Device);
+    }
 
     #[test]
     fn the_rows_cycle_back_to_the_input_list() {
@@ -183,12 +231,14 @@ mod tests {
 
     #[test]
     fn stepping_a_tab_wraps_at_both_ends() {
+        assert_eq!(SettingsTab::Audio.stepped(1), SettingsTab::Midi);
         assert_eq!(SettingsTab::Midi.stepped(1), SettingsTab::Appearance);
         assert_eq!(SettingsTab::Appearance.stepped(1), SettingsTab::Keyboard);
         assert_eq!(SettingsTab::Keyboard.stepped(1), SettingsTab::Ai);
         assert_eq!(SettingsTab::Ai.stepped(1), SettingsTab::About);
-        assert_eq!(SettingsTab::About.stepped(1), SettingsTab::Midi);
-        assert_eq!(SettingsTab::Midi.stepped(-1), SettingsTab::About);
+        assert_eq!(SettingsTab::About.stepped(1), SettingsTab::Audio);
+        assert_eq!(SettingsTab::Audio.stepped(-1), SettingsTab::About);
+        assert_eq!(SettingsTab::Midi.stepped(-1), SettingsTab::Audio);
         assert_eq!(SettingsTab::Keyboard.stepped(-1), SettingsTab::Appearance);
     }
 }

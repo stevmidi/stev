@@ -19,6 +19,7 @@ mod load;
 pub(crate) mod meter;
 mod metronome_source;
 pub(crate) mod mix;
+mod prefs;
 mod thread_role;
 mod topology;
 // Only the macOS plugin host's audio export writes WAV.
@@ -31,9 +32,12 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Instant;
 
 pub(crate) use clock::AudioClock;
-pub(crate) use engine::{AudioEngine, EngineHandle};
+pub(crate) use engine::{AudioControl, AudioEngine, EngineHandle};
 pub(crate) use load::AudioLoad;
 pub(crate) use metronome_source::{ClickClass, ClickEvent, MetronomeSource};
+pub(crate) use prefs::{
+    AudioDevice, AudioPrefs, EngineNews, RunningAudio, buffer_ms, khz, khz_number,
+};
 pub(crate) use thread_role::enter_render_thread;
 /// Only the CLAP host (macOS) asks which thread it is on.
 #[cfg(target_os = "macos")]
@@ -47,10 +51,10 @@ pub(crate) use workgroup::DeviceWorkgroup;
 /// far smaller; a larger one is split into passes of this size.
 pub(crate) const MAX_FRAMES: usize = 4096;
 
-/// Requested audio callback buffer size, in frames — the "buffer size" a DAW
-/// exposes. Lower = less latency, higher = more headroom against xruns. Clamped
-/// to the device's supported range; a device that reports no range keeps its
-/// own default.
+/// The audio callback buffer size asked for until the user picks one in the
+/// Audio tab, in frames — the "buffer size" a DAW exposes. Lower = less
+/// latency, higher = more headroom against xruns. Clamped to the device's
+/// supported range; a device that reports no range keeps its own default.
 pub(crate) const DESIRED_BUFFER_FRAMES: u32 = 256;
 
 /// The rate the engine assumes before a device has opened, and keeps while
@@ -58,35 +62,71 @@ pub(crate) const DESIRED_BUFFER_FRAMES: u32 = 256;
 pub(crate) const FALLBACK_SAMPLE_RATE: u32 = 48_000;
 
 /// What the engine shares about its stream with whoever builds something
-/// against it outside the engine: the plugin host's loads and the audio
-/// export's files. The engine updates it on every restart
-/// (`480-audio-settings.md` decision 5); a reader takes it fresh each time.
+/// against it outside the engine: the plugin host's loads, the audio
+/// export's files and the Audio tab's readout. The engine updates it on every
+/// restart (`480-audio-settings.md` decision 5), and the callback keeps the
+/// measured buffer and latency current; a reader takes it fresh each time.
 pub(crate) struct StreamStatus {
     /// The rate the running stream opened at, Hz.
     sample_rate: AtomicU32,
     /// How many times a running stream has been dropped for another.
     restarts: AtomicU32,
+    /// The frames the last callback was asked for: the buffer the device
+    /// actually runs at. `0` before the first callback.
+    buffer_frames: AtomicU32,
+    /// The output latency the last callback was given, µs: from the
+    /// callback to the moment its first frame plays (buffer, device latency
+    /// and safety offset, as cpal works it out). `0` before the first.
+    latency_us: AtomicU32,
 }
 
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 impl StreamStatus {
     /// A rate of `hz` and no restarts, until the engine says otherwise.
     pub(crate) fn new(hz: u32) -> Self {
         Self {
             sample_rate: AtomicU32::new(hz),
             restarts: AtomicU32::new(0),
+            buffer_frames: AtomicU32::new(0),
+            latency_us: AtomicU32::new(0),
         }
     }
 
     /// The running rate, Hz. Only the macOS plugin host reads it.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub(crate) fn sample_rate(&self) -> f64 {
         f64::from(self.sample_rate.load(Ordering::Relaxed))
     }
 
     /// How many times the stream has restarted. A change under a running
     /// export ends it (`480-audio-settings.md` decision 10).
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub(crate) fn restarts(&self) -> u32 {
         self.restarts.load(Ordering::Relaxed)
+    }
+
+    /// The buffer the device runs at, frames; `None` before the first
+    /// callback of a stream.
+    pub(crate) fn buffer_frames(&self) -> Option<u32> {
+        Some(self.buffer_frames.load(Ordering::Relaxed)).filter(|&frames| frames > 0)
+    }
+
+    /// The output latency, ms; `None` before the first callback of a stream
+    /// or when the host gives no timestamps.
+    pub(crate) fn latency_ms(&self) -> Option<f64> {
+        let us = self.latency_us.load(Ordering::Relaxed);
+        (us > 0).then(|| f64::from(us) / 1000.0)
+    }
+
+    /// Records what a callback was given: `frames` and its output latency.
+    /// Two relaxed stores, safe on the audio thread.
+    fn record_callback(&self, frames: u32, latency_us: u32) {
+        self.buffer_frames.store(frames, Ordering::Relaxed);
+        self.latency_us.store(latency_us, Ordering::Relaxed);
+    }
+
+    /// Forgets the last stream's measurements, for a new one.
+    fn clear_measurements(&self) {
+        self.record_callback(0, 0);
     }
 
     /// Records the rate a new stream opened at.

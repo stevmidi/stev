@@ -1,6 +1,8 @@
 //! The settings modal (`settings/mod.rs`): one fixed-size panel with a tab
-//! strip along its top and the showing tab below — MIDI (the input / output
-//! port lists and the output-offset row), Appearance (the theme list),
+//! strip along its top and the showing tab below — Audio (the output-device
+//! list, the sample rates, the buffer sizes and a readout of what runs,
+//! `settings/audio_tab.rs`), MIDI (the input / output port lists and the
+//! output-offset row), Appearance (the theme list),
 //! Keyboard (the search field over every command and fixed key,
 //! `settings/keyboard_tab.rs`), AI (*Allow AI agents*, what it is and how to connect
 //! a client, `settings/ai_tab.rs`) or About (the version, the links, the VST logo
@@ -10,18 +12,21 @@
 
 use std::borrow::Cow;
 use std::env::consts::ARCH;
+use std::time::Duration;
 
 use egui::emath::GuiRounding;
 use egui::{Context, Id, Pos2, Theme, Ui};
 
+use crate::core::audio::khz_number;
 use crate::core::update_check::{CURRENT_VERSION, UpdateCheck};
 use crate::view::display::settings::about_tab::{
     AboutLink, UPDATE_CHECK, UpdateState, VST_LOGO_SIZE,
 };
 use crate::view::display::settings::ai_tab::{AiTab, ClaudeCodeSetup};
+use crate::view::display::settings::audio_tab::{AudioChoice, AudioTab, DEVICE_ROWS, buffer_label};
 
 use crate::view::display::fields::{FieldStyle, MODAL_MARGIN};
-use crate::view::display::modal_focus::{PortSide, SettingsTab};
+use crate::view::display::modal_focus::{AudioSettingsFocus, PortSide, SettingsTab};
 use crate::view::display::settings::keyboard_tab::{
     KeyboardFocus, Recording, ShortcutLine, ShortcutRow, row_lines, shortcut_lines,
 };
@@ -91,6 +96,39 @@ struct MidiTabLayout {
     offset: Section,
 }
 
+/// Where the Audio tab's parts sit.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct AudioTabLayout {
+    /// The output-device list: [`DEVICE_ROWS`] rows and a ghost row's slot,
+    /// always, so the sections under it never move.
+    device: Section,
+    /// The sample rates: one row of choices.
+    rate: Section,
+    /// The buffer sizes: one row of two-line choices (the frames over their
+    /// length in ms).
+    buffer: Section,
+    /// The readout of what runs: three lines.
+    readout: Section,
+}
+
+/// How many choices a row of them is divided into, so the rates and the
+/// buffer sizes line up in columns: the most buffer sizes there are.
+const CHOICE_COLUMNS: usize = 7;
+
+/// Choice `i` of a row of choices `row`. Pure geometry.
+fn choice_rect(row: Rect, i: usize) -> Rect {
+    let w = row.width() / CHOICE_COLUMNS as f32;
+    Rect::from_min_size(
+        pos2(row.min.x + i as f32 * w, row.min.y),
+        vec2(w, row.height()),
+    )
+}
+
+/// The choice under `p` in the row of `count` choices `row`.
+fn choice_hit(row: Rect, count: usize, p: Pos2) -> Option<usize> {
+    (0..count.min(CHOICE_COLUMNS)).find(|&i| choice_rect(row, i).contains(p))
+}
+
 /// The AI tab's opening paragraph: what the feature is.
 const ABOUT_AGENTS: &str = "Lets an AI client such as Claude Code read and edit the open project \
                             through MCP: marquee a section and ask what key it's in, for a chord \
@@ -147,7 +185,7 @@ struct AboutTabLayout {
 
 impl Display {
     /// Panel width.
-    const SETTINGS_W: f32 = 480.0 * Self::M_SCALE;
+    const SETTINGS_W: f32 = 520.0 * Self::M_SCALE;
     /// Inset of the tab strip from the panel's top and left edges.
     const SETTINGS_TAB_INSET: f32 = 20.0 * Self::M_SCALE;
     /// Height of a tab, its label centred in it.
@@ -179,15 +217,18 @@ impl Display {
     /// logo.
     const ABOUT_NOTE_LINE_H: f32 = 1.3 * Self::FONT_HINT;
 
-    /// The content height: the taller of the fullest MIDI tab (three
-    /// headers; two port lists of `PORT_ROWS` plus a ghost row each; the
-    /// offset row) and the theme window — so switching tabs never makes the
-    /// panel jump.
+    /// The content height: the tallest of the Audio tab (four headers; the
+    /// device list with its ghost row, the rates, the two-line buffer sizes,
+    /// the readout's three lines), the fullest MIDI tab (three headers; two
+    /// port lists of `PORT_ROWS` plus a ghost row each; the offset row) and
+    /// the theme window — so switching tabs never makes the panel jump.
     fn settings_content_h() -> f32 {
+        let audio = 4.0 * Self::SETTINGS_SECTION_H
+            + (DEVICE_ROWS + 1 + 1 + 2 + 3) as f32 * Self::SETTINGS_ROW_H;
         let midi = 3.0 * Self::SETTINGS_SECTION_H
             + (2 * (PORT_ROWS + 1) + 1) as f32 * Self::SETTINGS_ROW_H;
         let themes = THEME_ROWS as f32 * Self::SETTINGS_ROW_H;
-        midi.max(themes)
+        audio.max(midi).max(themes)
     }
 
     /// Measures the tab labels into `settings.tab_label_w` for this frame's
@@ -273,6 +314,24 @@ impl Display {
         MidiTabLayout {
             ports,
             offset: Self::settings_section(content, top, 1, 1),
+        }
+    }
+
+    /// The Audio tab in `content` for `audio`'s device list: the devices,
+    /// the rates, the buffer sizes (their row two lines high) and the
+    /// readout, top to bottom. Pure geometry.
+    fn audio_tab_layout(content: Rect, audio: &AudioTab) -> AudioTabLayout {
+        let device =
+            Self::settings_section(content, content.min.y, audio.visible(), DEVICE_ROWS + 1);
+        let rate = Self::settings_section(content, device.area.max.y, 1, 1);
+        let mut buffer = Self::settings_section(content, rate.area.max.y, 1, 2);
+        buffer.rows.first.max.y += Self::SETTINGS_ROW_H;
+        let readout = Self::settings_section(content, buffer.area.max.y, 0, 3);
+        AudioTabLayout {
+            device,
+            rate,
+            buffer,
+            readout,
         }
     }
 
@@ -417,6 +476,7 @@ impl Display {
             return Some(SettingsHit::Tab(tab));
         }
         let hit = match self.settings.tab {
+            SettingsTab::Audio => self.audio_hit_at(layout.content, p),
             SettingsTab::Midi => {
                 let midi = Self::midi_tab_layout(layout.content, &self.settings.midi);
                 PortSide::ALL
@@ -484,6 +544,42 @@ impl Display {
         Some(hit.unwrap_or(SettingsHit::Panel))
     }
 
+    /// What `p` is on in the Audio tab in `content`: a device row, a rate or
+    /// a buffer size chooses it, the rest of a section focuses it. While an
+    /// audio export runs the tab is read-only and nothing is hit
+    /// (`480-audio-settings.md` decision 10).
+    fn audio_hit_at(&self, content: Rect, p: Pos2) -> Option<SettingsHit> {
+        if self.is_exporting_audio() {
+            return None;
+        }
+        let audio = &self.settings.audio;
+        let layout = Self::audio_tab_layout(content, audio);
+        let device = layout
+            .device
+            .rows
+            .hit(p)
+            .map(|i| AudioChoice::Device(audio.window_start() + i));
+        let rate =
+            choice_hit(layout.rate.rows.first, audio.rates().len(), p).map(AudioChoice::Rate);
+        let buffer =
+            choice_hit(layout.buffer.rows.first, audio.buffers().len(), p).map(AudioChoice::Buffer);
+        if let Some(choice) = device.or(rate).or(buffer) {
+            return Some(SettingsHit::Audio(choice));
+        }
+        [
+            (layout.device, AudioSettingsFocus::Device),
+            (layout.rate, AudioSettingsFocus::Rate),
+            (layout.buffer, AudioSettingsFocus::Buffer),
+        ]
+        .into_iter()
+        .find_map(|(section, focus)| {
+            section
+                .area
+                .contains(p)
+                .then_some(SettingsHit::AudioSection(focus))
+        })
+    }
+
     /// What `p` is on in the About tab laid out as `layout`: a link's row,
     /// Check for updates (not while a check runs), or the check's answer
     /// when it links a newer release.
@@ -542,6 +638,7 @@ impl Display {
         );
 
         match self.settings.tab {
+            SettingsTab::Audio => self.draw_audio_tab(painter, layout.content),
             SettingsTab::Midi => self.draw_midi_tab(painter, layout.content),
             SettingsTab::Appearance => self.draw_appearance_tab(painter, layout.content),
             SettingsTab::Keyboard => self.draw_keyboard_tab(painter, layout.content),
@@ -670,11 +767,7 @@ impl Display {
             Self::draw_settings_cursor(painter, row, is_focused);
         }
         if is_active {
-            painter.vline(
-                row.min.x,
-                (row.min.y + 2.0)..=(row.max.y - 2.0),
-                Stroke::new(3.0_f32, theme::region()),
-            );
+            Self::draw_active_bar(painter, row, theme::region());
         }
         let color = if is_active {
             theme::region()
@@ -718,6 +811,220 @@ impl Display {
         if let Some(missing) = missing {
             dim_line(section.rows.count, &format!("○ {missing} (not connected)"));
         }
+    }
+
+    /// The Audio tab: the output-device list (System default first, the row
+    /// in use badged, a ghost row for a chosen device that isn't connected),
+    /// the device's sample rates (a hint in the header while the device runs
+    /// at its own), its buffer sizes with their length at the running rate,
+    /// and the readout of what runs. Keeps redrawing until the new stream's
+    /// first callback has given its buffer and latency.
+    ///
+    /// While an audio export runs the tab is read-only (`480-audio-settings.md`
+    /// decision 10): no section has the focus, no cursor shows, every choice
+    /// reads `fg_dim` with the one in use keeping its bar in `fg_dim`, and
+    /// the OUTPUT DEVICE header says why at its right. The readout is drawn
+    /// as ever.
+    fn draw_audio_tab(&self, painter: &Painter, content: Rect) {
+        let audio = &self.settings.audio;
+        let layout = Self::audio_tab_layout(content, audio);
+        let locked = self.is_exporting_audio();
+        let focus = (!locked).then_some(audio.focus);
+        // The cursor, only while the tab can be used.
+        let cursor = |is_cursor: bool| is_cursor && !locked;
+        if audio.awaiting_measurements() {
+            painter
+                .ctx()
+                .request_repaint_after(Duration::from_millis(200));
+        }
+
+        let focused = focus == Some(AudioSettingsFocus::Device);
+        Self::draw_settings_header(painter, layout.device, "OUTPUT DEVICE", focused);
+        if locked {
+            let header = layout.device.header;
+            Self::draw_settings_text_right(
+                painter,
+                header,
+                header.max.x,
+                "Locked while an audio export runs",
+                Self::FONT_HINT,
+                theme::fg(),
+            );
+        }
+        let active = audio.active_row();
+        let start = audio.window_start();
+        for i in 0..layout.device.rows.count {
+            let idx = start + i;
+            Self::draw_audio_row(
+                painter,
+                layout.device.rows.row(i),
+                &audio.row_label(idx),
+                cursor(idx == audio.device_cursor),
+                focused,
+                active == Some(idx),
+                locked,
+            );
+        }
+        if let Some(missing) = audio.missing() {
+            let row = layout.device.rows.row(layout.device.rows.count);
+            let text = format!("○ {missing} (not connected)");
+            Self::draw_settings_text(painter, row, &text, Self::FONT_LIST, theme::fg_dim());
+        }
+
+        let focused = focus == Some(AudioSettingsFocus::Rate);
+        Self::draw_settings_header(painter, layout.rate, "SAMPLE RATE (kHz)", focused);
+        if audio.running.is_some() && audio.prefs.sample_rate.is_none() {
+            let header = layout.rate.header;
+            let hint = "the device's own rate";
+            Self::draw_settings_text_right(
+                painter,
+                header,
+                header.max.x,
+                hint,
+                Self::FONT_HINT,
+                theme::fg_dim(),
+            );
+        }
+        let row = layout.rate.rows.first;
+        let active = audio.active_rate();
+        for (i, &hz) in audio.rates().iter().enumerate().take(CHOICE_COLUMNS) {
+            let is_cursor = cursor(i == audio.rate_cursor);
+            let is_active = active == Some(i);
+            let chip = choice_rect(row, i);
+            Self::draw_audio_row(
+                painter,
+                chip,
+                &khz_number(hz),
+                is_cursor,
+                focused,
+                is_active,
+                locked,
+            );
+        }
+        if audio.rates().is_empty() {
+            Self::draw_settings_text(
+                painter,
+                row,
+                "No audio output",
+                Self::FONT_LIST,
+                theme::fg_dim(),
+            );
+        }
+
+        let focused = focus == Some(AudioSettingsFocus::Buffer);
+        Self::draw_settings_header(painter, layout.buffer, "BUFFER SIZE (frames)", focused);
+        let row = layout.buffer.rows.first;
+        let active = audio.active_buffer();
+        let hz = audio.running.as_ref().map_or(0, |r| r.sample_rate);
+        for (i, &frames) in audio.buffers().iter().enumerate().take(CHOICE_COLUMNS) {
+            let is_cursor = cursor(i == audio.buffer_cursor);
+            let is_active = active == Some(i);
+            Self::draw_buffer_choice(
+                painter,
+                choice_rect(row, i),
+                buffer_label(frames, hz),
+                is_cursor,
+                focused,
+                is_active,
+                locked,
+            );
+        }
+        if audio.buffers().is_empty() {
+            let text = if audio.running.is_some() {
+                "The device picks its own"
+            } else {
+                "No audio output"
+            };
+            let line = Rect::from_min_size(row.min, vec2(row.width(), Self::SETTINGS_ROW_H));
+            Self::draw_settings_text(painter, line, text, Self::FONT_LIST, theme::fg_dim());
+        }
+
+        Self::draw_settings_header(painter, layout.readout, "RUNNING", false);
+        let readout = audio.readout();
+        let lines = ListRows {
+            first: Rect::from_min_size(
+                pos2(content.min.x, layout.readout.header.max.y),
+                vec2(content.width(), Self::SETTINGS_ROW_H),
+            ),
+            count: 3,
+        };
+        Self::draw_settings_text(
+            painter,
+            lines.row(0),
+            &readout.running,
+            Self::FONT_LIST,
+            theme::fg(),
+        );
+        if let Some(latency) = &readout.latency {
+            Self::draw_settings_text(painter, lines.row(1), latency, Self::FONT_LIST, theme::fg());
+        }
+        if let Some(note) = &readout.note {
+            Self::draw_settings_text(
+                painter,
+                lines.row(2),
+                note,
+                Self::FONT_HINT,
+                theme::fg_dim(),
+            );
+        }
+    }
+
+    /// Paints one Audio tab choice, a device row or a rate, as a list row
+    /// ([`draw_settings_row`](Self::draw_settings_row)) — or, `locked` for
+    /// an export, read-only: the text `fg_dim` and the one in use keeping its
+    /// bar, in `fg_dim` too.
+    fn draw_audio_row(
+        painter: &Painter,
+        row: Rect,
+        text: &str,
+        is_cursor: bool,
+        is_focused: bool,
+        is_active: bool,
+        locked: bool,
+    ) {
+        if !locked {
+            return Self::draw_settings_row(painter, row, text, is_cursor, is_focused, is_active);
+        }
+        if is_active {
+            Self::draw_active_bar(painter, row, theme::fg_dim());
+        }
+        Self::draw_settings_text(painter, row, text, Self::FONT_LIST, theme::fg_dim());
+    }
+
+    /// The bar along `row`'s left edge marking the connected port, the
+    /// active theme or the audio choice in use, in `color`.
+    fn draw_active_bar(painter: &Painter, row: Rect, color: Color32) {
+        painter.vline(
+            row.min.x,
+            (row.min.y + 2.0)..=(row.max.y - 2.0),
+            Stroke::new(3.0_f32, color),
+        );
+    }
+
+    /// Paints one buffer size: the cursor's tint and the active bar as a
+    /// list row has them, the frames on the upper line and their length in
+    /// ms, dim and smaller, on the lower; read-only when `locked`, as
+    /// [`draw_audio_row`](Self::draw_audio_row) has it.
+    fn draw_buffer_choice(
+        painter: &Painter,
+        rect: Rect,
+        (frames, ms): (String, String),
+        is_cursor: bool,
+        is_focused: bool,
+        is_active: bool,
+        locked: bool,
+    ) {
+        Self::draw_audio_row(painter, rect, "", is_cursor, is_focused, is_active, locked);
+        let color = if locked {
+            theme::fg_dim()
+        } else if is_active {
+            theme::region()
+        } else {
+            accent_if(is_cursor && is_focused, theme::fg())
+        };
+        let (upper, lower) = rect.split_top_bottom_at_fraction(0.5);
+        Self::draw_settings_text(painter, upper, &frames, Self::FONT_LIST, color);
+        Self::draw_settings_text(painter, lower, &ms, Self::FONT_HINT, theme::fg_dim());
     }
 
     /// The MIDI tab: the input and output port lists and the output-offset
@@ -1092,12 +1399,55 @@ mod tests {
     use crossbeam_channel::unbounded;
     use egui::{Rect, pos2, vec2};
 
-    use super::{Display, ListRows};
+    use super::{CHOICE_COLUMNS, Display, ListRows, choice_hit, choice_rect};
+    use crate::core::audio::AudioDevice;
     use crate::view::display::settings::THEME_ROWS;
+    use crate::view::display::settings::audio_tab::{AudioTab, DEVICE_ROWS};
     use crate::view::display::settings::midi_tab::{MidiTab, PORT_ROWS};
 
+    /// An Audio tab listing `count` devices.
+    fn audio(count: usize) -> AudioTab {
+        let mut audio = AudioTab::default();
+        let devices = (0..count)
+            .map(|i| AudioDevice {
+                id: format!("coreaudio:{i}"),
+                name: format!("device {i}"),
+            })
+            .collect();
+        audio.set_devices(devices, None);
+        audio
+    }
+
+    #[test]
+    fn the_audio_sections_stack_inside_the_content_and_never_move() {
+        let content = Display::settings_layout(canvas(), LABEL_W).content;
+        let few = Display::audio_tab_layout(content, &audio(1));
+        let many = Display::audio_tab_layout(content, &audio(DEVICE_ROWS + 5));
+        assert_eq!(few.rate, many.rate);
+        assert_eq!(many.device.rows.count, DEVICE_ROWS);
+        assert_eq!(few.device.rows.count, 2);
+        assert_eq!(few.device.area.min.y, content.min.y);
+        assert_eq!(few.rate.area.min.y, few.device.area.max.y);
+        assert_eq!(few.buffer.area.min.y, few.rate.area.max.y);
+        assert_eq!(few.readout.area.min.y, few.buffer.area.max.y);
+        assert!(few.readout.area.max.y <= content.max.y + 0.01);
+        // The buffer sizes' row holds their two lines.
+        assert!((few.buffer.rows.first.height() - 2.0 * Display::SETTINGS_ROW_H).abs() < 1e-3);
+        assert!(few.buffer.area.contains_rect(few.buffer.rows.first));
+    }
+
+    #[test]
+    fn the_choices_split_their_row_into_aligned_columns() {
+        let row = Rect::from_min_size(pos2(0.0, 0.0), vec2(700.0, 30.0));
+        let last = choice_rect(row, CHOICE_COLUMNS - 1);
+        assert!((last.max.x - row.max.x).abs() < 1e-3);
+        assert_eq!(choice_hit(row, 3, choice_rect(row, 2).center()), Some(2));
+        // Past the choices there are.
+        assert_eq!(choice_hit(row, 3, choice_rect(row, 4).center()), None);
+    }
+
     /// Tab label widths as short and long as the real ones.
-    const LABEL_W: [f32; 5] = [40.0, 140.0, 110.0, 25.0, 70.0];
+    const LABEL_W: [f32; 6] = [70.0, 40.0, 140.0, 110.0, 25.0, 70.0];
 
     /// A canvas the size of a laptop window.
     fn canvas() -> Rect {

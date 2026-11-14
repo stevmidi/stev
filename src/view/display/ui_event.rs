@@ -11,6 +11,7 @@ use uuid::Uuid;
 
 use crate::{
     core::{
+        audio::{AudioDevice, RunningAudio},
         config::DEFAULT_TRACK_COUNT,
         input_event::TimeSelectionRect,
         project::{ProjectAction, ProjectOrigin},
@@ -230,6 +231,20 @@ pub(crate) enum UiEvent {
     /// Quitting was asked for and nothing is left unsaved (or the prompt said
     /// Don't Save): close the window.
     QuitApproved,
+    /// The audio engine restarted (`480-audio-settings.md` decision 5) —
+    /// and at launch, the first open: what it runs now, for the Audio tab.
+    AudioRunning {
+        /// The running stream; `None` with no device open.
+        running: Option<RunningAudio>,
+    },
+    /// The output devices changed — and at launch, the first list: the
+    /// Audio tab's device list, kept current whether or not it is open.
+    AudioDevicesRefreshed {
+        /// Every output device.
+        devices: Vec<AudioDevice>,
+        /// The system default's name, for the System default row.
+        default_name: Option<String>,
+    },
     /// The available MIDI ports changed — and at startup, the first lists:
     /// the settings modal's port lists, kept current whether or not it is
     /// open.

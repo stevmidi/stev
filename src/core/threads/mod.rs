@@ -49,7 +49,8 @@ use egui::Context;
 use rtrb::Consumer;
 
 use crate::core::audio::{
-    AudioEngine, AudioSource, ClickEvent, EngineHandle, FALLBACK_SAMPLE_RATE, MetronomeSource,
+    AudioEngine, AudioPrefs, AudioSource, ClickEvent, EngineHandle, EngineNews,
+    FALLBACK_SAMPLE_RATE, MetronomeSource,
 };
 use crate::core::clock::{Clock, ClockTick};
 use crate::core::time;
@@ -69,12 +70,15 @@ pub(crate) fn start_clock_thread(clock: Clock, tick_tx: Sender<ClockTick>) {
 /// Spawns the `"audio-engine"` thread with the built-in metronome click as its
 /// first (and, off macOS, only) [`AudioSource`]. Returns the handle so `main`
 /// can hand the macOS instrument mixer to the running engine as a second
-/// source. With no output device the app starts silent and the engine opens
-/// one when it appears. The engine's lines about an outside change (a device
-/// gone, a new rate) go to the footer through `ui_event_tx`, and every
-/// restart wakes the UI.
+/// source. It opens as `prefs` say (the Audio tab's saved choices). With no
+/// output device the app starts silent and the engine opens one when it
+/// appears. What the engine reports goes to the UI through `ui_event_tx`: the
+/// stream each restart opened and the device list for the Audio tab, and the
+/// line about an outside change (a device gone, a new rate) for the footer.
+/// Every report wakes the UI.
 pub(crate) fn start_audio_engine(
     metronome_click_rx: Consumer<ClickEvent>,
+    prefs: AudioPrefs,
     ui_event_tx: Sender<UiEvent>,
     repaint_ctx: Arc<OnceLock<Context>>,
 ) -> EngineHandle {
@@ -83,9 +87,26 @@ pub(crate) fn start_audio_engine(
     let click = MetronomeSource::new(metronome_click_rx, f64::from(FALLBACK_SAMPLE_RATE));
     AudioEngine::start(
         vec![Box::new(click) as Box<dyn AudioSource>],
-        move |message| {
-            if let Some(message) = message {
-                ui_event_tx.send(UiEvent::Status { message }).ok();
+        prefs,
+        move |news| {
+            match news {
+                EngineNews::Restarted { running, message } => {
+                    ui_event_tx.send(UiEvent::AudioRunning { running }).ok();
+                    if let Some(message) = message {
+                        ui_event_tx.send(UiEvent::Status { message }).ok();
+                    }
+                }
+                EngineNews::Devices {
+                    devices,
+                    default_name,
+                } => {
+                    ui_event_tx
+                        .send(UiEvent::AudioDevicesRefreshed {
+                            devices,
+                            default_name,
+                        })
+                        .ok();
+                }
             }
             // A device change is no window input event, so an idle window would
             // not redraw the footer, or reactivate the plugins at a new rate,

@@ -219,6 +219,11 @@ impl Display {
                         self.reload_browser();
                     }
                 }
+                UiEvent::AudioRunning { running } => self.settings.audio.set_running(running),
+                UiEvent::AudioDevicesRefreshed {
+                    devices,
+                    default_name,
+                } => self.settings.audio.set_devices(devices, default_name),
                 UiEvent::MidiPortsRefreshed {
                     in_ports,
                     out_ports,

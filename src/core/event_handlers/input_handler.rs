@@ -383,6 +383,10 @@ impl EventHandlers {
                 });
             }
 
+            InputEvent::SaveAudioPrefs { prefs } => {
+                update_settings("audio settings", |settings| settings.set_audio_prefs(prefs));
+            }
+
             InputEvent::SaveTheme { theme_index } => {
                 update_settings("theme", |settings| settings.theme_index = *theme_index);
             }
