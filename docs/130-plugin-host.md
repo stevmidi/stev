@@ -85,10 +85,16 @@ methods take a track's position and look the slot up in its `tracks` mirror
   it in place: `Display::return_stale_voices` sends
   `PluginHostCommand::Return`, the mixer stops the voice
   (`InstrumentVoice::stop_processing`) and hands it back through the reclaim
-  thread (`VoiceBack::Returned`), and `PluginAudioHandle::reactivate` runs
-  `InstrumentEditor::reactivate` and inserts it again at the new rate. A
-  plugin that won't reactivate is loaded again from its live state
-  (`Display::reload_slot_instrument`; `480` § Things to check). A restart
+  thread (`VoiceBack::Returned`). Each joins an audio restart
+  (`InstrumentHost::restart`, `view/display/audio_restart.rs`), which
+  reactivates one per frame (`Display::restart_next_instrument`, running
+  `PluginAudioHandle::reactivate` → `InstrumentEditor::reactivate`) under the
+  "Restarting audio" panel, holds each `ReadyVoice`, and puts them all back
+  in one frame once every one is ready (`finish_restart`,
+  `PluginAudioHandle::insert_ready`). A plugin that won't reactivate is
+  loaded again from its live state with `prepare_instrument`, and its voice
+  waits with the rest (`Display::reload_slot_instrument`; `480` § Things to
+  check). A restart
   also drops the events queued for the old stream and sends every voice the
   note reset (`AudioSource::restarted`).
 - **Per-track plugins.** From the browser panel's **Plugins** category (Enter
@@ -345,7 +351,7 @@ methods take a track's position and look the slot up in its `tracks` mirror
 
 | File | Responsibility |
 |---|---|
-| `mod.rs` | `start_plugin_host` (build `InstrumentMixer`, `EngineHandle::add_source` it into the audio engine, spawn the `"plugin-host"` thread), `start_plugin_catalog_scan` (spawns the `"plugin-catalog-scan"` thread), `load_instrument` (**the one place a format is chosen** - dispatches on `entry.format`, then `Insert`s the returned voice), `PluginAudioHandle` (`cmd_tx` / `voice_back_rx` / `shutdown` / `sample_rate()` / `reactivate` / `repaint` - the egui context slot `start_plugin_host` is handed once, so `load_instrument` takes no format-specific arguments - / `ui_wake`), `LoadedInstrument`, `reclaim_voices` (the `"plugin-host"` thread loop: drops removed voices, passes returned ones to the UI as `VoiceBack::Returned`, and makes the UI wakes `UiWake` asks for), `VoiceBack` / `ReturnedVoice`. Voices are built for `core::audio::MAX_FRAMES`. |
+| `mod.rs` | `start_plugin_host` (build `InstrumentMixer`, `EngineHandle::add_source` it into the audio engine, spawn the `"plugin-host"` thread), `start_plugin_catalog_scan` (spawns the `"plugin-catalog-scan"` thread), `load_instrument` (**the one place a format is chosen** - dispatches on `entry.format`, then `Insert`s the returned voice), `PluginAudioHandle` (`cmd_tx` / `voice_back_rx` / `shutdown` / `sample_rate()` / `reactivate` / `insert_ready` / `repaint` - the egui context slot `start_plugin_host` is handed once, so `load_instrument` takes no format-specific arguments - / `ui_wake`), `LoadedInstrument`, `reclaim_voices` (the `"plugin-host"` thread loop: drops removed voices, passes returned ones to the UI as `VoiceBack::Returned`, and makes the UI wakes `UiWake` asks for), `VoiceBack` / `ReturnedVoice` / `ReadyVoice` (a voice held for an audio restart's insert; `PreparedInstrument::into_ready` makes one from a reload). Voices are built for `core::audio::MAX_FRAMES`. |
 | `voice.rs` | The `InstrumentVoice` trait and `VoiceMix` - the mixer-owned `sleeping` / `rendered` flags and gain-ramp endpoints every voice carries. Also `note_reset_messages`, the burst `queue_note_reset` queues into every new voice. They live on the voice rather than in a parallel array in the mixer because the render pass is the loop spread across worker threads, where each worker may only touch its own voice. |
 | `editor.rs` | The `InstrumentEditor` trait - the `!Send` main-thread half. `close` (= `teardown_gui`) and `toggle` (on `is_open`) are default methods, so a format supplies only `is_open`. |
 | `buffers.rs` | `AudioIoLayout` (a plugin's declared channels per input/output port or bus; `new` applies the one-stereo-output fallback) and `PortBuffers` - the `[port][channel]` buffer set every voice renders into: silent input feed, capacity-reserved outputs, `prepare_outputs(frames)`, `main_sample` (port-0-only, mono/empty/out-of-range-safe - what the mixer sums) and `main_output_silent`. Each format builds its own FFI view over it. Unit-tested. |
@@ -628,7 +634,10 @@ still alive and idle — safe.
 
 A plugin removed while its voice is out of the mixer to be reactivated
 (`480-audio-settings.md`) sends no `Remove`: there is nothing in the slot to
-drop. The returned voice finishes its `pending_instance_drop` entry instead
+drop. A voice the audio restart already holds, back or reactivated, is
+dropped there and then, and the instance deactivated after it
+(`AudioRestart::forget`). One still on its way finishes a
+`pending_instance_drop` entry when it comes
 (`Display::take_back_voice`: voice dropped, then `deactivate`). Both kinds of
 ack come on one channel in the order the mixer let a slot's voices go, which
 is the order they were removed or asked back, so each finishes the slot's

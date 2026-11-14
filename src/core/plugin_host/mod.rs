@@ -165,6 +165,19 @@ pub(crate) enum VoiceBack {
 /// a removal's order too.
 pub(crate) struct ReturnedVoice(Box<dyn InstrumentVoice>);
 
+/// A voice activated and ready to go into the mixer, held by the UI until
+/// an audio restart's plugins all go back together
+/// (`480-audio-settings.md` decision 8): one reactivated in place
+/// ([`PluginAudioHandle::reactivate`]) or loaded again
+/// ([`PreparedInstrument::into_ready`]). Opaque to the UI, and dropped as a
+/// [`ReturnedVoice`] is: before its instance is deactivated.
+pub(crate) struct ReadyVoice {
+    /// The voice, every note reset queued.
+    voice: Box<dyn InstrumentVoice>,
+    /// The rate its plugin was activated at.
+    sample_rate: f64,
+}
+
 /// Capacity of a voice's parameter rings, in both formats. A preset change in
 /// a large synth can push a parameter per control at once, so this is sized
 /// for a whole panel's worth rather than for incremental knob turns.
@@ -178,20 +191,26 @@ impl PluginAudioHandle {
     }
 
     /// Reactivates `editor`'s plugin, in place, at the rate the stream runs
-    /// at now, with the `voice` the mixer handed back for `track`, and sends
-    /// the voice back in, every note reset and its gain ramping in from
-    /// silence (`480-audio-settings.md` decisions 8 and 9). Returns that
-    /// rate, or why the plugin wouldn't reactivate.
+    /// at now, with the `voice` the mixer handed back, every note reset and
+    /// its gain to ramp in from silence (`480-audio-settings.md` decisions 8
+    /// and 9). Returns the voice for [`insert_ready`](Self::insert_ready), or
+    /// why the plugin wouldn't reactivate.
     pub(crate) fn reactivate(
-        &mut self,
-        track: usize,
+        &self,
         voice: ReturnedVoice,
         editor: &mut dyn InstrumentEditor,
-    ) -> Result<f64, String> {
+    ) -> Result<ReadyVoice, String> {
         let sample_rate = self.sample_rate();
         let mut voice = editor.reactivate(voice.0, sample_rate)?;
         *voice.mix_mut() = VoiceMix::default();
         voice.queue_note_reset();
+        Ok(ReadyVoice { voice, sample_rate })
+    }
+
+    /// Sends a [`ReadyVoice`] to the mixer for `track`, whose slot must be
+    /// empty by then. Returns the rate it was activated at.
+    pub(crate) fn insert_ready(&mut self, track: usize, ready: ReadyVoice) -> Result<f64, String> {
+        let ReadyVoice { voice, sample_rate } = ready;
         self.send_insert(track, voice, sample_rate)?;
         Ok(sample_rate)
     }
@@ -407,6 +426,19 @@ impl PreparedInstrument {
         } = self;
         handle.send_insert(track, voice, sample_rate)?;
         Ok((editor, sample_rate))
+    }
+
+    /// Splits a plugin loaded again in an audio restart into its editor and
+    /// the voice to hold until the restart's plugins go back together
+    /// ([`PluginAudioHandle::insert_ready`]).
+    pub(crate) fn into_ready(self) -> (Box<dyn InstrumentEditor>, ReadyVoice) {
+        let PreparedInstrument {
+            voice,
+            sample_rate,
+            editor,
+            ..
+        } = self;
+        (editor, ReadyVoice { voice, sample_rate })
     }
 
     /// Drops a plugin that never reached the mixer, in the order a removed

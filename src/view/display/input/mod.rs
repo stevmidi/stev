@@ -489,9 +489,11 @@ impl Display {
         );
         // Nothing acts while a project being opened loads its plugins — not
         // even the project chords ahead of the overlay below: the open
-        // project must stay exactly as it is.
+        // project must stay exactly as it is. Nor while an audio restart
+        // reactivates its plugins: its panel is up over everything, Settings
+        // included.
         #[cfg(target_os = "macos")]
-        if self.overlay == Some(Overlay::RestoringInstruments) {
+        if self.overlay == Some(Overlay::RestoringInstruments) || self.audio_restart().is_some() {
             events.clear();
         }
         for event in events.drain(..) {
@@ -561,10 +563,14 @@ impl Display {
                     && self.view_state() == ViewState::Arranger))
     }
 
-    /// Whether a modal — an overlay or a project dialog — is up. It takes
-    /// the pointer as well as the keyboard, so nothing under it shows a
-    /// hover.
+    /// Whether a modal — an overlay, a project dialog or the "Restarting
+    /// audio" panel — is up. It takes the pointer as well as the keyboard,
+    /// so nothing under it shows a hover.
     pub(in crate::view::display) fn modal_up(&self) -> bool {
+        #[cfg(target_os = "macos")]
+        if self.audio_restart().is_some() {
+            return true;
+        }
         self.overlay.is_some() || self.project_dialog.is_some()
     }
 

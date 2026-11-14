@@ -17,7 +17,8 @@
 //!   `UiEvent` drain.
 //! - `instrument.rs` (macOS) — the per-track plugin editor host reached
 //!   through `self.instruments`; `instrument_restore.rs` the queue a project
-//!   load restores its plugins from, one per frame.
+//!   load restores its plugins from, one per frame; `audio_restart.rs` the
+//!   plugins an audio restart reactivates at a new rate, one per frame.
 //! - `pane.rs` — the arranger / clip-view panes the lane area splits into;
 //!   the coordinate helpers below answer for the *active* one
 //!   (`active_pane`, `in_pane`). See `archive/210-docked-clip-panel.md`.
@@ -65,6 +66,8 @@
 //! See `020-views-and-state.md` for the state model and `030-ui-design.md` for
 //! the layout.
 
+#[cfg(target_os = "macos")]
+mod audio_restart;
 mod browser;
 mod clip_lane;
 mod clip_shape;

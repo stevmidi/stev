@@ -268,13 +268,17 @@ impl RestartCause {
 }
 
 /// The footer line for a restart: `previous` is the last stream that opened,
-/// `now` the one this restart opened, if any. Nothing for the launch, for a
+/// `now` the one this restart opened, if any, and `chosen_rate` the rate
+/// picked in the Audio tab, if one was. Nothing for the launch, for a
 /// choice in the tab that opened (the readout changes in front of the user),
-/// or for a retry that still found no device. Pure, unit-tested.
+/// or for a retry that still found no device. A rate changed from outside
+/// that Stev set back to the one picked in the tab says so
+/// (`480-audio-settings.md` decision 3). Pure, unit-tested.
 fn restart_message(
     cause: RestartCause,
     previous: Option<&RunningAudio>,
     now: Option<&RunningAudio>,
+    chosen_rate: Option<u32>,
 ) -> Option<String> {
     if cause == RestartCause::Launch || (cause == RestartCause::Chosen && now.is_some()) {
         return None;
@@ -297,7 +301,14 @@ fn restart_message(
     Some(match cause {
         RestartCause::DeviceLost => format!("{}; using {name}", lost()),
         RestartCause::RateChanged if previous.is_some_and(|p| p.device.name == *name) => {
-            format!("Device rate changed to {}", khz(now.sample_rate))
+            if chosen_rate == Some(now.sample_rate) {
+                format!(
+                    "Device rate set back to {} (chosen in Settings)",
+                    khz(now.sample_rate)
+                )
+            } else {
+                format!("Device rate changed to {}", khz(now.sample_rate))
+            }
         }
         RestartCause::DefaultChanged => {
             format!("Audio switched to {name} (System default changed)")
@@ -619,7 +630,7 @@ impl EngineThread {
     ) {
         let message = match refused {
             Some(chosen) => Some(refused_message(chosen, now)),
-            None => restart_message(cause, self.opened.as_ref(), now),
+            None => restart_message(cause, self.opened.as_ref(), now, self.prefs.sample_rate),
         };
         (self.notify)(EngineNews::Restarted {
             running: now.cloned(),
@@ -1199,12 +1210,15 @@ mod tests {
     fn the_launch_and_a_fruitless_retry_say_nothing() {
         let speakers = opened("MacBook Pro Speakers", 48_000);
         assert_eq!(
-            restart_message(RestartCause::Launch, None, Some(&speakers)),
+            restart_message(RestartCause::Launch, None, Some(&speakers), None),
             None
         );
-        assert_eq!(restart_message(RestartCause::Launch, None, None), None);
         assert_eq!(
-            restart_message(RestartCause::Retry, Some(&speakers), None),
+            restart_message(RestartCause::Launch, None, None, None),
+            None
+        );
+        assert_eq!(
+            restart_message(RestartCause::Retry, Some(&speakers), None, None),
             None
         );
     }
@@ -1218,21 +1232,28 @@ mod tests {
             restart_message(
                 RestartCause::DefaultChanged,
                 Some(&speakers),
-                Some(&airpods)
+                Some(&airpods),
+                None
             )
             .as_deref(),
             Some("Audio switched to AirPods Pro (System default changed)")
         );
         assert_eq!(
-            restart_message(RestartCause::DeviceLost, Some(&scarlett), Some(&speakers)).as_deref(),
+            restart_message(
+                RestartCause::DeviceLost,
+                Some(&scarlett),
+                Some(&speakers),
+                None
+            )
+            .as_deref(),
             Some("Scarlett 2i2 disconnected; using MacBook Pro Speakers")
         );
         assert_eq!(
-            restart_message(RestartCause::DeviceLost, Some(&scarlett), None).as_deref(),
+            restart_message(RestartCause::DeviceLost, Some(&scarlett), None, None).as_deref(),
             Some("Scarlett 2i2 disconnected; no audio output")
         );
         assert_eq!(
-            restart_message(RestartCause::Retry, Some(&scarlett), Some(&speakers)).as_deref(),
+            restart_message(RestartCause::Retry, Some(&scarlett), Some(&speakers), None).as_deref(),
             Some("Audio switched to MacBook Pro Speakers")
         );
     }
@@ -1242,12 +1263,29 @@ mod tests {
         let at_48 = opened("Scarlett 2i2", 48_000);
         let at_44 = opened("Scarlett 2i2", 44_100);
         assert_eq!(
-            restart_message(RestartCause::RateChanged, Some(&at_48), Some(&at_44)).as_deref(),
+            restart_message(RestartCause::RateChanged, Some(&at_48), Some(&at_44), None).as_deref(),
             Some("Device rate changed to 44.1 kHz")
+        );
+        // A rate changed from outside that Stev set back to the one picked
+        // in the tab says so, rather than naming the rate as new.
+        assert_eq!(
+            restart_message(
+                RestartCause::RateChanged,
+                Some(&at_48),
+                Some(&at_48),
+                Some(48_000)
+            )
+            .as_deref(),
+            Some("Device rate set back to 48 kHz (chosen in Settings)")
+        );
+        // With no rate picked, the device's own rate is news either way.
+        assert_eq!(
+            restart_message(RestartCause::RateChanged, Some(&at_48), Some(&at_48), None).as_deref(),
+            Some("Device rate changed to 48 kHz")
         );
         // A first device, after a launch with none, says only where it went.
         assert_eq!(
-            restart_message(RestartCause::Retry, None, Some(&at_44)).as_deref(),
+            restart_message(RestartCause::Retry, None, Some(&at_44), None).as_deref(),
             Some("Audio switched to Scarlett 2i2")
         );
     }
@@ -1257,11 +1295,11 @@ mod tests {
         let speakers = opened("MacBook Pro Speakers", 48_000);
         let scarlett = opened("Scarlett 2i2", 96_000);
         assert_eq!(
-            restart_message(RestartCause::Chosen, Some(&speakers), Some(&scarlett)),
+            restart_message(RestartCause::Chosen, Some(&speakers), Some(&scarlett), None),
             None
         );
         assert_eq!(
-            restart_message(RestartCause::Chosen, Some(&speakers), None).as_deref(),
+            restart_message(RestartCause::Chosen, Some(&speakers), None, None).as_deref(),
             Some("No audio output")
         );
     }
@@ -1284,7 +1322,13 @@ mod tests {
         let speakers = opened("MacBook Pro Speakers", 48_000);
         let scarlett = opened("Scarlett 2i2", 48_000);
         assert_eq!(
-            restart_message(RestartCause::Returned, Some(&speakers), Some(&scarlett)).as_deref(),
+            restart_message(
+                RestartCause::Returned,
+                Some(&speakers),
+                Some(&scarlett),
+                None
+            )
+            .as_deref(),
             Some("Audio switched to Scarlett 2i2 (reconnected)")
         );
     }
