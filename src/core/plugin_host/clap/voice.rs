@@ -32,6 +32,7 @@ use crate::core::sequencer::NoteSource;
 use crate::core::time::{monotonic_nanos, ticks_to_beats_f64};
 use crate::models::knobs::ParamId;
 
+use super::engine::activate;
 use super::host::StevClapHost;
 use super::params::VoiceParams;
 
@@ -103,17 +104,10 @@ impl ClapVoice {
             bufs,
             mut params,
             note_ids,
-            ..
+            mix,
         } = self;
         instance.deactivate(processor.into_stopped());
-        let configuration = PluginAudioConfiguration {
-            sample_rate,
-            min_frames_count: 1,
-            max_frames_count: MAX_FRAMES as u32,
-        };
-        let processor = instance
-            .activate(|_, _| (), configuration)
-            .map_err(|e| format!("activate at {sample_rate} Hz: {e}"))?;
+        let processor = activate(instance, sample_rate, MAX_FRAMES as u32)?;
         params.set_sample_rate(sample_rate);
         Ok(Self {
             processor: processor.into(),
@@ -121,7 +115,7 @@ impl ClapVoice {
             in_ports,
             out_ports,
             bufs,
-            mix: VoiceMix::default(),
+            mix,
             params,
             note_ids: note_ids.map(|_| NoteIds::default()),
         })

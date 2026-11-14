@@ -116,8 +116,8 @@ const CMD_RING_CAPACITY: usize = 4 * MAX_TRACKS;
 
 /// Capacity of the `rtrb` ring the mixer hands removed voices back on, for the
 /// reclaim thread to drop off the audio thread (and returned ones, for it to
-/// pass to the UI: at most one per track, `MAX_TRACKS`, on a rate change). The worst realistic burst is
-/// one full project reload — a `Remove` per instrument track, `MAX_TRACKS` at
+/// pass to the UI: at most one per track, `MAX_TRACKS`, on a rate change).
+/// The worst realistic burst is one full project reload — a `Remove` per instrument track, `MAX_TRACKS` at
 /// most — before the reclaim thread's next drain; 2× that. A full ring (the
 /// reclaim thread stalled through several plugin swaps — not reachable in
 /// practice) falls back to dropping the voice on the audio thread.
@@ -191,14 +191,25 @@ impl PluginAudioHandle {
         let mut voice = editor.reactivate(voice.0, sample_rate)?;
         *voice.mix_mut() = VoiceMix::default();
         voice.queue_note_reset();
+        self.send_insert(track, voice, sample_rate)?;
+        Ok(sample_rate)
+    }
+
+    /// Sends `voice`, activated at `sample_rate`, to the mixer for `track`,
+    /// whose slot must be empty by then.
+    fn send_insert(
+        &mut self,
+        track: usize,
+        voice: Box<dyn InstrumentVoice>,
+        sample_rate: f64,
+    ) -> Result<(), String> {
         self.cmd_tx
             .push(PluginHostCommand::Insert {
                 track,
                 voice,
                 sample_rate,
             })
-            .map_err(|_| "plugin host audio thread is gone (command ring full)".to_string())?;
-        Ok(sample_rate)
+            .map_err(|_| "plugin host audio thread is gone (command ring full)".to_string())
     }
 }
 
@@ -393,14 +404,7 @@ impl PreparedInstrument {
             sample_rate,
             editor,
         } = self;
-        handle
-            .cmd_tx
-            .push(PluginHostCommand::Insert {
-                track,
-                voice,
-                sample_rate,
-            })
-            .map_err(|_| "plugin host audio thread is gone (command ring full)".to_string())?;
+        handle.send_insert(track, voice, sample_rate)?;
         Ok((editor, sample_rate))
     }
 
@@ -428,7 +432,7 @@ pub(crate) fn prepare_instrument(
     state: Option<&[u8]>,
 ) -> Result<PreparedInstrument, String> {
     // Read once, so the voice is known to run at the rate it was built at.
-    let sample_rate = handle.stream.sample_rate();
+    let sample_rate = handle.sample_rate();
     let (mut voice, editor) = match entry.format {
         PluginFormat::Clap => clap::load(handle, track, entry, state, sample_rate)?,
         PluginFormat::Vst3 => vst3::load(handle, track, entry, state, sample_rate)?,

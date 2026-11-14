@@ -71,7 +71,8 @@ pub(crate) fn start_clock_thread(clock: Clock, tick_tx: Sender<ClockTick>) {
 /// can hand the macOS instrument mixer to the running engine as a second
 /// source. With no output device the app starts silent and the engine opens
 /// one when it appears. The engine's lines about an outside change (a device
-/// gone, a new rate) go to the footer through `ui_event_tx`.
+/// gone, a new rate) go to the footer through `ui_event_tx`, and every
+/// restart wakes the UI.
 pub(crate) fn start_audio_engine(
     metronome_click_rx: Consumer<ClickEvent>,
     ui_event_tx: Sender<UiEvent>,
@@ -83,9 +84,12 @@ pub(crate) fn start_audio_engine(
     AudioEngine::start(
         vec![Box::new(click) as Box<dyn AudioSource>],
         move |message| {
-            ui_event_tx.send(UiEvent::Status { message }).ok();
+            if let Some(message) = message {
+                ui_event_tx.send(UiEvent::Status { message }).ok();
+            }
             // A device change is no window input event, so an idle window would
-            // not redraw the footer on its own.
+            // not redraw the footer, or reactivate the plugins at a new rate,
+            // on its own.
             if let Some(ctx) = repaint_ctx.get() {
                 ctx.request_repaint();
             }

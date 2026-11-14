@@ -628,11 +628,11 @@ still alive and idle — safe.
 
 A plugin removed while its voice is out of the mixer to be reactivated
 (`480-audio-settings.md`) sends no `Remove`: there is nothing in the slot to
-drop. Its `pending_instance_drop` entry is flagged, and the returned voice
-finishes it instead (`Display::take_back_voice` → `finish_instance_drop`:
-voice dropped, then `deactivate`). Both kinds of ack come on one channel in
-the order the mixer let the voices go, so each meets the earliest entry for
-its slot waiting for that kind.
+drop. The returned voice finishes its `pending_instance_drop` entry instead
+(`Display::take_back_voice`: voice dropped, then `deactivate`). Both kinds of
+ack come on one channel in the order the mixer let a slot's voices go, which
+is the order they were removed or asked back, so each finishes the slot's
+earliest entry (`take_pending_drop`).
 
 ## Track add / remove
 

@@ -112,11 +112,14 @@ impl AudioEngine {
     /// the system default output, and returns once that first open has been
     /// tried, so [`EngineHandle::status`] has the device's. With no device the
     /// app starts silent, and the engine opens one when it appears.
-    /// `notify` puts a line in the footer when an outside change restarts
-    /// the stream (`480-audio-settings.md` decision 11).
+    /// `notify` is called after every restart, once [`EngineHandle::status`]
+    /// has the new stream's rate, with the line for the footer when an
+    /// outside change restarted the stream (`480-audio-settings.md`
+    /// decision 11). The caller wakes the UI each time: that is what has it
+    /// reactivate the plugins at a new rate.
     pub(crate) fn start<N>(sources: Vec<Box<dyn AudioSource>>, notify: N) -> EngineHandle
     where
-        N: Fn(String) + Send + 'static,
+        N: Fn(Option<String>) + Send + 'static,
     {
         let (add_source_tx, add_source_rx) = RingBuffer::new(ADD_SOURCE_RING_CAPACITY);
         let load = Arc::new(AudioLoad::new());
@@ -303,8 +306,8 @@ struct EngineThread {
     status: Arc<StreamStatus>,
     /// The engine's meter, which the stream's error callback counts into.
     load: Arc<AudioLoad>,
-    /// Puts a line in the footer.
-    notify: Box<dyn Fn(String) + Send>,
+    /// Wakes the UI after a restart, with a line for the footer if any.
+    notify: Box<dyn Fn(Option<String>) + Send>,
 }
 
 impl EngineThread {
@@ -363,7 +366,9 @@ impl EngineThread {
         self.generation += 1;
         let Ok(mixer) = self.mixer_rx.recv_timeout(MIXER_RETURN_TIMEOUT) else {
             error!("audio engine: the stream never handed the mixer back; audio is off");
-            (self.notify)("Audio stopped; restart Stev to bring it back".to_string());
+            (self.notify)(Some(
+                "Audio stopped; restart Stev to bring it back".to_string(),
+            ));
             return false;
         };
 
@@ -374,8 +379,6 @@ impl EngineThread {
                     opened.name, opened.sample_rate
                 );
                 // Only a stream that plays is the rate plugins are built at.
-                // Published before the footer line, whose repaint is what
-                // has the UI reactivate the plugins at it.
                 self.status.set_sample_rate(opened.sample_rate);
                 self.notify_restart(cause, Some(&opened));
                 self.running = Some(running);
@@ -395,11 +398,10 @@ impl EngineThread {
         true
     }
 
-    /// Puts the footer line for a restart that opened `now`, if any.
+    /// Wakes the UI after a restart that opened `now`, if anything, with
+    /// its footer line, if any.
     fn notify_restart(&self, cause: RestartCause, now: Option<&Opened>) {
-        if let Some(line) = restart_message(cause, self.opened.as_ref(), now) {
-            (self.notify)(line);
-        }
+        (self.notify)(restart_message(cause, self.opened.as_ref(), now));
     }
 
     /// Opens a stream on the system default output at its own rate, with

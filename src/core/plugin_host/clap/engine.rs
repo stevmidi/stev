@@ -105,6 +105,23 @@ fn read_parameters(instance: &mut PluginInstance<StevClapHost>) -> ParamValues {
     ParamValues::new(read)
 }
 
+/// Activates `instance` at `sample_rate`, for blocks of up to `max_frames`:
+/// the end of a load, and of a reactivation (`ClapVoice::reactivated`).
+pub(super) fn activate(
+    instance: &mut PluginInstance<StevClapHost>,
+    sample_rate: f64,
+    max_frames: u32,
+) -> Result<StoppedPluginAudioProcessor<StevClapHost>, String> {
+    let configuration = PluginAudioConfiguration {
+        sample_rate,
+        min_frames_count: 1,
+        max_frames_count: max_frames,
+    };
+    instance
+        .activate(|_, _| (), configuration)
+        .map_err(|e| format!("activate at {sample_rate} Hz: {e}"))
+}
+
 /// A loaded, activated CLAP instrument, ready to be handed to the audio thread.
 pub(super) struct LoadedPlugin {
     /// Session-lived. `PluginInstance` is `!Send` and must stay on the eframe
@@ -207,14 +224,8 @@ pub(super) fn load(
     let params = read_parameters(&mut instance);
     let note_events = accepts_note_events(&mut instance, &name);
 
-    let configuration = PluginAudioConfiguration {
-        sample_rate,
-        min_frames_count: 1,
-        max_frames_count: max_frames,
-    };
-    let processor = instance
-        .activate(|_, _| (), configuration)
-        .map_err(|e| format!("activate '{name}': {e}"))?;
+    let processor =
+        activate(&mut instance, sample_rate, max_frames).map_err(|e| format!("'{name}': {e}"))?;
 
     Ok(LoadedPlugin {
         instance,

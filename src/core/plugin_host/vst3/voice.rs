@@ -163,13 +163,12 @@ impl Vst3Voice {
 
     /// The voice of the same plugin activated again at `sample_rate`, with
     /// the `tail_samples` it now declares ([`reactivate`](super::component::reactivate)):
-    /// carried into every block's `ProcessContext` from here on, and back
-    /// from silence.
+    /// carried into every block's `ProcessContext` from here on, its note
+    /// ids and silence count starting afresh.
     pub(super) fn reactivated(&mut self, sample_rate: f64, tail_samples: u32) {
         self.sample_rate = sample_rate;
         self.tail_samples = tail_samples;
         self.note_ids = NoteIds::default();
-        self.mix = VoiceMix::default();
         self.wake();
     }
 
