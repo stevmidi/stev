@@ -41,14 +41,21 @@ use super::export::{CHANNELS, ExportRings, ExportShared};
 /// this bounds its speed: a ring holds a second of audio.
 const DRAIN_INTERVAL: Duration = Duration::from_millis(5);
 
-/// How long the mixer may send nothing before the writer decides the render
-/// has stopped advancing. Far past the stream's teardown before the first
-/// block, and any block.
+/// How long the mixer may send nothing, once the render has started, before
+/// the writer decides it has stopped advancing. Far past any block.
 const STALL_TIMEOUT: Duration = Duration::from_secs(3);
 
+/// How long the writer waits for the render to start. The engine thread may
+/// be in the middle of a restart when it is asked, opening a device that
+/// takes its time, and then has its stream to drop: longer than any of
+/// that, so only an engine that is gone runs it out.
+const START_TIMEOUT: Duration = Duration::from_secs(20);
+
 /// How long the render waits for the `"sequencer"` thread's answer to a
-/// step before giving the run up.
-const STEP_TIMEOUT: Duration = Duration::from_secs(5);
+/// step before giving the run up. Under [`STALL_TIMEOUT`], so it is the
+/// render that says what went wrong, and the engine thread is held no
+/// longer than the writer would have waited.
+const STEP_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// One file being written: its writer, until an error stops it.
 type OpenWav = Option<WavWriter<BufWriter<File>>>;
@@ -90,17 +97,29 @@ impl OfflineRun for ExportRender {
     }
 
     /// Asks the `"sequencer"` thread for the ticks due before `until` and
-    /// waits for its answer. Gives up when there is no run any more, no
-    /// answer within [`STEP_TIMEOUT`], or the writer has given up.
+    /// waits for its answer. `false` when there is no run any more or the
+    /// writer has given up; and when the step can't be sent or isn't
+    /// answered within [`STEP_TIMEOUT`], which gives the export up here, so
+    /// the writer stops at once and says so. The first step tells the writer
+    /// the render has started.
     fn advance(&mut self, until: Instant) -> bool {
+        self.shared.begin(self.id);
+        if self.shared.gave_up(self.id) {
+            return false;
+        }
         let step = ExportStep {
             until,
             answer: self.answers.0.clone(),
         };
-        if self.shared.gave_up(self.id) || self.steps.send(step).is_err() {
-            return false;
+        let answer = self
+            .steps
+            .send(step)
+            .ok()
+            .and_then(|()| self.answers.1.recv_timeout(STEP_TIMEOUT).ok());
+        if answer.is_none() {
+            self.shared.give_up(self.id);
         }
-        self.answers.1.recv_timeout(STEP_TIMEOUT).unwrap_or(false)
+        answer.unwrap_or(false)
     }
 
     fn is_done(&self) -> bool {
@@ -207,6 +226,7 @@ impl ExportWriter {
         ));
 
         let mut frames = 0;
+        let mut begun = false;
         let mut last_heard = Instant::now();
         let stopped = loop {
             // Read before draining: every sample pushed before the flag was
@@ -225,7 +245,17 @@ impl ExportWriter {
             if ended {
                 break None;
             }
-            if let Some(reason) = stop_reason(last_heard.elapsed()) {
+            // The stall clock starts when the render does: the engine may
+            // have had other work to finish first.
+            if !begun && self.shared.has_begun(job.id) {
+                begun = true;
+                last_heard = Instant::now();
+            }
+            // The render got no answer to a step and gave up itself.
+            if self.shared.gave_up(job.id) {
+                break Some(STALLED);
+            }
+            if let Some(reason) = stop_reason(begun, last_heard.elapsed()) {
                 // The render stops pushing, and waiting for room.
                 self.shared.give_up(job.id);
                 break Some(reason);
@@ -257,10 +287,19 @@ impl ExportWriter {
     }
 }
 
-/// Why a run should stop before its end, if it should: the mixer has sent
-/// nothing for [`STALL_TIMEOUT`], so the render has stopped advancing.
-fn stop_reason(quiet_for: Duration) -> Option<&'static str> {
-    (quiet_for >= STALL_TIMEOUT).then_some("the render stalled")
+/// The footer's reason for a render that stopped advancing.
+const STALLED: &str = "the render stalled";
+
+/// Why a run should stop before its end, if it should, having heard nothing
+/// for `quiet_for`: a render that has `begun` and sent nothing for
+/// [`STALL_TIMEOUT`] has stopped advancing; one that hasn't begun within
+/// [`START_TIMEOUT`] never will.
+fn stop_reason(begun: bool, quiet_for: Duration) -> Option<&'static str> {
+    if begun {
+        (quiet_for >= STALL_TIMEOUT).then_some(STALLED)
+    } else {
+        (quiet_for >= START_TIMEOUT).then_some("the render never started")
+    }
 }
 
 /// Moves everything in `ring` into `wav` and returns how many frames that
@@ -398,8 +437,33 @@ mod tests {
 
     #[test]
     fn a_run_stops_when_the_render_goes_quiet() {
-        assert_eq!(stop_reason(Duration::from_millis(100)), None);
-        assert_eq!(stop_reason(STALL_TIMEOUT), Some("the render stalled"));
+        assert_eq!(stop_reason(true, Duration::from_millis(100)), None);
+        assert_eq!(stop_reason(true, STALL_TIMEOUT), Some(STALLED));
+    }
+
+    #[test]
+    fn a_render_slow_to_start_is_waited_for_longer_than_one_that_stalls() {
+        // The engine thread finishing a restart before it takes the run.
+        assert_eq!(stop_reason(false, STALL_TIMEOUT), None);
+        assert_eq!(
+            stop_reason(false, START_TIMEOUT),
+            Some("the render never started")
+        );
+        // The render gives up on a step before the writer would on it.
+        assert!(STEP_TIMEOUT < STALL_TIMEOUT);
+    }
+
+    #[test]
+    fn an_export_the_render_gave_up_stops_the_writer_at_once() {
+        let (mut writer, _tap, _marks) = writer();
+        let (job, folder) = job(1, "given-up");
+        // The render got no answer to a step.
+        writer.shared.give_up(job.id);
+        let started = Instant::now();
+        let outcome = writer.write(&job);
+        assert_eq!(outcome.stopped, Some(STALLED));
+        assert!(started.elapsed() < STALL_TIMEOUT);
+        fs::remove_dir_all(&folder).unwrap();
     }
 
     /// A render of export 1 and the `"sequencer"` thread's end of its steps.
@@ -433,10 +497,14 @@ mod tests {
         assert!(!render.advance(render.start()));
         sequencer.join().unwrap();
 
-        // No `"sequencer"` thread to ask.
-        let (mut render, _shared, asked) = self::render();
+        // No `"sequencer"` thread to ask: the render gives the export up
+        // itself, so the writer hears of it.
+        let (mut render, shared, asked) = self::render();
         drop(asked);
+        assert!(!shared.has_begun(1));
         assert!(!render.advance(render.start()));
+        assert!(shared.has_begun(1), "the first step says it started");
+        assert!(shared.gave_up(1));
     }
 
     #[test]

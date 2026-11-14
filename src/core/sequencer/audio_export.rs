@@ -373,8 +373,8 @@ mod tests {
 
     use crate::core::sequencer::ClipInstrumentEvent;
     use crate::core::sequencer::test_support::{
-        clip_at, clip_with_marker_notes, drain, rect, sequencer_with_outputs,
-        step_audio_export as step, stub_instrument, test_sequencer,
+        bend_at, clip_at, clip_with_marker_notes, drain, note_off, note_on, rect,
+        sequencer_with_outputs, step_audio_export as step, stub_instrument, test_sequencer,
     };
     use crate::core::time::Meter;
 
@@ -659,8 +659,13 @@ mod tests {
         let far = origin + Duration::from_secs(60);
         let (mut sequencer, midi_out, mut plugin) = sequencer_with_outputs(true);
         sequencer.tracks_mut()[0].set_output(stub_instrument(Vec::new()));
+        // Notes, and a bend that leaves the wheel off its rest.
+        let mut clip = clip_at(0, BAR);
+        for event in [note_on(0), bend_at(100, 0x60), note_off(500)] {
+            clip.add_event(event);
+        }
         for track in sequencer.tracks_mut().iter_mut().take(2) {
-            track.add_clip(&clip_with_marker_notes(0, BAR));
+            track.add_clip(&clip);
         }
         let plan = sequencer
             .audio_export_plan(Some(rect(0, BAR, 0, 0)))
@@ -673,13 +678,21 @@ mod tests {
         assert!(!drain(&mut plugin).is_empty(), "the plugin track plays");
         assert_eq!(midi_out.try_iter().count(), 0);
 
-        // Ordinary playback of the same bar sends them.
+        // Nor when the run's stop puts the wheels back: the track never
+        // played, so there is no bend to undo on the wire.
         sequencer.finish_audio_export();
+        sequencer.reset_wheels();
+        assert_eq!(midi_out.try_iter().count(), 0);
+
+        // Ordinary playback of the same bar sends them, and its stop the
+        // wheel's reset.
         sequencer.reset_to_tick(0);
         for tick in 0..BAR as u64 {
             sequencer.tick(tick_at(&sequencer, origin, tick));
         }
-        assert!(midi_out.try_iter().count() > 0);
+        assert_eq!(midi_out.try_iter().count(), 3, "the note and the bend");
+        sequencer.reset_wheels();
+        assert_eq!(midi_out.try_iter().count(), 1, "the bend back to centre");
     }
 
     #[test]

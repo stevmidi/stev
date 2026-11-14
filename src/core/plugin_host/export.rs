@@ -49,9 +49,10 @@ pub(super) const CHANNELS: usize = 2;
 /// in. The writer drains every few milliseconds.
 const ROOM_POLL: Duration = Duration::from_millis(1);
 
-/// What the mixer tells the writer besides the samples. Written only by the
-/// rendering thread — the silent slots cleared when an export starts — and
-/// read by the writer, so there are no locks.
+/// What the render and the writer tell each other besides the samples: the
+/// mixer's end and silent slots (the silent slots cleared when an export
+/// starts), the render's start, and either side giving an export up. All
+/// atomics, so there are no locks.
 #[derive(Default)]
 pub(super) struct ExportShared {
     /// The id of the last export the mixer has pushed every frame of.
@@ -59,10 +60,15 @@ pub(super) struct ExportShared {
     /// The exported slots that had no voice for a block, as a bit mask:
     /// their stems are silence there.
     silent_slots: AtomicU32,
-    /// The id of the last export the writer stopped before its end. The one
-    /// thing the writer writes here: the tap then stops pushing that export,
-    /// and waiting for room nobody will make.
+    /// The id of the last export given up before its end: by the writer,
+    /// which heard nothing for too long, or by the render, which got no
+    /// answer to a step. The tap then stops pushing that export, and waiting
+    /// for room nobody will make, and the writer stops waiting for it.
     given_up: AtomicU32,
+    /// The id of the last export whose render has asked for its first step:
+    /// the engine has its mixer and is rendering. The writer's stall clock
+    /// starts there.
+    begun: AtomicU32,
 }
 
 impl ExportShared {
@@ -72,12 +78,23 @@ impl ExportShared {
         self.ended.load(Ordering::Acquire) == id
     }
 
-    /// (writer) Export `id` is given up: nothing more of it will be drained.
+    /// (render) Export `id` is being rendered.
+    pub(super) fn begin(&self, id: u32) {
+        self.begun.store(id, Ordering::Release);
+    }
+
+    /// (writer) Whether the render of export `id` has started.
+    pub(super) fn has_begun(&self, id: u32) -> bool {
+        self.begun.load(Ordering::Acquire) == id
+    }
+
+    /// Export `id` is given up: nothing more of it will be rendered or
+    /// drained.
     pub(super) fn give_up(&self, id: u32) {
         self.given_up.store(id, Ordering::Release);
     }
 
-    /// Whether the writer gave export `id` up.
+    /// Whether export `id` was given up.
     pub(super) fn gave_up(&self, id: u32) -> bool {
         self.given_up.load(Ordering::Acquire) == id
     }

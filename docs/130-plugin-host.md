@@ -361,8 +361,8 @@ methods take a track's position and look the slot up in its `tracks` mirror
 | `test_voice.rs` | `#[cfg(test)]` `ConstantVoice`, a format-free `InstrumentVoice` playing a constant, shared by the mixer's and the export tap's tests. |
 | `transport.rs` | `TransportState` (the shared atomics) and `BlockTransport` (the plain `Copy` snapshot taken once per block and handed to every voice, in app-native units - ticks and microseconds-per-quarter - plus `bpm()`, `bar_number()` and `bar_start_beats()` - the bar maths in the project's `Meter`, carried in the snapshot from the `SharedAtomics.meter` atomic, floored for a pre-roll playhead; `bar_start_beats` is in quarter notes). Each format converts it in its own `render_block`; that conversion is a handful of float ops, so doing it per voice rather than once per block costs nothing and keeps every plugin type out of the mixer. Unit-tested. |
 | `catalog.rs` | `PluginFormat` (label - which is also its `Audio/Plug-Ins` subdirectory - and bundle extension), `ALL_FORMATS`, `PluginCatalogEntry { format, bundle_path, plugin_id, name }`, `installed_bundles` (the shared depth-capped bundle walk over the install roots - what each format's scan calls), `scan_catalog` (runs every format's scan and reports the merged, name-sorted list **once per format** — VST3 is slow enough that waiting for it would hide the CLAP plugins too; `merge_scans` takes the scans as functions so each only starts after the previous one's delivery), `available_bundles_hint`. Runs on the background `"plugin-catalog-scan"` thread, result held in `Display::plugin_catalog`. Unit-tested. |
-| `export.rs` | The audio export's tap (§ Audio export): `ExportTap` (the mixer's half: takes the sequencer's `ExportMark`s and resolves them with `scheduled_frame`, `begin_block` / `tap` (or `tap_silence`) / `end_block` push each exported slot's raw samples and the gained mix, for an offline block only, waiting for room in a ring instead of dropping), `export_span` (the part of a block inside the export), `ExportShared` (the `ended` export id and silent-slots atomics the writer reads, and the `given_up` id it writes), `tap_missing` (silence for a slot with no voice, reported), `export_tap` (builds the tap and one ring per slot plus the mix, about a second of stereo each, at start-up). Unit-tested with a fake voice. |
-| `export_writer.rs` | The `"audio-export"` thread: `start_export_writer`, `ExportWriter::write` (one `WavWriter` per stem plus `Mix.wav`, the engine asked to render the run offline, the rings drained every 5 ms until the mixer has ended that export's id, then `SequencerCommand::AudioExportWritten`), progress into `AudioExportAtomics::written_ms`, `stop_reason` (3 s with nothing from the mixer, then `ExportShared::give_up`). `ExportRender` is the run as the engine renders it (`audio::OfflineRun`): `advance` sends the `"sequencer"` thread an `ExportStep` and waits for its answer, `is_done` reads the mixer's end. A failed file stops being written but its ring is still drained. It never removes files: a cancelled or stopped run's go in the handler (`event_handlers/audio_export.rs`). Unit-tested: draining across the ring's wrap, a failed write, a written export on disk, an abandoned export's leftovers, `stop_reason`, the render's steps. `offline_tests.rs` (tests only) runs a whole export on one thread, a real `Sequencer` through the engine's offline loop, this mixer and the tap: the length to the sample, Esc. |
+| `export.rs` | The audio export's tap (§ Audio export): `ExportTap` (the mixer's half: takes the sequencer's `ExportMark`s and resolves them with `scheduled_frame`, `begin_block` / `tap` (or `tap_silence`) / `end_block` push each exported slot's raw samples and the gained mix, for an offline block only, waiting for room in a ring instead of dropping), `export_span` (the part of a block inside the export), `ExportShared` (the `ended` export id and silent-slots atomics the writer reads, the `begun` id the render sets with its first step, and the `given_up` id either side sets), `tap_missing` (silence for a slot with no voice, reported), `export_tap` (builds the tap and one ring per slot plus the mix, about a second of stereo each, at start-up). Unit-tested with a fake voice. |
+| `export_writer.rs` | The `"audio-export"` thread: `start_export_writer`, `ExportWriter::write` (one `WavWriter` per stem plus `Mix.wav`, the engine asked to render the run offline, the rings drained every 5 ms until the mixer has ended that export's id, then `SequencerCommand::AudioExportWritten`), progress into `AudioExportAtomics::written_ms`, `stop_reason` (3 s with nothing from the mixer once the render has begun, 20 s for it to begin, then `ExportShared::give_up`). `ExportRender` is the run as the engine renders it (`audio::OfflineRun`): `advance` sends the `"sequencer"` thread an `ExportStep` and waits for its answer, `is_done` reads the mixer's end. A failed file stops being written but its ring is still drained. It never removes files: a cancelled or stopped run's go in the handler (`event_handlers/audio_export.rs`). Unit-tested: draining across the ring's wrap, a failed write, a written export on disk, an abandoned export's leftovers, `stop_reason`, the render's steps. `offline_tests.rs` (tests only) runs a whole export on one thread, a real `Sequencer` through the engine's offline loop, this mixer and the tap: the length to the sample, Esc. |
 | `ui_wake.rs` | `UiWake` - wakes the reactive UI from the audio thread, which can't take `request_repaint`'s lock: a flag and an `unpark` of the `"plugin-host"` thread, which makes the call. Every CLAP host callback wakes the UI through it, since `request_callback`, `request_resize` and `closed` may come from any thread. Unit-tested. |
 | `shutdown.rs` | `HostShutdown` - app-exit coordination (`requested` + `in_process`), one instance shared by the mixer and the reclaim thread. Unit-tested. |
 | `window.rs` | `PluginWindow` - a minimal native `NSWindow` parent for an embedded plugin GUI; `show` (`orderFront:`), `is_visible`, `frame_top_left` / a `top_left` argument to `new` (position carried across a close/reopen), `set_content_size` (anchored at the top-left corner), `take_closed` (the title-bar close button, refused by the `CloseInterceptor` delegate so the editor can tear down first, or the window off screen by any other route while Stev is not hidden); an `EditorWindow`, whose `keyDown:` hands on what the plugin didn't use (`editor_keys`). It is closed by `Drop`, not hidden - there is no `hide`. Format-agnostic. |
@@ -566,9 +566,11 @@ run in real time).
   share one tick path, `EventHandlers::play_tick` (the transport's tick, a
   wrap re-anchored, then the tracks).
 - **No sound, and nothing that reads the wall clock.** The device is closed
-  for the run. MIDI Out tracks send nothing (`Sequencer::tick` and
-  `chase_notes` skip them: the `"midiout"` queue would wait out the run's
-  made-up instants in real time), and their meters stay down. The click
+  for the run. MIDI Out tracks sit it out whole (`Sequencer::tick` doesn't
+  advance them and `chase_notes` skips them: the `"midiout"` queue would
+  wait out the run's made-up instants in real time), so they send nothing,
+  their meters stay down, and nothing is recorded as sounding or moved for
+  the stop after the run to release or reset on the wire. The click
   gets no ticks. The DSP meter and the overrun journal record nothing.
 
 ### The tap
@@ -658,9 +660,14 @@ or the export depend on anything but the arrangement
   has sent nothing for 3 s (`AudioExportOutcome::stopped`, `ExportShared::give_up`,
   which also stops the render pushing and waiting); the handler closes the
   run's marks, removes its files and the folder, and the footer says "Export
-  stopped: the render stalled". The render itself gives up, and the engine
-  reopens its stream, when the `"sequencer"` thread has no run any more, or
-  doesn't answer a step within 5 s.
+  stopped: the render stalled". Those 3 s count from the render's first step
+  (`ExportShared::begin`), not from the job: the engine thread may be in the
+  middle of a restart when it is asked. A render that hasn't started within
+  20 s never will ("… the render never started"). The render itself stops,
+  and the engine reopens its stream, when the `"sequencer"` thread has no
+  run any more; when a step isn't answered within 2 s it gives the export up
+  itself, and the writer stops at once. After a run the `"audio-engine"`
+  thread takes its audio-thread mark off again (`leave_render_thread`).
 
 ## Per-track teardown ordering
 

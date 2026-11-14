@@ -119,6 +119,13 @@ impl Sequencer {
         // Read audibility once, before the `&mut` loop below.
         let audible = self.track_audibility();
         for (track_idx, track) in self.tracks.iter_mut().enumerate() {
+            // A MIDI Out track sits an export out whole: it sends nothing
+            // and its playback doesn't advance, so nothing is recorded as
+            // sounding or moved for the stop after the run to release or
+            // reset on the wire. That stop re-seeks it with the rest.
+            if exporting && matches!(track.output(), TrackOutput::MidiOut { .. }) {
+                continue;
+            }
             let track_audible = audible.get(track_idx).copied().unwrap_or(true);
             while let Some(event) = track.tick() {
                 // A muted event never sounds at all — both its `NoteOn` and
@@ -152,10 +159,6 @@ impl Sequencer {
                 // the synth is already where the clip has it on an unmute.
                 let note_on = matches!(event.event_type(), Some(EventType::NoteOn));
                 if !track_audible && note_on {
-                    continue;
-                }
-                // Silent, meter included, while an export renders.
-                if exporting && matches!(track.output(), TrackOutput::MidiOut { .. }) {
                     continue;
                 }
                 // Kicks the track's meter, stamped when the note is due

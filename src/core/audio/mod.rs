@@ -45,10 +45,10 @@ pub(crate) use offline::OfflineRun;
 pub(crate) use prefs::{
     AudioDevice, AudioPrefs, EngineNews, RunningAudio, buffer_ms, khz, khz_number,
 };
-pub(crate) use thread_role::enter_render_thread;
 /// Only the CLAP host (macOS) asks which thread it is on.
 #[cfg(target_os = "macos")]
 pub(crate) use thread_role::is_audio_thread;
+pub(crate) use thread_role::{enter_render_thread, leave_render_thread};
 pub(crate) use topology::max_dsp_threads;
 pub(crate) use worker_pool::WorkerPool;
 pub(crate) use workgroup::DeviceWorkgroup;

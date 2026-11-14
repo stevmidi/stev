@@ -31,6 +31,14 @@ pub(crate) fn enter_render_thread() {
     mark_audio_thread();
 }
 
+/// Takes the audio-thread mark off the **calling thread**: for a thread that
+/// rendered for a while and goes back to other work, as the `"audio-engine"`
+/// thread does after an offline run (`490-offline-export.md`). The denormal
+/// flush stays on; it changes nothing for a thread that does no DSP.
+pub(crate) fn leave_render_thread() {
+    IS_AUDIO_THREAD.with(|flag| flag.set(false));
+}
+
 /// Marks the **calling thread** as an audio thread.
 fn mark_audio_thread() {
     IS_AUDIO_THREAD.with(|flag| flag.set(true));
@@ -52,6 +60,19 @@ mod tests {
     fn unmarked_thread_is_not_an_audio_thread() {
         let marked = thread::spawn(is_audio_thread).join().unwrap();
         assert!(!marked);
+    }
+
+    #[test]
+    fn leaving_takes_the_mark_off_again() {
+        let marks = thread::spawn(|| {
+            enter_render_thread();
+            let entered = is_audio_thread();
+            leave_render_thread();
+            (entered, is_audio_thread())
+        })
+        .join()
+        .unwrap();
+        assert_eq!(marks, (true, false));
     }
 
     #[test]

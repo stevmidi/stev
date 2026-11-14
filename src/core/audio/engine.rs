@@ -37,7 +37,7 @@ use super::prefs::{buffer_choices, rate_choices};
 use super::{
     AudioClock, AudioDevice, AudioLoad, AudioPrefs, AudioSource, DeviceWorkgroup, EngineNews,
     FALLBACK_SAMPLE_RATE, MAX_FRAMES, RenderCtx, RunningAudio, StreamStatus, WorkerPool,
-    enter_render_thread, khz, max_dsp_threads,
+    enter_render_thread, khz, leave_render_thread, max_dsp_threads,
 };
 use crate::core::config::MAX_TRACKS;
 
@@ -1000,7 +1000,8 @@ impl Mixer {
     /// The next [`restart`](Self::restart) puts the clock and the delay back
     /// for a device.
     fn render_offline(&mut self, run: &mut dyn OfflineRun, sample_rate: f64, buffer: u32) -> u64 {
-        // A thread of ours, but the plugins are called on it all the same.
+        // A thread of ours, but the plugins are called on it all the same,
+        // for as long as the run lasts.
         enter_render_thread();
         self.take_added_sources();
         // Only after an open that failed past `restart`: the plugins were
@@ -1033,6 +1034,8 @@ impl Mixer {
                 break;
             }
         }
+        // Back to opening devices: no audio thread from here on.
+        leave_render_thread();
         self.steady.wrapping_sub(first)
     }
 
