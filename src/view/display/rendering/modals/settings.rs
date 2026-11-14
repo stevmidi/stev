@@ -139,13 +139,15 @@ impl RowLook {
     }
 }
 
-/// How many choices a row of them is divided into, so the rates and the
-/// buffer sizes line up in columns: the most buffer sizes there are.
+/// How many columns a row of choices is divided into at least, so the
+/// rates and the buffer sizes line up: the most buffer sizes there are. A
+/// device offering more rates than this narrows its rate columns to fit
+/// them all.
 const CHOICE_COLUMNS: usize = 7;
 
-/// Choice `i` of a row of choices `row`. Pure geometry.
-fn choice_rect(row: Rect, i: usize) -> Rect {
-    let w = row.width() / CHOICE_COLUMNS as f32;
+/// Choice `i` of `count` in the row of choices `row`. Pure geometry.
+fn choice_rect(row: Rect, i: usize, count: usize) -> Rect {
+    let w = row.width() / count.max(CHOICE_COLUMNS) as f32;
     Rect::from_min_size(
         pos2(row.min.x + i as f32 * w, row.min.y),
         vec2(w, row.height()),
@@ -154,7 +156,7 @@ fn choice_rect(row: Rect, i: usize) -> Rect {
 
 /// The choice under `p` in the row of `count` choices `row`.
 fn choice_hit(row: Rect, count: usize, p: Pos2) -> Option<usize> {
-    (0..count.min(CHOICE_COLUMNS)).find(|&i| choice_rect(row, i).contains(p))
+    (0..count).find(|&i| choice_rect(row, i, count).contains(p))
 }
 
 /// The AI tab's opening paragraph: what the feature is.
@@ -932,9 +934,11 @@ impl Display {
         }
         let row = layout.rate.rows.first;
         let active = audio.active_rate();
-        for (i, &hz) in audio.rates().iter().enumerate().take(CHOICE_COLUMNS) {
+        let count = audio.rates().len();
+        for (i, &hz) in audio.rates().iter().enumerate() {
             let look = look(i == audio.rate_cursor, focused, active == Some(i));
-            Self::draw_row(painter, choice_rect(row, i), &khz_number(hz), None, look);
+            let rect = choice_rect(row, i, count);
+            Self::draw_row(painter, rect, &khz_number(hz), None, look);
         }
         if audio.rates().is_empty() {
             Self::draw_settings_text(
@@ -951,10 +955,11 @@ impl Display {
         let row = layout.buffer.rows.first;
         let active = audio.active_buffer();
         let hz = audio.running.as_ref().map_or(0, |r| r.sample_rate);
-        for (i, &frames) in audio.buffers().iter().enumerate().take(CHOICE_COLUMNS) {
+        let count = audio.buffers().len();
+        for (i, &frames) in audio.buffers().iter().enumerate() {
             let look = look(i == audio.buffer_cursor, focused, active == Some(i));
             let ms = buffer_ms(frames, hz);
-            let rect = choice_rect(row, i);
+            let rect = choice_rect(row, i, count);
             Self::draw_row(painter, rect, &frames.to_string(), Some(&ms), look);
         }
         if audio.buffers().is_empty() {
@@ -1413,11 +1418,22 @@ mod tests {
     #[test]
     fn the_choices_split_their_row_into_aligned_columns() {
         let row = Rect::from_min_size(pos2(0.0, 0.0), vec2(700.0, 30.0));
-        let last = choice_rect(row, CHOICE_COLUMNS - 1);
+        let last = choice_rect(row, CHOICE_COLUMNS - 1, 3);
         assert!((last.max.x - row.max.x).abs() < 1e-3);
-        assert_eq!(choice_hit(row, 3, choice_rect(row, 2).center()), Some(2));
+        // A short row keeps the full columns, so it lines up with a longer.
+        assert_eq!(choice_rect(row, 2, 3), choice_rect(row, 2, CHOICE_COLUMNS));
+        assert_eq!(choice_hit(row, 3, choice_rect(row, 2, 3).center()), Some(2));
         // Past the choices there are.
-        assert_eq!(choice_hit(row, 3, choice_rect(row, 4).center()), None);
+        assert_eq!(choice_hit(row, 3, choice_rect(row, 4, 3).center()), None);
+    }
+
+    #[test]
+    fn more_rates_than_columns_all_fit_the_row() {
+        let row = Rect::from_min_size(pos2(0.0, 0.0), vec2(700.0, 30.0));
+        let count = CHOICE_COLUMNS + 1;
+        let last = choice_rect(row, count - 1, count);
+        assert!((last.max.x - row.max.x).abs() < 1e-3);
+        assert_eq!(choice_hit(row, count, last.center()), Some(count - 1));
     }
 
     /// Tab label widths as short and long as the real ones.

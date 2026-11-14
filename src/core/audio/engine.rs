@@ -191,7 +191,7 @@ impl AudioEngine {
             listed: None,
             listed_at: None,
             failed_at: None,
-            chosen_failed_at: None,
+            chosen_refused: false,
             generation: 0,
             command_tx: command_tx.clone(),
             command_rx,
@@ -310,6 +310,15 @@ fn restart_message(
     })
 }
 
+/// The footer line when the chosen device is connected but won't open:
+/// what plays instead, `now`, if anything. Pure, unit-tested.
+fn refused_message(chosen: &str, now: Option<&RunningAudio>) -> String {
+    match now {
+        Some(now) => format!("Couldn't open {chosen}; using {}", now.device.name),
+        None => format!("Couldn't open {chosen}; no audio output"),
+    }
+}
+
 /// Whether a stream opened as `opened` already runs as `prefs` ask, with the
 /// chosen device connected (`chosen_connected`) or not: then a choice in the
 /// tab needs no restart. A rate the device doesn't offer would open at the
@@ -357,9 +366,11 @@ struct EngineThread {
     /// When the last open failed with a device there, so the poll doesn't
     /// rebuild the pool every half second for a device that won't open.
     failed_at: Option<Instant>,
-    /// When the chosen device, connected, last failed to open, so the poll
-    /// doesn't switch back to it every half second.
-    chosen_failed_at: Option<Instant>,
+    /// Whether the chosen device, connected, failed to open and the stream
+    /// fell back to the default. The poll then leaves it alone until it has
+    /// gone away and come back, or the user picks again: retrying it on a
+    /// timer would drop the working stream out each time.
+    chosen_refused: bool,
     /// Counts restarts. Each stream's error callback carries the count it
     /// opened under, so an error from a stream already replaced is ignored.
     generation: u64,
@@ -421,6 +432,7 @@ impl EngineThread {
                 EngineCommand::Restart { .. } => {}
                 EngineCommand::Configure(prefs) => {
                     self.prefs = prefs;
+                    self.chosen_refused = false;
                     chosen = true;
                 }
             }
@@ -470,10 +482,11 @@ impl EngineThread {
         if self.opened.as_ref().is_some_and(|opened| opened.on_chosen) {
             return None;
         }
-        let retry_chosen = self
-            .chosen_failed_at
-            .is_none_or(|at| at.elapsed() >= FAILED_OPEN_RETRY);
-        if retry_chosen && self.chosen_device().is_some() {
+        let chosen_there = self.chosen_device().is_some();
+        if self.chosen_refused {
+            // Gone away: it may open when it comes back.
+            self.chosen_refused = chosen_there;
+        } else if chosen_there {
             return Some(RestartCause::Returned);
         }
         let default_id = self.host.default_output_device()?.id().ok()?;
@@ -540,16 +553,21 @@ impl EngineThread {
 
         let chosen_there = self.chosen_device().is_some();
         let mut result = self.open(mixer, true);
+        let mut refused = None;
         if let Err(e) = &result
             && chosen_there
         {
             warn!("audio engine: the chosen device won't open ({e}); trying the default");
-            self.chosen_failed_at = Some(Instant::now());
+            self.chosen_refused = true;
+            refused = self.prefs.device.as_ref().map(|d| d.name.clone());
             let Some(mixer) = self.take_mixer() else {
                 return false;
             };
             result = self.open(mixer, false);
         }
+        // A device plugged in or out is in the list before the tab hears
+        // what runs, so it can find the row in use.
+        self.list_devices();
         match result {
             Ok((running, opened)) => {
                 info!(
@@ -558,10 +576,7 @@ impl EngineThread {
                 );
                 // Only a stream that plays is the rate plugins are built at.
                 self.status.set_sample_rate(opened.sample_rate);
-                self.notify_restart(cause, Some(&opened));
-                if opened.on_chosen {
-                    self.chosen_failed_at = None;
-                }
+                self.notify_restart(cause, Some(&opened), refused.as_deref());
                 self.running = Some(running);
                 self.opened = Some(opened);
                 self.failed_at = None;
@@ -572,12 +587,10 @@ impl EngineThread {
                 } else {
                     error!("audio engine: no stream ({cause:?}): {e}");
                 }
-                self.notify_restart(cause, None);
+                self.notify_restart(cause, None, refused.as_deref());
                 self.failed_at = Some(Instant::now());
             }
         }
-        // A device plugged in or out is in the list at once.
-        self.list_devices();
         true
     }
 
@@ -596,11 +609,21 @@ impl EngineThread {
     }
 
     /// Tells the UI a restart opened `now`, if anything, with its footer
-    /// line, if any.
-    fn notify_restart(&self, cause: RestartCause, now: Option<&RunningAudio>) {
+    /// line, if any: why the chosen device isn't playing when it `refused`
+    /// to open (its name), else what the cause calls for.
+    fn notify_restart(
+        &self,
+        cause: RestartCause,
+        now: Option<&RunningAudio>,
+        refused: Option<&str>,
+    ) {
+        let message = match refused {
+            Some(chosen) => Some(refused_message(chosen, now)),
+            None => restart_message(cause, self.opened.as_ref(), now),
+        };
         (self.notify)(EngineNews::Restarted {
             running: now.cloned(),
-            message: restart_message(cause, self.opened.as_ref(), now),
+            message,
         });
     }
 
@@ -652,10 +675,13 @@ impl EngineThread {
         config.buffer_size = buffer_size;
         // `pick_buffer_size`'s clamp against the device's reported range
         // doesn't guarantee the driver accepts every value in it — probe with
-        // a throwaway no-op stream before committing.
-        if matches!(config.buffer_size, BufferSize::Fixed(_))
-            && !probe_buffer_size_supported(&device, &config, sample_format)
-        {
+        // a throwaway no-op stream before committing. Twice: building the
+        // first probe is what sets a new rate on the device, and the buffer
+        // set straight after it can be refused while the device is still
+        // changing rate (seen on a Scarlett 4i4 on every rate change); by the
+        // second the rate has settled.
+        let probe = || probe_buffer_size_supported(&device, &config, sample_format);
+        if matches!(config.buffer_size, BufferSize::Fixed(_)) && !probe() && !probe() {
             info!(
                 "audio engine: fixed buffer size rejected by the device; using the device default"
             );
@@ -1237,6 +1263,19 @@ mod tests {
         assert_eq!(
             restart_message(RestartCause::Chosen, Some(&speakers), None).as_deref(),
             Some("No audio output")
+        );
+    }
+
+    #[test]
+    fn a_chosen_device_that_wont_open_says_what_plays_instead() {
+        let speakers = opened("MacBook Pro Speakers", 48_000);
+        assert_eq!(
+            refused_message("Scarlett 2i2", Some(&speakers)),
+            "Couldn't open Scarlett 2i2; using MacBook Pro Speakers"
+        );
+        assert_eq!(
+            refused_message("Scarlett 2i2", None),
+            "Couldn't open Scarlett 2i2; no audio output"
         );
     }
 
