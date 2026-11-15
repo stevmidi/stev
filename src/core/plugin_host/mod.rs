@@ -75,6 +75,7 @@ mod voice;
 mod vst3;
 mod window;
 
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, OnceLock};
 use std::thread;
 use std::time::Duration;
@@ -91,13 +92,15 @@ use transport::TransportState;
 use ui_wake::UiWake;
 use voice::{InstrumentVoice, VoiceMix};
 
+pub(crate) use voice::{Activation, ProcessMode};
+
 use crate::core::audio::{AudioSource, EngineHandle, StreamStatus};
 use crate::core::config::MAX_TRACKS;
 use crate::core::midi::message::Midi3;
 use crate::core::sequencer::{
     AudioExportJob, ClipInstrumentEvent, ExportMark, ExportStep, SequencerCommand,
 };
-use crate::core::shared_atomics::SharedAtomics;
+use crate::core::shared_atomics::{AudioExportAtomics, SharedAtomics};
 
 pub(crate) use catalog::scan_catalog;
 pub(crate) use editor::InstrumentEditor;
@@ -146,6 +149,9 @@ pub(crate) struct PluginAudioHandle {
     /// The engine's stream — each plugin is activated at its rate as it
     /// loads.
     stream: Arc<StreamStatus>,
+    /// The audio export's mirror: while a run is on, plugins are activated
+    /// in their offline mode.
+    export: Arc<AudioExportAtomics>,
     /// Shared egui context slot, for a plugin to wake the reactive UI (CLAP's
     /// main-thread callback requests).
     repaint: Arc<OnceLock<egui::Context>>,
@@ -178,8 +184,8 @@ pub(crate) struct ReturnedVoice(Box<dyn InstrumentVoice>);
 pub(crate) struct ReadyVoice {
     /// The voice, every note reset queued.
     voice: Box<dyn InstrumentVoice>,
-    /// The rate its plugin was activated at.
-    sample_rate: f64,
+    /// What its plugin was activated for.
+    activation: Activation,
 }
 
 /// Capacity of a voice's parameter rings, in both formats. A preset change in
@@ -188,42 +194,67 @@ pub(crate) struct ReadyVoice {
 const PARAM_RING_CAPACITY: usize = 4096;
 
 impl PluginAudioHandle {
-    /// The rate the stream runs at now, which a plugin loaded or reactivated
-    /// now is activated at.
-    pub(crate) fn sample_rate(&self) -> f64 {
-        self.stream.sample_rate()
+    /// What a plugin loaded or reactivated now is activated for: the rate
+    /// the stream runs at, and offline from the moment an audio export is
+    /// asked for until it ends (`490-offline-export.md` decision 6), real
+    /// time otherwise.
+    pub(crate) fn activation(&self) -> Activation {
+        Activation {
+            sample_rate: self.stream.sample_rate(),
+            mode: ProcessMode::of_block(self.export.is_running()),
+        }
     }
 
-    /// Reactivates `editor`'s plugin, in place, at the rate the stream runs
-    /// at now, with the `voice` the mixer handed back, every note reset and
-    /// its gain to ramp in from silence (`480-audio-settings.md` decisions 8
-    /// and 9). Returns the voice for [`insert_ready`](Self::insert_ready), or
-    /// why the plugin wouldn't reactivate.
+    /// Whether an audio export is running: what
+    /// [`activation`](Self::activation)'s mode follows.
+    pub(crate) fn is_exporting(&self) -> bool {
+        self.export.is_running()
+    }
+
+    /// Tells the `"audio-export"` thread whether the run's plugins are all
+    /// in their offline mode, which it waits for before the run is rendered
+    /// (`AudioExportAtomics::plugins_offline`).
+    pub(crate) fn set_plugins_offline(&self, offline: bool) {
+        self.export
+            .plugins_offline
+            .store(offline, Ordering::Relaxed);
+    }
+
+    /// Reactivates `editor`'s plugin, in place, for what is wanted now
+    /// ([`activation`](Self::activation)), with the `voice` the mixer handed
+    /// back, every note reset and its gain to ramp in from silence
+    /// (`480-audio-settings.md` decisions 8 and 9). Returns the voice for
+    /// [`insert_ready`](Self::insert_ready), or why the plugin wouldn't
+    /// reactivate.
     pub(crate) fn reactivate(
         &self,
         voice: ReturnedVoice,
         editor: &mut dyn InstrumentEditor,
     ) -> Result<ReadyVoice, String> {
-        let sample_rate = self.sample_rate();
-        let mut voice = editor.reactivate(voice.0, sample_rate)?;
+        let activation = self.activation();
+        let mut voice = editor.reactivate(voice.0, activation)?;
         *voice.mix_mut() = VoiceMix::default();
         voice.queue_note_reset();
-        Ok(ReadyVoice { voice, sample_rate })
+        Ok(ReadyVoice { voice, activation })
     }
 
     /// Sends a [`ReadyVoice`] to the mixer for `track`, whose slot must be
-    /// empty by then: the one way a voice goes in. Returns the rate it was
-    /// activated at.
-    pub(crate) fn insert_ready(&mut self, track: usize, ready: ReadyVoice) -> Result<f64, String> {
-        let ReadyVoice { voice, sample_rate } = ready;
+    /// empty by then: the one way a voice goes in. Returns what it was
+    /// activated for.
+    pub(crate) fn insert_ready(
+        &mut self,
+        track: usize,
+        ready: ReadyVoice,
+    ) -> Result<Activation, String> {
+        let ReadyVoice { voice, activation } = ready;
         self.cmd_tx
             .push(PluginHostCommand::Insert {
                 track,
                 voice,
-                sample_rate,
+                activation,
             })
             .map_err(|_| "plugin host audio thread is gone (command ring full)".to_string())?;
-        Ok(sample_rate)
+        Ok(activation)
     }
 }
 
@@ -309,6 +340,7 @@ pub(crate) fn start_plugin_host(
         voice_back_rx,
         shutdown,
         stream: Arc::clone(&engine.status),
+        export: Arc::clone(&atomics.audio_export),
         repaint,
         ui_wake,
     })
@@ -398,20 +430,21 @@ pub(crate) struct PreparedInstrument {
     track: usize,
     /// The audio-thread half, until the mixer takes it.
     voice: Box<dyn InstrumentVoice>,
-    /// The rate the plugin was activated at.
-    sample_rate: f64,
+    /// What the plugin was activated for.
+    activation: Activation,
     /// The main-thread half.
     editor: Box<dyn InstrumentEditor>,
 }
 
-/// A plugin in the mixer, as the UI keeps it: its editor, and the rate it
-/// was activated at, which the UI compares with the stream's to know when to
-/// reactivate it ([`PluginAudioHandle::reactivate`]).
-pub(crate) type InsertedInstrument = (Box<dyn InstrumentEditor>, f64);
+/// A plugin in the mixer, as the UI keeps it: its editor, and what it was
+/// activated for, which the UI compares with what is wanted now
+/// ([`PluginAudioHandle::activation`]) to know when to reactivate it
+/// ([`PluginAudioHandle::reactivate`]).
+pub(crate) type InsertedInstrument = (Box<dyn InstrumentEditor>, Activation);
 
 impl PreparedInstrument {
     /// Sends the voice to the mixer for its slot and hands back the editor
-    /// and its rate — the slot must be empty by then (its old voice's
+    /// and its activation — the slot must be empty by then (its old voice's
     /// `Remove` sent first).
     pub(crate) fn insert(
         self,
@@ -419,8 +452,8 @@ impl PreparedInstrument {
     ) -> Result<InsertedInstrument, String> {
         let track = self.track;
         let (editor, ready) = self.into_ready();
-        let sample_rate = handle.insert_ready(track, ready)?;
-        Ok((editor, sample_rate))
+        let activation = handle.insert_ready(track, ready)?;
+        Ok((editor, activation))
     }
 
     /// Splits a plugin loaded again in an audio restart into its editor and
@@ -429,11 +462,11 @@ impl PreparedInstrument {
     pub(crate) fn into_ready(self) -> (Box<dyn InstrumentEditor>, ReadyVoice) {
         let PreparedInstrument {
             voice,
-            sample_rate,
+            activation,
             editor,
             ..
         } = self;
-        (editor, ReadyVoice { voice, sample_rate })
+        (editor, ReadyVoice { voice, activation })
     }
 
     /// Drops a plugin that never reached the mixer, in the order a removed
@@ -459,11 +492,11 @@ pub(crate) fn prepare_instrument(
     entry: &PluginCatalogEntry,
     state: Option<&[u8]>,
 ) -> Result<PreparedInstrument, String> {
-    // Read once, so the voice is known to run at the rate it was built at.
-    let sample_rate = handle.sample_rate();
+    // Read once, so the voice is known to run as it was built.
+    let activation = handle.activation();
     let (mut voice, editor) = match entry.format {
-        PluginFormat::Clap => clap::load(handle, track, entry, state, sample_rate)?,
-        PluginFormat::Vst3 => vst3::load(handle, track, entry, state, sample_rate)?,
+        PluginFormat::Clap => clap::load(handle, track, entry, state, activation)?,
+        PluginFormat::Vst3 => vst3::load(handle, track, entry, state, activation)?,
     };
     // Every format starts from silence, whatever its restored state believes
     // is held. Queued here, on the main thread, before `Insert`.
@@ -477,7 +510,7 @@ pub(crate) fn prepare_instrument(
     Ok(PreparedInstrument {
         track,
         voice,
-        sample_rate,
+        activation,
         editor,
     })
 }

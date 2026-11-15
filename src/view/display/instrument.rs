@@ -29,8 +29,8 @@ use uuid::Uuid;
 use crate::core::input_event::InputEvent;
 use crate::core::plugin_host::catalog::PluginCatalogEntry;
 use crate::core::plugin_host::{
-    InstrumentEditor, PluginAudioHandle, PluginHostCommand, PreparedInstrument, ReadyVoice,
-    ReturnedVoice, VoiceBack, load_instrument, prepare_instrument,
+    Activation, InstrumentEditor, PluginAudioHandle, PluginHostCommand, PreparedInstrument,
+    ProcessMode, ReadyVoice, ReturnedVoice, VoiceBack, load_instrument, prepare_instrument,
 };
 use crate::models::track::{InstrumentRef, TrackOutput};
 
@@ -104,8 +104,10 @@ pub(super) struct InstrumentHost {
     /// slot, each with when: [`CAPTURE_QUIET`] after the last reason to.
     pending_captures: Vec<(usize, Instant)>,
     /// The plugins an audio restart is reactivating at the stream's new
-    /// rate, one per frame (`restart_next_instrument`), under the
-    /// "Restarting audio" panel. `None` when no restart is under way.
+    /// rate, or an audio export is switching to their offline mode and
+    /// back, one per frame (`restart_next_instrument`), under the
+    /// "Restarting audio" or "Preparing export" panel. `None` when no
+    /// restart is under way.
     pub(super) restart: Option<PluginRestart>,
 }
 
@@ -174,11 +176,12 @@ pub(super) struct TrackInstrument {
     /// frame it closes, by whatever route, captures its state
     /// (`410-crash-recovery.md` decision 6).
     editor_was_open: bool,
-    /// The rate its voice in the mixer was activated at. Once the stream
-    /// runs at another, the voice is asked back (`return_stale_voices`), and
-    /// this is `None` until the audio restart it joins puts it back
-    /// (`finish_restart`).
-    sample_rate: Option<f64>,
+    /// What its voice in the mixer was activated for: the rate and the
+    /// mode. Once another is wanted (the stream runs at another rate, an
+    /// audio export starts or ends), the voice is asked back
+    /// (`return_stale_voices`), and this is `None` until the audio restart
+    /// it joins puts it back (`finish_restart`).
+    activation: Option<Activation>,
 }
 
 impl InstrumentHost {
@@ -365,7 +368,7 @@ impl Display {
             load_instrument(handle, slot, &entry, Some(state))
         };
         match loaded {
-            Ok((mut editor, sample_rate)) => {
+            Ok((mut editor, activation)) => {
                 if let Some(track_idx) = picked {
                     editor.show();
                     let instrument = InstrumentRef {
@@ -381,7 +384,7 @@ impl Display {
                         })
                         .ok();
                 }
-                self.install_editor(slot, editor, entry, Some(sample_rate));
+                self.install_editor(slot, editor, entry, Some(activation));
                 self.sync_live_instrument_target();
             }
             Err(e) => {
@@ -504,7 +507,7 @@ impl Display {
             .and_then(|restart| restart.forget(slot));
         let Some(TrackInstrument {
             mut editor,
-            sample_rate,
+            activation,
             ..
         }) = self
             .instruments
@@ -523,7 +526,7 @@ impl Display {
             return;
         }
         if let Some(handle) = &mut self.instruments.audio
-            && sample_rate.is_some()
+            && activation.is_some()
         {
             handle
                 .cmd_tx
@@ -669,21 +672,21 @@ impl Display {
     /// `restartComponent` — is dropped first: it is no hand turn and no
     /// preset, and counted as one it would make a project just opened ask to
     /// be saved (`400-parameter-knobs.md` decision 9).
-    /// `sample_rate` is the rate its voice in the mixer was activated at,
+    /// `activation` is what its voice in the mixer was activated for,
     /// `None` while an audio restart holds the voice.
     fn install_editor(
         &mut self,
         slot: usize,
         mut editor: Box<dyn InstrumentEditor>,
         entry: PluginCatalogEntry,
-        sample_rate: Option<f64>,
+        activation: Option<Activation>,
     ) {
         editor.take_parameter_gestures();
         self.instruments.track_instruments[slot] = Some(TrackInstrument {
             editor,
             entry,
             editor_was_open: false,
-            sample_rate,
+            activation,
         });
     }
 
@@ -698,11 +701,16 @@ impl Display {
         Some(pending.remove(pos).1)
     }
 
-    /// Per frame: asks the mixer for the voice of every plugin activated at
-    /// another rate than the stream runs at now, to reactivate it
-    /// (`480-audio-settings.md` decision 8), and adds it to the audio
-    /// restart, starting one if none is under way. Its track is silent
-    /// meanwhile, as the mixer holds a voice at another rate silent anyway.
+    /// Per frame: asks the mixer for the voice of every plugin activated for
+    /// something else than is wanted now (`PluginAudioHandle::activation`),
+    /// to reactivate it, and adds it to the audio restart, starting one if
+    /// none is under way: the stream runs at another rate
+    /// (`480-audio-settings.md` decision 8), or an audio export has started
+    /// and wants the plugins offline, or has ended and wants them back
+    /// (`490-offline-export.md` decision 6). Its track is silent meanwhile,
+    /// as the mixer holds such a voice silent anyway. Then tells the
+    /// `"audio-export"` thread whether a run's plugins are all offline: it
+    /// waits for that before the run is rendered.
     fn return_stale_voices(&mut self) {
         let InstrumentHost {
             audio: Some(handle),
@@ -713,12 +721,12 @@ impl Display {
         else {
             return;
         };
-        let rate = handle.sample_rate();
+        let wanted = handle.activation();
         for (slot, loaded) in track_instruments.iter_mut().enumerate() {
             let Some(loaded) = loaded else {
                 continue;
             };
-            if loaded.sample_rate.is_none_or(|at| at == rate) {
+            if loaded.activation.is_none_or(|at| at == wanted) {
                 continue;
             }
             let asked = handle
@@ -726,12 +734,21 @@ impl Display {
                 .push(PluginHostCommand::Return { track: slot })
                 .is_ok();
             if asked {
-                loaded.sample_rate = None;
+                loaded.activation = None;
                 restart
                     .get_or_insert_with(AudioRestart::new)
                     .ask(slot, Instant::now());
             }
         }
+        // Every plugin still loaded is in the mixer, offline: none out to be
+        // switched, none waiting to go back in.
+        let offline = wanted.mode == ProcessMode::Offline
+            && restart.is_none()
+            && track_instruments
+                .iter()
+                .flatten()
+                .all(|loaded| loaded.activation == Some(wanted));
+        handle.set_plugins_offline(offline);
     }
 
     /// The mixer handed back `slot`'s voice, to be reactivated: it joins
@@ -750,7 +767,7 @@ impl Display {
             warn!("plugin host: a voice came back for slot {slot}, with no plugin waiting for it");
             return;
         };
-        if loaded.sample_rate.is_some() {
+        if loaded.activation.is_some() {
             warn!(
                 "plugin host: a voice came back for '{}', which wasn't waiting for one",
                 loaded.entry.name
@@ -764,7 +781,7 @@ impl Display {
     }
 
     /// Per frame, from `logic`: reactivates the audio restart's next plugin
-    /// at the stream's rate, editor, state and all, and holds its voice; a
+    /// for what is wanted now, editor, state and all, and holds its voice; a
     /// plugin that won't reactivate, or whose voice the mixer didn't have,
     /// is loaded again from its state (`reload_slot_instrument`). Once
     /// every plugin is ready they all go back in together
@@ -825,10 +842,10 @@ impl Display {
         };
         match handle.reactivate(voice, &mut *loaded.editor) {
             Ok(ready) => {
+                let Activation { sample_rate, mode } = handle.activation();
                 info!(
-                    "plugin host: reactivated '{}' at {} Hz",
-                    loaded.entry.name,
-                    handle.sample_rate()
+                    "plugin host: reactivated '{}' at {sample_rate} Hz, {mode:?}",
+                    loaded.entry.name
                 );
                 Some(ready)
             }
@@ -844,9 +861,10 @@ impl Display {
 
     /// Ends the audio restart: puts every voice it holds back in the mixer,
     /// in one frame, so the tracks come back together
-    /// (`480-audio-settings.md` decision 8). A voice activated at a rate the
-    /// stream has left since goes in all the same, and is asked back for the
-    /// next restart (`return_stale_voices`).
+    /// (`480-audio-settings.md` decision 8). A voice activated for what is
+    /// no longer wanted (the stream has left its rate since, the export has
+    /// ended) goes in all the same, and is asked back for the next restart
+    /// (`return_stale_voices`).
     fn finish_restart(&mut self) {
         let Some(restart) = self.instruments.restart.take() else {
             return;
@@ -864,7 +882,7 @@ impl Display {
                 continue;
             };
             match handle.insert_ready(slot, ready) {
-                Ok(rate) => loaded.sample_rate = Some(rate),
+                Ok(activation) => loaded.activation = Some(activation),
                 Err(e) => error!(
                     "plugin host: couldn't put '{}' back: {e}",
                     loaded.entry.name
@@ -873,8 +891,8 @@ impl Display {
         }
     }
 
-    /// Loads the plugin in `slot` again from its live state, at the
-    /// stream's rate, and returns its voice for the audio restart to put
+    /// Loads the plugin in `slot` again from its live state, for what is
+    /// wanted now, and returns its voice for the audio restart to put
     /// back in: the fallback for one that wouldn't reactivate in place
     /// (`480-audio-settings.md` decision 8). Its voice is already out of the
     /// mixer. Its editor reopens if it was open. A plugin whose state can't
@@ -912,7 +930,7 @@ impl Display {
             )
         }) else {
             self.render.status = Some(StatusMessage::new(format!(
-                "{} could not restart at the new sample rate and is silent",
+                "{} could not restart and is silent",
                 entry.name
             )));
             self.sync_live_instrument_target();
@@ -965,9 +983,13 @@ impl Display {
             .is_some_and(|restart| restart.holds_app(Instant::now()))
     }
 
-    /// The audio restart holding the app, if one is, for the panel: the
-    /// plugin it names, the step ("3 of 8") and how much is done.
-    pub(super) fn audio_restart(&self) -> Option<(&str, (usize, usize), f32)> {
+    /// The audio restart holding the app, if one is, for the panel: its
+    /// title, the plugin it names, the step ("3 of 8") and how much is
+    /// done. While an audio export is on, the restart is the one switching
+    /// its plugins to their offline mode, and the panel says so
+    /// (`490-offline-export.md` decision 6); the one switching them back,
+    /// after it, is an audio restart like any other.
+    pub(super) fn audio_restart(&self) -> Option<(&'static str, &str, (usize, usize), f32)> {
         if !self.audio_restart_holds_app() {
             return None;
         }
@@ -976,7 +998,29 @@ impl Display {
             .next_slot()
             .and_then(|slot| self.slot_instrument(slot))
             .map_or("plugins", |loaded| loaded.entry.name.as_str());
-        Some((name, restart.step(), restart.fraction()))
+        let exporting = self
+            .instruments
+            .audio
+            .as_ref()
+            .is_some_and(PluginAudioHandle::is_exporting);
+        let title = if exporting {
+            "Preparing export"
+        } else {
+            "Restarting audio"
+        };
+        Some((title, name, restart.step(), restart.fraction()))
+    }
+
+    /// The loaded plugin that can only render in real time, if there is
+    /// one, by name: an audio export, which renders offline, is refused
+    /// for it (`490-offline-export.md` decision 7).
+    pub(super) fn real_time_only_instrument(&self) -> Option<&str> {
+        self.instruments
+            .track_instruments
+            .iter()
+            .flatten()
+            .find(|loaded| loaded.editor.needs_real_time())
+            .map(|loaded| loaded.entry.name.as_str())
     }
 
     /// Puts a staged plugin into its slot: its voice to the mixer, its editor
@@ -992,8 +1036,8 @@ impl Display {
             return;
         };
         match prepared.insert(handle) {
-            Ok((editor, sample_rate)) => {
-                self.install_editor(slot, editor, entry, Some(sample_rate));
+            Ok((editor, activation)) => {
+                self.install_editor(slot, editor, entry, Some(activation));
             }
             Err(e) => error!("plugin host: failed to load '{}': {e}", entry.name),
         }

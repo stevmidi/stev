@@ -18,10 +18,11 @@ use std::marker::PhantomData;
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
 
+use log::warn;
 use vst3::Steinberg::Vst::{
     BusDirections_::{kInput, kOutput},
     MediaTypes_::{kAudio, kEvent},
-    ProcessModes_::kRealtime,
+    ProcessModes_::{kOffline, kRealtime},
     SymbolicSampleSizes_::kSample32,
 };
 use vst3::Steinberg::Vst::{
@@ -36,6 +37,7 @@ use vst3::{ComPtr, Interface};
 
 use crate::core::plugin_host::buffers::AudioIoLayout;
 use crate::core::plugin_host::editor::ParameterInfo as KnobParameter;
+use crate::core::plugin_host::voice::{Activation, ProcessMode};
 
 use super::discovery::uid_from_hex;
 use super::events::MidiMap;
@@ -73,6 +75,8 @@ pub(super) struct LoadedPlugin {
     /// never stops". The voice needs it to know when idling is safe; see
     /// [`voice`](super::voice).
     pub(super) tail_samples: u32,
+    /// The mode the processor was set up in ([`activate`]).
+    pub(super) mode: ProcessMode,
 }
 
 /// Everything about a loaded plugin that may only be touched on the eframe main
@@ -110,7 +114,7 @@ pub(super) struct MainThreadHalf {
 pub(super) fn load(
     bundle_path: &Path,
     plugin_id: &str,
-    sample_rate: f64,
+    activation: Activation,
     max_frames: u32,
     saved_state: Option<&[u8]>,
     repaint: Arc<OnceLock<egui::Context>>,
@@ -182,7 +186,7 @@ pub(super) fn load(
         // particular block.
         let tail_samples = processor.getTailSamples();
 
-        activate(&component, &processor, sample_rate, max_frames)
+        let mode = activate(&component, &processor, activation, max_frames)
             .map_err(|e| format!("vst3: '{plugin_id}' {e}"))?;
 
         Ok(LoadedPlugin {
@@ -198,13 +202,28 @@ pub(super) fn load(
             params: param_rx,
             midi_map,
             tail_samples,
+            mode,
         })
     }
 }
 
-/// Sets `processor` up for `sample_rate` and blocks of up to `max_frames`,
-/// activates `component` and starts it processing: the end of a load, and of
-/// a [`reactivate`].
+/// `mode` as VST3's `ProcessModes`, for `ProcessSetup` and every block's
+/// `ProcessData` alike: the two must agree.
+pub(super) fn process_mode(mode: ProcessMode) -> int32 {
+    match mode {
+        ProcessMode::Realtime => kRealtime as int32,
+        ProcessMode::Offline => kOffline as int32,
+    }
+}
+
+/// Sets `processor` up for `activation` (its rate and mode) and blocks of up
+/// to `max_frames`, activates `component` and starts it processing: the end
+/// of a load, and of a [`reactivate`]. Returns the mode it was set up in,
+/// which every block's `ProcessData` must carry: `activation`'s, except
+/// that a plugin refusing the offline setup is set up for real time
+/// instead, and renders the export as it plays. Loading it again, as for a
+/// refused rate, would only have it refuse again
+/// (`490-offline-export.md` § Phases, 3).
 ///
 /// # Safety
 ///
@@ -213,20 +232,31 @@ pub(super) fn load(
 unsafe fn activate(
     component: &ComPtr<IComponent>,
     processor: &ComPtr<IAudioProcessor>,
-    sample_rate: f64,
+    activation: Activation,
     max_frames: u32,
-) -> Result<(), String> {
-    let mut setup = ProcessSetup {
-        processMode: kRealtime as int32,
-        symbolicSampleSize: kSample32 as int32,
-        maxSamplesPerBlock: max_frames as int32,
-        sampleRate: sample_rate,
+) -> Result<ProcessMode, String> {
+    let Activation { sample_rate, mode } = activation;
+    let set_up = |mode| {
+        let mut setup = ProcessSetup {
+            processMode: process_mode(mode),
+            symbolicSampleSize: kSample32 as int32,
+            maxSamplesPerBlock: max_frames as int32,
+            sampleRate: sample_rate,
+        };
+        // SAFETY: the caller's contract; `setup` is a local of the right
+        // type.
+        unsafe { processor.setupProcessing(&mut setup) == kResultOk }
     };
-    // SAFETY: the caller's contract; `setup` is a local of the right type.
+    let mode = if set_up(mode) {
+        mode
+    } else if mode == ProcessMode::Offline && set_up(ProcessMode::Realtime) {
+        warn!("vst3: the plugin refused the offline setup; it renders in real-time mode");
+        ProcessMode::Realtime
+    } else {
+        return Err(format!("rejected {sample_rate} Hz / {max_frames} frames"));
+    };
+    // SAFETY: the caller's contract.
     unsafe {
-        if processor.setupProcessing(&mut setup) != kResultOk {
-            return Err(format!("rejected {sample_rate} Hz / {max_frames} frames"));
-        }
         if component.setActive(1) != kResultOk {
             return Err("refused to activate".to_string());
         }
@@ -235,14 +265,16 @@ unsafe fn activate(
         // never truly idle in the sense `setProcessing(false)` describes.
         processor.setProcessing(1);
     }
-    Ok(())
+    Ok(mode)
 }
 
-/// Activates `component` again at `sample_rate`, in place: stop processing,
-/// deactivate, `setupProcessing` with the new rate, activate
-/// (`480-audio-settings.md` decision 8). The instance, its controller and
+/// Activates `component` again for `activation`, in place: stop processing,
+/// deactivate, `setupProcessing` with the new rate and mode, activate
+/// (`480-audio-settings.md` decision 8; `490-offline-export.md` decision 6
+/// for the mode, `kOffline` for an audio export's render). The instance, its controller and
 /// its state are untouched. Returns the plugin's tail at the new rate
-/// (`getTailSamples` counts samples). A plugin that refuses to deactivate
+/// (`getTailSamples` counts samples) and the mode it was set up in
+/// ([`activate`]). A plugin that refuses to deactivate
 /// is left as it is, and one that refuses the new setup inactive.
 ///
 /// # Safety
@@ -251,9 +283,9 @@ unsafe fn activate(
 /// mixer, so no `process` call can be in flight.
 pub(super) unsafe fn reactivate(
     component: &ComPtr<IComponent>,
-    sample_rate: f64,
+    activation: Activation,
     max_frames: u32,
-) -> Result<u32, String> {
+) -> Result<(u32, ProcessMode), String> {
     let processor = component
         .cast::<IAudioProcessor>()
         .ok_or("exposes no IAudioProcessor")?;
@@ -264,8 +296,8 @@ pub(super) unsafe fn reactivate(
         if component.setActive(0) != kResultOk {
             return Err("refused to deactivate".to_string());
         }
-        activate(component, &processor, sample_rate, max_frames)?;
-        Ok(processor.getTailSamples())
+        let mode = activate(component, &processor, activation, max_frames)?;
+        Ok((processor.getTailSamples(), mode))
     }
 }
 

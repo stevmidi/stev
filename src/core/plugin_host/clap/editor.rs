@@ -27,7 +27,7 @@ use super::ClapVoice;
 use super::host::StevClapHost;
 use super::params::EditorParams;
 use crate::core::plugin_host::editor::{InstrumentEditor, ParameterGesture, ParameterInfo};
-use crate::core::plugin_host::voice::InstrumentVoice;
+use crate::core::plugin_host::voice::{Activation, InstrumentVoice};
 use crate::core::plugin_host::window::{FALLBACK_SIZE, PluginWindow, editor_level, editor_title};
 use crate::models::knobs::ParamId;
 
@@ -61,6 +61,9 @@ pub(crate) struct ClapEditor {
     window_top_left: Option<NSPoint>,
     /// The editor's end of the parameter bridge. See [`params`](super::params).
     params: EditorParams,
+    /// Whether the plugin said, as it loaded, that it can only render in
+    /// real time.
+    needs_real_time: bool,
 }
 
 impl ClapEditor {
@@ -71,6 +74,7 @@ impl ClapEditor {
         plugin_name: &str,
         track: usize,
         params: EditorParams,
+        needs_real_time: bool,
     ) -> Self {
         Self {
             instance,
@@ -80,6 +84,7 @@ impl ClapEditor {
             window: None,
             window_top_left: None,
             params,
+            needs_real_time,
         }
     }
 }
@@ -164,20 +169,22 @@ impl InstrumentEditor for ClapEditor {
         }
     }
 
-    /// Deactivates and activates the instance again at `sample_rate`, with
+    /// Deactivates and activates the instance again for `activation`, with
     /// the processor the voice hands back ([`ClapVoice::reactivated`]).
     fn reactivate(
         &mut self,
         voice: Box<dyn InstrumentVoice>,
-        sample_rate: f64,
+        activation: Activation,
     ) -> Result<Box<dyn InstrumentVoice>, String> {
         let voice = voice
             .into_any()
             .downcast::<ClapVoice>()
             .map_err(|_| "not a CLAP voice".to_string())?;
-        Ok(Box::new(
-            voice.reactivated(&mut self.instance, sample_rate)?,
-        ))
+        Ok(Box::new(voice.reactivated(&mut self.instance, activation)?))
+    }
+
+    fn needs_real_time(&self) -> bool {
+        self.needs_real_time
     }
 
     /// Per-frame pump: run any requested main-thread callback, tick the plugin's

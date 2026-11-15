@@ -70,7 +70,7 @@ use super::export::ExportTap;
 use super::meter::{BlockDecay, MeterBallistics};
 use super::shutdown::HostShutdown;
 use super::transport::TransportState;
-use super::voice::InstrumentVoice;
+use super::voice::{Activation, InstrumentVoice, ProcessMode};
 
 /// Pre-reserved capacity of the mixer's `pending` scheduling buffer. Sized well
 /// over the worst realistic burst (both `rtrb` feeds — clip + live — full in one
@@ -86,9 +86,10 @@ pub(crate) enum PluginHostCommand {
         track: usize,
         /// The built voice, of whichever plugin format the track picked.
         voice: Box<dyn InstrumentVoice>,
-        /// The sample rate the plugin was activated at. A voice at another
-        /// rate than the stream's is held silent.
-        sample_rate: f64,
+        /// What the plugin was activated for. A voice at another rate than
+        /// the stream's, or in another mode than the block's, is held
+        /// silent.
+        activation: Activation,
     },
     /// Remove `track`'s voice — the callback hands it back to the
     /// `"plugin-host"` thread to drop off the audio thread.
@@ -97,8 +98,9 @@ pub(crate) enum PluginHostCommand {
         track: usize,
     },
     /// Hand `track`'s voice back to the UI, stopped, to be reactivated at the
-    /// stream's new rate and inserted again (`480-audio-settings.md`
-    /// decision 8). It goes the way a removed voice does, as far as the
+    /// stream's new rate, or in the mode an audio export wants, and inserted
+    /// again (`480-audio-settings.md` decision 8, `490-offline-export.md`
+    /// decision 6). It goes the way a removed voice does, as far as the
     /// `"plugin-host"` thread, which passes it on instead of dropping it.
     Return {
         /// Engine slot (`Track::slot`) to take the voice from.
@@ -212,13 +214,16 @@ pub(super) struct InstrumentMixer {
     /// The output sample rate, Hz: what turns a block's frames into the
     /// meters' time step.
     sample_rate: f64,
-    /// The rate each slot's voice was activated at. A voice whose rate isn't
+    /// What each slot's voice was activated for. A voice whose rate isn't
     /// the stream's — the device's rate changed under it — is held silent
     /// rather than played at the wrong pitch and speed, until the UI has
     /// reactivated it at the new rate and inserted it again
-    /// (`480-audio-settings.md` decision 8). An empty slot's entry means
+    /// (`480-audio-settings.md` decision 8). So is one whose mode isn't the
+    /// block's: an audio export's offline render never runs a plugin still
+    /// told it is live, nor the device one still told it is offline
+    /// (`490-offline-export.md` decision 6). An empty slot's entry means
     /// nothing.
-    voice_rates: [f64; MAX_TRACKS],
+    voice_activations: [Activation; MAX_TRACKS],
 }
 
 impl InstrumentMixer {
@@ -252,7 +257,7 @@ impl InstrumentMixer {
             meters: [[MeterBallistics::default(); 2]; MAX_TRACKS],
             meter_resets_seen: [0; MAX_TRACKS],
             sample_rate,
-            voice_rates: [sample_rate; MAX_TRACKS],
+            voice_activations: [Activation::realtime(sample_rate); MAX_TRACKS],
         }
     }
 
@@ -326,10 +331,10 @@ impl InstrumentMixer {
                 PluginHostCommand::Insert {
                     track,
                     voice,
-                    sample_rate,
+                    activation,
                 } => {
-                    if let Some(rate) = self.voice_rates.get_mut(track) {
-                        *rate = sample_rate;
+                    if let Some(slot) = self.voice_activations.get_mut(track) {
+                        *slot = activation;
                     }
                     let old = self
                         .voices
@@ -390,7 +395,7 @@ impl AudioSource for InstrumentMixer {
     /// feeds too: they would all land at once, late. Every voice is sent the
     /// note reset instead, so nothing hangs from a note-off lost in the
     /// drop-out (`480-audio-settings.md` decision 9). A rate change leaves
-    /// the voices activated at the old rate held silent (see `voice_rates`)
+    /// the voices activated at the old rate held silent (see `voice_activations`)
     /// until the UI has them back (`PluginHostCommand::Return`), reactivates
     /// them and inserts them again.
     fn restarted(&mut self, sample_rate: f64) {
@@ -503,10 +508,15 @@ impl AudioSource for InstrumentMixer {
         // one instance, not a different thread per instance. See
         // `170-multicore-scheduling.md`.
         //
-        // A voice held at another rate than the stream's is never called
-        // into either, and renders nothing.
-        let (rates, rate) = (&self.voice_rates, self.sample_rate);
-        let held = |track: usize| rates[track] != rate;
+        // A voice activated for another rate than the stream's, or another
+        // mode than this block's, is never called into either, and renders
+        // nothing.
+        let activations = &self.voice_activations;
+        let block = Activation {
+            sample_rate: self.sample_rate,
+            mode: ProcessMode::of_block(offline),
+        };
+        let held = |track: usize| activations[track] != block;
         let mut awake = 0;
         for (track, voice) in self.voices.iter_mut().enumerate() {
             if let Some(voice) = voice {
@@ -693,8 +703,14 @@ mod tests {
         (mixer, track_mix, commands, reclaimed)
     }
 
-    /// Renders `secs` of blocks.
+    /// Renders `secs` of blocks, as a device's.
     fn render(mixer: &mut InstrumentMixer, secs: f64) {
+        render_as(mixer, secs, false);
+    }
+
+    /// Renders `secs` of blocks: an audio export's when `offline`, else a
+    /// device's.
+    fn render_as(mixer: &mut InstrumentMixer, secs: f64, offline: bool) {
         let clock = AudioClock::new(RATE);
         let pool = WorkerPool::new(0, || ());
         let load = AudioLoad::new();
@@ -704,7 +720,7 @@ mod tests {
                 frames: BLOCK,
                 first_frame: block * BLOCK as u64,
                 schedule_delay: BLOCK as u32,
-                offline: false,
+                offline,
                 clock: &clock,
                 pool: &pool,
                 load: &load,
@@ -765,7 +781,7 @@ mod tests {
         let insert = |level| PluginHostCommand::Insert {
             track: 0,
             voice: Box::new(ConstantVoice::new(level)),
-            sample_rate: RATE,
+            activation: Activation::realtime(RATE),
         };
         commands.push(insert(1.0)).ok().unwrap();
         render(&mut mixer, 0.5);
@@ -824,7 +840,7 @@ mod tests {
             .push(PluginHostCommand::Insert {
                 track: 0,
                 voice: Box::new(ConstantVoice::new(1.0)),
-                sample_rate: 44_100.0,
+                activation: Activation::realtime(44_100.0),
             })
             .ok()
             .unwrap();
@@ -833,12 +849,40 @@ mod tests {
     }
 
     #[test]
+    fn a_voice_renders_only_blocks_of_the_mode_it_was_activated_in() {
+        let (mut mixer, track_mix, mut commands) = mixer_with_commands();
+        let insert = |mode| PluginHostCommand::Insert {
+            track: 0,
+            voice: Box::new(ConstantVoice::new(1.0)),
+            activation: Activation {
+                sample_rate: RATE,
+                mode,
+            },
+        };
+        // Told it is live: the device's blocks, never an export's.
+        commands.push(insert(ProcessMode::Realtime)).ok().unwrap();
+        render(&mut mixer, 0.1);
+        assert_eq!(peak_db(&track_mix), [0.0; 2]);
+        track_mix.reset_meter(0);
+        render_as(&mut mixer, 0.01, true);
+        assert_eq!(track_mix.audio_level(0), [ChannelLevel::default(); 2]);
+
+        // Switched to offline: the export's blocks, never the device's.
+        commands.push(insert(ProcessMode::Offline)).ok().unwrap();
+        render_as(&mut mixer, 0.1, true);
+        assert_eq!(peak_db(&track_mix), [0.0; 2]);
+        track_mix.reset_meter(0);
+        render(&mut mixer, 0.01);
+        assert_eq!(track_mix.audio_level(0), [ChannelLevel::default(); 2]);
+    }
+
+    #[test]
     fn a_returned_voice_leaves_stopped_for_the_ui_and_its_slot_falls_silent() {
         let (mut mixer, track_mix, mut commands, mut reclaimed) = mixer_with_rings();
         let insert = |level, sample_rate| PluginHostCommand::Insert {
             track: 0,
             voice: Box::new(ConstantVoice::new(level)),
-            sample_rate,
+            activation: Activation::realtime(sample_rate),
         };
         commands.push(insert(1.0, RATE)).ok().unwrap();
         render(&mut mixer, 0.1);

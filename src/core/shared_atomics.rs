@@ -250,7 +250,8 @@ const VELOCITY_MASK: u64 = 0x7F;
 
 /// The running audio export (`130-plugin-host.md` § Audio export), mirrored for the
 /// threads besides the `"sequencer"` one, whose `Sequencer` holds the run
-/// itself. Grouped like [`TrackMixAtomics`]: three values, each independent.
+/// itself. Grouped like [`TrackMixAtomics`]: values that are each
+/// independent.
 #[derive(Default)]
 pub(crate) struct AudioExportAtomics {
     /// True from the run's start until the writer's report ends it. Written
@@ -264,6 +265,17 @@ pub(crate) struct AudioExportAtomics {
     /// How much of it the `"audio-export"` thread has written, in
     /// milliseconds.
     pub(crate) written_ms: AtomicU32,
+    /// True while a run is on and every loaded plugin is in its offline
+    /// mode (`490-offline-export.md` decision 6). Written by the UI thread,
+    /// which switches them, every frame; the `"audio-export"` thread waits
+    /// for it before it has the run rendered.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pub(crate) plugins_offline: AtomicBool,
+    /// Esc has cancelled the run. Written by the `Sequencer`
+    /// (`begin_audio_export` clears it, `cancel_audio_export` sets it); read
+    /// by the `"audio-export"` thread while it waits for the plugins, when
+    /// no render is there yet to hear of the cancel through the mixer.
+    pub(crate) cancelled: AtomicBool,
 }
 
 impl AudioExportAtomics {

@@ -45,19 +45,20 @@ impl Display {
     }
 
     /// Paints the "Restarting audio" panel into the canvas `rect` while an
-    /// audio restart reactivates its plugins.
+    /// audio restart reactivates its plugins: "Preparing export" while it
+    /// switches them to their offline mode for an audio export.
     pub(in crate::view::display::rendering) fn draw_audio_restart_view(
         &self,
         painter: &Painter,
         rect: Rect,
     ) {
-        let Some((name, step, fraction)) = self.audio_restart() else {
+        let Some((title, name, step, fraction)) = self.audio_restart() else {
             return;
         };
         Self::draw_plugin_progress(
             painter,
             rect,
-            "Restarting audio",
+            title,
             &format!("Reactivating {name}"),
             step,
             fraction,

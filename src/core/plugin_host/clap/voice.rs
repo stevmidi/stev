@@ -26,7 +26,7 @@ use crate::core::plugin_host::buffers::{AudioIoLayout, PortBuffers, channel_tota
 use crate::core::plugin_host::note_ids::NoteIds;
 use crate::core::plugin_host::transport::BlockTransport;
 use crate::core::plugin_host::voice::{
-    EVENT_CAPACITY, InstrumentVoice, VoiceMix, note_reset_messages,
+    Activation, EVENT_CAPACITY, InstrumentVoice, ProcessMode, VoiceMix, note_reset_messages,
 };
 use crate::core::sequencer::NoteSource;
 use crate::core::time::{monotonic_nanos, ticks_to_beats_f64};
@@ -61,6 +61,9 @@ pub(crate) struct ClapVoice {
     /// The ids of the notes sounding, on a plugin that takes native note
     /// events. `None` sends its notes as raw MIDI, with no ids.
     note_ids: Option<NoteIds>,
+    /// The mode the plugin was last told to render in (its `render`
+    /// extension), so a reactivation only tells it one that differs.
+    mode: ProcessMode,
 }
 
 impl ClapVoice {
@@ -72,6 +75,7 @@ impl ClapVoice {
         io: &AudioIoLayout,
         params: VoiceParams,
         note_events: bool,
+        mode: ProcessMode,
     ) -> Self {
         Self {
             processor: processor.into(),
@@ -82,19 +86,22 @@ impl ClapVoice {
             mix: VoiceMix::default(),
             params,
             note_ids: note_events.then(NoteIds::default),
+            mode,
         }
     }
 
-    /// The same voice on `instance` deactivated and activated again at
-    /// `sample_rate`: CLAP's own way to change the rate, keeping the instance
-    /// and its state (`480-audio-settings.md` decision 8). Main thread, with
+    /// The same voice on `instance` deactivated and activated again for
+    /// `activation`: CLAP's own way to change the rate, keeping the instance
+    /// and its state (`480-audio-settings.md` decision 8), and where the
+    /// plugin is told another render mode (`490-offline-export.md`
+    /// decision 6). Main thread, with
     /// processing stopped ([`stop_processing`](InstrumentVoice::stop_processing))
     /// and the voice out of the mixer. A plugin that won't activate is left
     /// deactivated, and the voice is gone.
     pub(super) fn reactivated(
         self,
         instance: &mut PluginInstance<StevClapHost>,
-        sample_rate: f64,
+        activation: Activation,
     ) -> Result<Self, String> {
         let Self {
             processor,
@@ -105,10 +112,11 @@ impl ClapVoice {
             mut params,
             note_ids,
             mix,
+            mode,
         } = self;
         instance.deactivate(processor.into_stopped());
-        let processor = activate(instance, sample_rate, MAX_FRAMES as u32)?;
-        params.set_sample_rate(sample_rate);
+        let processor = activate(instance, activation, mode, MAX_FRAMES as u32)?;
+        params.set_sample_rate(activation.sample_rate);
         Ok(Self {
             processor: processor.into(),
             in_events,
@@ -118,6 +126,7 @@ impl ClapVoice {
             mix,
             params,
             note_ids: note_ids.map(|_| NoteIds::default()),
+            mode: activation.mode,
         })
     }
 

@@ -16,7 +16,7 @@
 
 use std::time::Duration;
 
-use super::voice::InstrumentVoice;
+use super::voice::{Activation, InstrumentVoice};
 use crate::models::knobs::ParamId;
 
 /// One of a plugin's parameters, as the knob panel shows it.
@@ -103,17 +103,27 @@ pub(crate) trait InstrumentEditor {
     /// dropped. The editor is dropped immediately afterwards.
     fn deactivate(&mut self);
 
-    /// Reactivates the plugin at `sample_rate`, in place: the stream's rate
-    /// changed under it (`480-audio-settings.md` decision 8). `voice` is the
-    /// one its last activation made, which the mixer has stopped and let go
-    /// of. The instance, its editor and its state are kept. Returns the voice
-    /// to insert again, or why the plugin wouldn't reactivate; it is then
-    /// left for [`deactivate`](Self::deactivate) and dropped.
+    /// Reactivates the plugin for `activation`, in place: the stream's rate
+    /// changed under it (`480-audio-settings.md` decision 8), or an audio
+    /// export wants it in its offline mode, or back out of it
+    /// (`490-offline-export.md` decision 6). `voice` is the one its last
+    /// activation made, which the mixer has stopped and let go of. The
+    /// instance, its editor and its state are kept. Returns the voice to
+    /// insert again, or why the plugin wouldn't reactivate; it is then left
+    /// for [`deactivate`](Self::deactivate) and dropped.
     fn reactivate(
         &mut self,
         voice: Box<dyn InstrumentVoice>,
-        sample_rate: f64,
+        activation: Activation,
     ) -> Result<Box<dyn InstrumentVoice>, String>;
+
+    /// Whether the plugin says it can only render in real time (CLAP's
+    /// `has_hard_realtime_requirement`: a proxy for hardware, say). Such a
+    /// plugin refuses an audio export, which renders offline
+    /// (`490-offline-export.md` decision 7). The default is that it can.
+    fn needs_real_time(&self) -> bool {
+        false
+    }
 
     /// Per-frame servicing on the main thread: plugin timer callbacks, window
     /// state, pending resizes. `yield_to_main` while the main window shows a

@@ -24,6 +24,7 @@ use std::sync::Arc;
 
 use crate::core::audio::MAX_FRAMES;
 use crate::core::plugin_host::catalog::PluginCatalogEntry;
+use crate::core::plugin_host::voice::Activation;
 use crate::core::plugin_host::{LoadedInstrument, PluginAudioHandle};
 
 pub(super) use editor::ClapEditor;
@@ -44,26 +45,36 @@ pub(super) fn load(
     track: usize,
     entry: &PluginCatalogEntry,
     state: Option<&[u8]>,
-    sample_rate: f64,
+    activation: Activation,
 ) -> Result<LoadedInstrument, String> {
     let loaded = engine::load(
         &entry.bundle_path,
         &entry.plugin_id,
-        sample_rate,
+        activation,
         MAX_FRAMES as u32,
         Arc::clone(&handle.ui_wake),
         state,
     )?;
 
-    let (editor_params, voice_params) =
-        params::bridge(loaded.params, sample_rate, Arc::clone(&handle.ui_wake));
+    let (editor_params, voice_params) = params::bridge(
+        loaded.params,
+        activation.sample_rate,
+        Arc::clone(&handle.ui_wake),
+    );
     let voice = ClapVoice::new(
         loaded.processor,
         MAX_FRAMES,
         &loaded.io,
         voice_params,
         loaded.note_events,
+        activation.mode,
     );
-    let editor = ClapEditor::new(loaded.instance, &loaded.name, track, editor_params);
+    let editor = ClapEditor::new(
+        loaded.instance,
+        &loaded.name,
+        track,
+        editor_params,
+        loaded.needs_real_time,
+    );
     Ok((Box::new(voice), Box::new(editor)))
 }

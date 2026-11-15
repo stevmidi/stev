@@ -21,11 +21,11 @@ use vst3::ComWrapper;
 use vst3::Steinberg::Vst::ProcessContext_::StatesAndFlags_::{
     kCycleActive, kPlaying, kProjectTimeMusicValid, kTempoValid, kTimeSigValid,
 };
+use vst3::Steinberg::Vst::SymbolicSampleSizes_::kSample32;
 use vst3::Steinberg::Vst::{
     AudioBusBuffers, AudioBusBuffers__type0, IAudioProcessor, IAudioProcessorTrait, IEventList,
     IParameterChanges, ProcessContext, ProcessData,
 };
-use vst3::Steinberg::Vst::{ProcessModes_::kRealtime, SymbolicSampleSizes_::kSample32};
 use vst3::Steinberg::kResultOk;
 
 use crate::core::config::MAX_TRACKS;
@@ -34,12 +34,13 @@ use crate::core::plugin_host::buffers::{AudioIoLayout, PortBuffers, channel_tota
 use crate::core::plugin_host::note_ids::NoteIds;
 use crate::core::plugin_host::transport::BlockTransport;
 use crate::core::plugin_host::voice::{
-    EVENT_CAPACITY, InstrumentVoice, VoiceMix, note_reset_messages,
+    Activation, EVENT_CAPACITY, InstrumentVoice, VoiceMix, note_reset_messages,
 };
 use crate::core::sequencer::NoteSource;
 use crate::core::time::ticks_to_beats_f64;
 use crate::models::knobs::ParamId;
 
+use super::component::process_mode;
 use super::events::{MidiMap, Translated, displaced_note_off, translate};
 use super::host::HostEventList;
 use super::params::ParamReceiver;
@@ -127,10 +128,13 @@ pub(super) struct Vst3Voice {
     tail_samples: u32,
     /// The mixer-owned render flags and gain ramp.
     mix: VoiceMix,
-    /// The device sample rate this plugin was activated against — fixed
-    /// until a [reactivation](Self::reactivated), and carried into every
-    /// block's `ProcessContext` (see [`process_context`]).
-    sample_rate: f64,
+    /// What this plugin's processor was set up for — fixed until a
+    /// [reactivation](Self::reactivated). Its rate is carried into every
+    /// block's `ProcessContext` (see [`process_context`]) and its mode into
+    /// every block's `ProcessData`, as `setupProcessing` was told: real
+    /// time even in an export's render for a plugin that refused the
+    /// offline setup ([`reactivate`](super::component::reactivate)).
+    activation: Activation,
 }
 
 impl Vst3Voice {
@@ -143,7 +147,7 @@ impl Vst3Voice {
         params: ParamReceiver,
         midi_map: MidiMap,
         tail_samples: u32,
-        sample_rate: f64,
+        activation: Activation,
     ) -> Self {
         Self {
             processor,
@@ -157,16 +161,16 @@ impl Vst3Voice {
             heartbeat_phase: 0,
             tail_samples,
             mix: VoiceMix::default(),
-            sample_rate,
+            activation,
         }
     }
 
-    /// The voice of the same plugin activated again at `sample_rate`, with
+    /// The voice of the same plugin activated again for `activation`, with
     /// the `tail_samples` it now declares ([`reactivate`](super::component::reactivate)):
     /// carried into every block's `ProcessContext` from here on, its note
     /// ids and silence count starting afresh.
-    pub(super) fn reactivated(&mut self, sample_rate: f64, tail_samples: u32) {
-        self.sample_rate = sample_rate;
+    pub(super) fn reactivated(&mut self, activation: Activation, tail_samples: u32) {
+        self.activation = activation;
         self.tail_samples = tail_samples;
         self.note_ids = NoteIds::default();
         self.wake();
@@ -229,10 +233,10 @@ impl InstrumentVoice for Vst3Voice {
         let mut out_buses = [EMPTY_BUS; MAX_BUSES];
         let num_inputs = fill_buses(&mut self.bufs.inputs, &mut in_ptrs, &mut in_buses);
         let num_outputs = fill_buses(&mut self.bufs.outputs, &mut out_ptrs, &mut out_buses);
-        let mut context = process_context(transport, self.sample_rate);
+        let mut context = process_context(transport, self.activation.sample_rate);
 
         let mut data = ProcessData {
-            processMode: kRealtime as i32,
+            processMode: process_mode(self.activation.mode),
             symbolicSampleSize: kSample32 as i32,
             numSamples: frames as i32,
             numInputs: num_inputs as i32,
@@ -426,6 +430,7 @@ fn may_sleep(silent_samples: u64, tail_samples: u32) -> bool {
 mod tests {
     use std::sync::{Arc, Mutex};
 
+    use vst3::Steinberg::Vst::ProcessModes_::{kOffline, kRealtime};
     use vst3::Steinberg::Vst::{
         BusDirection, IAudioProcessorTrait, IEventListTrait, ProcessSetup, SpeakerArrangement,
     };
@@ -433,17 +438,23 @@ mod tests {
     use vst3::{Class, ComRef};
 
     use super::*;
+    use crate::core::plugin_host::voice::ProcessMode;
     use crate::core::plugin_host::vst3::params::bridge;
     use crate::core::time::{Meter, PPQN};
 
     /// Block size the fake-processor tests render at.
     const FRAMES: usize = 512;
 
+    /// A log of `process` calls, one entry each.
+    type CallLog = Arc<Mutex<Vec<i32>>>;
+
     /// A silent stand-in processor that logs how many events each `process`
     /// call was handed.
     struct FakeProcessor {
         /// One entry per `process` call: that call's event count.
         calls: Arc<Mutex<Vec<i32>>>,
+        /// One entry per `process` call: that call's `processMode`.
+        modes: Arc<Mutex<Vec<i32>>>,
     }
 
     impl Class for FakeProcessor {
@@ -487,6 +498,11 @@ mod tests {
                 ComRef::from_raw((*data).inputEvents).map_or(-1, |events| events.getEventCount())
             };
             self.calls.lock().unwrap().push(count);
+            // SAFETY: as above.
+            self.modes
+                .lock()
+                .unwrap()
+                .push(unsafe { (*data).processMode });
             kResultOk
         }
         unsafe fn getTailSamples(&self) -> uint32 {
@@ -496,9 +512,17 @@ mod tests {
 
     /// A stereo voice around a [`FakeProcessor`], plus that processor's log.
     fn fake_voice() -> (Vst3Voice, Arc<Mutex<Vec<i32>>>) {
+        let (voice, calls, _modes) = fake_voice_with_modes();
+        (voice, calls)
+    }
+
+    /// [`fake_voice`], and the processor's log of each call's `processMode`.
+    fn fake_voice_with_modes() -> (Vst3Voice, CallLog, CallLog) {
         let calls = Arc::new(Mutex::new(Vec::new()));
+        let modes = Arc::new(Mutex::new(Vec::new()));
         let processor = ComWrapper::new(FakeProcessor {
             calls: Arc::clone(&calls),
+            modes: Arc::clone(&modes),
         })
         .to_com_ptr::<IAudioProcessor>()
         .unwrap();
@@ -510,9 +534,9 @@ mod tests {
             rx,
             MidiMap::empty(),
             0,
-            48_000.0,
+            Activation::realtime(48_000.0),
         );
-        (voice, calls)
+        (voice, calls, modes)
     }
 
     /// A stopped 4/4 transport at 120 BPM, one bar of loop region.
@@ -544,6 +568,22 @@ mod tests {
         while !voice.mix().sleeping {
             run_block(voice);
         }
+    }
+
+    #[test]
+    fn every_block_carries_the_mode_the_voice_was_activated_in() {
+        let (mut voice, _calls, modes) = fake_voice_with_modes();
+        run_block(&mut voice);
+        let offline = Activation {
+            sample_rate: 48_000.0,
+            mode: ProcessMode::Offline,
+        };
+        voice.reactivated(offline, 0);
+        run_block(&mut voice);
+        assert_eq!(
+            *modes.lock().unwrap(),
+            vec![kRealtime as i32, kOffline as i32]
+        );
     }
 
     #[test]

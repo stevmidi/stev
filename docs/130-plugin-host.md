@@ -78,10 +78,12 @@ methods take a track's position and look the slot up in its `tracks` mirror
   scheduling delay: one buffer of the running stream (256 frames as asked for).
 - **Sample rate** is the running stream's (`StreamStatus`, shared from the
   engine): `prepare_instrument` reads it once, activates the plugin at it, and
-  sends it with the voice (`PluginHostCommand::Insert::sample_rate`). When an
+  sends it with the voice, as half of its `Activation` (the rate and the
+  `ProcessMode`, real time or offline: `PluginHostCommand::Insert::activation`;
+  the mode is § Audio export's). When an
   outside change restarts the engine at another rate (`480-audio-settings.md`),
   the mixer holds every voice activated at the old rate silent
-  (`InstrumentMixer::voice_rates`) while the UI has it back and reactivates
+  (`InstrumentMixer::voice_activations`) while the UI has it back and reactivates
   it in place: `Display::return_stale_voices` sends
   `PluginHostCommand::Return`, the mixer stops the voice
   (`InstrumentVoice::stop_processing`) and hands it back through the reclaim
@@ -351,8 +353,8 @@ methods take a track's position and look the slot up in its `tracks` mirror
 
 | File | Responsibility |
 |---|---|
-| `mod.rs` | `start_plugin_host` (build `InstrumentMixer`, `EngineHandle::add_source` it into the audio engine, spawn the `"plugin-host"` thread), `start_plugin_catalog_scan` (spawns the `"plugin-catalog-scan"` thread), `load_instrument` (**the one place a format is chosen** - dispatches on `entry.format`, then `Insert`s the returned voice), `PluginAudioHandle` (`cmd_tx` / `voice_back_rx` / `shutdown` / `sample_rate()` / `reactivate` / `insert_ready` / `repaint` - the egui context slot `start_plugin_host` is handed once, so `load_instrument` takes no format-specific arguments - / `ui_wake`), `LoadedInstrument`, `reclaim_voices` (the `"plugin-host"` thread loop: drops removed voices, passes returned ones to the UI as `VoiceBack::Returned`, and makes the UI wakes `UiWake` asks for), `VoiceBack` / `ReturnedVoice` / `ReadyVoice` (a voice held for an audio restart's insert; `PreparedInstrument::into_ready` makes one from a reload). Voices are built for `core::audio::MAX_FRAMES`. |
-| `voice.rs` | The `InstrumentVoice` trait and `VoiceMix` - the mixer-owned `sleeping` / `rendered` flags and gain-ramp endpoints every voice carries. Also `note_reset_messages`, the burst `queue_note_reset` queues into every new voice. They live on the voice rather than in a parallel array in the mixer because the render pass is the loop spread across worker threads, where each worker may only touch its own voice. |
+| `mod.rs` | `start_plugin_host` (build `InstrumentMixer`, `EngineHandle::add_source` it into the audio engine, spawn the `"plugin-host"` thread), `start_plugin_catalog_scan` (spawns the `"plugin-catalog-scan"` thread), `load_instrument` (**the one place a format is chosen** - dispatches on `entry.format`, then `Insert`s the returned voice), `PluginAudioHandle` (`cmd_tx` / `voice_back_rx` / `shutdown` / `activation()` (the rate and mode a plugin is activated for now) / `reactivate` / `insert_ready` / `repaint` - the egui context slot `start_plugin_host` is handed once, so `load_instrument` takes no format-specific arguments - / `ui_wake`), `LoadedInstrument`, `reclaim_voices` (the `"plugin-host"` thread loop: drops removed voices, passes returned ones to the UI as `VoiceBack::Returned`, and makes the UI wakes `UiWake` asks for), `VoiceBack` / `ReturnedVoice` / `ReadyVoice` (a voice held for an audio restart's insert; `PreparedInstrument::into_ready` makes one from a reload). Voices are built for `core::audio::MAX_FRAMES`. |
+| `voice.rs` | The `InstrumentVoice` trait, `Activation` / `ProcessMode` (what a voice was activated for: its rate, and real time or offline) and `VoiceMix` - the mixer-owned `sleeping` / `rendered` flags and gain-ramp endpoints every voice carries. Also `note_reset_messages`, the burst `queue_note_reset` queues into every new voice. They live on the voice rather than in a parallel array in the mixer because the render pass is the loop spread across worker threads, where each worker may only touch its own voice. |
 | `editor.rs` | The `InstrumentEditor` trait - the `!Send` main-thread half. `close` (= `teardown_gui`) and `toggle` (on `is_open`) are default methods, so a format supplies only `is_open`. |
 | `buffers.rs` | `AudioIoLayout` (a plugin's declared channels per input/output port or bus; `new` applies the one-stereo-output fallback) and `PortBuffers` - the `[port][channel]` buffer set every voice renders into: silent input feed, capacity-reserved outputs, `prepare_outputs(frames)`, `main_sample` (port-0-only, mono/empty/out-of-range-safe - what the mixer sums) and `main_output_silent`. Each format builds its own FFI view over it. Unit-tested. |
 | `mixer.rs` | `InstrumentMixer` (`impl AudioSource` - the audio-callback state: `[Option<Box<dyn InstrumentVoice>>; MAX_TRACKS]`, the `pending` scheduling buffer and per-block dispatch, the render/sum two-pass split, the per-track gain ramp, summed into the engine's `mix`, the audio export's tap fed from the summing pass, and the track meters' `MeterBallistics` per slot and channel), `PluginHostCommand`, `within_block_offset`. `AudioClock` lives in `core::audio`. Unit-tested: the pending sort's note-off/note-on ordering, `within_block_offset` clamping, the partition-point sub-block selection, and (with `test_voice::ConstantVoice`) the meter reading after the fader and balance and falling for a muted or sleeping voice. |
@@ -502,8 +504,59 @@ another caller and a tap on this mixer; nothing new renders audio or
 schedules events. Built 2026-10-18/19 as a real-time playback run (the phase
 plan, with the decisions behind it, is `archive/300-export-to-audio.md`);
 since 2026-11-14 an **offline render** in virtual time, with the device
-closed (`490-offline-export.md`, phase 2: the plugins are still told they
-run in real time).
+closed (`490-offline-export.md`), the plugins switched to their offline
+mode for it (phase 3, § The plugins' offline mode below).
+
+### The plugins' offline mode
+
+A plugin rendered faster than real time while it believes it is live can
+get it wrong: a sampler streaming from disk drops the notes whose samples
+haven't arrived. So every loaded plugin is told, for the run
+(`490-offline-export.md` decision 6):
+
+- **The activation is the rate and the mode.** `Activation { sample_rate,
+  mode }` (`voice.rs`) is what a voice was activated for, and
+  `PluginAudioHandle::activation` what is wanted now: the stream's rate,
+  and `ProcessMode::Offline` from the moment an export is asked for until
+  it ends (`AudioExportAtomics::running`), `Realtime` otherwise. The mixer
+  renders a voice only in blocks of its own activation
+  (`voice_activations` against the stream's rate and `RenderCtx::offline`):
+  a voice still told it is live is silent in the export's render, and one
+  still told it is offline is silent on the device.
+- **The switch is `480`'s reactivation path, whole.**
+  `Display::return_stale_voices` asks back every voice whose activation
+  isn't the wanted one, and the audio restart reactivates one per frame and
+  puts them back together, as for a rate change. The panel is titled
+  "Preparing export" while a run is on, "Restarting audio" for the switch
+  back after it (`Display::audio_restart`).
+- **VST3**: `ProcessSetup::processMode` and every block's
+  `ProcessData::processMode` are `kOffline` (`component::process_mode`),
+  set through the `setActive(false)` → `setupProcessing` → `setActive(true)`
+  of `component::reactivate`. A plugin that refuses the offline setup is
+  set up for real time instead and renders the export as it plays, logged;
+  its voice carries the mode it was set up in.
+- **CLAP**: the `render` extension (`clack-extensions`' `render` feature),
+  `PluginRender::set` on the main thread between the deactivate and the
+  activate of `ClapVoice::reactivated` (`engine::activate`), and only when
+  the mode differs from the one the plugin was last told, so a load or a
+  rate change never touches it. A plugin without the extension renders the
+  same either way; one that declines keeps its mode and still renders,
+  logged.
+- **The run waits for it.** Each frame the UI says whether a run's plugins
+  are all in the mixer, offline (`AudioExportAtomics::plugins_offline`),
+  and the writer waits for that before it has the engine render
+  (`ExportWriter::wait_for_plugins`). There is no timeout: the switch needs
+  UI frames, and a window that isn't drawing holds the export at "Preparing
+  export" until it is shown. Esc ends the wait
+  (`AudioExportAtomics::cancelled`, set by `Sequencer::cancel_audio_export`:
+  with no render yet there may be no mixer block to carry the closing marks
+  to the writer); the run was never rendered and its empty files go.
+- **A plugin that needs real time refuses the export.** CLAP's
+  `has_hard_realtime_requirement`, asked once as the plugin loads
+  (`InstrumentEditor::needs_real_time`). The export key is answered in the
+  footer, "Can't export: <plugin> needs real time", and nothing is sent
+  (`Display::real_time_only_instrument`). Any loaded plugin counts, in the
+  export or not: they are all switched.
 
 ### The run
 
@@ -537,7 +590,8 @@ run in real time).
   ("Audio export needs the plugin host (macOS)"); the plan and `WavWriter`
   are cross-platform.
 - **Rendered offline, in virtual time** (`490-offline-export.md`). Nothing
-  plays the run in real time. The writer, its files open, has the engine
+  plays the run in real time. The writer, its files open and the plugins
+  offline (below), has the engine
   render it (`AudioControl::render_offline` with an `ExportRender`): the
   `"audio-engine"` thread drops its stream, keeps the mixer and renders
   block after block as fast as the plugins compute

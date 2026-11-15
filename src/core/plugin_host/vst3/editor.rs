@@ -43,7 +43,7 @@ use vst3::{Class, ComPtr, ComRef, ComWrapper};
 
 use crate::core::audio::MAX_FRAMES;
 use crate::core::plugin_host::editor::{InstrumentEditor, ParameterGesture, ParameterInfo};
-use crate::core::plugin_host::voice::InstrumentVoice;
+use crate::core::plugin_host::voice::{Activation, InstrumentVoice};
 use crate::core::plugin_host::window::{FALLBACK_SIZE, PluginWindow, editor_level, editor_title};
 use crate::models::knobs::ParamId;
 
@@ -321,11 +321,11 @@ impl InstrumentEditor for Vst3Editor {
     }
 
     /// `setActive(false)` → `setupProcessing` → `setActive(true)` on the
-    /// component, then the voice told its new rate and tail.
+    /// component, then the voice told its new rate, mode and tail.
     fn reactivate(
         &mut self,
         voice: Box<dyn InstrumentVoice>,
-        sample_rate: f64,
+        activation: Activation,
     ) -> Result<Box<dyn InstrumentVoice>, String> {
         let mut voice = voice
             .into_any()
@@ -337,9 +337,9 @@ impl InstrumentEditor for Vst3Editor {
         // SAFETY: this is the main thread, which owns the component; it is
         // live and active (`finished` is clear), and its voice is here, out of
         // the mixer, so no `process` call can be in flight.
-        let tail_samples =
-            unsafe { reactivate(&self.plugin.component, sample_rate, MAX_FRAMES as u32)? };
-        voice.reactivated(sample_rate, tail_samples);
+        let (tail_samples, mode) =
+            unsafe { reactivate(&self.plugin.component, activation, MAX_FRAMES as u32)? };
+        voice.reactivated(Activation { mode, ..activation }, tail_samples);
         Ok(voice)
     }
 

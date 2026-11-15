@@ -25,6 +25,7 @@ use super::mixer::{InstrumentMixer, PluginHostCommand};
 use super::shutdown::HostShutdown;
 use super::test_voice::ConstantVoice;
 use super::transport::TransportState;
+use super::voice::{Activation, ProcessMode};
 
 const BAR: i32 = Meter::FOUR_FOUR.bars_to_ticks(1);
 
@@ -123,7 +124,10 @@ fn export(
         .push(PluginHostCommand::Insert {
             track: slot,
             voice: Box::new(ConstantVoice::new(LEVEL)),
-            sample_rate: rate_hz,
+            activation: Activation {
+                sample_rate: rate_hz,
+                mode: ProcessMode::Offline,
+            },
         })
         .ok()
         .unwrap();

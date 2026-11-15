@@ -39,6 +39,7 @@ use log::info;
 
 use crate::core::audio::MAX_FRAMES;
 use crate::core::plugin_host::catalog::PluginCatalogEntry;
+use crate::core::plugin_host::voice::Activation;
 use crate::core::plugin_host::{LoadedInstrument, PluginAudioHandle};
 
 use editor::Vst3Editor;
@@ -52,12 +53,12 @@ pub(super) fn load(
     track: usize,
     entry: &PluginCatalogEntry,
     state: Option<&[u8]>,
-    sample_rate: f64,
+    activation: Activation,
 ) -> Result<LoadedInstrument, String> {
     let loaded = component::load(
         &entry.bundle_path,
         &entry.plugin_id,
-        sample_rate,
+        activation,
         MAX_FRAMES as u32,
         state,
         Arc::clone(&handle.repaint),
@@ -81,7 +82,10 @@ pub(super) fn load(
         loaded.params,
         loaded.midi_map,
         loaded.tail_samples,
-        sample_rate,
+        Activation {
+            mode: loaded.mode,
+            ..activation
+        },
     )
     .staggered_for(track);
     let editor = Vst3Editor::new(loaded.main, &entry.name, track, parameters);

@@ -81,6 +81,7 @@ clack-extensions = { version = "0.2", features = [
     "log",
     "state",
     "thread-check",
+    "render",
 ] }
 # Native NSWindow for the (embedded) plugin editor, the app menu's Quit
 # item and eframe's GL context (`view/appkit.rs`). Versions already in the tree via

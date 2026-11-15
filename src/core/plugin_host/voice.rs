@@ -67,6 +67,52 @@ impl Default for VoiceMix {
     }
 }
 
+/// Whether a plugin has been told it renders against the clock or not
+/// (`490-offline-export.md` decision 6): VST3's `processMode`, CLAP's
+/// `render` extension.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum ProcessMode {
+    /// Playing through the device, a deadline per block.
+    #[default]
+    Realtime,
+    /// An audio export's render: as fast as it computes, and free to wait
+    /// (a sampler for its disk, say) rather than drop a note.
+    Offline,
+}
+
+impl ProcessMode {
+    /// The mode a block is rendered in: `offline` is `RenderCtx::offline`.
+    pub(crate) fn of_block(offline: bool) -> Self {
+        if offline {
+            ProcessMode::Offline
+        } else {
+            ProcessMode::Realtime
+        }
+    }
+}
+
+/// What a plugin was activated for: the sample rate and the mode. A voice
+/// only renders blocks of its own activation; the mixer holds it silent in
+/// any other, until the UI has it back and reactivates it
+/// (`480-audio-settings.md` decision 8, `490-offline-export.md` decision 6).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Activation {
+    /// The sample rate, Hz.
+    pub(crate) sample_rate: f64,
+    /// Real time or offline.
+    pub(crate) mode: ProcessMode,
+}
+
+impl Activation {
+    /// Playing through a device at `sample_rate`.
+    pub(crate) fn realtime(sample_rate: f64) -> Self {
+        Activation {
+            sample_rate,
+            mode: ProcessMode::Realtime,
+        }
+    }
+}
+
 /// One hosted instrument as the audio thread sees it: a plugin that can be fed
 /// MIDI, asked to render a block, and read back a sample at a time.
 ///
@@ -127,7 +173,7 @@ pub(crate) trait InstrumentVoice: Send {
     fn mix_mut(&mut self) -> &mut VoiceMix;
 
     /// Stops the plugin processing, on the audio thread, as the mixer hands
-    /// the voice back to be reactivated at another rate
+    /// the voice back to be reactivated at another rate or in another mode
     /// (`PluginHostCommand::Return`): CLAP's `stop_processing` may only be
     /// called there. The default does nothing.
     fn stop_processing(&mut self) {}

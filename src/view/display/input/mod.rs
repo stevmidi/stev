@@ -1420,7 +1420,15 @@ impl Display {
             // ⌘/Ctrl+⇧+R — "Export Audio" (Ableton's chord): the marquee's
             // time as WAV stems plus a mix. Without a marquee, and in the
             // clip view, the sequencer says to make one.
+            // A plugin that can only render in real time refuses it: the
+            // export renders offline (`490-offline-export.md` decision 7).
             InputEvent::Action(Action::ExportAudio) => {
+                #[cfg(target_os = "macos")]
+                if let Some(plugin) = self.real_time_only_instrument() {
+                    let message = format!("Can't export: {plugin} needs real time");
+                    self.render.status = Some(StatusMessage::new(message));
+                    return true;
+                }
                 let (time_bounds, name) = self.export_scope();
                 self.input_event_tx
                     .send(InputEvent::ExportAudio { time_bounds, name })

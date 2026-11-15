@@ -8,12 +8,14 @@ use std::sync::Arc;
 use clack_extensions::audio_ports::{AudioPortInfoBuffer, PluginAudioPorts};
 use clack_extensions::note_ports::{NoteDialect, NotePortInfoBuffer, PluginNotePorts};
 use clack_extensions::params::{ParamInfoBuffer, ParamInfoFlags};
+use clack_extensions::render::{PluginRender, RenderMode};
 use clack_host::prelude::*;
 use log::{debug, info, warn};
 
 use crate::core::plugin_host::buffers::AudioIoLayout;
 use crate::core::plugin_host::catalog::available_bundles_hint;
 use crate::core::plugin_host::ui_wake::UiWake;
+use crate::core::plugin_host::voice::{Activation, ProcessMode};
 
 use super::discovery::{cached_entry, descriptor_name};
 use super::host::{ClapHostMainThread, ClapHostShared, StevClapHost};
@@ -105,13 +107,53 @@ fn read_parameters(instance: &mut PluginInstance<StevClapHost>) -> ParamValues {
     ParamValues::new(read)
 }
 
-/// Activates `instance` at `sample_rate`, for blocks of up to `max_frames`:
-/// the end of a load, and of a reactivation (`ClapVoice::reactivated`).
+/// Tells a plugin with the `render` extension which `mode` it renders in
+/// (`490-offline-export.md` decision 6). Main thread, and only ever while
+/// the plugin is deactivated: the extension doesn't ask for that, but it is
+/// when a plugin can rebuild what it must. One without the extension
+/// renders the same either way. A plugin that declines keeps the mode it
+/// was in, and still renders: it is only logged. So is one that takes the
+/// mode, to tell from the log which plugins have the extension.
+fn set_render_mode(instance: &mut PluginInstance<StevClapHost>, mode: ProcessMode) {
+    let plugin = instance.plugin_handle();
+    let Some(render) = plugin.get_extension::<PluginRender>() else {
+        return;
+    };
+    let render_mode = match mode {
+        ProcessMode::Realtime => RenderMode::Realtime,
+        ProcessMode::Offline => RenderMode::Offline,
+    };
+    match render.set(&plugin, render_mode) {
+        Ok(()) => info!("clap host: the plugin took the {mode:?} render mode"),
+        Err(_) => warn!("clap host: the plugin declined the {mode:?} render mode"),
+    }
+}
+
+/// Whether the plugin says it can only render in real time (the `render`
+/// extension's `has_hard_realtime_requirement`). Main thread.
+fn needs_real_time(instance: &mut PluginInstance<StevClapHost>) -> bool {
+    let plugin = instance.plugin_handle();
+    plugin
+        .get_extension::<PluginRender>()
+        .is_some_and(|render| render.has_realtime_requirement(&plugin))
+}
+
+/// Activates `instance` for `activation` (told the mode first, then
+/// activated at the rate), for blocks of up to `max_frames`: the end of a
+/// load, and of a reactivation (`ClapVoice::reactivated`). `told` is the
+/// mode the plugin was last told, real time for a fresh instance, which
+/// starts there: it is only told a mode that differs, so an ordinary load
+/// or rate change never touches the extension.
 pub(super) fn activate(
     instance: &mut PluginInstance<StevClapHost>,
-    sample_rate: f64,
+    activation: Activation,
+    told: ProcessMode,
     max_frames: u32,
 ) -> Result<StoppedPluginAudioProcessor<StevClapHost>, String> {
+    let Activation { sample_rate, mode } = activation;
+    if mode != told {
+        set_render_mode(instance, mode);
+    }
     let configuration = PluginAudioConfiguration {
         sample_rate,
         min_frames_count: 1,
@@ -141,6 +183,8 @@ pub(super) struct LoadedPlugin {
     pub(super) note_events: bool,
     /// Display name, for the editor window title.
     pub(super) name: String,
+    /// Whether the plugin says it can only render in real time.
+    pub(super) needs_real_time: bool,
 }
 
 /// Loads the plugin `plugin_id` from the `.clap` bundle at `bundle_path` and
@@ -152,7 +196,7 @@ pub(super) struct LoadedPlugin {
 pub(super) fn load(
     bundle_path: &Path,
     plugin_id: &str,
-    sample_rate: f64,
+    activation: Activation,
     max_frames: u32,
     wake: Arc<UiWake>,
     state: Option<&[u8]>,
@@ -223,9 +267,10 @@ pub(super) fn load(
     let io = query_audio_io(&mut instance);
     let params = read_parameters(&mut instance);
     let note_events = accepts_note_events(&mut instance, &name);
+    let needs_real_time = needs_real_time(&mut instance);
 
-    let processor =
-        activate(&mut instance, sample_rate, max_frames).map_err(|e| format!("'{name}': {e}"))?;
+    let processor = activate(&mut instance, activation, ProcessMode::Realtime, max_frames)
+        .map_err(|e| format!("'{name}': {e}"))?;
 
     Ok(LoadedPlugin {
         instance,
@@ -234,5 +279,6 @@ pub(super) fn load(
         params,
         note_events,
         name,
+        needs_real_time,
     })
 }

@@ -8,6 +8,12 @@
 //! it has got for the footer (`AudioExportAtomics::written_ms`; the UI
 //! repaints on its own while the transport reads as running).
 //!
+//! Before the render is asked for, the writer waits for the UI thread to
+//! have every plugin in its offline mode
+//! (`AudioExportAtomics::plugins_offline`, `490-offline-export.md`
+//! decision 6): the mixer holds a voice in another mode silent, so a run
+//! started early would write silence. Only Esc ends that wait.
+//!
 //! The render waits for the writer, never the other way round: the tap holds
 //! a block until its rings have room. The writer only gives a run up when
 //! nothing has come for [`STALL_TIMEOUT`], and then says so
@@ -216,6 +222,16 @@ impl ExportWriter {
             .collect();
         let mut mix = open(&job.mix);
 
+        // The plugins first: the UI switches them to their offline mode, a
+        // frame each. A run cancelled meanwhile is never rendered; its
+        // files, empty, go with it.
+        if !self.wait_for_plugins() {
+            for wav in stems.into_iter().map(|(_, wav)| wav).chain([mix]).flatten() {
+                wav.finish().ok();
+            }
+            return AudioExportOutcome::default();
+        }
+
         // An engine that is gone renders nothing, which the stall below
         // finds.
         (self.render)(ExportRender::new(
@@ -276,6 +292,22 @@ impl ExportWriter {
                 .map(|(slot, _)| *slot)
                 .filter(|&slot| self.shared.is_silent(slot))
                 .collect(),
+        }
+    }
+
+    /// Waits until the UI thread says every plugin is in its offline mode.
+    /// `false` if Esc cancelled the run first. No timeout: the switch takes
+    /// UI frames, and a window that isn't drawing holds it until it is
+    /// shown; Esc is the way out.
+    fn wait_for_plugins(&self) -> bool {
+        loop {
+            if self.progress.cancelled.load(Ordering::Relaxed) {
+                return false;
+            }
+            if self.progress.plugins_offline.load(Ordering::Relaxed) {
+                return true;
+            }
+            thread::sleep(DRAIN_INTERVAL);
         }
     }
 
@@ -342,6 +374,7 @@ mod tests {
     use std::fs;
     use std::io::Cursor;
     use std::path::PathBuf;
+    use std::sync::atomic::AtomicBool;
 
     use crossbeam_channel::unbounded;
     use rtrb::{Producer, RingBuffer};
@@ -354,14 +387,16 @@ mod tests {
 
     /// A writer at 1 kHz and the tap feeding it, with its marks ring. The
     /// engine it asks to render is none: a test pushes through the tap
-    /// itself.
+    /// itself. The plugins are offline already.
     fn writer() -> (ExportWriter, ExportTap, Producer<ExportMark>) {
         let (marks, marks_rx) = RingBuffer::new(4);
         let (tap, rings, shared) = export_tap(marks_rx, 1_000.0);
+        let progress = Arc::new(AudioExportAtomics::default());
+        progress.plugins_offline.store(true, Ordering::Relaxed);
         let writer = ExportWriter::new(
             rings,
             shared,
-            Arc::new(AudioExportAtomics::default()),
+            progress,
             Arc::new(StreamStatus::new(1_000)),
             unbounded().0,
             Box::new(|_| {}),
@@ -420,6 +455,43 @@ mod tests {
         assert_eq!(wav_len(&job.stems[0].1), four_frames);
         assert_eq!(wav_len(&job.mix), four_frames);
         assert_eq!(writer.progress.written_ms.load(Ordering::Relaxed), 4);
+        fs::remove_dir_all(&folder).unwrap();
+    }
+
+    #[test]
+    fn the_render_waits_for_the_plugins_to_be_offline() {
+        let (mut writer, mut tap, mut marks) = writer();
+        let progress = Arc::clone(&writer.progress);
+        progress.plugins_offline.store(false, Ordering::Relaxed);
+        let asked = Arc::new(AtomicBool::new(false));
+        let was_asked = Arc::clone(&asked);
+        writer.render = Box::new(move |_| was_asked.store(true, Ordering::Relaxed));
+        let (job, folder) = job(1, "waits");
+        play(&mut tap, &mut marks, 1);
+
+        let writing = thread::spawn(move || writer.write(&job));
+        thread::sleep(Duration::from_millis(50));
+        assert!(!asked.load(Ordering::Relaxed), "not while a plugin is live");
+        progress.plugins_offline.store(true, Ordering::Relaxed);
+        let outcome = writing.join().unwrap();
+        assert!(asked.load(Ordering::Relaxed));
+        assert_eq!(outcome.stopped, None);
+        fs::remove_dir_all(&folder).unwrap();
+    }
+
+    #[test]
+    fn a_run_cancelled_while_the_plugins_switch_is_never_rendered() {
+        let (mut writer, _tap, _marks) = writer();
+        writer
+            .progress
+            .plugins_offline
+            .store(false, Ordering::Relaxed);
+        writer.progress.cancelled.store(true, Ordering::Relaxed);
+        writer.render = Box::new(|_| panic!("a cancelled run was rendered"));
+        let (job, folder) = job(1, "cancelled-early");
+        let outcome = writer.write(&job);
+        assert_eq!(outcome, AudioExportOutcome::default());
+        assert_eq!(wav_len(&job.mix), u64::from(HEADER_LEN));
         fs::remove_dir_all(&folder).unwrap();
     }
 

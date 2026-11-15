@@ -245,6 +245,7 @@ impl Sequencer {
         let total_ms = ticks_to_millis_f64(self.tempo_us(), plan.end_tick - plan.start_tick);
         let atomics = &self.audio_export_atomics;
         atomics.written_ms.store(0, Ordering::Relaxed);
+        atomics.cancelled.store(false, Ordering::Relaxed);
         atomics.total_ms.store(total_ms as u32, Ordering::Relaxed);
         atomics.running.store(true, Ordering::Relaxed);
         self.audio_export = Some(AudioExportRun {
@@ -294,6 +295,9 @@ impl Sequencer {
         self.close_audio_export();
         if let Some(run) = &mut self.audio_export {
             run.cancelled = true;
+            self.audio_export_atomics
+                .cancelled
+                .store(true, Ordering::Relaxed);
         }
     }
 
@@ -640,7 +644,14 @@ mod tests {
         // clock's.
         assert_eq!(marks.pop(), Ok(ExportMark::End { at: third }));
         assert!(marks.is_empty());
+        // The writer, which may still be waiting for the plugins, hears of
+        // it; the next run starts with the flag down.
+        let atomics = sequencer.audio_export_atomics.clone();
+        assert!(atomics.cancelled.load(Ordering::Relaxed));
         assert!(sequencer.finish_audio_export().unwrap().cancelled);
+        let plan = sequencer.audio_export_plan(two_bars()).unwrap();
+        sequencer.begin_audio_export(plan, PathBuf::new(), origin);
+        assert!(!atomics.cancelled.load(Ordering::Relaxed));
     }
 
     #[test]
