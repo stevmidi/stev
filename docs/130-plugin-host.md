@@ -541,17 +541,21 @@ haven't arrived. So every loaded plugin is told, for the run
   the mode differs from the one the plugin was last told, so a load or a
   rate change never touches it. A plugin without the extension renders the
   same either way; one that declines keeps its mode and still renders,
-  logged.
+  logged, and the voice records the mode it is really in
+  (`ClapVoice::mode`), so the switch back tells it nothing.
 - **The run waits for it.** Each frame the UI says whether a run's plugins
   are all in the mixer, offline (`Display::publish_plugins_offline` →
   `AudioExportAtomics::plugins_offline`),
   and the writer waits for that before it has the engine render
-  (`ExportWriter::wait_for_plugins`). There is no timeout: the switch needs
-  UI frames, and a window that isn't drawing holds the export at "Preparing
-  export" until it is shown. Esc ends the wait
+  (`ExportWriter::wait_for_plugins`). The handler wakes the UI as the
+  run starts, so the switch begins on the next frame. Esc ends the wait
   (`AudioExportAtomics::cancelled`, set by `Sequencer::cancel_audio_export`:
   with no render yet there may be no mixer block to carry the closing marks
-  to the writer); the run was never rendered and its empty files go.
+  to the writer), and so do 30 s of it (`PREPARE_TIMEOUT`): a switch that
+  can't happen (no device open, so no voice can be asked back; a voice
+  that never went back in; a window that isn't drawing) ends the export
+  with "Export stopped: the plugins didn't switch to offline rendering".
+  Either way the run was never rendered and its empty files go.
 - **A plugin that needs real time refuses the export.** CLAP's
   `has_hard_realtime_requirement`, asked once as the plugin loads
   (`InstrumentEditor::needs_real_time`). The export key is answered in the

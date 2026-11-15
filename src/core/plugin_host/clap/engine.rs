@@ -113,20 +113,25 @@ fn read_parameters(instance: &mut PluginInstance<StevClapHost>) -> ParamValues {
 /// when a plugin can rebuild what it must. One without the extension
 /// renders the same either way. A plugin that declines keeps the mode it
 /// was in, and still renders: it is only logged. So is one that takes the
-/// mode, to tell from the log which plugins have the extension.
-fn set_render_mode(instance: &mut PluginInstance<StevClapHost>, mode: ProcessMode) {
+/// mode, to tell from the log which plugins have the extension. Returns
+/// whether the plugin is in `mode` now, as far as the host can tell: `false`
+/// only for one that declined.
+fn set_render_mode(instance: &mut PluginInstance<StevClapHost>, mode: ProcessMode) -> bool {
     let plugin = instance.plugin_handle();
     let Some(render) = plugin.get_extension::<PluginRender>() else {
-        return;
+        return true;
     };
     let render_mode = match mode {
         ProcessMode::Realtime => RenderMode::Realtime,
         ProcessMode::Offline => RenderMode::Offline,
     };
-    match render.set(&plugin, render_mode) {
-        Ok(()) => info!("clap host: the plugin took the {mode:?} render mode"),
-        Err(_) => warn!("clap host: the plugin declined the {mode:?} render mode"),
+    let taken = render.set(&plugin, render_mode).is_ok();
+    if taken {
+        info!("clap host: the plugin took the {mode:?} render mode");
+    } else {
+        warn!("clap host: the plugin declined the {mode:?} render mode");
     }
+    taken
 }
 
 /// Whether the plugin says it can only render in real time (the `render`
@@ -143,17 +148,20 @@ fn needs_real_time(instance: &mut PluginInstance<StevClapHost>) -> bool {
 /// load, and of a reactivation (`ClapVoice::reactivated`). `told` is the
 /// mode the plugin was last told, real time for a fresh instance, which
 /// starts there: it is only told a mode that differs, so an ordinary load
-/// or rate change never touches the extension.
+/// or rate change never touches the extension. Returns the processor and
+/// the mode the plugin is in now: `told` still, for one that declined.
 pub(super) fn activate(
     instance: &mut PluginInstance<StevClapHost>,
     activation: Activation,
     told: ProcessMode,
     max_frames: u32,
-) -> Result<StoppedPluginAudioProcessor<StevClapHost>, String> {
+) -> Result<(StoppedPluginAudioProcessor<StevClapHost>, ProcessMode), String> {
     let Activation { sample_rate, mode } = activation;
-    if mode != told {
-        set_render_mode(instance, mode);
-    }
+    let mode = if mode == told || set_render_mode(instance, mode) {
+        mode
+    } else {
+        told
+    };
     let configuration = PluginAudioConfiguration {
         sample_rate,
         min_frames_count: 1,
@@ -161,6 +169,7 @@ pub(super) fn activate(
     };
     instance
         .activate(|_, _| (), configuration)
+        .map(|processor| (processor, mode))
         .map_err(|e| format!("activate at {sample_rate} Hz: {e}"))
 }
 
@@ -185,6 +194,8 @@ pub(super) struct LoadedPlugin {
     pub(super) name: String,
     /// Whether the plugin says it can only render in real time.
     pub(super) needs_real_time: bool,
+    /// The render mode the plugin is in ([`activate`]).
+    pub(super) mode: ProcessMode,
 }
 
 /// Loads the plugin `plugin_id` from the `.clap` bundle at `bundle_path` and
@@ -269,7 +280,7 @@ pub(super) fn load(
     let note_events = accepts_note_events(&mut instance, &name);
     let needs_real_time = needs_real_time(&mut instance);
 
-    let processor = activate(&mut instance, activation, ProcessMode::Realtime, max_frames)
+    let (processor, mode) = activate(&mut instance, activation, ProcessMode::Realtime, max_frames)
         .map_err(|e| format!("'{name}': {e}"))?;
 
     Ok(LoadedPlugin {
@@ -280,5 +291,6 @@ pub(super) fn load(
         note_events,
         name,
         needs_real_time,
+        mode,
     })
 }

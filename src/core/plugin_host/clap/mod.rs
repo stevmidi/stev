@@ -67,7 +67,7 @@ pub(super) fn load(
         &loaded.io,
         voice_params,
         loaded.note_events,
-        activation.mode,
+        loaded.mode,
     );
     let editor = ClapEditor::new(
         loaded.instance,

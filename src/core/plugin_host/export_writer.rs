@@ -12,7 +12,8 @@
 //! have every plugin in its offline mode
 //! (`AudioExportAtomics::plugins_offline`, `490-offline-export.md`
 //! decision 6): the mixer holds a voice in another mode silent, so a run
-//! started early would write silence. Only Esc ends that wait.
+//! started early would write silence. Esc ends that wait, and so does
+//! [`PREPARE_TIMEOUT`], with a reason for the footer.
 //!
 //! The render waits for the writer, never the other way round: the tap holds
 //! a block until its rings have room. The writer only gives a run up when
@@ -56,6 +57,13 @@ const STALL_TIMEOUT: Duration = Duration::from_secs(3);
 /// takes its time, and then has its stream to drop: longer than any of
 /// that, so only an engine that is gone runs it out.
 const START_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// How long the writer waits for the UI thread to have the plugins in their
+/// offline mode. The switch takes a fraction of a second for a project's
+/// worth; this is for the one that can't happen (no device is open, so no
+/// voice can be asked back; a voice that never went back in; a window that
+/// isn't drawing), so the export ends with a reason instead of waiting on.
+const PREPARE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// How long the render waits for the `"sequencer"` thread's answer to a
 /// step before giving the run up. Under [`STALL_TIMEOUT`], so it is the
@@ -223,11 +231,19 @@ impl ExportWriter {
         let mut mix = open(&job.mix);
 
         // The plugins first: the UI switches them to their offline mode, a
-        // frame each. A run cancelled meanwhile is never rendered; its
-        // files, empty, go with it.
-        if !self.wait_for_plugins() {
+        // frame each. A run cancelled meanwhile, or whose plugins never
+        // switch, is never rendered; its files, empty, go with it.
+        let stopped = match self.wait_for_plugins(PREPARE_TIMEOUT) {
+            PluginWait::Offline => None,
+            PluginWait::Cancelled => Some(None),
+            PluginWait::TimedOut => Some(Some("the plugins didn't switch to offline rendering")),
+        };
+        if let Some(stopped) = stopped {
             finish_all(stems, mix, &mut error);
-            return AudioExportOutcome::default();
+            return AudioExportOutcome {
+                stopped,
+                ..AudioExportOutcome::default()
+            };
         }
 
         // An engine that is gone renders nothing, which the stall below
@@ -291,17 +307,19 @@ impl ExportWriter {
         }
     }
 
-    /// Waits until the UI thread says every plugin is in its offline mode.
-    /// `false` if Esc cancelled the run first. No timeout: the switch takes
-    /// UI frames, and a window that isn't drawing holds it until it is
-    /// shown; Esc is the way out.
-    fn wait_for_plugins(&self) -> bool {
+    /// Waits until the UI thread says every plugin is in its offline mode,
+    /// Esc cancels the run, or `give_up_after` has passed.
+    fn wait_for_plugins(&self, give_up_after: Duration) -> PluginWait {
+        let asked = Instant::now();
         loop {
             if self.progress.cancelled.load(Ordering::Relaxed) {
-                return false;
+                return PluginWait::Cancelled;
             }
             if self.progress.plugins_offline.load(Ordering::Relaxed) {
-                return true;
+                return PluginWait::Offline;
+            }
+            if asked.elapsed() >= give_up_after {
+                return PluginWait::TimedOut;
             }
             thread::sleep(DRAIN_INTERVAL);
         }
@@ -313,6 +331,18 @@ impl ExportWriter {
             drain::<File>(ring, &mut None, &mut None);
         }
     }
+}
+
+/// How the writer's wait for the plugins' offline mode ended
+/// ([`ExportWriter::wait_for_plugins`]).
+#[derive(Debug, PartialEq)]
+enum PluginWait {
+    /// Every plugin is offline: the run can be rendered.
+    Offline,
+    /// Esc cancelled the run first.
+    Cancelled,
+    /// The plugins didn't switch in time.
+    TimedOut,
 }
 
 /// Finishes every file still open, keeping the first error.
@@ -496,6 +526,31 @@ mod tests {
         assert_eq!(outcome, AudioExportOutcome::default());
         assert_eq!(wav_len(&job.mix), u64::from(HEADER_LEN));
         fs::remove_dir_all(&folder).unwrap();
+    }
+
+    #[test]
+    fn plugins_that_never_switch_stop_the_export_with_a_reason() {
+        let (writer, _tap, _marks) = writer();
+        writer
+            .progress
+            .plugins_offline
+            .store(false, Ordering::Relaxed);
+        assert_eq!(
+            writer.wait_for_plugins(Duration::from_millis(20)),
+            PluginWait::TimedOut
+        );
+        // Esc is seen before the clock, and offline plugins before either.
+        writer.progress.cancelled.store(true, Ordering::Relaxed);
+        assert_eq!(
+            writer.wait_for_plugins(Duration::ZERO),
+            PluginWait::Cancelled
+        );
+        writer.progress.cancelled.store(false, Ordering::Relaxed);
+        writer
+            .progress
+            .plugins_offline
+            .store(true, Ordering::Relaxed);
+        assert_eq!(writer.wait_for_plugins(Duration::ZERO), PluginWait::Offline);
     }
 
     #[test]

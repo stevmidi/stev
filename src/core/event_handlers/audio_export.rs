@@ -110,6 +110,9 @@ impl EventHandlers {
             return Err(NEEDS_PLUGIN_HOST.to_owned());
         }
         self.send_transport(TransportCommand::StartExport { tick: start_tick });
+        // The UI switches the plugins to their offline mode, which the
+        // writer waits for: a frame now, not at its next idle wake.
+        self.request_repaint();
         Ok(())
     }
 

@@ -61,8 +61,9 @@ pub(crate) struct ClapVoice {
     /// The ids of the notes sounding, on a plugin that takes native note
     /// events. `None` sends its notes as raw MIDI, with no ids.
     note_ids: Option<NoteIds>,
-    /// The mode the plugin was last told to render in (its `render`
-    /// extension), so a reactivation only tells it one that differs.
+    /// The render mode the plugin is in (its `render` extension): the last
+    /// it was told and took, so a reactivation only tells it one that
+    /// differs.
     mode: ProcessMode,
 }
 
@@ -115,7 +116,7 @@ impl ClapVoice {
             mode,
         } = self;
         instance.deactivate(processor.into_stopped());
-        let processor = activate(instance, activation, mode, MAX_FRAMES as u32)?;
+        let (processor, mode) = activate(instance, activation, mode, MAX_FRAMES as u32)?;
         params.set_sample_rate(activation.sample_rate);
         Ok(Self {
             processor: processor.into(),
@@ -126,7 +127,7 @@ impl ClapVoice {
             mix,
             params,
             note_ids: note_ids.map(|_| NoteIds::default()),
-            mode: activation.mode,
+            mode,
         })
     }
 
