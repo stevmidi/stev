@@ -282,7 +282,7 @@ The same path switches the plugin's mode for an audio export
 (`490-offline-export.md` decision 6): `ProcessSetup::processMode` is
 `kOffline` for the export's render and `kRealtime` otherwise, and every
 block's `ProcessData::processMode` is the mode the setup was given
-(`component::process_mode`, `Vst3Voice::activation`). A plugin that refuses
+(`component::process_mode`, `Vst3Voice::setup`). A plugin that refuses
 the offline setup is set up for real time again and renders the export in
 that mode.
 

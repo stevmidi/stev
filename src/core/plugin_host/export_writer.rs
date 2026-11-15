@@ -226,9 +226,7 @@ impl ExportWriter {
         // frame each. A run cancelled meanwhile is never rendered; its
         // files, empty, go with it.
         if !self.wait_for_plugins() {
-            for wav in stems.into_iter().map(|(_, wav)| wav).chain([mix]).flatten() {
-                wav.finish().ok();
-            }
+            finish_all(stems, mix, &mut error);
             return AudioExportOutcome::default();
         }
 
@@ -280,9 +278,7 @@ impl ExportWriter {
         };
 
         self.abandoned = stopped.is_some();
-        for wav in stems.into_iter().map(|(_, wav)| wav).chain([mix]).flatten() {
-            keep_first_error(&mut error, wav.finish());
-        }
+        finish_all(stems, mix, &mut error);
         AudioExportOutcome {
             stopped,
             error: error.map(|e| e.to_string()),
@@ -316,6 +312,13 @@ impl ExportWriter {
         for ring in self.rings.stems.iter_mut().chain([&mut self.rings.mix]) {
             drain::<File>(ring, &mut None, &mut None);
         }
+    }
+}
+
+/// Finishes every file still open, keeping the first error.
+fn finish_all(stems: Vec<(usize, OpenWav)>, mix: OpenWav, error: &mut Option<io::Error>) {
+    for wav in stems.into_iter().map(|(_, wav)| wav).chain([mix]).flatten() {
+        keep_first_error(error, wav.finish());
     }
 }
 

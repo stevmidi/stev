@@ -82,10 +82,7 @@ pub(super) fn load(
         loaded.params,
         loaded.midi_map,
         loaded.tail_samples,
-        Activation {
-            mode: loaded.mode,
-            ..activation
-        },
+        loaded.setup,
     )
     .staggered_for(track);
     let editor = Vst3Editor::new(loaded.main, &entry.name, track, parameters);

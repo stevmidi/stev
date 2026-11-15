@@ -205,12 +205,6 @@ impl PluginAudioHandle {
         }
     }
 
-    /// Whether an audio export is running: what
-    /// [`activation`](Self::activation)'s mode follows.
-    pub(crate) fn is_exporting(&self) -> bool {
-        self.export.is_running()
-    }
-
     /// Tells the `"audio-export"` thread whether the run's plugins are all
     /// in their offline mode, which it waits for before the run is rendered
     /// (`AudioExportAtomics::plugins_offline`).

@@ -543,7 +543,8 @@ haven't arrived. So every loaded plugin is told, for the run
   same either way; one that declines keeps its mode and still renders,
   logged.
 - **The run waits for it.** Each frame the UI says whether a run's plugins
-  are all in the mixer, offline (`AudioExportAtomics::plugins_offline`),
+  are all in the mixer, offline (`Display::publish_plugins_offline` →
+  `AudioExportAtomics::plugins_offline`),
   and the writer waits for that before it has the engine render
   (`ExportWriter::wait_for_plugins`). There is no timeout: the switch needs
   UI frames, and a window that isn't drawing holds the export at "Preparing

@@ -259,6 +259,7 @@ impl Display {
             }
         }
         self.return_stale_voices();
+        self.publish_plugins_offline();
 
         // What the editors turned: an armed knob's assignment, a knob's
         // parameter turned by hand; and what they are to show of playback
@@ -708,9 +709,7 @@ impl Display {
     /// (`480-audio-settings.md` decision 8), or an audio export has started
     /// and wants the plugins offline, or has ended and wants them back
     /// (`490-offline-export.md` decision 6). Its track is silent meanwhile,
-    /// as the mixer holds such a voice silent anyway. Then tells the
-    /// `"audio-export"` thread whether a run's plugins are all offline: it
-    /// waits for that before the run is rendered.
+    /// as the mixer holds such a voice silent anyway.
     fn return_stale_voices(&mut self) {
         let InstrumentHost {
             audio: Some(handle),
@@ -740,8 +739,25 @@ impl Display {
                     .ask(slot, Instant::now());
             }
         }
-        // Every plugin still loaded is in the mixer, offline: none out to be
-        // switched, none waiting to go back in.
+    }
+
+    /// Per frame, after [`return_stale_voices`](Self::return_stale_voices):
+    /// tells the `"audio-export"` thread whether a run's plugins are all in
+    /// their offline mode, which it waits for before the run is rendered
+    /// (`490-offline-export.md` decision 6). They are once every plugin
+    /// still loaded is in the mixer, offline: none out to be switched, none
+    /// waiting to go back in.
+    fn publish_plugins_offline(&self) {
+        let InstrumentHost {
+            audio: Some(handle),
+            track_instruments,
+            restart,
+            ..
+        } = &self.instruments
+        else {
+            return;
+        };
+        let wanted = handle.activation();
         let offline = wanted.mode == ProcessMode::Offline
             && restart.is_none()
             && track_instruments
@@ -998,12 +1014,7 @@ impl Display {
             .next_slot()
             .and_then(|slot| self.slot_instrument(slot))
             .map_or("plugins", |loaded| loaded.entry.name.as_str());
-        let exporting = self
-            .instruments
-            .audio
-            .as_ref()
-            .is_some_and(PluginAudioHandle::is_exporting);
-        let title = if exporting {
+        let title = if self.is_exporting_audio() {
             "Preparing export"
         } else {
             "Restarting audio"

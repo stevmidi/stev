@@ -337,9 +337,9 @@ impl InstrumentEditor for Vst3Editor {
         // SAFETY: this is the main thread, which owns the component; it is
         // live and active (`finished` is clear), and its voice is here, out of
         // the mixer, so no `process` call can be in flight.
-        let (tail_samples, mode) =
+        let (tail_samples, setup) =
             unsafe { reactivate(&self.plugin.component, activation, MAX_FRAMES as u32)? };
-        voice.reactivated(Activation { mode, ..activation }, tail_samples);
+        voice.reactivated(setup, tail_samples);
         Ok(voice)
     }
 

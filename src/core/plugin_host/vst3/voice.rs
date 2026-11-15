@@ -128,13 +128,14 @@ pub(super) struct Vst3Voice {
     tail_samples: u32,
     /// The mixer-owned render flags and gain ramp.
     mix: VoiceMix,
-    /// What this plugin's processor was set up for — fixed until a
+    /// What `setupProcessing` was last told — fixed until a
     /// [reactivation](Self::reactivated). Its rate is carried into every
     /// block's `ProcessContext` (see [`process_context`]) and its mode into
-    /// every block's `ProcessData`, as `setupProcessing` was told: real
-    /// time even in an export's render for a plugin that refused the
-    /// offline setup ([`reactivate`](super::component::reactivate)).
-    activation: Activation,
+    /// every block's `ProcessData`. Not the activation the mixer holds the
+    /// voice by: a plugin that refused the offline setup is set up for real
+    /// time, and still renders the export's blocks
+    /// ([`reactivate`](super::component::reactivate)).
+    setup: Activation,
 }
 
 impl Vst3Voice {
@@ -147,7 +148,7 @@ impl Vst3Voice {
         params: ParamReceiver,
         midi_map: MidiMap,
         tail_samples: u32,
-        activation: Activation,
+        setup: Activation,
     ) -> Self {
         Self {
             processor,
@@ -161,16 +162,16 @@ impl Vst3Voice {
             heartbeat_phase: 0,
             tail_samples,
             mix: VoiceMix::default(),
-            activation,
+            setup,
         }
     }
 
-    /// The voice of the same plugin activated again for `activation`, with
+    /// The voice of the same plugin set up again as `setup`, with
     /// the `tail_samples` it now declares ([`reactivate`](super::component::reactivate)):
     /// carried into every block's `ProcessContext` from here on, its note
     /// ids and silence count starting afresh.
-    pub(super) fn reactivated(&mut self, activation: Activation, tail_samples: u32) {
-        self.activation = activation;
+    pub(super) fn reactivated(&mut self, setup: Activation, tail_samples: u32) {
+        self.setup = setup;
         self.tail_samples = tail_samples;
         self.note_ids = NoteIds::default();
         self.wake();
@@ -233,10 +234,10 @@ impl InstrumentVoice for Vst3Voice {
         let mut out_buses = [EMPTY_BUS; MAX_BUSES];
         let num_inputs = fill_buses(&mut self.bufs.inputs, &mut in_ptrs, &mut in_buses);
         let num_outputs = fill_buses(&mut self.bufs.outputs, &mut out_ptrs, &mut out_buses);
-        let mut context = process_context(transport, self.activation.sample_rate);
+        let mut context = process_context(transport, self.setup.sample_rate);
 
         let mut data = ProcessData {
-            processMode: process_mode(self.activation.mode),
+            processMode: process_mode(self.setup.mode),
             symbolicSampleSize: kSample32 as i32,
             numSamples: frames as i32,
             numInputs: num_inputs as i32,
@@ -452,9 +453,9 @@ mod tests {
     /// call was handed.
     struct FakeProcessor {
         /// One entry per `process` call: that call's event count.
-        calls: Arc<Mutex<Vec<i32>>>,
+        calls: CallLog,
         /// One entry per `process` call: that call's `processMode`.
-        modes: Arc<Mutex<Vec<i32>>>,
+        modes: CallLog,
     }
 
     impl Class for FakeProcessor {
@@ -511,7 +512,7 @@ mod tests {
     }
 
     /// A stereo voice around a [`FakeProcessor`], plus that processor's log.
-    fn fake_voice() -> (Vst3Voice, Arc<Mutex<Vec<i32>>>) {
+    fn fake_voice() -> (Vst3Voice, CallLog) {
         let (voice, calls, _modes) = fake_voice_with_modes();
         (voice, calls)
     }
