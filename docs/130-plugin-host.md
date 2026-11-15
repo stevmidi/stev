@@ -504,7 +504,7 @@ another caller and a tap on this mixer; nothing new renders audio or
 schedules events. Built 2026-10-18/19 as a real-time playback run (the phase
 plan, with the decisions behind it, is `archive/300-export-to-audio.md`);
 since 2026-11-14 an **offline render** in virtual time, with the device
-closed (`490-offline-export.md`), the plugins switched to their offline
+closed (`archive/490-offline-export.md`), the plugins switched to their offline
 mode for it (phase 3, § The plugins' offline mode below).
 
 ### The plugins' offline mode
@@ -512,7 +512,7 @@ mode for it (phase 3, § The plugins' offline mode below).
 A plugin rendered faster than real time while it believes it is live can
 get it wrong: a sampler streaming from disk drops the notes whose samples
 haven't arrived. So every loaded plugin is told, for the run
-(`490-offline-export.md` decision 6):
+(`archive/490-offline-export.md` decision 6):
 
 - **The activation is the rate and the mode.** `Activation { sample_rate,
   mode }` (`voice.rs`) is what a voice was activated for, and
@@ -594,7 +594,7 @@ haven't arrived. So every loaded plugin is told, for the run
   export is a transport run, not an edit: no undo. Off macOS it refuses
   ("Audio export needs the plugin host (macOS)"); the plan and `WavWriter`
   are cross-platform.
-- **Rendered offline, in virtual time** (`490-offline-export.md`). Nothing
+- **Rendered offline, in virtual time** (`archive/490-offline-export.md`). Nothing
   plays the run in real time. The writer, its files open and the plugins
   offline (below), has the engine
   render it (`AudioControl::render_offline` with an `ExportRender`): the

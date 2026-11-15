@@ -49,7 +49,7 @@
 //! samples, and their gained sum, between the frames the sequencer's start
 //! and end marks resolve to, scheduled the way a clip event's `At` is. The
 //! export is rendered offline (`RenderCtx::offline`,
-//! `490-offline-export.md`), and only such a block is tapped.
+//! `archive/490-offline-export.md`), and only such a block is tapped.
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -99,7 +99,7 @@ pub(crate) enum PluginHostCommand {
     },
     /// Hand `track`'s voice back to the UI, stopped, to be reactivated at the
     /// stream's new rate, or in the mode an audio export wants, and inserted
-    /// again (`480-audio-settings.md` decision 8, `490-offline-export.md`
+    /// again (`480-audio-settings.md` decision 8, `archive/490-offline-export.md`
     /// decision 6). It goes the way a removed voice does, as far as the
     /// `"plugin-host"` thread, which passes it on instead of dropping it.
     Return {
@@ -221,7 +221,7 @@ pub(super) struct InstrumentMixer {
     /// (`480-audio-settings.md` decision 8). So is one whose mode isn't the
     /// block's: an audio export's offline render never runs a plugin still
     /// told it is live, nor the device one still told it is offline
-    /// (`490-offline-export.md` decision 6). An empty slot's entry means
+    /// (`archive/490-offline-export.md` decision 6). An empty slot's entry means
     /// nothing.
     voice_activations: [Activation; MAX_TRACKS],
 }

@@ -4,7 +4,7 @@
 //! those slots goes to the mix ring, for the `"audio-export"` thread
 //! (`export_writer.rs`) to write.
 //!
-//! The export is rendered offline (`490-offline-export.md`): the
+//! The export is rendered offline (`archive/490-offline-export.md`): the
 //! `"audio-engine"` thread renders its blocks with the device closed, as fast
 //! as the plugins compute, and only those blocks are tapped. That thread can
 //! wait, so a ring with no room for a block is waited for until the writer
@@ -317,7 +317,7 @@ fn export_span(
 }
 
 /// Pushes `len` samples of export `id` to `ring` whole, waiting for the
-/// writer to make room first (`490-offline-export.md` decision 9). Only ever
+/// writer to make room first (`archive/490-offline-export.md` decision 9). Only ever
 /// called for an offline block, on the `"audio-engine"` thread, which may
 /// wait. A ring whose writer is gone, or has given the export up, takes
 /// nothing.

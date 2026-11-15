@@ -94,7 +94,7 @@ impl ClapVoice {
     /// The same voice on `instance` deactivated and activated again for
     /// `activation`: CLAP's own way to change the rate, keeping the instance
     /// and its state (`480-audio-settings.md` decision 8), and where the
-    /// plugin is told another render mode (`490-offline-export.md`
+    /// plugin is told another render mode (`archive/490-offline-export.md`
     /// decision 6). Main thread, with
     /// processing stopped ([`stop_processing`](InstrumentVoice::stop_processing))
     /// and the voice out of the mixer. A plugin that won't activate is left

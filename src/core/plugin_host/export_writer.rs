@@ -1,7 +1,7 @@
 //! The `"audio-export"` thread (`130-plugin-host.md` § Audio export): spawned with the
 //! plugin host, it waits for an [`AudioExportJob`], opens a WAV file per stem
 //! plus the mix, has the engine render the export offline ([`ExportRender`],
-//! `490-offline-export.md`), drains the mixer's export rings (`export.rs`)
+//! `archive/490-offline-export.md`), drains the mixer's export rings (`export.rs`)
 //! into the files until the mixer reports the end, finishes them and tells
 //! the `"sequencer"` thread how it went
 //! (`SequencerCommand::AudioExportWritten`). On the way it publishes how far
@@ -10,7 +10,7 @@
 //!
 //! Before the render is asked for, the writer waits for the UI thread to
 //! have every plugin in its offline mode
-//! (`AudioExportAtomics::plugins_offline`, `490-offline-export.md`
+//! (`AudioExportAtomics::plugins_offline`, `archive/490-offline-export.md`
 //! decision 6): the mixer holds a voice in another mode silent, so a run
 //! started early would write silence. Esc ends that wait, and so does
 //! [`PREPARE_TIMEOUT`], with a reason for the footer.
@@ -75,7 +75,7 @@ const STEP_TIMEOUT: Duration = Duration::from_secs(2);
 type OpenWav = Option<WavWriter<BufWriter<File>>>;
 
 /// One export as the `"audio-engine"` thread renders it offline
-/// ([`OfflineRun`], `490-offline-export.md` decision 3): before each block
+/// ([`OfflineRun`], `archive/490-offline-export.md` decision 3): before each block
 /// it has the `"sequencer"` thread play the run's ticks due before it, and
 /// it is done when the mixer has ended the export.
 pub(super) struct ExportRender {

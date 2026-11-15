@@ -111,7 +111,7 @@ impl Sequencer {
     /// An audio export's start and end marks carry it the same way
     /// (`audio_export.rs`). During an export `at` is the run's virtual time,
     /// which the `"midiout"` queue would wait out in real time: MIDI Out
-    /// tracks send nothing (`490-offline-export.md` decision 5).
+    /// tracks send nothing (`archive/490-offline-export.md` decision 5).
     pub(crate) fn tick(&mut self, at: Instant) {
         self.mark_audio_export(at);
         let exporting = self.is_exporting_audio();

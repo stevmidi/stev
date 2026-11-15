@@ -10,7 +10,7 @@
 //! playback to the cursor). The run is not played by the clock: the engine
 //! renders it with the device closed and steps it block by block
 //! ([`step_audio_export`](EventHandlers::step_audio_export),
-//! `490-offline-export.md`).
+//! `archive/490-offline-export.md`).
 //!
 //! While it runs, [`audio_export_command`](EventHandlers::audio_export_command)
 //! and [`audio_export_transport_command`](EventHandlers::audio_export_transport_command)
@@ -136,7 +136,7 @@ impl EventHandlers {
 
     /// The offline render asks for the run's ticks due before `until`, a
     /// block's first instant (the `"sequencer"` thread's step arm,
-    /// `490-offline-export.md` decision 4): each is played as a clock tick
+    /// `archive/490-offline-export.md` decision 4): each is played as a clock tick
     /// would have been ([`play_tick`](Self::play_tick)), stamped with the
     /// run's own instant for it. `false` with no run, which stops the
     /// render. The caller has handled every transport command and event

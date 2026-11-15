@@ -105,7 +105,7 @@ pub(crate) enum TransportCommand {
         enabled: bool,
     },
     /// Readies the transport for an audio export's offline run
-    /// (`490-offline-export.md`): looping off, playback moved to `tick` (the
+    /// (`archive/490-offline-export.md`): looping off, playback moved to `tick` (the
     /// selection's start) with the notes sounding there chased, the cursor
     /// left alone, and the transport reading as running. Nothing plays from
     /// the clock meanwhile: the render steps the run, and each step has this

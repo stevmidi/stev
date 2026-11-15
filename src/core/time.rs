@@ -214,7 +214,7 @@ pub fn ticks_to_millis_f64(tempo: i32, ticks: i32) -> f64 {
 /// quarter), exact but for the last nanosecond's truncation: multiplied out
 /// before the one division, so tick `n`'s offset never drifts from `n` tick
 /// lengths. What an audio export's virtual time is counted in
-/// (`490-offline-export.md` decision 2). A tempo of zero or less is no time.
+/// (`archive/490-offline-export.md` decision 2). A tempo of zero or less is no time.
 pub(crate) const fn ticks_to_nanos(tempo_us: i32, ticks: u64) -> u64 {
     if tempo_us <= 0 {
         return 0;

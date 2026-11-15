@@ -266,7 +266,7 @@ pub(crate) struct AudioExportAtomics {
     /// milliseconds.
     pub(crate) written_ms: AtomicU32,
     /// True while a run is on and every loaded plugin is in its offline
-    /// mode (`490-offline-export.md` decision 6). Written by the UI thread,
+    /// mode (`archive/490-offline-export.md` decision 6). Written by the UI thread,
     /// which switches them, every frame; the `"audio-export"` thread waits
     /// for it before it has the run rendered.
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]

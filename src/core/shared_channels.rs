@@ -125,7 +125,7 @@ pub(crate) struct SharedChannels {
     /// through the plugin host's `ExportRender`; macOS only) → the
     /// `"sequencer"` thread: play the run's ticks due before a block, each
     /// answered on the step's own channel before the block is rendered
-    /// (`490-offline-export.md` decision 3). Elsewhere the sender is dropped.
+    /// (`archive/490-offline-export.md` decision 3). Elsewhere the sender is dropped.
     pub(crate) export_step_tx: Sender<ExportStep>,
     /// Receiving half of the pair documented above.
     pub(crate) export_step_rx: Receiver<ExportStep>,

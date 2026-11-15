@@ -108,7 +108,7 @@ fn read_parameters(instance: &mut PluginInstance<StevClapHost>) -> ParamValues {
 }
 
 /// Tells a plugin with the `render` extension which `mode` it renders in
-/// (`490-offline-export.md` decision 6). Main thread, and only ever while
+/// (`archive/490-offline-export.md` decision 6). Main thread, and only ever while
 /// the plugin is deactivated: the extension doesn't ask for that, but it is
 /// when a plugin can rebuild what it must. One without the extension
 /// renders the same either way. A plugin that declines keeps the mode it

@@ -33,7 +33,7 @@ pub(crate) fn enter_render_thread() {
 
 /// Takes the audio-thread mark off the **calling thread**: for a thread that
 /// rendered for a while and goes back to other work, as the `"audio-engine"`
-/// thread does after an offline run (`490-offline-export.md`). The denormal
+/// thread does after an offline run (`archive/490-offline-export.md`). The denormal
 /// flush stays on; it changes nothing for a thread that does no DSP.
 pub(crate) fn leave_render_thread() {
     IS_AUDIO_THREAD.with(|flag| flag.set(false));

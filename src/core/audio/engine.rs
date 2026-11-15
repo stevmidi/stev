@@ -13,7 +13,7 @@
 //! default moved, the chosen device came back, or a device appeared while
 //! none was open). The same poll keeps the tab's device list current.
 //!
-//! The thread also renders offline ([`OfflineRun`], `490-offline-export.md`):
+//! The thread also renders offline ([`OfflineRun`], `archive/490-offline-export.md`):
 //! it drops the stream, keeps the mixer and renders block by block in virtual
 //! time, then restarts the stream the ordinary way.
 
@@ -152,7 +152,7 @@ enum EngineCommand {
     /// The user's choice in the Audio tab.
     Configure(AudioPrefs),
     /// An offline run to render with the stream down
-    /// (`490-offline-export.md` decision 3).
+    /// (`archive/490-offline-export.md` decision 3).
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     Render(Box<dyn OfflineRun>),
 }
@@ -495,7 +495,7 @@ impl EngineThread {
         (cause, run)
     }
 
-    /// Renders `run` offline (`490-offline-export.md` decision 3): drops the
+    /// Renders `run` offline (`archive/490-offline-export.md` decision 3): drops the
     /// stream, keeps the mixer it hands back and has it render the run in
     /// blocks of the stream's buffer (decision 8), then opens the stream
     /// again through the ordinary restart. Nothing about the device can end

@@ -151,7 +151,7 @@ pub(crate) struct RenderCtx<'a> {
     /// still degrades gracefully to block offset 0. Live keyboard events
     /// bypass it — see `plugin_host::mixer`.
     pub(crate) schedule_delay: u32,
-    /// The block is rendered offline (`490-offline-export.md`): no device
+    /// The block is rendered offline (`archive/490-offline-export.md`): no device
     /// waits for it, so a source may wait itself (the export tap does, for
     /// its writer), and its frames are virtual time, heard by nobody.
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]

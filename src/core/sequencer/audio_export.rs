@@ -4,7 +4,7 @@
 //! workflow that starts and ends the run is the handler's; the tap and the
 //! files are the plugin host's.
 //!
-//! The run is rendered offline, in *virtual time* (`490-offline-export.md`
+//! The run is rendered offline, in *virtual time* (`archive/490-offline-export.md`
 //! decisions 2 and 4): the `"audio-engine"` thread renders with the device
 //! closed and, before each block, asks for the ticks due before it
 //! ([`ExportStep`]). Tick `n` of the run carries the instant `start + n ×
@@ -62,7 +62,7 @@ pub(crate) enum ExportMark {
 
 /// The offline render asking the `"sequencer"` thread for the ticks due
 /// before `until`, a block's first instant, and waiting for the answer
-/// before it renders the block (`490-offline-export.md` decision 3).
+/// before it renders the block (`archive/490-offline-export.md` decision 3).
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) struct ExportStep {
     /// Every tick of the run due before this is to be played.

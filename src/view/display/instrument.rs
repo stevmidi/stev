@@ -708,7 +708,7 @@ impl Display {
     /// none is under way: the stream runs at another rate
     /// (`480-audio-settings.md` decision 8), or an audio export has started
     /// and wants the plugins offline, or has ended and wants them back
-    /// (`490-offline-export.md` decision 6). Its track is silent meanwhile,
+    /// (`archive/490-offline-export.md` decision 6). Its track is silent meanwhile,
     /// as the mixer holds such a voice silent anyway.
     fn return_stale_voices(&mut self) {
         let InstrumentHost {
@@ -744,7 +744,7 @@ impl Display {
     /// Per frame, after [`return_stale_voices`](Self::return_stale_voices):
     /// tells the `"audio-export"` thread whether a run's plugins are all in
     /// their offline mode, which it waits for before the run is rendered
-    /// (`490-offline-export.md` decision 6). They are once every plugin
+    /// (`archive/490-offline-export.md` decision 6). They are once every plugin
     /// still loaded is in the mixer, offline: none out to be switched, none
     /// waiting to go back in.
     fn publish_plugins_offline(&self) {
@@ -1003,7 +1003,7 @@ impl Display {
     /// title, the plugin it names, the step ("3 of 8") and how much is
     /// done. While an audio export is on, the restart is the one switching
     /// its plugins to their offline mode, and the panel says so
-    /// (`490-offline-export.md` decision 6); the one switching them back,
+    /// (`archive/490-offline-export.md` decision 6); the one switching them back,
     /// after it, is an audio restart like any other.
     pub(super) fn audio_restart(&self) -> Option<(&'static str, &str, (usize, usize), f32)> {
         if !self.audio_restart_holds_app() {
@@ -1024,7 +1024,7 @@ impl Display {
 
     /// The loaded plugin that can only render in real time, if there is
     /// one, by name: an audio export, which renders offline, is refused
-    /// for it (`490-offline-export.md` decision 7).
+    /// for it (`archive/490-offline-export.md` decision 7).
     pub(super) fn real_time_only_instrument(&self) -> Option<&str> {
         self.instruments
             .track_instruments

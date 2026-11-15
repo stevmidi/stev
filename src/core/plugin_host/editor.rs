@@ -106,7 +106,7 @@ pub(crate) trait InstrumentEditor {
     /// Reactivates the plugin for `activation`, in place: the stream's rate
     /// changed under it (`480-audio-settings.md` decision 8), or an audio
     /// export wants it in its offline mode, or back out of it
-    /// (`490-offline-export.md` decision 6). `voice` is the one its last
+    /// (`archive/490-offline-export.md` decision 6). `voice` is the one its last
     /// activation made, which the mixer has stopped and let go of. The
     /// instance, its editor and its state are kept. Returns the voice to
     /// insert again, or why the plugin wouldn't reactivate; it is then left
@@ -120,7 +120,7 @@ pub(crate) trait InstrumentEditor {
     /// Whether the plugin says it can only render in real time (CLAP's
     /// `has_hard_realtime_requirement`: a proxy for hardware, say). Such a
     /// plugin refuses an audio export, which renders offline
-    /// (`490-offline-export.md` decision 7). The default is that it can.
+    /// (`archive/490-offline-export.md` decision 7). The default is that it can.
     fn needs_real_time(&self) -> bool {
         false
     }

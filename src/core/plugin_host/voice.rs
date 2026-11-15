@@ -68,7 +68,7 @@ impl Default for VoiceMix {
 }
 
 /// Whether a plugin has been told it renders against the clock or not
-/// (`490-offline-export.md` decision 6): VST3's `processMode`, CLAP's
+/// (`archive/490-offline-export.md` decision 6): VST3's `processMode`, CLAP's
 /// `render` extension.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum ProcessMode {
@@ -94,7 +94,7 @@ impl ProcessMode {
 /// What a plugin was activated for: the sample rate and the mode. A voice
 /// only renders blocks of its own activation; the mixer holds it silent in
 /// any other, until the UI has it back and reactivates it
-/// (`480-audio-settings.md` decision 8, `490-offline-export.md` decision 6).
+/// (`480-audio-settings.md` decision 8, `archive/490-offline-export.md` decision 6).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Activation {
     /// The sample rate, Hz.

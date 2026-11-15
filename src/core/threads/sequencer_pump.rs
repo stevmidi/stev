@@ -7,7 +7,7 @@
 //! through `EventHandlers` against the thread-local `Sequencer` / `Transport` /
 //! `Metronome`. While an audio export renders, the clock's ticks play nothing
 //! and the run is stepped instead, by the offline render's [`ExportStep`]s
-//! (`490-offline-export.md` decision 4). It also owns the `Record<UndoStep>` undo stack
+//! (`archive/490-offline-export.md` decision 4). It also owns the `Record<UndoStep>` undo stack
 //! (`050-undo-redo.md`) and the [`OpenProject`]: what the unsaved-changes
 //! check compares against (`060-persistence.md`), a project read from disk
 //! while the view loads its plugins (`130-plugin-host.md`), and the

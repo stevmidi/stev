@@ -279,7 +279,7 @@ of the mixer): `setProcessing(false)`, `setActive(false)`, then step 6's
 the tail `getTailSamples` gives now (`480-audio-settings.md`).
 
 The same path switches the plugin's mode for an audio export
-(`490-offline-export.md` decision 6): `ProcessSetup::processMode` is
+(`archive/490-offline-export.md` decision 6): `ProcessSetup::processMode` is
 `kOffline` for the export's render and `kRealtime` otherwise, and every
 block's `ProcessData::processMode` is the mode the setup was given
 (`component::process_mode`, `Vst3Voice::setup`). A plugin that refuses

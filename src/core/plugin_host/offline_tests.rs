@@ -1,5 +1,5 @@
 //! The audio export rendered offline, end to end on one thread
-//! (`490-offline-export.md`): a real [`Sequencer`] stepped by the engine's
+//! (`archive/490-offline-export.md`): a real [`Sequencer`] stepped by the engine's
 //! offline loop, its events and marks through the [`InstrumentMixer`] and
 //! the export tap, and what comes out of the writer's rings counted. No
 //! plugin, no device, no `"sequencer"` thread: the run steps the sequencer
@@ -166,7 +166,7 @@ fn frames_for(ticks: i32, tempo_us: i32, rate: u32) -> usize {
 
 #[test]
 fn an_offline_export_is_the_selection_to_the_sample() {
-    // The measured case (`490-offline-export.md` § Measured): bars 1 to 6 at
+    // The measured case (`archive/490-offline-export.md` § Measured): bars 1 to 6 at
     // 96 bpm, 48 kHz in buffers of 256, is 12.5 s, 600,000 frames. The
     // real-time run came out 4,759 short with overruns and 26 over without.
     let run = export(625_000, (0, 5 * BAR), 48_000, 256, None);

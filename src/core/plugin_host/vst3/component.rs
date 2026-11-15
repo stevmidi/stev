@@ -223,7 +223,7 @@ pub(super) fn process_mode(mode: ProcessMode) -> int32 {
 /// that a plugin refusing the offline setup is set up for real time
 /// instead, and renders the export as it plays. Loading it again, as for a
 /// refused rate, would only have it refuse again
-/// (`490-offline-export.md` § Phases, 3).
+/// (`archive/490-offline-export.md` § Phases, 3).
 ///
 /// # Safety
 ///
@@ -270,7 +270,7 @@ unsafe fn activate(
 
 /// Activates `component` again for `activation`, in place: stop processing,
 /// deactivate, `setupProcessing` with the new rate and mode, activate
-/// (`480-audio-settings.md` decision 8; `490-offline-export.md` decision 6
+/// (`480-audio-settings.md` decision 8; `archive/490-offline-export.md` decision 6
 /// for the mode, `kOffline` for an audio export's render). The instance, its controller and
 /// its state are untouched. Returns the plugin's tail at the new rate
 /// (`getTailSamples` counts samples) and the activation it was set up for

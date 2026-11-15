@@ -196,7 +196,7 @@ const PARAM_RING_CAPACITY: usize = 4096;
 impl PluginAudioHandle {
     /// What a plugin loaded or reactivated now is activated for: the rate
     /// the stream runs at, and offline from the moment an audio export is
-    /// asked for until it ends (`490-offline-export.md` decision 6), real
+    /// asked for until it ends (`archive/490-offline-export.md` decision 6), real
     /// time otherwise.
     pub(crate) fn activation(&self) -> Activation {
         Activation {

@@ -1,4 +1,4 @@
-//! What the engine renders offline for (`490-offline-export.md`): a run that
+//! What the engine renders offline for (`archive/490-offline-export.md`): a run that
 //! takes the device away and has the sources rendered block by block in
 //! *virtual time*, as fast as they compute, instead of against the device's
 //! deadline.

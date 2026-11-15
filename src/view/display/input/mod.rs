@@ -1421,7 +1421,7 @@ impl Display {
             // time as WAV stems plus a mix. Without a marquee, and in the
             // clip view, the sequencer says to make one.
             // A plugin that can only render in real time refuses it: the
-            // export renders offline (`490-offline-export.md` decision 7).
+            // export renders offline (`archive/490-offline-export.md` decision 7).
             // Refused here, where the plugins are, and not with the
             // sequencer's refusals: this is the export's one sender, and
             // another would have to ask the same.
