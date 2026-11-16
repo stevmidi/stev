@@ -54,10 +54,10 @@ pub(crate) struct TransposeClipsEdit {
     /// `(track, clip)` of every covered clip holding a note, found once at
     /// construction; redo trusts them, the undo stack being linear.
     targets: Vec<(usize, Uuid)>,
-    /// Each target's event list before the last `edit()`, in `targets`
-    /// order, for `undo()`: shared with the clip until the transpose writes
-    /// it (`Clip::shared_events`).
-    pre_events: Vec<Arc<Vec<Event>>>,
+    /// Each target's event list before the last `edit()`, one per target in
+    /// `targets` order (`None` for a clip gone), for `undo()`: shared with
+    /// the clip until the transpose writes it (`Clip::shared_events`).
+    pre_events: Vec<Option<Arc<Vec<Event>>>>,
 }
 
 impl TransposeClipsEdit {
@@ -82,8 +82,11 @@ impl TransposeClipsEdit {
             .enumerate()
             .filter(|&(track_idx, _)| in_tracks(tracks, track_idx))
             .any(|(_, track)| {
-                track.find_clip_ids_in(start, end).len()
-                    != track.find_clip_ids_within(start, end).len()
+                let within = track.find_clip_ids_within(start, end);
+                track
+                    .find_clip_ids_in(start, end)
+                    .iter()
+                    .any(|id| !within.contains(id))
             });
         if cuts_through {
             return Err(TransposeRefusal::CutThrough);
@@ -123,7 +126,7 @@ impl TransposeClipsEdit {
         self.pre_events = self
             .targets
             .iter()
-            .filter_map(|&(track_idx, id)| {
+            .map(|&(track_idx, id)| {
                 sequencer.edit_clip_events(track_idx, id, |clip| {
                     let pre_events = Arc::clone(clip.shared_events());
                     clip.transpose_all_notes(semitones);
@@ -142,6 +145,9 @@ impl TransposeClipsEdit {
     ) -> EditResult {
         let pre_events = std::mem::take(&mut self.pre_events);
         for (&(track_idx, id), events) in self.targets.iter().zip(pre_events) {
+            let Some(events) = events else {
+                continue;
+            };
             sequencer.edit_clip_events(track_idx, id, |clip| {
                 clip.restore_shared_events(events);
             });
@@ -254,6 +260,17 @@ mod tests {
         );
         // Off the marquee's tracks, the same clip is no reason to refuse.
         assert!(TransposeClipsEdit::from_marquee(&sequencer, rect(960, 1920, 0, 0), 1).is_ok());
+    }
+
+    /// A clip with no length on the marquee's start edge lies inside it
+    /// without overlapping it: nothing is cut, so the press isn't refused.
+    #[test]
+    fn a_zero_length_clip_on_the_edge_is_not_a_cut() {
+        let mut sequencer = test_sequencer();
+        sequencer.tracks_mut()[0].add_clip(&clip_with_note(960, 960, 60));
+        sequencer.tracks_mut()[1].add_clip(&clip_at(960, 0));
+
+        assert!(TransposeClipsEdit::from_marquee(&sequencer, rect(960, 1920, 0, 1), 1).is_ok());
     }
 
     #[test]
