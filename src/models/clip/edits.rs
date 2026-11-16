@@ -1,5 +1,7 @@
 //! In-place edits of the selected events: nudge time / length, transpose,
-//! nudge velocity, mute, delete, duplicate.
+//! nudge velocity, mute, delete, duplicate — and the one edit of every note,
+//! the arranger's whole-clip transpose
+//! ([`transpose_all_notes`](Clip::transpose_all_notes)).
 //!
 //! Every method resolves the target from `self.event_selection` (the one
 //! exception, [`nudge_events_velocity`](Clip::nudge_events_velocity), takes an
@@ -9,6 +11,8 @@
 //! undoable wrappers live in `core/sequencer/edit/event_edits.rs`.
 
 use uuid::Uuid;
+
+use crate::models::event::EventType;
 
 use super::Clip;
 
@@ -63,6 +67,40 @@ impl Clip {
         for on_idx in self.note_on_indices(self.event_selection.ids()) {
             self.transpose_note_pair(on_idx, semitones, &pairing);
         }
+    }
+
+    /// Transposes every note in the clip by `semitones` — those hidden
+    /// outside its window and muted ones too — moving each `NoteOn` with its
+    /// paired `NoteOff`: exactly `⌘A` then `↑`/`↓` in the clip view, without
+    /// touching the selection. The arranger's marquee transpose
+    /// (`500-marquee-transpose.md` decision 3), which checks
+    /// [`notes_fit_transposed`](Self::notes_fit_transposed) first so nothing
+    /// is clamped.
+    pub(crate) fn transpose_all_notes(&mut self, semitones: i32) {
+        let note_ons: Vec<usize> = self
+            .events
+            .iter()
+            .enumerate()
+            .filter(|(_, event)| event.event_type() == Some(EventType::NoteOn))
+            .map(|(idx, _)| idx)
+            .collect();
+        if note_ons.is_empty() || semitones == 0 {
+            return;
+        }
+        let pairing = self.pair_note_events();
+        for on_idx in note_ons {
+            self.transpose_note_pair(on_idx, semitones, &pairing);
+        }
+    }
+
+    /// Whether every note in the clip stays inside MIDI's 0–127 when moved
+    /// by `semitones` (`500-marquee-transpose.md` decision 6).
+    pub(crate) fn notes_fit_transposed(&self, semitones: i32) -> bool {
+        self.events
+            .iter()
+            .filter(|event| event.event_type() == Some(EventType::NoteOn))
+            .filter_map(|event| event.note_number())
+            .all(|pitch| (0..=127).contains(&(i32::from(pitch) + semitones)))
     }
 
     /// Nudges the velocity of the notes in `event_ids` (not
@@ -258,6 +296,62 @@ mod tests {
             .collect();
         assert!(note_numbers.contains(&63));
         assert_eq!(note_numbers.iter().filter(|note| **note == 63).count(), 2);
+    }
+
+    /// Every note moves with its `NoteOff` — one outside the window and a
+    /// muted one too — and the selection is left as it was.
+    #[test]
+    fn transpose_all_notes_moves_hidden_and_muted_notes_with_their_note_offs() {
+        let mut clip = clip_with_region(0, 480);
+        clip.add_event(on(0, 60));
+        clip.add_event(off(120, 60));
+        clip.add_event(on(240, 64));
+        clip.add_event(off(360, 64));
+        // Hidden: past the window's end.
+        clip.add_event(on(600, 67));
+        clip.add_event(off(700, 67));
+        let muted_id = clip.events()[2].id();
+        clip.select_event(Some(muted_id));
+        clip.toggle_muted_for_selected_events();
+
+        clip.transpose_all_notes(-12);
+
+        let pitches: Vec<(i32, u8)> = clip
+            .events()
+            .iter()
+            .map(|event| (event.tick(), event.note_number().unwrap()))
+            .collect();
+        assert_eq!(
+            pitches,
+            vec![
+                (0, 48),
+                (120, 48),
+                (240, 52),
+                (360, 52),
+                (600, 55),
+                (700, 55)
+            ]
+        );
+        assert!(clip.events()[2].is_muted());
+        assert_eq!(clip.selected_event_ids(), vec![muted_id]);
+        let pairing = clip.pair_note_events();
+        assert!(pairing.orphan_note_offs.is_empty());
+        assert!(pairing.open_note_ons.is_empty());
+    }
+
+    #[test]
+    fn notes_fit_transposed_checks_both_ends_of_the_midi_range() {
+        let mut clip = clip_with_region(0, 960);
+        clip.add_event(on(0, 2));
+        clip.add_event(off(120, 2));
+        clip.add_event(on(0, 120));
+        clip.add_event(off(120, 120));
+
+        assert!(clip.notes_fit_transposed(7));
+        assert!(!clip.notes_fit_transposed(8));
+        assert!(clip.notes_fit_transposed(-2));
+        assert!(!clip.notes_fit_transposed(-3));
+        assert!(Clip::new().notes_fit_transposed(127));
     }
 
     #[test]

@@ -248,6 +248,14 @@ const CASES: &[Case] = &[
         },
     },
     Case {
+        name: "TransposeClips (all)",
+        setup: none,
+        command: |h| SequencerCommand::TransposeClips {
+            rect: everything(h),
+            semitones: 1,
+        },
+    },
+    Case {
         name: "NudgeClipCursor",
         setup: none,
         command: |_| SequencerCommand::NudgeClipCursor(240),

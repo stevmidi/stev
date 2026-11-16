@@ -256,6 +256,10 @@ impl EventHandlers {
                 );
             }
 
+            SequencerCommand::TransposeClips { rect, semitones } => {
+                self.transpose_clips_workflow(sequencer, undo_record, *rect, *semitones);
+            }
+
             SequencerCommand::EnterClip => {
                 self.enter_clip_workflow(sequencer);
             }
@@ -710,7 +714,9 @@ mod tests {
 
     use crate::core::agent::{AgentReply, AgentRequest};
     use crate::core::event_handlers::SavedProject;
-    use crate::core::event_handlers::test_harness::{Harness, add_clip, harness, run_command};
+    use crate::core::event_handlers::test_harness::{
+        Harness, add_clip, harness, run_command, statuses,
+    };
     use crate::core::midi::message::Controller;
     use crate::core::paths::project_dir;
     use crate::core::project::{ProjectAction, ProjectData, ProjectOrigin};
@@ -1748,6 +1754,75 @@ mod tests {
         assert_eq!(play(&mut h, 120), vec![(0, 60, true)]);
         run_command(&mut h, &mut record, SequencerCommand::Undo);
         assert_eq!(play(&mut h, 1800), vec![(120, 60, false)]);
+    }
+
+    /// `500-marquee-transpose.md`: a note sounding when the marquee
+    /// transpose lands is released at once, isn't started again at its new
+    /// pitch, and nothing hangs, as with the clip view's pitch drag (whose
+    /// moved `NoteOff` is still met, a stray off for the new pitch).
+    #[test]
+    fn transposing_a_sounding_clip_releases_its_note_once() {
+        let (mut h, _) = harness_mid_note();
+        run_command(
+            &mut h,
+            &mut Record::new(),
+            SequencerCommand::TransposeClips {
+                rect: rect(0, 1920, 0, 0),
+                semitones: 1,
+            },
+        );
+        let edges = play(&mut h, 1800);
+        assert_eq!(edges.first(), Some(&(120, 60, false)));
+        assert_no_hung_or_doubled_notes(&edges, "transposed mid-note");
+        assert!(edges.iter().all(|&(_, _, is_on)| !is_on), "{edges:?}");
+    }
+
+    /// Each press is one undo step with its footer line, the marquee's span
+    /// and the step; a refused press says why and records nothing.
+    #[test]
+    fn each_marquee_transpose_is_one_step_and_a_refusal_records_none() {
+        let (mut h, clip_id, _) = harness_with_clip();
+        let pitch = |h: &Harness| {
+            h.sequencer.clip_on(0, clip_id).unwrap().events()[0]
+                .note_number()
+                .unwrap()
+        };
+        let transpose = |rect, semitones| SequencerCommand::TransposeClips { rect, semitones };
+        let mut record = Record::new();
+        statuses(&h);
+
+        run_command(&mut h, &mut record, transpose(rect(0, 1920, 0, 0), 1));
+        run_command(&mut h, &mut record, transpose(rect(0, 1920, 0, 0), -12));
+        assert_eq!(pitch(&h), 49);
+        assert_eq!(record.len(), 2);
+        assert_eq!(
+            statuses(&h),
+            [
+                "Transposed 1–1+2 up a semitone",
+                "Transposed 1–1+2 down an octave"
+            ]
+        );
+
+        run_command(&mut h, &mut record, transpose(rect(0, 960, 0, 0), 1));
+        run_command(&mut h, &mut record, transpose(rect(0, 1920, 0, 0), 100));
+        run_command(&mut h, &mut record, transpose(rect(1920, 3840, 0, 0), 1));
+        assert_eq!(pitch(&h), 49);
+        assert_eq!(record.len(), 2);
+        assert_eq!(
+            statuses(&h),
+            [
+                "The marquee cuts through a clip",
+                "A note would leave the MIDI range",
+                "No clips in the marquee",
+            ]
+        );
+
+        run_command(&mut h, &mut record, SequencerCommand::Undo);
+        assert_eq!(pitch(&h), 61);
+        run_command(&mut h, &mut record, SequencerCommand::Undo);
+        assert_eq!(pitch(&h), 60);
+        run_command(&mut h, &mut record, SequencerCommand::Redo);
+        assert_eq!(pitch(&h), 61);
     }
 
     /// Stretching a sounding note keeps it sounding to its new end — no

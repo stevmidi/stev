@@ -14,8 +14,9 @@ use std::slice;
 
 use undo::Record;
 
+use crate::core::agent::span_label;
 use crate::core::input_event::{CLIP_CLIPBOARD_SENTINEL, TimeSelectionRect};
-use crate::core::sequencer::{DeleteInRangeEdit, PasteLead, UndoStep};
+use crate::core::sequencer::{DeleteInRangeEdit, PasteLead, TransposeClipsEdit, UndoStep};
 
 use super::*;
 
@@ -272,6 +273,50 @@ impl EventHandlers {
 
         self.send_clips_updated_ui_event(updated);
         self.send_clips_removed_ui_event(removed);
+    }
+
+    /// `⌥↑`/`⌥↓` over a marquee (`SequencerCommand::TransposeClips`): moves
+    /// every note in the clips it covers whole as one undo step, and the
+    /// footer names the span and the step, or why the press was refused
+    /// (`500-marquee-transpose.md` decision 7). The marquee stays, so
+    /// presses chain.
+    pub(super) fn transpose_clips_workflow(
+        &self,
+        sequencer: &mut Sequencer,
+        undo_record: &mut Record<UndoStep>,
+        rect: TimeSelectionRect,
+        semitones: i32,
+    ) {
+        let edit = match TransposeClipsEdit::from_marquee(sequencer, rect, semitones) {
+            Ok(edit) => edit,
+            Err(refusal) => {
+                self.send_status_ui_event(refusal.message().to_owned());
+                return;
+            }
+        };
+        if self.record_edit(sequencer, undo_record, Some(edit)) {
+            let span = span_label(rect.start, rect.end, sequencer.meter());
+            let step = transpose_step_label(semitones);
+            self.send_status_ui_event(format!("Transposed {span} {step}"));
+        }
+    }
+
+    /// A marquee transpose, its undo or its redo (`EditResult::ClipsTransposed`):
+    /// re-seeks, updates each clip's thumbnail, and refreshes the clip view
+    /// if it shows one of them. The event selections are untouched.
+    pub(super) fn clips_transposed_workflow(
+        &self,
+        sequencer: &mut Sequencer,
+        clips: &[ClipMetadata],
+    ) {
+        sequencer.reset();
+        self.send_clips_updated_ui_event(clips);
+        if clips
+            .iter()
+            .any(|clip| sequencer.selected_clip_id() == Some(clip.clip_id))
+        {
+            self.sync_clip_post_edit_workflow(sequencer);
+        }
     }
 
     /// Forward direction of a clip paste (`⌘V`): `pasted` is every clip added
@@ -545,5 +590,16 @@ impl EventHandlers {
             ctx.copy_text(CLIP_CLIPBOARD_SENTINEL.to_owned());
             ctx.request_repaint();
         }
+    }
+}
+
+/// How far a marquee transpose moved, as the footer says it: "up a
+/// semitone", "down an octave", or "up 3 semitones" for any other step.
+fn transpose_step_label(semitones: i32) -> String {
+    let direction = if semitones < 0 { "down" } else { "up" };
+    match semitones.unsigned_abs() {
+        1 => format!("{direction} a semitone"),
+        12 => format!("{direction} an octave"),
+        n => format!("{direction} {n} semitones"),
     }
 }

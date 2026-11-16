@@ -432,6 +432,7 @@ const FIXED: &[FixedGroup] = &[
             ("⌥←  →", "Jump to the next clip edge"),
             ("⇧⌥←  →", "Extend to the next clip edge"),
             ("⌘←  →", "Move the selected block"),
+            ("⌥↑  ↓", "Transpose the marqueed clips (Shift: an octave)"),
             ("←  →", "Clip: cursor, or nudge notes"),
             ("⌘←  →", "Clip: nudge notes finely"),
             ("⇧←  →", "Clip: shorten / lengthen notes"),

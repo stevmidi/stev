@@ -12,7 +12,9 @@
 //! clip's edges and nothing else, and `RetimeClipEdit` retimes one clip with
 //! the tempo (Enter's fit, `⌥=`/`⌥-`); `CommitClipEdit` is the one that puts
 //! a take, committed as a brand-new clip, on a track; `CreateClipsEdit` is
-//! the agent bridge's new clips, a paste that keeps the selection. See
+//! the agent bridge's new clips, a paste that keeps the selection;
+//! `TransposeClipsEdit` moves every note of the clips a marquee covers whole
+//! (`500-marquee-transpose.md`). See
 //! `050-undo-redo.md` and `020-views-and-state.md`.
 
 use std::collections::HashSet;
@@ -44,6 +46,7 @@ mod paste;
 mod resize_clip;
 mod retime_clip;
 mod split;
+mod transpose_clips;
 
 pub(crate) use commit_clip::CommitClipEdit;
 pub(crate) use create_clips::CreateClipsEdit;
@@ -59,6 +62,7 @@ pub(crate) use paste::PasteClipsEdit;
 pub(crate) use resize_clip::ResizeClipEdit;
 pub(crate) use retime_clip::RetimeClipEdit;
 pub(crate) use split::SplitClipsEdit;
+pub(crate) use transpose_clips::TransposeClipsEdit;
 
 /// `Clip::clone` with a freshly-constructed `Region`, breaking the
 /// `Arc<AtomicI32>` sharing a plain clone keeps (see `050-undo-redo.md`). Any

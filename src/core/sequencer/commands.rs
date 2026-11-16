@@ -212,6 +212,18 @@ pub(crate) enum SequencerCommand {
         /// The marquee selection.
         rect: TimeSelectionRect,
     },
+    /// `⌥↑`/`⌥↓` in the Arranger (`⇧` for an octave): moves every note in
+    /// the clips the marquee covers whole, on its tracks, by `semitones`
+    /// (`TransposeClipsEdit::from_marquee`, undoable). Refused with a footer
+    /// line when the marquee cuts through a clip, covers no clip with
+    /// notes, or a note would leave MIDI's range
+    /// (`500-marquee-transpose.md`).
+    TransposeClips {
+        /// The marquee selection.
+        rect: TimeSelectionRect,
+        /// Signed: `±1` or `±12`.
+        semitones: i32,
+    },
 
     // --- Clip cursor and region ---
     /// Move the selected clip's cursor by a signed tick amount.

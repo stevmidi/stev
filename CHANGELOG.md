@@ -20,6 +20,14 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ## [Unreleased]
 
+### Added
+
+- `⌥↑`/`⌥↓` in the arranger transpose every note in the clips a marquee covers whole, a semitone at a time, across all its tracks at once; `⇧⌥↑`/`⇧⌥↓` move them an octave. One undo step per press, and the marquee stays, so you press, listen in the loop and press again until an idea sits in key with the others. A marquee that cuts through a clip is refused, and so is a press that would take a note out of MIDI's range (nothing is clamped). The footer says what happened.
+
+### Changed
+
+- `⌥↑`/`⌥↓` no longer step the selected track in the arranger (they did as a side effect, the ⌥ ignored); plain `↑`/`↓` still do.
+
 ## [0.16.1] - 2026-11-15
 
 ### Changed

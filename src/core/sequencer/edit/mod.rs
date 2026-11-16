@@ -44,7 +44,7 @@ mod undo_step;
 pub(crate) use clip_edits::{
     CommitClipEdit, CreateClipsEdit, DeleteInRangeEdit, DeleteTimeEdit, DuplicateClipsEdit,
     DuplicateTimeEdit, InsertSilenceEdit, MoveClipEdit, MoveRangeEdit, MuteInRangeEdit,
-    PasteClipsEdit, ResizeClipEdit, RetimeClipEdit, SplitClipsEdit,
+    PasteClipsEdit, ResizeClipEdit, RetimeClipEdit, SplitClipsEdit, TransposeClipsEdit,
 };
 pub(crate) use event_edits::{
     ClearControllerSpanEdit, DeleteSelectedEventsEdit, DragEventsVelocityEdit, DragNotesEdit,
@@ -414,6 +414,15 @@ pub(crate) enum EditResult {
         /// The clip that was removed.
         clip: ClipMetadata,
     },
+    /// Every note in these clips moved by a marquee transpose
+    /// (`TransposeClipsEdit`, either direction): their bounds didn't change,
+    /// only their notes. The handler re-seeks, updates each shape's
+    /// thumbnail, and refreshes the clip view if it shows one of them; the
+    /// event selections are left alone.
+    ClipsTransposed {
+        /// Each transposed clip as it is now.
+        clips: Vec<ClipMetadata>,
+    },
     /// Events within one clip changed (nudge / transpose / velocity / delete /
     /// duplicate / a take inserted by `/`) — re-render that clip and re-sync
     /// the event selection.
@@ -701,6 +710,7 @@ sequencer_edit_dispatch!(
     ResizeClip(ResizeClipEdit),
     RetimeClip(RetimeClipEdit),
     MuteInRange(MuteInRangeEdit),
+    TransposeClips(TransposeClipsEdit),
     DeleteSelectedEvents(DeleteSelectedEventsEdit),
     NudgeSelectedEvents(NudgeSelectedEventsEdit),
     NudgeSelectedEventsLength(NudgeSelectedEventsLengthEdit),
@@ -745,6 +755,7 @@ impl SequencerEdit {
             | SequencerEdit::ResizeClip(_)
             | SequencerEdit::RetimeClip(_)
             | SequencerEdit::MuteInRange(_)
+            | SequencerEdit::TransposeClips(_)
             | SequencerEdit::DeleteSelectedEvents(_)
             | SequencerEdit::NudgeSelectedEvents(_)
             | SequencerEdit::NudgeSelectedEventsLength(_)

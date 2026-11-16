@@ -51,6 +51,21 @@ enum TrackHeaderKey {
     },
 }
 
+/// The arranger's marquee transpose chord (`500-marquee-transpose.md`
+/// decision 1): `⌥↑`/`⌥↓` a semitone up or down, `⇧⌥↑`/`⇧⌥↓` an octave.
+/// `None` for every other key or chord, `⌘` held included.
+fn marquee_transpose_key(key: Key, modifiers: KeyModifiers) -> Option<i32> {
+    if !modifiers.alt || modifiers.command {
+        return None;
+    }
+    let step = if modifiers.shift { 12 } else { 1 };
+    match key {
+        Key::ArrowUp => Some(step),
+        Key::ArrowDown => Some(-step),
+        _ => None,
+    }
+}
+
 /// The track-header column's keymap: plain Delete/Backspace removes the
 /// selected track, Esc leaves, Shift+Tab and plain Tab leave and still do
 /// their usual pane work. `None` — every other key, a modified Delete
@@ -1244,15 +1259,36 @@ impl Display {
                 }
                 true
             }
+            // ⌥↑/⌥↓ (⇧ for an octave): transpose every note in the clips
+            // the marquee covers whole (`500-marquee-transpose.md`). The
+            // view owns the marquee, so it resolves it here; without one
+            // that has a tick range the chord is consumed and does nothing
+            // — it no longer steps tracks.
+            InputEvent::KeyPressed { key, modifiers }
+                if self.view_state() == ViewState::Arranger
+                    && marquee_transpose_key(key, modifiers).is_some() =>
+            {
+                if let Some(semitones) = marquee_transpose_key(key, modifiers)
+                    && let Some(rect) = self
+                        .gesture
+                        .time_selection
+                        .filter(TimeSelectionRect::has_tick_range)
+                {
+                    self.input_event_tx
+                        .send(InputEvent::TransposeClipsInSelection { rect, semitones })
+                        .ok();
+                }
+                true
+            }
             // Keyboard twin of a vertical drag: same rationale as ⇧←/⇧→
             // above, just extending the track span instead of the tick
             // range. Also view-local (the operand is `time_selection`), so
             // it never reaches `input_handler.rs` either — see
-            // `handle_prev_next_keys`.
+            // `handle_prev_next_keys`. Not with ⌥, the transpose's octave.
             InputEvent::KeyPressed {
                 key: key @ (Key::ArrowUp | Key::ArrowDown),
                 modifiers,
-            } if modifiers.shift && self.view_state() == ViewState::Arranger => {
+            } if modifiers.shift && !modifiers.alt && self.view_state() == ViewState::Arranger => {
                 let direction = if key == Key::ArrowUp { -1 } else { 1 };
                 self.nudge_time_selection_track(direction);
                 true
@@ -1530,7 +1566,7 @@ impl Display {
 mod tests {
     use egui::Key;
 
-    use super::{TrackHeaderKey, track_header_key};
+    use super::{TrackHeaderKey, marquee_transpose_key, track_header_key};
     use crate::core::input_event::KeyModifiers;
 
     fn mods(command: bool, shift: bool, alt: bool) -> KeyModifiers {
@@ -1575,6 +1611,34 @@ mod tests {
             );
         }
         assert_eq!(track_header_key(Key::Tab, mods(true, false, false)), None);
+    }
+
+    #[test]
+    fn option_arrows_transpose_a_semitone_and_shift_makes_it_an_octave() {
+        let alt = mods(false, false, true);
+        let shift_alt = mods(false, true, true);
+        assert_eq!(marquee_transpose_key(Key::ArrowUp, alt), Some(1));
+        assert_eq!(marquee_transpose_key(Key::ArrowDown, alt), Some(-1));
+        assert_eq!(marquee_transpose_key(Key::ArrowUp, shift_alt), Some(12));
+        assert_eq!(marquee_transpose_key(Key::ArrowDown, shift_alt), Some(-12));
+    }
+
+    /// Plain and ⇧ arrows stay the track step and the marquee's track span;
+    /// ⌘⌥ and ⌥ on other keys aren't the chord.
+    #[test]
+    fn other_arrow_chords_are_not_the_transpose() {
+        for modifiers in [
+            KeyModifiers::default(),
+            mods(false, true, false),
+            mods(true, false, true),
+        ] {
+            assert_eq!(marquee_transpose_key(Key::ArrowUp, modifiers), None);
+            assert_eq!(marquee_transpose_key(Key::ArrowDown, modifiers), None);
+        }
+        assert_eq!(
+            marquee_transpose_key(Key::ArrowLeft, mods(false, false, true)),
+            None
+        );
     }
 
     #[test]

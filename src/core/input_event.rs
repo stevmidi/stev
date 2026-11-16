@@ -399,6 +399,16 @@ pub(crate) enum InputEvent {
         /// The marquee selection.
         rect: TimeSelectionRect,
     },
+    /// `⌥↑`/`⌥↓` in the Arranger (`⇧` for an octave): transpose every note
+    /// in the clips the marquee covers whole. The view sends this only with
+    /// a marquee that has a tick range. Forwarded to
+    /// `SequencerCommand::TransposeClips` (`500-marquee-transpose.md`).
+    TransposeClipsInSelection {
+        /// The marquee selection.
+        rect: TimeSelectionRect,
+        /// Signed: `±1` or `±12`.
+        semitones: i32,
+    },
     /// Ableton/Bitwig-style "Insert Silence": insert `end - start` ticks of
     /// empty time at `start`, across all tracks. Marquee-only like every
     /// other `...InSelection` event — here because the operand is meaningless

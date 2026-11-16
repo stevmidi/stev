@@ -469,6 +469,12 @@ impl EventHandlers {
             InputEvent::MuteClipsInSelection { rect } => {
                 self.send_sequencer(SequencerCommand::MuteClipsInRange { rect: *rect });
             }
+            InputEvent::TransposeClipsInSelection { rect, semitones } => {
+                self.send_sequencer(SequencerCommand::TransposeClips {
+                    rect: *rect,
+                    semitones: *semitones,
+                });
+            }
             InputEvent::InsertSilenceInSelection { start, end } => {
                 self.send_sequencer(SequencerCommand::InsertSilenceInRange {
                     start: *start,
@@ -788,8 +794,12 @@ impl EventHandlers {
     /// `Up`/`Down` (+ Shift): track cycle in the Arranger, cursor-to-start/end or transpose in a clip.
     fn handle_prev_next_keys(&self, direction: i32, modifiers: &KeyModifiers) {
         match self.clip_context() {
-            // ⇧↑/↓ never arrives here in the Arranger: `Display::forward_input_event`
-            // consumes it to drag the view-local time selection's track span.
+            // ⇧↑/↓ and ⌥↑/↓ never arrive here in the Arranger:
+            // `Display::forward_input_event` consumes the first to drag the
+            // view-local time selection's track span, the second to
+            // transpose the marquee's clips. With ⌥ held the track step stays
+            // off regardless (`500-marquee-transpose.md` decision 1).
+            ClipContext::Arranger if modifiers.alt => {}
             ClipContext::Arranger if direction < 0 => {
                 self.send_sequencer(SequencerCommand::SelectPrevTrack);
             }

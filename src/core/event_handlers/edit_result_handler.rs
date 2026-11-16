@@ -109,6 +109,9 @@ impl EventHandlers {
             EditResult::RangeUnmuted { updated, removed } => {
                 self.unmute_in_range_workflow(sequencer, &updated, &removed);
             }
+            EditResult::ClipsTransposed { clips } => {
+                self.clips_transposed_workflow(sequencer, &clips);
+            }
             EditResult::ClipCommitted { clip } => {
                 self.commit_clip_workflow(sequencer, &clip);
             }
