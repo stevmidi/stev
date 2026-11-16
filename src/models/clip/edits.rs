@@ -77,6 +77,9 @@ impl Clip {
     /// [`notes_fit_transposed`](Self::notes_fit_transposed) first so nothing
     /// is clamped.
     pub(crate) fn transpose_all_notes(&mut self, semitones: i32) {
+        if semitones == 0 {
+            return;
+        }
         let note_ons: Vec<usize> = self
             .events
             .iter()
@@ -84,9 +87,6 @@ impl Clip {
             .filter(|(_, event)| event.event_type() == Some(EventType::NoteOn))
             .map(|(idx, _)| idx)
             .collect();
-        if note_ons.is_empty() || semitones == 0 {
-            return;
-        }
         let pairing = self.pair_note_events();
         for on_idx in note_ons {
             self.transpose_note_pair(on_idx, semitones, &pairing);

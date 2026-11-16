@@ -89,23 +89,19 @@ impl TransposeClipsEdit {
             return Err(TransposeRefusal::CutThrough);
         }
 
-        let targets: Vec<(usize, Uuid)> = interior_clip_ids(sequencer, tracks, start, end)
-            .into_iter()
-            .filter(|&(track_idx, id)| {
-                sequencer
-                    .clip_on(track_idx, id)
-                    .is_some_and(|clip| clip.has_notes())
-            })
-            .collect();
+        let mut targets = Vec::new();
+        let mut fits = true;
+        for (track_idx, id) in interior_clip_ids(sequencer, tracks, start, end) {
+            if let Some(clip) = sequencer.clip_on(track_idx, id)
+                && clip.has_notes()
+            {
+                fits &= clip.notes_fit_transposed(semitones);
+                targets.push((track_idx, id));
+            }
+        }
         if targets.is_empty() {
             return Err(TransposeRefusal::NothingCovered);
         }
-
-        let fits = targets.iter().all(|&(track_idx, id)| {
-            sequencer
-                .clip_on(track_idx, id)
-                .is_some_and(|clip| clip.notes_fit_transposed(semitones))
-        });
         if !fits {
             return Err(TransposeRefusal::OutOfRange);
         }

@@ -1266,13 +1266,12 @@ impl Display {
             // — it no longer steps tracks.
             InputEvent::KeyPressed { key, modifiers }
                 if self.view_state() == ViewState::Arranger
-                    && marquee_transpose_key(key, modifiers).is_some() =>
+                    && let Some(semitones) = marquee_transpose_key(key, modifiers) =>
             {
-                if let Some(semitones) = marquee_transpose_key(key, modifiers)
-                    && let Some(rect) = self
-                        .gesture
-                        .time_selection
-                        .filter(TimeSelectionRect::has_tick_range)
+                if let Some(rect) = self
+                    .gesture
+                    .time_selection
+                    .filter(TimeSelectionRect::has_tick_range)
                 {
                     self.input_event_tx
                         .send(InputEvent::TransposeClipsInSelection { rect, semitones })
