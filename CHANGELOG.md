@@ -26,6 +26,7 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ### Changed
 
+- A click on the arranger's ruler now starts playback from that point and leaves the cursor and the marquee where they are, as Ableton's scrub area does. Audition a marqueed section from a bar or two before it, transpose, click again, without marqueeing it again. A click in the lanes still places the cursor.
 - `⌥↑`/`⌥↓` no longer step the selected track in the arranger (they did as a side effect, the ⌥ ignored); plain `↑`/`↓` still do.
 
 ## [0.16.1] - 2026-11-15

@@ -647,6 +647,11 @@ impl EventHandlers {
             // note selection (clip view).
             InputEvent::SetCursorTick { pane, tick } => self.place_cursor(*pane, *tick),
 
+            // An arranger ruler click: play from there, the cursor untouched.
+            InputEvent::PlayFromTick { tick } => {
+                self.send_transport(TransportCommand::PlayFromTick { tick: *tick });
+            }
+
             InputEvent::SelectClipSpan { track_idx, clip_id } => {
                 self.send_sequencer(SequencerCommand::SelectClipSpan {
                     track_idx: *track_idx,
@@ -910,6 +915,7 @@ mod tests {
     use crate::core::event_handlers::test_harness::harness;
     use crate::core::input_event::{CaptureFrame, InputEvent, TimeSelectionRect};
     use crate::core::sequencer::SequencerCommand;
+    use crate::core::transport::TransportCommand;
 
     #[test]
     fn the_commit_carries_the_marquee() {
@@ -938,5 +944,19 @@ mod tests {
             h.sequencer_commands.try_recv(),
             Ok(SequencerCommand::ClearEventSelection)
         ));
+    }
+
+    /// A ruler click plays from its tick and leaves the cursor alone: no
+    /// `SetCursorAndSelectClip`, so the marquee survives the audition.
+    #[test]
+    fn a_ruler_click_plays_without_moving_the_cursor() {
+        let h = harness();
+        h.handlers
+            .handle_input_event(&InputEvent::PlayFromTick { tick: 1920 });
+        assert!(matches!(
+            h.transport_commands.try_recv(),
+            Ok(TransportCommand::PlayFromTick { tick: 1920 })
+        ));
+        assert!(h.transport_commands.try_recv().is_err());
     }
 }

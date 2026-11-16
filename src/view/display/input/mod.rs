@@ -163,8 +163,21 @@ impl Display {
             .ok();
     }
 
+    /// Starts playback at the snapped tick under `x` (`PlayFromTick`),
+    /// leaving the cursor and the marquee. A no-op off the content.
+    fn play_from_x(&self, x: f32) {
+        if !self.content_x_on_screen(x) {
+            return;
+        }
+        let tick = self.snapped_tick_at(x);
+        self.input_event_tx
+            .send(InputEvent::PlayFromTick { tick })
+            .ok();
+    }
+
     /// A press in the active pane (`forward_input_event` scopes it with
-    /// `in_pane`): on the timeline strip, cursor placement alone
+    /// `in_pane`): on the timeline strip, playback from there in the arranger
+    /// (`PlayFromTick`) and cursor placement alone in the clip view
     /// (`SetCursorTick`), and in a controller lane the same with the lane's
     /// focus and span; in the lanes, the arranger's header buttons, mix bars, Shift+click extend,
     /// clip edge / band drags; the clip view's ⌘-click velocity drag;
@@ -194,10 +207,16 @@ impl Display {
             return true;
         }
 
-        // The timeline strip places the pane's cursor and nothing else: no
-        // track, clip or note selection, no marquee, no drag.
+        // The arranger's timeline strip plays from the click and touches
+        // nothing else: the cursor, and so the marquee, stays (Ableton's
+        // scrub area). The clip view's places its cursor and nothing else:
+        // no note selection, no marquee, no drag.
         if self.is_mouse_on_timeline_strip(x, y) {
-            self.place_cursor_at(x);
+            if arranger {
+                self.play_from_x(x);
+            } else {
+                self.place_cursor_at(x);
+            }
             return true;
         }
 

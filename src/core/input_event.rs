@@ -630,8 +630,9 @@ pub(crate) enum InputEvent {
     /// note selection. Two senders: `⌥←`/`⌥→` in the Arranger (the next clip
     /// edge in that direction; the view resolves it because it owns the clip
     /// shapes the edges come from — the same "view-local operand" reason as
-    /// `SetRegionToTimeSelectionOrToggleLoop`), and a click on either pane's
-    /// timeline strip. In the arranger the handler routes it to
+    /// `SetRegionToTimeSelectionOrToggleLoop`), and a click on the clip
+    /// view's timeline strip (the arranger's plays instead, `PlayFromTick`).
+    /// In the arranger the handler routes it to
     /// `TransportCommand::SetCursorAndSelectClip`, the click-to-place path
     /// minus the track select, so the lead clip re-syncs and the marquee
     /// collapses exactly as after an arrow-key move; in the clip view to
@@ -644,6 +645,16 @@ pub(crate) enum InputEvent {
         /// Absolute target tick — a clip edge (deliberately *not* snapped to
         /// the cursor grid: the edge is the point) or a timeline click,
         /// snapped like a lane click.
+        tick: i32,
+    },
+    /// A click on the arranger's timeline strip: play from the snapped tick
+    /// under it, running or stopped (`TransportCommand::PlayFromTick`),
+    /// leaving the cursor, the marquee and the selected track as they are —
+    /// Ableton's scrub area. Auditions a marqueed section from a bar or two
+    /// before it without losing the marquee. The clip view's strip still
+    /// places its cursor (`SetCursorTick`).
+    PlayFromTick {
+        /// Absolute (arrangement) tick to start from.
         tick: i32,
     },
     /// Plain `←`/`→` in the Arranger or `Clip`: step the cursor one

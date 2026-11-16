@@ -469,6 +469,7 @@ const FIXED: &[FixedGroup] = &[
             ("Legend drag", "Clip: zoom / scroll the note rows"),
             ("Band drag", "Arranger: move the clip or the marquee"),
             ("⌥ band drag", "Arranger: copy the clip or the marquee"),
+            ("Ruler click", "Arranger: play from there, the marquee kept"),
         ],
     ),
     (

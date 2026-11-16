@@ -36,7 +36,7 @@ A transpose of *the marqueed content* was drafted first (2026-11-16) and dropped
 
     Refusals record no undo step. A running total ("+3 so far") would need a session remembering where the shift began, stored mode-like state that `220`'s principles avoid; the undo history already holds it.
 
-8. **No audition.** The clip view's transpose previews the first selected note when it moves (`Sequencer::preview_note`), on the selected track. An idea spans tracks, and a single note on one of them says little about whether it fits. Listening means playing the loop over the idea, which is the whole workflow; stopped, a press is silent.
+8. **No audition.** The clip view's transpose previews the first selected note when it moves (`Sequencer::preview_note`), on the selected track. An idea spans tracks, and a single note on one of them says little about whether it fits. Listening means playing the loop over the idea, which is the whole workflow; stopped, a press is silent. To hear how it resolves against what comes before, click the arranger's ruler a bar or two ahead of it: that plays from there without moving the cursor, so the marquee stays for the next press (added 2026-11-16 after use, `020` § Timeline click).
 
 9. **Unchanged.**
     - **The clip view's transpose**: `↑`/`↓` on the selected notes, as today; it stays the tool for anything finer than whole clips.
