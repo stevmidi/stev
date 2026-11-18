@@ -564,5 +564,9 @@ mod tests {
         );
         transport_command(&mut h, &mut transport, TransportCommand::PlayPerformance);
         assert!(!transport.is_running());
+        assert_eq!(
+            statuses(&h).last().map(String::as_str),
+            Some("Nothing on pad 5 to play")
+        );
     }
 }

@@ -139,6 +139,8 @@ impl EventHandlers {
             TransportCommand::PlayPerformance => {
                 if sequencer.start_performance_replay() {
                     transport.start();
+                } else {
+                    self.send_status_ui_event(nothing_to_replay(sequencer.selected_pad()));
                 }
             }
             TransportCommand::TogglePlayback => {
@@ -180,4 +182,10 @@ fn play_from_tick(tick: i32, transport: &mut Transport, sequencer: &mut Sequence
 fn stop(transport: &Transport, sequencer: &mut Sequencer) {
     sequencer.stop_performance_replay();
     transport.stop();
+}
+
+/// The footer's line for `⌥Space` on an empty pad `pad`: nothing plays, and
+/// it says why. Pads count from 1.
+fn nothing_to_replay(pad: usize) -> String {
+    format!("Nothing on pad {} to play", pad + 1)
 }

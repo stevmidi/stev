@@ -200,7 +200,8 @@ impl PerformanceLane {
             Some(_) => notes().filter(|&(start, _, _)| start == at).last(),
         }
         .map(|(start, _, key)| key + at - start);
-        let sounding = notes().any(|(start, end, _)| start <= at && at < end);
+        // Only a tick with no jump needs to know: a jump lands on a note.
+        let sounding = jump.is_some() || notes().any(|(start, end, _)| start <= at && at < end);
         let cue = match jump {
             Some(tick) => Some(ReplayCue::Jump(tick)),
             None if !sounding && !replay.silent => Some(ReplayCue::Silence),

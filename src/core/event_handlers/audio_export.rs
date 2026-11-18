@@ -119,8 +119,8 @@ impl EventHandlers {
 
     /// One tick of playback at `at`: the performance replay cues what it
     /// plays (`520-performance-capture.md` decision 4), the transport
-    /// advances, and the tracks play. A loop wrap is re-anchored in between, before the tick reaches
-    /// the sequencer: deferred to the transport's events, a burst of ticks
+    /// advances, and the tracks play. A loop wrap is re-anchored in between,
+    /// before the tick reaches the sequencer: deferred to the transport's events, a burst of ticks
     /// handled in one wakeup plays past the region end into the next clip
     /// (the stuck-note bug, `150-clock-position-sync.md`). The one tick
     /// path, for the clock's ticks and an audio export's steps alike.
