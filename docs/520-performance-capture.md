@@ -1,6 +1,6 @@
 # Capturing a Performance-Lane Performance
 
-**Status: draft, on the drawing board (2026-11-18).** Not agreed, no issue, not in the index. This records where the discussion stands and why, so it can be picked up again; the decisions below are directions agreed in conversation, not a design to build. A performance played on the lane (`110`, `510`) is captured as a **performance clip the lane holds**: a note clip whose notes are the keys pressed. With the lane selected, the knob panel's column (which has no plugin to show then) holds the performances as eight pads, and the docked clip panel's piano roll shows the selected one, edited there with the clip view's tools. It is auditioned with `⌥Space` against the arrangement's `Space`, and placed through the clipboard: a pad selected and `⌘C` copies its performance, rendered as clips on the tracks it played from, and `⌘V` overwrites or `⇧⌘V` inserts it at the cursor. It builds on Paste Time, `⇧⌘V`, built on its own first (§ Paste Time); launch quantize, when a press jumps, is deferred (§ Launch quantize).
+**Status: design agreed 2026-11-18, not built.** Launch quantize is deferred to a design of its own (§ Launch quantize); Paste Time, which it builds on, is built (§ Paste Time). A performance played on the lane (`110`, `510`) is captured as a **performance clip the lane holds**: a note clip whose notes are the keys pressed. With the lane selected, the knob panel's column (which has no plugin to show then) holds the performances as eight pads, and the docked clip panel's piano roll shows the selected one, edited there with the clip view's tools. It is auditioned with `⌥Space` against the arrangement's `Space`, and placed through the clipboard: a pad selected and `⌘C` copies its performance, rendered as clips on the tracks it played from, and `⌘V` overwrites or `⇧⌘V` inserts it at the cursor. It builds on Paste Time, `⇧⌘V`, built on its own first (§ Paste Time); launch quantize, when a press jumps, is deferred (§ Launch quantize).
 
 ## Background
 
@@ -34,7 +34,7 @@ Where a gridded result is wanted, it comes from one of two places, both the play
 
 The same holds for playback (decision 4): the performance is replayed through the live trigger path, so it isn't a reconstruction of what was played but the same code playing it again.
 
-## Decisions so far (draft)
+## Decisions
 
 1. **The lane holds performance clips, as data.** The sequencer already owns the lane's state (the key length, `510` § Step 1b); the performance sits beside it: an ordinary note clip whose notes are the keys pressed. A note's pitch is the key (C3 and up, where it jumps at the key length), its start is when it was pressed, its length is **until the next press** (not until the key's release: a release doesn't stop the transport, so "from this press to the next" is what played). Ticks count from the performance's own start, not from the timeline. It is saved with the project (one field beside the key length: a list, empty by default, decision 6), a capture is an undoable edit, and editing it is ordinary undoable clip editing.
 
