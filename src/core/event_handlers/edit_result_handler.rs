@@ -270,7 +270,10 @@ impl EventHandlers {
                 inserted_take,
                 duplicate_span,
             } => {
-                sequencer.reset();
+                // No track plays a performance: nothing to re-seek.
+                if home != ClipHome::Lane {
+                    sequencer.reset();
+                }
 
                 if let Some(clip) = sequencer.clip_on_mut(home, clip_id) {
                     clip.restore_event_selection(&selected_event_ids);

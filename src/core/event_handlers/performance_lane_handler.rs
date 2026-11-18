@@ -443,4 +443,15 @@ mod tests {
         run_command(&mut h, &mut record, SequencerCommand::PasteNotes);
         assert_ne!(pad_notes(&h, 0), before);
     }
+
+    /// Regression: `⌥Space` in the clip view played the arrangement from the
+    /// performance's cursor taken as an arrangement tick. A performance has
+    /// no place there; its replay is phase 3.
+    #[test]
+    fn option_space_on_a_performance_plays_nothing_from_the_arrangement() {
+        let (mut h, mut record, _) = captured();
+        h.transport_commands.try_iter().for_each(drop);
+        run_command(&mut h, &mut record, SequencerCommand::PlayFromClipCursor);
+        assert_eq!(h.transport_commands.try_iter().count(), 0);
+    }
 }

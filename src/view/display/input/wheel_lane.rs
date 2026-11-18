@@ -96,7 +96,9 @@ impl Display {
     /// other one's. The knob panel's selection is its own: a lane switch
     /// leaves it alone.
     pub(in crate::view::display) fn set_clip_lane(&mut self, lane: ClipLane) {
-        if lane == self.render.clip_lane {
+        // A performance has no lower lane (`lower_lane_h`): the choice waits
+        // for the next track's clip, unswitched.
+        if lane == self.render.clip_lane || self.shows_performance() {
             return;
         }
         self.render.clip_lane = lane;

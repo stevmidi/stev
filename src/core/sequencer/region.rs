@@ -32,7 +32,12 @@ impl Sequencer {
     /// `⌥Space` in the clip view: where playback from the lead clip's cursor
     /// starts in the arrangement — the clip's start when the cursor sits on
     /// material outside the window (`Clip::play_from_arrangement_tick`).
+    /// `None` with the lane selected: a performance has no place in the
+    /// arrangement to play from (its own replay is `520` phase 3).
     pub(crate) fn selected_clip_play_from_tick(&self) -> Option<i32> {
+        if self.is_performance_lane_armed() {
+            return None;
+        }
         self.selected_clip()
             .map(|clip| clip.play_from_arrangement_tick(clip.cursor_tick()))
     }
