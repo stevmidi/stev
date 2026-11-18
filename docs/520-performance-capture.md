@@ -1,0 +1,170 @@
+# Capturing a Performance-Lane Performance
+
+**Status: draft, on the drawing board (2026-11-18).** Not agreed, no issue, not in the index. This records where the discussion stands and why, so it can be picked up again; the decisions below are directions agreed in conversation, not a design to build. A performance played on the lane (`110`, `510`) is captured as a **performance clip the lane holds**: a note clip whose notes are the keys pressed. With the lane selected, the knob panel's column (which has no plugin to show then) holds the performances as tiles, and the docked clip panel's piano roll shows the selected one, edited there with the clip view's tools. It is auditioned with `⌥Space` against the arrangement's `Space`, and placed through the clipboard: a tile selected and `⌘C` copies its performance, rendered as clips on the tracks it played from, and `⌘V` overwrites or `⇧⌘V` inserts it at the cursor. Two designs of their own come with it: launch quantize, when a press jumps (§ Launch quantize), and Paste Time, `⇧⌘V`, which this depends on (§ Depends on: Paste Time).
+
+## Background
+
+The marquee transpose (`500`), the ruler click that plays without moving the cursor (`020` § Timeline click) and the lane drawn as a keyboard with a choice of key length (`510`) together opened a workflow: put ideas side by side, shift them by ear until they work together, then play freely on the lane trying combinations. Sooner or later a pattern comes out that would work as a transition or a section of its own. Today it is gone once played: the lane is live-only by design (`110` § Scope).
+
+What's wanted is to keep such a pattern as material: a new set of clips that can go anywhere on the timeline.
+
+### A deliberate change of `110`'s scope
+
+`110` says not to bring back a `PerformanceLaneData`/events concept "without a deliberate scope change": an earlier lane recorded its triggers and that was removed on purpose. This is that change, made deliberately. What was removed was trigger data shown on the timeline as lane feedback; what's proposed here is a captured performance as material, kept off the timeline (decision 3) and turned into ordinary clips on commit. If it goes ahead, `110` § Scope records the change and the reason.
+
+## What a performance is
+
+The lane only ever moves the transport (`handle_performance_lane_midi_input` → `jump_and_chase(key_tick)`); between presses playback runs straight on, and a release doesn't stop it. So a performance is a list of jumps, "at this moment, go to this key", and what it plays is a **path through the arrangement**: bars 5–6, then bar 13 to beat 3, then bars 1–2, and so on.
+
+There were two ways to keep it:
+
+1. **Keep the path** and let it drive the transport on playback: song mode, scene chaining. Non-destructive (edit an idea and the performance follows), but a second level of arrangement: the timeline would no longer show what plays, and it would fight the loop, the playhead and the cursor.
+2. **Render the path into clips**: each segment a copy of what was under the playhead on each track, laid end to end. What you see is what plays, and every existing tool works on the result (transpose, `⌥`-drag, `⌘E`, edge drags, undo).
+
+The direction is both, in that order: the performance is *kept* as the path (the performance clip, decision 1) while it's being shaped and auditioned, and *rendered* to clips when copied for placing (decision 5). The timeline only ever holds rendered clips, so it stays flat.
+
+## Principle: what you play is what you get
+
+A capture records exactly what was heard. Nothing in the capture post-processes timing: no snapping press times to a grid, no thresholds, no clean-up that would clear the groove of the performance. An early suggestion was to snap press times at capture, since `jump_and_chase` fires on the press and a press is never exactly on the beat; it was rejected for that reason (2026-11-18).
+
+Where a gridded result is wanted, it comes from one of two places, both the player's choice and both heard:
+
+- **Before the ears**: launch quantize schedules the jump on the next beat or bar while playing (§ Launch quantize).
+- **After, by hand**: quantizing the performance clip's notes in the piano roll (decision 2), an explicit, visible, undoable edit.
+
+The same holds for playback (decision 4): the performance is replayed through the live trigger path, so it isn't a reconstruction of what was played but the same code playing it again.
+
+## Decisions so far (draft)
+
+1. **The lane holds performance clips, as data.** The sequencer already owns the lane's state (the key length, `510` § Step 1b); the performance sits beside it: an ordinary note clip whose notes are the keys pressed. A note's pitch is the key (C3 and up, where it jumps at the key length), its start is when it was pressed, its length is **until the next press** (not until the key's release: a release doesn't stop the transport, so "from this press to the next" is what played). Ticks count from the performance's own start, not from the timeline. It is saved with the project (one field beside the key length: a list, empty by default, decision 6), a capture is an undoable edit, and editing it is ordinary undoable clip editing.
+
+    **Why data and not a pending capture.** The first picture was a pending capture: a take not yet committed that you could leave to audition the arranger and come back to. That is the `PendingClip` model `220` removed, and a stored mode `220`'s principles avoid (the take session is the one exception). The questions it raises ("if the capture isn't committed yet…", "go back to where it still sits") are the ones a mode creates. Held by the lane as data, there's nothing to suspend or resume:
+
+    | | Pending capture | Data on the lane |
+    |---|---|---|
+    | Leave for the arranger | Suspend it, remember to come back | Ordinary selection; it's still there |
+    | Save, quit, reopen | Lost, or a special case | Saved like the key length |
+    | A mistake | Discard the session | `⌘Z` |
+    | Try it in three places | Must stay uncommitted throughout | `⇧⌘V`, `⌘Z`, move, `⇧⌘V` |
+
+2. **The panel shows it as a piano roll.** A performance *is* a monophonic melody on the lane's keyboard, so the view is the piano roll itself, with the lane's keys as its rows, and it maps one to one onto what was played:
+
+    ```
+     Performance · 6 bars                      ← clip panel, lane selected
+            |1         |2         |3         |4         |5
+       G3   |                     ██████
+       E3   |           ██████████      ███
+       C#3  |                              ████
+       C3   |███████████                       ██████████████ …
+    ```
+
+    Every edit has a musical meaning: a note dragged sideways cuts earlier or later; dragged up or down, the segment plays from somewhere else; shortened, it cuts out sooner; `⌥`-dragged, a segment repeats; quantized, the cuts land on the grid, by choice. Rows are labelled as on the lane's strip, perhaps with where they jump ("E3 · bar 2"). The velocity lane, the wheels and the knobs don't apply and aren't shown. Live there are no gaps or overlaps; after editing, a gap could be silence (a new tool: a stop before the drop) and an overlap resolves as live, the latest note wins.
+
+3. **In the docked clip panel, not the lane row.** Everything in the lane row lines up with the bars above it; that's the point of `510` ("the eye goes straight up from a clip to its key"). A performance has its own time, 0 to its length, and its six bars aren't the arranger's bars 1–6: drawn in the row, its notes would sit over bars they don't play. The row is also 24 pt for up to 68 rows of keys, and it already has a job, the keyboard. The panel needs no new layout (a third thing it can show: a track's clip, or the lane's selected performance), and during playback (decision 4) it gives two views at once: the arranger above shows the *path* (the playhead jumping between ideas, the strip lighting keys), the panel below the *time* (its own playhead running steadily through the notes).
+
+    **The column beside it holds the performances as tiles.** The knob panel's column (`030` § Knob Panel) is left of the piano roll; its knobs belong to the selected track's plugin, so with the lane selected (no track) it has nothing to show and reads `No plugin on this track`. With the lane selected it shows the lane's performances instead, each as a tile with its name and length ("Performance · 6 bars"). A tile is the performance as a whole, an object to select, as a clip is in the arranger and a row in the browser; the piano roll beside it shows its events. It also answers whether a performance exists (§ Open questions 7) without touching the lane row. Clicking a tile selects it, washed as a list row is (`030`, "one selection mark per kind of thing"), opens it in the piano roll, and gives the column the keyboard, as a clicked knob does (`KeyFocus::KnobPanel`); the tile's keys are decision 5's copy and decision 6's delete.
+
+4. **`Space` plays the arrangement, `⌥Space` the performance.** With the lane selected, both play from where you are, without leaving the lane:
+
+    - `Space`: the arrangement from the arranger cursor, as today, unchanged.
+    - `⌥Space`: the performance, from the panel's cursor (or its start), **whichever pane has the keyboard** while the lane is selected.
+    - `←`/`→`: move the arranger cursor along the lane, as today (`450` decision 6): the spot to try next.
+    - A ruler click: the arrangement from any bar without moving the cursor (`020`).
+
+    This is the clip view's existing grammar (`010`): `Space` from the arranger cursor, `⌥Space` "from where you're editing", the clip cursor, leaving the arranger cursor alone. On the lane, what you're editing is the performance. Today `⌥Space` picks the clip cursor only with the panel focused; on the lane it plays the performance with either pane focused, since otherwise A/B would be focus-switching instead.
+
+    **Why not up and down.** The first picture was A/B by selection: a track and `Space` for the arrangement, `↑` to the lane and `Space` for the performance. It changed `Space`'s meaning on the lane, and every comparison was a trip between rows. `Space`/`⌥Space` needs neither.
+
+    The performance plays **through the live trigger path**: each note fed to the lane's trigger at its time, as if pressed again, so the playhead jumps and the strip lights as when it was played, and an edit is heard on the next pass. It loops over its own length. While it plays the transport position jumps, so the performance needs **its own clock** (time since it started) driving the jumps and the panel's playhead: the one new mechanism, on the sequencer thread beside the trigger. `⌥Space` is an unconditional restart, so it switches from the arrangement to the performance mid-play; back is `Space` (stop) then `Space`. A live lane key pressed during the replay takes over, the latest press wins as today, and the replay stops (recording over a performance is another question).
+
+5. **Placed through the clipboard: a tile and `⌘C`, then `⌘V` or `⇧⌘V`.** Each place `⌘C` can be pressed has one meaning, and it copies what is selected there:
+
+    | Where | `⌘C` copies |
+    |---|---|
+    | The arranger, a marquee | clips, as today |
+    | The piano roll, selected notes | the performance's notes, for pasting **inside performances only** |
+    | The column, a selected tile | the performance, rendered |
+
+    With a tile selected, `⌘C` copies its performance *rendered*: each segment a copy of the clip under the playhead on each track, its window trimmed to the stretch that played, laid end to end from 0, each piece tagged with the track it came from and no track anchor, the span the performance's length. That is exactly the shape of an all-track time copy (`⇧⌘C`, `020`), so the ordinary paste keys place it, from the lane or from a track:
+
+    - `⌘V`: overwrite at the cursor, as today. With no track selected an all-track paste already puts every piece at the cursor on its source track (`ClipClipboard::target_track`), so it works from the lane.
+    - `⇧⌘V`: insert at the cursor and push the rest along (§ Depends on: Paste Time).
+
+    Trimmed windows keep it cheap and reversible: the copies share the source clips' `Arc` events (`420`), and dragging a segment's edge out shows the rest of the idea, as hidden notes do (`500` decision 3). A copy isn't an edit and records no undo step; each paste is one, selects nothing new (`220`), and leaves the performance in its tile and in the clipboard, so it can be placed again.
+
+    **Why the clipboard, not a commit key.** The first version was `Enter` committing at the cursor (and then `Enter`/`⇧Enter` for overwrite and insert, mirroring `⌘V`/`⇧⌘V`). That is a second placement grammar beside the paste one, with keys and an edit of its own. Once rendered, a performance *is* a time copy, so it goes through the clipboard and the paste grammar places it. It also answers "insert or overwrite" without choosing (§ Open questions 2), and works from anywhere, which is what was wanted from the start: a new set of clips that can go anywhere on the timeline. And `Enter` on the lane stays free, for framing a capture perhaps (§ Open questions 1). This also follows the habit of routing through the general path rather than keeping a variant of it.
+
+    **Why a tile, not the lane or the piano roll.** Two other places were considered (2026-11-18). `⌘C` while standing on the lane, copying the performance implicitly: but Stev never copies without a selection (every arranger clipboard chord is marquee-only, `020`), and the lane doesn't show the performance (decision 3: the row is the keyboard, and the cursor on it is a position in the arrangement), so it copies something you can't see from where you stand. `⌘C` in the piano roll, copying what the selected notes play: but there a copy should be the clip's events, isolated to the performance clip, as in every clip; making the piano roll's copy produce arrangement clips would be a grammar of its own. The tile gives the performance a visible, selectable form, so copying it is the ordinary "select a thing, copy it". The piano roll keeps note copy and paste between and within performances; arrangement clips only come from a tile.
+
+    **Getting to the paste.** From a knob, a pane command hands the keyboard back and acts on the pane (`010`); `⌘V`/`⇧⌘V` from a tile could do the same, pasting at the arranger cursor, so the loop is: tile, `⌘C`, `⇧⌘V`, listen, `⌘Z`, `→`, `⇧⌘V`. Or a click in the arranger first, more ordinary. To decide. With the column focused, `⌥Space` still plays the selected performance (decision 4: lane selected, either pane).
+
+    **What it costs.** The render happens at the copy, not the paste: an idea transposed after `⌘C` is still in its old key in the clipboard, and is copied again (as any copy behaves). A copy of the performance replaces whatever was in the clipboard, as any copy does. And it needs `⇧⌘V` built first or alongside.
+
+    The transition into the performance is heard after pasting: play from a bar before the cursor; if it doesn't work, `⌘Z`, move the cursor, paste again. After the first `⌘C` each try is one key. A preview playing "the arrangement up to the cursor, then the performance" without pasting is possible (decision 4 started at the cursor) but is a virtual timeline, the pending state in another form; left out until paste + `⌘Z` proves too slow.
+
+6. **Several performances, a tile each.** The column makes a bin of performances natural (2026-11-18), and the cost over one is small, so the lane holds a list from the start rather than one performance that a capture overwrites:
+
+    - **A capture adds a tile** and selects it; nothing it replaces, so trying again never loses the take before. Undo of a capture removes its tile.
+    - **The selected tile is the current performance**: the one the piano roll shows, `⌥Space` plays and `⌘C` copies. Exactly one is selected while there are any.
+    - **`Delete` on a selected tile removes it**, one undo step, as a clip or a track goes.
+    - **Saved with the project** as a list, empty by default, so an old project opens with none.
+
+    **Why a list from the start.** With one performance, a capture over a good one is only saved by `⌘Z`, and comparing two takes means capturing again. With tiles, comparing is clicking between them and `⌥Space`, the same A/B as decision 4. The stored shape is the decision that is hard to change later (a field in the project file, `060`); the rest (naming, ordering, a limit) can grow by use (§ Open questions 6).
+
+    **Not yet**: launching a tile from the lane's keys or playing tiles in a chain, which would be the path on the timeline again (§ What a performance is).
+
+## The workflow, end to end
+
+1. Play on the armed lane; capture (§ Open questions 1).
+2. A tile appears in the column, selected; the piano roll shows the performance.
+3. `⌥Space` to hear it; move notes, quantize.
+4. `←`/`→` to a spot, `Space` to hear the arrangement there; `⌥Space` for the performance; repeat.
+5. Select its tile and `⌘C` copies the performance; `⇧⌘V` inserts it at the cursor (`⌘V` to overwrite); play from just before it to hear the join; `⌘Z`, move, paste again if it doesn't sit.
+
+## Depends on: Paste Time
+
+Stev has no paste that inserts: `⌘V` always overwrites, `⇧⌘D` (Duplicate Time) inserts but only straight after its source, and anywhere else it takes a marquee, `⌘I` (Insert Silence) then `⌘V`, which can't be done from the lane (`⌘I` needs a marquee). The time clipboard today, against Ableton's:
+
+| | Stev today | Ableton |
+|---|---|---|
+| `⇧⌘C` | Copy time: every track's slice | Copy Time |
+| `⇧⌘X` | Cuts the slice, leaves the gap | Cut Time: closes the gap |
+| `⌘V` | Paste, overwrites | Paste |
+| `⇧⌘V` | nothing | Paste Time: inserts, pushes the rest |
+| `⇧⌘D` | Duplicate Time, inserts | Duplicate Time |
+
+**Paste Time** is a small design of its own, useful today without the lane, and decision 5 builds on it. As discussed (2026-11-18): `⌘V` stays exactly as it is; `⇧⌘V` does the same paste but inserts instead of overwriting. It needs no new machinery: `DuplicateTimeEdit` is already an `InsertSilenceEdit` then a `PasteClipsEdit`, one undo step, and Paste Time is the same composition anchored at the cursor. It follows Duplicate Time's loop rule (a loop region at or after the cursor slides along, not resized) and needs no marquee, so it works from the lane. `⇧` as the wider form matches `⇧⌘C`/`⇧⌘X`/`⇧⌘D`. To settle in its own design:
+
+- **How much to insert**: the copied span (`end − start`), not the extent of the pieces, so a copy whose last bar is empty still inserts its full length. Check whether `ClipClipboard` keeps the span or only the pieces.
+- **A scoped copy (plain `⌘C`) pasted with `⇧⌘V`**: insert on every track (insert time always is) and paste the pieces in their marquee shape, or refuse.
+- **`⇧⌘X` as Cut Time**, closing the gap as in Ableton so the set is complete. Not needed (`⌘Delete` closes gaps already), and it would change a released key, so only deliberately, with a changelog line.
+
+## Launch quantize
+
+Its own design, probably before or alongside this one: useful while just performing, testable by ear alone, and it settles the timing question before capture is designed.
+
+- **Two settings, two questions.** The key length (built) is where a key jumps *to*; launch quantize is *when*: Off (on the press), Beat, ½ bar where the meter allows, Bar. They pair naturally (Bar keys at Bar launch is classic scene launching; Beat keys with Off is stutter playing), but "jump to bar 5, on the next beat" is valid too, so they stay separate. Saved with the project, not an undo step, as the key length.
+- **A scheduled press**: jumps at the next boundary, done by the sequencer on its own tick, so exact to the tick, tighter than a live press. The latest press wins. A release before the boundary probably doesn't cancel (the press was the decision, as in Ableton); to check by hand. A press while stopped starts at once. The loop-wrap suspension starts at the jump, not the press. **A pending key must show**, or a press waiting half a bar feels broken: an outline or dimmer accent on its piece of the strip until it lands.
+- **What Off implies.** Targets are always on the grid (`key_tick`), moments aren't. Press 0.3 of a beat late into bar 5 and the source then plays 0.3 beats against the output: every bar line after it sits off the grid it lands on. That is what was played; a capture with Off has segments at off-grid ticks (clip windows hold any tick) and its downbeats won't line up after a commit. That *is* the groove, and keeping it is the point. With Beat or Bar everything is on the grid by construction, nothing corrected.
+- **Not now**: an Off that jumps to the target *plus* the press's offset within the beat (cutting in early or late, the grid kept). It changes what's heard, so it would be a playing mode, not a capture fix; only if Off's drift turns out to be a problem in use.
+
+## Open questions
+
+1. **Framing a capture.** Which key (`Enter` on the lane is free since decision 5), and which presses count: since the last pause (a phrase-start rule much simpler than `040`'s, on jump data), the last N bars, or a marquee as in `470`. Capture-first says no record mode: the lane always remembers its recent presses, as the capture buffer remembers notes (`090`), and a key frames the take after the fact, as `/` does. Where it ends: the capture key's press, or the last press plus one key length. The next thing to think through.
+2. **Insert or overwrite at the cursor.** Settled by decision 5 (2026-11-18): both, through the paste keys, `⌘V` overwriting and `⇧⌘V` inserting. Kept here for the trail: an `Enter`/`⇧Enter` commit pair was considered first, then dropped for the clipboard once Paste Time (§ Depends on: Paste Time) was seen to be missing from Stev on its own account.
+3. **Does the render sound like the replay?** `jump_and_chase` *chases*: a note started before the jump target and still held at it is sounded. A trimmed window wouldn't play it (it starts outside the window). Either the render includes chased notes or the replay matches the render; they must agree, or what's heard and what's pasted differ. Check in the code.
+4. **Wheels and parameters at a segment's start.** Pitch bend, the mod wheel and parameter moves must hold the value they had at that point in the source, or a segment starts on the wrong bend: the latching `370` solved, a precedent.
+5. **The lane owning a clip without being a track.** The panel, the note edits, quantize and undo are all addressed by track and clip ids, and the lane is not a track. How it holds a clip without pretending to be one is the first thing to check in the code.
+6. **Decision 6's details**: names (a number, the capture's time, a rename later), ordering, the column's room for tiles and what happens past it (a scroll), whether a tile can be dragged, and a limit, if any.
+7. **Showing that a performance exists**: answered by the column's tiles (decision 3); nothing on the lane row.
+
+## Not in this design
+
+- **The path on the timeline** (song mode, scenes): § What a performance is.
+- **Post-processing a capture's timing**: § Principle.
+- **A pending, uncommitted capture**: decision 1.
+- **A preview of the performance in place before pasting**: decision 5.
+- **A commit key of its own** (`Enter`, `Enter`/`⇧Enter`): decision 5.
+- **An implicit copy from the lane, or arrangement clips from the piano roll's copy**: decision 5.
+- **Launching or chaining tiles**: decision 6.
+- **Step 2 of `510`, one key per idea.** Less urgent with capture, since the pasted result is plain clips whatever the mapping; but a performance clip reading "E3, E3, G3, C4" is easier to follow than "bar 5, bar 5, bar 9, bar 13" once ideas sit on keys.
