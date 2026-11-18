@@ -15,6 +15,7 @@ mod knob_panel;
 mod modals;
 mod output_menu;
 mod overlays;
+mod performance_lane;
 mod piano_keys;
 mod timeline;
 mod wheel_lane;
@@ -804,6 +805,7 @@ impl Display {
         // What is drawn in the track lanes is clipped to their viewport, so
         // a lane scrolled up never paints over the performance lane or the
         // timeline strip.
+        self.draw_performance_lane_keys(painter, rect);
         let lanes_painter = self.arranger_layout().lanes_painter(painter, rect);
         self.draw_time_selection_gaps(&lanes_painter, rect);
         self.draw_arranger_view(&lanes_painter, rect);

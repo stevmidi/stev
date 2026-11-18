@@ -22,10 +22,12 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ### Added
 
+- The arranger's performance lane shows the keyboard that drives it: a thin strip of white and black keys along its bottom edge, each key lined up with where it jumps, from C3 at bar 1. The C's are named, and every key once you zoom in far enough. The strip is dimmer while the lane isn't armed; armed, a key you hold lights up.
 - `⌥↑`/`⌥↓` in the arranger transpose every note in the clips a marquee covers whole, a semitone at a time, across all its tracks at once; `⇧⌥↑`/`⇧⌥↓` move them an octave. One undo step per press, and the marquee stays, so you press, listen in the loop and press again until an idea sits in key with the others. A marquee that cuts through a clip is refused, and so is a press that would take a note out of MIDI's range (nothing is clamped). The footer says what happened.
 
 ### Changed
 
+- Each key on the performance lane now jumps a beat instead of a bar, the beat of the project's meter: in 4/4, C3 is bar 1, C♯3 bar 1 beat 2, E3 bar 2, C4 bar 4. The keyboard reaches 68 beats from C3 (17 bars of 4/4) instead of 68 bars.
 - A click on the arranger's ruler now starts playback from that point and leaves the cursor and the marquee where they are, as Ableton's scrub area does. Audition a marqueed section from a bar or two before it, transpose, click again, without marqueeing it again. A click in the lanes still places the cursor.
 - `⌥↑`/`⌥↓` no longer step the selected track in the arranger (they did as a side effect, the ⌥ ignored); plain `↑`/`↓` still do.
 

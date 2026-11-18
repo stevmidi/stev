@@ -1,7 +1,8 @@
 //! Painting the Arranger: the bar grid, the clip rectangles with their note
-//! thumbnails, the reserved performance-lane row, and the left track-header
-//! column (per-track colour swatch, the track's name, S/M buttons and the
-//! output chip, volume/pan bars for instrument tracks). See `030-ui-design.md`.
+//! thumbnails, and the left track-header column (per-track colour swatch, the
+//! track's name, S/M buttons and the output chip, volume/pan bars for
+//! instrument tracks). The performance-lane row is `performance_lane.rs`.
+//! See `030-ui-design.md`.
 
 use egui::text::{LayoutJob, TextFormat};
 use egui::{Align2, Color32, CornerRadius, FontId, Painter, Rect, Stroke, pos2, vec2};
@@ -61,7 +62,7 @@ impl Display {
             Stroke::new(1.0_f32, grid_seam_color()),
         );
 
-        self.draw_performance_lane_row(
+        self.draw_performance_lane_gutter(
             painter,
             rect,
             performance_lane_top,
@@ -812,68 +813,6 @@ impl Display {
             );
         }
     }
-
-    /// Draws the reserved arranger performance lane row (above track 1):
-    /// just a selection accent, so it's clear performance mode is armed.
-    /// Not a track — its geometry comes from `Display::arranger_layout()`,
-    /// the same source `track_idx_at`/`performance_lane_hit_at` use for
-    /// hit-testing. The playhead itself (drawn elsewhere) is the feedback
-    /// for a live trigger.
-    fn draw_performance_lane_row(
-        &self,
-        painter: &Painter,
-        rect: Rect,
-        lane_top: f32,
-        lane_h: f32,
-        labels_right: f32,
-    ) {
-        let content_x = self.content_origin_x();
-        let content_w = self.content_w();
-        let accent = theme::accent();
-        let is_selected = self.performance_lane_selected();
-
-        let lane_fill = lane_grid_fill(is_selected, accent);
-        let gutter_fill = if is_selected {
-            accent.gamma_multiply(0.18)
-        } else {
-            theme::bg_panel().gamma_multiply(0.16)
-        };
-
-        // Content fill
-        painter.rect_filled(
-            Rect::from_min_size(pos2(content_x, lane_top), vec2(content_w, lane_h)),
-            CornerRadius::ZERO,
-            lane_fill,
-        );
-        // Gutter fill
-        painter.rect_filled(
-            Rect::from_min_size(
-                pos2(rect.min.x, lane_top),
-                vec2(labels_right - rect.min.x, lane_h),
-            ),
-            CornerRadius::ZERO,
-            gutter_fill,
-        );
-
-        if is_selected {
-            painter.rect_filled(
-                Rect::from_min_size(pos2(rect.min.x, lane_top), vec2(4.0, lane_h)),
-                CornerRadius::ZERO,
-                accent,
-            );
-        }
-
-        // Seam below the row, matching the track-lane separators.
-        painter.hline(
-            rect.min.x..=(rect.min.x + rect.width()),
-            seam_y(
-                lane_top + lane_h,
-                ARRANGER_LANE_SEAM_W,
-                painter.pixels_per_point(),
-            ),
-            Stroke::new(ARRANGER_LANE_SEAM_W, grid_seam_color()),
-        );
-    }
 }
 
 /// Grid-area background fill for one unselected track lane: `theme::bg()`
@@ -881,7 +820,7 @@ impl Display {
 /// same across every palette) so the darker `grid_seam_color()` grooves
 /// stand out against it. The selected lane swaps this for a low accent tint.
 /// Used for the track lanes and the performance lane alike.
-fn lane_grid_fill(is_selected: bool, accent: Color32) -> Color32 {
+pub(super) fn lane_grid_fill(is_selected: bool, accent: Color32) -> Color32 {
     if is_selected {
         accent.gamma_multiply(0.12)
     } else {

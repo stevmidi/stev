@@ -1,6 +1,6 @@
 # The Performance Lane as a Keyboard
 
-**Status: design agreed 2026-11-18; not built.** The performance lane (`110`) draws the keyboard that drives it, lined up with the bars: each bar's slice of the lane is filled with its key's colour, white or black as on the piano roll, the C's carry their name (C3, C4, …), every key does once a bar is wide enough, and a key held while the lane is armed lights its bar. The mapping stays exactly as it is (C3 = bar 1, each semitone the next bar). Nothing is stored, nothing is persisted, no command is added. This is step 1 of the "Performance lane as a keyboard" idea; step 2, one key per idea instead of one per bar, waits to see whether step 1 is enough.
+**Status: design agreed and built 2026-11-18** (issue #37; as built in `110` § Rendering). Two things changed while building it, by hand-testing: the keys are a thin strip, not whole-bar fills, and a key is a beat, not a bar (§ Changes while building). The decisions below are the design as agreed. The performance lane (`110`) draws the keyboard that drives it, lined up with the bars: each bar's slice of the lane is filled with its key's colour, white or black as on the piano roll, the C's carry their name (C3, C4, …), every key does once a bar is wide enough, and a key held while the lane is armed lights its bar. The mapping stays exactly as it is (C3 = bar 1, each semitone the next bar). Nothing is stored, nothing is persisted, no command is added. This is step 1 of the "Performance lane as a keyboard" idea; step 2, one key per idea instead of one per bar, waits to see whether step 1 is enough.
 
 ## Background
 
@@ -49,6 +49,13 @@ A keyboard widget of its own (in the gutter, or a strip under the transport) wou
 - **A held key past bar 68** can't happen (note 127 is bar 68), but a held key whose bar is scrolled off draws nothing, and that's fine.
 - **Tests** (`models/` and pure `view/` geometry): `note_for_bar` as the exact inverse of `bar_index_from_note` across 0–67 and `None` from 68; the visible-bar range for a scroll and zoom, including the cap; the E/F and B/C seam rule; the label threshold against bar width; in another meter, a slice as wide as `bar_ticks`.
 - **Docs**: `110` § Rendering (the keys, the labels, the lit bars, and the reason the barebones rule gives way here), `030` (the lane in the arranger's anatomy), `CHANGELOG.md`.
+
+## Changes while building
+
+Decided 2026-11-18 by looking at the built lane:
+
+- **A thin strip, not whole-bar fills.** Filling each bar's slice of the 24 pt row read as heavy alternating slabs across the arranger. Softer tones were tried (accent tints armed, then the lane's own greys moved toward white), and neither worked: the problem was the area, not the colour. The piano roll's key colours work in a narrow band, as in its key column, so the keys are a 5 pt strip along the lane's bottom edge (`KEY_STRIP_H`), in `piano_key_white`/`piano_key_black`, with the seams in it. The plain lane fill (accent-tinted while armed) is above it, holding the names in `fg_dim`. A held key lights its piece of the strip in the accent, with a faint wash over its span above. The strip was also tried along the top edge, under the ruler; the bottom read better.
+- **A key is a beat, not a bar.** Each semitone jumps one counted beat of the project's meter (`key_tick`, `meter.beat_ticks()`): in 4/4 C3 = bar 1, C♯3 = bar 1 beat 2, E3 = bar 2, C4 = bar 4. This reverses decision 6's "the mapping is unchanged", and the trigger path changes with it (`key_index_from_note` and `key_tick` in place of `bar_index_from_note` and `bars_to_ticks`). Half a bar per key was tried first: in 4/4 it is two beats, but in 3/4 it lands on beat 2½ and in 7/8 halfway through an eighth, where a beat lands on the beat in every meter. Finer than a beat was ruled out: a key per eighth reaches 8½ bars of 4/4, and jumps mid-beat read as stutters rather than moves. The keyboard now reaches 68 beats from C3 (17 bars of 4/4, not 68 bars; `Not in this design` keeps the movable base note out). `note_for_bar` became `note_for_key`, and the keys are drawn a beat wide.
 
 ## Not in this design
 

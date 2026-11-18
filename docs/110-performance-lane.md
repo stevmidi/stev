@@ -1,7 +1,7 @@
 # Arranger Performance Lane
 
 A reserved row in the arranger, above track 1, that arms the physical MIDI keyboard
-for bar-jump triggering instead of normal note capture. Deliberately live-input
+for beat-jump triggering instead of normal note capture. Deliberately live-input
 only — no recording/capture, no persistence. Key files:
 `src/models/performance_lane.rs`, `src/core/sequencer/performance_lane.rs`,
 `src/core/event_handlers/performance_lane_handler.rs`,
@@ -10,7 +10,7 @@ only — no recording/capture, no persistence. Key files:
 ## Scope
 
 - **Live playing only, by design** — a note held on the physical keyboard jumps
-  the transport to that note's bar and plays from there; releasing it leaves
+  the transport to that note's beat and plays from there; releasing it leaves
   playback running (deliberately — a release doesn't stop the transport, so a
   performer flowing between bars gets no awkward pause; they stop playback
   themselves when done). Nothing about a trigger is recorded, committed, or persisted —
@@ -20,9 +20,15 @@ only — no recording/capture, no persistence. Key files:
   one and it was removed on purpose.
 - `PerformanceLane` (`models/performance_lane.rs`) tracks only the
   currently-held trigger note (`live_active: Option<u8>`), monophonic — a new
-  NoteOn simply supersedes whatever was previously held. `bar_index_from_note`
-  maps a MIDI note to a 0-based bar via `config::PERFORMANCE_LANE_BASE_NOTE`
-  (currently C3/60); notes below it are ignored.
+  NoteOn simply supersedes whatever was previously held. `key_index_from_note`
+  maps a MIDI note to a 0-based key via `config::PERFORMANCE_LANE_BASE_NOTE`
+  (currently C3/60); notes below it are ignored. `key_tick` is where a key
+  jumps: **one beat per key**, the counted beat of the project's meter
+  (`meter.beat_ticks()`: a quarter in x/4, an eighth in x/8), so every jump
+  lands on a beat in every meter. In 4/4 C3 = bar 1, C♯3 = bar 1 beat 2,
+  E3 = bar 2, C4 = bar 4, and the keyboard reaches 17 bars (to note 127).
+  One key per bar until 2026-11-18, then briefly half a bar, which landed off
+  the beat in odd meters (`510` § Changes while building).
 
 ## Arming / selection
 
@@ -72,7 +78,7 @@ only — no recording/capture, no persistence. Key files:
   it needs `&mut Transport`, which `Sequencer` doesn't own.
 - **NoteOn**: `begin_live_trigger`, then `transport.suspend_loop_wrap()`,
   starts the transport if not already running, and `jump_and_chase(target_tick)`
-  to the note's bar. `loop_wrap_suspended` (`Transport`, thread-local, plain
+  to the key's beat (`key_tick`). `loop_wrap_suspended` (`Transport`, thread-local, plain
   `bool`) stops the region loop boundary from fighting the lane's hold.
 - **NoteOff**: only acts if `end_live_trigger` confirms the released note
   matches the currently-held one (a stale release of an already-superseded
@@ -85,15 +91,42 @@ only — no recording/capture, no persistence. Key files:
 
 - The row is reserved layout, not a track: `Display::arranger_layout()`
   (`rendering/mod.rs`) is the single source of geometry shared by drawing
-  (`draw_performance_lane_row`) and hit-testing, so they can't drift apart.
+  (`rendering/performance_lane.rs`) and hit-testing, so they can't drift apart.
   Height is `Display::PERFORMANCE_LANE_H`.
-- **Intentionally barebones**: the row only shows the selection accent
-  (armed vs. not) — no per-trigger visualization, no "Bar N" label, no
+- **The row draws the keyboard that drives it**
+  (`510-performance-lane-keyboard.md`). The gutter is drawn with the arranger's
+  backgrounds (`draw_performance_lane_gutter`: the accent tint and 4px marker
+  while armed); the content area after the timeline grid
+  (`draw_performance_lane_keys`), so the grid's bar and beat lines stop at the
+  lane and the key edges, every beat, are the lines there. Each key (68
+  from C3, 17 bars of 4/4; `note_for_key`, the inverse of `key_index_from_note`)
+  spans its beat, from `key_tick` to the next, in a thin strip along the lane's bottom edge (`KEY_STRIP_H`, 5pt), in
+  the piano roll's `piano_key_white`/`piano_key_black`, from
+  `tick_to_screen_x` in the project meter, so it follows zoom, scroll and
+  the meter; beats past the 68th have none. Filling the whole row
+  with the keys was tried first and read as heavy slabs, whatever the tones:
+  the piano roll's colours work in a narrow band, as in its key column. Seams
+  at E/F (1px) and B/C (2px) in the strip, as on the piano roll
+  (`row_seam_w`). The plain lane above the strip carries the names in
+  `fg_dim`: the C's always (Cubase-style, C3 over bar 1), every key once a key
+  fits the widest sharp's name and its padding (`labels_every_key`), each
+  clipped to its key. Only the visible keys are drawn (`visible_keys`).
+  The strip is drawn armed or not, at `UNARMED_KEY_STRENGTH` unarmed; the
+  lane fill is the usual one (the accent tint while armed). While armed every
+  key the live keyboard holds (`LiveNotes`, which wakes the UI on each edge)
+  lights its piece of the strip in `theme::accent()`, with a wash
+  (`HELD_KEY_WASH`) over its span above: what the hands hold, not just the
+  key the transport jumped to. Unarmed, held keys light nothing in the lane.
+- **Otherwise barebones**: no per-trigger visualization, no "Bar N" label, no
   committed-trigger history. The playhead (drawn elsewhere, unconditionally
-  whenever `running`) is the only feedback for an active trigger. An earlier
-  version rendered a growing span + bar label per trigger; it was removed as
-  unnecessary UI complexity once the playhead was made reliably visible (see
-  next section) — don't re-add it without a specific reason.
+  whenever `running`, over the keys) is the only feedback for an active
+  trigger. An earlier version rendered a growing span + bar label per
+  trigger; it was removed as unnecessary UI complexity once the playhead was
+  made reliably visible (see next section) — don't re-add it without a
+  specific reason. The keys are such a reason: they show the mapping, which
+  nothing else shows, and they are static (zoom, scroll and the meter change
+  them, playing never does), where the removed visuals repeated what the
+  playhead already says.
 
 ## Waking the UI from a background-thread trigger
 
