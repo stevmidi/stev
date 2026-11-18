@@ -212,7 +212,7 @@ fn ladder(meter: Meter) -> impl Iterator<Item = i32> {
     let to_beat = std::iter::successors(Some(FINEST_RUNG_TICKS), move |&t| {
         (t < beat).then_some(t * 2)
     });
-    let half_bar = meter.numerator().is_multiple_of(2).then_some(bar / 2);
+    let half_bar = meter.half_bar_ticks();
     let bars = std::iter::successors(Some(1), |&n| (n < MAX_BAR_TIER_BARS).then_some(n * 2))
         .map(move |n| bar * n);
     to_beat.chain(half_bar.into_iter().chain(bars).filter(move |&t| t > beat))

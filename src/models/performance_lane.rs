@@ -101,12 +101,13 @@ impl KeyLength {
 
     /// The length that plays in `meter`: this one, except a half bar in a
     /// meter with an odd numerator, where half a bar falls between beats (3/4's
-    /// beat 2½, half an eighth in 7/8), which plays as a beat. The rule the
-    /// arranger grid's half-bar rung follows (`grid.rs`). The stored choice is
+    /// beat 2½, half an eighth in 7/8), which plays as a beat: no
+    /// [`Meter::half_bar_ticks`], the rule the arranger grid's half-bar rung
+    /// follows too. The stored choice is
     /// kept, so a project that goes to 3/4 and back is at a half bar again.
     pub(crate) fn in_meter(self, meter: Meter) -> KeyLength {
         match self {
-            KeyLength::HalfBar if !offers_half_bar(meter) => KeyLength::Beat,
+            KeyLength::HalfBar if meter.half_bar_ticks().is_none() => KeyLength::Beat,
             length => length,
         }
     }
@@ -114,9 +115,9 @@ impl KeyLength {
     /// One key's length in `meter`, in ticks, as it plays
     /// ([`in_meter`](Self::in_meter)).
     pub(crate) fn ticks(self, meter: Meter) -> i32 {
-        match self.in_meter(meter) {
+        match self {
             KeyLength::Bar => meter.bar_ticks(),
-            KeyLength::HalfBar => meter.bar_ticks() / 2,
+            KeyLength::HalfBar => meter.half_bar_ticks().unwrap_or(meter.beat_ticks()),
             KeyLength::Beat => meter.beat_ticks(),
         }
     }
@@ -144,11 +145,6 @@ impl KeyLength {
             _ => KeyLength::Beat,
         }
     }
-}
-
-/// Whether half a bar of `meter` lands on a beat: its numerator is even.
-fn offers_half_bar(meter: Meter) -> bool {
-    meter.numerator().is_multiple_of(2)
 }
 
 /// Where key `key_index` jumps to, in ticks: the start of its key, one

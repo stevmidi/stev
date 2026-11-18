@@ -118,7 +118,7 @@ saved is the key length. Key files:
   `FONT_SIZE_TL`, coloured as the piano roll's `VEL`/`PB`/`MW` switch
   (`toggle_icon_color`): the length that plays in the accent, one under the
   pointer `fg`, the rest `fg_dim`, with the pointing hand on a label that
-  would switch (`HoveredControl::KeyLength`, no footer hint). In an odd meter
+  would switch (`HoveredControl::LaneSwitch`, no footer hint). In an odd meter
   `½` isn't drawn (the other two close up) and `Beat` is lit when `½` is the
   stored choice. One pure layout (`key_length_labels`, each cell its label's
   width and the row's height) serves the drawing and the hit test

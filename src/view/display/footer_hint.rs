@@ -34,12 +34,10 @@ pub(super) enum HoveredControl {
     /// A browser category row's `+`, which runs this command
     /// (`BrowserCategory::plus_action`).
     CategoryPlus(Action),
-    /// A piano-roll gutter label that would show another lane. No hint: a
-    /// click picks the lane, the key cycles them.
-    ClipLane,
-    /// A performance-lane gutter label that would pick another key length.
-    /// No hint: no key does it.
-    KeyLength,
+    /// A gutter label that would switch to another choice: the piano roll's
+    /// lane (its key cycles them) or the performance lane's key length (no
+    /// key). No hint.
+    LaneSwitch,
 }
 
 impl HoveredControl {
@@ -57,7 +55,7 @@ impl HoveredControl {
             HoveredControl::KeyboardChip => Action::ToggleComputerKeyboard,
             HoveredControl::BrowserToggle => Action::ToggleBrowser,
             HoveredControl::CategoryPlus(action) => action,
-            HoveredControl::ClipLane | HoveredControl::KeyLength => return None,
+            HoveredControl::LaneSwitch => return None,
         };
         command_hint(action.info().label, keymap.chords(action))
     }
@@ -77,10 +75,8 @@ impl Display {
             Some(HoveredControl::KeyboardChip)
         } else if self.is_pointer_on_browser_toggle() {
             Some(HoveredControl::BrowserToggle)
-        } else if self.is_pointer_on_clip_lane_switch() {
-            Some(HoveredControl::ClipLane)
-        } else if self.is_pointer_on_key_length_switch() {
-            Some(HoveredControl::KeyLength)
+        } else if self.is_pointer_on_clip_lane_switch() || self.is_pointer_on_key_length_switch() {
+            Some(HoveredControl::LaneSwitch)
         } else {
             self.browser_category_plus_under_pointer()
                 .and_then(BrowserCategory::plus_action)

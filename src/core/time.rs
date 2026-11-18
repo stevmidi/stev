@@ -136,6 +136,18 @@ impl Meter {
         PPQN * 4 / self.denominator as i32
     }
 
+    /// Half a bar, in ticks (an amount), where it lands on a counted beat:
+    /// only when the numerator is even (half a 3/4 bar is beat 2½, half a 7/8
+    /// bar half an eighth). The arranger grid's half-bar rung and the
+    /// performance lane's half-bar keys both follow it.
+    pub(crate) const fn half_bar_ticks(self) -> Option<i32> {
+        if self.numerator.is_multiple_of(2) {
+            Some(self.bar_ticks() / 2)
+        } else {
+            None
+        }
+    }
+
     /// Bars → ticks (an amount).
     pub(crate) const fn bars_to_ticks(self, bars: i32) -> i32 {
         self.bar_ticks() * bars
@@ -426,6 +438,16 @@ mod tests {
     /// Builds a meter the test knows is supported.
     fn meter(numerator: u8, denominator: u8) -> Meter {
         Meter::new(numerator, denominator).unwrap()
+    }
+
+    #[test]
+    fn half_a_bar_is_offered_only_on_an_even_numerator() {
+        assert_eq!(Meter::FOUR_FOUR.half_bar_ticks(), Some(PPQN * 2));
+        assert_eq!(meter(6, 8).half_bar_ticks(), Some(PPQN * 3 / 2));
+        assert_eq!(meter(2, 4).half_bar_ticks(), Some(PPQN));
+        assert_eq!(meter(3, 4).half_bar_ticks(), None);
+        assert_eq!(meter(7, 8).half_bar_ticks(), None);
+        assert_eq!(meter(1, 8).half_bar_ticks(), None);
     }
 
     #[test]
