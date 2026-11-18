@@ -157,11 +157,6 @@ impl PerformancePads {
         self.pads.get(pad)?.as_ref()
     }
 
-    /// Mutable [`get`](Self::get).
-    pub(crate) fn get_mut(&mut self, pad: usize) -> Option<&mut Clip> {
-        self.pads.get_mut(pad)?.as_mut()
-    }
-
     /// The performance with this id, on whichever pad holds it.
     pub(crate) fn find(&self, clip_id: Uuid) -> Option<&Clip> {
         self.pads.iter().flatten().find(|clip| clip.id() == clip_id)

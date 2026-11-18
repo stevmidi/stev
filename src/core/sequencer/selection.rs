@@ -124,12 +124,16 @@ impl Sequencer {
     }
 
     /// Where the clip the clip view edits lives, and its id: the selected
-    /// pad's performance on the lane while it is selected, otherwise the lead
-    /// clip on the selected track. What a note edit is built on
-    /// (`ClipEventsEditState`). `None` with neither.
+    /// pad's performance while the performance lane is selected
+    /// (`520-performance-capture.md` decisions 2 and 6; `None` on an empty
+    /// pad), otherwise the lead clip on the selected track. The one rule for
+    /// which clip is open ([`selected_clip`](Self::selected_clip) follows
+    /// it, a take session aside) and what a note edit is built on
+    /// (`ClipEventsEditState`).
     pub(crate) fn selected_clip_home(&self) -> Option<(ClipHome, Uuid)> {
         if self.is_performance_lane_armed() {
-            return Some((ClipHome::Lane, self.shown_performance()?.id()));
+            let performance = self.performance_pads().get(self.selected_pad())?;
+            return Some((ClipHome::Lane, performance.id()));
         }
         Some((
             ClipHome::Track(self.selected_track_index()?),
@@ -254,16 +258,16 @@ impl Sequencer {
     }
 
     /// The clip the clip view shows and its commands act on: the take while
-    /// a take session is open (`take_framing.rs`), the selected pad's
-    /// performance while the performance lane is selected
-    /// ([`shown_performance`](Self::shown_performance),
-    /// `520-performance-capture.md` decision 2), otherwise the
+    /// a take session is open (`take_framing.rs`), otherwise the clip
+    /// [`selected_clip_home`](Self::selected_clip_home) names — the
+    /// selected pad's performance with the lane selected, else the
     /// [`lead_clip`](Self::lead_clip).
     pub(crate) fn selected_clip(&self) -> Option<&Clip> {
-        if self.is_performance_lane_armed() {
-            return self.shown_performance();
+        if self.is_framing_take() {
+            return self.framed_take();
         }
-        self.framed_take().or_else(|| self.lead_clip())
+        let (home, clip_id) = self.selected_clip_home()?;
+        self.clip_on(home, clip_id)
     }
 
     /// Mutable access to the [`selected_clip`](Self::selected_clip). Not for
@@ -271,15 +275,11 @@ impl Sequencer {
     /// [`edit_clip_events`](Self::edit_clip_events), or a note sounding under
     /// a running playhead can hang.
     pub(super) fn selected_clip_mut(&mut self) -> Option<&mut Clip> {
-        if self.is_performance_lane_armed() {
-            return self.shown_performance_mut();
-        }
         if self.is_framing_take() {
             return self.framed_take_mut();
         }
-        let clip_id = self.clip_selection.selected_id()?;
-        self.selected_track_mut()
-            .and_then(|track| track.get_clip_by_id_mut(clip_id))
+        let (home, clip_id) = self.selected_clip_home()?;
+        self.clip_on_mut(home, clip_id)
     }
 
     /// The lead-selected [`Clip`] on the selected track, if any — in the

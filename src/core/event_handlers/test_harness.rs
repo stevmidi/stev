@@ -218,3 +218,15 @@ pub(crate) fn statuses(h: &Harness) -> Vec<String> {
         })
         .collect()
 }
+
+/// The lead clip each `LeadClipChanged` sent since the last drain announced,
+/// in order (`None` for none): what the clip view was told to show.
+pub(crate) fn lead_changes(ui_events: &Receiver<UiEvent>) -> Vec<Option<Uuid>> {
+    ui_events
+        .try_iter()
+        .filter_map(|event| match event {
+            UiEvent::LeadClipChanged { clip_view } => Some(clip_view.map(|view| view.clip_id)),
+            _ => None,
+        })
+        .collect()
+}

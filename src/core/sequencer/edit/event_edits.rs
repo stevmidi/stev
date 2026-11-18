@@ -725,33 +725,8 @@ macro_rules! clip_events_edit {
                 self.state.undo(sequencer)
             }
         }
-
-        clip_home!($name);
     };
 }
-
-/// Gives each of these edits `home()`: where its clip is, which decides
-/// whether an undo of it puts back the arranger's view
-/// (`SequencerEdit::restores_view`).
-macro_rules! clip_home {
-    ($($name:ident),* $(,)?) => {
-        $(impl $name {
-            /// Where the edit's clip is: a track, or a pad of the lane.
-            pub(super) fn home(&self) -> ClipHome {
-                self.state.home
-            }
-        })*
-    };
-}
-
-clip_home!(
-    InsertCaptureEdit,
-    DragEventsVelocityEdit,
-    InsertNotesEdit,
-    ReplaceClipNotesEdit,
-    DragNotesEdit,
-    ClearControllerSpanEdit,
-);
 
 clip_events_edit!(
     DeleteSelectedEventsEdit;

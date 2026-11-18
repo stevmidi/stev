@@ -388,25 +388,8 @@ impl EventHandlers {
 mod tests {
     use std::sync::atomic::Ordering;
 
-    use crossbeam_channel::Receiver;
-    use uuid::Uuid;
-
-    use crate::core::event_handlers::test_harness::{add_clip, harness};
+    use crate::core::event_handlers::test_harness::{add_clip, harness, lead_changes};
     use crate::core::view_state::{Pane, ViewState};
-    use crate::view::display::UiEvent;
-
-    /// The lead clip each `LeadClipChanged` sent so far announced.
-    fn lead_changes(ui_events: &Receiver<UiEvent>) -> Vec<Option<Uuid>> {
-        ui_events
-            .try_iter()
-            .filter_map(|event| match event {
-                UiEvent::LeadClipChanged { clip_view } => {
-                    Some(clip_view.map(|clip_view| clip_view.clip_id))
-                }
-                _ => None,
-            })
-            .collect()
-    }
 
     /// Moving the cursor onto another clip makes it the lead clip, tells the
     /// view, and drops the old lead's event selection — republishing the

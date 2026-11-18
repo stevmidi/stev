@@ -30,6 +30,8 @@ impl EventHandlers {
     /// back. A merge into the step on top keeps that step's `before` and
     /// takes this `after`; a merge that annuls the step on top
     /// (`Merged::Annul`) leaves the record shorter, and nothing is written.
+    /// An edit on a performance keeps no view to put back
+    /// (`UndoStep::leave_view`).
     pub(super) fn record_edit(
         &self,
         sequencer: &mut Sequencer,
@@ -42,11 +44,15 @@ impl EventHandlers {
         let head = undo_record.head();
         let step = UndoStep::new(edit.into(), ViewSnapshot::of(sequencer));
         let (result, _) = undo_record.edit(sequencer, step);
+        let on_lane = result.is_on_lane();
         self.handle_edit_result(sequencer, result);
         if undo_record.head() >= head
             && let Some(step) = top_step(undo_record)
         {
             step.set_after(ViewSnapshot::of(sequencer));
+            if on_lane {
+                step.leave_view();
+            }
         }
         true
     }

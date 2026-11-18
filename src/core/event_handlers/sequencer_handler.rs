@@ -745,7 +745,7 @@ mod tests {
     use crate::core::agent::{AgentReply, AgentRequest};
     use crate::core::event_handlers::SavedProject;
     use crate::core::event_handlers::test_harness::{
-        Harness, add_clip, harness, run_command, statuses,
+        Harness, add_clip, harness, lead_changes, run_command, statuses,
     };
     use crate::core::midi::message::Controller;
     use crate::core::paths::project_dir;
@@ -2126,11 +2126,7 @@ mod tests {
 
         assert_eq!(h.sequencer.selected_track_index(), Some(0));
         assert_eq!(h.sequencer.selected_clip_id(), Some(lead_id));
-        let lead = h.ui_events.try_iter().filter_map(|event| match event {
-            UiEvent::LeadClipChanged { clip_view } => Some(clip_view.map(|view| view.clip_id)),
-            _ => None,
-        });
-        assert_eq!(lead.last(), Some(Some(lead_id)));
+        assert_eq!(lead_changes(&h.ui_events).last(), Some(&Some(lead_id)));
     }
 
     /// Range mute (`M`), a marquee split (`⌘E`) and Insert Silence (`⌘I`)

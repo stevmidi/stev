@@ -56,24 +56,6 @@ impl Sequencer {
         &mut self.performance_pads
     }
 
-    /// The performance the clip view shows and edits while the lane is
-    /// selected: the selected pad's (`520-performance-capture.md`
-    /// decisions 2 and 6). `None` unarmed, or on an empty pad.
-    pub(crate) fn shown_performance(&self) -> Option<&Clip> {
-        if !self.is_performance_lane_armed() {
-            return None;
-        }
-        self.performance_pads.get(self.selected_pad)
-    }
-
-    /// Mutable [`shown_performance`](Self::shown_performance).
-    pub(crate) fn shown_performance_mut(&mut self) -> Option<&mut Clip> {
-        if !self.is_performance_lane_armed() {
-            return None;
-        }
-        self.performance_pads.get_mut(self.selected_pad)
-    }
-
     /// The selected pad (`520-performance-capture.md` decision 6).
     pub(crate) fn selected_pad(&self) -> usize {
         self.selected_pad
@@ -89,6 +71,8 @@ impl Sequencer {
 
 #[cfg(test)]
 mod tests {
+    use uuid::Uuid;
+
     use crate::core::sequencer::ClipHome;
     use crate::core::sequencer::test_support::{clip_at, test_sequencer};
     use crate::models::performance_lane::performance_clip;
@@ -97,7 +81,7 @@ mod tests {
 
     /// A sequencer with a performance on pad `pad` (C3 then E3, a beat each);
     /// returns it and the performance's id.
-    fn with_performance(pad: usize) -> (Sequencer, uuid::Uuid) {
+    fn with_performance(pad: usize) -> (Sequencer, Uuid) {
         let mut sequencer = test_sequencer();
         let clip = performance_clip(&[(0, 60, 100), (960, 64, 100)], 1920).unwrap();
         let id = clip.id();
@@ -114,11 +98,7 @@ mod tests {
         );
         assert!(sequencer.clip_on_mut(ClipHome::Lane, id).is_some());
         assert!(sequencer.clip_on(0, id).is_none(), "not on a track");
-        assert!(
-            sequencer
-                .clip_on(ClipHome::Lane, uuid::Uuid::new_v4())
-                .is_none()
-        );
+        assert!(sequencer.clip_on(ClipHome::Lane, Uuid::new_v4()).is_none());
     }
 
     #[test]

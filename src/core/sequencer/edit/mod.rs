@@ -521,6 +521,22 @@ pub(crate) enum EditResult {
     NoOp,
 }
 
+impl EditResult {
+    /// Whether the edit was on a performance (`EventsModified` on
+    /// `ClipHome::Lane`): its step then undoes with the view as it is, as
+    /// the pad it is on does, since the pads aren't the arrangement
+    /// (`520-performance-capture.md`, `UndoStep::leave_view`).
+    pub(crate) fn is_on_lane(&self) -> bool {
+        matches!(
+            self,
+            EditResult::EventsModified {
+                home: ClipHome::Lane,
+                ..
+            }
+        )
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Clip lookup shared by every edit
 // ---------------------------------------------------------------------------
@@ -608,13 +624,16 @@ impl Sequencer {
         clip_id: Uuid,
         edit: impl FnOnce(&mut Clip) -> R,
     ) -> Option<R> {
-        let track_idx = match home.into() {
-            ClipHome::Track(track_idx) if self.is_running() => track_idx,
-            home => return self.clip_on_mut(home, clip_id).map(edit),
-        };
-        self.tracks_mut()
-            .get_mut(track_idx)?
-            .edit_clip_events(clip_id, edit)
+        let home = home.into();
+        if let ClipHome::Track(track_idx) = home
+            && self.is_running()
+        {
+            return self
+                .tracks_mut()
+                .get_mut(track_idx)?
+                .edit_clip_events(clip_id, edit);
+        }
+        self.clip_on_mut(home, clip_id).map(edit)
     }
 
     /// As [`edit_clip_events`](Self::edit_clip_events), for a retime that
@@ -787,14 +806,10 @@ impl SequencerEdit {
     /// Ableton; the tempo, the meter, a track's name, its output, a knob's
     /// mapping and a performance pad undo with the view as it is, and a
     /// track add or remove keeps its own selection rule (`050-undo-redo.md`
-    /// § Track add / remove). A note edit on a performance undoes with the
-    /// view as it is too, as the pad it is on does: the pads aren't the
-    /// arrangement (`520-performance-capture.md`). Exhaustive, so a new edit
-    /// has to be placed.
+    /// § Track add / remove). Exhaustive, so a new edit has to be placed.
+    /// A note edit on a performance leaves the view alone whatever its kind
+    /// ([`EditResult::is_on_lane`], decided when it is recorded).
     pub(crate) fn restores_view(&self) -> bool {
-        if self.clip_home() == Some(ClipHome::Lane) {
-            return false;
-        }
         match self {
             SequencerEdit::CommitClip(_)
             | SequencerEdit::CreateClips(_)
@@ -831,26 +846,6 @@ impl SequencerEdit {
             | SequencerEdit::SetTempo(_)
             | SequencerEdit::SetMeter(_)
             | SequencerEdit::SetPerformancePad(_) => false,
-        }
-    }
-
-    /// Where a note edit's clip is (a track, or a pad of the lane); `None`
-    /// for every edit that isn't on the events inside one clip.
-    fn clip_home(&self) -> Option<ClipHome> {
-        match self {
-            SequencerEdit::DeleteSelectedEvents(edit) => Some(edit.home()),
-            SequencerEdit::NudgeSelectedEvents(edit) => Some(edit.home()),
-            SequencerEdit::NudgeSelectedEventsLength(edit) => Some(edit.home()),
-            SequencerEdit::TransposeSelectedEvents(edit) => Some(edit.home()),
-            SequencerEdit::DragEventsVelocity(edit) => Some(edit.home()),
-            SequencerEdit::MuteSelectedEvents(edit) => Some(edit.home()),
-            SequencerEdit::QuantizeEvents(edit) => Some(edit.home()),
-            SequencerEdit::ClearControllerSpan(edit) => Some(edit.home()),
-            SequencerEdit::InsertCapture(edit) => Some(edit.home()),
-            SequencerEdit::InsertNotes(edit) => Some(edit.home()),
-            SequencerEdit::ReplaceClipNotes(edit) => Some(edit.home()),
-            SequencerEdit::DragNotes(edit) => Some(edit.home()),
-            _ => None,
         }
     }
 }

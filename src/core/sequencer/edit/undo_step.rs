@@ -62,6 +62,9 @@ pub(crate) struct UndoStep {
     before: ViewSnapshot,
     /// The view after the edit's result was applied; `None` until then.
     after: Cell<Option<ViewSnapshot>>,
+    /// Set when the edit turned out to be on a performance
+    /// ([`EditResult::is_on_lane`]): the step then puts back no view.
+    leaves_view: Cell<bool>,
 }
 
 impl UndoStep {
@@ -71,6 +74,7 @@ impl UndoStep {
             edit,
             before,
             after: Cell::new(None),
+            leaves_view: Cell::new(false),
         }
     }
 
@@ -82,13 +86,26 @@ impl UndoStep {
     /// The view an undo of this step puts back, `None` for an edit that
     /// leaves the view alone ([`SequencerEdit::restores_view`]).
     fn view_before(&self) -> Option<ViewSnapshot> {
-        self.edit.restores_view().then_some(self.before)
+        self.restores_view().then_some(self.before)
     }
 
     /// The view a redo of this step puts back, `None` for an edit that
     /// leaves the view alone, or before `after` was filled.
     fn view_after(&self) -> Option<ViewSnapshot> {
-        self.after.get().filter(|_| self.edit.restores_view())
+        self.after.get().filter(|_| self.restores_view())
+    }
+
+    /// Whether an undo or redo of this step puts back a view: its kind of
+    /// edit does ([`SequencerEdit::restores_view`]) and it wasn't on a
+    /// performance.
+    fn restores_view(&self) -> bool {
+        self.edit.restores_view() && !self.leaves_view.get()
+    }
+
+    /// The edit was on a performance ([`EditResult::is_on_lane`]): the step
+    /// undoes and redoes with the view as it is.
+    pub(crate) fn leave_view(&self) {
+        self.leaves_view.set(true);
     }
 
     /// Records the view once the edit's result was applied.
@@ -131,6 +148,7 @@ impl Edit for UndoStep {
             edit,
             before,
             after,
+            leaves_view,
         } = other;
         match self.edit.merge(edit) {
             Merged::Yes => Merged::Yes,
@@ -139,6 +157,7 @@ impl Edit for UndoStep {
                 edit,
                 before,
                 after,
+                leaves_view,
             }),
         }
     }

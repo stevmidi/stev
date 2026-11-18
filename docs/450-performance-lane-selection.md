@@ -31,7 +31,7 @@ The sequencer side already takes `Option`: `selected_track_index()` and `selecte
 
 | Reader | With the lane selected |
 |---|---|
-| Lead clip (`lead_clip`, `current_clip_view`, `selection.rs`, `view.rs`) | None. The clip view showed "No clip at the cursor"; since `520` phase 2 it shows the selected pad's performance (`selected_clip` → `shown_performance`), "Pad 2 · empty" on an empty pad. |
+| Lead clip (`lead_clip`, `current_clip_view`, `selection.rs`, `view.rs`) | None. The clip view showed "No clip at the cursor"; since `520` phase 2 it shows the selected pad's performance (`selected_clip_home` → `ClipHome::Lane`), "Pad 2 · empty" on an empty pad. |
 | Capture: `/` running and stopped, the take session (`capture/mod.rs`, `stopped_capture.rs`, `take_framing.rs`, `commit_clip.rs`) | Returns `None`, nothing happens. Nothing was captured either: while armed the keyboard goes to `handle_performance_lane_midi_input`, not the capture buffer (`sequencer_pump.rs`). Since `520` phase 1, `/` on the lane keeps its run on a pad instead (the `Commit` arm → `capture_performance_workflow`). |
 | Clip edits on the lead or selected track (`resize_clip.rs`, `retime_clip.rs`, `split.rs` at the cursor, `event_edits.rs`, `export.rs`'s SMF export, `sequencer/region.rs`) | Return `None`, nothing happens. Since `520` phase 2 the note edits (`event_edits.rs`) and the clip cursor (`region.rs`) act on the selected pad's performance instead (`ClipHome::Lane`); the window edges, the retime and the export still need a track. |
 | Marquee edits (`delete_in_range.rs`, `merge_clips.rs`, `duplicate_time.rs`) | Take their tracks from the rect; the selected track is only used to keep the lead, or as a fallback span. No marquee exists with the lane selected (decision 3). |

@@ -131,14 +131,13 @@ mod tests {
     use uuid::Uuid;
 
     use crate::core::event_handlers::test_harness::{
-        Harness, add_clip, harness, run_command, statuses,
+        Harness, add_clip, harness, lead_changes, run_command, statuses,
     };
     use crate::core::sequencer::test_support::clip_notes;
     use crate::core::sequencer::{SequencerCommand, UndoStep};
     use crate::core::time::Meter;
     use crate::core::transport::Transport;
     use crate::models::{clip::Clip, performance_lane::KeyLength};
-    use crate::view::display::UiEvent;
 
     /// A transport over `h`'s shared state, as the `"sequencer"` thread holds
     /// one beside the sequencer.
@@ -338,18 +337,6 @@ mod tests {
         );
     }
 
-    /// The clip each `LeadClipChanged` sent since the last call announced,
-    /// in order: what the clip view was told to show.
-    fn shown(h: &Harness) -> Vec<Option<Uuid>> {
-        h.ui_events
-            .try_iter()
-            .filter_map(|event| match event {
-                UiEvent::LeadClipChanged { clip_view } => Some(clip_view.map(|view| view.clip_id)),
-                _ => None,
-            })
-            .collect()
-    }
-
     /// The armed lane with a performance captured on pad 1: E3 for 300
     /// ticks, then C3 for 200.
     fn captured() -> (Harness, Record<UndoStep>, Uuid) {
@@ -367,7 +354,7 @@ mod tests {
     fn the_clip_view_follows_the_lane_and_its_pads() {
         let (mut h, mut record, id) = captured();
         assert_eq!(
-            shown(&h),
+            lead_changes(&h.ui_events),
             [None, Some(id)],
             "the lane selected on empty pad 1, then the capture onto it"
         );
@@ -377,29 +364,33 @@ mod tests {
             &mut record,
             SequencerCommand::SelectPerformancePad(1),
         );
-        assert_eq!(shown(&h), [None], "an empty pad");
+        assert_eq!(lead_changes(&h.ui_events), [None], "an empty pad");
         run_command(
             &mut h,
             &mut record,
             SequencerCommand::SelectPerformancePad(0),
         );
-        assert_eq!(shown(&h), [Some(id)]);
+        assert_eq!(lead_changes(&h.ui_events), [Some(id)]);
 
         h.handlers.select_track_workflow(&mut h.sequencer, 0);
-        assert_eq!(shown(&h), [None], "a track with no clip at the cursor");
+        assert_eq!(
+            lead_changes(&h.ui_events),
+            [None],
+            "a track with no clip at the cursor"
+        );
         h.handlers
             .select_performance_lane_workflow(&mut h.sequencer);
-        assert_eq!(shown(&h), [Some(id)], "back on the lane");
+        assert_eq!(lead_changes(&h.ui_events), [Some(id)], "back on the lane");
 
         // Unarmed, a pad's selection shows nothing.
         h.handlers.select_track_workflow(&mut h.sequencer, 0);
-        shown(&h);
+        assert_eq!(lead_changes(&h.ui_events), [None]);
         run_command(
             &mut h,
             &mut record,
             SequencerCommand::SelectPerformancePad(1),
         );
-        assert!(shown(&h).is_empty());
+        assert!(lead_changes(&h.ui_events).is_empty());
     }
 
     #[test]
