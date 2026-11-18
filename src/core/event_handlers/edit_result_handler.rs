@@ -236,9 +236,10 @@ impl EventHandlers {
             } => {
                 // Reuse both halves' workflows verbatim: the insert-silence half
                 // first (shifted / split clips), then the paste half (the copy),
-                // then advance the Arranger time selection onto the copy, on
-                // the tracks the edit froze. The paste carve buckets are
-                // always empty — the gap is pre-cleared.
+                // then, for Duplicate Time, advance the Arranger time selection
+                // onto the copy, on the tracks the edit froze (Paste Time
+                // leaves it). The paste carve buckets are always empty — the
+                // gap is pre-cleared.
                 self.insert_silence_workflow(sequencer, &shifted, &split_updated, &split_added);
                 self.paste_clips_workflow(
                     sequencer,
@@ -246,23 +247,9 @@ impl EventHandlers {
                     &pasted,
                     PasteLead::CursorRule,
                 );
-                self.set_marquee_workflow(sequencer, new_selection);
-            }
-            EditResult::TimePasted {
-                shifted,
-                split_updated,
-                split_added,
-                pasted,
-            } => {
-                // Duplicate Time's two halves, with `⌘V`'s lead and no marquee
-                // move: a paste leaves the marquee where it was.
-                self.insert_silence_workflow(sequencer, &shifted, &split_updated, &split_added);
-                self.paste_clips_workflow(
-                    sequencer,
-                    CarveResult::EMPTY,
-                    &pasted,
-                    PasteLead::CursorRule,
-                );
+                if let Some(rect) = new_selection {
+                    self.set_marquee_workflow(sequencer, rect);
+                }
             }
             EditResult::TimeUnduplicated {
                 unpasted,
@@ -376,7 +363,7 @@ mod tests {
 
     use crate::core::event_handlers::test_harness::{Harness, add_clip, harness, run_command};
     use crate::core::input_event::TimeSelectionRect;
-    use crate::core::sequencer::test_support::{clip_at, rect};
+    use crate::core::sequencer::test_support::{clip_at, rect, spans};
     use crate::core::sequencer::{SequencerCommand, UndoStep, ViewSnapshot};
     use crate::view::display::UiEvent;
 
@@ -501,23 +488,16 @@ mod tests {
 
         run_command(&mut h, &mut record, SequencerCommand::PasteTime);
 
-        let spans = |h: &Harness, track: usize| -> Vec<(i32, i32)> {
-            h.sequencer.tracks()[track]
-                .clips()
-                .iter()
-                .map(|c| (c.start_tick(), c.end_tick()))
-                .collect()
-        };
-        assert_eq!(spans(&h, 0), vec![(0, 1920), (1920, 3840)]);
-        assert_eq!(spans(&h, 1), vec![(3840, 5760)]);
+        assert_eq!(spans(&h.sequencer, 0), vec![(0, 1920), (1920, 3840)]);
+        assert_eq!(spans(&h.sequencer, 1), vec![(3840, 5760)]);
         let lead = h.sequencer.selected_clip_id();
         assert!(lead.is_some() && lead != Some(clip_id));
         assert_eq!(h.sequencer.marquee(), Some(marquee));
         assert_eq!(record.len(), 1);
 
         run_command(&mut h, &mut record, SequencerCommand::Undo);
-        assert_eq!(spans(&h, 0), vec![(0, 1920)]);
-        assert_eq!(spans(&h, 1), vec![(1920, 3840)]);
+        assert_eq!(spans(&h.sequencer, 0), vec![(0, 1920)]);
+        assert_eq!(spans(&h.sequencer, 1), vec![(1920, 3840)]);
     }
 
     /// A ⌥-drag copy leaves the selection on the copy — cursor on its

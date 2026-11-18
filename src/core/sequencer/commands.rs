@@ -198,8 +198,8 @@ pub(crate) enum SequencerCommand {
     /// goes back on its absolute source track. Existing clips under a pasted
     /// clip are carved out Ableton-style, exactly like `RemoveClips`.
     PasteClips,
-    /// `PasteClips` inserting instead of overwriting (`PasteTimeEdit`,
-    /// `⇧⌘V`): everything at or after the cursor moves right by the
+    /// `PasteClips` inserting instead of overwriting
+    /// (`DuplicateTimeEdit::pasting`, `⇧⌘V`): everything at or after the cursor moves right by the
     /// clipboard's span on every track first, then the paste lands in the
     /// gap.
     PasteTime,

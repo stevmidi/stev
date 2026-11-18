@@ -33,7 +33,7 @@ pub(crate) struct ClipClipboard {
     clips: Vec<ClipboardClip>,
     /// The copied range's length in ticks (`end - start`), not the pieces'
     /// extent: a copy whose last bar is empty still spans it, so `⇧⌘V`
-    /// (Paste Time, `PasteTimeEdit`) inserts the whole length.
+    /// (Paste Time, `DuplicateTimeEdit::pasting`) inserts the whole length.
     span: i32,
     /// The track the set is anchored on, if it was copied with a track
     /// shape: the marquee's `track_start` for plain `⌘/Ctrl+C`/`⌘/Ctrl+X`,

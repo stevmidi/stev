@@ -77,8 +77,8 @@ pub(crate) use edit::{
     DuplicateClipsEdit, DuplicateTimeEdit, EditResult, InsertCaptureEdit, InsertNotesEdit,
     InsertSilenceEdit, MoveClipEdit, MoveRangeEdit, MuteInRangeEdit, MuteSelectedEventsEdit,
     NudgeSelectedEventsEdit, NudgeSelectedEventsLengthEdit, PasteClipsEdit, PasteLead,
-    PasteTimeEdit, QuantizeEventsEdit, RemoveTrackEdit, RenameTrackEdit, ReplaceClipNotesEdit,
-    ResizeClipEdit, RetimeClipEdit, SequencerEdit, SetKnobParamEdit, SetMeterEdit, SetTempoEdit,
+    QuantizeEventsEdit, RemoveTrackEdit, RenameTrackEdit, ReplaceClipNotesEdit, ResizeClipEdit,
+    RetimeClipEdit, SequencerEdit, SetKnobParamEdit, SetMeterEdit, SetTempoEdit,
     SetTrackOutputEdit, SplitClipsEdit, StepOutput, TempoGesture, TransposeClipsEdit,
     TransposeSelectedEventsEdit, UndoStep, ViewSnapshot, top_step,
 };

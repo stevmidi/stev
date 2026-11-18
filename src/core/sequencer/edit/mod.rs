@@ -44,8 +44,7 @@ mod undo_step;
 pub(crate) use clip_edits::{
     CommitClipEdit, CreateClipsEdit, DeleteInRangeEdit, DeleteTimeEdit, DuplicateClipsEdit,
     DuplicateTimeEdit, InsertSilenceEdit, MoveClipEdit, MoveRangeEdit, MuteInRangeEdit,
-    PasteClipsEdit, PasteTimeEdit, ResizeClipEdit, RetimeClipEdit, SplitClipsEdit,
-    TransposeClipsEdit,
+    PasteClipsEdit, ResizeClipEdit, RetimeClipEdit, SplitClipsEdit, TransposeClipsEdit,
 };
 pub(crate) use event_edits::{
     ClearControllerSpanEdit, DeleteSelectedEventsEdit, DragEventsVelocityEdit, DragNotesEdit,
@@ -360,7 +359,9 @@ pub(crate) enum EditResult {
     /// `pasted` is the `PasteClipsEdit` half (the copied slice dropped into the
     /// freed span — its carve buckets are always empty because the gap is
     /// pre-cleared). `new_selection` is the range the Arranger time selection
-    /// should advance to so repeated `Shift+⌘/Ctrl+D` chains down the timeline.
+    /// should advance to so repeated `Shift+⌘/Ctrl+D` chains down the timeline;
+    /// `None` for `Shift+⌘/Ctrl+V` "Paste Time" (the same edit, built by
+    /// `DuplicateTimeEdit::pasting`), which leaves the marquee alone.
     TimeDuplicated {
         /// Clips moved wholesale along the timeline.
         shifted: Vec<ClipMetadata>,
@@ -371,22 +372,8 @@ pub(crate) enum EditResult {
         /// The clipboard clips added at the cursor.
         pasted: Vec<ClipMetadata>,
         /// Arranger time selection the view should advance to, on the
-        /// tracks the marquee had.
-        new_selection: TimeSelectionRect,
-    },
-    /// Forward direction of `Shift+⌘/Ctrl+V` "Paste Time" (`PasteTimeEdit`):
-    /// `TimeDuplicated`'s halves (the gap opened at the cursor, the
-    /// clipboard pasted into it) without a selection to advance — a paste
-    /// leaves the marquee where it was, as `ClipsPasted` does.
-    TimePasted {
-        /// Clips moved wholesale along the timeline.
-        shifted: Vec<ClipMetadata>,
-        /// The shrunk left halves of the split (ids kept).
-        split_updated: Vec<ClipMetadata>,
-        /// The new right-hand halves produced by the split.
-        split_added: Vec<ClipMetadata>,
-        /// The clipboard clips added at the cursor.
-        pasted: Vec<ClipMetadata>,
+        /// tracks the marquee had; `None` for Paste Time.
+        new_selection: Option<TimeSelectionRect>,
     },
     /// Undo of "Duplicate Time" and "Paste Time": `unpasted` is every copied clip being removed,
     /// `shifted`/`split_updated`/`split_removed` mirror `SilenceRemoved`.
@@ -720,7 +707,6 @@ sequencer_edit_dispatch!(
     SplitClips(SplitClipsEdit),
     InsertSilence(InsertSilenceEdit),
     PasteClips(PasteClipsEdit),
-    PasteTime(PasteTimeEdit),
     MoveClip(MoveClipEdit),
     MoveRange(MoveRangeEdit),
     ResizeClip(ResizeClipEdit),
@@ -766,7 +752,6 @@ impl SequencerEdit {
             | SequencerEdit::SplitClips(_)
             | SequencerEdit::InsertSilence(_)
             | SequencerEdit::PasteClips(_)
-            | SequencerEdit::PasteTime(_)
             | SequencerEdit::MoveClip(_)
             | SequencerEdit::MoveRange(_)
             | SequencerEdit::ResizeClip(_)
