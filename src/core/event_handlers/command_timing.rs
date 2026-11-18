@@ -236,6 +236,11 @@ const CASES: &[Case] = &[
         command: |_| SequencerCommand::PasteClips,
     },
     Case {
+        name: "PasteTime (all)",
+        setup: copy_clips,
+        command: |_| SequencerCommand::PasteTime,
+    },
+    Case {
         name: "RescaleSelectedClipTempo",
         setup: none,
         command: |_| SequencerCommand::RescaleSelectedClipTempo(400_000),

@@ -13,8 +13,8 @@ use crate::core::sequencer::{
     ClearControllerSpanEdit, DeleteSelectedEventsEdit, DeleteTimeEdit, DragEventsVelocityEdit,
     DragNotesEdit, DuplicateClipsEdit, DuplicateTimeEdit, InsertNotesEdit, InsertSilenceEdit,
     MoveClipEdit, MoveRangeEdit, MuteInRangeEdit, MuteSelectedEventsEdit, NudgeSelectedEventsEdit,
-    NudgeSelectedEventsLengthEdit, PasteClipsEdit, QuantizeEventsEdit, RenameTrackEdit,
-    SetMeterEdit, SetTempoEdit, SetTrackOutputEdit, SplitClipsEdit, TempoGesture,
+    NudgeSelectedEventsLengthEdit, PasteClipsEdit, PasteTimeEdit, QuantizeEventsEdit,
+    RenameTrackEdit, SetMeterEdit, SetTempoEdit, SetTrackOutputEdit, SplitClipsEdit, TempoGesture,
     TransposeSelectedEventsEdit, UndoStep, top_step,
 };
 use crate::core::time::TapTempo;
@@ -239,6 +239,14 @@ impl EventHandlers {
                     sequencer,
                     undo_record,
                     PasteClipsEdit::from_sequencer(sequencer),
+                );
+            }
+
+            SequencerCommand::PasteTime => {
+                self.record_edit(
+                    sequencer,
+                    undo_record,
+                    PasteTimeEdit::from_sequencer(sequencer),
                 );
             }
 

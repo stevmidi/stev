@@ -248,6 +248,22 @@ impl EventHandlers {
                 );
                 self.set_marquee_workflow(sequencer, new_selection);
             }
+            EditResult::TimePasted {
+                shifted,
+                split_updated,
+                split_added,
+                pasted,
+            } => {
+                // Duplicate Time's two halves, with `⌘V`'s lead and no marquee
+                // move: a paste leaves the marquee where it was.
+                self.insert_silence_workflow(sequencer, &shifted, &split_updated, &split_added);
+                self.paste_clips_workflow(
+                    sequencer,
+                    CarveResult::EMPTY,
+                    &pasted,
+                    PasteLead::CursorRule,
+                );
+            }
             EditResult::TimeUnduplicated {
                 unpasted,
                 shifted,
@@ -469,6 +485,39 @@ mod tests {
             assert_eq!(h.sequencer.selected_track_index(), Some(0), "{name}");
             assert_eq!(marquee_sent(&h), Some(Some(copy)), "{name}");
         }
+    }
+
+    /// Paste Time (`⇧⌘V`) inserts at the cursor on every track, makes the
+    /// pasted clip under the cursor the lead as `⌘V` does, leaves the
+    /// marquee where it was, and undoes in one step.
+    #[test]
+    fn paste_time_inserts_at_the_cursor_and_undoes_in_one_step() {
+        let marquee = rect(0, 1920, 0, 0);
+        let (mut h, clip_id) = harness_with(0, marquee);
+        h.sequencer.tracks_mut()[1].add_clip(&clip_at(1920, 1920));
+        h.sequencer.copy_clips_to_clipboard(0, 1920);
+        h.cursor_tick.store(1920, Ordering::Relaxed);
+        let mut record: Record<UndoStep> = Record::new();
+
+        run_command(&mut h, &mut record, SequencerCommand::PasteTime);
+
+        let spans = |h: &Harness, track: usize| -> Vec<(i32, i32)> {
+            h.sequencer.tracks()[track]
+                .clips()
+                .iter()
+                .map(|c| (c.start_tick(), c.end_tick()))
+                .collect()
+        };
+        assert_eq!(spans(&h, 0), vec![(0, 1920), (1920, 3840)]);
+        assert_eq!(spans(&h, 1), vec![(3840, 5760)]);
+        let lead = h.sequencer.selected_clip_id();
+        assert!(lead.is_some() && lead != Some(clip_id));
+        assert_eq!(h.sequencer.marquee(), Some(marquee));
+        assert_eq!(record.len(), 1);
+
+        run_command(&mut h, &mut record, SequencerCommand::Undo);
+        assert_eq!(spans(&h, 0), vec![(0, 1920)]);
+        assert_eq!(spans(&h, 1), vec![(1920, 3840)]);
     }
 
     /// A ⌥-drag copy leaves the selection on the copy — cursor on its

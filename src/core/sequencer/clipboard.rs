@@ -31,6 +31,10 @@ use super::Sequencer;
 pub(crate) struct ClipClipboard {
     /// The copied pieces, anchor-normalized.
     clips: Vec<ClipboardClip>,
+    /// The copied range's length in ticks (`end - start`), not the pieces'
+    /// extent: a copy whose last bar is empty still spans it, so `⇧⌘V`
+    /// (Paste Time, `PasteTimeEdit`) inserts the whole length.
+    span: i32,
     /// The track the set is anchored on, if it was copied with a track
     /// shape: the marquee's `track_start` for plain `⌘/Ctrl+C`/`⌘/Ctrl+X`,
     /// so a paste lands the set on the selected track with the marquee's
@@ -45,6 +49,11 @@ impl ClipClipboard {
     /// The copied pieces.
     pub(crate) fn clips(&self) -> &[ClipboardClip] {
         &self.clips
+    }
+
+    /// The copied range's length in ticks, empty stretches included.
+    pub(crate) fn span(&self) -> i32 {
+        self.span
     }
 
     /// The copied pieces, owned: for a throwaway clipboard whose pieces
@@ -171,6 +180,7 @@ impl Sequencer {
 
         Some(ClipClipboard {
             clips,
+            span: end - start,
             track_anchor: None,
         })
     }

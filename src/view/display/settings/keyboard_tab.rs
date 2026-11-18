@@ -456,6 +456,7 @@ const FIXED: &[FixedGroup] = &[
         &[
             ("⌘C  X  V", "Copy / cut / paste"),
             ("⌘⇧C", "Copy across every track"),
+            ("⌘⇧V", "Paste, inserting time"),
         ],
     ),
     (

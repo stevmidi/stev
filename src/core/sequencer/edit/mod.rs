@@ -44,7 +44,8 @@ mod undo_step;
 pub(crate) use clip_edits::{
     CommitClipEdit, CreateClipsEdit, DeleteInRangeEdit, DeleteTimeEdit, DuplicateClipsEdit,
     DuplicateTimeEdit, InsertSilenceEdit, MoveClipEdit, MoveRangeEdit, MuteInRangeEdit,
-    PasteClipsEdit, ResizeClipEdit, RetimeClipEdit, SplitClipsEdit, TransposeClipsEdit,
+    PasteClipsEdit, PasteTimeEdit, ResizeClipEdit, RetimeClipEdit, SplitClipsEdit,
+    TransposeClipsEdit,
 };
 pub(crate) use event_edits::{
     ClearControllerSpanEdit, DeleteSelectedEventsEdit, DragEventsVelocityEdit, DragNotesEdit,
@@ -373,7 +374,21 @@ pub(crate) enum EditResult {
         /// tracks the marquee had.
         new_selection: TimeSelectionRect,
     },
-    /// Undo of "Duplicate Time": `unpasted` is every copied clip being removed,
+    /// Forward direction of `Shift+⌘/Ctrl+V` "Paste Time" (`PasteTimeEdit`):
+    /// `TimeDuplicated`'s halves (the gap opened at the cursor, the
+    /// clipboard pasted into it) without a selection to advance — a paste
+    /// leaves the marquee where it was, as `ClipsPasted` does.
+    TimePasted {
+        /// Clips moved wholesale along the timeline.
+        shifted: Vec<ClipMetadata>,
+        /// The shrunk left halves of the split (ids kept).
+        split_updated: Vec<ClipMetadata>,
+        /// The new right-hand halves produced by the split.
+        split_added: Vec<ClipMetadata>,
+        /// The clipboard clips added at the cursor.
+        pasted: Vec<ClipMetadata>,
+    },
+    /// Undo of "Duplicate Time" and "Paste Time": `unpasted` is every copied clip being removed,
     /// `shifted`/`split_updated`/`split_removed` mirror `SilenceRemoved`.
     TimeUnduplicated {
         /// The pasted clips being removed again (undo).
@@ -705,6 +720,7 @@ sequencer_edit_dispatch!(
     SplitClips(SplitClipsEdit),
     InsertSilence(InsertSilenceEdit),
     PasteClips(PasteClipsEdit),
+    PasteTime(PasteTimeEdit),
     MoveClip(MoveClipEdit),
     MoveRange(MoveRangeEdit),
     ResizeClip(ResizeClipEdit),
@@ -750,6 +766,7 @@ impl SequencerEdit {
             | SequencerEdit::SplitClips(_)
             | SequencerEdit::InsertSilence(_)
             | SequencerEdit::PasteClips(_)
+            | SequencerEdit::PasteTime(_)
             | SequencerEdit::MoveClip(_)
             | SequencerEdit::MoveRange(_)
             | SequencerEdit::ResizeClip(_)
