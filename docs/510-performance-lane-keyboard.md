@@ -1,6 +1,6 @@
 # The Performance Lane as a Keyboard
 
-**Status: design agreed and built 2026-11-18** (issue #37; as built in `110` § Rendering). Two things changed while building it, by hand-testing: the keys are a thin strip, not whole-bar fills, and a key is a beat, not a bar (§ Changes while building). The decisions below are the design as agreed. **Step 1b, choosing a key's length (bar, half bar or beat) from the lane's gutter: design agreed 2026-11-18, not built** (§ Step 1b). The performance lane (`110`) draws the keyboard that drives it, lined up with the bars: each bar's slice of the lane is filled with its key's colour, white or black as on the piano roll, the C's carry their name (C3, C4, …), every key does once a bar is wide enough, and a key held while the lane is armed lights its bar. The mapping stays exactly as it is (C3 = bar 1, each semitone the next bar). Nothing is stored, nothing is persisted, no command is added. This is step 1 of the "Performance lane as a keyboard" idea; step 2, one key per idea instead of one per bar, waits to see whether step 1 is enough.
+**Status: design agreed and built 2026-11-18** (issue #37; as built in `110` § Rendering). Two things changed while building it, by hand-testing: the keys are a thin strip, not whole-bar fills, and a key is a beat, not a bar (§ Changes while building). The decisions below are the design as agreed. **Step 1b, choosing a key's length (bar, half bar or beat) from the lane's gutter: design agreed 2026-11-18, not built; issue #38** (§ Step 1b). The performance lane (`110`) draws the keyboard that drives it, lined up with the bars: each bar's slice of the lane is filled with its key's colour, white or black as on the piano roll, the C's carry their name (C3, C4, …), every key does once a bar is wide enough, and a key held while the lane is armed lights its bar. The mapping stays exactly as it is (C3 = bar 1, each semitone the next bar). Nothing is stored, nothing is persisted, no command is added. This is step 1 of the "Performance lane as a keyboard" idea; step 2, one key per idea instead of one per bar, waits to see whether step 1 is enough.
 
 ## Background
 
@@ -59,7 +59,7 @@ Decided 2026-11-18 by looking at the built lane:
 
 ## Step 1b: choosing a key's length
 
-**Status: design agreed 2026-11-18; not built.** One key per beat (§ Changes while building) suits jumping inside an idea, but a key per bar is still the quicker way to move between ideas, and a half bar sits between them. Which one fits depends on the piece, so the lane gets a choice of three, made from its gutter and saved with the project.
+**Status: design agreed 2026-11-18; not built.** Issue: #38. One key per beat (§ Changes while building) suits jumping inside an idea, but a key per bar is still the quicker way to move between ideas, and a half bar sits between them. Which one fits depends on the piece, so the lane gets a choice of three, made from its gutter and saved with the project.
 
 ### Decisions
 
