@@ -1,6 +1,6 @@
 # The Performance Lane as a Keyboard
 
-**Status: design agreed and built 2026-11-18** (issue #37; as built in `110` § Rendering). Two things changed while building it, by hand-testing: the keys are a thin strip, not whole-bar fills, and a key is a beat, not a bar (§ Changes while building). The decisions below are the design as agreed. The performance lane (`110`) draws the keyboard that drives it, lined up with the bars: each bar's slice of the lane is filled with its key's colour, white or black as on the piano roll, the C's carry their name (C3, C4, …), every key does once a bar is wide enough, and a key held while the lane is armed lights its bar. The mapping stays exactly as it is (C3 = bar 1, each semitone the next bar). Nothing is stored, nothing is persisted, no command is added. This is step 1 of the "Performance lane as a keyboard" idea; step 2, one key per idea instead of one per bar, waits to see whether step 1 is enough.
+**Status: design agreed and built 2026-11-18** (issue #37; as built in `110` § Rendering). Two things changed while building it, by hand-testing: the keys are a thin strip, not whole-bar fills, and a key is a beat, not a bar (§ Changes while building). The decisions below are the design as agreed. **Step 1b, choosing a key's length (bar, half bar or beat) from the lane's gutter: design agreed 2026-11-18, not built** (§ Step 1b). The performance lane (`110`) draws the keyboard that drives it, lined up with the bars: each bar's slice of the lane is filled with its key's colour, white or black as on the piano roll, the C's carry their name (C3, C4, …), every key does once a bar is wide enough, and a key held while the lane is armed lights its bar. The mapping stays exactly as it is (C3 = bar 1, each semitone the next bar). Nothing is stored, nothing is persisted, no command is added. This is step 1 of the "Performance lane as a keyboard" idea; step 2, one key per idea instead of one per bar, waits to see whether step 1 is enough.
 
 ## Background
 
@@ -57,10 +57,43 @@ Decided 2026-11-18 by looking at the built lane:
 - **A thin strip, not whole-bar fills.** Filling each bar's slice of the 24 pt row read as heavy alternating slabs across the arranger. Softer tones were tried (accent tints armed, then the lane's own greys moved toward white), and neither worked: the problem was the area, not the colour. The piano roll's key colours work in a narrow band, as in its key column, so the keys are a 5 pt strip along the lane's bottom edge (`KEY_STRIP_H`), in `piano_key_white`/`piano_key_black`, with the seams in it. The plain lane fill (accent-tinted while armed) is above it, holding the names in `fg_dim`. A held key lights its piece of the strip in the accent, with a faint wash over its span above. The strip was also tried along the top edge, under the ruler; the bottom read better.
 - **A key is a beat, not a bar.** Each semitone jumps one counted beat of the project's meter (`key_tick`, `meter.beat_ticks()`): in 4/4 C3 = bar 1, C♯3 = bar 1 beat 2, E3 = bar 2, C4 = bar 4. This reverses decision 6's "the mapping is unchanged", and the trigger path changes with it (`key_index_from_note` and `key_tick` in place of `bar_index_from_note` and `bars_to_ticks`). Half a bar per key was tried first: in 4/4 it is two beats, but in 3/4 it lands on beat 2½ and in 7/8 halfway through an eighth, where a beat lands on the beat in every meter. Finer than a beat was ruled out: a key per eighth reaches 8½ bars of 4/4, and jumps mid-beat read as stutters rather than moves. The keyboard now reaches 68 beats from C3 (17 bars of 4/4, not 68 bars; `Not in this design` keeps the movable base note out). `note_for_bar` became `note_for_key`, and the keys are drawn a beat wide.
 
+## Step 1b: choosing a key's length
+
+**Status: design agreed 2026-11-18; not built.** One key per beat (§ Changes while building) suits jumping inside an idea, but a key per bar is still the quicker way to move between ideas, and a half bar sits between them. Which one fits depends on the piece, so the lane gets a choice of three, made from its gutter and saved with the project.
+
+### Decisions
+
+1. **Three key lengths: a bar, half a bar, a beat.** A new `KeyLength { Bar, HalfBar, Beat }` in `models/performance_lane.rs`, with `ticks(meter)`: `meter.bar_ticks()`, half of it, or `meter.beat_ticks()`. `key_tick(meter, length, key_index)` multiplies; it stays the one place the mapping lives, for the trigger and the drawing alike. The keyboard keeps its 68 keys from C3 (`KEY_COUNT`), so it reaches 68 bars, 34, or 68 beats (17 bars of 4/4). Nothing finer than a beat (§ Changes while building).
+
+2. **Half a bar only where it lands on a beat.** In 3/4 half a bar is beat 2½ and in 7/8 half an eighth, so half a bar is offered only when the meter's numerator is even, the rule the arranger grid already follows (`grid.rs`, `ladder`: the half bar only when `numerator().is_multiple_of(2)`). A pure `KeyLength::in_meter(meter)` gives the length that plays: `HalfBar` in an odd meter plays as `Beat`. The stored choice is kept, so a project that goes from 4/4 to 3/4 and back is at a half bar again; nothing changes the choice but the user.
+
+3. **Picked from labels in the lane's gutter.** The gutter shows `Bar`, `½` and `Beat`, laid out and styled as the piano roll's lane switch (`VEL`/`PB`/`MW`, `clip_lane.rs`, `380`): the length that plays in `fg`, the others in `fg_dim`; in an odd meter `½` isn't drawn and `Beat` is lit if `½` is the stored choice. A click on a label picks that length and does nothing else. It doesn't arm the lane or change the selection: picking a length is not choosing the lane. A click anywhere else on the row arms it, as today (`performance_lane_hit_at`). The labels' rects come from one pure geometry function, shared by the drawing and the hit test, as `ArrangerLayout` is for the row. No key and no keymap action: the length is set before playing, not while. A key to cycle can come later if it's missed.
+
+4. **The sequencer owns it; the view reads it.** The trigger needs it (`handle_performance_lane_midi_input` computes the jump), so it lives in the sequencer beside the lane, set by a new `SequencerCommand::SetPerformanceLaneKeyLength(KeyLength)`. The view draws from it through a `SharedAtomics` entry (`Arc<AtomicU8>`), the way it reads the meter (`SharedAtomics::meter`): no lock, no `UiEvent` (`000`). A load sets it like the meter.
+
+5. **Saved with the project; not an undo step.** The right length belongs to the piece (its meter, how long its ideas are), not to the player in general, so it goes in the project, not the settings: one optional field on `ProjectData` (`060`), `#[serde(default)]`. A project saved before the field opens at a beat, what the lane does since § Changes while building; the released one-key-a-bar mapping isn't brought back for old files. New projects and templates start at a beat too. Changing it counts as unsaved (the fingerprint, `410`, takes it in) but isn't an undo step: it is a setting of how the lane plays, like the loop toggle, not an edit (`050`).
+
+6. **A change takes effect from the next key.** A key held when the length changes keeps the jump it made; its release still only resumes the loop wrap (`110` § MIDI routing). The strip redraws at the new width at once, so the new reach of each key shows before the next one is played.
+
+7. **Unchanged.** The trigger path apart from the tick it jumps to; arming and selection (`450`); the strip, seams, labels and lit keys (§ Changes while building), now a key length wide, with the every-key label threshold measured against that width; the base note (C3); the audio export and the MCP server, which don't see the lane.
+
+### Things to check while building
+
+- **The gutter's room.** Three labels in the 160 pt track column at the lane's 24 pt height, beside the 4 px armed marker: check they fit at `FONT_SIZE_TL` and leave the marker clear.
+- **A click on a label while armed** must leave the lane armed, and unarmed must leave it unarmed; a click on the gutter outside the labels arms as today.
+- **The meter change** with `½` stored, both ways, and what the gutter lights.
+- **An old project** (no field) opens at a beat; a project saved at a bar opens at a bar; the recovery copy (`410`) restores the length.
+- **Tests** (`models/` and pure `view/` geometry): `KeyLength::ticks` and `in_meter` in 4/4, 3/4, 6/8 and 7/8; `key_tick` for each length; the label rects and their hit test; the DTO round trip and the missing-field default.
+- **Docs**: `110` (§ Scope's mapping, § Rendering's gutter), `060` (the field), `030` (the gutter), `000` if the `SharedAtomics` list names its entries, `CHANGELOG.md`.
+
+### Phases
+
+One phase: `KeyLength`, the command and the shared atomic, the field, the gutter labels and their hit test, the tests and the docs above.
+
 ## Not in this design
 
 - **Step 2, one key per idea.** The keys would map to where ideas start, worked out from the clips (every bar where a clip starts on some track), so the first idea is C, the second D, the third E, on white keys only. It changes the mapping, needs a rule for staggered clip starts across tracks and a decision about jumps inside an idea, and would make a captured performance read in idea order. Kept in the notes until step 1 has been used and counting keys is still a problem.
-- **A movable base note or an octave shift for the lane.** Today's keyboard reaches bars 1–68 from C3; nobody has hit the end.
+- **A movable base note or an octave shift for the lane.** The keyboard's 68 keys from C3 reach 68 bars, 34 or 17 (§ Step 1b); nobody has hit the end.
 - **Labelling bars by number in the lane.** The ruler already numbers them; the lane names keys.
 - **Recording what the lane played.** `110` keeps the lane live-only; the "capture a performance-lane performance" idea is its own design.
 
