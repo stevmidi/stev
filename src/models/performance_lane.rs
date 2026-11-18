@@ -147,11 +147,6 @@ impl PerformanceLane {
         self.replay = None;
     }
 
-    /// The pad the replay plays, `None` when none plays.
-    pub(crate) fn replay_pad(&self) -> Option<usize> {
-        self.replay.map(|replay| replay.pad)
-    }
-
     /// Where the replay is ([`ReplayPosition`]), `None` when none plays.
     pub(crate) fn replay_position(&self) -> Option<ReplayPosition> {
         self.replay.map(|replay| ReplayPosition {
@@ -186,19 +181,17 @@ impl PerformanceLane {
         target: impl Fn(u8) -> Option<i32>,
     ) -> Option<ReplayCue> {
         let replay = self.replay.as_mut()?;
-        let length = clip.map_or(0, Clip::region_length);
-        let (Some(clip), true) = (clip, length > 0) else {
+        let moved = replay
+            .expected_tick
+            .is_some_and(|expected| expected != playback_tick);
+        let Some(clip) = clip.filter(|clip| clip.region_length() > 0 && !moved) else {
             self.replay = None;
             return None;
         };
-        if replay
-            .expected_tick
-            .is_some_and(|expected| expected != playback_tick)
-        {
-            self.replay = None;
-            return None;
-        }
-        let at = clip.region().start() + replay.elapsed % length;
+        let length = clip.region_length();
+        // Wrapped again here: an edit may have shortened the performance.
+        let elapsed = replay.elapsed % length;
+        let at = clip.region().start() + elapsed;
         let notes = || replay_notes(clip, &target);
         let jump = match replay.expected_tick {
             None => notes()
@@ -219,7 +212,7 @@ impl PerformanceLane {
             _ => playback_tick,
         };
         replay.expected_tick = Some(now + 1);
-        replay.elapsed = (replay.elapsed % length + 1) % length;
+        replay.elapsed = (elapsed + 1) % length;
         cue
     }
 
@@ -721,9 +714,9 @@ mod tests {
     fn an_emptied_pad_ends_the_replay() {
         let mut lane = PerformanceLane::new();
         lane.start_replay(3, 0);
-        assert_eq!(lane.replay_pad(), Some(3));
+        assert_eq!(lane.replay_position().map(|position| position.pad), Some(3));
         assert_eq!(lane.step_replay(0, None, beat_key), None);
-        assert_eq!(lane.replay_pad(), None);
+        assert_eq!(lane.replay_position(), None);
     }
 
     #[test]

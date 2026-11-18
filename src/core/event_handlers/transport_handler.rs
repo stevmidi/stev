@@ -143,8 +143,7 @@ impl EventHandlers {
             }
             TransportCommand::TogglePlayback => {
                 if transport.is_running() {
-                    sequencer.stop_performance_replay();
-                    transport.stop();
+                    stop(transport, sequencer);
                 } else {
                     // `restart_from_cursor` starts playback from the cursor.
                     sequencer.begin_running_take(sequencer.cursor_tick());
@@ -154,8 +153,7 @@ impl EventHandlers {
             }
             TransportCommand::Stop => {
                 sequencer.reset_capture();
-                sequencer.stop_performance_replay();
-                transport.stop();
+                stop(transport, sequencer);
                 transport.reset_playback_to_cursor();
             }
             TransportCommand::ToggleMetronomeMute => {
@@ -167,13 +165,19 @@ impl EventHandlers {
 
 /// Stops, moves playback to `tick` with the notes sounding there chased, and
 /// starts again, leaving the cursor: `PlayFromTick`, and the seek of an audio
-/// export's run. Either ends the performance replay, here rather than on the
-/// stop's [`TransportEvent::Stopped`], which can arrive after a replay the
-/// next command started.
+/// export's run.
 fn play_from_tick(tick: i32, transport: &mut Transport, sequencer: &mut Sequencer) {
     sequencer.begin_running_take(tick);
-    sequencer.stop_performance_replay();
-    transport.stop();
+    stop(transport, sequencer);
     transport.jump_and_chase(tick);
     transport.start();
+}
+
+/// Stops the transport and ends the performance replay with it, here rather
+/// than on the stop's [`TransportEvent::Stopped`], which can arrive after a
+/// replay the next command started (`520-performance-capture.md` § Phases 3).
+/// Every stop a command makes goes through here.
+fn stop(transport: &Transport, sequencer: &mut Sequencer) {
+    sequencer.stop_performance_replay();
+    transport.stop();
 }

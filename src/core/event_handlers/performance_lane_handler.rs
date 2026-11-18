@@ -452,14 +452,14 @@ mod tests {
 
     /// Regression: `⌥Space` in the clip view played the arrangement from the
     /// performance's cursor taken as an arrangement tick. A performance has
-    /// no place there: it replays instead.
+    /// no place there: `⌥Space` replays it (`PlayPerformance`, routed by the
+    /// input handler), and the clip cursor's play does nothing.
     #[test]
-    fn option_space_on_a_performance_replays_it() {
+    fn option_space_on_a_performance_plays_nothing_from_the_arrangement() {
         let (mut h, mut record, _) = captured();
         h.transport_commands.try_iter().for_each(drop);
         run_command(&mut h, &mut record, SequencerCommand::PlayFromClipCursor);
-        let sent: Vec<_> = h.transport_commands.try_iter().collect();
-        assert!(matches!(sent[..], [TransportCommand::PlayPerformance]));
+        assert_eq!(h.transport_commands.try_iter().count(), 0);
     }
 
     /// `cmd` through the transport's handler, as the `"sequencer"` thread

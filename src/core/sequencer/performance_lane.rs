@@ -79,7 +79,7 @@ impl Sequencer {
     /// (`PerformanceLane::step_replay`, on its pad's performance as it is
     /// now, the keys at the lane's key length). `None` with no replay.
     pub(crate) fn step_performance_replay(&mut self, playback_tick: i32) -> Option<ReplayCue> {
-        let pad = self.performance_lane.replay_pad()?;
+        let pad = self.performance_lane.replay_position()?.pad;
         let (meter, length) = (self.meter(), self.performance_lane_key_length());
         let target = |note| key_index_from_note(note).map(|key| key_tick(meter, length, key));
         let cue = self.performance_lane.step_replay(

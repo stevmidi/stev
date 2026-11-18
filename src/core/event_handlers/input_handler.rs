@@ -101,14 +101,16 @@ impl EventHandlers {
             // so the clip view's arm must come first: a global action and a
             // scoped one can't share a default chord (`docs/320`). With the
             // performance lane selected it plays the selected pad's
-            // performance from either pane (`520-performance-capture.md`
-            // decision 4), the clip view's arm too.
+            // performance instead, from either pane
+            // (`520-performance-capture.md` decision 4).
+            InputEvent::Action(Action::PlayFromCursor) if self.is_performance_lane_armed() => {
+                self.send_transport(TransportCommand::PlayPerformance);
+            }
             InputEvent::Action(Action::PlayFromCursor)
-                if self.is_performance_lane_armed()
-                    || matches!(
-                        self.clip_context(),
-                        ClipContext::Clip | ClipContext::ClipWithSelection
-                    ) =>
+                if matches!(
+                    self.clip_context(),
+                    ClipContext::Clip | ClipContext::ClipWithSelection
+                ) =>
             {
                 self.send_sequencer(SequencerCommand::PlayFromClipCursor);
             }
@@ -956,12 +958,14 @@ mod tests {
 
         h.handlers
             .select_performance_lane_workflow(&mut h.sequencer);
-        h.sequencer_commands.try_iter().for_each(drop);
-        h.handlers.handle_input_event(&option_space);
-        assert!(matches!(
-            h.sequencer_commands.try_recv(),
-            Ok(SequencerCommand::PlayFromClipCursor)
-        ));
+        for view in [ViewState::Arranger, ViewState::Clip] {
+            h.handlers.set_view_state(view);
+            h.handlers.handle_input_event(&option_space);
+            assert!(matches!(
+                h.transport_commands.try_recv(),
+                Ok(TransportCommand::PlayPerformance)
+            ));
+        }
     }
 
     /// `⇧⌘V` is Paste Time in the arranger and `⌘V` the plain paste; the
