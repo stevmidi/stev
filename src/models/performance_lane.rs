@@ -115,9 +115,10 @@ impl KeyLength {
     /// One key's length in `meter`, in ticks, as it plays
     /// ([`in_meter`](Self::in_meter)).
     pub(crate) fn ticks(self, meter: Meter) -> i32 {
-        match self {
+        match self.in_meter(meter) {
             KeyLength::Bar => meter.bar_ticks(),
-            KeyLength::HalfBar => meter.half_bar_ticks().unwrap_or(meter.beat_ticks()),
+            // `in_meter` keeps a half bar only where the meter has one.
+            KeyLength::HalfBar => meter.bar_ticks() / 2,
             KeyLength::Beat => meter.beat_ticks(),
         }
     }
