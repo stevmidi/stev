@@ -76,10 +76,10 @@ only — no recording/capture, no persistence. Key files:
   called directly from the sequencer thread's `midi_in_rx` arm
   (`threads/sequencer_pump.rs`) instead of `Sequencer::handle_midi_input`, because
   it needs `&mut Transport`, which `Sequencer` doesn't own.
-- **NoteOn**: `begin_live_trigger`, then `transport.suspend_loop_wrap()`,
-  starts the transport if not already running, and `jump_and_chase(target_tick)`
-  to the key's beat (`key_tick`). `loop_wrap_suspended` (`Transport`, thread-local, plain
-  `bool`) stops the region loop boundary from fighting the lane's hold.
+- **NoteOn**: `begin_live_trigger`, then `transport.suspend_loop_wrap()`, starts
+  the transport if not already running, and `jump_and_chase(target_tick)` to the
+  key's beat (`key_tick`). `loop_wrap_suspended` (`Transport`, thread-local,
+  plain `bool`) stops the region loop boundary from fighting the lane's hold.
 - **NoteOff**: only acts if `end_live_trigger` confirms the released note
   matches the currently-held one (a stale release of an already-superseded
   note is a no-op) — then `resume_loop_wrap()`. Deliberately does **not**
@@ -95,29 +95,29 @@ only — no recording/capture, no persistence. Key files:
   Height is `Display::PERFORMANCE_LANE_H`.
 - **The row draws the keyboard that drives it**
   (`510-performance-lane-keyboard.md`). The whole row is drawn with the
-  arranger's backgrounds (`draw_performance_lane_row`, `rendering/performance_lane.rs`):
-  the gutter (the accent tint and 4px marker while armed), the lane fill and
-  the keys. `draw_timeline` starts the arranger's in-lane grid lines under the
-  row (`ArrangerLayout::lanes_top`), so no bar or beat line crosses the lane;
-  the key edges, every beat, are the lines there. Each key (`KEY_COUNT`,
-  68 from C3, 17 bars of 4/4; `note_for_key`, the inverse of `key_index_from_note`)
-  spans its beat, from `key_tick` to the next, in a thin strip along the lane's bottom edge (`KEY_STRIP_H`, 5pt), in
-  the piano roll's `piano_key_white`/`piano_key_black`, from
-  `tick_to_screen_x` in the project meter, so it follows zoom, scroll and
-  the meter; beats past the 68th have none. Filling the whole row
-  with the keys was tried first and read as heavy slabs, whatever the tones:
-  the piano roll's colours work in a narrow band, as in its key column. Seams
-  at E/F (1px) and B/C (2px) in the strip, as on the piano roll
-  (`row_seam_w`). The plain lane above the strip carries the names in
-  `fg_dim`: the C's always (Cubase-style, C3 over bar 1), every key once a key
-  fits the widest sharp's name and its padding (`labels_every_key`), each
-  clipped to its key. Only the visible keys are drawn (`visible_keys`).
-  The strip is drawn armed or not, at `UNARMED_KEY_STRENGTH` unarmed; the
-  lane fill is the usual one (the accent tint while armed). While armed every
-  key the live keyboard holds (`LiveNotes`, which wakes the UI on each edge)
-  lights its piece of the strip in `theme::accent()`, with a wash
-  (`HELD_KEY_WASH`) over its span above: what the hands hold, not just the
-  key the transport jumped to. Unarmed, held keys light nothing in the lane.
+  arranger's backgrounds (`draw_performance_lane_row`,
+  `rendering/performance_lane.rs`): the gutter (the accent tint and 4px marker
+  while armed), the lane fill and the keys. `draw_timeline` starts the
+  arranger's in-lane grid lines under the row (`ArrangerLayout::lanes_top`), so
+  no bar or beat line crosses the lane; the key edges, every beat, are the lines
+  there. Each key (`KEY_COUNT`, 68 from C3, 17 bars of 4/4; `note_for_key`, the
+  inverse of `key_index_from_note`) spans its beat, from `key_tick` to the next,
+  in a thin strip along the lane's bottom edge (`KEY_STRIP_H`, 5pt), in the
+  piano roll's `piano_key_white`/`piano_key_black`, from `tick_to_screen_x` in
+  the project meter, so it follows zoom, scroll and the meter; beats past the
+  68th have none. Filling the whole row with the keys was tried first and read
+  as heavy slabs, whatever the tones: the piano roll's colours work in a narrow
+  band, as in its key column. Seams at E/F (1px) and B/C (2px) in the strip, as
+  on the piano roll (`row_seam_w`). The plain lane above the strip carries the
+  names in `fg_dim`: the C's always (Cubase-style, C3 over bar 1), every key
+  once a key fits the widest sharp's name and its padding (`labels_every_key`),
+  each clipped to its key. Only the visible keys are drawn (`visible_keys`). The
+  strip is drawn armed or not, at `UNARMED_KEY_STRENGTH` unarmed; the lane fill
+  is the usual one (the accent tint while armed). While armed every key the live
+  keyboard holds (`LiveNotes`, which wakes the UI on each edge) lights its piece
+  of the strip in `theme::accent()`, with a wash (`HELD_KEY_WASH`) over its span
+  above: what the hands hold, not just the key the transport jumped to. Unarmed,
+  held keys light nothing in the lane.
 - **Otherwise barebones**: no per-trigger visualization, no "Bar N" label, no
   committed-trigger history. The playhead (drawn elsewhere, unconditionally
   whenever `running`, over the keys) is the only feedback for an active

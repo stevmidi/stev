@@ -177,6 +177,11 @@ impl Display {
 /// zoom.
 fn visible_keys(scroll_x: f32, content_w: f32, pixels_per_tick: f32, key_ticks: i32) -> Range<i32> {
     let key_w = pixels_per_tick * key_ticks as f32;
+    // A degenerate zoom (zero or not finite) shows no keys, rather than a
+    // range from a NaN or infinite division.
+    if !key_w.is_finite() || key_w <= 0.0 {
+        return 0..0;
+    }
     let first = (scroll_x / key_w).floor() as i32;
     let end = ((scroll_x + content_w) / key_w).ceil() as i32;
     first.max(0)..end.clamp(0, KEY_COUNT)
@@ -238,6 +243,14 @@ mod tests {
         // Scrolled past the last key: nothing.
         let ppt = 100.0 / key_ticks as f32;
         assert!(visible_keys(8000.0, 400.0, ppt, key_ticks).is_empty());
+    }
+
+    #[test]
+    fn a_degenerate_zoom_shows_no_keys() {
+        let key_ticks = key_tick(Meter::FOUR_FOUR, 1);
+        assert!(visible_keys(0.0, 400.0, 0.0, key_ticks).is_empty());
+        assert!(visible_keys(0.0, 400.0, f32::NAN, key_ticks).is_empty());
+        assert!(visible_keys(0.0, 400.0, f32::INFINITY, key_ticks).is_empty());
     }
 
     #[test]
