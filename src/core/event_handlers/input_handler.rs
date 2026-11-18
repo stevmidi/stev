@@ -925,6 +925,33 @@ mod tests {
     use crate::core::input_event::{CaptureFrame, InputEvent, TimeSelectionRect};
     use crate::core::sequencer::SequencerCommand;
     use crate::core::transport::TransportCommand;
+    use crate::core::view_state::ViewState;
+
+    /// `⇧⌘V` is Paste Time in the arranger and `⌘V` the plain paste; the
+    /// clip view ignores the ⇧ and pastes notes either way.
+    #[test]
+    fn the_shifted_paste_is_paste_time_in_the_arranger_only() {
+        let h = harness();
+        let paste = |shift| InputEvent::Paste { shift, alt: false };
+        h.handlers.set_view_state(ViewState::Arranger);
+        h.handlers.handle_input_event(&paste(false));
+        h.handlers.handle_input_event(&paste(true));
+        assert!(matches!(
+            h.sequencer_commands.try_recv(),
+            Ok(SequencerCommand::PasteClips)
+        ));
+        assert!(matches!(
+            h.sequencer_commands.try_recv(),
+            Ok(SequencerCommand::PasteTime)
+        ));
+
+        h.handlers.set_view_state(ViewState::Clip);
+        h.handlers.handle_input_event(&paste(true));
+        assert!(matches!(
+            h.sequencer_commands.try_recv(),
+            Ok(SequencerCommand::PasteNotes)
+        ));
+    }
 
     #[test]
     fn the_commit_carries_the_marquee() {
