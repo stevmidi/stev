@@ -26,7 +26,9 @@ key length and the pads. Key files:
   selected pad, an undoable edit, and the pads are saved (`ProjectData`'s
   `performance_pads`, beside `performance_lane_key_length`, `060`). Don't add
   trigger data or per-trigger drawing to the lane itself.
-- `PerformanceLane` (`models/performance_lane.rs`) holds only the **run**
+- `PerformanceLane` (`models/performance_lane.rs`) holds the **run** and the
+  **replay** `⌥Space` plays a pad with (`520` decision 4 and § Phases 3: a
+  clock of its own driving the same jumps from `play_tick`). The run
   (`520` decision 8): the presses since the one that started the transport
   (or since the last `/`), each stamped with the run's own clock, the ticks
   playback has advanced since its first press (`PerformanceLane::advance`,
@@ -102,7 +104,9 @@ key length and the pads. Key files:
   draws the region dimmed as with looping off (`Display::is_loop_enabled`
   reads both). Until 2026-11-18 a press suspended the wrap and its release
   resumed it, so a key let go before the loop end let playback wrap.
-- `performance_lane_armed: Arc<AtomicBool>` (`SharedAtomics`) is read by
+- `performance_lane_armed: Arc<AtomicBool>` (`SharedAtomics`) is also read
+  by `EventHandlers`' key routing, so `⌥Space` plays the selected pad from
+  either pane (`520` decision 4), and by
   `MidiInputForwarder` on its own thread to suppress **every audible route**
   while armed — both the MIDI-OUT thru-forward and the hosted CLAP instrument
   tap (`instrument_midi_tx`). The physical keyboard drives the transport

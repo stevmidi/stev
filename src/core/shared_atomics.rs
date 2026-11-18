@@ -15,7 +15,9 @@
 
 use std::sync::{
     Arc, OnceLock,
-    atomic::{AtomicBool, AtomicI32, AtomicU8, AtomicU16, AtomicU32, AtomicU64, Ordering},
+    atomic::{
+        AtomicBool, AtomicI32, AtomicI64, AtomicU8, AtomicU16, AtomicU32, AtomicU64, Ordering,
+    },
 };
 
 use egui::Context;
@@ -359,6 +361,11 @@ pub(crate) struct SharedAtomics {
     /// draw the keys and the gutter's labels (`510-performance-lane-keyboard.md`
     /// § Step 1b).
     pub(crate) performance_lane_key_length: Arc<AtomicU8>,
+    /// Where the performance replay (`⌥Space` on the lane) is, as
+    /// `ReplayPosition::to_bits` packs it (`-1` for none). Written by the
+    /// `"sequencer"` thread each tick it plays, read by the clip view for the
+    /// performance's own playhead (`520-performance-capture.md` decision 4).
+    pub(crate) performance_replay: Arc<AtomicI64>,
     /// Free-running musical tick counter. Written by the `"clock"` thread; held
     /// to `clock_tick ≡ playback_tick (mod region_length)` — *not* absolute
     /// equality — via [`ClockCommand::AlignToPlayback`](crate::core::clock::ClockCommand).

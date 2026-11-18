@@ -136,8 +136,14 @@ impl EventHandlers {
                 transport.set_loop_enabled(false);
                 play_from_tick(*tick, transport, sequencer);
             }
+            TransportCommand::PlayPerformance => {
+                if sequencer.start_performance_replay() {
+                    transport.start();
+                }
+            }
             TransportCommand::TogglePlayback => {
                 if transport.is_running() {
+                    sequencer.stop_performance_replay();
                     transport.stop();
                 } else {
                     // `restart_from_cursor` starts playback from the cursor.
@@ -148,6 +154,7 @@ impl EventHandlers {
             }
             TransportCommand::Stop => {
                 sequencer.reset_capture();
+                sequencer.stop_performance_replay();
                 transport.stop();
                 transport.reset_playback_to_cursor();
             }
@@ -160,9 +167,12 @@ impl EventHandlers {
 
 /// Stops, moves playback to `tick` with the notes sounding there chased, and
 /// starts again, leaving the cursor: `PlayFromTick`, and the seek of an audio
-/// export's run.
+/// export's run. Either ends the performance replay, here rather than on the
+/// stop's [`TransportEvent::Stopped`], which can arrive after a replay the
+/// next command started.
 fn play_from_tick(tick: i32, transport: &mut Transport, sequencer: &mut Sequencer) {
     sequencer.begin_running_take(tick);
+    sequencer.stop_performance_replay();
     transport.stop();
     transport.jump_and_chase(tick);
     transport.start();

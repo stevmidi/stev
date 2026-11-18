@@ -5,7 +5,9 @@
 //! the **run**: the presses since playback started, on a clock of its own
 //! that counts only the ticks playback advances, which `/` keeps as a
 //! performance (`520-performance-capture.md` decision 8), and the eight
-//! **pads** the kept performances sit on ([`PerformancePads`], decision 6).
+//! **pads** the kept performances sit on ([`PerformancePads`], decision 6),
+//! and the **replay** `⌥Space` plays a pad's performance with, on the same
+//! kind of clock (decision 4).
 //! [`key_index_from_note`] is the note-number → key mapping the lane triggers
 //! on, [`key_tick`] where a key jumps to (one [`KeyLength`] of the project's
 //! meter per key: a bar, half a bar or a beat), and [`note_for_key`] the
@@ -18,18 +20,83 @@ use uuid::Uuid;
 
 use crate::core::config;
 use crate::core::time::Meter;
-use crate::models::{clip::Clip, event::Event};
+use crate::models::{
+    clip::Clip,
+    event::{Event, EventType},
+};
 
 /// How many pads the lane has: the knob panel's eight cells
 /// (`520-performance-capture.md` decision 6).
 pub(crate) const PAD_COUNT: usize = 8;
 
-/// The lane's live state: the run its presses make. Not saved, not an undo
-/// step. See the module docs.
+/// The lane's live state: the run its presses make, and the replay of a
+/// pad's performance. Not saved, not an undo step. See the module docs.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct PerformanceLane {
     /// The presses since the run began, `None` with no run.
     run: Option<Run>,
+    /// The performance `⌥Space` plays, `None` when none plays.
+    replay: Option<Replay>,
+}
+
+/// A pad's performance played back through the live trigger path
+/// (`520-performance-capture.md` decision 4): each note jumps playback to its
+/// key as its press did, on a clock of the replay's own that loops over the
+/// performance's length.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Replay {
+    /// The pad it plays.
+    pad: usize,
+    /// Where in the performance the next tick plays, from its window start.
+    elapsed: i32,
+    /// Where playback is when only the replay has moved it, as the run's
+    /// [`Run::expected_tick`]; `None` before its first tick, which takes
+    /// playback from wherever it is.
+    expected_tick: Option<i32>,
+    /// In a gap between notes, which is silence (decision 2).
+    silent: bool,
+}
+
+/// What the tick pump does for the replay before playback advances a tick
+/// ([`PerformanceLane::step_replay`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ReplayCue {
+    /// A note starts: playback jumps to this tick, the notes there chased,
+    /// as a press's jump.
+    Jump(i32),
+    /// A gap starts: what sounds is released, and nothing sounds until the
+    /// next note.
+    Silence,
+}
+
+/// Where the replay is, for the clip view's playhead: its pad and the tick
+/// it plays, from the performance's window start. Packed into one atomic
+/// ([`to_bits`](Self::to_bits)), `-1` for none.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ReplayPosition {
+    /// The pad the replay plays.
+    pub(crate) pad: usize,
+    /// The tick it is at, from the performance's window start.
+    pub(crate) tick: i32,
+}
+
+impl ReplayPosition {
+    /// `position` as one value for `SharedAtomics::performance_replay`: the
+    /// pad above the tick, `-1` for none.
+    pub(crate) fn to_bits(position: Option<ReplayPosition>) -> i64 {
+        position.map_or(-1, |position| {
+            ((position.pad as i64) << 32) | i64::from(position.tick.max(0))
+        })
+    }
+
+    /// The position [`to_bits`](Self::to_bits) packed; `None` for a
+    /// negative value.
+    pub(crate) fn from_bits(bits: i64) -> Option<ReplayPosition> {
+        (bits >= 0).then_some(ReplayPosition {
+            pad: (bits >> 32) as usize,
+            tick: (bits & 0xFFFF_FFFF) as i32,
+        })
+    }
 }
 
 /// One run of presses (`520-performance-capture.md` decision 8): from the
@@ -55,9 +122,105 @@ impl PerformanceLane {
         PerformanceLane::default()
     }
 
-    /// Ends the run: the lane was disarmed, or a project replaced.
+    /// Ends the run and the replay: the lane was disarmed, or a project
+    /// replaced.
     pub(crate) fn clear(&mut self) {
         self.run = None;
+        self.replay = None;
+    }
+
+    /// `⌥Space`: starts replaying pad `pad`'s performance from `from` ticks
+    /// into it, replacing any replay. Ends the run: the replay moves playback,
+    /// so the presses before it no longer say what played.
+    pub(crate) fn start_replay(&mut self, pad: usize, from: i32) {
+        self.run = None;
+        self.replay = Some(Replay {
+            pad,
+            elapsed: from.max(0),
+            expected_tick: None,
+            silent: false,
+        });
+    }
+
+    /// Ends the replay: playback stopped, or a live press took over.
+    pub(crate) fn stop_replay(&mut self) {
+        self.replay = None;
+    }
+
+    /// The pad the replay plays, `None` when none plays.
+    pub(crate) fn replay_pad(&self) -> Option<usize> {
+        self.replay.map(|replay| replay.pad)
+    }
+
+    /// Where the replay is ([`ReplayPosition`]), `None` when none plays.
+    pub(crate) fn replay_position(&self) -> Option<ReplayPosition> {
+        self.replay.map(|replay| ReplayPosition {
+            pad: replay.pad,
+            tick: replay.elapsed,
+        })
+    }
+
+    /// Whether the replay is in a gap, where nothing sounds (decision 2).
+    pub(crate) fn is_replay_silent(&self) -> bool {
+        self.replay.is_some_and(|replay| replay.silent)
+    }
+
+    /// Playback is about to advance one tick from `playback_tick` while the
+    /// replay plays `clip` (its pad's performance, read each tick so an edit
+    /// is heard on the next pass): what to do first, and the replay's clock
+    /// counts the tick, back to the start at the performance's length.
+    /// `target` is where a note's key jumps to (`None` for a note below the
+    /// lane's keys, which plays as a gap).
+    ///
+    /// A note starting now jumps; with several the latest in the clip wins,
+    /// as live. The first tick instead takes the note sounding there, from
+    /// as far into it as the replay starts. Where no note sounds is a gap,
+    /// silence (decision 2); a note ending under a longer one plays on, as
+    /// live the latest press wins. The replay ends, with no cue, when
+    /// playback isn't where it left it (something else moved it: a ruler
+    /// click, `Space` from the cursor) or the performance is gone.
+    pub(crate) fn step_replay(
+        &mut self,
+        playback_tick: i32,
+        clip: Option<&Clip>,
+        target: impl Fn(u8) -> Option<i32>,
+    ) -> Option<ReplayCue> {
+        let replay = self.replay.as_mut()?;
+        let length = clip.map_or(0, Clip::region_length);
+        let (Some(clip), true) = (clip, length > 0) else {
+            self.replay = None;
+            return None;
+        };
+        if replay
+            .expected_tick
+            .is_some_and(|expected| expected != playback_tick)
+        {
+            self.replay = None;
+            return None;
+        }
+        let at = clip.region().start() + replay.elapsed % length;
+        let notes = || replay_notes(clip, &target);
+        let jump = match replay.expected_tick {
+            None => notes()
+                .filter(|&(start, end, _)| start <= at && at < end)
+                .max_by_key(|&(start, _, _)| start),
+            Some(_) => notes().filter(|&(start, _, _)| start == at).last(),
+        }
+        .map(|(start, _, key)| key + at - start);
+        let sounding = notes().any(|(start, end, _)| start <= at && at < end);
+        let cue = match jump {
+            Some(tick) => Some(ReplayCue::Jump(tick)),
+            None if !sounding && !replay.silent => Some(ReplayCue::Silence),
+            None => None,
+        };
+        replay.silent = jump.is_none() && !sounding;
+        let now = match cue {
+            Some(ReplayCue::Jump(tick)) => tick,
+            _ => playback_tick,
+        };
+        replay.expected_tick = Some(now + 1);
+        replay.elapsed = (replay.elapsed % length + 1) % length;
+        cue
     }
 
     /// A press of `note` jumped playback to `target_tick`. It starts a run
@@ -108,6 +271,21 @@ impl PerformanceLane {
         let run = self.run.take()?;
         performance_clip(&run.presses, run.elapsed)
     }
+}
+
+/// The notes of performance `clip` the replay plays, `(start, end, key)`:
+/// each unmuted note on a lane key, with where its key jumps to (`target`).
+fn replay_notes<'a>(
+    clip: &'a Clip,
+    target: &'a impl Fn(u8) -> Option<i32>,
+) -> impl Iterator<Item = (i32, i32, i32)> + 'a {
+    clip.events()
+        .iter()
+        .filter(|event| event.event_type() == Some(EventType::NoteOn) && !event.is_muted())
+        .filter_map(move |event| {
+            let key = target(event.note_number()?)?;
+            Some((event.tick(), event.end_tick(), key))
+        })
 }
 
 /// A performance clip from `presses` (`(tick, note, velocity)`, in order,
@@ -412,6 +590,168 @@ mod tests {
         play(&mut lane, 0, 10);
         lane.clear();
         assert!(lane.take_run().is_none());
+    }
+
+    /// Where each key jumps in these tests: a beat a key, in 4/4.
+    fn beat_key(note: u8) -> Option<i32> {
+        key_index_from_note(note).map(|key| key_tick(Meter::FOUR_FOUR, KeyLength::Beat, key))
+    }
+
+    /// A performance of `notes` (`(start, end, note)`) with window `0..end`,
+    /// as an edit in the piano roll can leave it.
+    fn clip_of(notes: &[(i32, i32, u8)], end: i32) -> Clip {
+        let mut clip = Clip::new();
+        clip.region_mut().set_region(Some(0), Some(end));
+        for &(start, until, note) in notes {
+            clip.add_event(Event::new(start, until - start, vec![0x90, note, 100]));
+            clip.add_event(Event::new(until, 0, vec![0x80, note, 0]));
+        }
+        clip.calculate_note_lengths();
+        clip
+    }
+
+    /// Replays `clip` for `ticks` ticks from playback at `playback`, as the
+    /// tick pump would: each cue, by the replay's tick it came on, and where
+    /// playback ends up.
+    fn replay(
+        lane: &mut PerformanceLane,
+        clip: &Clip,
+        mut playback: i32,
+        ticks: i32,
+    ) -> (Vec<(i32, ReplayCue)>, i32) {
+        let mut cues = Vec::new();
+        for _ in 0..ticks {
+            let at = lane.replay_position().map(|position| position.tick);
+            if let Some(cue) = lane.step_replay(playback, Some(clip), beat_key) {
+                cues.push((at.unwrap(), cue));
+                if let ReplayCue::Jump(tick) = cue {
+                    playback = tick;
+                }
+            }
+            playback += 1;
+        }
+        (cues, playback)
+    }
+
+    #[test]
+    fn a_replay_jumps_at_each_note_and_loops_over_the_length() {
+        // E3 (bar 2) for 100 ticks, then C3 (bar 1) for 50.
+        let clip = performance_clip(&[(0, 64, 100), (100, 60, 100)], 150).unwrap();
+        let mut lane = PerformanceLane::new();
+        lane.start_replay(0, 0);
+        let (cues, playback) = replay(&mut lane, &clip, 7000, 310);
+        assert_eq!(
+            cues,
+            [
+                (0, ReplayCue::Jump(3840)),
+                (100, ReplayCue::Jump(0)),
+                (0, ReplayCue::Jump(3840)),
+                (100, ReplayCue::Jump(0)),
+                (0, ReplayCue::Jump(3840)),
+            ]
+        );
+        assert_eq!(playback, 3840 + 10);
+        assert!(!lane.is_replay_silent());
+    }
+
+    #[test]
+    fn a_replay_from_inside_a_note_starts_as_far_into_its_key() {
+        let clip = performance_clip(&[(0, 64, 100), (100, 60, 100)], 150).unwrap();
+        let mut lane = PerformanceLane::new();
+        lane.start_replay(0, 30);
+        let (cues, _) = replay(&mut lane, &clip, 0, 1);
+        assert_eq!(cues, [(30, ReplayCue::Jump(3840 + 30))]);
+    }
+
+    #[test]
+    fn a_gap_is_silence_until_the_next_note() {
+        // E3 for 40 ticks, then a gap to C3 at 100.
+        let clip = clip_of(&[(0, 40, 64), (100, 200, 60)], 200);
+        let mut lane = PerformanceLane::new();
+        lane.start_replay(0, 0);
+        let (cues, _) = replay(&mut lane, &clip, 0, 41);
+        assert_eq!(cues, [(0, ReplayCue::Jump(3840)), (40, ReplayCue::Silence)]);
+        assert!(lane.is_replay_silent());
+        let (cues, _) = replay(&mut lane, &clip, 3840 + 41, 60);
+        assert_eq!(cues, [(100, ReplayCue::Jump(0))]);
+        assert!(!lane.is_replay_silent());
+    }
+
+    #[test]
+    fn a_replay_starting_in_a_gap_is_silent_from_its_first_tick() {
+        let clip = clip_of(&[(100, 200, 60)], 200);
+        let mut lane = PerformanceLane::new();
+        lane.start_replay(0, 0);
+        let (cues, _) = replay(&mut lane, &clip, 500, 101);
+        assert_eq!(cues, [(0, ReplayCue::Silence), (100, ReplayCue::Jump(0))]);
+    }
+
+    #[test]
+    fn a_note_ending_under_a_longer_one_plays_on() {
+        let clip = clip_of(&[(0, 200, 60), (50, 100, 64)], 200);
+        let mut lane = PerformanceLane::new();
+        lane.start_replay(0, 0);
+        let (cues, _) = replay(&mut lane, &clip, 0, 200);
+        assert_eq!(cues, [(0, ReplayCue::Jump(0)), (50, ReplayCue::Jump(3840))]);
+    }
+
+    #[test]
+    fn a_muted_note_plays_as_a_gap() {
+        let mut clip = clip_of(&[(0, 100, 60)], 100);
+        let _ = clip.select_all_events();
+        clip.toggle_muted_for_selected_events();
+        let mut lane = PerformanceLane::new();
+        lane.start_replay(0, 0);
+        let (cues, _) = replay(&mut lane, &clip, 0, 100);
+        assert_eq!(cues, [(0, ReplayCue::Silence)]);
+    }
+
+    #[test]
+    fn playback_moved_by_anything_but_the_replay_ends_it() {
+        let clip = performance_clip(&[(0, 60, 100)], 200).unwrap();
+        let mut lane = PerformanceLane::new();
+        lane.start_replay(0, 0);
+        replay(&mut lane, &clip, 0, 10);
+        // A ruler click took playback to bar 5.
+        assert_eq!(lane.step_replay(3840, Some(&clip), beat_key), None);
+        assert_eq!(lane.replay_position(), None);
+    }
+
+    #[test]
+    fn an_emptied_pad_ends_the_replay() {
+        let mut lane = PerformanceLane::new();
+        lane.start_replay(3, 0);
+        assert_eq!(lane.replay_pad(), Some(3));
+        assert_eq!(lane.step_replay(0, None, beat_key), None);
+        assert_eq!(lane.replay_pad(), None);
+    }
+
+    #[test]
+    fn a_replay_ends_the_run_and_clearing_ends_the_replay() {
+        let mut lane = PerformanceLane::new();
+        lane.press(60, 100, 0, true);
+        play(&mut lane, 0, 10);
+        lane.start_replay(0, 0);
+        assert!(lane.take_run().is_none());
+        lane.clear();
+        assert_eq!(lane.replay_position(), None);
+    }
+
+    #[test]
+    fn a_replay_position_packs_into_one_value() {
+        for position in [
+            None,
+            Some(ReplayPosition { pad: 0, tick: 0 }),
+            Some(ReplayPosition {
+                pad: 7,
+                tick: 123_456,
+            }),
+        ] {
+            assert_eq!(
+                ReplayPosition::from_bits(ReplayPosition::to_bits(position)),
+                position
+            );
+        }
     }
 
     #[test]

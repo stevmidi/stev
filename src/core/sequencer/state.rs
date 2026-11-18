@@ -11,7 +11,7 @@
 
 use std::sync::{
     Arc,
-    atomic::{AtomicBool, AtomicI32, AtomicU8, AtomicU16, Ordering},
+    atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU8, AtomicU16, Ordering},
 };
 use std::time::Instant;
 
@@ -180,6 +180,10 @@ pub(crate) struct Sequencer {
     /// view (`SharedAtomics::performance_lane_key_length`). Saved with the
     /// project; not an undo step (`510-performance-lane-keyboard.md` § Step 1b).
     pub(super) performance_lane_key_length: Arc<AtomicU8>,
+    /// Where the performance replay is, for the clip view's playhead
+    /// (`SharedAtomics::performance_replay`). Kept by the replay accessors
+    /// in `performance_lane.rs`.
+    pub(super) performance_replay: Arc<AtomicI64>,
     /// The lane's eight pads, the performances `/` kept on the lane
     /// (`520-performance-capture.md` decision 6). Saved with the project;
     /// changed through `SetPerformancePadEdit`.
@@ -223,6 +227,7 @@ impl Sequencer {
         arm_channel: Arc<AtomicU8>,
         performance_lane_armed: Arc<AtomicBool>,
         performance_lane_key_length: Arc<AtomicU8>,
+        performance_replay: Arc<AtomicI64>,
         track_mix: Arc<TrackMixAtomics>,
         audio_export_atomics: Arc<AudioExportAtomics>,
     ) -> Self {
@@ -264,6 +269,7 @@ impl Sequencer {
             performance_lane: PerformanceLane::new(),
             performance_lane_armed,
             performance_lane_key_length,
+            performance_replay,
             performance_pads: PerformancePads::default(),
             selected_pad: 0,
             marquee: None,

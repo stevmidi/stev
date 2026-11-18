@@ -4,7 +4,7 @@
 
 use std::sync::{
     Arc, OnceLock,
-    atomic::{AtomicBool, AtomicI32, AtomicU8, AtomicU16, AtomicU64},
+    atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU8, AtomicU16, AtomicU64},
 };
 
 use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
@@ -56,6 +56,7 @@ pub(crate) fn setup_shared_atomics(repaint_ctx: Arc<OnceLock<Context>>) -> Share
         tempo: Arc::new(AtomicI32::new(TEMPO_US_DEFAULT)),
         meter: Arc::new(AtomicU16::new(Meter::FOUR_FOUR.to_bits())),
         performance_lane_key_length: Arc::new(AtomicU8::new(KeyLength::default().to_bits())),
+        performance_replay: Arc::new(AtomicI64::new(-1)),
         clock_tick: Arc::new(AtomicI32::new(0)),
         clock_tick_instant_nanos: Arc::new(AtomicU64::new(0)),
         playback_tick: Arc::new(AtomicI32::new(0)),
@@ -259,6 +260,7 @@ pub(crate) fn setup_display(
         shared_atomics.tempo.clone(),
         shared_atomics.meter.clone(),
         shared_atomics.performance_lane_key_length.clone(),
+        shared_atomics.performance_replay.clone(),
         shared_atomics.running.clone(),
         shared_atomics.playback_tick.clone(),
         shared_atomics.cursor_tick.clone(),
@@ -295,6 +297,7 @@ pub(crate) fn setup_sequencer(
         shared_atomics.arm_channel.clone(),
         shared_atomics.performance_lane_armed.clone(),
         shared_atomics.performance_lane_key_length.clone(),
+        shared_atomics.performance_replay.clone(),
         shared_atomics.track_mix.clone(),
         shared_atomics.audio_export.clone(),
     )
@@ -319,6 +322,7 @@ pub(crate) fn setup_event_handlers(
         audio_export_job_tx,
         shared_atomics.view_state.clone(),
         shared_atomics.has_event_selection.clone(),
+        shared_atomics.performance_lane_armed.clone(),
         shared_atomics.midi_out_offset_ms.clone(),
         shared_atomics.audio_export.clone(),
         repaint_ctx,

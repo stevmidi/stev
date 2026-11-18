@@ -6,7 +6,7 @@
 
 use std::sync::{
     Arc, OnceLock,
-    atomic::{AtomicBool, AtomicI32, AtomicU8, AtomicU16},
+    atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU8, AtomicU16},
 };
 
 use crossbeam_channel::{Receiver, unbounded};
@@ -76,6 +76,7 @@ pub(crate) fn harness() -> Harness {
     let (sequencer_command_tx, sequencer_commands) = unbounded();
     let has_event_selection = Arc::new(AtomicBool::new(false));
     let audio_export = Arc::new(AudioExportAtomics::default());
+    let performance_lane_armed = Arc::new(AtomicBool::new(false));
     let handlers = EventHandlers::new(
         ui_event_tx,
         transport_command_tx,
@@ -84,6 +85,7 @@ pub(crate) fn harness() -> Harness {
         unbounded().0,
         Arc::new(AtomicU8::new(0)),
         has_event_selection.clone(),
+        performance_lane_armed.clone(),
         Arc::new(AtomicI32::new(0)),
         audio_export.clone(),
         Arc::new(OnceLock::new()),
@@ -93,7 +95,6 @@ pub(crate) fn harness() -> Harness {
     let playback_tick = Arc::new(AtomicI32::new(0));
     let running = Arc::new(AtomicBool::new(false));
     let region = (Arc::new(AtomicI32::new(0)), Arc::new(AtomicI32::new(3840)));
-    let performance_lane_armed = Arc::new(AtomicBool::new(false));
     let (plugin_midi_tx, _plugin_midi_rx) = RingBuffer::new(64);
     let mut sequencer = Sequencer::new(
         unbounded().0,
@@ -110,6 +111,7 @@ pub(crate) fn harness() -> Harness {
         Arc::new(AtomicU8::new(0)),
         performance_lane_armed.clone(),
         Arc::new(AtomicU8::new(KeyLength::default().to_bits())),
+        Arc::new(AtomicI64::new(-1)),
         Arc::new(TrackMixAtomics::new()),
         audio_export.clone(),
     );

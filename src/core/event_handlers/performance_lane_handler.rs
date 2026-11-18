@@ -48,6 +48,9 @@ impl EventHandlers {
             sequencer.performance_lane_key_length(),
             key_index,
         );
+        // A live press takes over from the replay (`520-performance-capture.md`
+        // decision 4) and begins a run of its own.
+        sequencer.stop_performance_replay();
         let started = !transport.is_running();
         sequencer.performance_lane_mut().press(
             note,
@@ -127,8 +130,11 @@ mod tests {
 
     use undo::Record;
 
-    use crate::core::config::PERFORMANCE_LANE_BASE_NOTE;
+    use rtrb::RingBuffer;
     use uuid::Uuid;
+
+    use crate::core::config::PERFORMANCE_LANE_BASE_NOTE;
+    use crate::core::metronome::Metronome;
 
     use crate::core::event_handlers::test_harness::{
         Harness, add_clip, harness, lead_changes, run_command, statuses,
@@ -136,7 +142,7 @@ mod tests {
     use crate::core::sequencer::test_support::clip_notes;
     use crate::core::sequencer::{SequencerCommand, UndoStep};
     use crate::core::time::Meter;
-    use crate::core::transport::Transport;
+    use crate::core::transport::{Transport, TransportCommand};
     use crate::models::{clip::Clip, performance_lane::KeyLength};
 
     /// A transport over `h`'s shared state, as the `"sequencer"` thread holds
@@ -446,12 +452,117 @@ mod tests {
 
     /// Regression: `⌥Space` in the clip view played the arrangement from the
     /// performance's cursor taken as an arrangement tick. A performance has
-    /// no place there; its replay is phase 3.
+    /// no place there: it replays instead.
     #[test]
-    fn option_space_on_a_performance_plays_nothing_from_the_arrangement() {
+    fn option_space_on_a_performance_replays_it() {
         let (mut h, mut record, _) = captured();
         h.transport_commands.try_iter().for_each(drop);
         run_command(&mut h, &mut record, SequencerCommand::PlayFromClipCursor);
-        assert_eq!(h.transport_commands.try_iter().count(), 0);
+        let sent: Vec<_> = h.transport_commands.try_iter().collect();
+        assert!(matches!(sent[..], [TransportCommand::PlayPerformance]));
+    }
+
+    /// `cmd` through the transport's handler, as the `"sequencer"` thread
+    /// runs it.
+    fn transport_command(h: &mut Harness, transport: &mut Transport, cmd: TransportCommand) {
+        let metronome = Metronome::new(Arc::new(AtomicBool::new(true)), RingBuffer::new(1).0);
+        h.handlers
+            .handle_transport_command(&cmd, transport, &mut h.sequencer, &metronome);
+    }
+
+    /// The captured performance (E3, bar 2, for 300 ticks, then C3, bar 1,
+    /// for 200) on the armed lane, stopped with playback at `parked`.
+    fn ready_to_replay(parked: i32) -> (Harness, Transport) {
+        let (mut h, _record, _) = captured();
+        let mut transport = transport(&h);
+        transport_command(&mut h, &mut transport, TransportCommand::Stop);
+        h.playback_tick.store(parked, Ordering::Relaxed);
+        (h, transport)
+    }
+
+    fn playback(h: &Harness) -> i32 {
+        h.playback_tick.load(Ordering::Relaxed)
+    }
+
+    #[test]
+    fn a_replay_plays_the_path_the_presses_did_and_loops() {
+        let (mut h, mut transport) = ready_to_replay(7000);
+        transport_command(&mut h, &mut transport, TransportCommand::PlayPerformance);
+        assert!(transport.is_running(), "⌥Space starts the transport");
+
+        play(&mut h, &mut transport, 1);
+        assert_eq!(playback(&h), 3840 + 1, "E3: bar 2");
+        play(&mut h, &mut transport, 299);
+        assert_eq!(playback(&h), 3840 + 300);
+        play(&mut h, &mut transport, 1);
+        assert_eq!(playback(&h), 1, "C3: bar 1");
+        play(&mut h, &mut transport, 199);
+        play(&mut h, &mut transport, 1);
+        assert_eq!(playback(&h), 3840 + 1, "round again at its length");
+        assert!(
+            h.sequencer.performance_pads().get(0).is_some(),
+            "a replay isn't a capture"
+        );
+    }
+
+    #[test]
+    fn a_replay_starts_from_the_clip_cursor_in_the_performance() {
+        let (mut h, mut transport) = ready_to_replay(0);
+        h.sequencer.set_selected_clip_cursor_tick(400);
+        transport_command(&mut h, &mut transport, TransportCommand::PlayPerformance);
+        play(&mut h, &mut transport, 1);
+        assert_eq!(playback(&h), 100 + 1, "100 ticks into C3");
+    }
+
+    #[test]
+    fn stopping_ends_the_replay() {
+        let (mut h, mut transport) = ready_to_replay(0);
+        transport_command(&mut h, &mut transport, TransportCommand::PlayPerformance);
+        play(&mut h, &mut transport, 10);
+        transport_command(&mut h, &mut transport, TransportCommand::TogglePlayback);
+        assert!(!transport.is_running());
+        transport_command(&mut h, &mut transport, TransportCommand::TogglePlayback);
+        let from = playback(&h);
+        play(&mut h, &mut transport, 400);
+        assert_eq!(playback(&h), from + 400, "the arrangement, straight on");
+    }
+
+    #[test]
+    fn a_live_press_takes_over_from_the_replay() {
+        let (mut h, mut transport) = ready_to_replay(0);
+        let mut record = Record::new();
+        transport_command(&mut h, &mut transport, TransportCommand::PlayPerformance);
+        play(&mut h, &mut transport, 10);
+        press(&mut h, &mut transport, 8);
+        play(&mut h, &mut transport, 400);
+        assert_eq!(playback(&h), 2 * 3840 + 400, "the press's key, straight on");
+
+        // The press began a run of its own.
+        slash(&mut h, &mut record);
+        assert_eq!(pad_notes(&h, 0), Some(vec![(0, 68, 400)]));
+    }
+
+    #[test]
+    fn leaving_the_lane_ends_the_replay_and_playback_runs_on() {
+        let (mut h, mut transport) = ready_to_replay(0);
+        transport_command(&mut h, &mut transport, TransportCommand::PlayPerformance);
+        play(&mut h, &mut transport, 10);
+        h.handlers.select_track_workflow(&mut h.sequencer, 0);
+        play(&mut h, &mut transport, 300);
+        assert_eq!(playback(&h), 3840 + 310);
+        assert!(transport.is_running());
+    }
+
+    #[test]
+    fn option_space_on_an_empty_pad_plays_nothing() {
+        let (mut h, mut transport) = ready_to_replay(0);
+        let mut record = Record::new();
+        run_command(
+            &mut h,
+            &mut record,
+            SequencerCommand::SelectPerformancePad(4),
+        );
+        transport_command(&mut h, &mut transport, TransportCommand::PlayPerformance);
+        assert!(!transport.is_running());
     }
 }

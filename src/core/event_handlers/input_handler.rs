@@ -99,12 +99,16 @@ impl EventHandlers {
             // (the arranger cursor stays put). In `Arranger` it is the play /
             // stop toggle. One global action whose meaning follows the pane,
             // so the clip view's arm must come first: a global action and a
-            // scoped one can't share a default chord (`docs/320`).
+            // scoped one can't share a default chord (`docs/320`). With the
+            // performance lane selected it plays the selected pad's
+            // performance from either pane (`520-performance-capture.md`
+            // decision 4), the clip view's arm too.
             InputEvent::Action(Action::PlayFromCursor)
-                if matches!(
-                    self.clip_context(),
-                    ClipContext::Clip | ClipContext::ClipWithSelection
-                ) =>
+                if self.is_performance_lane_armed()
+                    || matches!(
+                        self.clip_context(),
+                        ClipContext::Clip | ClipContext::ClipWithSelection
+                    ) =>
             {
                 self.send_sequencer(SequencerCommand::PlayFromClipCursor);
             }
@@ -931,9 +935,34 @@ impl EventHandlers {
 mod tests {
     use crate::core::event_handlers::test_harness::harness;
     use crate::core::input_event::{CaptureFrame, InputEvent, TimeSelectionRect};
+    use crate::core::keymap::Action;
     use crate::core::sequencer::SequencerCommand;
     use crate::core::transport::TransportCommand;
     use crate::core::view_state::ViewState;
+
+    /// `⌥Space` with the arranger focused toggles playback, but on the
+    /// performance lane it plays the performance, as from the clip view
+    /// (`520-performance-capture.md` decision 4).
+    #[test]
+    fn option_space_on_the_lane_plays_the_performance_from_the_arranger_too() {
+        let mut h = harness();
+        h.handlers.set_view_state(ViewState::Arranger);
+        let option_space = InputEvent::Action(Action::PlayFromCursor);
+        h.handlers.handle_input_event(&option_space);
+        assert!(matches!(
+            h.transport_commands.try_recv(),
+            Ok(TransportCommand::TogglePlayback)
+        ));
+
+        h.handlers
+            .select_performance_lane_workflow(&mut h.sequencer);
+        h.sequencer_commands.try_iter().for_each(drop);
+        h.handlers.handle_input_event(&option_space);
+        assert!(matches!(
+            h.sequencer_commands.try_recv(),
+            Ok(SequencerCommand::PlayFromClipCursor)
+        ));
+    }
 
     /// `⇧⌘V` is Paste Time in the arranger and `⌘V` the plain paste; the
     /// clip view ignores the ⇧ and pastes notes either way.

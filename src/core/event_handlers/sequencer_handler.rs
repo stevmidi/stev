@@ -305,6 +305,9 @@ impl EventHandlers {
                 }
             }
 
+            SequencerCommand::PlayFromClipCursor if sequencer.is_performance_lane_armed() => {
+                self.send_transport(TransportCommand::PlayPerformance);
+            }
             SequencerCommand::PlayFromClipCursor => {
                 if let Some(tick) = sequencer.selected_clip_play_from_tick() {
                     self.send_transport(TransportCommand::PlayFromTick { tick });

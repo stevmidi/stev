@@ -1,5 +1,5 @@
 //! `Sequencer`-side accessors for the arranger performance lane: its armed
-//! state, its run and its pads.
+//! state, its run, its replay and its pads.
 //!
 //! The lane model itself is [`PerformanceLane`] and [`PerformancePads`]; the
 //! trigger routing lives in `event_handlers/performance_lane_handler.rs`. The
@@ -12,7 +12,10 @@ use std::sync::atomic::Ordering;
 
 use crate::models::{
     clip::Clip,
-    performance_lane::{PAD_COUNT, PerformanceLane, PerformancePads},
+    performance_lane::{
+        PAD_COUNT, PerformanceLane, PerformancePads, ReplayCue, ReplayPosition,
+        key_index_from_note, key_tick,
+    },
 };
 
 use super::Sequencer;
@@ -30,13 +33,74 @@ impl Sequencer {
     }
 
     /// Arms / disarms the lane. Shared with `MidiInputForwarder` and
-    /// `Transport`. Disarming ends the run: the presses before it can't be
-    /// kept once the lane is left.
+    /// `Transport`. Disarming ends the run, the presses before it can't be
+    /// kept once the lane is left, and the replay: playback runs on in the
+    /// arrangement.
     pub(crate) fn set_performance_lane_armed(&mut self, armed: bool) {
         self.performance_lane_armed.store(armed, Ordering::Relaxed);
         if !armed {
             self.performance_lane.clear();
+            self.publish_performance_replay();
         }
+    }
+
+    /// `⌥Space` on the lane: starts replaying the selected pad's
+    /// performance from the clip view's cursor in it, its start when the
+    /// cursor is outside it (`520-performance-capture.md` decision 4).
+    /// `false`, and nothing starts, on an empty pad or with the lane not
+    /// selected.
+    pub(crate) fn start_performance_replay(&mut self) -> bool {
+        if !self.is_performance_lane_armed() {
+            return false;
+        }
+        let pad = self.selected_pad;
+        let Some(clip) = self.performance_pads.get(pad) else {
+            return false;
+        };
+        let (start, end) = (clip.region().start(), clip.region().end());
+        let cursor = clip.cursor_tick();
+        let from = if (start..end).contains(&cursor) {
+            cursor - start
+        } else {
+            0
+        };
+        self.performance_lane.start_replay(pad, from);
+        self.publish_performance_replay();
+        true
+    }
+
+    /// Ends the replay: playback stopped, or a live press took over.
+    pub(crate) fn stop_performance_replay(&mut self) {
+        self.performance_lane.stop_replay();
+        self.publish_performance_replay();
+    }
+
+    /// The replay's cue for the tick about to play from `playback_tick`
+    /// (`PerformanceLane::step_replay`, on its pad's performance as it is
+    /// now, the keys at the lane's key length). `None` with no replay.
+    pub(crate) fn step_performance_replay(&mut self, playback_tick: i32) -> Option<ReplayCue> {
+        let pad = self.performance_lane.replay_pad()?;
+        let (meter, length) = (self.meter(), self.performance_lane_key_length());
+        let target = |note| key_index_from_note(note).map(|key| key_tick(meter, length, key));
+        let cue = self.performance_lane.step_replay(
+            playback_tick,
+            self.performance_pads.get(pad),
+            target,
+        );
+        self.publish_performance_replay();
+        cue
+    }
+
+    /// Whether the replay is in a gap: nothing sounds (decision 2), so
+    /// `Sequencer::tick` plays every track as muted.
+    pub(crate) fn is_performance_replay_silent(&self) -> bool {
+        self.performance_lane.is_replay_silent()
+    }
+
+    /// Writes where the replay is to `SharedAtomics::performance_replay`.
+    fn publish_performance_replay(&self) {
+        let bits = ReplayPosition::to_bits(self.performance_lane.replay_position());
+        self.performance_replay.store(bits, Ordering::Relaxed);
     }
 
     /// The lane's pads.
