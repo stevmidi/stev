@@ -92,6 +92,12 @@ impl Display {
         ))
     }
 
+    /// What the clip pane says with the lane selected on an empty pad, in
+    /// place of a piano roll ([`pad_hint`]): "Pad 6 · empty".
+    pub(super) fn empty_pad_note(&self) -> String {
+        pad_hint(self.performance_pads.selected, None, self.meter())
+    }
+
     /// Whether the pad column has the keyboard: focused by a click, the lane
     /// still selected and the panel showing.
     pub(super) fn pads_have_keyboard(&self) -> bool {

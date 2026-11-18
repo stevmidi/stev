@@ -256,7 +256,13 @@ impl Sequencer {
 
     /// Maps the arranger cursor into the selected clip's event-tick space and
     /// parks the clip cursor there — done on entering the clip view.
+    /// A performance's cursor is its own: a performance has no place in the
+    /// arrangement to map the arranger cursor into
+    /// (`520-performance-capture.md` decision 3).
     pub(crate) fn sync_selected_clip_cursor_with_arranger(&mut self) {
+        if self.is_performance_lane_armed() {
+            return;
+        }
         let absolute_tick = self.cursor_tick();
         if let Some(clip) = self.selected_clip_mut() {
             clip.sync_clip_cursor_with_absolute_tick(absolute_tick);

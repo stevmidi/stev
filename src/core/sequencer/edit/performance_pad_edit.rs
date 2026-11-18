@@ -32,13 +32,13 @@ impl SetPerformancePadEdit {
     /// Puts `to` on the pad.
     pub(crate) fn edit(&mut self, sequencer: &mut Sequencer) -> EditResult {
         sequencer.set_performance_pad(self.pad, self.to.clone());
-        EditResult::PerformancePadChanged
+        EditResult::PerformancePadChanged { pad: self.pad }
     }
 
     /// Puts `from` back.
     pub(crate) fn undo(&mut self, sequencer: &mut Sequencer) -> EditResult {
         sequencer.set_performance_pad(self.pad, self.from.clone());
-        EditResult::PerformancePadChanged
+        EditResult::PerformancePadChanged { pad: self.pad }
     }
 }
 

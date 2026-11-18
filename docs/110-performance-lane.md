@@ -76,7 +76,8 @@ key length and the pads. Key files:
   doesn't hold (a load has no selected track for a moment), so its flag is
   stored, not derived.
 - **While the lane is selected, a command aimed at the selected track does
-  nothing**: no lead clip (the clip view shows "No clip at the cursor"), no
+  nothing**: no lead clip (the clip view shows the selected pad's
+  performance instead, `520-performance-capture.md` decision 2), no
   clip capture (`/` keeps the lane's run instead, § MIDI routing), no knob, no `v`, no rename, no plugin from the browser with Enter;
   no marquee, so `⇧`-arrows, a `⇧`-click and `⌘A` start none, and `⌥←`/`⌥→`
   have no track's clip edges to jump to; a marquee-scoped `⌘V` pastes nothing

@@ -813,8 +813,9 @@ impl Display {
         self.draw_selected_track_cursor(painter, rect);
     }
 
-    /// The docked clip pane with no clip under the cursor: a quiet note in
-    /// place of an empty piano roll.
+    /// The docked clip pane with no clip under the cursor, or the lane
+    /// selected on an empty pad: a quiet note in place of an empty piano
+    /// roll.
     fn draw_empty_clip_pane(&self, painter: &Painter, rect: Rect) {
         let pane = self.pane_rect().translate(rect.min.to_vec2());
         painter.rect_filled(
@@ -822,10 +823,15 @@ impl Display {
             CornerRadius::ZERO,
             theme::bg_panel().gamma_multiply(0.5),
         );
+        let note = if self.shows_performance() {
+            self.empty_pad_note()
+        } else {
+            "No clip at the cursor".to_owned()
+        };
         painter.text(
             pane.center(),
             Align2::CENTER_CENTER,
-            "No clip at the cursor",
+            note,
             FontId::proportional(theme::FONT_SIZE_LABEL),
             theme::fg_dim(),
         );

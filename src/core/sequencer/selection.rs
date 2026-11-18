@@ -19,7 +19,7 @@ use crate::models::{
     track::{Track, TrackOutput},
 };
 
-use super::Sequencer;
+use super::{ClipHome, Sequencer};
 
 impl Sequencer {
     // --- Track selection ---
@@ -121,6 +121,20 @@ impl Sequencer {
                 .into_iter()
                 .map(move |id| (track_idx, id))
         })
+    }
+
+    /// Where the clip the clip view edits lives, and its id: the selected
+    /// pad's performance on the lane while it is selected, otherwise the lead
+    /// clip on the selected track. What a note edit is built on
+    /// (`ClipEventsEditState`). `None` with neither.
+    pub(crate) fn selected_clip_home(&self) -> Option<(ClipHome, Uuid)> {
+        if self.is_performance_lane_armed() {
+            return Some((ClipHome::Lane, self.shown_performance()?.id()));
+        }
+        Some((
+            ClipHome::Track(self.selected_track_index()?),
+            self.selected_clip_id()?,
+        ))
     }
 
     /// Clears the clip selection, returning the ids that were selected.
@@ -240,9 +254,15 @@ impl Sequencer {
     }
 
     /// The clip the clip view shows and its commands act on: the take while
-    /// a take session is open (`take_framing.rs`), otherwise the
+    /// a take session is open (`take_framing.rs`), the selected pad's
+    /// performance while the performance lane is selected
+    /// ([`shown_performance`](Self::shown_performance),
+    /// `520-performance-capture.md` decision 2), otherwise the
     /// [`lead_clip`](Self::lead_clip).
     pub(crate) fn selected_clip(&self) -> Option<&Clip> {
+        if self.is_performance_lane_armed() {
+            return self.shown_performance();
+        }
         self.framed_take().or_else(|| self.lead_clip())
     }
 
@@ -251,6 +271,9 @@ impl Sequencer {
     /// [`edit_clip_events`](Self::edit_clip_events), or a note sounding under
     /// a running playhead can hang.
     pub(super) fn selected_clip_mut(&mut self) -> Option<&mut Clip> {
+        if self.is_performance_lane_armed() {
+            return self.shown_performance_mut();
+        }
         if self.is_framing_take() {
             return self.framed_take_mut();
         }

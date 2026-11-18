@@ -14,6 +14,8 @@
 
 use std::array;
 
+use uuid::Uuid;
+
 use crate::core::config;
 use crate::core::time::Meter;
 use crate::models::{clip::Clip, event::Event};
@@ -153,6 +155,24 @@ impl PerformancePads {
     /// pad.
     pub(crate) fn get(&self, pad: usize) -> Option<&Clip> {
         self.pads.get(pad)?.as_ref()
+    }
+
+    /// Mutable [`get`](Self::get).
+    pub(crate) fn get_mut(&mut self, pad: usize) -> Option<&mut Clip> {
+        self.pads.get_mut(pad)?.as_mut()
+    }
+
+    /// The performance with this id, on whichever pad holds it.
+    pub(crate) fn find(&self, clip_id: Uuid) -> Option<&Clip> {
+        self.pads.iter().flatten().find(|clip| clip.id() == clip_id)
+    }
+
+    /// Mutable [`find`](Self::find).
+    pub(crate) fn find_mut(&mut self, clip_id: Uuid) -> Option<&mut Clip> {
+        self.pads
+            .iter_mut()
+            .flatten()
+            .find(|clip| clip.id() == clip_id)
     }
 
     /// Puts `clip` on pad `pad` (empties it for `None`). Nothing for a pad

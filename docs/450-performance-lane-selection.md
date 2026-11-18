@@ -31,9 +31,9 @@ The sequencer side already takes `Option`: `selected_track_index()` and `selecte
 
 | Reader | With the lane selected |
 |---|---|
-| Lead clip (`lead_clip`, `current_clip_view`, `selection.rs`, `view.rs`) | None. The clip view shows "No clip at the cursor". |
+| Lead clip (`lead_clip`, `current_clip_view`, `selection.rs`, `view.rs`) | None. The clip view showed "No clip at the cursor"; since `520` phase 2 it shows the selected pad's performance (`selected_clip` → `shown_performance`), "Pad 2 · empty" on an empty pad. |
 | Capture: `/` running and stopped, the take session (`capture/mod.rs`, `stopped_capture.rs`, `take_framing.rs`, `commit_clip.rs`) | Returns `None`, nothing happens. Nothing was captured either: while armed the keyboard goes to `handle_performance_lane_midi_input`, not the capture buffer (`sequencer_pump.rs`). Since `520` phase 1, `/` on the lane keeps its run on a pad instead (the `Commit` arm → `capture_performance_workflow`). |
-| Clip edits on the lead or selected track (`resize_clip.rs`, `retime_clip.rs`, `split.rs` at the cursor, `event_edits.rs`, `export.rs`'s SMF export, `sequencer/region.rs`) | Return `None`, nothing happens. |
+| Clip edits on the lead or selected track (`resize_clip.rs`, `retime_clip.rs`, `split.rs` at the cursor, `event_edits.rs`, `export.rs`'s SMF export, `sequencer/region.rs`) | Return `None`, nothing happens. Since `520` phase 2 the note edits (`event_edits.rs`) and the clip cursor (`region.rs`) act on the selected pad's performance instead (`ClipHome::Lane`); the window edges, the retime and the export still need a track. |
 | Marquee edits (`delete_in_range.rs`, `merge_clips.rs`, `duplicate_time.rs`) | Take their tracks from the rect; the selected track is only used to keep the lead, or as a fallback span. No marquee exists with the lane selected (decision 3). |
 | Paste (`paste.rs`) | Checked 2026-11-12: with no selected track every piece lands at the cursor on the track it was copied from (`ClipClipboard::target_track`, pinned by `paste_does_not_need_a_selected_track`), for a scoped copy (`⌘C`) as for an all-track one. A scoped `⌘V` does nothing instead (decision 8); the all-track paste is unchanged. |
 | Note preview and audition (`playback.rs`) | No channel, no sound. |
@@ -70,7 +70,7 @@ The sequencer side already takes `Option`: `selected_track_index()` and `selecte
 ## Things to check while building
 
 - **Every `selected_track_idx` use in the view** compiles against `Option` with no `unwrap_or(0)`: a silent fallback to track 1 is the bug this design removes.
-- **The clip view with the keyboard** when the lane is clicked: the focus stays (only the user moves it, `020` § Views), on "No clip at the cursor".
+- **The clip view with the keyboard** when the lane is clicked: the focus stays (only the user moves it, `020` § Views), on "No clip at the cursor" (on the selected pad's performance since `520` phase 2).
 - **The take session**: arming during one. Checked: `SelectPerformanceLane` already cancels the session before it runs, with the other track changes (`take_framing.rs`).
 - **An audio export run** (`130`): checked, the lane click is already blocked (`SelectPerformanceLane` is not on `audio_export_command`'s allow list); no change.
 - **Tests**: arming clears the track and the lead and collapses the marquee; a track click after it selects the clip under the cursor; `↓`/`↑` from the lane; a scoped `⌘V` with the lane selected pastes nothing and an all-track one still does (`paste_does_not_need_a_selected_track` was already an all-track copy and is renamed `an_all_track_paste_does_not_need_a_selected_track`; `scoped_paste_without_a_selected_track_keeps_source_tracks` is the one rewritten); an undo that puts a track back leaves the lane; an undo of a step recorded while armed changes no selection; `get_context` with the lane selected.

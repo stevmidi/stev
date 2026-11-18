@@ -72,15 +72,16 @@ pub(crate) use audio_export::{AudioExportPlan, StemPlan};
 pub(crate) use capture::{CaptureFraming, TakePlace};
 pub(crate) use commands::SequencerCommand;
 pub(crate) use edit::{
-    AddTrackEdit, ClearControllerSpanEdit, CommitClipEdit, CreateClipsEdit, DeleteInRangeEdit,
-    DeleteSelectedEventsEdit, DeleteTimeEdit, DragEventsVelocityEdit, DragNotesEdit,
-    DuplicateClipsEdit, DuplicateTimeEdit, EditResult, InsertCaptureEdit, InsertNotesEdit,
-    InsertSilenceEdit, MoveClipEdit, MoveRangeEdit, MuteInRangeEdit, MuteSelectedEventsEdit,
-    NudgeSelectedEventsEdit, NudgeSelectedEventsLengthEdit, PasteClipsEdit, PasteLead,
-    QuantizeEventsEdit, RemoveTrackEdit, RenameTrackEdit, ReplaceClipNotesEdit, ResizeClipEdit,
-    RetimeClipEdit, SequencerEdit, SetKnobParamEdit, SetMeterEdit, SetPerformancePadEdit,
-    SetTempoEdit, SetTrackOutputEdit, SplitClipsEdit, StepOutput, TempoGesture, TransposeClipsEdit,
-    TransposeSelectedEventsEdit, UndoStep, ViewSnapshot, top_step,
+    AddTrackEdit, ClearControllerSpanEdit, ClipHome, CommitClipEdit, CreateClipsEdit,
+    DeleteInRangeEdit, DeleteSelectedEventsEdit, DeleteTimeEdit, DragEventsVelocityEdit,
+    DragNotesEdit, DuplicateClipsEdit, DuplicateTimeEdit, EditResult, InsertCaptureEdit,
+    InsertNotesEdit, InsertSilenceEdit, MoveClipEdit, MoveRangeEdit, MuteInRangeEdit,
+    MuteSelectedEventsEdit, NudgeSelectedEventsEdit, NudgeSelectedEventsLengthEdit, PasteClipsEdit,
+    PasteLead, QuantizeEventsEdit, RemoveTrackEdit, RenameTrackEdit, ReplaceClipNotesEdit,
+    ResizeClipEdit, RetimeClipEdit, SequencerEdit, SetKnobParamEdit, SetMeterEdit,
+    SetPerformancePadEdit, SetTempoEdit, SetTrackOutputEdit, SplitClipsEdit, StepOutput,
+    TempoGesture, TransposeClipsEdit, TransposeSelectedEventsEdit, UndoStep, ViewSnapshot,
+    top_step,
 };
 pub(crate) use export::ExportRefusal;
 pub(crate) use instrument_event::ClipInstrumentEvent;

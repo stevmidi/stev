@@ -632,7 +632,7 @@ impl EventHandlers {
 
             // The view selected it already, on the click.
             SequencerCommand::SelectPerformancePad(pad) => {
-                sequencer.select_pad(*pad);
+                self.select_performance_pad_workflow(sequencer, *pad);
             }
 
             SequencerCommand::ClearPerformancePad => {

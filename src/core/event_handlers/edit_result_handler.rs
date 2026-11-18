@@ -5,7 +5,7 @@
 //! of the view is not in the result but in the step (`handle_step_output`,
 //! `selection.rs`'s `restore_view_workflow`). See `050-undo-redo.md`.
 
-use crate::core::sequencer::{EditResult, PasteLead, StepOutput};
+use crate::core::sequencer::{ClipHome, EditResult, PasteLead, StepOutput};
 
 use super::clip_range_edits::CarveResult;
 use super::*;
@@ -264,7 +264,7 @@ impl EventHandlers {
                 self.clip_resized_workflow(sequencer, clip, retime);
             }
             EditResult::EventsModified {
-                track_idx,
+                home,
                 clip_id,
                 selected_event_ids,
                 inserted_take,
@@ -272,16 +272,19 @@ impl EventHandlers {
             } => {
                 sequencer.reset();
 
-                if let Some(clip) = sequencer.clip_on_mut(track_idx, clip_id) {
+                if let Some(clip) = sequencer.clip_on_mut(home, clip_id) {
                     clip.restore_event_selection(&selected_event_ids);
                 }
 
-                // An event edit, or its undo or redo, on a clip that isn't
-                // the lead (the agent bridge's `replace_clip_notes`, or ⌘Z
-                // after the lead moved on): the clip panel shows another
-                // clip, so only the arranger's thumbnail of this one changes.
-                if sequencer.selected_clip_id() != Some(clip_id) {
-                    if let Some(clip) = sequencer.clip_on(track_idx, clip_id) {
+                // An event edit, or its undo or redo, on a clip the panel
+                // doesn't show (the agent bridge's `replace_clip_notes`, ⌘Z
+                // after the lead moved on, or a performance's edit undone
+                // away from its pad): only the arranger's thumbnail of a
+                // track's clip changes; a performance has none.
+                if sequencer.selected_clip_home() != Some((home, clip_id)) {
+                    if let ClipHome::Track(track_idx) = home
+                        && let Some(clip) = sequencer.clip_on(track_idx, clip_id)
+                    {
                         let clip = ClipMetadata::from_clip(track_idx, clip);
                         self.ui_event_tx.send(UiEvent::ClipUpdated { clip }).ok();
                     }
@@ -334,8 +337,11 @@ impl EventHandlers {
                 self.track_removed_workflow(sequencer, track_idx, track_id, slot);
             }
             EditResult::TrackRenamed => self.emit_tracks(sequencer, None),
-            EditResult::PerformancePadChanged => {
+            EditResult::PerformancePadChanged { pad } => {
                 self.send_performance_pads_ui_event(sequencer);
+                if sequencer.is_performance_lane_armed() && pad == sequencer.selected_pad() {
+                    self.show_performance_workflow(sequencer);
+                }
             }
             EditResult::KnobsChanged => {
                 self.emit_tracks(sequencer, None);

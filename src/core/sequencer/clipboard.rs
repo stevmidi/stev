@@ -219,11 +219,18 @@ impl Sequencer {
             return false;
         }
         self.note_clipboard = notes;
+        self.note_clipboard_from_performance = self.is_performance_lane_armed();
         true
     }
 
-    /// The copied notes, empty if none have been copied this session.
+    /// The copied notes the open clip can take, empty if none have been
+    /// copied this session. A performance takes only notes copied from a
+    /// performance: a track's notes there would be jumps nobody played
+    /// (`520-performance-capture.md` decision 5).
     pub(crate) fn note_clipboard(&self) -> &[CopiedNote] {
+        if self.is_performance_lane_armed() && !self.note_clipboard_from_performance {
+            return &[];
+        }
         &self.note_clipboard
     }
 }

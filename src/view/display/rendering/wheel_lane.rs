@@ -56,7 +56,10 @@ impl Display {
     /// The gutter label under `(x, y)`: its whole row, the gutter's width.
     /// Clip pane only, and only with a lead clip shown.
     pub(in crate::view::display) fn clip_lane_label_at(&self, x: f32, y: f32) -> Option<ClipLane> {
-        if !self.is_pane_visible(Pane::Clip) || self.lead_clip_time.is_none() {
+        if !self.is_pane_visible(Pane::Clip)
+            || self.lead_clip_time.is_none()
+            || self.shows_performance()
+        {
             return None;
         }
         lane_label_in(self.lane_gutter_rect(&self.note_area_geom()), pos2(x, y))
@@ -68,10 +71,13 @@ impl Display {
             .and_then(|p| self.clip_lane_label_at(p.x, p.y))
     }
 
-    /// Whether `(x, y)` is in the lower lane. Clip pane only.
+    /// Whether `(x, y)` is in the lower lane. Clip pane only; never under a
+    /// performance, which has none.
     pub(in crate::view::display) fn is_in_lower_lane(&self, x: f32, y: f32) -> bool {
-        self.lower_lane_rect(&self.note_area_geom())
-            .contains(pos2(x, y))
+        !self.shows_performance()
+            && self
+                .lower_lane_rect(&self.note_area_geom())
+                .contains(pos2(x, y))
     }
 
     /// Whether the pointer is on a lane label a click would switch to — a

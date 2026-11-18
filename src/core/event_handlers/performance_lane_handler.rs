@@ -86,6 +86,32 @@ impl EventHandlers {
             self.send_status_ui_event(format!("Captured {length} to pad {}", pad + 1));
         }
     }
+
+    /// Selects pad `pad` (the view did already, on the click). With the
+    /// lane selected the clip view follows it: the old performance's notes
+    /// are deselected while it is still the one shown, then the new one is
+    /// shown (`520-performance-capture.md` decisions 2 and 6).
+    pub(super) fn select_performance_pad_workflow(&self, sequencer: &mut Sequencer, pad: usize) {
+        if pad == sequencer.selected_pad() {
+            return;
+        }
+        let shown = sequencer.is_performance_lane_armed();
+        if shown {
+            self.clear_event_selection_workflow(sequencer);
+        }
+        sequencer.select_pad(pad);
+        if shown {
+            self.show_performance_workflow(sequencer);
+        }
+    }
+
+    /// Shows the clip view what it now shows with the lane selected: the
+    /// selected pad's performance, none on an empty pad
+    /// (`UiEvent::LeadClipChanged`), framed fresh, as a new lead clip is.
+    pub(super) fn show_performance_workflow(&self, sequencer: &mut Sequencer) {
+        self.send_lead_clip_changed_ui_event(sequencer.current_clip_view());
+        self.publish_event_selection(sequencer);
+    }
 }
 
 #[cfg(test)]
@@ -102,12 +128,17 @@ mod tests {
     use undo::Record;
 
     use crate::core::config::PERFORMANCE_LANE_BASE_NOTE;
-    use crate::core::event_handlers::test_harness::{Harness, harness, run_command, statuses};
+    use uuid::Uuid;
+
+    use crate::core::event_handlers::test_harness::{
+        Harness, add_clip, harness, run_command, statuses,
+    };
     use crate::core::sequencer::test_support::clip_notes;
     use crate::core::sequencer::{SequencerCommand, UndoStep};
     use crate::core::time::Meter;
     use crate::core::transport::Transport;
-    use crate::models::performance_lane::KeyLength;
+    use crate::models::{clip::Clip, performance_lane::KeyLength};
+    use crate::view::display::UiEvent;
 
     /// A transport over `h`'s shared state, as the `"sequencer"` thread holds
     /// one beside the sequencer.
@@ -305,5 +336,120 @@ mod tests {
             0,
             "a track: it wraps"
         );
+    }
+
+    /// The clip each `LeadClipChanged` sent since the last call announced,
+    /// in order: what the clip view was told to show.
+    fn shown(h: &Harness) -> Vec<Option<Uuid>> {
+        h.ui_events
+            .try_iter()
+            .filter_map(|event| match event {
+                UiEvent::LeadClipChanged { clip_view } => Some(clip_view.map(|view| view.clip_id)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The armed lane with a performance captured on pad 1: E3 for 300
+    /// ticks, then C3 for 200.
+    fn captured() -> (Harness, Record<UndoStep>, Uuid) {
+        let (mut h, mut transport, mut record) = armed();
+        press(&mut h, &mut transport, 4);
+        play(&mut h, &mut transport, 300);
+        press(&mut h, &mut transport, 0);
+        play(&mut h, &mut transport, 200);
+        slash(&mut h, &mut record);
+        let id = h.sequencer.performance_pads().get(0).map(Clip::id).unwrap();
+        (h, record, id)
+    }
+
+    #[test]
+    fn the_clip_view_follows_the_lane_and_its_pads() {
+        let (mut h, mut record, id) = captured();
+        assert_eq!(
+            shown(&h),
+            [None, Some(id)],
+            "the lane selected on empty pad 1, then the capture onto it"
+        );
+
+        run_command(
+            &mut h,
+            &mut record,
+            SequencerCommand::SelectPerformancePad(1),
+        );
+        assert_eq!(shown(&h), [None], "an empty pad");
+        run_command(
+            &mut h,
+            &mut record,
+            SequencerCommand::SelectPerformancePad(0),
+        );
+        assert_eq!(shown(&h), [Some(id)]);
+
+        h.handlers.select_track_workflow(&mut h.sequencer, 0);
+        assert_eq!(shown(&h), [None], "a track with no clip at the cursor");
+        h.handlers
+            .select_performance_lane_workflow(&mut h.sequencer);
+        assert_eq!(shown(&h), [Some(id)], "back on the lane");
+
+        // Unarmed, a pad's selection shows nothing.
+        h.handlers.select_track_workflow(&mut h.sequencer, 0);
+        shown(&h);
+        run_command(
+            &mut h,
+            &mut record,
+            SequencerCommand::SelectPerformancePad(1),
+        );
+        assert!(shown(&h).is_empty());
+    }
+
+    #[test]
+    fn a_note_edit_on_a_performance_undoes_with_the_arranger_left_alone() {
+        let (mut h, mut record, _) = captured();
+        run_command(&mut h, &mut record, SequencerCommand::SelectAllEvents);
+        run_command(
+            &mut h,
+            &mut record,
+            SequencerCommand::TransposeSelectedEvents(2),
+        );
+        assert_eq!(
+            pad_notes(&h, 0),
+            Some(vec![(0, 66, 300), (300, 62, 200)]),
+            "the pad's performance, nothing on a track"
+        );
+        assert!(h.sequencer.tracks().iter().all(|t| t.clips().is_empty()));
+
+        h.sequencer.set_cursor_tick(1920);
+        run_command(&mut h, &mut record, SequencerCommand::Undo);
+        assert_eq!(pad_notes(&h, 0), Some(vec![(0, 64, 300), (300, 60, 200)]));
+        assert_eq!(
+            h.sequencer.cursor_tick(),
+            1920,
+            "the pads aren't the arrangement: no view put back"
+        );
+    }
+
+    #[test]
+    fn only_a_performances_notes_paste_into_a_performance() {
+        let (mut h, mut record, _) = captured();
+        // A track's note copied...
+        h.handlers.select_track_workflow(&mut h.sequencer, 0);
+        let (clip_id, _) = add_clip(&mut h.sequencer, 0);
+        h.handlers
+            .select_clip_workflow(&mut h.sequencer, Some((0, clip_id)));
+        run_command(&mut h, &mut record, SequencerCommand::SelectAllEvents);
+        run_command(&mut h, &mut record, SequencerCommand::CopyNotes);
+        // ...doesn't paste into the performance.
+        h.handlers
+            .select_performance_lane_workflow(&mut h.sequencer);
+        let before = pad_notes(&h, 0);
+        run_command(&mut h, &mut record, SequencerCommand::PasteNotes);
+        assert_eq!(pad_notes(&h, 0), before);
+
+        // The performance's own notes do, at its cursor.
+        run_command(&mut h, &mut record, SequencerCommand::SelectAllEvents);
+        run_command(&mut h, &mut record, SequencerCommand::CopyNotes);
+        h.sequencer.set_selected_clip_cursor_tick(250);
+        run_command(&mut h, &mut record, SequencerCommand::PasteNotes);
+        assert_ne!(pad_notes(&h, 0), before);
     }
 }

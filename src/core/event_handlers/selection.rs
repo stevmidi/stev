@@ -41,7 +41,14 @@ impl EventHandlers {
             return false;
         }
 
-        sequencer.set_performance_lane_armed(false);
+        if performance_lane_was_armed {
+            // The performance the clip view showed: its notes deselected
+            // while it is still the open clip, then the panel shows none
+            // until the track's lead clip, if any, comes in.
+            self.clear_event_selection_workflow(sequencer);
+            sequencer.set_performance_lane_armed(false);
+            self.send_lead_clip_changed_ui_event(None);
+        }
 
         self.clear_clip_selection_workflow(sequencer);
 
@@ -73,6 +80,7 @@ impl EventHandlers {
     /// row (`450-performance-lane-selection.md` decision 1): the lead clip,
     /// the track selection and the marquee go, and the armed lane maps the
     /// physical MIDI keyboard to bar-jump triggers instead of note capture.
+    /// The clip view shows the selected pad's performance meanwhile.
     pub(super) fn select_performance_lane_workflow(&self, sequencer: &mut Sequencer) {
         if sequencer.is_performance_lane_armed() {
             return;
@@ -82,6 +90,9 @@ impl EventHandlers {
         sequencer.set_performance_lane_armed(true);
         self.send_performance_lane_selected_ui_event();
         self.clear_marquee_workflow(sequencer);
+        // The clip view shows the selected pad's performance
+        // (`520-performance-capture.md` decision 2).
+        self.show_performance_workflow(sequencer);
     }
 
     /// Makes `lead`, a clip and the track it is on, the lead clip (`None`

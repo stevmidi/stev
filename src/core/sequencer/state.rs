@@ -96,6 +96,9 @@ pub(crate) struct Sequencer {
     /// is copied. Not persisted, not part of the undo record. Cleared on
     /// new/load project.
     pub(super) note_clipboard: Vec<CopiedNote>,
+    /// Whether `note_clipboard`'s notes were copied from a performance: only
+    /// those paste into one (`520-performance-capture.md` decision 5).
+    pub(super) note_clipboard_from_performance: bool,
 
     // --- Region and playback state ---
     /// Playback position, shared with the transport / UI.
@@ -237,6 +240,7 @@ impl Sequencer {
             track_mix,
             clip_clipboard: None,
             note_clipboard: Vec::new(),
+            note_clipboard_from_performance: false,
             playback_tick,
             cursor_tick,
             region_start,
