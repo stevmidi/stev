@@ -105,4 +105,14 @@ impl EventHandlers {
     pub(super) fn send_performance_lane_selected_ui_event(&self) {
         self.ui_event_tx.send(UiEvent::PerformanceLaneSelected).ok();
     }
+
+    /// Fans out [`UiEvent::PerformancePads`]: what each pad holds
+    /// (`520-performance-capture.md` decision 6).
+    pub(super) fn send_performance_pads_ui_event(&self, sequencer: &Sequencer) {
+        self.ui_event_tx
+            .send(UiEvent::PerformancePads {
+                lengths: sequencer.performance_pads().lengths(),
+            })
+            .ok();
+    }
 }

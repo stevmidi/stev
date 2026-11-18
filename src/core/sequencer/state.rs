@@ -39,7 +39,7 @@ use crate::{
     models::{
         clip::{Clip, CopiedNote},
         knobs::UNASSIGNED_KNOBS,
-        performance_lane::{KeyLength, PerformanceLane},
+        performance_lane::{KeyLength, PerformanceLane, PerformancePads},
         track::{Track, TrackOutput},
     },
 };
@@ -164,8 +164,8 @@ pub(crate) struct Sequencer {
     pub(super) audio_export_atomics: Arc<AudioExportAtomics>,
 
     // --- Arranger performance lane ---
-    /// Tracks the physical keyboard's currently-held trigger while the
-    /// lane is armed — live-input only, nothing is recorded or persisted.
+    /// The run the lane's presses make while it is armed, which `/` keeps
+    /// as a performance (`520-performance-capture.md` decision 8). Not saved.
     pub(super) performance_lane: PerformanceLane,
     /// True while the performance lane (not a regular track) is selected,
     /// which arms the physical MIDI keyboard for bar-jump triggering
@@ -177,6 +177,14 @@ pub(crate) struct Sequencer {
     /// view (`SharedAtomics::performance_lane_key_length`). Saved with the
     /// project; not an undo step (`510-performance-lane-keyboard.md` § Step 1b).
     pub(super) performance_lane_key_length: Arc<AtomicU8>,
+    /// The lane's eight pads, the performances `/` kept on the lane
+    /// (`520-performance-capture.md` decision 6). Saved with the project;
+    /// changed through `SetPerformancePadEdit`.
+    pub(super) performance_pads: PerformancePads,
+    /// The selected pad: the one a capture goes to. View state, as the
+    /// selected knob: not saved, not an undo step, pad 1 in a project just
+    /// opened.
+    pub(super) selected_pad: usize,
 
     // --- Agent bridge ---
     /// The view's arranger marquee, mirrored here on every change
@@ -252,6 +260,8 @@ impl Sequencer {
             performance_lane: PerformanceLane::new(),
             performance_lane_armed,
             performance_lane_key_length,
+            performance_pads: PerformancePads::default(),
+            selected_pad: 0,
             marquee: None,
             modal_open: false,
         }
@@ -380,12 +390,14 @@ impl Sequencer {
     }
 
     /// Whether playback is actually wrapping — the loop is on *and*
-    /// `playback_tick` is inside the region, the same condition
+    /// `playback_tick` is inside the region and the performance lane isn't
+    /// armed (`520-performance-capture.md` decision 7), the same condition
     /// `Transport::tick` wraps on. A start after the region end runs linearly
     /// with the loop flag still set; running capture sizes and windows such a
     /// take as linear (`100-running-capture.md`).
     pub(crate) fn playback_is_looping(&self) -> bool {
         self.is_loop_enabled()
+            && !self.is_performance_lane_armed()
             && (self.region_start()..self.region_end()).contains(&self.playback_tick())
     }
 
@@ -479,8 +491,9 @@ impl Sequencer {
             .store(config::TEMPO_US_DEFAULT, Ordering::Relaxed);
         self.set_meter(Meter::FOUR_FOUR);
         self.set_performance_lane_key_length(KeyLength::default());
-        self.performance_lane.clear();
-        self.performance_lane_armed.store(false, Ordering::Relaxed);
+        self.set_performance_lane_armed(false);
+        self.performance_pads.clear();
+        self.selected_pad = 0;
         self.clip_clipboard = None;
         self.note_clipboard.clear();
         self.reset_track_mix();
@@ -589,5 +602,25 @@ mod tests {
         seq.playback_tick.store(bar * 3, Ordering::Relaxed);
         seq.loop_enabled.store(false, Ordering::Relaxed);
         assert!(!seq.playback_is_looping(), "flag off never wraps");
+    }
+
+    /// The armed performance lane never wraps (`520-performance-capture.md`
+    /// decision 7), so playback isn't looping there, the flag on or not.
+    #[test]
+    fn playback_is_not_looping_while_the_performance_lane_is_armed() {
+        let mut seq = sequencer_at_tempo(config::TEMPO_US_DEFAULT).0;
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        seq.set_global_region(0, bar * 4);
+        seq.loop_enabled.store(true, Ordering::Relaxed);
+        seq.playback_tick.store(bar, Ordering::Relaxed);
+        assert!(seq.playback_is_looping());
+
+        seq.set_performance_lane_armed(true);
+        assert!(!seq.playback_is_looping());
+        seq.set_performance_lane_armed(false);
+        assert!(
+            seq.playback_is_looping(),
+            "a track selected: it loops again"
+        );
     }
 }

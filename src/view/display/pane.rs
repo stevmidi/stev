@@ -36,6 +36,11 @@ pub(super) enum KeyFocus {
     /// the panel shows knobs, clip open or not (`400-parameter-knobs.md`
     /// decision 14).
     KnobPanel(usize),
+    /// The knob panel's column holding the performance lane's pads (a click
+    /// on one, the lane selected), so `Delete` empties the selected pad.
+    /// Only effective while the lane is selected and the panel shows
+    /// (`520-performance-capture.md` decision 3).
+    Pads,
 }
 
 /// The clip panel's height: the whole lane area, or a band docked below the

@@ -51,6 +51,9 @@ pub(crate) struct Harness {
     pub(crate) running: Arc<AtomicBool>,
     /// The loop region, shared with the sequencer: `(start, end)`.
     pub(crate) region: (Arc<AtomicI32>, Arc<AtomicI32>),
+    /// Whether the performance lane is armed, shared with the sequencer (and
+    /// a test's `Transport`).
+    pub(crate) performance_lane_armed: Arc<AtomicBool>,
     /// A sequencer with track 0 selected.
     pub(crate) sequencer: Sequencer,
     /// The project as a file: as last saved or loaded (the sequencer's empty
@@ -90,6 +93,7 @@ pub(crate) fn harness() -> Harness {
     let playback_tick = Arc::new(AtomicI32::new(0));
     let running = Arc::new(AtomicBool::new(false));
     let region = (Arc::new(AtomicI32::new(0)), Arc::new(AtomicI32::new(3840)));
+    let performance_lane_armed = Arc::new(AtomicBool::new(false));
     let (plugin_midi_tx, _plugin_midi_rx) = RingBuffer::new(64);
     let mut sequencer = Sequencer::new(
         unbounded().0,
@@ -104,7 +108,7 @@ pub(crate) fn harness() -> Harness {
         Arc::new(AtomicI32::new(500_000)),
         Arc::new(AtomicU16::new(Meter::FOUR_FOUR.to_bits())),
         Arc::new(AtomicU8::new(0)),
-        Arc::new(AtomicBool::new(false)),
+        performance_lane_armed.clone(),
         Arc::new(AtomicU8::new(KeyLength::default().to_bits())),
         Arc::new(TrackMixAtomics::new()),
         audio_export.clone(),
@@ -132,6 +136,7 @@ pub(crate) fn harness() -> Harness {
         playback_tick,
         running,
         region,
+        performance_lane_armed,
         sequencer,
         open: OpenProject::new(saved, recovery, storage),
         storage_jobs,

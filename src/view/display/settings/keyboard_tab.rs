@@ -499,6 +499,11 @@ const FIXED: &[FixedGroup] = &[
             ),
             ("Delete", "Remove the selected knob's mapping"),
             ("Esc", "Stop assigning, or give back the keyboard"),
+            (
+                "Click",
+                "Lane selected: on a pad, select it (a capture goes there)",
+            ),
+            ("Delete", "Lane selected: empty the selected pad"),
         ],
     ),
     (

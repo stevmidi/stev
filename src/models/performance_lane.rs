@@ -1,57 +1,202 @@
 //! The arranger performance lane's model state.
 //!
-//! The lane arms the physical keyboard to jump the transport to a bar instead
-//! of capturing notes (`110-performance-lane.md`). All this type holds is the
-//! one note currently held, so a `NoteOff` can be told from a stale release of
-//! a note a later `NoteOn` already superseded. [`key_index_from_note`] is the
-//! note-number → key mapping the lane triggers on, [`key_tick`] where a key
-//! jumps to (one [`KeyLength`] of the project's meter per key: a bar, half a
-//! bar or a beat), and [`note_for_key`] the mapping's inverse, which the
-//! arranger draws the lane's keys from (`510-performance-lane-keyboard.md`).
+//! The lane arms the physical keyboard to jump the transport to a key's start
+//! instead of capturing notes (`110-performance-lane.md`). What it holds is
+//! the **run**: the presses since playback started, on a clock of its own
+//! that counts only the ticks playback advances, which `/` keeps as a
+//! performance (`520-performance-capture.md` decision 8), and the eight
+//! **pads** the kept performances sit on ([`PerformancePads`], decision 6).
+//! [`key_index_from_note`] is the note-number → key mapping the lane triggers
+//! on, [`key_tick`] where a key jumps to (one [`KeyLength`] of the project's
+//! meter per key: a bar, half a bar or a beat), and [`note_for_key`] the
+//! mapping's inverse, which the arranger draws the lane's keys from
+//! (`510-performance-lane-keyboard.md`).
+
+use std::array;
 
 use crate::core::config;
 use crate::core::time::Meter;
+use crate::models::{clip::Clip, event::Event};
 
-/// Transport-automation lane: not a `Track`. Tracks which note (if any) is
-/// currently held on the physical MIDI keyboard while the lane is armed, so
-/// a NoteOff can be told apart from a stale release of an already-superseded
-/// note. Purely a live-input concern for now — no recording/committing, see
-/// `110-performance-lane.md` for the current scope.
+/// How many pads the lane has: the knob panel's eight cells
+/// (`520-performance-capture.md` decision 6).
+pub(crate) const PAD_COUNT: usize = 8;
+
+/// The lane's live state: the run its presses make. Not saved, not an undo
+/// step. See the module docs.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct PerformanceLane {
-    /// The note currently held on the keyboard, or `None`. Monophonic.
-    live_active: Option<u8>,
+    /// The presses since the run began, `None` with no run.
+    run: Option<Run>,
+}
+
+/// One run of presses (`520-performance-capture.md` decision 8): from the
+/// press that started it, each press stamped with the run's own clock.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Run {
+    /// Ticks playback has advanced since the run's first press: musical time
+    /// while running, never the transport position (it jumps) nor the
+    /// clock's (realigned at every jump, `150`).
+    elapsed: i32,
+    /// Each press, `(elapsed, note, velocity)`, in order.
+    presses: Vec<(i32, u8, u8)>,
+    /// Where playback is when the lane alone has moved it: the last press's
+    /// key plus the ticks since. Playback anywhere else means something else
+    /// moved it (a ruler click, `Space` from the cursor), so what follows is
+    /// no longer what the presses played and the run ends.
+    expected_tick: i32,
 }
 
 impl PerformanceLane {
-    /// A lane with nothing held.
+    /// A lane with no run.
     pub(crate) fn new() -> Self {
         PerformanceLane::default()
     }
 
-    /// Forgets any held note — used when the lane is disarmed.
+    /// Ends the run: the lane was disarmed, or a project replaced.
     pub(crate) fn clear(&mut self) {
-        self.live_active = None;
+        self.run = None;
     }
 
-    /// Starts a new live-held trigger. Monophonic: a new NoteOn simply
-    /// supersedes whatever was previously held, with no bookkeeping of the
-    /// note it replaced.
-    pub(crate) fn begin_live_trigger(&mut self, note_number: u8) {
-        self.live_active = Some(note_number);
-    }
-
-    /// Ends the live trigger, but only if `note_number` matches the
-    /// currently active one. Returns `true` if it matched (the caller
-    /// should treat this as a real release); a stale NoteOff for a note
-    /// already superseded by a later NoteOn returns `false` and is a no-op.
-    pub(crate) fn end_live_trigger(&mut self, note_number: u8) -> bool {
-        if self.live_active == Some(note_number) {
-            self.live_active = None;
-            true
-        } else {
-            false
+    /// A press of `note` jumped playback to `target_tick`. It starts a run
+    /// when there is none, or when `started` (it started the transport: the
+    /// run is "from the press that started the transport"), and is added to
+    /// it. A press on the same tick as the one before replaces it, as live
+    /// the latest press wins.
+    pub(crate) fn press(&mut self, note: u8, velocity: u8, target_tick: i32, started: bool) {
+        if started {
+            self.run = None;
         }
+        let run = self.run.get_or_insert_with(|| Run {
+            elapsed: 0,
+            presses: Vec::new(),
+            expected_tick: target_tick,
+        });
+        if run
+            .presses
+            .last()
+            .is_some_and(|&(at, _, _)| at == run.elapsed)
+        {
+            run.presses.pop();
+        }
+        run.presses.push((run.elapsed, note, velocity));
+        run.expected_tick = target_tick;
+    }
+
+    /// Playback is about to advance one tick from `playback_tick`: the run's
+    /// clock counts it, or the run ends if playback isn't where the presses
+    /// left it ([`Run::expected_tick`]). Nothing with no run.
+    pub(crate) fn advance(&mut self, playback_tick: i32) {
+        let Some(run) = &mut self.run else {
+            return;
+        };
+        if run.expected_tick != playback_tick {
+            self.run = None;
+            return;
+        }
+        run.elapsed += 1;
+        run.expected_tick += 1;
+    }
+
+    /// `/`: the run as a performance clip ([`performance_clip`]), ending now
+    /// (running) or where playback stopped (stopped: the clock stood still
+    /// since). The run is used up, so the next press starts the next one.
+    /// `None` with no run, or nothing in it that lasts a tick.
+    pub(crate) fn take_run(&mut self) -> Option<Clip> {
+        let run = self.run.take()?;
+        performance_clip(&run.presses, run.elapsed)
+    }
+}
+
+/// A performance clip from `presses` (`(tick, note, velocity)`, in order,
+/// the first at 0) ending at `end` (`520-performance-capture.md` decision 1):
+/// a note per press, its pitch the key, lasting until the next press (a
+/// release doesn't stop the transport, so that is what played), the last
+/// until `end`. Its window is `0..end`. `None` when nothing lasts a tick.
+pub(crate) fn performance_clip(presses: &[(i32, u8, u8)], end: i32) -> Option<Clip> {
+    let ends = presses.iter().skip(1).map(|&(at, _, _)| at).chain([end]);
+    let mut events = Vec::new();
+    for (&(at, note, velocity), until) in presses.iter().zip(ends) {
+        if until <= at {
+            continue;
+        }
+        events.push(Event::new(
+            at,
+            until - at,
+            vec![0x90, note, velocity.max(1)],
+        ));
+        events.push(Event::new(until, 0, vec![0x80, note, 0]));
+    }
+    if events.is_empty() {
+        return None;
+    }
+    let mut clip = Clip::new();
+    clip.region_mut().set_region(Some(0), Some(end));
+    for event in events {
+        clip.add_event(event);
+    }
+    clip.calculate_note_lengths();
+    Some(clip)
+}
+
+/// The lane's eight pads (`520-performance-capture.md` decision 6): each
+/// empty or holding a performance clip. Saved with the project, changed only
+/// through undoable edits (`SetPerformancePadEdit`).
+#[derive(Clone, Debug, Default)]
+pub(crate) struct PerformancePads {
+    /// Each pad's performance, by pad.
+    pads: [Option<Clip>; PAD_COUNT],
+}
+
+impl PerformancePads {
+    /// Pad `pad`'s performance; `None` when it is empty or there is no such
+    /// pad.
+    pub(crate) fn get(&self, pad: usize) -> Option<&Clip> {
+        self.pads.get(pad)?.as_ref()
+    }
+
+    /// Puts `clip` on pad `pad` (empties it for `None`). Nothing for a pad
+    /// past the last.
+    pub(crate) fn set(&mut self, pad: usize, clip: Option<Clip>) {
+        if let Some(slot) = self.pads.get_mut(pad) {
+            *slot = clip;
+        }
+    }
+
+    /// Empties every pad.
+    pub(crate) fn clear(&mut self) {
+        self.pads = Default::default();
+    }
+
+    /// The pads that hold a performance, with it, in pad order.
+    pub(crate) fn lit(&self) -> impl Iterator<Item = (usize, &Clip)> {
+        self.pads
+            .iter()
+            .enumerate()
+            .filter_map(|(pad, clip)| Some((pad, clip.as_ref()?)))
+    }
+
+    /// Each pad's length in ticks, `None` for an empty one: what the knob
+    /// panel draws.
+    pub(crate) fn lengths(&self) -> [Option<i32>; PAD_COUNT] {
+        array::from_fn(|pad| self.get(pad).map(Clip::region_length))
+    }
+}
+
+/// A performance's length as the footer names it, in whole bars and beats
+/// of `meter`: `6 bars`, `1 bar 2 beats`, `3 beats`; `under a beat` for less.
+pub(crate) fn length_label(ticks: i32, meter: Meter) -> String {
+    let bars = ticks / meter.bar_ticks();
+    let beats = ticks % meter.bar_ticks() / meter.beat_ticks();
+    let count = |n: i32, one: &str| match n {
+        1 => format!("1 {one}"),
+        n => format!("{n} {one}s"),
+    };
+    match (bars, beats) {
+        (0, 0) => "under a beat".to_owned(),
+        (0, beats) => count(beats, "beat"),
+        (bars, 0) => count(bars, "bar"),
+        (bars, beats) => format!("{} {}", count(bars, "bar"), count(beats, "beat")),
     }
 }
 
@@ -160,46 +305,129 @@ pub(crate) fn key_tick(meter: Meter, length: KeyLength, key_index: i32) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::sequencer::test_support::clip_notes;
 
-    #[test]
-    fn begin_live_trigger_supersedes_previous_note() {
-        let mut lane = PerformanceLane::new();
-        lane.begin_live_trigger(60);
-        lane.begin_live_trigger(62);
-
-        assert!(!lane.end_live_trigger(60), "60 was superseded, not active");
-        assert!(lane.end_live_trigger(62), "62 is the currently active note");
+    /// Plays `ticks` ticks from `from`, as the tick pump would.
+    fn play(lane: &mut PerformanceLane, from: i32, ticks: i32) {
+        for tick in from..from + ticks {
+            lane.advance(tick);
+        }
     }
 
     #[test]
-    fn end_live_trigger_matching_note_clears_it() {
+    fn each_press_lasts_until_the_next_and_the_last_until_the_capture() {
         let mut lane = PerformanceLane::new();
-        lane.begin_live_trigger(60);
+        lane.press(64, 100, 3840, true);
+        play(&mut lane, 3840, 1000);
+        lane.press(60, 90, 0, false);
+        play(&mut lane, 0, 500);
 
-        assert!(lane.end_live_trigger(60));
-        assert!(
-            !lane.end_live_trigger(60),
-            "already cleared, a second release is a no-op"
-        );
+        let clip = lane.take_run().expect("a run");
+        assert_eq!(clip_notes(&clip), [(0, 64, 1000), (1000, 60, 500)]);
+        assert_eq!((clip.region().start(), clip.region().end()), (0, 1500));
+        assert!(lane.take_run().is_none(), "the capture uses the run up");
     }
 
     #[test]
-    fn end_live_trigger_stale_note_is_noop() {
+    fn a_stopped_capture_ends_where_playback_stopped() {
         let mut lane = PerformanceLane::new();
-        lane.begin_live_trigger(60);
-        lane.begin_live_trigger(62); // supersedes 60
-
-        assert!(!lane.end_live_trigger(60), "stale release must not match");
+        lane.press(60, 100, 0, true);
+        play(&mut lane, 0, 700);
+        // Stopped: no ticks reach the lane.
+        let clip = lane.take_run().expect("a run");
+        assert_eq!(clip_notes(&clip), [(0, 60, 700)]);
     }
 
     #[test]
-    fn clear_drops_an_in_progress_trigger() {
+    fn the_next_run_starts_at_the_first_press_after_a_capture() {
         let mut lane = PerformanceLane::new();
-        lane.begin_live_trigger(60);
+        lane.press(60, 100, 0, true);
+        play(&mut lane, 0, 100);
+        assert!(lane.take_run().is_some());
+        play(&mut lane, 100, 50);
+        assert!(lane.take_run().is_none(), "nothing pressed since");
 
+        lane.press(62, 100, 960, false);
+        play(&mut lane, 960, 30);
+        let clip = lane.take_run().expect("a run");
+        assert_eq!(clip_notes(&clip), [(0, 62, 30)]);
+    }
+
+    #[test]
+    fn a_press_that_starts_the_transport_starts_a_new_run() {
+        let mut lane = PerformanceLane::new();
+        lane.press(60, 100, 0, true);
+        play(&mut lane, 0, 100);
+        lane.press(65, 100, 1920, true);
+        play(&mut lane, 1920, 10);
+        assert_eq!(clip_notes(&lane.take_run().unwrap()), [(0, 65, 10)]);
+    }
+
+    #[test]
+    fn playback_moved_by_anything_but_a_press_ends_the_run() {
+        let mut lane = PerformanceLane::new();
+        lane.press(60, 100, 0, true);
+        play(&mut lane, 0, 100);
+        // A ruler click took playback to bar 5.
+        play(&mut lane, 3840, 1);
+        assert!(lane.take_run().is_none());
+    }
+
+    #[test]
+    fn presses_on_one_tick_keep_the_latest() {
+        let mut lane = PerformanceLane::new();
+        lane.press(60, 100, 0, true);
+        lane.press(62, 100, 480, false);
+        play(&mut lane, 480, 10);
+        assert_eq!(clip_notes(&lane.take_run().unwrap()), [(0, 62, 10)]);
+    }
+
+    #[test]
+    fn a_run_with_nothing_lasting_a_tick_captures_nothing() {
+        let mut lane = PerformanceLane::new();
+        lane.press(60, 100, 0, true);
+        assert!(lane.take_run().is_none());
+        assert!(PerformanceLane::new().take_run().is_none());
+    }
+
+    #[test]
+    fn clearing_the_lane_ends_the_run() {
+        let mut lane = PerformanceLane::new();
+        lane.press(60, 100, 0, true);
+        play(&mut lane, 0, 10);
         lane.clear();
+        assert!(lane.take_run().is_none());
+    }
 
-        assert!(!lane.end_live_trigger(60));
+    #[test]
+    fn a_pad_holds_one_performance() {
+        let mut pads = PerformancePads::default();
+        let first = performance_clip(&[(0, 60, 100)], 960).unwrap();
+        let second = performance_clip(&[(0, 62, 100)], 1920).unwrap();
+        let second_id = second.id();
+        pads.set(2, Some(first.clone()));
+        pads.set(2, Some(second));
+        assert_eq!(pads.get(2).map(Clip::id), Some(second_id), "replaced");
+        assert_eq!(
+            pads.lengths(),
+            [None, None, Some(1920), None, None, None, None, None]
+        );
+        assert_eq!(pads.lit().map(|(pad, _)| pad).collect::<Vec<_>>(), [2]);
+        pads.set(PAD_COUNT, Some(first));
+        assert!(pads.get(PAD_COUNT).is_none(), "no ninth pad");
+        pads.clear();
+        assert_eq!(pads.lengths(), [None; PAD_COUNT]);
+    }
+
+    #[test]
+    fn a_length_reads_in_bars_and_beats() {
+        let four = Meter::FOUR_FOUR;
+        let (bar, beat) = (four.bar_ticks(), four.beat_ticks());
+        assert_eq!(length_label(6 * bar + 100, four), "6 bars");
+        assert_eq!(length_label(bar + 2 * beat, four), "1 bar 2 beats");
+        assert_eq!(length_label(2 * bar + beat, four), "2 bars 1 beat");
+        assert_eq!(length_label(3 * beat, four), "3 beats");
+        assert_eq!(length_label(beat - 1, four), "under a beat");
     }
 
     #[test]

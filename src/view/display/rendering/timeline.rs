@@ -213,9 +213,9 @@ impl Display {
         let (span, color, dim) = if self.active_pane() == Pane::Clip {
             (self.clip_window_for_render(), self.lead_clip_color(), 1.0)
         } else {
-            // When looping is disabled the region still marks the playback
-            // bounds but no longer wraps playback, so everything dims to
-            // signal that.
+            // When looping is disabled, or the performance lane is selected,
+            // the region still marks the playback bounds but no longer wraps
+            // playback, so everything dims to signal that.
             let loop_dim = if self.is_loop_enabled() { 1.0 } else { 0.4 };
             (self.region_bounds_for_render(), theme::region(), loop_dim)
         };

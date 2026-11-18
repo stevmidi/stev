@@ -18,7 +18,7 @@ use crate::core::{
 };
 use crate::models::{
     clip::Clip,
-    event::{Event, ParamMove},
+    event::{Event, EventType, ParamMove},
     knobs::{ParamId, test_param},
     performance_lane::KeyLength,
     track::{InstrumentRef, Track, TrackOutput},
@@ -282,4 +282,16 @@ pub(super) fn tick_and_collect_messages(
         }
     }
     messages
+}
+
+/// `(tick, note, length)` of each of `clip`'s notes, in order.
+pub(crate) fn clip_notes(clip: &Clip) -> Vec<(i32, u8, i32)> {
+    clip.events()
+        .iter()
+        .filter(|event| event.event_type() == Some(EventType::NoteOn))
+        .map(|event| {
+            let note = event.note_number().unwrap_or(0);
+            (event.tick(), note, event.end_tick() - event.tick())
+        })
+        .collect()
 }

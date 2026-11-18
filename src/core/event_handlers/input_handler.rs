@@ -727,6 +727,14 @@ impl EventHandlers {
                 self.send_sequencer(SequencerCommand::SetPerformanceLaneKeyLength(*length));
             }
 
+            InputEvent::SelectPerformancePad(pad) => {
+                self.send_sequencer(SequencerCommand::SelectPerformancePad(*pad));
+            }
+
+            InputEvent::ClearPerformancePad => {
+                self.send_sequencer(SequencerCommand::ClearPerformancePad);
+            }
+
             InputEvent::SetTrackPan { track_idx, pan } => {
                 self.send_sequencer(SequencerCommand::SetTrackPan {
                     track_idx: *track_idx,

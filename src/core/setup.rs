@@ -181,6 +181,7 @@ pub(crate) fn setup_transport(
         shared_atomics.region_start.clone(),
         shared_atomics.region_end.clone(),
         shared_atomics.loop_enabled.clone(),
+        shared_atomics.performance_lane_armed.clone(),
     )
 }
 

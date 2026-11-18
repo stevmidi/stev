@@ -161,7 +161,10 @@ impl Display {
     /// else, and for what goes on past it — a clipboard chord, which first
     /// hands the keyboard back to the notes as a note command does, and Esc
     /// during an audio export, which goes on to cancel it.
-    pub(super) fn focus_key_press(&mut self, event: &InputEvent) -> Option<(Key, Option<Action>)> {
+    pub(in crate::view::display) fn focus_key_press(
+        &mut self,
+        event: &InputEvent,
+    ) -> Option<(Key, Option<Action>)> {
         match *event {
             InputEvent::KeyPressed { key, .. }
                 if key == Key::Escape && self.is_exporting_audio() =>

@@ -107,6 +107,9 @@ impl Display {
         if let Some(hint) = self.knob_footer_hint() {
             return Some(hint);
         }
+        if let Some(hint) = self.pad_footer_hint() {
+            return Some(hint);
+        }
         self.hovered_control()?.hint(&self.keymap)
     }
 }

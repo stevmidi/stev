@@ -129,7 +129,7 @@ impl KnobRects {
 /// its label's part from the label's top down, its dial's above.
 ///
 /// [`hit`]: KnobRects::hit
-fn knob_hit_at(knobs: &[KnobRects], pos: Pos2) -> Option<KnobHit> {
+pub(super) fn knob_hit_at(knobs: &[KnobRects], pos: Pos2) -> Option<KnobHit> {
     knobs.iter().enumerate().find_map(|(i, knob)| {
         if !knob.hit().contains(pos) {
             None
@@ -323,6 +323,15 @@ pub(super) enum KnobHit {
     Label(usize),
 }
 
+impl KnobHit {
+    /// The knob hit, dial or label.
+    pub(super) fn knob(self) -> usize {
+        match self {
+            KnobHit::Dial(knob) | KnobHit::Label(knob) => knob,
+        }
+    }
+}
+
 /// A drag on a dial: which knob, and the travel since its anchor (the
 /// tempo chip's drag's shape — `fields/tempo_field.rs`).
 #[derive(Clone, Copy, Debug)]
@@ -507,12 +516,14 @@ impl Display {
             .is_some_and(|column| column.contains(pos2(x, y)))
     }
 
-    /// The knobs' layout this frame — `None` while the panel is hidden or
-    /// shows its hint instead ([`knob_hint`](Self::knob_hint)).
+    /// The knobs' layout this frame — `None` while the panel is hidden,
+    /// shows its hint instead ([`knob_hint`](Self::knob_hint)) or holds the
+    /// performance lane's pads (`performance_pads.rs`).
     pub(super) fn knob_rects(&self) -> Option<[KnobRects; KNOB_COUNT]> {
-        if self
-            .knobs_track()
-            .is_some_and(|track_idx| !self.knobs_drive_plugin(track_idx))
+        if self.performance_lane_selected()
+            || self
+                .knobs_track()
+                .is_some_and(|track_idx| !self.knobs_drive_plugin(track_idx))
         {
             return None;
         }
@@ -624,9 +635,7 @@ impl Display {
     /// The knob whose dial or label is under the pointer — the label lit as
     /// a hover, since a click on either shows its lane.
     pub(super) fn knob_under_pointer(&self) -> Option<usize> {
-        match self.knob_hit_under_pointer()? {
-            KnobHit::Dial(knob) | KnobHit::Label(knob) => Some(knob),
-        }
+        self.knob_hit_under_pointer().map(KnobHit::knob)
     }
 
     /// The knob whose label is under the pointer, when a click there would

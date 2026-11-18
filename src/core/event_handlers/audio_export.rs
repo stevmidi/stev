@@ -128,6 +128,10 @@ impl EventHandlers {
         sequencer: &mut Sequencer,
         transport: &mut Transport,
     ) {
+        // The lane's run counts the ticks playback advances
+        // (`520-performance-capture.md` decision 8), from where it is now.
+        let playback_tick = sequencer.playback_tick();
+        sequencer.performance_lane_mut().advance(playback_tick);
         if let TickOutcome::Wrapped(anchor) = transport.tick() {
             self.reanchor_playback(anchor, sequencer, transport);
         }
@@ -501,6 +505,7 @@ mod tests {
             h.region.0.clone(),
             h.region.1.clone(),
             Arc::new(AtomicBool::new(true)),
+            h.performance_lane_armed.clone(),
         );
         (transport, events)
     }

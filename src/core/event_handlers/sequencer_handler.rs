@@ -14,8 +14,8 @@ use crate::core::sequencer::{
     DragNotesEdit, DuplicateClipsEdit, DuplicateTimeEdit, InsertNotesEdit, InsertSilenceEdit,
     MoveClipEdit, MoveRangeEdit, MuteInRangeEdit, MuteSelectedEventsEdit, NudgeSelectedEventsEdit,
     NudgeSelectedEventsLengthEdit, PasteClipsEdit, QuantizeEventsEdit, RenameTrackEdit,
-    SetMeterEdit, SetTempoEdit, SetTrackOutputEdit, SplitClipsEdit, TempoGesture,
-    TransposeSelectedEventsEdit, UndoStep, top_step,
+    SetMeterEdit, SetPerformancePadEdit, SetTempoEdit, SetTrackOutputEdit, SplitClipsEdit,
+    TempoGesture, TransposeSelectedEventsEdit, UndoStep, top_step,
 };
 use crate::core::time::TapTempo;
 use crate::models::clip::ClipEdge;
@@ -97,6 +97,11 @@ impl EventHandlers {
             return;
         }
         match cmd {
+            // On the armed lane `/` keeps the lane's run on the selected pad
+            // instead (`520-performance-capture.md` decision 8).
+            SequencerCommand::Commit { .. } if sequencer.is_performance_lane_armed() => {
+                self.capture_performance_workflow(sequencer, undo_record);
+            }
             SequencerCommand::Commit { frame } => {
                 self.commit_workflow(sequencer, undo_record, *frame);
             }
@@ -623,6 +628,16 @@ impl EventHandlers {
             SequencerCommand::SetPerformanceLaneKeyLength(length) => {
                 sequencer.set_performance_lane_key_length(*length);
                 self.request_repaint();
+            }
+
+            // The view selected it already, on the click.
+            SequencerCommand::SelectPerformancePad(pad) => {
+                sequencer.select_pad(*pad);
+            }
+
+            SequencerCommand::ClearPerformancePad => {
+                let edit = SetPerformancePadEdit::new(sequencer, sequencer.selected_pad(), None);
+                self.record_edit(sequencer, undo_record, edit);
             }
 
             // Answered above, ahead of the holds.

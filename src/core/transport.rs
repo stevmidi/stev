@@ -154,11 +154,12 @@ pub(crate) struct Transport {
     region: Region,
     /// Whether playback wraps at the region end, shared.
     loop_enabled: Arc<AtomicBool>,
-    /// Suspends region loop-wrap while the arranger performance lane is
-    /// actively holding a bar-jump (live or replayed) — `Transport` only
-    /// ever lives as a sequencer-thread-local, so no cross-thread read is
-    /// needed and this stays a plain `bool`, unlike `loop_enabled`.
-    loop_wrap_suspended: bool,
+    /// Whether the arranger performance lane is selected (armed), shared
+    /// with the sequencer, which sets it: while it is, playback never wraps
+    /// at the loop end, so a performance plays straight on as its capture,
+    /// replay and render all assume (`520-performance-capture.md` decision
+    /// 7). The loop itself is untouched.
+    performance_lane_armed: Arc<AtomicBool>,
 
     // --- Communication ---
     /// Discontinuity notifications to the `"sequencer"` tick pump.
@@ -183,6 +184,7 @@ impl Transport {
         region_start: Arc<AtomicI32>,
         region_end: Arc<AtomicI32>,
         loop_enabled: Arc<AtomicBool>,
+        performance_lane_armed: Arc<AtomicBool>,
     ) -> Self {
         Transport {
             playback_tick,
@@ -190,7 +192,7 @@ impl Transport {
             running,
             region: Region::from_shared(region_start, region_end),
             loop_enabled,
-            loop_wrap_suspended: false,
+            performance_lane_armed,
             transport_event_tx,
             clock_command_tx,
         }
@@ -215,11 +217,12 @@ impl Transport {
         let current = self.playback_tick.load(Ordering::Relaxed);
         let next = current + 1;
 
-        // Loop wrap applies only while looping is enabled and playback is currently
-        // inside the active region window. When starting from a cursor outside the
-        // region, keep advancing from cursor instead of snapping to region start.
+        // Loop wrap applies only while looping is enabled, the performance lane
+        // isn't selected, and playback is currently inside the active region
+        // window. When starting from a cursor outside the region, keep
+        // advancing from cursor instead of snapping to region start.
         if self.is_loop_enabled()
-            && !self.loop_wrap_suspended
+            && !self.performance_lane_armed.load(Ordering::Relaxed)
             && current >= start
             && current < end
             && next >= end
@@ -261,18 +264,6 @@ impl Transport {
         self.transport_event_tx
             .send(TransportEvent::PlaybackTickResetWithChase(tick))
             .ok();
-    }
-
-    /// Suspends region loop-wrap for the duration of an arranger
-    /// performance-lane bar-jump (live or replayed) so the loop boundary
-    /// doesn't fight the lane's own hold.
-    pub(crate) fn suspend_loop_wrap(&mut self) {
-        self.loop_wrap_suspended = true;
-    }
-
-    /// Re-enables region loop-wrap after a performance-lane bar-jump releases.
-    pub(crate) fn resume_loop_wrap(&mut self) {
-        self.loop_wrap_suspended = false;
     }
 
     /// Hands the `"clock"` thread what it needs to realign its free-running
@@ -431,6 +422,7 @@ mod tests {
             region_start_atomic,
             region_end_atomic,
             loop_enabled,
+            Arc::new(AtomicBool::new(false)),
         );
 
         (transport, playback_tick, clock_command_rx)
@@ -557,6 +549,7 @@ mod tests {
             Arc::new(AtomicI32::new(10)),
             Arc::new(AtomicI32::new(20)),
             Arc::new(AtomicBool::new(true)),
+            Arc::new(AtomicBool::new(false)),
         );
 
         assert!(matches!(transport.tick(), TickOutcome::Wrapped(10)));

@@ -87,6 +87,7 @@ mod knob_params;
 mod modal_focus;
 mod output_menu;
 mod pane;
+mod performance_pads;
 mod pointer_state;
 mod project_dialog;
 mod project_state;
@@ -114,6 +115,7 @@ use self::output_menu::OutputMenuHit;
 use self::pane::{
     KeyFocus, Pane, PaneRects, PanelSize, clip_event_tick_at, clip_pane_frame_value, pane_rects,
 };
+use self::performance_pads::PadsShown;
 use self::project_dialog::ProjectDialog;
 use self::project_state::ProjectViewState;
 use self::render_state::RenderState;
@@ -295,6 +297,10 @@ pub(crate) struct Display {
     /// The knob panel beside the clip view: its drag, wheel turn and CC
     /// field (which has the keyboard while open). See `knob_panel.rs`.
     knob_panel: KnobPanel,
+    /// What the performance lane's pads hold and which is selected, drawn in
+    /// the knob panel's column while the lane is selected. See
+    /// `performance_pads.rs`.
+    performance_pads: PadsShown,
     /// The open Save As field or unsaved-changes prompt, if any — it has the
     /// keyboard while open. See `project_dialog.rs`.
     project_dialog: Option<ProjectDialog>,
@@ -503,6 +509,7 @@ impl Display {
             tempo_chip: TempoChip::default(),
             meter_chip: MeterChip::default(),
             knob_panel: KnobPanel::default(),
+            performance_pads: PadsShown::default(),
             project_dialog: None,
             project_dialog_shown: false,
             raise_main_window: false,
@@ -599,9 +606,11 @@ impl Display {
         self.audio_export.is_running()
     }
 
-    /// Whether playback loops at the region end.
+    /// Whether playback loops at the region end: looping is on and the
+    /// performance lane isn't selected, where playback never wraps
+    /// (`520-performance-capture.md` decision 7).
     fn is_loop_enabled(&self) -> bool {
-        self.loop_enabled.load(Ordering::Relaxed)
+        self.loop_enabled.load(Ordering::Relaxed) && !self.performance_lane_selected()
     }
 
     /// Reads region bounds as a consistent pair.
@@ -689,6 +698,7 @@ impl Display {
                 KeyFocus::Pane
             }
             KeyFocus::KnobPanel(_) if self.knob_rects().is_none() => KeyFocus::Pane,
+            KeyFocus::Pads if self.pad_rects().is_none() => KeyFocus::Pane,
             focus => focus,
         }
     }

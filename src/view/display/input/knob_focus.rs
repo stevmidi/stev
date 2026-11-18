@@ -17,28 +17,30 @@ use crate::models::knobs::ParamId;
 use super::super::status_message::StatusMessage;
 use super::*;
 
-/// What a key does while the knob panel has the keyboard.
+/// What a key does while the knob panel's column has the keyboard, with
+/// its knobs or, the performance lane selected, its pads
+/// (`performance_pads.rs`).
 #[derive(Debug, PartialEq, Eq)]
-enum KnobPanelKey {
-    /// Remove the selected knob's mapping.
-    Unassign,
+pub(in crate::view::display) enum ColumnKey {
+    /// Remove the selected knob's mapping, or empty the selected pad.
+    Delete,
     /// Give the keyboard back to the pane.
     Leave,
     /// Give the keyboard back to the pane and let the key act there.
     HandBack,
 }
 
-/// The knob panel's keymap, by the action the keymap resolves the press to
-/// (`action`): Delete (`Delete`/`⌫`, whatever it is bound to, in either
-/// pane) unassigns the knob; any other pane command hands the keyboard back
+/// The knob panel's column's keymap, by the action the keymap resolves the
+/// press to (`action`): Delete (`Delete`/`⌫`, whatever it is bound to, in
+/// either pane) unassigns the knob or empties the pad; any other pane command hands the keyboard back
 /// first. Esc, not a command, leaves. `None` — every other key, the
 /// transport, the arrows and `W` among them — falls through to the pane as
 /// usual.
-fn knob_panel_key(key: Key, action: Option<Action>) -> Option<KnobPanelKey> {
+pub(in crate::view::display) fn column_key(key: Key, action: Option<Action>) -> Option<ColumnKey> {
     match (key, action) {
-        (Key::Escape, _) => Some(KnobPanelKey::Leave),
-        (_, Some(Action::DeleteNotes | Action::DeleteSelection)) => Some(KnobPanelKey::Unassign),
-        (_, Some(action)) if action.leaves_knob_panel() => Some(KnobPanelKey::HandBack),
+        (Key::Escape, _) => Some(ColumnKey::Leave),
+        (_, Some(Action::DeleteNotes | Action::DeleteSelection)) => Some(ColumnKey::Delete),
+        (_, Some(action)) if action.leaves_knob_panel() => Some(ColumnKey::HandBack),
         _ => None,
     }
 }
@@ -76,23 +78,23 @@ impl Display {
     }
 
     /// The knob panel's keys while it has the keyboard, knob `knob`
-    /// selected ([`knob_panel_key`], read through
+    /// selected ([`column_key`], read through
     /// [`focus_key_press`](Self::focus_key_press)). Returns whether it
     /// consumed `event`.
     pub(super) fn handle_knob_panel_key(&mut self, knob: usize, event: &InputEvent) -> bool {
         let Some((key, action)) = self.focus_key_press(event) else {
             return false;
         };
-        match knob_panel_key(key, action) {
-            Some(KnobPanelKey::Unassign) => {
+        match column_key(key, action) {
+            Some(ColumnKey::Delete) => {
                 self.unassign_knob(knob);
                 true
             }
-            Some(KnobPanelKey::Leave) => {
+            Some(ColumnKey::Leave) => {
                 self.key_focus = KeyFocus::Pane;
                 true
             }
-            Some(KnobPanelKey::HandBack) => {
+            Some(ColumnKey::HandBack) => {
                 self.key_focus = KeyFocus::Pane;
                 false
             }
@@ -152,7 +154,7 @@ fn removed_mapping_message(name: Option<&str>, knob: usize, with_moves: bool) ->
 mod tests {
     use egui::Key;
 
-    use super::{KnobPanelKey, knob_panel_key, removed_mapping_message};
+    use super::{ColumnKey, column_key, removed_mapping_message};
     use crate::core::keymap::Action;
 
     /// Delete, whatever it is bound to and in either pane, unassigns the
@@ -161,10 +163,7 @@ mod tests {
     fn delete_unassigns_the_knob() {
         for key in [Key::Delete, Key::Backspace, Key::X] {
             for action in [Action::DeleteNotes, Action::DeleteSelection] {
-                assert_eq!(
-                    knob_panel_key(key, Some(action)),
-                    Some(KnobPanelKey::Unassign)
-                );
+                assert_eq!(column_key(key, Some(action)), Some(ColumnKey::Delete));
             }
         }
     }
@@ -189,7 +188,7 @@ mod tests {
     /// Esc leaves at once: there is no span to drop first.
     #[test]
     fn esc_leaves() {
-        assert_eq!(knob_panel_key(Key::Escape, None), Some(KnobPanelKey::Leave));
+        assert_eq!(column_key(Key::Escape, None), Some(ColumnKey::Leave));
     }
 
     /// A pane command hands the keyboard back and acts on the pane.
@@ -201,10 +200,7 @@ mod tests {
             Action::Quantize,
             Action::DeleteTime,
         ] {
-            assert_eq!(
-                knob_panel_key(Key::A, Some(action)),
-                Some(KnobPanelKey::HandBack)
-            );
+            assert_eq!(column_key(Key::A, Some(action)), Some(ColumnKey::HandBack));
         }
     }
 
@@ -212,9 +208,9 @@ mod tests {
     /// focus.
     #[test]
     fn other_keys_pass_through() {
-        assert_eq!(knob_panel_key(Key::ArrowLeft, None), None);
+        assert_eq!(column_key(Key::ArrowLeft, None), None);
         for action in [Action::CycleClipLane, Action::TogglePlayback, Action::Undo] {
-            assert_eq!(knob_panel_key(Key::W, Some(action)), None);
+            assert_eq!(column_key(Key::W, Some(action)), None);
         }
     }
 }

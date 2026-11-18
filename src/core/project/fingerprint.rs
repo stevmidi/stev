@@ -112,6 +112,15 @@ fn hash_project(
         sequencer.tracks().len(),
     )
         .hash(&mut hasher);
+    for (pad, clip) in sequencer.performance_pads().lit() {
+        (
+            pad,
+            clip.region().start(),
+            clip.region().end(),
+            events_hash(clip.shared_events()),
+        )
+            .hash(&mut hasher);
+    }
     for (track_idx, track) in sequencer.tracks().iter().enumerate() {
         match track.output() {
             TrackOutput::MidiOut { channel } => channel.hash(&mut hasher),
@@ -172,8 +181,8 @@ fn hash_events(events: &[Event]) -> u64 {
 #[cfg(test)]
 mod tests {
     use crate::core::project::dto::{
-        ClipData, EventData, KnobData, MeterData, ParamMoveData, ProjectData, TrackData,
-        TrackOutputData,
+        ClipData, EventData, KnobData, MeterData, ParamMoveData, PerformancePadData, ProjectData,
+        TrackData, TrackOutputData,
     };
     use crate::core::sequencer::test_support::{
         clip_at, note_off, note_on, param_at, stub_instrument, test_sequencer,
@@ -182,7 +191,7 @@ mod tests {
     use crate::models::clip::Clip;
     use crate::models::event::Event;
     use crate::models::knobs::{PluginParam, UNASSIGNED_KNOBS, test_param};
-    use crate::models::performance_lane::KeyLength;
+    use crate::models::performance_lane::{KeyLength, performance_clip};
     use crate::models::track::InstrumentRef;
 
     use super::*;
@@ -298,6 +307,9 @@ mod tests {
         }),
         ("a hand turn", |s| s.turn_knob(0, 0, 0.25, 0)),
         ("a preset loaded", |s| s.count_plugin_change(0)),
+        ("a performance on a pad", |s| {
+            s.set_performance_pad(2, performance_clip(&[(0, 64, 100)], 1920));
+        }),
         ("another clip", |s| {
             s.tracks_mut()[0].add_clip(&clip_at(3840, 1920));
         }),
@@ -339,6 +351,7 @@ mod tests {
     /// What a project doesn't save, or that the check leaves out.
     const UNSAVED_CHANGES: &[Change] = &[
         ("cursor", |s| s.set_cursor_tick(480)),
+        ("selected pad", |s| s.select_pad(3)),
         ("solo", |s| s.set_track_soloed(0, true)),
         ("plugin state", |s| {
             edit_plugin(s, |i| i.state = [9, 9].into())
@@ -456,6 +469,7 @@ mod tests {
             tempo_us: _,
             meter,
             performance_lane_key_length: _,
+            performance_pads,
             region_start: _,
             region_end: _,
             tracks,
@@ -470,6 +484,7 @@ mod tests {
         else {
             return;
         };
+        for PerformancePadData { pad: _, clip: _ } in performance_pads {}
         for track in tracks {
             let TrackData {
                 output,

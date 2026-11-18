@@ -37,6 +37,7 @@ use super::Sequencer;
 mod clip_edits;
 mod event_edits;
 mod meter_edit;
+mod performance_pad_edit;
 mod tempo_edit;
 mod track_edits;
 mod undo_step;
@@ -53,6 +54,7 @@ pub(crate) use event_edits::{
     TransposeSelectedEventsEdit,
 };
 pub(crate) use meter_edit::SetMeterEdit;
+pub(crate) use performance_pad_edit::SetPerformancePadEdit;
 pub(crate) use tempo_edit::{SetTempoEdit, TempoGesture};
 pub(crate) use track_edits::{
     AddTrackEdit, RemoveTrackEdit, RenameTrackEdit, SetKnobParamEdit, SetTrackOutputEdit,
@@ -488,6 +490,9 @@ pub(crate) enum EditResult {
     /// knobs drive (`TracksChanged`, no shift), and the lead clip, whose
     /// moves may have changed with the knob.
     KnobsChanged,
+    /// What a performance-lane pad holds changed (`SetPerformancePadEdit`'s
+    /// edit and undo). The handler re-sends the view the pads.
+    PerformancePadChanged,
     /// A track's output changed (`SetTrackOutputEdit`'s edit and undo). The
     /// handler re-sends the view its track list and has `Display` bring the
     /// plugin in `slot` in line with `instrument` (`UiEvent::SlotInstrument`):
@@ -732,15 +737,16 @@ sequencer_edit_dispatch!(
     SetKnobParam(SetKnobParamEdit),
     SetTempo(SetTempoEdit),
     SetMeter(SetMeterEdit),
+    SetPerformancePad(SetPerformancePadEdit),
 );
 
 impl SequencerEdit {
     /// Whether an undo or redo of this edit puts back the view around it
     /// ([`UndoStep`]): every edit that changes clips or notes does, as in
-    /// Ableton; the tempo, the meter, a track's name, its output and a
-    /// knob's mapping undo with the view as it is, and a track add or remove
-    /// keeps its own selection rule (`050-undo-redo.md` § Track add /
-    /// remove). Exhaustive, so a new edit has to be placed.
+    /// Ableton; the tempo, the meter, a track's name, its output, a knob's
+    /// mapping and a performance pad undo with the view as it is, and a
+    /// track add or remove keeps its own selection rule (`050-undo-redo.md`
+    /// § Track add / remove). Exhaustive, so a new edit has to be placed.
     pub(crate) fn restores_view(&self) -> bool {
         match self {
             SequencerEdit::CommitClip(_)
@@ -776,7 +782,8 @@ impl SequencerEdit {
             | SequencerEdit::SetTrackOutput(_)
             | SequencerEdit::SetKnobParam(_)
             | SequencerEdit::SetTempo(_)
-            | SequencerEdit::SetMeter(_) => false,
+            | SequencerEdit::SetMeter(_)
+            | SequencerEdit::SetPerformancePad(_) => false,
         }
     }
 }

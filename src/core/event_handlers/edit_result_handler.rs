@@ -334,6 +334,9 @@ impl EventHandlers {
                 self.track_removed_workflow(sequencer, track_idx, track_id, slot);
             }
             EditResult::TrackRenamed => self.emit_tracks(sequencer, None),
+            EditResult::PerformancePadChanged => {
+                self.send_performance_pads_ui_event(sequencer);
+            }
             EditResult::KnobsChanged => {
                 self.emit_tracks(sequencer, None);
                 // The lead clip's moves may have changed with the knob.

@@ -24,7 +24,7 @@ use crate::{
         clip::Clip,
         event::{Event, ParamMove},
         knobs::{ParamId, PluginParam, PluginTag, knobs_from_saved},
-        performance_lane::KeyLength,
+        performance_lane::{KeyLength, PAD_COUNT},
         track::{InstrumentRef, Track, TrackOutput, track_name_from_input},
     },
 };
@@ -100,6 +100,64 @@ pub(crate) struct ClipData {
     /// The clip's events.
     #[serde(default)]
     pub(crate) events: Vec<EventData>,
+}
+
+impl ClipData {
+    /// `clip` as a save writes it, with `events` (empty for a snapshot that
+    /// adds them on the `"storage"` thread, [`ProjectSnapshot::encoded`]).
+    fn of(clip: &Clip, events: Vec<EventData>) -> Self {
+        ClipData {
+            start_tick: clip.start_tick(),
+            region_start: clip.region().start(),
+            region_end: clip.region().end(),
+            muted: clip.is_muted(),
+            swing_pct: clip.swing_pct(),
+            events,
+        }
+    }
+
+    /// The clip this saved one is, a parameter move with no plugin named
+    /// being `own_plugin`'s.
+    fn into_clip(self, own_plugin: PluginTag) -> Clip {
+        let mut clip = Clip::new();
+        clip.set_start_tick(self.start_tick);
+        clip.region_mut()
+            .set_region(Some(self.region_start), Some(self.region_end));
+        clip.set_muted(self.muted);
+        clip.set_swing_pct(self.swing_pct);
+
+        // Add events (delta_ticks recalculated by add_event)
+        for event_data in self.events {
+            let mut event = match event_data.param_move {
+                Some(ParamMoveData {
+                    param,
+                    plugin,
+                    value,
+                }) => {
+                    let param = PluginParam {
+                        plugin: plugin.unwrap_or(own_plugin),
+                        id: param,
+                    };
+                    Event::from_param_move(event_data.tick, ParamMove { param, value })
+                }
+                None => Event::new(event_data.tick, event_data.length, event_data.midi_message),
+            };
+            event.set_muted(event_data.muted);
+            clip.add_event(event);
+        }
+        clip
+    }
+}
+
+/// One of the performance lane's pads, on disk: which pad, and the
+/// performance it holds (`520-performance-capture.md` decision 6). Only the
+/// pads that hold one are saved.
+#[derive(Serialize, Deserialize, Clone)]
+pub(crate) struct PerformancePadData {
+    /// The pad, from 0.
+    pub(crate) pad: usize,
+    /// Its performance clip: a note per press, from tick 0.
+    pub(crate) clip: ClipData,
 }
 
 /// Serde default for [`ClipData::swing_pct`] — straight (50).
@@ -235,14 +293,7 @@ impl TrackData {
                 .collect(),
             clips: clips
                 .iter()
-                .map(|clip| ClipData {
-                    start_tick: clip.start_tick(),
-                    region_start: clip.region().start(),
-                    region_end: clip.region().end(),
-                    muted: clip.is_muted(),
-                    swing_pct: clip.swing_pct(),
-                    events: Vec::new(),
-                })
+                .map(|clip| ClipData::of(clip, Vec::new()))
                 .collect(),
         }
     }
@@ -361,6 +412,11 @@ pub(crate) struct ProjectData {
     /// before the choice existed, which open at a beat.
     #[serde(default)]
     pub(crate) performance_lane_key_length: KeyLengthData,
+    /// The performance lane's pads that hold a performance, in pad order.
+    /// Absent with none, and in projects saved before pads, which open with
+    /// every pad empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) performance_pads: Vec<PerformancePadData>,
     /// Loop-region start tick.
     pub(crate) region_start: i32,
     /// Loop-region end tick.
@@ -375,6 +431,7 @@ impl Default for ProjectData {
             tempo_us: config::TEMPO_US_DEFAULT,
             meter: default_meter_list(),
             performance_lane_key_length: KeyLengthData::default(),
+            performance_pads: Vec::new(),
             region_start: 0,
             region_end: config::REGION_LENGTH_DEFAULT,
             // One empty MIDI-Out track per slot, channel = track index —
@@ -465,6 +522,23 @@ impl ProjectSnapshot {
                 performance_lane_key_length: KeyLengthData::of(
                     sequencer.performance_lane_key_length(),
                 ),
+                // A few dozen notes each, so encoded here rather than on
+                // the `"storage"` thread.
+                performance_pads: if with_clips {
+                    sequencer
+                        .performance_pads()
+                        .lit()
+                        .map(|(pad, clip)| PerformancePadData {
+                            pad,
+                            clip: ClipData::of(
+                                clip,
+                                clip.events().iter().map(EventData::of).collect(),
+                            ),
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                },
                 region_start: sequencer.region_start(),
                 region_end: sequencer.region_end(),
                 tracks,
@@ -491,7 +565,8 @@ impl ProjectData {
     /// track's output and plugin state, name, colour, volume and pan; the
     /// track count, meter and tempo), what describes a performance or a
     /// passing state reset — no clips, no track muted, the default loop
-    /// region, the performance lane at a beat a key (it belongs to the piece,
+    /// region, no performance on the lane's pads, the performance lane at a
+    /// beat a key (it belongs to the piece,
     /// `510-performance-lane-keyboard.md` § Step 1b decision 5). Applied when a template opens, so one holding clips (a project
     /// copied into the folder by hand) still opens empty, and when one is
     /// saved. See `archive/340-templates.md` decisions 5 and 6.
@@ -499,6 +574,7 @@ impl ProjectData {
         self.region_start = 0;
         self.region_end = config::REGION_LENGTH_DEFAULT;
         self.performance_lane_key_length = KeyLengthData::default();
+        self.performance_pads.clear();
         for track in &mut self.tracks {
             track.muted = false;
             track.clips.clear();
@@ -543,6 +619,12 @@ impl ProjectData {
         sequencer
             .set_performance_lane_key_length(self.performance_lane_key_length.into_key_length());
         sequencer.set_global_region(self.region_start, self.region_end);
+        for PerformancePadData { pad, clip } in self.performance_pads {
+            if pad < PAD_COUNT {
+                // No track plays a performance clip: no plugin owns a move.
+                sequencer.set_performance_pad(pad, Some(clip.into_clip(0)));
+            }
+        }
 
         let mut all_metadata = Vec::new();
 
@@ -562,37 +644,7 @@ impl ProjectData {
                 track.set_knobs(knobs_from_saved(&saved_knobs, own_plugin));
 
                 for clip_data in track_data.clips {
-                    let mut clip = Clip::new();
-                    clip.set_start_tick(clip_data.start_tick);
-                    clip.region_mut()
-                        .set_region(Some(clip_data.region_start), Some(clip_data.region_end));
-                    clip.set_muted(clip_data.muted);
-                    clip.set_swing_pct(clip_data.swing_pct);
-
-                    // Add events (delta_ticks recalculated by add_event)
-                    for event_data in clip_data.events {
-                        let mut event = match event_data.param_move {
-                            Some(ParamMoveData {
-                                param,
-                                plugin,
-                                value,
-                            }) => {
-                                let param = PluginParam {
-                                    plugin: plugin.unwrap_or(own_plugin),
-                                    id: param,
-                                };
-                                Event::from_param_move(event_data.tick, ParamMove { param, value })
-                            }
-                            None => Event::new(
-                                event_data.tick,
-                                event_data.length,
-                                event_data.midi_message,
-                            ),
-                        };
-                        event.set_muted(event_data.muted);
-                        clip.add_event(event);
-                    }
-
+                    let clip = clip_data.into_clip(own_plugin);
                     track.add_clip(&clip);
                     all_metadata.push(ClipMetadata::from_clip(track_idx, &clip));
                 }
@@ -607,10 +659,11 @@ impl ProjectData {
 mod tests {
     use super::*;
     use crate::core::sequencer::test_support::{
-        clip_at, note_off, note_on, param_at, param_moves, stub_instrument, test_sequencer,
-        track_colors,
+        clip_at, clip_notes, note_off, note_on, param_at, param_moves, stub_instrument,
+        test_sequencer, track_colors,
     };
     use crate::models::knobs::{KnobParams, UNASSIGNED_KNOBS, test_param};
+    use crate::models::performance_lane::performance_clip;
 
     /// A default project with `count` tracks.
     fn project_with_tracks(count: usize) -> ProjectData {
@@ -922,6 +975,66 @@ mod tests {
             data.apply_to_sequencer(&mut sequencer);
             assert_eq!(sequencer.performance_lane_key_length(), length);
         }
+    }
+
+    /// One pad as [`pad_notes`] reads it: the pad, its length, and its
+    /// notes ([`clip_notes`]).
+    type PadNotes = (usize, i32, Vec<(i32, u8, i32)>);
+
+    /// Each pad that holds a performance, as [`PadNotes`].
+    fn pad_notes(sequencer: &Sequencer) -> Vec<PadNotes> {
+        sequencer
+            .performance_pads()
+            .lit()
+            .map(|(pad, clip)| (pad, clip.region_length(), clip_notes(clip)))
+            .collect()
+    }
+
+    #[test]
+    fn the_pads_survive_a_save_and_load_and_a_new_project_empties_them() {
+        let mut sequencer = test_sequencer();
+        let clip = performance_clip(&[(0, 64, 100), (480, 60, 100)], 1920);
+        sequencer.set_performance_pad(6, clip);
+        let saved = pad_notes(&sequencer);
+        let json = serde_json::to_string(&ProjectData::from_sequencer(&sequencer)).unwrap();
+
+        sequencer.new_project();
+        assert!(pad_notes(&sequencer).is_empty());
+        let data: ProjectData = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            data.performance_pads.len(),
+            1,
+            "only the pad that holds one"
+        );
+        data.apply_to_sequencer(&mut sequencer);
+        assert_eq!(pad_notes(&sequencer), saved);
+        assert_eq!(saved, [(6, 1920, vec![(0, 64, 480), (480, 60, 1440)])]);
+    }
+
+    #[test]
+    fn empty_pads_save_nothing_and_an_old_project_opens_with_none() {
+        let json = serde_json::to_value(ProjectData::from_sequencer(&test_sequencer())).unwrap();
+        assert!(json.get("performance_pads").is_none());
+
+        let mut sequencer = test_sequencer();
+        sequencer.set_performance_pad(0, performance_clip(&[(0, 60, 100)], 960));
+        let data: ProjectData = serde_json::from_value(json).unwrap();
+        data.apply_to_sequencer(&mut sequencer);
+        assert!(pad_notes(&sequencer).is_empty());
+    }
+
+    #[test]
+    fn a_template_keeps_no_performance() {
+        let mut sequencer = test_sequencer();
+        sequencer.set_performance_pad(0, performance_clip(&[(0, 60, 100)], 960));
+        let data = ProjectData::from_sequencer(&sequencer).into_template();
+        assert!(data.performance_pads.is_empty());
+        assert!(
+            ProjectSnapshot::template_of(&sequencer)
+                .encoded()
+                .performance_pads
+                .is_empty()
+        );
     }
 
     /// A half bar is kept as chosen in an odd meter, though it plays as a

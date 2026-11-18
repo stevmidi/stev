@@ -73,7 +73,7 @@ Decided 2026-11-18 by looking at the built lane:
 
 5. **Saved with the project; not an undo step.** The right length belongs to the piece (its meter, how long its ideas are), not to the player in general, so it goes in the project, not the settings: one optional field on `ProjectData` (`060`), `#[serde(default)]`. A project saved before the field opens at a beat, what the lane does since § Changes while building; the released one-key-a-bar mapping isn't brought back for old files. New projects and templates start at a beat too. Changing it counts as unsaved (the fingerprint, `410`, takes it in) but isn't an undo step: it is a setting of how the lane plays, like the loop toggle, not an edit (`050`).
 
-6. **A change takes effect from the next key.** A key held when the length changes keeps the jump it made; its release still only resumes the loop wrap (`110` § MIDI routing). The strip redraws at the new width at once, so the new reach of each key shows before the next one is played.
+6. **A change takes effect from the next key.** A key held when the length changes keeps the jump it made; its release does nothing (`110` § MIDI routing). The strip redraws at the new width at once, so the new reach of each key shows before the next one is played.
 
 7. **Unchanged.** The trigger path apart from the tick it jumps to; arming and selection (`450`); the strip, seams, labels and lit keys (§ Changes while building), now a key length wide, with the every-key label threshold measured against that width; the base note (C3); the audio export and the MCP server, which don't see the lane.
 

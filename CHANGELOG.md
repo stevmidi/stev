@@ -22,6 +22,8 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ### Added
 
+- Keep what you play on the performance lane. With the lane selected, `/` keeps the presses since you started playing (or since the last `/`) as a performance on one of eight pads, which show in the knob panel's column while the lane is selected: a lit pad holds one, an empty pad is an outline. Click a pad to choose where the next capture goes; capturing onto a lit pad replaces it, and ⌘Z brings the old one back. Hover a pad to see its length in the footer; `Delete` with the column focused empties the selected pad. The pads are saved with the project. Hearing a performance again and placing it on the timeline come next.
+
 - `⇧⌘V` in the arranger is Paste Time: the same paste as `⌘V`, but it makes room instead of overwriting. Everything from the cursor on moves right by the length you copied, on every track, and the paste lands in the gap. It works after either copy, `⌘C` or `⇧⌘C`, and keeps the copy's empty bars, so what follows stays in place in the bar. A loop at or after the cursor moves along with it. One undo step.
 - Choose how far each performance-lane key jumps: a bar, half a bar or a beat. Click `Bar`, `½` or `Beat` in the lane's gutter; the key strip redraws at the new width at once, and the next key you press jumps by it. Half a bar is offered only in meters where it lands on a beat (4/4, 6/8, not 3/4 or 7/8). The choice is saved with the project; a project saved before it opens at a beat.
 - The arranger's performance lane shows the keyboard that drives it: a thin strip of white and black keys along its bottom edge, each key lined up with where it jumps, from C3 at bar 1. The C's are named, and every key once you zoom in far enough. The strip is dimmer while the lane isn't armed; armed, a key you hold lights up.
@@ -29,6 +31,7 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ### Changed
 
+- While the performance lane is selected, playback never wraps at the loop end: `Space`, a ruler click and the lane's keys all play straight past it, and the loop shows dimmed. Select a track and it loops again. Before, a key let go before the loop end let playback wrap to the loop start.
 - Each key on the performance lane now jumps a beat instead of a bar, the beat of the project's meter: in 4/4, C3 is bar 1, C♯3 bar 1 beat 2, E3 bar 2, C4 bar 4. The keyboard reaches 68 beats from C3 (17 bars of 4/4) instead of 68 bars.
 - A click on the arranger's ruler now starts playback from that point and leaves the cursor and the marquee where they are, as Ableton's scrub area does. Audition a marqueed section from a bar or two before it, transpose, click again, without marqueeing it again. A click in the lanes still places the cursor.
 - `⌥↑`/`⌥↓` no longer step the selected track in the arranger (they did as a side effect, the ⌥ ignored); plain `↑`/`↓` still do.

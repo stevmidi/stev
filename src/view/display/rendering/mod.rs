@@ -870,7 +870,8 @@ impl Display {
         );
     }
 
-    /// The track-header column or the knob panel with the keyboard: the
+    /// The track-header column or the knob panel (its knobs or its pads)
+    /// with the keyboard: the
     /// panes' focus edge across the top of that column only, in every
     /// layout. Drawn here, over the panes and unclipped, so it has the
     /// pane edge's full width: a pane's clipped painter would cut off the
@@ -878,7 +879,7 @@ impl Display {
     fn draw_column_focus_edge(&self, painter: &Painter, panes: PaneRects, rect: Rect) {
         let (column, width) = match self.key_owner() {
             KeyFocus::TrackHeaders => (panes.arranger, Self::TRACK_COLUMN_W),
-            KeyFocus::KnobPanel(_) => (panes.knobs, Self::KNOB_COLUMN_W),
+            KeyFocus::KnobPanel(_) | KeyFocus::Pads => (panes.knobs, Self::KNOB_COLUMN_W),
             _ => return,
         };
         let Some(column) = column else {

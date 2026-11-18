@@ -30,6 +30,7 @@ mod modal;
 mod plugin_drag;
 mod wheel_lane;
 
+pub(super) use knob_focus::{ColumnKey, column_key};
 pub(super) use midi_drag::DragPointer;
 
 use self::gestures::past_drag_threshold;
@@ -559,6 +560,9 @@ impl Display {
                         Some(knob) => self.handle_knob_panel_key(knob, &event),
                         None => false,
                     },
+                    KeyFocus::Pads if self.pads_have_keyboard() => {
+                        self.handle_pad_column_key(&event)
+                    }
                     _ => false,
                 }
                 || self.forward_input_event(event, ctx);
@@ -1030,9 +1034,12 @@ impl Display {
                     return true;
                 }
                 // The knob panel takes the keyboard only for a click that
-                // selects a knob (`select_knob`); a turn never.
+                // selects a knob (`select_knob`) or, the lane selected, a
+                // pad (`handle_pad_click`); a turn never.
                 if self.is_over_knob_panel(x, y) {
-                    self.handle_knob_panel_click(x, y, modifiers.command);
+                    if !self.handle_pad_click(x, y) {
+                        self.handle_knob_panel_click(x, y, modifiers.command);
+                    }
                     return true;
                 }
                 if self.key_focus == KeyFocus::Browser {
