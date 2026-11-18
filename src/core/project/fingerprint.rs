@@ -106,6 +106,7 @@ fn hash_project(
         sequencer.tempo_us(),
         meter.numerator(),
         meter.denominator(),
+        sequencer.performance_lane_key_length(),
         sequencer.region_start(),
         sequencer.region_end(),
         sequencer.tracks().len(),
@@ -181,6 +182,7 @@ mod tests {
     use crate::models::clip::Clip;
     use crate::models::event::Event;
     use crate::models::knobs::{PluginParam, UNASSIGNED_KNOBS, test_param};
+    use crate::models::performance_lane::KeyLength;
     use crate::models::track::InstrumentRef;
 
     use super::*;
@@ -261,6 +263,9 @@ mod tests {
     const SAVED_CHANGES: &[Change] = &[
         ("tempo", |s| s.set_tempo(400_000)),
         ("meter", |s| s.set_meter(Meter::new(3, 4).unwrap())),
+        ("performance-lane key length", |s| {
+            s.set_performance_lane_key_length(KeyLength::Bar);
+        }),
         ("region start", |s| s.set_global_region(480, s.region_end())),
         ("region end", |s| s.set_global_region(0, 1920)),
         ("track count", |s| s.set_track_count(5)),
@@ -450,6 +455,7 @@ mod tests {
         let ProjectData {
             tempo_us: _,
             meter,
+            performance_lane_key_length: _,
             region_start: _,
             region_end: _,
             tracks,

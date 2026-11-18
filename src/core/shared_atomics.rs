@@ -351,6 +351,14 @@ pub(crate) struct SharedAtomics {
     /// atomic being the source of truth as `tempo` is. One meter per project
     /// (`archive/270-time-signature.md`).
     pub(crate) meter: Arc<AtomicU16>,
+    /// How far each performance-lane key jumps, as
+    /// [`KeyLength::to_bits`](crate::models::performance_lane::KeyLength::to_bits):
+    /// the stored choice, a half bar included in an odd meter. Written by the
+    /// `"sequencer"` thread (`Sequencer::set_performance_lane_key_length`),
+    /// the atomic being the source of truth as `meter` is; read by the view to
+    /// draw the keys and the gutter's labels (`510-performance-lane-keyboard.md`
+    /// § Step 1b).
+    pub(crate) performance_lane_key_length: Arc<AtomicU8>,
     /// Free-running musical tick counter. Written by the `"clock"` thread; held
     /// to `clock_tick ≡ playback_tick (mod region_length)` — *not* absolute
     /// equality — via [`ClockCommand::AlignToPlayback`](crate::core::clock::ClockCommand).

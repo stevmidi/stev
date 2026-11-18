@@ -1,6 +1,7 @@
 //! The `EventHandlers` chokepoint for raw MIDI-IN while the arranger
 //! performance lane is armed: a `NoteOn` on a mapped key jumps the transport to
-//! that key's beat (`key_tick`) and suspends loop-wrap; the `NoteOff` resumes loop-wrap but
+//! the start of that key (`key_tick`, a bar, half a bar or a beat a key) and
+//! suspends loop-wrap; the `NoteOff` resumes loop-wrap but
 //! deliberately leaves the transport running — releasing the key does not
 //! stop playback, so a performer stops on their own terms. Lives here rather
 //! than in `Sequencer` because it needs `&mut Transport`. Live-only. See
@@ -40,7 +41,11 @@ impl EventHandlers {
 
                 sequencer.performance_lane_mut().begin_live_trigger(note);
 
-                let target_tick = key_tick(sequencer.meter(), key_index);
+                let target_tick = key_tick(
+                    sequencer.meter(),
+                    sequencer.performance_lane_key_length(),
+                    key_index,
+                );
                 transport.suspend_loop_wrap();
                 if !transport.is_running() {
                     transport.start();

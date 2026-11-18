@@ -1,8 +1,9 @@
 # Arranger Performance Lane
 
 A reserved row in the arranger, above track 1, that arms the physical MIDI keyboard
-for beat-jump triggering instead of normal note capture. Deliberately live-input
-only — no recording/capture, no persistence. Key files:
+for jump triggering (a bar, half a bar or a beat a key) instead of normal note
+capture. Deliberately live-input only — no recording/capture; the one thing
+saved is the key length. Key files:
 `src/models/performance_lane.rs`, `src/core/sequencer/performance_lane.rs`,
 `src/core/event_handlers/performance_lane_handler.rs`,
 `src/view/display/rendering/arranger.rs`.
@@ -10,25 +11,39 @@ only — no recording/capture, no persistence. Key files:
 ## Scope
 
 - **Live playing only, by design** — a note held on the physical keyboard jumps
-  the transport to that note's beat and plays from there; releasing it leaves
+  the transport to that note's key and plays from there; releasing it leaves
   playback running (deliberately — a release doesn't stop the transport, so a
   performer flowing between bars gets no awkward pause; they stop playback
   themselves when done). Nothing about a trigger is recorded, committed, or persisted —
-  `ProjectData` (`060-persistence.md`) does not carry any performance-lane
-  field. Do not reintroduce a `PerformanceLaneData`/events/muted concept
+  `ProjectData` (`060-persistence.md`) carries one performance-lane field, the
+  key length (`performance_lane_key_length`, a setting of how the lane plays,
+  not a trigger). Do not reintroduce a `PerformanceLaneData`/events/muted concept
   without a deliberate scope change; an earlier iteration of this feature had
   one and it was removed on purpose.
 - `PerformanceLane` (`models/performance_lane.rs`) tracks only the
   currently-held trigger note (`live_active: Option<u8>`), monophonic — a new
   NoteOn simply supersedes whatever was previously held. `key_index_from_note`
   maps a MIDI note to a 0-based key via `config::PERFORMANCE_LANE_BASE_NOTE`
-  (currently C3/60); notes below it are ignored. `key_tick` is where a key
-  jumps: **one beat per key**, the counted beat of the project's meter
-  (`meter.beat_ticks()`: a quarter in x/4, an eighth in x/8), so every jump
-  lands on a beat in every meter. In 4/4 C3 = bar 1, C♯3 = bar 1 beat 2,
-  E3 = bar 2, C4 = bar 4, and the keyboard reaches 17 bars (to note 127).
-  One key per bar until 2026-11-18, then briefly half a bar, which landed off
-  the beat in odd meters (`510` § Changes while building).
+  (currently C3/60); notes below it are ignored. `key_tick(meter, length,
+  key)` is where a key jumps, one **key length** (`KeyLength`) per key: a
+  bar, half a bar or a beat (`KeyLength::ticks`: `bar_ticks`, half of it,
+  `beat_ticks`, the counted beat, a quarter in x/4, an eighth in x/8), so
+  every jump lands on a beat in every meter. Half a bar is offered only where
+  the meter's numerator is even (the arranger grid's half-bar rule);
+  `KeyLength::in_meter` plays a stored half bar as a beat in an odd meter, and
+  the stored choice is kept, so 4/4 → 3/4 → 4/4 is at a half bar again. A beat
+  a key in 4/4: C3 = bar 1, C♯3 = bar 1 beat 2, E3 = bar 2, C4 = bar 4; a bar
+  a key: C♯3 = bar 2, C4 = bar 13. 68 keys (to note 127) reach 68 bars, 34 or
+  68 beats. The length is picked from the gutter (§ Rendering), owned by the
+  sequencer (`Sequencer::set_performance_lane_key_length`, from
+  `SequencerCommand::SetPerformanceLaneKeyLength`), mirrored to the view
+  through `SharedAtomics::performance_lane_key_length`, saved with the project
+  (a project saved before it opens at a beat, as do new projects and
+  templates), counted as unsaved by the fingerprint and **not an undo step**.
+  A change applies from the next key pressed: a held key keeps its jump.
+  One key per bar until 2026-11-18, then briefly half a bar for every meter,
+  then a beat (`510` § Changes while building), then the choice (`510`
+  § Step 1b).
 
 ## Arming / selection
 
@@ -78,7 +93,7 @@ only — no recording/capture, no persistence. Key files:
   it needs `&mut Transport`, which `Sequencer` doesn't own.
 - **NoteOn**: `begin_live_trigger`, then `transport.suspend_loop_wrap()`, starts
   the transport if not already running, and `jump_and_chase(target_tick)` to the
-  key's beat (`key_tick`). `loop_wrap_suspended` (`Transport`, thread-local,
+  key's start (`key_tick`, at the length the sequencer holds). `loop_wrap_suspended` (`Transport`, thread-local,
   plain `bool`) stops the region loop boundary from fighting the lane's hold.
 - **NoteOff**: only acts if `end_live_trigger` confirms the released note
   matches the currently-held one (a stale release of an already-superseded
@@ -97,15 +112,29 @@ only — no recording/capture, no persistence. Key files:
   (`510-performance-lane-keyboard.md`). The whole row is drawn with the
   arranger's backgrounds (`draw_performance_lane_row`,
   `rendering/performance_lane.rs`): the gutter (the accent tint and 4px marker
-  while armed), the lane fill and the keys. `draw_timeline` starts the
+  while armed, and the key-length labels), the lane fill and the keys.
+- **The gutter's key-length labels**: `Bar`, `½` and `Beat` side by side from
+  the track names' inset (`TRACK_HEADER_INNER_PAD_X`), clear of the marker, in
+  `FONT_SIZE_TL`, coloured as the piano roll's `VEL`/`PB`/`MW` switch
+  (`toggle_icon_color`): the length that plays in the accent, one under the
+  pointer `fg`, the rest `fg_dim`, with the pointing hand on a label that
+  would switch (`HoveredControl::KeyLength`, no footer hint). In an odd meter
+  `½` isn't drawn (the other two close up) and `Beat` is lit when `½` is the
+  stored choice. One pure layout (`key_length_labels`, each cell its label's
+  width and the row's height) serves the drawing and the hit test
+  (`Display::key_length_label_at`). A click on a label picks that length and
+  does nothing else: it doesn't arm or disarm the lane, select anything or move
+  the focus (checked first in `handle_mouse_click`'s header-column branch); a
+  click anywhere else on the row arms as before. No key and no keymap action. `draw_timeline` starts the
   arranger's in-lane grid lines under the row (`ArrangerLayout::lanes_top`), so
   no bar or beat line crosses the lane; the key edges, every beat, are the lines
-  there. Each key (`KEY_COUNT`, 68 from C3, 17 bars of 4/4; `note_for_key`, the
-  inverse of `key_index_from_note`) spans its beat, from `key_tick` to the next,
+  there. Each key (`KEY_COUNT`, 68 from C3; `note_for_key`, the
+  inverse of `key_index_from_note`) spans its key length, from `key_tick` to the next,
   in a thin strip along the lane's bottom edge (`KEY_STRIP_H`, 5pt), in the
   piano roll's `piano_key_white`/`piano_key_black`, from `tick_to_screen_x` in
-  the project meter, so it follows zoom, scroll and the meter; beats past the
-  68th have none. Filling the whole row with the keys was tried first and read
+  the project meter, so it follows zoom, scroll, the meter and the key length
+  (redrawn at the new width as soon as it changes); time past the 68th key has
+  none. Filling the whole row with the keys was tried first and read
   as heavy slabs, whatever the tones: the piano roll's colours work in a narrow
   band, as in its key column. Seams at E/F (1px) and B/C (2px) in the strip, as
   on the piano roll (`row_seam_w`). The plain lane above the strip carries the
@@ -125,8 +154,8 @@ only — no recording/capture, no persistence. Key files:
   trigger; it was removed as unnecessary UI complexity once the playhead was
   made reliably visible (see next section) — don't re-add it without a
   specific reason. The keys are such a reason: they show the mapping, which
-  nothing else shows, and they are static (zoom, scroll and the meter change
-  them, playing never does), where the removed visuals repeated what the
+  nothing else shows, and they are static (zoom, scroll, the meter and the key
+  length change them, playing never does), where the removed visuals repeated what the
   playhead already says.
 
 ## Waking the UI from a background-thread trigger

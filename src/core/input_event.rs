@@ -39,6 +39,7 @@ use crate::{
     models::{
         clip::{Clip, ClipEdge, NoteDrag},
         knobs::ParamId,
+        performance_lane::KeyLength,
         track::TrackOutput,
     },
 };
@@ -727,6 +728,9 @@ pub(crate) enum InputEvent {
         /// The new meter.
         meter: Meter,
     },
+    /// A click on one of the performance lane's gutter labels (`Bar`, `½`,
+    /// `Beat`): how far each lane key jumps (`SequencerCommand::SetPerformanceLaneKeyLength`).
+    SetPerformanceLaneKeyLength(KeyLength),
     /// Arranger track-header volume/pan bar drag: the view resolves the target
     /// track and the absolute value for the current pointer position and
     /// forwards it each time it changes. Not undoable — see

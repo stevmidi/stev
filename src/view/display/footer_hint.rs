@@ -37,6 +37,9 @@ pub(super) enum HoveredControl {
     /// A piano-roll gutter label that would show another lane. No hint: a
     /// click picks the lane, the key cycles them.
     ClipLane,
+    /// A performance-lane gutter label that would pick another key length.
+    /// No hint: no key does it.
+    KeyLength,
 }
 
 impl HoveredControl {
@@ -54,7 +57,7 @@ impl HoveredControl {
             HoveredControl::KeyboardChip => Action::ToggleComputerKeyboard,
             HoveredControl::BrowserToggle => Action::ToggleBrowser,
             HoveredControl::CategoryPlus(action) => action,
-            HoveredControl::ClipLane => return None,
+            HoveredControl::ClipLane | HoveredControl::KeyLength => return None,
         };
         command_hint(action.info().label, keymap.chords(action))
     }
@@ -76,6 +79,8 @@ impl Display {
             Some(HoveredControl::BrowserToggle)
         } else if self.is_pointer_on_clip_lane_switch() {
             Some(HoveredControl::ClipLane)
+        } else if self.is_pointer_on_key_length_switch() {
+            Some(HoveredControl::KeyLength)
         } else {
             self.browser_category_plus_under_pointer()
                 .and_then(BrowserCategory::plus_action)

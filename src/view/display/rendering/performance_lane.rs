@@ -2,8 +2,10 @@
 //! the gutter and its selection accent, and in the content area the keyboard
 //! that drives the lane, lined up with where its keys jump
 //! (`510-performance-lane-keyboard.md`). Key `k` is note
-//! `PERFORMANCE_LANE_BASE_NOTE + k` (`note_for_key`) and spans one beat
-//! from `key_tick(k)`: a thin strip along the lane's bottom edge carries each
+//! `PERFORMANCE_LANE_BASE_NOTE + k` (`note_for_key`) and spans one key
+//! length (a bar, half a bar or a beat, `KeyLength`) from `key_tick(k)`,
+//! picked from the `Bar` / `½` / `Beat` labels in the gutter
+//! (§ Step 1b): a thin strip along the lane's bottom edge carries each
 //! key, white or black as on the piano roll, the plain lane above it the
 //! names (the C's always, every key once a key is wide enough), and a key the
 //! live keyboard holds lights while the lane is armed. Static: it changes
@@ -12,12 +14,13 @@
 
 use std::ops::Range;
 
-use egui::{Align2, Color32, CornerRadius, FontId, Painter, Rect, Stroke, pos2, vec2};
+use egui::{Align2, Color32, CornerRadius, FontId, Painter, Pos2, Rect, Stroke, pos2, vec2};
 
 use super::arranger::lane_grid_fill;
 use super::piano_keys::{is_black_key, octave_of, pitch_class, row_seam_w};
 use super::*;
-use crate::models::performance_lane::{KEY_COUNT, key_tick, note_for_key};
+use crate::core::time::Meter;
+use crate::models::performance_lane::{KEY_COUNT, KeyLength, key_tick, note_for_key};
 use crate::models::pitch::pitch_class_name;
 
 /// Height of the key strip along the lane's bottom edge. Narrow, as the
@@ -41,6 +44,16 @@ const KEY_LABEL_PAD_X: f32 = 3.0;
 /// The name the every-key label threshold is measured from: a sharp, as
 /// wide as the lane's names get (`labels_every_key`).
 const WIDEST_KEY_NAME: &str = "C#4";
+
+/// A gutter label's cell: its text and the room after it, so a cell's width
+/// is what a click on it takes (`key_length_labels`).
+fn key_length_label(length: KeyLength) -> (&'static str, f32) {
+    match length {
+        KeyLength::Bar => ("Bar", 32.0),
+        KeyLength::HalfBar => ("½", 22.0),
+        KeyLength::Beat => ("Beat", 36.0),
+    }
+}
 
 impl Display {
     /// Draws the performance-lane row (above track 1), from
@@ -80,6 +93,7 @@ impl Display {
                 accent,
             );
         }
+        self.draw_key_length_labels(painter);
 
         let content = Rect::from_x_y_ranges(
             self.content_origin_x()..=self.content_right_x(),
@@ -98,8 +112,9 @@ impl Display {
         let strip_top = strip_bottom - KEY_STRIP_H;
 
         let meter = self.meter();
+        let length = self.performance_lane_key_length();
         let ppt = self.pixels_per_tick();
-        let key_ticks = key_tick(meter, 1);
+        let key_ticks = key_tick(meter, length, 1);
         let keys = visible_keys(self.render_scroll_x(), self.content_w(), ppt, key_ticks);
         let font = FontId::proportional(theme::FONT_SIZE_TL);
         let label_w = p
@@ -121,8 +136,8 @@ impl Display {
             let Some(note) = note_for_key(key_index) else {
                 continue;
             };
-            let left = self.tick_to_screen_x(key_tick(meter, key_index));
-            let right = self.tick_to_screen_x(key_tick(meter, key_index + 1));
+            let left = self.tick_to_screen_x(key_tick(meter, length, key_index));
+            let right = self.tick_to_screen_x(key_tick(meter, length, key_index + 1));
             let above = Rect::from_x_y_ranges(left..=right, lane_top..=strip_top);
             let key = Rect::from_x_y_ranges(left..=right, strip_top..=strip_bottom);
             let lit = armed && self.live_notes.is_held(note);
@@ -168,6 +183,96 @@ impl Display {
             Stroke::new(ARRANGER_LANE_SEAM_W, grid_seam_color()),
         );
     }
+
+    /// The gutter's key-length labels this frame, each with the cell a click
+    /// on it takes: shared by the drawing and the hit test, as
+    /// `arranger_layout` is for the row.
+    fn key_length_labels(&self) -> Vec<(KeyLength, Rect)> {
+        let layout = self.arranger_layout();
+        let row = Rect::from_min_size(
+            pos2(
+                self.render.canvas_rect.min.x + Self::TRACK_HEADER_INNER_PAD_X,
+                layout.performance_lane_top,
+            ),
+            vec2(0.0, layout.performance_lane_h),
+        );
+        key_length_labels(self.meter(), row)
+    }
+
+    /// The key length whose gutter label holds `(x, y)`, if any. Arranger
+    /// only: a click on it picks that length and does nothing else
+    /// (`510-performance-lane-keyboard.md` § Step 1b decision 3).
+    pub(in crate::view::display) fn key_length_label_at(
+        &self,
+        x: f32,
+        y: f32,
+    ) -> Option<KeyLength> {
+        key_length_label_in(&self.key_length_labels(), pos2(x, y))
+    }
+
+    /// Whether the pointer is on a gutter label a click would switch to:
+    /// not the length that plays. Its pointing hand.
+    pub(in crate::view::display) fn is_pointer_on_key_length_switch(&mut self) -> bool {
+        let playing = self.performance_lane_key_length().in_meter(self.meter());
+        self.in_pane(Pane::Arranger, |display| {
+            display
+                .canvas_pointer()
+                .and_then(|p| display.key_length_label_at(p.x, p.y))
+        })
+        .is_some_and(|length| length != playing)
+    }
+
+    /// Draws `Bar`, `½` and `Beat` in the gutter, coloured as the piano
+    /// roll's lane switch is (`toggle_icon_color`): the length that plays
+    /// `accent`, one under the pointer `fg`, the rest `fg_dim`. In an odd
+    /// meter `½` isn't drawn, and `Beat` is lit if `½` is the stored choice.
+    fn draw_key_length_labels(&self, painter: &Painter) {
+        let playing = self.performance_lane_key_length().in_meter(self.meter());
+        let labels = self.key_length_labels();
+        let hovered = self
+            .canvas_pointer()
+            .and_then(|p| key_length_label_in(&labels, p));
+        let font = FontId::proportional(theme::FONT_SIZE_TL);
+        for (length, cell) in labels {
+            painter.text(
+                pos2(cell.left(), cell.center().y),
+                Align2::LEFT_CENTER,
+                key_length_label(length).0,
+                font.clone(),
+                toggle_icon_color(length == playing, hovered == Some(length)),
+            );
+        }
+    }
+}
+
+/// The gutter's key-length labels laid out left to right from `row`'s left
+/// edge, each cell `row`'s height and its label's width
+/// (`key_length_label`): `Bar`, `½` where `meter` offers half a bar
+/// (`KeyLength::is_offered`), `Beat`.
+fn key_length_labels(meter: Meter, row: Rect) -> Vec<(KeyLength, Rect)> {
+    let mut left = row.left();
+    KeyLength::ALL
+        .into_iter()
+        .filter(|length| length.is_offered(meter))
+        .map(|length| {
+            let w = key_length_label(length).1;
+            let cell = Rect::from_x_y_ranges(left..=left + w, row.y_range());
+            left += w;
+            (length, cell)
+        })
+        .collect()
+}
+
+/// The length whose cell of `labels` holds `pos`. A cell's right edge
+/// belongs to the next one.
+fn key_length_label_in(labels: &[(KeyLength, Rect)], pos: Pos2) -> Option<KeyLength> {
+    labels
+        .iter()
+        .find(|(_, cell)| {
+            (cell.left()..cell.right()).contains(&pos.x)
+                && (cell.top()..cell.bottom()).contains(&pos.y)
+        })
+        .map(|&(length, _)| length)
 }
 
 /// The keys (0-based, end exclusive) at least partly inside a content area
@@ -215,7 +320,6 @@ fn key_name(note: u8) -> String {
 mod tests {
     use super::*;
     use crate::core::config::PERFORMANCE_LANE_BASE_NOTE;
-    use crate::core::time::Meter;
 
     #[test]
     fn the_keys_end_at_note_127() {
@@ -225,7 +329,7 @@ mod tests {
 
     #[test]
     fn visible_keys_follow_scroll_and_zoom() {
-        let key_ticks = key_tick(Meter::FOUR_FOUR, 1);
+        let key_ticks = key_tick(Meter::FOUR_FOUR, KeyLength::Beat, 1);
         // 100 px to a key, a beat: 400 to a bar.
         let ppt = 100.0 / key_ticks as f32;
         assert_eq!(visible_keys(0.0, 400.0, ppt, key_ticks), 0..4);
@@ -236,7 +340,7 @@ mod tests {
 
     #[test]
     fn visible_keys_stop_where_the_keys_do() {
-        let key_ticks = key_tick(Meter::FOUR_FOUR, 1);
+        let key_ticks = key_tick(Meter::FOUR_FOUR, KeyLength::Beat, 1);
         // Zoomed far out: a pixel a key, 1000 keys' room on screen.
         let ppt = 1.0 / key_ticks as f32;
         assert_eq!(visible_keys(0.0, 1000.0, ppt, key_ticks), 0..KEY_COUNT);
@@ -247,7 +351,7 @@ mod tests {
 
     #[test]
     fn a_degenerate_zoom_shows_no_keys() {
-        let key_ticks = key_tick(Meter::FOUR_FOUR, 1);
+        let key_ticks = key_tick(Meter::FOUR_FOUR, KeyLength::Beat, 1);
         assert!(visible_keys(0.0, 400.0, 0.0, key_ticks).is_empty());
         assert!(visible_keys(0.0, 400.0, f32::NAN, key_ticks).is_empty());
         assert!(visible_keys(0.0, 400.0, f32::INFINITY, key_ticks).is_empty());
@@ -258,12 +362,88 @@ mod tests {
         let waltz = Meter::new(3, 4).expect("3/4 is a valid meter");
         let seven_eight = Meter::new(7, 8).expect("7/8 is a valid meter");
         for meter in [waltz, seven_eight] {
-            let key_ticks = key_tick(meter, 1);
+            let key_ticks = key_tick(meter, KeyLength::Beat, 1);
             assert_eq!(key_ticks, meter.beat_ticks());
             // 100 px to a beat of this meter: four keys in 400 px.
             let ppt = 100.0 / meter.beat_ticks() as f32;
             assert_eq!(visible_keys(0.0, 400.0, ppt, key_ticks), 0..4);
         }
+    }
+
+    #[test]
+    fn a_key_is_one_bar_or_half_a_bar_when_chosen() {
+        let meter = Meter::FOUR_FOUR;
+        let bar = key_tick(meter, KeyLength::Bar, 1);
+        assert_eq!(bar, meter.bar_ticks());
+        // 100 px to a bar: four bar keys in 400 px, from bar 3 scrolled 200.
+        let ppt = 100.0 / bar as f32;
+        assert_eq!(visible_keys(200.0, 400.0, ppt, bar), 2..6);
+        let half = key_tick(meter, KeyLength::HalfBar, 1);
+        assert_eq!(visible_keys(0.0, 400.0, ppt, half), 0..8);
+        // Zoomed far out, a bar a key still stops at the last key.
+        let ppt = 1.0 / bar as f32;
+        assert_eq!(visible_keys(0.0, 1000.0, ppt, bar), 0..KEY_COUNT);
+    }
+
+    /// The gutter row the label tests lay out in: from x 12, 24 high.
+    fn gutter_row() -> Rect {
+        Rect::from_min_size(pos2(12.0, 100.0), vec2(0.0, 24.0))
+    }
+
+    #[test]
+    fn the_gutter_shows_bar_half_and_beat_in_an_even_meter() {
+        for meter in [Meter::FOUR_FOUR, Meter::new(6, 8).unwrap()] {
+            let labels = key_length_labels(meter, gutter_row());
+            let lengths: Vec<KeyLength> = labels.iter().map(|&(length, _)| length).collect();
+            assert_eq!(lengths, KeyLength::ALL);
+            // Side by side from the row's left edge, each the row's height.
+            assert_eq!(labels[0].1.left(), 12.0);
+            for pair in labels.windows(2) {
+                assert_eq!(pair[0].1.right(), pair[1].1.left());
+            }
+            assert!(
+                labels
+                    .iter()
+                    .all(|(_, cell)| cell.y_range() == gutter_row().y_range())
+            );
+        }
+    }
+
+    #[test]
+    fn the_gutter_drops_the_half_bar_in_an_odd_meter() {
+        for meter in [Meter::new(3, 4).unwrap(), Meter::new(7, 8).unwrap()] {
+            let labels = key_length_labels(meter, gutter_row());
+            let lengths: Vec<KeyLength> = labels.iter().map(|&(length, _)| length).collect();
+            assert_eq!(lengths, [KeyLength::Bar, KeyLength::Beat]);
+            assert_eq!(
+                labels[0].1.right(),
+                labels[1].1.left(),
+                "no gap where ½ was"
+            );
+        }
+    }
+
+    #[test]
+    fn a_click_on_a_label_finds_its_length() {
+        let labels = key_length_labels(Meter::FOUR_FOUR, gutter_row());
+        let at = |x, y| key_length_label_in(&labels, pos2(x, y));
+        let (bar, half, beat) = (labels[0].1, labels[1].1, labels[2].1);
+        assert_eq!(at(bar.left(), 112.0), Some(KeyLength::Bar));
+        assert_eq!(at(half.center().x, 101.0), Some(KeyLength::HalfBar));
+        assert_eq!(
+            at(bar.right(), 112.0),
+            Some(KeyLength::HalfBar),
+            "an edge is the next cell's"
+        );
+        assert_eq!(at(beat.right() - 0.5, 123.5), Some(KeyLength::Beat));
+        assert_eq!(
+            at(beat.right(), 112.0),
+            None,
+            "past the last label: arms the lane"
+        );
+        assert_eq!(at(11.0, 112.0), None, "left of the labels, over the marker");
+        assert_eq!(at(half.center().x, 99.0), None, "above the row");
+        assert_eq!(at(half.center().x, 124.0), None, "below the row");
     }
 
     #[test]

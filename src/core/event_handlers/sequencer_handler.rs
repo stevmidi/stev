@@ -610,6 +610,13 @@ impl EventHandlers {
                 self.record_edit(sequencer, undo_record, edit);
             }
 
+            // A setting of how the lane plays, not an edit: no undo step,
+            // but the fingerprint takes it in, so it counts as unsaved.
+            SequencerCommand::SetPerformanceLaneKeyLength(length) => {
+                sequencer.set_performance_lane_key_length(*length);
+                self.request_repaint();
+            }
+
             // Answered above, ahead of the holds.
             SequencerCommand::SetMarquee(_)
             | SequencerCommand::SetModalOpen(_)
@@ -728,6 +735,7 @@ mod tests {
         clip::NoteDrag::{self, Move, ResizeEnd, ResizeStart},
         event::{Event, EventType},
         knobs::UNASSIGNED_KNOBS,
+        performance_lane::KeyLength,
         track::{InstrumentRef, TrackOutput},
     };
     use crate::view::display::{TrackLane, TrackRoute, UiEvent};
@@ -863,6 +871,30 @@ mod tests {
 
         run_command(&mut h, &mut record, SequencerCommand::Undo);
         assert_eq!(h.sequencer.meter(), Meter::FOUR_FOUR);
+        run_command(&mut h, &mut record, quit());
+        assert_eq!(last_project_reply(&h), Some(None));
+    }
+
+    /// The lane's gutter sets the key length without an undo step, and the
+    /// change counts as unsaved until it is set back.
+    #[test]
+    fn set_performance_lane_key_length_is_unsaved_but_not_undoable() {
+        let mut h = harness();
+        let mut record = Record::new();
+        let set = |length| SequencerCommand::SetPerformanceLaneKeyLength(length);
+        run_command(&mut h, &mut record, set(KeyLength::Bar));
+        assert_eq!(h.sequencer.performance_lane_key_length(), KeyLength::Bar);
+        run_command(&mut h, &mut record, quit());
+        assert_eq!(last_project_reply(&h), Some(Some(ProjectAction::Quit)));
+
+        run_command(&mut h, &mut record, SequencerCommand::Undo);
+        assert_eq!(
+            h.sequencer.performance_lane_key_length(),
+            KeyLength::Bar,
+            "not an undo step"
+        );
+
+        run_command(&mut h, &mut record, set(KeyLength::Beat));
         run_command(&mut h, &mut record, quit());
         assert_eq!(last_project_reply(&h), Some(None));
     }

@@ -149,6 +149,7 @@ use crate::core::plugin_host::PluginAudioHandle;
 use crate::core::plugin_host::catalog::PluginCatalogEntry;
 use crate::core::time::{Meter, pixels_to_ticks, px_per_beat_to_ppt, snap_to_grid};
 use crate::models::clip::{min_window_length, window_with_edge_at};
+use crate::models::performance_lane::KeyLength;
 #[cfg(target_os = "macos")]
 use crate::view::appkit::MainGlContext;
 use crate::{
@@ -209,6 +210,10 @@ pub(crate) struct Display {
     /// The project's time signature, packed by [`Meter::to_bits`]. Read
     /// through [`meter`](Self::meter).
     meter: Arc<AtomicU16>,
+    /// How far each performance-lane key jumps, packed by
+    /// [`KeyLength::to_bits`]. Read through
+    /// [`performance_lane_key_length`](Self::performance_lane_key_length).
+    performance_lane_key_length: Arc<AtomicU8>,
     /// Shared "transport running" flag.
     running: Arc<AtomicBool>,
     /// Shared transport playback position, ticks. The clip pane maps it into
@@ -455,6 +460,7 @@ impl Display {
         input_clock: InputClock,
         tempo: Arc<AtomicI32>,
         meter: Arc<AtomicU16>,
+        performance_lane_key_length: Arc<AtomicU8>,
         running: Arc<AtomicBool>,
         playback_tick: Arc<AtomicI32>,
         cursor_tick: Arc<AtomicI32>,
@@ -470,6 +476,7 @@ impl Display {
         Display {
             tempo,
             meter,
+            performance_lane_key_length,
             running,
             playback_tick,
             cursor_tick,
@@ -1203,6 +1210,12 @@ impl Display {
     /// The project's time signature.
     fn meter(&self) -> Meter {
         Meter::from_bits(self.meter.load(Ordering::Relaxed))
+    }
+
+    /// How far each performance-lane key jumps, as chosen (a half bar in an
+    /// odd meter too: `KeyLength::in_meter` gives what plays).
+    fn performance_lane_key_length(&self) -> KeyLength {
+        KeyLength::from_bits(self.performance_lane_key_length.load(Ordering::Relaxed))
     }
 
     /// The current transport playback tick.

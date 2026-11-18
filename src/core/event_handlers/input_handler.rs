@@ -718,6 +718,10 @@ impl EventHandlers {
                 self.send_sequencer(SequencerCommand::SetMeter { meter: *meter });
             }
 
+            InputEvent::SetPerformanceLaneKeyLength(length) => {
+                self.send_sequencer(SequencerCommand::SetPerformanceLaneKeyLength(*length));
+            }
+
             InputEvent::SetTrackPan { track_idx, pan } => {
                 self.send_sequencer(SequencerCommand::SetTrackPan {
                     track_idx: *track_idx,

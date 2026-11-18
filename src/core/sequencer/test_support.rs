@@ -20,6 +20,7 @@ use crate::models::{
     clip::Clip,
     event::{Event, ParamMove},
     knobs::{ParamId, test_param},
+    performance_lane::KeyLength,
     track::{InstrumentRef, Track, TrackOutput},
 };
 
@@ -54,6 +55,7 @@ pub(super) fn sequencer_with_outputs(
         Arc::new(AtomicU16::new(Meter::FOUR_FOUR.to_bits())),
         Arc::new(AtomicU8::new(0)),
         Arc::new(AtomicBool::new(false)),
+        Arc::new(AtomicU8::new(KeyLength::default().to_bits())),
         Arc::new(TrackMixAtomics::new()),
         Arc::new(AudioExportAtomics::default()),
     );

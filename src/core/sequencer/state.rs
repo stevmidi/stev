@@ -39,7 +39,7 @@ use crate::{
     models::{
         clip::{Clip, CopiedNote},
         knobs::UNASSIGNED_KNOBS,
-        performance_lane::PerformanceLane,
+        performance_lane::{KeyLength, PerformanceLane},
         track::{Track, TrackOutput},
     },
 };
@@ -173,6 +173,10 @@ pub(crate) struct Sequencer {
     /// selection. Shared with `MidiInputForwarder` (a different thread)
     /// so it can suppress the MIDI-OUT thru-forward while armed.
     pub(super) performance_lane_armed: Arc<AtomicBool>,
+    /// How far each lane key jumps (`KeyLength::to_bits`), shared with the
+    /// view (`SharedAtomics::performance_lane_key_length`). Saved with the
+    /// project; not an undo step (`510-performance-lane-keyboard.md` § Step 1b).
+    pub(super) performance_lane_key_length: Arc<AtomicU8>,
 
     // --- Agent bridge ---
     /// The view's arranger marquee, mirrored here on every change
@@ -207,6 +211,7 @@ impl Sequencer {
         meter: Arc<AtomicU16>,
         arm_channel: Arc<AtomicU8>,
         performance_lane_armed: Arc<AtomicBool>,
+        performance_lane_key_length: Arc<AtomicU8>,
         track_mix: Arc<TrackMixAtomics>,
         audio_export_atomics: Arc<AudioExportAtomics>,
     ) -> Self {
@@ -246,6 +251,7 @@ impl Sequencer {
             audio_export_atomics,
             performance_lane: PerformanceLane::new(),
             performance_lane_armed,
+            performance_lane_key_length,
             marquee: None,
             modal_open: false,
         }
@@ -317,6 +323,18 @@ impl Sequencer {
     /// the loop region keep their ticks (`archive/270-time-signature.md`).
     pub(crate) fn set_meter(&self, meter: Meter) {
         self.meter.store(meter.to_bits(), Ordering::Relaxed);
+    }
+
+    /// Sets how far each performance-lane key jumps. Kept as chosen, a half
+    /// bar in an odd meter too (`KeyLength::in_meter` decides what plays).
+    pub(crate) fn set_performance_lane_key_length(&self, length: KeyLength) {
+        self.performance_lane_key_length
+            .store(length.to_bits(), Ordering::Relaxed);
+    }
+
+    /// How far each performance-lane key jumps, as chosen.
+    pub(crate) fn performance_lane_key_length(&self) -> KeyLength {
+        KeyLength::from_bits(self.performance_lane_key_length.load(Ordering::Relaxed))
     }
 
     /// Sets both loop-region bounds directly (no normalization / clock realign
@@ -460,6 +478,7 @@ impl Sequencer {
         self.tempo
             .store(config::TEMPO_US_DEFAULT, Ordering::Relaxed);
         self.set_meter(Meter::FOUR_FOUR);
+        self.set_performance_lane_key_length(KeyLength::default());
         self.performance_lane.clear();
         self.performance_lane_armed.store(false, Ordering::Relaxed);
         self.clip_clipboard = None;

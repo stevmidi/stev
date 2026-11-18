@@ -24,6 +24,7 @@ use crate::{
         clip::Clip,
         event::{Event, ParamMove},
         knobs::{ParamId, PluginParam, PluginTag, knobs_from_saved},
+        performance_lane::KeyLength,
         track::{InstrumentRef, Track, TrackOutput, track_name_from_input},
     },
 };
@@ -313,6 +314,40 @@ fn meter_from_list(list: &[MeterData]) -> Meter {
     })
 }
 
+/// How far each performance-lane key jumps, on disk: `"Bar"`, `"HalfBar"`
+/// or `"Beat"`. Kept as chosen, a half bar in an odd meter too
+/// (`KeyLength::in_meter`). See `510-performance-lane-keyboard.md` § Step 1b.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum KeyLengthData {
+    /// A bar a key.
+    Bar,
+    /// Half a bar a key.
+    HalfBar,
+    /// A beat a key: what a project saved before the choice existed plays.
+    #[default]
+    Beat,
+}
+
+impl KeyLengthData {
+    /// `length` as saved.
+    fn of(length: KeyLength) -> Self {
+        match length {
+            KeyLength::Bar => KeyLengthData::Bar,
+            KeyLength::HalfBar => KeyLengthData::HalfBar,
+            KeyLength::Beat => KeyLengthData::Beat,
+        }
+    }
+
+    /// The length this saved value means.
+    fn into_key_length(self) -> KeyLength {
+        match self {
+            KeyLengthData::Bar => KeyLength::Bar,
+            KeyLengthData::HalfBar => KeyLength::HalfBar,
+            KeyLengthData::Beat => KeyLength::Beat,
+        }
+    }
+}
+
 /// A whole project, on disk — the root of the `.stev` JSON.
 #[derive(Serialize, Deserialize, Clone)]
 pub(crate) struct ProjectData {
@@ -322,6 +357,10 @@ pub(crate) struct ProjectData {
     /// projects saved before time signatures, which load as 4/4.
     #[serde(default = "default_meter_list")]
     pub(crate) meter: Vec<MeterData>,
+    /// How far each performance-lane key jumps. Absent in projects saved
+    /// before the choice existed, which open at a beat.
+    #[serde(default)]
+    pub(crate) performance_lane_key_length: KeyLengthData,
     /// Loop-region start tick.
     pub(crate) region_start: i32,
     /// Loop-region end tick.
@@ -335,6 +374,7 @@ impl Default for ProjectData {
         ProjectData {
             tempo_us: config::TEMPO_US_DEFAULT,
             meter: default_meter_list(),
+            performance_lane_key_length: KeyLengthData::default(),
             region_start: 0,
             region_end: config::REGION_LENGTH_DEFAULT,
             // One empty MIDI-Out track per slot, channel = track index —
@@ -422,6 +462,9 @@ impl ProjectSnapshot {
             data: ProjectData {
                 tempo_us: sequencer.tempo_us(),
                 meter: MeterData::list_for(sequencer.meter()),
+                performance_lane_key_length: KeyLengthData::of(
+                    sequencer.performance_lane_key_length(),
+                ),
                 region_start: sequencer.region_start(),
                 region_end: sequencer.region_end(),
                 tracks,
@@ -448,12 +491,14 @@ impl ProjectData {
     /// track's output and plugin state, name, colour, volume and pan; the
     /// track count, meter and tempo), what describes a performance or a
     /// passing state reset — no clips, no track muted, the default loop
-    /// region. Applied when a template opens, so one holding clips (a project
+    /// region, the performance lane at a beat a key (it belongs to the piece,
+    /// `510-performance-lane-keyboard.md` § Step 1b decision 5). Applied when a template opens, so one holding clips (a project
     /// copied into the folder by hand) still opens empty, and when one is
     /// saved. See `archive/340-templates.md` decisions 5 and 6.
     pub(crate) fn into_template(mut self) -> Self {
         self.region_start = 0;
         self.region_end = config::REGION_LENGTH_DEFAULT;
+        self.performance_lane_key_length = KeyLengthData::default();
         for track in &mut self.tracks {
             track.muted = false;
             track.clips.clear();
@@ -495,6 +540,8 @@ impl ProjectData {
 
         sequencer.set_tempo(self.tempo_us);
         sequencer.set_meter(meter_from_list(&self.meter));
+        sequencer
+            .set_performance_lane_key_length(self.performance_lane_key_length.into_key_length());
         sequencer.set_global_region(self.region_start, self.region_end);
 
         let mut all_metadata = Vec::new();
@@ -574,12 +621,13 @@ mod tests {
     }
 
     /// A template keeps the instruments and their mix, and drops the
-    /// performance: clips, mutes and the loop region.
+    /// performance: clips, mutes, the loop region and the lane's key length.
     #[test]
     fn a_template_keeps_the_setup_and_drops_the_performance() {
         let mut data = ProjectData {
             tempo_us: 666_667,
             meter: MeterData::list_for(Meter::new(6, 8).unwrap()),
+            performance_lane_key_length: KeyLengthData::Bar,
             region_start: 1920,
             region_end: 7680,
             ..ProjectData::default()
@@ -607,6 +655,7 @@ mod tests {
         let mut expected = data.clone();
         expected.region_start = 0;
         expected.region_end = config::REGION_LENGTH_DEFAULT;
+        expected.performance_lane_key_length = KeyLengthData::Beat;
         expected.tracks[1].muted = false;
         expected.tracks[1].clips.clear();
 
@@ -854,6 +903,63 @@ mod tests {
         sequencer.set_meter(Meter::new(3, 4).unwrap());
         data.apply_to_sequencer(&mut sequencer);
         assert_eq!(sequencer.meter(), Meter::FOUR_FOUR);
+    }
+
+    #[test]
+    fn a_key_length_survives_a_save_and_load() {
+        for length in KeyLength::ALL {
+            let mut sequencer = test_sequencer();
+            sequencer.set_performance_lane_key_length(length);
+            let json = serde_json::to_string(&ProjectData::from_sequencer(&sequencer)).unwrap();
+
+            sequencer.new_project();
+            assert_eq!(
+                sequencer.performance_lane_key_length(),
+                KeyLength::Beat,
+                "a new project is at a beat"
+            );
+            let data: ProjectData = serde_json::from_str(&json).unwrap();
+            data.apply_to_sequencer(&mut sequencer);
+            assert_eq!(sequencer.performance_lane_key_length(), length);
+        }
+    }
+
+    /// A half bar is kept as chosen in an odd meter, though it plays as a
+    /// beat there, so going back to an even meter brings it back.
+    #[test]
+    fn a_half_bar_in_an_odd_meter_is_saved_as_chosen() {
+        let sequencer = test_sequencer();
+        sequencer.set_meter(Meter::new(3, 4).unwrap());
+        sequencer.set_performance_lane_key_length(KeyLength::HalfBar);
+        let data = ProjectData::from_sequencer(&sequencer);
+        assert_eq!(data.performance_lane_key_length, KeyLengthData::HalfBar);
+    }
+
+    /// A project saved before the choice existed has no key: it opens at a
+    /// beat, even over a session at a bar.
+    #[test]
+    fn a_project_without_a_key_length_opens_at_a_beat() {
+        let mut json = serde_json::to_value(ProjectData::default()).unwrap();
+        json.as_object_mut()
+            .unwrap()
+            .remove("performance_lane_key_length");
+        let data: ProjectData = serde_json::from_value(json).unwrap();
+        assert_eq!(data.performance_lane_key_length, KeyLengthData::Beat);
+
+        let mut sequencer = test_sequencer();
+        sequencer.set_performance_lane_key_length(KeyLength::Bar);
+        data.apply_to_sequencer(&mut sequencer);
+        assert_eq!(sequencer.performance_lane_key_length(), KeyLength::Beat);
+    }
+
+    #[test]
+    fn a_key_length_is_saved_by_name() {
+        let data = ProjectData {
+            performance_lane_key_length: KeyLengthData::HalfBar,
+            ..ProjectData::default()
+        };
+        let json = serde_json::to_value(data).unwrap();
+        assert_eq!(json["performance_lane_key_length"], "HalfBar");
     }
 
     /// A hand-edited meter Stev can't play, or an empty list, falls back to

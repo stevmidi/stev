@@ -21,6 +21,7 @@ use crate::core::{
     time::Meter,
     timer::Timer,
 };
+use crate::models::performance_lane::KeyLength;
 use crate::{
     core::{
         audio::ClickEvent,
@@ -54,6 +55,7 @@ pub(crate) fn setup_shared_atomics(repaint_ctx: Arc<OnceLock<Context>>) -> Share
         running: Arc::new(AtomicBool::new(false)),
         tempo: Arc::new(AtomicI32::new(TEMPO_US_DEFAULT)),
         meter: Arc::new(AtomicU16::new(Meter::FOUR_FOUR.to_bits())),
+        performance_lane_key_length: Arc::new(AtomicU8::new(KeyLength::default().to_bits())),
         clock_tick: Arc::new(AtomicI32::new(0)),
         clock_tick_instant_nanos: Arc::new(AtomicU64::new(0)),
         playback_tick: Arc::new(AtomicI32::new(0)),
@@ -255,6 +257,7 @@ pub(crate) fn setup_display(
         input_clock(shared_atomics),
         shared_atomics.tempo.clone(),
         shared_atomics.meter.clone(),
+        shared_atomics.performance_lane_key_length.clone(),
         shared_atomics.running.clone(),
         shared_atomics.playback_tick.clone(),
         shared_atomics.cursor_tick.clone(),
@@ -290,6 +293,7 @@ pub(crate) fn setup_sequencer(
         shared_atomics.meter.clone(),
         shared_atomics.arm_channel.clone(),
         shared_atomics.performance_lane_armed.clone(),
+        shared_atomics.performance_lane_key_length.clone(),
         shared_atomics.track_mix.clone(),
         shared_atomics.audio_export.clone(),
     )

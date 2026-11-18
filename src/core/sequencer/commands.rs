@@ -16,6 +16,7 @@ use crate::core::time::Meter;
 use crate::core::view_state::Pane;
 use crate::models::clip::{Clip, ClipEdge, NoteDrag};
 use crate::models::knobs::ParamId;
+use crate::models::performance_lane::KeyLength;
 use crate::models::track::TrackOutput;
 
 /// Everything the `"sequencer"` thread can be asked to do, other than the
@@ -729,6 +730,10 @@ pub(crate) enum SequencerCommand {
         /// The new meter.
         meter: Meter,
     },
+    /// The performance lane's gutter: how far each lane key jumps, from the
+    /// next key pressed. Saved with the project, not an undo step
+    /// (`510-performance-lane-keyboard.md` § Step 1b).
+    SetPerformanceLaneKeyLength(KeyLength),
 
     // --- Agent bridge ---
     /// The view's marquee changed: mirror it for the agent bridge's reads

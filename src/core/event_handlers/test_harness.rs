@@ -20,6 +20,7 @@ use crate::core::sequencer::{Sequencer, SequencerCommand, UndoStep};
 use crate::core::shared_atomics::{AudioExportAtomics, TrackMixAtomics};
 use crate::core::time::{Meter, TapTempo};
 use crate::core::transport::TransportCommand;
+use crate::models::performance_lane::KeyLength;
 use crate::view::display::UiEvent;
 
 use super::{EventHandlers, OpenProject, RecoveryKeeper, SavedProject, Storage};
@@ -104,6 +105,7 @@ pub(crate) fn harness() -> Harness {
         Arc::new(AtomicU16::new(Meter::FOUR_FOUR.to_bits())),
         Arc::new(AtomicU8::new(0)),
         Arc::new(AtomicBool::new(false)),
+        Arc::new(AtomicU8::new(KeyLength::default().to_bits())),
         Arc::new(TrackMixAtomics::new()),
         audio_export.clone(),
     );

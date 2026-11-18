@@ -22,6 +22,7 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ### Added
 
+- Choose how far each performance-lane key jumps: a bar, half a bar or a beat. Click `Bar`, `½` or `Beat` in the lane's gutter; the key strip redraws at the new width at once, and the next key you press jumps by it. Half a bar is offered only in meters where it lands on a beat (4/4, 6/8, not 3/4 or 7/8). The choice is saved with the project; a project saved before it opens at a beat.
 - The arranger's performance lane shows the keyboard that drives it: a thin strip of white and black keys along its bottom edge, each key lined up with where it jumps, from C3 at bar 1. The C's are named, and every key once you zoom in far enough. The strip is dimmer while the lane isn't armed; armed, a key you hold lights up.
 - `⌥↑`/`⌥↓` in the arranger transpose every note in the clips a marquee covers whole, a semitone at a time, across all its tracks at once; `⇧⌥↑`/`⇧⌥↓` move them an octave. One undo step per press, and the marquee stays, so you press, listen in the loop and press again until an idea sits in key with the others. A marquee that cuts through a clip is refused, and so is a press that would take a note out of MIDI's range (nothing is clamped). The footer says what happened.
 

@@ -275,6 +275,15 @@ impl Display {
         // A track's header also takes the keyboard (Delete removes the
         // track); the performance lane's doesn't.
         if in_header_column {
+            // The gutter's `Bar` / `½` / `Beat` pick how far a lane key
+            // jumps, and nothing else: no arming, no selection, no focus
+            // change (`510-performance-lane-keyboard.md` § Step 1b).
+            if let Some(length) = self.key_length_label_at(x, y) {
+                self.input_event_tx
+                    .send(InputEvent::SetPerformanceLaneKeyLength(length))
+                    .ok();
+                return true;
+            }
             let performance_lane_hit = self.performance_lane_hit_at(y);
             let track_idx = (!performance_lane_hit)
                 .then(|| self.track_idx_at(y))
