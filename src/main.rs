@@ -54,6 +54,7 @@ mod models {
     pub mod event;
     pub mod knobs;
     pub mod performance_lane;
+    pub mod pitch;
     pub mod region;
     pub mod selection;
     pub mod track;

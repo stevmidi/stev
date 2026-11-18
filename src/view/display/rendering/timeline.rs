@@ -82,6 +82,13 @@ impl Display {
         // `grid_major`, graduated by height rather than colour.
         let groove = grid_seam_color();
         let crosses_track_seams = self.active_pane() == Pane::Arranger;
+        // In the arranger the in-lane lines start under the performance lane,
+        // whose keys mark the beats there (`draw_performance_lane_row`).
+        let lines_top = if crosses_track_seams {
+            rect.min.y + self.arranger_layout().lanes_top
+        } else {
+            strip_bottom
+        };
         let line_color =
             |role: GridRole| groove.gamma_multiply(tiers.line_strength(role, crosses_track_seams));
         // The piano roll's grid usually has three vertical tiers
@@ -135,7 +142,7 @@ impl Display {
             };
             painter.vline(
                 x,
-                strip_bottom..=area_bottom,
+                lines_top..=area_bottom,
                 Stroke::new(lane_w, line_color(role)),
             );
             // The ruler is a readout, not the snap grid: fine snap lines keep

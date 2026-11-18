@@ -64,14 +64,17 @@ pub(crate) fn key_index_from_note(note_number: u8) -> Option<i32> {
         .map(i32::from)
 }
 
+/// How many keys the lane has: from `PERFORMANCE_LANE_BASE_NOTE` (the start
+/// of bar 1) to note 127. 68 from C3, a beat each: 17 bars of 4/4.
+pub(crate) const KEY_COUNT: i32 = 128 - config::PERFORMANCE_LANE_BASE_NOTE as i32;
+
 /// The note of 0-based key `key_index`: the inverse of
-/// [`key_index_from_note`]. `None` for a key past note 127 (key index 68 on,
-/// from C3) or before the first.
+/// [`key_index_from_note`]. `None` outside `0..KEY_COUNT`: past note 127, or
+/// before the first key.
 pub(crate) fn note_for_key(key_index: i32) -> Option<u8> {
-    let note = u8::try_from(key_index)
-        .ok()?
-        .checked_add(config::PERFORMANCE_LANE_BASE_NOTE)?;
-    (note <= 127).then_some(note)
+    (0..KEY_COUNT)
+        .contains(&key_index)
+        .then(|| config::PERFORMANCE_LANE_BASE_NOTE + key_index as u8)
 }
 
 /// Where key `key_index` jumps to, in ticks: the start of its beat, one

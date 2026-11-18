@@ -62,13 +62,7 @@ impl Display {
             Stroke::new(1.0_f32, grid_seam_color()),
         );
 
-        self.draw_performance_lane_gutter(
-            painter,
-            rect,
-            performance_lane_top,
-            performance_lane_h,
-            labels_right,
-        );
+        self.draw_performance_lane_row(painter, rect);
 
         let painter = &layout.lanes_painter(painter, rect);
         for track_idx in 0..layout.track_count {

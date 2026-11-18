@@ -63,7 +63,7 @@ src/core/
   event_handlers/        — EventHandlers: input_handler, transport_handler, sequencer_handler, performance_lane_handler; workflows split by concern — selection, clip_view, clip_edges, clip_lifecycle, clip_range_edits, take_framing, tracks, edit_result_handler, project, save, recovery, audio_export, command_helpers, ui_helpers; test-only test_harness, command_timing, long_take_timing
   transport.rs           — TransportCommand / TransportEvent / TickOutcome enums (TickOutcome::Wrapped re-anchors a loop wrap synchronously in the tick pump)
 src/main.rs              — Wiring entrypoint; owns native_options() (eframe::NativeOptions)
-src/models/              — Clip, Event, Track, Region, PerformanceLane, Selection, ControllerTracker (controllers.rs — see 050 § Invariants) (pure data, no I/O)
+src/models/              — Clip, Event, Track, Region, PerformanceLane, Selection, the pitch-class names (pitch.rs), ControllerTracker (controllers.rs — see 050 § Invariants) (pure data, no I/O)
 src/view/              — Display (egui/eframe rendering; its clip / event shape models in display/clip_shape.rs and display/event_shape.rs), InputPoller, UiEvent enum, computer_keyboard.rs (the letter keys as a piano: keymap + held notes, pure), appkit.rs (macOS: the main window's content view, the app menu, quitting through the unsaved check), theme/ (the palettes and the UI font)
 src/metadata/          — Render-side clip snapshots (ClipMetadata, ClipView) built by core
 ```

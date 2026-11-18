@@ -14,11 +14,12 @@ use serde_json::Value;
 use crate::core::sequencer::Sequencer;
 use crate::core::time::Meter;
 use crate::models::clip::Clip;
+use crate::models::pitch::pitch_class_name;
 
 use super::reads::{
     PlayedNote, beat_span, clip_span, pitch_classes, short_id, track_played, track_title,
 };
-use super::units::{NoteRow, counted, format_position, note_name, pitch_class_name};
+use super::units::{NoteRow, counted, format_position, note_name};
 use super::writes::{Cleaned, PreparedClips, PreparedReplace, prepare_clips, prepare_replace};
 
 /// The most findings one check lists; the rest are counted.

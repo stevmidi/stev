@@ -5,11 +5,7 @@
 //! leave this module. Pure, unit-tested below.
 
 use crate::core::time::{Meter, PPQN, ticks_to_beats_f64};
-
-/// The pitch-class names, sharps only (decision 8).
-const PITCH_CLASSES: [&str; 12] = [
-    "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
-];
+use crate::models::pitch::{PITCH_CLASSES, pitch_class_name};
 
 /// How many decimals a beat count keeps: a 1/32 triplet still reads apart
 /// from its neighbours, and the rows stay short.
@@ -101,11 +97,6 @@ pub(crate) fn counted(count: usize, noun: &str) -> String {
 /// `pitch` as a note name, C4 = MIDI 60: `C4`, `F#2`, `C-1` for 0.
 pub(crate) fn note_name(pitch: i32) -> String {
     format!("{}{}", pitch_class_name(pitch), pitch.div_euclid(12) - 1)
-}
-
-/// The pitch class of `pitch` as a name, sharps only: `A`, `C#`.
-pub(crate) fn pitch_class_name(pitch: i32) -> &'static str {
-    PITCH_CLASSES[pitch.rem_euclid(12) as usize]
 }
 
 /// A pitch as a note name (`C4`, `F#2`, `Bb3`, `C-1`, either case) or a

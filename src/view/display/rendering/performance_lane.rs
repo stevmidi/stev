@@ -17,13 +17,8 @@ use egui::{Align2, Color32, CornerRadius, FontId, Painter, Rect, Stroke, pos2, v
 use super::arranger::lane_grid_fill;
 use super::piano_keys::{is_black_key, octave_of, pitch_class, row_seam_w};
 use super::*;
-use crate::core::agent::pitch_class_name;
-use crate::core::config::PERFORMANCE_LANE_BASE_NOTE;
-use crate::models::performance_lane::{key_tick, note_for_key};
-
-/// How many keys the lane has: from `PERFORMANCE_LANE_BASE_NOTE` (the start
-/// of bar 1) to note 127. 68 from C3, a beat each: 17 bars of 4/4.
-const KEY_COUNT: i32 = 128 - PERFORMANCE_LANE_BASE_NOTE as i32;
+use crate::models::performance_lane::{KEY_COUNT, key_tick, note_for_key};
+use crate::models::pitch::pitch_class_name;
 
 /// Height of the key strip along the lane's bottom edge. Narrow, as the
 /// piano roll's key column is: the piano roll's near-white and near-black
@@ -43,29 +38,29 @@ const HELD_KEY_WASH: f32 = 0.25;
 /// its right before every key is labelled (`labels_every_key`).
 const KEY_LABEL_PAD_X: f32 = 3.0;
 
-/// The names the every-key label threshold is measured from: the sharps, the
-/// widest names the lane shows (`labels_every_key`).
-const WIDEST_KEY_NAMES: [&str; 5] = ["C#4", "D#4", "F#4", "G#4", "A#4"];
+/// The name the every-key label threshold is measured from: a sharp, as
+/// wide as the lane's names get (`labels_every_key`).
+const WIDEST_KEY_NAME: &str = "C#4";
 
 impl Display {
-    /// Draws the performance-lane row's gutter: a plain fill, or while the
-    /// lane is armed an accent tint and the 4px left marker the selected
-    /// track's header carries. Called from `draw_arranger_backgrounds`; the
-    /// content area is `draw_performance_lane_keys`, drawn after the
-    /// timeline's grid. Not a track: its geometry comes from
+    /// Draws the performance-lane row (above track 1), from
+    /// `draw_arranger_backgrounds`: the gutter (an accent tint and the 4px
+    /// left marker while armed), then the content area's lane fill and the
+    /// keys (module doc), and the row's bottom seam. `draw_timeline` stops
+    /// its in-lane grid lines short of the row: the key edges are the beat
+    /// lines here. Not a track: its geometry comes from
     /// `Display::arranger_layout()`, the same source
     /// `track_idx_at`/`performance_lane_hit_at` use for hit-testing.
-    pub(super) fn draw_performance_lane_gutter(
-        &self,
-        painter: &Painter,
-        rect: Rect,
-        lane_top: f32,
-        lane_h: f32,
-        labels_right: f32,
-    ) {
+    pub(super) fn draw_performance_lane_row(&self, painter: &Painter, rect: Rect) {
+        let layout = self.arranger_layout();
+        let lane_top = rect.min.y + layout.performance_lane_top;
+        let lane_h = layout.performance_lane_h;
+        let lane_bottom = lane_top + lane_h;
+        let armed = self.performance_lane_selected();
         let accent = theme::accent();
-        let is_selected = self.performance_lane_selected();
-        let gutter_fill = if is_selected {
+
+        let labels_right = self.content_origin_x() - Self::TRACK_COLUMN_GRID_GAP_X;
+        let gutter_fill = if armed {
             accent.gamma_multiply(0.18)
         } else {
             theme::bg_panel().gamma_multiply(0.16)
@@ -78,66 +73,49 @@ impl Display {
             CornerRadius::ZERO,
             gutter_fill,
         );
-        if is_selected {
+        if armed {
             painter.rect_filled(
                 Rect::from_min_size(pos2(rect.min.x, lane_top), vec2(4.0, lane_h)),
                 CornerRadius::ZERO,
                 accent,
             );
         }
-    }
 
-    /// Draws the performance lane's content area: the lane fill, then each
-    /// visible key in the strip along the bottom edge (`KEY_STRIP_H`; dimmed
-    /// while unarmed, the accent for a key held while armed, with a wash over
-    /// its span), the E/F and B/C seams in the strip, the names above it, and
-    /// the row's top and bottom seams. Drawn after `draw_timeline`, so the
-    /// grid's bar and beat lines stop at the lane: the key edges, every beat,
-    /// are the lines here. The playhead and the cursor accent
-    /// are drawn over it afterwards.
-    pub(super) fn draw_performance_lane_keys(&self, painter: &Painter, rect: Rect) {
-        let layout = self.arranger_layout();
-        let lane_top = rect.min.y + layout.performance_lane_top;
-        let lane_bottom = lane_top + layout.performance_lane_h;
         let content = Rect::from_x_y_ranges(
             self.content_origin_x()..=self.content_right_x(),
             lane_top..=lane_bottom,
         );
-        let armed = self.performance_lane_selected();
-        let ppp = painter.pixels_per_point();
-        let seam = |y: f32| {
-            painter.hline(
-                rect.x_range(),
-                seam_y(y, ARRANGER_LANE_SEAM_W, ppp),
-                Stroke::new(ARRANGER_LANE_SEAM_W, grid_seam_color()),
-            );
-        };
-        // The strip sits on the bottom seam's top edge, not under it.
-        let strip_bottom =
-            seam_y(lane_bottom, ARRANGER_LANE_SEAM_W, ppp) - ARRANGER_LANE_SEAM_W / 2.0;
-        let strip_top = strip_bottom - KEY_STRIP_H;
-
         let p = painter.with_clip_rect(content);
-        p.rect_filled(
-            content,
-            CornerRadius::ZERO,
-            lane_grid_fill(armed, theme::accent()),
+        p.rect_filled(content, CornerRadius::ZERO, lane_grid_fill(armed, accent));
+
+        // The strip sits on the bottom seam's top edge, not under it.
+        let bottom_seam_y = seam_y(
+            lane_bottom,
+            ARRANGER_LANE_SEAM_W,
+            painter.pixels_per_point(),
         );
+        let strip_bottom = bottom_seam_y - ARRANGER_LANE_SEAM_W / 2.0;
+        let strip_top = strip_bottom - KEY_STRIP_H;
 
         let meter = self.meter();
         let ppt = self.pixels_per_tick();
         let key_ticks = key_tick(meter, 1);
         let keys = visible_keys(self.render_scroll_x(), self.content_w(), ppt, key_ticks);
         let font = FontId::proportional(theme::FONT_SIZE_TL);
-        let label_w = WIDEST_KEY_NAMES
-            .iter()
-            .map(|name| {
-                p.layout_no_wrap((*name).to_owned(), font.clone(), Color32::WHITE)
-                    .size()
-                    .x
-            })
-            .fold(0.0, f32::max);
+        let label_w = p
+            .layout_no_wrap(WIDEST_KEY_NAME.to_owned(), font.clone(), Color32::WHITE)
+            .size()
+            .x;
         let label_every_key = labels_every_key(ppt * key_ticks as f32, label_w);
+        let (white, black) = if armed {
+            (theme::piano_key_white(), theme::piano_key_black())
+        } else {
+            (
+                theme::piano_key_white().gamma_multiply(UNARMED_KEY_STRENGTH),
+                theme::piano_key_black().gamma_multiply(UNARMED_KEY_STRENGTH),
+            )
+        };
+        let label_color = theme::fg_dim();
 
         for key_index in keys {
             let Some(note) = note_for_key(key_index) else {
@@ -149,26 +127,17 @@ impl Display {
             let key = Rect::from_x_y_ranges(left..=right, strip_top..=strip_bottom);
             let lit = armed && self.live_notes.is_held(note);
             let key_fill = if lit {
-                theme::accent()
-            } else {
-                let fill = if is_black_key(pitch_class(note)) {
-                    theme::piano_key_black()
-                } else {
-                    theme::piano_key_white()
-                };
-                if armed {
-                    fill
-                } else {
-                    fill.gamma_multiply(UNARMED_KEY_STRENGTH)
-                }
-            };
-            if lit {
                 p.rect_filled(
                     above,
                     CornerRadius::ZERO,
-                    theme::accent().gamma_multiply(HELD_KEY_WASH),
+                    accent.gamma_multiply(HELD_KEY_WASH),
                 );
-            }
+                accent
+            } else if is_black_key(pitch_class(note)) {
+                black
+            } else {
+                white
+            };
             p.rect_filled(key, CornerRadius::ZERO, key_fill);
 
             if let Some(seam_w) = key_seam_w(key_index) {
@@ -187,15 +156,17 @@ impl Display {
                     Align2::LEFT_CENTER,
                     key_name(note),
                     font.clone(),
-                    theme::fg_dim(),
+                    label_color,
                 );
             }
         }
 
-        // The row's top edge is the timeline strip's seam, which the lane
-        // fill just covered half of; its bottom edge matches the track seams.
-        seam(lane_top);
-        seam(lane_bottom);
+        // Seam below the row, matching the track-lane separators.
+        painter.hline(
+            rect.x_range(),
+            bottom_seam_y,
+            Stroke::new(ARRANGER_LANE_SEAM_W, grid_seam_color()),
+        );
     }
 }
 
@@ -223,7 +194,7 @@ fn key_seam_w(key_index: i32) -> Option<f32> {
 }
 
 /// Whether a key `key_w` wide has room for every key's name: the widest name
-/// the lane shows (`label_w`, measured from `WIDEST_KEY_NAMES`) and its
+/// the lane shows (`label_w`, measured from `WIDEST_KEY_NAME`) and its
 /// padding on both sides. Below it only the C's are named.
 fn labels_every_key(key_w: f32, label_w: f32) -> bool {
     key_w >= label_w + 2.0 * KEY_LABEL_PAD_X
@@ -238,6 +209,7 @@ fn key_name(note: u8) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::config::PERFORMANCE_LANE_BASE_NOTE;
     use crate::core::time::Meter;
 
     #[test]

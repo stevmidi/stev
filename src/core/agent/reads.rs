@@ -16,11 +16,10 @@ use crate::core::sequencer::{Sequencer, TakePlace};
 use crate::core::time::{Meter, PPQN, format_bpm};
 use crate::models::clip::{Clip, min_max};
 use crate::models::event::EventType;
+use crate::models::pitch::pitch_class_name;
 use crate::models::track::{Track, TrackOutput};
 
-use super::units::{
-    NoteRow, counted, format_beats, format_position, note_name, parse_position, pitch_class_name,
-};
+use super::units::{NoteRow, counted, format_beats, format_position, note_name, parse_position};
 
 /// The most bars [`get_timeline`] reads in one call.
 pub(super) const TIMELINE_MAX_BARS: i32 = 16;

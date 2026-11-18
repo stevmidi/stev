@@ -94,12 +94,13 @@ only — no recording/capture, no persistence. Key files:
   (`rendering/performance_lane.rs`) and hit-testing, so they can't drift apart.
   Height is `Display::PERFORMANCE_LANE_H`.
 - **The row draws the keyboard that drives it**
-  (`510-performance-lane-keyboard.md`). The gutter is drawn with the arranger's
-  backgrounds (`draw_performance_lane_gutter`: the accent tint and 4px marker
-  while armed); the content area after the timeline grid
-  (`draw_performance_lane_keys`), so the grid's bar and beat lines stop at the
-  lane and the key edges, every beat, are the lines there. Each key (68
-  from C3, 17 bars of 4/4; `note_for_key`, the inverse of `key_index_from_note`)
+  (`510-performance-lane-keyboard.md`). The whole row is drawn with the
+  arranger's backgrounds (`draw_performance_lane_row`, `rendering/performance_lane.rs`):
+  the gutter (the accent tint and 4px marker while armed), the lane fill and
+  the keys. `draw_timeline` starts the arranger's in-lane grid lines under the
+  row (`ArrangerLayout::lanes_top`), so no bar or beat line crosses the lane;
+  the key edges, every beat, are the lines there. Each key (`KEY_COUNT`,
+  68 from C3, 17 bars of 4/4; `note_for_key`, the inverse of `key_index_from_note`)
   spans its beat, from `key_tick` to the next, in a thin strip along the lane's bottom edge (`KEY_STRIP_H`, 5pt), in
   the piano roll's `piano_key_white`/`piano_key_black`, from
   `tick_to_screen_x` in the project meter, so it follows zoom, scroll and
