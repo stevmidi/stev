@@ -216,6 +216,10 @@ pub(super) struct ClipResizeDrag {
     pub(super) clip_id: Uuid,
     /// Which edge.
     pub(super) edge: ClipResizeEdge,
+    /// The clip's start and end ticks when the edge was hit: during the
+    /// drag they stay snap targets (`Display::track_snapped_tick_at`), so the
+    /// edge can be dragged back to where it started, off the grid too.
+    pub(super) ticks_at_press: (i32, i32),
 }
 
 /// In-progress drag of a handle of the clip view's window band — see

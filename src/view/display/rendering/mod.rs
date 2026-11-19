@@ -218,6 +218,26 @@ fn nearest_snap_tick(
         .0
 }
 
+/// The clip edges [`Display::track_snapped_tick_at`] snaps to on
+/// `track_idx`, from `(track, clip id, (start, end))` per clip: every
+/// clip's start and end there, but the clip a resize drag is moving with
+/// its edges as they were at the press, so the dragged edge can go back to
+/// where it started and never catches on where it is now.
+fn snap_edge_ticks(
+    clips: impl Iterator<Item = (usize, Uuid, (i32, i32))>,
+    track_idx: usize,
+    resize: Option<ClipResizeDrag>,
+) -> impl Iterator<Item = i32> {
+    let resized = resize.filter(|drag| drag.track_idx == track_idx);
+    clips
+        .filter(move |&(track, id, _)| {
+            track == track_idx && resized.is_none_or(|drag| id != drag.clip_id)
+        })
+        .map(|(_, _, ticks)| ticks)
+        .chain(resized.map(|drag| drag.ticks_at_press))
+        .flat_map(|(start, end)| [start, end])
+}
+
 /// The `+` row's height with `track_count` tracks: gone at `MAX_TRACKS`.
 fn arranger_add_row_h(track_count: usize) -> f32 {
     if track_count < MAX_TRACKS {
@@ -1011,6 +1031,7 @@ impl Display {
             })
             .min_by_key(|(shape, _)| shape.start_tick())
             .map(|(shape, edge)| ClipResizeDrag {
+                ticks_at_press: (shape.start_tick(), shape.end_tick()),
                 track_idx,
                 clip_id: shape.clip_id(),
                 edge,
@@ -1034,18 +1055,17 @@ impl Display {
     /// Screen x → whichever is nearer (`nearest_snap_tick`): the grid line
     /// [`snapped_tick_at`](Self::snapped_tick_at) gives, or an edge of a clip
     /// on arranger track `track_idx` (Ableton's snap to object). The clip a
-    /// resize drag is moving is left out here rather than by the resize
-    /// alone: the hover line is re-derived on every move of that drag too
-    /// (`refresh_hovers`), and would otherwise catch on the edge being
-    /// dragged.
+    /// resize drag is moving counts with its edges as they were at the
+    /// press (`ClipResizeDrag::ticks_at_press`), as in Ableton: the dragged
+    /// edge snaps back to where it started and never catches on where it is
+    /// now. Here rather than in the resize alone: the hover line is
+    /// re-derived on every move of that drag too (`refresh_hovers`).
     pub(super) fn track_snapped_tick_at(&self, x: f32, track_idx: usize) -> i32 {
-        let resized = self.gesture.clip_resize_drag.map(|drag| drag.clip_id);
-        let edges = self
-            .render
-            .clip_shapes
-            .iter()
-            .filter(|shape| shape.track_idx() == track_idx && Some(shape.clip_id()) != resized)
-            .flat_map(|shape| [shape.start_tick(), shape.end_tick()])
+        let clips = self.render.clip_shapes.iter().map(|shape| {
+            let ticks = (shape.start_tick(), shape.end_tick());
+            (shape.track_idx(), shape.clip_id(), ticks)
+        });
+        let edges = snap_edge_ticks(clips, track_idx, self.gesture.clip_resize_drag)
             .map(|tick| (tick, self.tick_to_screen_x(tick)));
         let grid_tick = self.snapped_tick_at(x);
         nearest_snap_tick(x, (grid_tick, self.tick_to_screen_x(grid_tick)), edges)
@@ -1729,15 +1749,15 @@ mod tests {
         ADD_TRACK_ROW_H, ARRANGER_LANE_SEAM_W, ARRANGER_MIN_LANE_H, ArrangerLayout, CLIP_HEADER_H,
         TRACK_BTN_H, TRACK_BTN_W, TRACK_NAME_ROW_H, arranger_add_row_h, arranger_lane_h,
         arranger_max_scroll_y, arranger_scroll_y_to_show, clip_body_band, clip_resize_band,
-        gap_spans, nearest_snap_tick, seam_inset_band, seam_y, tick_overlap, track_header_rects,
-        track_name_row,
+        gap_spans, nearest_snap_tick, seam_inset_band, seam_y, snap_edge_ticks, tick_overlap,
+        track_header_rects, track_name_row,
     };
+    use super::{ClipResizeDrag, ClipResizeEdge, NotePart, note_at_grid_point, note_part_at};
     use super::{
         MeterBar, TRACK_METER_CHANNEL_GAP, TRACK_METER_FALL, TRACK_METER_GAP, TRACK_METER_W,
         TRACK_METER_ZERO_DB_HEIGHT, audio_meter_bar, db_to_meter_height, meter_centre_rect,
         meter_channel_rects, meter_level,
     };
-    use super::{NotePart, note_at_grid_point, note_part_at};
     use super::{TRACK_HEADER_PAD_Y, TRACK_NAME_CAP_INSET};
     use crate::core::audio::meter::ChannelLevel;
     use crate::core::config::MAX_TRACKS;
@@ -2255,5 +2275,42 @@ mod tests {
             .map(|x| nearest_snap_tick(x, grid, edge))
             .collect();
         assert_eq!(ticks, [1625, 1625, 1920]);
+    }
+
+    /// Two clips on track 0 (a resized one and its neighbour) and one on
+    /// track 1.
+    fn snap_test_clips(resized: Uuid) -> Vec<(usize, Uuid, (i32, i32))> {
+        vec![
+            (0, resized, (0, 2400)),
+            (0, Uuid::from_u128(2), (3600, 4800)),
+            (1, Uuid::from_u128(3), (960, 1920)),
+        ]
+    }
+
+    #[test]
+    fn snap_edge_ticks_are_the_clips_on_the_track() {
+        let clips = snap_test_clips(Uuid::from_u128(1));
+        let edges: Vec<i32> = snap_edge_ticks(clips.into_iter(), 0, None).collect();
+        assert_eq!(edges, [0, 2400, 3600, 4800]);
+    }
+
+    /// The regression found hand-testing: an end dragged out from an
+    /// off-grid tick (1625) couldn't be dragged back to it. The resized
+    /// clip counts with its edges at the press, not where the drag has
+    /// put them (2400 here).
+    #[test]
+    fn snap_edge_ticks_keep_a_resized_clips_edges_at_the_press() {
+        let id = Uuid::from_u128(1);
+        let drag = ClipResizeDrag {
+            track_idx: 0,
+            clip_id: id,
+            edge: ClipResizeEdge::End,
+            ticks_at_press: (0, 1625),
+        };
+        let on_track = |track| -> Vec<i32> {
+            snap_edge_ticks(snap_test_clips(id).into_iter(), track, Some(drag)).collect()
+        };
+        assert_eq!(on_track(0), [3600, 4800, 0, 1625]);
+        assert_eq!(on_track(1), [960, 1920]);
     }
 }
