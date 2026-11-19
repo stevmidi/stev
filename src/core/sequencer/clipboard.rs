@@ -109,8 +109,7 @@ impl Sequencer {
     /// (leaving any existing clipboard content intact) when nothing overlaps.
     pub(crate) fn copy_clips_to_clipboard(&mut self, start: i32, end: i32) {
         if let Some(clipboard) = self.clipboard_snapshot(start, end) {
-            self.clip_clipboard = Some(clipboard);
-            self.performance_clipboard = None;
+            self.set_clip_clipboard(clipboard);
         }
     }
 
@@ -125,6 +124,14 @@ impl Sequencer {
         end: i32,
     ) -> Option<ClipClipboard> {
         self.copy_range_to_clipboard((0, self.tracks.len().saturating_sub(1)), start, end)
+    }
+
+    /// A clip copy: `clipboard` replaces what the clip clipboard held, and
+    /// any pad's copy goes with it, so a `⌘V` onto a pad has nothing to
+    /// paste (`520-performance-capture.md` decision 5).
+    fn set_clip_clipboard(&mut self, clipboard: ClipClipboard) {
+        self.clip_clipboard = Some(clipboard);
+        self.performance_clipboard = None;
     }
 
     /// The current clipboard contents, if anything has been copied this
@@ -208,8 +215,7 @@ impl Sequencer {
             self.copy_range_to_clipboard((rect.track_start, rect.track_end), rect.start, rect.end)
         {
             clipboard.track_anchor = Some(rect.track_start);
-            self.clip_clipboard = Some(clipboard);
-            self.performance_clipboard = None;
+            self.set_clip_clipboard(clipboard);
         }
     }
 
@@ -247,11 +253,9 @@ impl Sequencer {
     /// from. Its span is the performance's length, so `⇧⌘V` inserts all of
     /// it, a gap at its end included. `None` when nothing plays.
     fn render_performance(&self, clip: &Clip) -> Option<ClipClipboard> {
-        let all = (0, self.tracks.len().saturating_sub(1));
         let mut clips = Vec::new();
         for segment in render_segments(clip, self.performance_key_target()) {
-            let Some(copy) =
-                self.copy_range_to_clipboard(all, segment.from, segment.from + segment.len)
+            let Some(copy) = self.clipboard_snapshot(segment.from, segment.from + segment.len)
             else {
                 continue;
             };

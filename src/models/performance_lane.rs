@@ -192,16 +192,11 @@ impl PerformanceLane {
         // Wrapped again here: an edit may have shortened the performance.
         let elapsed = replay.elapsed % length;
         let at = clip.region().start() + elapsed;
-        let notes = || replay_notes(clip, &target);
-        let jump = match replay.expected_tick {
-            None => notes()
-                .filter(|&(start, end, _)| start <= at && at < end)
-                .max_by_key(|&(start, _, _)| start),
-            Some(_) => notes().filter(|&(start, _, _)| start == at).last(),
-        }
-        .map(|(start, _, key)| key + at - start);
-        // Only a tick with no jump needs to know: a jump lands on a note.
-        let sounding = jump.is_some() || notes().any(|(start, end, _)| start <= at && at < end);
+        let (jump, sounding) = play_at(
+            || replay_notes(clip, &target),
+            at,
+            replay.expected_tick.is_none(),
+        );
         let cue = match jump {
             Some(tick) => Some(ReplayCue::Jump(tick)),
             None if !sounding && !replay.silent => Some(ReplayCue::Silence),
@@ -305,48 +300,66 @@ pub(crate) struct Segment {
 /// `target` is where a note's key jumps to, as for the replay.
 pub(crate) fn render_segments(clip: &Clip, target: impl Fn(u8) -> Option<i32>) -> Vec<Segment> {
     let (start, end) = (clip.region().start(), clip.region().end());
-    let notes = || replay_notes(clip, &target);
+    let notes: Vec<_> = replay_notes(clip, &target).collect();
     // The ticks something changes on: the start, and each note's ends
     // inside the window.
-    let mut changes: Vec<i32> = notes()
-        .flat_map(|(on, off, _)| [on, off])
+    let mut changes: Vec<i32> = notes
+        .iter()
+        .flat_map(|&(on, off, _)| [on, off])
         .filter(|&tick| start < tick && tick < end)
         .chain([start])
         .collect();
     changes.sort_unstable();
     changes.dedup();
 
-    let mut segments = Vec::new();
-    // The stretch playing: where it started in the performance, and from.
-    let mut open: Option<(i32, i32)> = None;
-    let mut close = |open: &mut Option<(i32, i32)>, at: i32| {
-        if let Some((began, from)) = open.take()
-            && at > began
-        {
-            segments.push(Segment {
-                at: began - start,
-                len: at - began,
-                from,
-            });
-        }
-    };
-    for &at in &changes {
-        let jump = if at == start {
-            notes()
-                .filter(|&(on, off, _)| on <= at && at < off)
-                .max_by_key(|&(on, _, _)| on)
-        } else {
-            notes().filter(|&(on, _, _)| on == at).last()
-        };
-        if let Some((on, _, key)) = jump {
-            close(&mut open, at);
-            open = Some((at, key + at - on));
-        } else if !notes().any(|(on, off, _)| on <= at && at < off) {
-            close(&mut open, at);
-        }
+    // Where a stretch starts, from where (a jump), or a gap starts (`None`);
+    // a tick where a note ends under a longer one cuts nothing.
+    let mut cuts: Vec<(i32, Option<i32>)> = changes
+        .into_iter()
+        .filter_map(
+            |at| match play_at(|| notes.iter().copied(), at, at == start) {
+                (Some(from), _) => Some((at, Some(from))),
+                (None, false) => Some((at, None)),
+                (None, true) => None,
+            },
+        )
+        .collect();
+    cuts.push((end, None));
+    cuts.windows(2)
+        .filter_map(|pair| {
+            let ((at, from), (until, _)) = (pair[0], pair[1]);
+            Some(Segment {
+                at: at - start,
+                len: until - at,
+                from: from?,
+            })
+        })
+        .collect()
+}
+
+/// What plays at tick `at` of a performance whose notes `notes` gives
+/// (`replay_notes`): where playback jumps, if anywhere, and whether a note
+/// sounds. On the `first` tick played it takes the note sounding there,
+/// from as far into its key; after that a note starting there jumps (several:
+/// the last in the clip, as live the latest press wins). The one rule the
+/// replay ([`PerformanceLane::step_replay`]) and the render
+/// ([`render_segments`]) both play by.
+fn play_at<I: Iterator<Item = (i32, i32, i32)>>(
+    notes: impl Fn() -> I,
+    at: i32,
+    first: bool,
+) -> (Option<i32>, bool) {
+    let jump = if first {
+        notes()
+            .filter(|&(on, off, _)| on <= at && at < off)
+            .max_by_key(|&(on, _, _)| on)
+    } else {
+        notes().filter(|&(on, _, _)| on == at).last()
     }
-    close(&mut open, end);
-    segments
+    .map(|(on, _, key)| key + at - on);
+    // Only a tick with no jump needs to know: a jump lands on a note.
+    let sounding = jump.is_some() || notes().any(|(on, off, _)| on <= at && at < off);
+    (jump, sounding)
 }
 
 /// A performance clip from `presses` (`(tick, note, velocity)`, in order,

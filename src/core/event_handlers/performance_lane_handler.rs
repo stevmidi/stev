@@ -103,11 +103,11 @@ impl EventHandlers {
         self.prime_os_clipboard();
         let pad = sequencer.selected_pad() + 1;
         let length = length_label(length, sequencer.meter());
-        self.send_status_ui_event(if sequencer.clip_clipboard().is_some() {
-            format!("Copied pad {pad} · {length}")
-        } else {
-            format!("Copied pad {pad} · {length}, which plays no clips")
-        });
+        let plays = match sequencer.clip_clipboard() {
+            Some(_) => "",
+            None => ", which plays no clips",
+        };
+        self.send_status_ui_event(format!("Copied pad {pad} · {length}{plays}"));
     }
 
     /// `⌘V` on the selected pad: a copy of the copied performance replaces

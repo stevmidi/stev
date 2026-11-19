@@ -640,7 +640,9 @@ impl EventHandlers {
                 self.record_edit(sequencer, undo_record, edit);
             }
 
-            SequencerCommand::CopyPerformancePad => self.copy_performance_pad_workflow(sequencer),
+            SequencerCommand::CopyPerformancePad => {
+                self.copy_performance_pad_workflow(sequencer);
+            }
 
             SequencerCommand::PastePerformancePad => {
                 self.paste_performance_pad_workflow(sequencer, undo_record);

@@ -40,23 +40,6 @@ fn pad_hint(pad: usize, length: Option<i32>, meter: Meter) -> String {
     format!("Pad {} · {what}", pad + 1)
 }
 
-/// What a clipboard chord does with the pad column focused: `Some` for every
-/// clipboard chord, which the column keeps, holding what it sends. `⌘C`
-/// copies the selected pad and `⌘V` pastes onto it; the rest do nothing (a
-/// pad has no time for `⇧⌘V` to insert into, and `⌘X` is left for later).
-/// `None` for any other event.
-fn pad_clipboard_event(event: &InputEvent) -> Option<Option<InputEvent>> {
-    match *event {
-        InputEvent::Copy { shift: false } => Some(Some(InputEvent::CopyPerformancePad)),
-        InputEvent::Paste {
-            shift: false,
-            alt: false,
-        } => Some(Some(InputEvent::PastePerformancePad)),
-        InputEvent::Copy { .. } | InputEvent::Cut { .. } | InputEvent::Paste { .. } => Some(None),
-        _ => None,
-    }
-}
-
 impl Display {
     /// The pads' layout this frame: the knobs' cells, while the lane is
     /// selected and the panel shows. `None` otherwise.
@@ -125,13 +108,25 @@ impl Display {
 
     /// The pad column's keys while it has the keyboard ([`column_key`], the
     /// knobs' own: `Delete` empties the selected pad), and the clipboard's
-    /// ([`pad_clipboard_event`]): the column keeps them, never handing them
+    /// (`⌘C`, `⌘V`): the column keeps them, never handing them
     /// to a pane that doesn't have the keyboard (`520-performance-capture.md`
     /// decision 5). Returns whether it consumed `event`.
     pub(super) fn handle_pad_column_key(&mut self, event: &InputEvent) -> bool {
-        if let Some(clipboard) = pad_clipboard_event(event) {
-            if let Some(event) = clipboard {
-                self.input_event_tx.send(event).ok();
+        // `⌘C` copies the selected pad and `⌘V` pastes onto it; the other
+        // chords do nothing here (a pad has no time for `⇧⌘V` to insert
+        // into, and `⌘X` is left for later).
+        if let InputEvent::Copy { .. } | InputEvent::Cut { .. } | InputEvent::Paste { .. } = *event
+        {
+            let send = match *event {
+                InputEvent::Copy { shift: false } => Some(InputEvent::CopyPerformancePad),
+                InputEvent::Paste {
+                    shift: false,
+                    alt: false,
+                } => Some(InputEvent::PastePerformancePad),
+                _ => None,
+            };
+            if let Some(send) = send {
+                self.input_event_tx.send(send).ok();
             }
             return true;
         }
@@ -160,32 +155,8 @@ impl Display {
 
 #[cfg(test)]
 mod tests {
-    use super::{pad_clipboard_event, pad_hint};
-    use crate::core::input_event::InputEvent;
+    use super::pad_hint;
     use crate::core::time::Meter;
-
-    #[test]
-    fn the_column_keeps_every_clipboard_chord() {
-        let paste = |shift, alt| InputEvent::Paste { shift, alt };
-        assert!(matches!(
-            pad_clipboard_event(&InputEvent::Copy { shift: false }),
-            Some(Some(InputEvent::CopyPerformancePad))
-        ));
-        assert!(matches!(
-            pad_clipboard_event(&paste(false, false)),
-            Some(Some(InputEvent::PastePerformancePad))
-        ));
-        for kept in [
-            InputEvent::Copy { shift: true },
-            InputEvent::Cut { shift: false },
-            InputEvent::Cut { shift: true },
-            paste(true, false),
-            paste(false, true),
-        ] {
-            assert!(matches!(pad_clipboard_event(&kept), Some(None)), "{kept:?}");
-        }
-        assert!(pad_clipboard_event(&InputEvent::ClearPerformancePad).is_none());
-    }
 
     #[test]
     fn the_hint_names_the_pad_and_its_length() {
