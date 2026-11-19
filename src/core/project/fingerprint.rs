@@ -264,7 +264,7 @@ mod tests {
         ("tempo", |s| s.set_tempo(400_000)),
         ("meter", |s| s.set_meter(Meter::new(3, 4).unwrap())),
         ("performance-lane key length", |s| {
-            s.set_performance_lane_key_length(KeyLength::Bar);
+            s.set_performance_lane_key_length(KeyLength::HalfBar);
         }),
         ("region start", |s| s.set_global_region(480, s.region_end())),
         ("region end", |s| s.set_global_region(0, 1920)),

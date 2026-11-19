@@ -186,6 +186,8 @@ mod tests {
         let mut h = harness();
         h.handlers
             .select_performance_lane_workflow(&mut h.sequencer);
+        // The tests count in beats, not the default half bar.
+        h.sequencer.set_performance_lane_key_length(KeyLength::Beat);
         let transport = transport(&h);
         (h, transport, Record::new())
     }

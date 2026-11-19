@@ -169,13 +169,13 @@ pub(crate) fn note_for_key(key_index: i32) -> Option<u8> {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub(crate) enum KeyLength {
     /// A whole bar per key: 68 keys reach 68 bars.
+    #[default]
     Bar,
     /// Half a bar per key, in a meter whose numerator is even; in an odd one
     /// it plays as [`Beat`](Self::Beat).
     HalfBar,
     /// One counted beat per key (a quarter in x/4, an eighth in x/8): what a
     /// project saved before the choice existed plays.
-    #[default]
     Beat,
 }
 
@@ -521,6 +521,6 @@ mod tests {
             assert_eq!(KeyLength::from_bits(length.to_bits()), length);
         }
         assert_eq!(KeyLength::from_bits(200), KeyLength::Beat);
-        assert_eq!(KeyLength::default(), KeyLength::Beat);
+        assert_eq!(KeyLength::default(), KeyLength::Bar);
     }
 }

@@ -895,19 +895,22 @@ mod tests {
         let mut h = harness();
         let mut record = Record::new();
         let set = |length| SequencerCommand::SetPerformanceLaneKeyLength(length);
-        run_command(&mut h, &mut record, set(KeyLength::Bar));
-        assert_eq!(h.sequencer.performance_lane_key_length(), KeyLength::Bar);
+        run_command(&mut h, &mut record, set(KeyLength::HalfBar));
+        assert_eq!(
+            h.sequencer.performance_lane_key_length(),
+            KeyLength::HalfBar
+        );
         run_command(&mut h, &mut record, quit());
         assert_eq!(last_project_reply(&h), Some(Some(ProjectAction::Quit)));
 
         run_command(&mut h, &mut record, SequencerCommand::Undo);
         assert_eq!(
             h.sequencer.performance_lane_key_length(),
-            KeyLength::Bar,
+            KeyLength::HalfBar,
             "not an undo step"
         );
 
-        run_command(&mut h, &mut record, set(KeyLength::Beat));
+        run_command(&mut h, &mut record, set(KeyLength::Bar));
         run_command(&mut h, &mut record, quit());
         assert_eq!(last_project_reply(&h), Some(None));
     }

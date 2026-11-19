@@ -414,7 +414,7 @@ impl Default for ProjectData {
         ProjectData {
             tempo_us: config::TEMPO_US_DEFAULT,
             meter: default_meter_list(),
-            performance_lane_key_length: KeyLengthData::default(),
+            performance_lane_key_length: KeyLengthData::Bar,
             region_start: 0,
             region_end: config::REGION_LENGTH_DEFAULT,
             // One empty MIDI-Out track per slot, channel = track index —
@@ -538,7 +538,7 @@ impl ProjectData {
     pub(crate) fn into_template(mut self) -> Self {
         self.region_start = 0;
         self.region_end = config::REGION_LENGTH_DEFAULT;
-        self.performance_lane_key_length = KeyLengthData::default();
+        self.performance_lane_key_length = KeyLengthData::Bar;
         for track in &mut self.tracks {
             track.muted = false;
             track.clips.clear();
@@ -665,7 +665,7 @@ mod tests {
         let mut expected = data.clone();
         expected.region_start = 0;
         expected.region_end = config::REGION_LENGTH_DEFAULT;
-        expected.performance_lane_key_length = KeyLengthData::Beat;
+        expected.performance_lane_key_length = KeyLengthData::Bar;
         expected.tracks[1].muted = false;
         expected.tracks[1].clips.clear();
 
@@ -925,8 +925,8 @@ mod tests {
             sequencer.new_project();
             assert_eq!(
                 sequencer.performance_lane_key_length(),
-                KeyLength::Beat,
-                "a new project is at a beat"
+                KeyLength::Bar,
+                "a new project is at a bar"
             );
             let data: ProjectData = serde_json::from_str(&json).unwrap();
             data.apply_to_sequencer(&mut sequencer);
