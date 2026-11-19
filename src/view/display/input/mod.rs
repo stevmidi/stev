@@ -387,7 +387,7 @@ impl Display {
         if !self.is_mouse_inside_grid(x, y) {
             return true;
         }
-        let tick_x = self.snapped_tick_at(x);
+        let tick_x = self.pointer_tick_at(x, y);
 
         self.gesture.hover_cursor = Some((tick_x, self.active_pane()));
         self.begin_time_selection(tick_x, y);

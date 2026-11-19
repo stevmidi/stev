@@ -63,7 +63,7 @@ impl Display {
         let Some((anchor_tick, anchor_track)) = self.gesture.time_selection_anchor else {
             return;
         };
-        let tick_x = self.snapped_tick_at(x);
+        let tick_x = self.pointer_tick_at(x, y);
         let track_idx = self.track_idx_at(y).unwrap_or(anchor_track);
 
         let collapsed = tick_x == anchor_tick && track_idx == anchor_track;
@@ -97,7 +97,7 @@ impl Display {
         let Some(selected_track) = self.selected_track_idx else {
             return;
         };
-        let point_tick = self.snapped_tick_at(x);
+        let point_tick = self.pointer_tick_at(x, y);
 
         let cursor_tick = self.cursor_tick.load(Ordering::Relaxed);
         let track_idx = self.track_idx_at(y).unwrap_or(selected_track);
@@ -609,15 +609,16 @@ impl Display {
     }
 
     /// Extends an in-progress clip edge drag: recomputes the pointer's
-    /// grid-snapped absolute tick (same `snap_to_grid` + `cursor_grid_ticks`
-    /// path as cursor placement) and sends it as the new target, tagged with
+    /// snapped absolute tick (`track_snapped_tick_at` on the clip's track: a
+    /// neighbouring clip's edge in reach, else the grid, as cursor placement
+    /// snaps) and sends it as the new target, tagged with
     /// the drag's id so the whole drag is one undo step. Not gated on
     /// `is_mouse_inside_clip_content`, same rationale as the other drags.
     pub(super) fn extend_clip_resize_drag(&mut self, x: f32) {
         let Some(drag) = self.gesture.clip_resize_drag else {
             return;
         };
-        let target_tick = self.snapped_tick_at(x);
+        let target_tick = self.track_snapped_tick_at(x, drag.track_idx);
         let drag_id = self.gesture.clip_resize_drag_id;
         let event = match drag.edge {
             ClipResizeEdge::End => InputEvent::ResizeSelectedClipRegionEnd {
@@ -1286,7 +1287,7 @@ impl Display {
         }
         self.gesture.hover_cursor = (self.is_mouse_inside_pane(x, y)
             && self.content_x_on_screen(x))
-        .then(|| self.snapped_tick_at(x))
+        .then(|| self.pointer_tick_at(x, y))
         .map(|tick| (tick, self.active_pane()));
     }
 }

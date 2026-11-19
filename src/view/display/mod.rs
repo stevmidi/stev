@@ -1198,7 +1198,8 @@ impl Display {
 
     /// Grid resolution (in ticks) that every mouse gesture snaps to for the
     /// current view — cursor-line hover, click placement, time-selection
-    /// drag edges, and clip-resize drag edges (`gestures.rs`). It is the finest *visible* grid tier
+    /// drag edges, and clip-resize drag edges (`gestures.rs`); in the
+    /// arranger a clip edge in reach wins over it (`pointer_tick_at`). It is the finest *visible* grid tier
     /// (`GridTiers::snap_ticks`), so it follows the zoom. The keyboard's plain
     /// Left/Right step matches this same resolution (`MoveCursorByGrid` →
     /// `TransportCommand::MoveCursor` in the arranger,

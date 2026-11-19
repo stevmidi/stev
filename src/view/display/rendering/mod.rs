@@ -196,6 +196,20 @@ pub(super) fn edge_overshoot(y: f32, top: f32, h: f32) -> f32 {
 /// track at the end.
 pub(super) const ADD_TRACK_ROW_H: f32 = 22.0;
 
+/// Pure core of [`Display::track_snapped_tick_at`]: of the `(tick,
+/// screen_x)` snap targets (grid lines and clip edges alike), the tick of
+/// the one nearest `pointer_x`, the earlier tick on a tie; `None` with no
+/// targets. No reach: a nearest-target rule only ever moves the result the
+/// way the pointer moves, where an edge with a reach and the grid behind it
+/// made the line jump back and forth past the edge (2026-11-19).
+fn nearest_snap_tick(pointer_x: f32, targets: impl IntoIterator<Item = (i32, f32)>) -> Option<i32> {
+    targets
+        .into_iter()
+        .map(|(tick, target_x)| (tick, (pointer_x - target_x).abs()))
+        .min_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)))
+        .map(|(tick, _)| tick)
+}
+
 /// The `+` row's height with `track_count` tracks: gone at `MAX_TRACKS`.
 fn arranger_add_row_h(track_count: usize) -> f32 {
     if track_count < MAX_TRACKS {
@@ -995,6 +1009,41 @@ impl Display {
             })
     }
 
+    /// Screen x → the tick a pointer at `(x, y)` lands on: in the arranger,
+    /// [`track_snapped_tick_at`](Self::track_snapped_tick_at) on the track
+    /// under the pointer; everywhere else (the clip view, the timeline strip,
+    /// the performance lane) the grid line alone.
+    pub(super) fn pointer_tick_at(&self, x: f32, y: f32) -> i32 {
+        let track_idx = (self.active_pane() == Pane::Arranger)
+            .then(|| self.track_idx_at(y))
+            .flatten();
+        match track_idx {
+            Some(track_idx) => self.track_snapped_tick_at(x, track_idx),
+            None => self.snapped_tick_at(x),
+        }
+    }
+
+    /// Screen x → whichever is nearer: the grid line
+    /// [`snapped_tick_at`](Self::snapped_tick_at) gives, or an edge of a clip
+    /// on arranger track `track_idx` (Ableton's snap to object). The edges
+    /// are snap targets like the grid lines, with no reach of their own, so
+    /// the line never jumps back past an edge (`nearest_snap_tick`). The
+    /// clip a resize drag is moving is left out, so its dragged edge never
+    /// snaps to where it already is.
+    pub(super) fn track_snapped_tick_at(&self, x: f32, track_idx: usize) -> i32 {
+        let resized = self.gesture.clip_resize_drag.map(|drag| drag.clip_id);
+        let edges = self
+            .render
+            .clip_shapes
+            .iter()
+            .filter(|shape| shape.track_idx() == track_idx && Some(shape.clip_id()) != resized)
+            .flat_map(|shape| [shape.start_tick(), shape.end_tick()])
+            .map(|tick| (tick, self.tick_to_screen_x(tick)));
+        let grid_tick = self.snapped_tick_at(x);
+        let grid = (grid_tick, self.tick_to_screen_x(grid_tick));
+        nearest_snap_tick(x, edges.chain(std::iter::once(grid))).unwrap_or(grid_tick)
+    }
+
     /// The arranger track whose clip grab band (`clip_resize_band`) holds
     /// `y`, shared by `clip_edge_at` and `clip_band_at`. `None` outside the
     /// arranger, off the lanes, or lower down the lane.
@@ -1673,7 +1722,8 @@ mod tests {
         ADD_TRACK_ROW_H, ARRANGER_LANE_SEAM_W, ARRANGER_MIN_LANE_H, ArrangerLayout, CLIP_HEADER_H,
         TRACK_BTN_H, TRACK_BTN_W, TRACK_NAME_ROW_H, arranger_add_row_h, arranger_lane_h,
         arranger_max_scroll_y, arranger_scroll_y_to_show, clip_body_band, clip_resize_band,
-        gap_spans, seam_inset_band, seam_y, tick_overlap, track_header_rects, track_name_row,
+        gap_spans, nearest_snap_tick, seam_inset_band, seam_y, tick_overlap, track_header_rects,
+        track_name_row,
     };
     use super::{
         MeterBar, TRACK_METER_CHANNEL_GAP, TRACK_METER_FALL, TRACK_METER_GAP, TRACK_METER_W,
@@ -2163,5 +2213,47 @@ mod tests {
         assert!((meter_level(Some((on, 64)), on) - 64.0 / 127.0).abs() < 1e-6);
         assert_eq!(meter_level(Some((on, 64)), on + fall * 6 / 10), 0.0);
         assert_eq!(meter_level(Some((on, 127)), on + 10 * fall), 0.0);
+    }
+
+    #[test]
+    fn nearest_snap_tick_takes_the_closest_target() {
+        let targets = [(960, 100.0), (1806, 104.0), (3840, 300.0)];
+        assert_eq!(nearest_snap_tick(103.0, targets), Some(1806));
+        assert_eq!(nearest_snap_tick(101.0, targets), Some(960));
+        assert_eq!(nearest_snap_tick(210.0, targets), Some(3840));
+        assert_eq!(nearest_snap_tick(200.0, []), None);
+    }
+
+    #[test]
+    fn nearest_snap_tick_prefers_the_earlier_tick_on_a_tie() {
+        // Two touching clips share an x; equidistant targets either side too.
+        assert_eq!(
+            nearest_snap_tick(100.0, [(1920, 100.0), (960, 100.0)]),
+            Some(960)
+        );
+        assert_eq!(
+            nearest_snap_tick(100.0, [(1920, 102.0), (960, 98.0)]),
+            Some(960)
+        );
+    }
+
+    /// The flicker found hand-testing (2026-11-19): a clip edge at x = 100
+    /// with the grid line nearest the pointer at x = 116, beyond it. Swept
+    /// left to right, the snapped tick must never move back left, as it did
+    /// when the edge had a reach and the grid line won outside it.
+    #[test]
+    fn nearest_snap_tick_never_moves_against_the_pointer() {
+        let edge = (1625, 100.0);
+        let grid_ticks = [(1440, 40.0), (1920, 116.0), (2400, 192.0)];
+        let mut last = i32::MIN;
+        for step in 0..=400 {
+            let x = 40.0 + step as f32 * 0.5;
+            // The grid line `snapped_tick_at` would give: the nearest one.
+            let grid = nearest_snap_tick(x, grid_ticks).unwrap();
+            let grid_x = grid_ticks.iter().find(|g| g.0 == grid).unwrap().1;
+            let tick = nearest_snap_tick(x, [edge, (grid, grid_x)]).unwrap();
+            assert!(tick >= last, "x = {x}: {tick} after {last}");
+            last = tick;
+        }
     }
 }

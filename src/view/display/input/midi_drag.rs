@@ -99,7 +99,7 @@ impl Display {
             }
             display
                 .track_idx_at(y)
-                .map(|track_idx| (track_idx, display.snapped_tick_at(x)))
+                .map(|track_idx| (track_idx, display.track_snapped_tick_at(x, track_idx)))
         })
     }
 
