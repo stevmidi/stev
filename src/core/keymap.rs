@@ -183,7 +183,7 @@ pub(crate) struct Chord {
 
 impl Chord {
     /// `key` with no modifier.
-    const fn plain(key: Key) -> Self {
+    pub(crate) const fn plain(key: Key) -> Self {
         Chord {
             key,
             command: false,
@@ -194,7 +194,7 @@ impl Chord {
     }
 
     /// `⌘/Ctrl+key`.
-    const fn cmd(key: Key) -> Self {
+    pub(crate) const fn cmd(key: Key) -> Self {
         Chord {
             command: true,
             ..Chord::plain(key)
@@ -990,14 +990,15 @@ impl Keymap {
             chords[i] = list;
             overridden[i] = true;
         }
-        // Settled in priority order (user-bound first, then table order),
-        // each action checked only against those settled before it, so a
-        // chord one of them lost costs nobody else theirs.
+        // Settled in priority order (user-bound first, then table order:
+        // the sort is stable), each action checked only against those
+        // settled before it, so a chord one of them lost costs nobody else
+        // theirs.
         let mut order: Vec<usize> = (0..ACTIONS.len()).collect();
-        order.sort_by_key(|&i| (!overridden[i], i));
+        order.sort_by_key(|&i| !overridden[i]);
         for (n, &i) in order.iter().enumerate() {
             let settled = &order[..n];
-            let kept: Vec<Chord> = chords[i]
+            chords[i] = chords[i]
                 .iter()
                 .copied()
                 .filter(|chord| {
@@ -1006,7 +1007,6 @@ impl Keymap {
                     })
                 })
                 .collect();
-            chords[i] = kept;
         }
         Keymap::from_chords(chords)
     }

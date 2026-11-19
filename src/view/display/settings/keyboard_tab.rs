@@ -562,18 +562,16 @@ fn key_label_for(keys: &str, mac: bool) -> String {
     let mut label = String::with_capacity(keys.len() + 8);
     let mut chars = keys.chars().peekable();
     while let Some(c) = chars.next() {
-        let key = match c {
-            '⌫' if mac => Some("Delete"),
-            '⌫' => Some("Backspace"),
-            '⌦' if mac => Some("Fwd Delete"),
-            '⌦' => Some("Delete"),
-            _ => None,
-        };
-        if let Some(key) = key {
-            label.push_str(key);
-            continue;
-        }
         let name = match c {
+            '⌫' | '⌦' => {
+                label.push_str(match (c, mac) {
+                    ('⌫', true) => "Delete",
+                    ('⌫', false) => "Backspace",
+                    (_, true) => "Fwd Delete",
+                    (_, false) => "Delete",
+                });
+                continue;
+            }
             '⌘' if mac => "Cmd",
             '⌘' | '⌃' => "Ctrl",
             '⌥' if mac => "Opt",
@@ -596,7 +594,12 @@ fn key_label_for(keys: &str, mac: bool) -> String {
 
 /// `chord` as shown on this platform: `Cmd+Shift+Z`, `\`.
 pub(in crate::view::display) fn chord_label(chord: Chord) -> String {
-    key_label(&chord_glyphs(chord))
+    chord_label_for(chord, cfg!(target_os = "macos"))
+}
+
+/// [`chord_label`] for `mac` or not.
+fn chord_label_for(chord: Chord, mac: bool) -> String {
+    key_label_for(&chord_glyphs(chord), mac)
 }
 
 /// A command's `chords` as shown on this platform, two spaces apart:
@@ -620,7 +623,7 @@ fn chords_label_for(chords: &[Chord], mac: bool) -> String {
                     ..chord
                 }))
         })
-        .map(|&chord| key_label_for(&chord_glyphs(chord), mac))
+        .map(|&chord| chord_label_for(chord, mac))
         .collect::<Vec<_>>()
         .join("  ")
 }
@@ -932,23 +935,16 @@ mod tests {
     /// listed. A forward delete bound alone stays listed on a Mac.
     #[test]
     fn a_delete_pair_is_one_key_on_a_mac() {
-        let chord = |key, command| Chord {
-            key,
-            command,
-            alt: false,
-            shift: false,
-            ctrl: false,
-        };
-        let pair = [chord(Key::Delete, false), chord(Key::Backspace, false)];
+        let pair = [Chord::plain(Key::Delete), Chord::plain(Key::Backspace)];
         assert_eq!(chords_label_for(&pair, true), "Delete");
         assert_eq!(chords_label_for(&pair, false), "Delete  Backspace");
-        let time = [chord(Key::Delete, true), chord(Key::Backspace, true)];
+        let time = [Chord::cmd(Key::Delete), Chord::cmd(Key::Backspace)];
         assert_eq!(chords_label_for(&time, true), "Cmd+Delete");
         assert_eq!(
             chords_label_for(&time, false),
             "Ctrl+Delete  Ctrl+Backspace"
         );
-        let forward = [chord(Key::Delete, true)];
+        let forward = [Chord::cmd(Key::Delete)];
         assert_eq!(chords_label_for(&forward, true), "Cmd+Fwd Delete");
     }
 
