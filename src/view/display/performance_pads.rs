@@ -7,7 +7,8 @@
 //! ("Pad 6 · 6 bars"). A click selects it and gives the column the keyboard
 //! (`KeyFocus::Pads`): `Delete` empties the selected pad, `⌘C` copies it
 //! (its performance and its render) and `⌘V` pastes a copied performance
-//! onto it, `Esc` leaves, a pane command hands the keyboard back and acts
+//! onto it (the other clipboard chords only say so in the footer), `Esc`
+//! leaves, a pane command hands the keyboard back and acts
 //! there, as from a knob. Mouse only. The drawing is
 //! `rendering/knob_panel.rs`.
 
@@ -21,6 +22,7 @@ use super::Display;
 use super::input::{ColumnKey, column_key};
 use super::knob_panel::{KnobRects, knob_hit_at, knob_layout};
 use super::pane::KeyFocus;
+use super::status_message::StatusMessage;
 
 /// What the pads hold, as the sequencer last said (`UiEvent::PerformancePads`),
 /// and which is selected: the view's own, set by a click and told to the
@@ -32,6 +34,10 @@ pub(super) struct PadsShown {
     /// The selected pad.
     pub(super) selected: usize,
 }
+
+/// The footer's line for a clipboard chord the pads don't take: they copy
+/// and paste pad to pad only.
+const PAD_CHORD_HINT: &str = "A pad takes ⌘C and ⌘V · Esc, then paste in the arranger";
 
 /// The footer's line for pad `pad` holding a performance `length` ticks long
 /// (`None` empty): "Pad 6 · 6 bars", "Pad 6 · empty". Pads count from 1.
@@ -114,19 +120,27 @@ impl Display {
     pub(super) fn handle_pad_column_key(&mut self, event: &InputEvent) -> bool {
         // `⌘C` copies the selected pad and `⌘V` pastes onto it; the other
         // chords do nothing here (a pad has no time for `⇧⌘V` to insert
-        // into, and `⌘X` is left for later).
+        // into, and `⌘X` is left for later), and the footer says where
+        // they act.
         if let InputEvent::Copy { .. } | InputEvent::Cut { .. } | InputEvent::Paste { .. } = *event
         {
-            let send = match *event {
-                InputEvent::Copy { shift: false } => Some(InputEvent::CopyPerformancePad),
+            match *event {
+                InputEvent::Copy { shift: false } => {
+                    self.input_event_tx
+                        .send(InputEvent::CopyPerformancePad)
+                        .ok();
+                }
                 InputEvent::Paste {
                     shift: false,
                     alt: false,
-                } => Some(InputEvent::PastePerformancePad),
-                _ => None,
-            };
-            if let Some(send) = send {
-                self.input_event_tx.send(send).ok();
+                } => {
+                    self.input_event_tx
+                        .send(InputEvent::PastePerformancePad)
+                        .ok();
+                }
+                _ => {
+                    self.render.status = Some(StatusMessage::new(PAD_CHORD_HINT.to_owned()));
+                }
             }
             return true;
         }

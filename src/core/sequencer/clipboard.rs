@@ -240,7 +240,8 @@ impl Sequencer {
     }
 
     /// The performance a pad's copy holds, for a paste onto a pad. `None`
-    /// when the last copy was clips or notes.
+    /// when clips were copied since; a note copy leaves it, the notes having
+    /// a clipboard of their own.
     pub(crate) fn performance_clipboard(&self) -> Option<&Clip> {
         self.performance_clipboard.as_ref()
     }
@@ -289,7 +290,6 @@ impl Sequencer {
         }
         self.note_clipboard = notes;
         self.note_clipboard_from_performance = self.is_performance_lane_armed();
-        self.performance_clipboard = None;
         true
     }
 

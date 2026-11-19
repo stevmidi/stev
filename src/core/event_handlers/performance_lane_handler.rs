@@ -112,14 +112,16 @@ impl EventHandlers {
 
     /// `⌘V` on the selected pad: a copy of the copied performance replaces
     /// what it holds, lit or not, one undo step, a clip of its own so
-    /// editing one pad never changes the other (decision 5). Nothing when
-    /// the last copy was clips or notes.
+    /// editing one pad never changes the other (decision 5). With no
+    /// performance copied (none yet, or clips copied since) nothing, and
+    /// the footer says so.
     pub(super) fn paste_performance_pad_workflow(
         &self,
         sequencer: &mut Sequencer,
         undo_record: &mut Record<UndoStep>,
     ) {
         let Some(clip) = sequencer.performance_clipboard().map(Clip::detached_copy) else {
+            self.send_status_ui_event("No pad copied to paste".to_owned());
             return;
         };
         let edit = SetPerformancePadEdit::new(sequencer, sequencer.selected_pad(), Some(clip));
@@ -571,14 +573,34 @@ mod tests {
         record.undo(&mut h.sequencer);
         assert_eq!(pad_notes(&h, 3), None, "one undo step");
 
-        // A clip copy since: no performance to paste.
+        // A note copy since leaves the copied performance: the notes have a
+        // clipboard of their own.
+        for pad in [0, 3] {
+            run_command(
+                &mut h,
+                &mut record,
+                SequencerCommand::SelectPerformancePad(pad),
+            );
+            if pad == 0 {
+                run_command(&mut h, &mut record, SequencerCommand::SelectAllEvents);
+                run_command(&mut h, &mut record, SequencerCommand::CopyNotes);
+                assert!(!h.sequencer.note_clipboard().is_empty());
+            }
+        }
+        run_command(&mut h, &mut record, SequencerCommand::PastePerformancePad);
+        assert_eq!(pad_notes(&h, 3), pad_notes(&h, 0));
+        record.undo(&mut h.sequencer);
+
+        // A clip copy since: no performance to paste, and the footer says so.
         run_command(
             &mut h,
             &mut record,
             SequencerCommand::CopyClips { start: 0, end: 960 },
         );
+        statuses(&h);
         run_command(&mut h, &mut record, SequencerCommand::PastePerformancePad);
         assert_eq!(pad_notes(&h, 3), None);
+        assert_eq!(statuses(&h), ["No pad copied to paste"]);
     }
 
     #[test]
