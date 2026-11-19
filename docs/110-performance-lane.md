@@ -169,7 +169,8 @@ key length and the pads. Key files:
   band, as in its key column. Seams at E/F (1px) and B/C (2px) in the strip, as
   on the piano roll (`row_seam_w`). The plain lane above the strip carries the
   names in `fg_dim`: the C's always (Cubase-style, C3 over bar 1), every key
-  once a key fits the widest sharp's name and its padding (`labels_every_key`),
+  once a key fits the widest sharp's name and its padding, but only at a beat a
+  key: at a bar or half a bar the C's alone mark the octaves (`labels_every_key`),
   each clipped to its key. Only the visible keys are drawn (`visible_keys`). The
   strip is drawn armed or not, at `UNARMED_KEY_STRENGTH` unarmed; the lane fill
   is the usual one (the accent tint while armed). While armed every key the live

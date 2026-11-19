@@ -7,7 +7,7 @@
 //! picked from the `Bar` / `½` / `Beat` labels in the gutter
 //! (§ Step 1b): a thin strip along the lane's bottom edge carries each
 //! key, white or black as on the piano roll, the plain lane above it the
-//! names (the C's always, every key once a key is wide enough), and a key the
+//! names (the C's always, every key once a beat key is wide enough), and a key the
 //! live keyboard holds lights while the lane is armed. Static: it changes
 //! with zoom, scroll and the meter, never with playing (the playhead is the
 //! trigger's feedback).
@@ -121,7 +121,8 @@ impl Display {
             .layout_no_wrap(WIDEST_KEY_NAME.to_owned(), font.clone(), Color32::WHITE)
             .size()
             .x;
-        let label_every_key = labels_every_key(ppt * key_ticks as f32, label_w);
+        let label_every_key =
+            labels_every_key(length.in_meter(meter), ppt * key_ticks as f32, label_w);
         let (white, black) = if armed {
             (theme::piano_key_white(), theme::piano_key_black())
         } else {
@@ -303,11 +304,13 @@ fn key_seam_w(key_index: i32) -> Option<f32> {
     row_seam_w(below)
 }
 
-/// Whether a key `key_w` wide has room for every key's name: the widest name
-/// the lane shows (`label_w`, measured from `WIDEST_KEY_NAME`) and its
-/// padding on both sides. Below it only the C's are named.
-fn labels_every_key(key_w: f32, label_w: f32) -> bool {
-    key_w >= label_w + 2.0 * KEY_LABEL_PAD_X
+/// Whether every key is named, not just the C's: only at a beat a key
+/// (`length` as it plays in the meter), and only once a key `key_w` wide has
+/// room for the widest name the lane shows (`label_w`, measured from
+/// `WIDEST_KEY_NAME`) and its padding on both sides. At a bar or half a bar
+/// a key, the C's alone mark the octaves, however far the lane is zoomed in.
+fn labels_every_key(length: KeyLength, key_w: f32, label_w: f32) -> bool {
+    length == KeyLength::Beat && key_w >= label_w + 2.0 * KEY_LABEL_PAD_X
 }
 
 /// A key's name, sharps only as the MCP units write them, with the piano
@@ -460,9 +463,16 @@ mod tests {
 
     #[test]
     fn every_key_is_named_once_a_key_fits_the_widest_name() {
-        assert!(!labels_every_key(20.0, 20.0));
-        assert!(!labels_every_key(25.9, 20.0));
-        assert!(labels_every_key(26.0, 20.0));
+        assert!(!labels_every_key(KeyLength::Beat, 20.0, 20.0));
+        assert!(!labels_every_key(KeyLength::Beat, 25.9, 20.0));
+        assert!(labels_every_key(KeyLength::Beat, 26.0, 20.0));
+    }
+
+    #[test]
+    fn only_the_cs_are_named_at_a_bar_or_half_a_bar() {
+        for length in [KeyLength::Bar, KeyLength::HalfBar] {
+            assert!(!labels_every_key(length, 1000.0, 20.0), "{length:?}");
+        }
     }
 
     #[test]
