@@ -990,18 +990,23 @@ impl Keymap {
             chords[i] = list;
             overridden[i] = true;
         }
-        // Whether action `j` keeps a chord from action `i` it shares it with.
-        let wins = |j: usize, i: usize| (overridden[j], i > j) > (overridden[i], j > i);
-        let held = chords.clone();
-        for (i, info) in ACTIONS.iter().enumerate() {
-            chords[i].retain(|chord| {
-                !ACTIONS.iter().enumerate().any(|(j, other)| {
-                    j != i
-                        && other.scope.overlaps(info.scope)
-                        && held[j].contains(chord)
-                        && wins(j, i)
+        // Settled in priority order (user-bound first, then table order),
+        // each action checked only against those settled before it, so a
+        // chord one of them lost costs nobody else theirs.
+        let mut order: Vec<usize> = (0..ACTIONS.len()).collect();
+        order.sort_by_key(|&i| (!overridden[i], i));
+        for (n, &i) in order.iter().enumerate() {
+            let settled = &order[..n];
+            let kept: Vec<Chord> = chords[i]
+                .iter()
+                .copied()
+                .filter(|chord| {
+                    !settled.iter().any(|&j| {
+                        ACTIONS[j].scope.overlaps(ACTIONS[i].scope) && chords[j].contains(chord)
+                    })
                 })
-            });
+                .collect();
+            chords[i] = kept;
         }
         Keymap::from_chords(chords)
     }
@@ -1731,6 +1736,24 @@ mod tests {
             keymap.chords(Action::DeleteTime),
             &[Chord::cmd(Key::Delete)]
         );
+        assert!(conflict_free(&keymap));
+    }
+
+    /// A chord lost to a rival that lost it too comes back: the arranger's
+    /// Mute takes `Q` from the plugin toggle (both bound, Mute first), and
+    /// Quantize keeps its default `Q`, the clip view's, which only the
+    /// global toggle, now without it, would have cost it.
+    #[test]
+    fn a_chord_lost_twice_over_is_kept() {
+        let q = vec![ChordDto::from(Chord::plain(Key::Q))];
+        let overrides = BTreeMap::from([
+            ("arranger.mute".to_owned(), q.clone()),
+            ("arranger.plugin_editor".to_owned(), q),
+        ]);
+        let keymap = Keymap::from_overrides(&overrides);
+        assert_eq!(keymap.chords(Action::MuteRange), &[Chord::plain(Key::Q)]);
+        assert!(keymap.chords(Action::TogglePluginEditor).is_empty());
+        assert_eq!(keymap.chords(Action::Quantize), &[Chord::plain(Key::Q)]);
         assert!(conflict_free(&keymap));
     }
 
