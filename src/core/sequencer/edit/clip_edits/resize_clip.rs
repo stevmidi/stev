@@ -43,9 +43,6 @@ pub(crate) struct ResizeClipEdit {
     clips: Vec<ClipResize>,
     /// The mouse drag this step belongs to; `None` for a keyboard edit.
     drag_id: Option<u64>,
-    /// Whether this is a drag over a marquee (`for_tied_edges`), reported as
-    /// [`EditResult::ClipsResized`] even for one clip.
-    grouped: bool,
     /// The marquee after the (latest merged) edit when its edge was on the
     /// dragged edge and follows it; `None` leaves the marquee alone. Undo
     /// restores the marquee through the step's view snapshot, not from here.
@@ -77,7 +74,6 @@ impl ResizeClipEdit {
                 after,
             }],
             drag_id,
-            grouped: false,
             marquee: None,
         })
     }
@@ -110,7 +106,6 @@ impl ResizeClipEdit {
         (!clips.is_empty()).then_some(Self {
             clips,
             drag_id: Some(drag_id),
-            grouped: true,
             marquee,
         })
     }
@@ -137,14 +132,13 @@ impl ResizeClipEdit {
         self.marquee = other.marquee;
     }
 
-    /// Applies `after`. Returns [`EditResult::ClipResized`] (one clip, not
-    /// over a marquee) or [`EditResult::ClipsResized`], or `NoOp` if the
-    /// clips are gone.
+    /// Applies `after`. Returns [`EditResult::ClipsResized`], or `NoOp` if
+    /// the clips are gone.
     pub(in crate::core::sequencer::edit) fn edit(
         &mut self,
         sequencer: &mut Sequencer,
     ) -> EditResult {
-        self.apply(sequencer, |clip| clip.after, self.marquee)
+        self.apply(sequencer, true)
     }
 
     /// Restores `before`. Same result shape as `edit()`.
@@ -152,33 +146,28 @@ impl ResizeClipEdit {
         &mut self,
         sequencer: &mut Sequencer,
     ) -> EditResult {
-        self.apply(sequencer, |clip| clip.before, None)
+        self.apply(sequencer, false)
     }
 
-    /// Moves each clip to the bounds `pick` chooses. While playing, a clip is
-    /// heard in its new window from the playhead at once
-    /// (`Sequencer::set_clip_bounds`).
-    fn apply(
-        &self,
-        sequencer: &mut Sequencer,
-        pick: impl Fn(&ClipResize) -> ClipBounds,
-        marquee: Option<TimeSelectionRect>,
-    ) -> EditResult {
-        let mut resized: Vec<_> = self
+    /// Moves each clip to its `after` bounds (`forward`) or its `before`
+    /// bounds. While playing, a clip is heard in its new window from the
+    /// playhead at once (`Sequencer::set_clip_bounds`). Only the forward
+    /// direction names a marquee: an undo's comes from the step's view.
+    fn apply(&self, sequencer: &mut Sequencer, forward: bool) -> EditResult {
+        let clips: Vec<_> = self
             .clips
             .iter()
-            .filter_map(|clip| sequencer.set_clip_bounds(clip.track_idx, clip.clip_id, pick(clip)))
+            .filter_map(|clip| {
+                let bounds = if forward { clip.after } else { clip.before };
+                sequencer.set_clip_bounds(clip.track_idx, clip.clip_id, bounds)
+            })
             .collect();
-        match resized.len() {
-            0 => EditResult::NoOp,
-            1 if !self.grouped => EditResult::ClipResized {
-                clip: resized.remove(0),
-                retime: None,
-            },
-            _ => EditResult::ClipsResized {
-                clips: resized,
-                marquee,
-            },
+        if clips.is_empty() {
+            return EditResult::NoOp;
+        }
+        EditResult::ClipsResized {
+            clips,
+            marquee: self.marquee.filter(|_| forward),
         }
     }
 }
@@ -541,13 +530,6 @@ mod tests {
         }
     }
 
-    /// The result of the first step of a tied end drag to `target`.
-    fn first_step(sequencer: &mut Sequencer, tied: &[(usize, Uuid)], target: i32) -> EditResult {
-        let mut edit =
-            ResizeClipEdit::for_tied_edges(sequencer, tied, ClipEdge::End, target, 1).unwrap();
-        edit.edit(sequencer)
-    }
-
     /// A marquee whose end is on the dragged end follows it, so it still
     /// holds the clips afterwards; undo leaves putting it back to the step's
     /// view snapshot.
@@ -579,8 +561,9 @@ mod tests {
         let tied = tied_ends(&mut sequencer);
         sequencer.set_marquee(Some(marquee_over((0, 2), (0, bar * 4))));
 
-        let EditResult::ClipsResized { marquee, .. } = first_step(&mut sequencer, &tied, bar * 3)
-        else {
+        let mut edit =
+            ResizeClipEdit::for_tied_edges(&sequencer, &tied, ClipEdge::End, bar * 3, 1).unwrap();
+        let EditResult::ClipsResized { marquee, .. } = edit.edit(&mut sequencer) else {
             panic!("expected ClipsResized");
         };
         assert_eq!(marquee, None);

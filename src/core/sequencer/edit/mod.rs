@@ -401,9 +401,9 @@ pub(crate) enum EditResult {
         /// which moves no events.
         retime: Option<EventSpaceRetime>,
     },
-    /// Several clips' edges moved together (`ResizeClipEdit` over a marquee,
-    /// either direction): each handled as a [`ClipResized`](Self::ClipResized)
-    /// without a retime.
+    /// One or more clips' edges moved (`ResizeClipEdit`, either direction —
+    /// several together in an edge drag over a marquee): each handled as a
+    /// [`ClipResized`](Self::ClipResized) without a retime.
     ClipsResized {
         /// The clips at their new bounds.
         clips: Vec<ClipMetadata>,

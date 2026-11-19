@@ -29,7 +29,7 @@ pub(crate) struct EdgeTarget {
 /// the end from a minimum clip length (`time::min_clip_length_ticks`) after
 /// the start to the next clip's start; the start from the previous clip's end
 /// (or however far the window can retreat before the events run out) to a
-/// minimum length before the end. `None` when the edge has no room to move.
+/// minimum length before the end. `None` when the limits cross.
 fn edge_limits(track: &Track, clip: &Clip, edge: ClipEdge) -> Option<(i32, i32)> {
     let min_length = time::min_clip_length_ticks();
     let start_tick = clip.start_tick();
@@ -47,7 +47,7 @@ fn edge_limits(track: &Track, clip: &Clip, edge: ClipEdge) -> Option<(i32, i32)>
             )
         }
     };
-    (lowest < highest || (edge == ClipEdge::End && lowest == highest)).then_some((lowest, highest))
+    (lowest <= highest).then_some((lowest, highest))
 }
 
 /// `clip`'s bounds with its arrangement `edge` moved to `tick`: the end

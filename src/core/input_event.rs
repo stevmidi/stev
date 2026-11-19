@@ -79,6 +79,14 @@ impl TimeSelectionRect {
         self.end > self.start
     }
 
+    /// Whether a clip on `track_idx` spanning `[start, end)` lies in this
+    /// selection: its track in the span and its ticks overlapping the range.
+    pub(crate) fn covers_clip(&self, track_idx: usize, start: i32, end: i32) -> bool {
+        (self.track_start..=self.track_end).contains(&track_idx)
+            && start < self.end
+            && end > self.start
+    }
+
     /// This block moved by a band drag's release delta: the rect a move or
     /// a ⌥-drag copy lands on. `None` when there is nothing to land — no
     /// tick width, a zero delta, a backwards track span or one off the

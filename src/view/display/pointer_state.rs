@@ -242,11 +242,8 @@ pub(super) fn tied_clips(
         ClipResizeEdge::End => end,
     };
     let grabbed_tick = edge_of(grabbed.ticks_at_press);
-    let in_marquee = |track_idx: usize, (start, end): (i32, i32)| {
-        (rect.track_start..=rect.track_end).contains(&track_idx)
-            && start < rect.end
-            && end > rect.start
-    };
+    let in_marquee =
+        |track_idx: usize, (start, end): (i32, i32)| rect.covers_clip(track_idx, start, end);
     if !in_marquee(grabbed.track_idx, grabbed.ticks_at_press) {
         return Vec::new();
     }
