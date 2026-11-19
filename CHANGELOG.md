@@ -22,6 +22,8 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ### Added
 
+- Drag a clip's edge with a marquee over several tracks and every clip in the marquee whose edge is at exactly the same place moves with it, as in Ableton: the ends (or starts) stay level, the drag stops where the tightest clip runs out of room, and it is one undo step. The marquee stays through the press and follows the edge you drag when its edge is on it. Without a marquee, or when the clip you grab isn't inside it, only that clip moves, as before.
+
 - Keep what you play on the performance lane. Put the arranger cursor where the material should go, select the lane and play on it, then press `/`: what you just heard lands at the cursor as ordinary clips, each stretch you jumped to copied from the tracks it played on and laid end to end, and everything after the cursor moves along to make room. It takes the presses since you started playing (or since the last `/`); `⌘Z` takes it out again and closes the gap. The clips are plain clips: trim, split, move, transpose or repeat them as any other. The footer says how much landed and where, or that nothing played.
 
 - `⇧⌘V` in the arranger is Paste Time: the same paste as `⌘V`, but it makes room instead of overwriting. Everything from the cursor on moves right by the length you copied, on every track, and the paste lands in the gap. It works after either copy, `⌘C` or `⇧⌘C`, and keeps the copy's empty bars, so what follows stays in place in the bar. A loop at or after the cursor moves along with it. One undo step.

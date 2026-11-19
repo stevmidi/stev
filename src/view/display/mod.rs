@@ -126,7 +126,7 @@ pub(crate) use modal_focus::{
 use pointer_state::{
     AxisFilter, ClipMoveDrag, ClipMoveKind, ClipResizeDrag, ClipResizeEdge, KeyZoomDrag,
     LoadedMidi, MarqueeAnchor, MidiDrag, NoteMouseDrag, NotePart, PluginDrag, TrackButton,
-    TrackMixDrag, TrackMixParam, VelocityDrag, WindowEdgeCommit, WindowEdgeDrag,
+    TrackMixDrag, TrackMixParam, VelocityDrag, WindowEdgeCommit, WindowEdgeDrag, tied_clips,
 };
 pub(crate) use ui_event::{TrackLane, TrackRoute, UiEvent};
 

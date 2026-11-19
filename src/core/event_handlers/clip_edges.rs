@@ -16,7 +16,8 @@ use super::*;
 impl EventHandlers {
     /// One step of the arranger edge drag: trims the selected clip's `edge`
     /// to `target_tick`, recorded under `drag_id` so the whole drag merges
-    /// into one undo step.
+    /// into one undo step. With `tied` clips (a drag over a marquee, fixed at
+    /// the press) their edges move together by the same delta, as one edit.
     pub(super) fn drag_clip_edge_workflow(
         &self,
         sequencer: &mut Sequencer,
@@ -24,7 +25,13 @@ impl EventHandlers {
         edge: ClipEdge,
         target_tick: i32,
         drag_id: u64,
+        tied: &[(usize, Uuid)],
     ) {
+        if !tied.is_empty() {
+            let edit = ResizeClipEdit::for_tied_edges(sequencer, tied, edge, target_tick, drag_id);
+            self.record_edit(sequencer, undo_record, edit);
+            return;
+        }
         let Some(clip_id) = sequencer.selected_clip_id() else {
             return;
         };
@@ -274,6 +281,7 @@ mod tests {
             SequencerCommand::ResizeSelectedClipRegionEnd {
                 target_tick: 1100,
                 drag_id: 1,
+                tied: Vec::new(),
             },
         );
         assert_eq!(loop_moves(&h), (vec![span(&h)], false));

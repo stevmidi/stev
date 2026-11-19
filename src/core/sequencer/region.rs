@@ -8,7 +8,10 @@ use uuid::Uuid;
 
 use crate::{
     core::time,
-    models::clip::{Clip, ClipBounds, ClipEdge, min_window_length, window_with_edge_at},
+    models::{
+        clip::{Clip, ClipBounds, ClipEdge, min_window_length, window_with_edge_at},
+        track::Track,
+    },
 };
 
 use super::Sequencer;
@@ -20,6 +23,46 @@ pub(crate) struct EdgeTarget {
     pub(crate) clip_id: Uuid,
     /// Its bounds after the edit.
     pub(crate) bounds: ClipBounds,
+}
+
+/// The ticks `clip`'s arrangement `edge` can be dragged between on `track`:
+/// the end from a minimum clip length (`time::min_clip_length_ticks`) after
+/// the start to the next clip's start; the start from the previous clip's end
+/// (or however far the window can retreat before the events run out) to a
+/// minimum length before the end. `None` when the edge has no room to move.
+fn edge_limits(track: &Track, clip: &Clip, edge: ClipEdge) -> Option<(i32, i32)> {
+    let min_length = time::min_clip_length_ticks();
+    let start_tick = clip.start_tick();
+    let (lowest, highest) = match edge {
+        ClipEdge::End => (
+            start_tick + min_length,
+            track.next_clip_start_after(start_tick).unwrap_or(i32::MAX),
+        ),
+        ClipEdge::Start => {
+            let from_prev_clip = track.prev_clip_end_before(start_tick).unwrap_or(0);
+            let from_region = start_tick - clip.region().start();
+            (
+                from_prev_clip.max(from_region),
+                clip.end_tick() - min_length,
+            )
+        }
+    };
+    (lowest < highest || (edge == ClipEdge::End && lowest == highest)).then_some((lowest, highest))
+}
+
+/// `clip`'s bounds with its arrangement `edge` moved to `tick`: the end
+/// changes the window's length, the start moves `start_tick` and the window
+/// start by the same delta so the content stays put in time.
+fn bounds_with_edge_at(clip: &Clip, edge: ClipEdge, tick: i32) -> ClipBounds {
+    let mut bounds = clip.bounds();
+    match edge {
+        ClipEdge::End => bounds.region_end = bounds.region_start + (tick - clip.start_tick()),
+        ClipEdge::Start => {
+            bounds.region_start += tick - clip.start_tick();
+            bounds.start_tick = tick;
+        }
+    }
+    bounds
 }
 
 impl Sequencer {
@@ -180,17 +223,11 @@ impl Sequencer {
         clip_id: Uuid,
         target_end_tick: i32,
     ) -> Option<ClipBounds> {
-        let min_length = time::min_clip_length_ticks();
         let track = self.selected_track()?;
         let clip = track.get_clip_by_id(clip_id)?;
-        let start_tick = clip.start_tick();
-
-        let max_end = track.next_clip_start_after(start_tick).unwrap_or(i32::MAX);
-        let clamped_end = target_end_tick.clamp(start_tick + min_length, max_end);
-        let new_length = clamped_end - start_tick;
-
-        let mut bounds = clip.bounds();
-        bounds.region_end = bounds.region_start + new_length;
+        let (lowest, highest) = edge_limits(track, clip, ClipEdge::End)?;
+        let bounds =
+            bounds_with_edge_at(clip, ClipEdge::End, target_end_tick.clamp(lowest, highest));
         (bounds != clip.bounds()).then_some(bounds)
     }
 
@@ -208,32 +245,60 @@ impl Sequencer {
         clip_id: Uuid,
         target_start_tick: i32,
     ) -> Option<ClipBounds> {
-        let min_length = time::min_clip_length_ticks();
         let track = self.selected_track()?;
         let clip = track.get_clip_by_id(clip_id)?;
-        let cur_start_tick = clip.start_tick();
-        let end_tick = clip.end_tick();
-        let region_start = clip.region().start();
+        let (lowest, highest) = edge_limits(track, clip, ClipEdge::Start)?;
+        let bounds = bounds_with_edge_at(
+            clip,
+            ClipEdge::Start,
+            target_start_tick.clamp(lowest, highest),
+        );
+        (bounds != clip.bounds()).then_some(bounds)
+    }
 
-        let min_start_from_prev_clip = track.prev_clip_end_before(cur_start_tick).unwrap_or(0);
-        let min_start_from_region = cur_start_tick - region_start;
-        let min_start = min_start_from_prev_clip.max(min_start_from_region);
-        let max_start = end_tick - min_length;
-
-        if min_start >= max_start {
-            return None;
+    /// Where each clip of `tied` (`(track, clip)` pairs, on any track) goes
+    /// when their `edge` is dragged to `target_tick` together (the mouse edge
+    /// drag over a marquee, `020-views-and-state.md` § Clip Edge Drag-Resize):
+    /// every clip moves its edge by the same delta, held to the tightest of
+    /// their limits (each clip's own, as `clip_end_trimmed_to` and
+    /// `clip_start_trimmed_to` have them) so the edges stay level. Only the
+    /// clips that change are listed; a tied clip that is gone is skipped, one
+    /// that cannot move at all holds the whole group still.
+    pub(crate) fn tied_edges_trimmed_to(
+        &self,
+        tied: &[(usize, Uuid)],
+        edge: ClipEdge,
+        target_tick: i32,
+    ) -> Vec<(usize, Uuid, ClipBounds)> {
+        let clips: Vec<(usize, &Clip)> = tied
+            .iter()
+            .filter_map(|&(track_idx, clip_id)| {
+                Some((track_idx, self.clip_on(track_idx, clip_id)?))
+            })
+            .collect();
+        let mut lowest = i32::MIN;
+        let mut highest = i32::MAX;
+        for &(track_idx, clip) in &clips {
+            let Some(track) = self.tracks().get(track_idx) else {
+                return Vec::new();
+            };
+            let Some((low, high)) = edge_limits(track, clip, edge) else {
+                return Vec::new();
+            };
+            lowest = lowest.max(low);
+            highest = highest.min(high);
         }
-
-        let clamped_start = target_start_tick.clamp(min_start, max_start);
-        let delta = clamped_start - cur_start_tick;
-        if delta == 0 {
-            return None;
+        if lowest > highest {
+            return Vec::new();
         }
-
-        let mut bounds = clip.bounds();
-        bounds.start_tick = clamped_start;
-        bounds.region_start = region_start + delta;
-        Some(bounds)
+        let tick = target_tick.clamp(lowest, highest);
+        clips
+            .into_iter()
+            .filter_map(|(track_idx, clip)| {
+                let bounds = bounds_with_edge_at(clip, edge, tick);
+                (bounds != clip.bounds()).then_some((track_idx, clip.id(), bounds))
+            })
+            .collect()
     }
 
     /// `length` fitted into the room a clip starting at `start_tick` on the

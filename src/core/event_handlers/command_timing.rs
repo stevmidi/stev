@@ -504,6 +504,7 @@ const CASES: &[Case] = &[
         command: |_| SequencerCommand::ResizeSelectedClipRegionEnd {
             target_tick: BAR,
             drag_id: 1,
+            tied: Vec::new(),
         },
     },
     Case {
@@ -512,6 +513,7 @@ const CASES: &[Case] = &[
         command: |_| SequencerCommand::ResizeSelectedClipRegionStart {
             target_tick: BAR,
             drag_id: 1,
+            tied: Vec::new(),
         },
     },
     Case {

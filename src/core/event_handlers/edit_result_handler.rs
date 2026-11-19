@@ -263,6 +263,14 @@ impl EventHandlers {
             EditResult::ClipResized { clip, retime } => {
                 self.clip_resized_workflow(sequencer, clip, retime);
             }
+            EditResult::ClipsResized { clips, marquee } => {
+                for clip in clips {
+                    self.clip_resized_workflow(sequencer, clip, None);
+                }
+                if let Some(rect) = marquee {
+                    self.set_marquee_workflow(sequencer, rect);
+                }
+            }
             EditResult::EventsModified {
                 track_idx,
                 clip_id,

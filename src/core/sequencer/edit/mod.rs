@@ -401,6 +401,16 @@ pub(crate) enum EditResult {
         /// which moves no events.
         retime: Option<EventSpaceRetime>,
     },
+    /// Several clips' edges moved together (`ResizeClipEdit` over a marquee,
+    /// either direction): each handled as a [`ClipResized`](Self::ClipResized)
+    /// without a retime.
+    ClipsResized {
+        /// The clips at their new bounds.
+        clips: Vec<ClipMetadata>,
+        /// The marquee after the edit when it follows the dragged edge
+        /// (forward direction only: an undo's comes from the step's view).
+        marquee: Option<TimeSelectionRect>,
+    },
     /// A brand-new clip is on its track (`CommitClipEdit`, forward direction
     /// — a capture commit or a redo of one): add
     /// its shape, select it, re-seek. See `050-undo-redo.md`.

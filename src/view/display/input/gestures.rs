@@ -587,22 +587,39 @@ impl Display {
     /// the raw press position — that's always inside the clip regardless of
     /// which edge was grabbed, sidestepping the exclusive-end hit-test edge
     /// case. The subsequent drag then drives the "selected clip" resize
-    /// commands.
+    /// commands. With a marquee holding the clip nothing is sent: the marquee,
+    /// the cursor and the track stay, and the drag moves the clips tied to
+    /// the edge (`tied_clips`).
     pub(super) fn begin_clip_resize_drag(&mut self, hit: ClipResizeDrag) {
-        let start_tick = self
-            .clip_shape(hit.track_idx, hit.clip_id)
-            .map_or(0, |shape| shape.start_tick());
-
-        self.input_event_tx
-            .send(InputEvent::MouseClickedTicks {
-                pane: Pane::Arranger,
-                tick_x: start_tick,
-                event_id: None,
-                track_idx: Some(hit.track_idx),
-                performance_lane_hit: false,
-            })
-            .ok();
-
+        self.gesture.clip_resize_tied = tied_clips(
+            self.render.clip_shapes.iter().map(|shape| {
+                (
+                    shape.track_idx(),
+                    shape.clip_id(),
+                    (shape.start_tick(), shape.end_tick()),
+                )
+            }),
+            self.gesture.time_selection,
+            hit,
+        );
+        // A marquee that holds the clip stays as it is, as for a band press
+        // (`begin_clip_move_drag`): the click would move the cursor and the
+        // track and collapse it. The drag then moves the tied clips, not the
+        // selected one.
+        if self.gesture.clip_resize_tied.is_empty() {
+            let start_tick = self
+                .clip_shape(hit.track_idx, hit.clip_id)
+                .map_or(0, |shape| shape.start_tick());
+            self.input_event_tx
+                .send(InputEvent::MouseClickedTicks {
+                    pane: Pane::Arranger,
+                    tick_x: start_tick,
+                    event_id: None,
+                    track_idx: Some(hit.track_idx),
+                    performance_lane_hit: false,
+                })
+                .ok();
+        }
         self.gesture.clip_resize_hover = None;
         self.gesture.clip_resize_drag = Some(hit);
         self.gesture.clip_resize_drag_id = self.gesture.take_drag_id();
@@ -620,14 +637,17 @@ impl Display {
         };
         let target_tick = self.track_snapped_tick_at(x, drag.track_idx);
         let drag_id = self.gesture.clip_resize_drag_id;
+        let tied = self.gesture.clip_resize_tied.clone();
         let event = match drag.edge {
             ClipResizeEdge::End => InputEvent::ResizeSelectedClipRegionEnd {
                 target_tick,
                 drag_id,
+                tied,
             },
             ClipResizeEdge::Start => InputEvent::ResizeSelectedClipRegionStart {
                 target_tick,
                 drag_id,
+                tied,
             },
         };
         self.input_event_tx.send(event).ok();

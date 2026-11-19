@@ -538,6 +538,10 @@ pub(crate) enum SequencerCommand {
         target_tick: i32,
         /// The drag gesture.
         drag_id: u64,
+        /// The clips whose edge moves with the grabbed one — `(track, clip)`
+        /// pairs, fixed at the press (`Display::tied_clips`); empty to move
+        /// only the selected clip.
+        tied: Vec<(usize, Uuid)>,
     },
     /// Mouse drag-resize of a clip's left edge to an absolute target tick.
     ResizeSelectedClipRegionStart {
@@ -545,6 +549,10 @@ pub(crate) enum SequencerCommand {
         target_tick: i32,
         /// The drag gesture.
         drag_id: u64,
+        /// The clips whose edge moves with the grabbed one — `(track, clip)`
+        /// pairs, fixed at the press (`Display::tied_clips`); empty to move
+        /// only the selected clip.
+        tied: Vec<(usize, Uuid)>,
     },
     /// The clip view's window band drag, released: move the lead clip's
     /// window `edge` to `tick`, in event ticks

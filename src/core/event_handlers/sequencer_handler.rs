@@ -511,6 +511,7 @@ impl EventHandlers {
             SequencerCommand::ResizeSelectedClipRegionEnd {
                 target_tick,
                 drag_id,
+                tied,
             } => {
                 self.drag_clip_edge_workflow(
                     sequencer,
@@ -518,12 +519,14 @@ impl EventHandlers {
                     ClipEdge::End,
                     *target_tick,
                     *drag_id,
+                    tied,
                 );
             }
 
             SequencerCommand::ResizeSelectedClipRegionStart {
                 target_tick,
                 drag_id,
+                tied,
             } => {
                 self.drag_clip_edge_workflow(
                     sequencer,
@@ -531,6 +534,7 @@ impl EventHandlers {
                     ClipEdge::Start,
                     *target_tick,
                     *drag_id,
+                    tied,
                 );
             }
 

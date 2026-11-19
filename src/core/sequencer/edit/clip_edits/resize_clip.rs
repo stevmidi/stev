@@ -6,7 +6,8 @@
 
 use uuid::Uuid;
 
-use crate::models::clip::ClipBounds;
+use crate::core::input_event::TimeSelectionRect;
+use crate::models::clip::{ClipBounds, ClipEdge};
 
 use super::super::super::Sequencer;
 use super::super::EditResult;
@@ -15,15 +16,8 @@ use super::super::EditResult;
 // ResizeClip
 // ---------------------------------------------------------------------------
 
-/// Moves one clip from `before` to `after` bounds. The caller computes
-/// `after` (the `Sequencer::selected_clip_*` helpers in `sequencer/region.rs` own
-/// the clamping against neighbours); this edit only applies and reverses it.
-///
-/// A mouse edge drag sends one edit per pointer move, all carrying the drag's
-/// id, and they merge into one undo step: the merged edit keeps the first
-/// `before` and takes each later `after` (`SequencerEdit::merge`). Keyboard
-/// edits carry no id and never merge.
-pub(crate) struct ResizeClipEdit {
+/// One clip's share of a [`ResizeClipEdit`].
+struct ClipResize {
     /// Track the clip is on.
     track_idx: usize,
     /// The clip — neither added nor removed here, so the id stays valid.
@@ -32,8 +26,30 @@ pub(crate) struct ResizeClipEdit {
     before: ClipBounds,
     /// Bounds after the (latest merged) edit, applied by `edit()`.
     after: ClipBounds,
+}
+
+/// Moves one clip, or several clips together, from their `before` to their
+/// `after` bounds. The caller computes `after` (the `Sequencer::selected_clip_*`
+/// helpers and `tied_edges_trimmed_to` in `sequencer/region.rs` own the
+/// clamping against neighbours); this edit only applies and reverses it.
+///
+/// A mouse edge drag sends one edit per pointer move, all carrying the drag's
+/// id, and they merge into one undo step: the merged edit keeps the first
+/// `before` and takes each later `after` (`SequencerEdit::merge`). Keyboard
+/// edits carry no id and never merge. A drag over a marquee moves every clip
+/// whose edge is level with the grabbed one as one edit (`for_tied_edges`).
+pub(crate) struct ResizeClipEdit {
+    /// The clips moved, in a fixed order the merge relies on.
+    clips: Vec<ClipResize>,
     /// The mouse drag this step belongs to; `None` for a keyboard edit.
     drag_id: Option<u64>,
+    /// Whether this is a drag over a marquee (`for_tied_edges`), reported as
+    /// [`EditResult::ClipsResized`] even for one clip.
+    grouped: bool,
+    /// The marquee after the (latest merged) edit when its edge was on the
+    /// dragged edge and follows it; `None` leaves the marquee alone. Undo
+    /// restores the marquee through the step's view snapshot, not from here.
+    marquee: Option<TimeSelectionRect>,
 }
 
 impl ResizeClipEdit {
@@ -54,36 +70,81 @@ impl ResizeClipEdit {
         }
 
         Some(Self {
-            track_idx: sequencer.selected_track_index()?,
-            clip_id,
-            before,
-            after,
+            clips: vec![ClipResize {
+                track_idx: sequencer.selected_track_index()?,
+                clip_id,
+                before,
+                after,
+            }],
             drag_id,
+            grouped: false,
+            marquee: None,
+        })
+    }
+
+    /// Drags the `edge` of every `tied` clip (`(track, clip)` pairs) to
+    /// `target_tick` together, as one edit. `None` if none of them moves.
+    pub(crate) fn for_tied_edges(
+        sequencer: &Sequencer,
+        tied: &[(usize, Uuid)],
+        edge: ClipEdge,
+        target_tick: i32,
+        drag_id: u64,
+    ) -> Option<Self> {
+        let clips: Vec<ClipResize> = sequencer
+            .tied_edges_trimmed_to(tied, edge, target_tick)
+            .into_iter()
+            .filter_map(|(track_idx, clip_id, after)| {
+                let before = sequencer.clip_on(track_idx, clip_id)?.bounds();
+                Some(ClipResize {
+                    track_idx,
+                    clip_id,
+                    before,
+                    after,
+                })
+            })
+            .collect();
+        let marquee = clips
+            .first()
+            .and_then(|lead| followed_marquee(sequencer.marquee()?, edge, lead));
+        (!clips.is_empty()).then_some(Self {
+            clips,
+            drag_id: Some(drag_id),
+            grouped: true,
+            marquee,
         })
     }
 
     /// Two steps merge iff they come from the same mouse drag on the same
-    /// clip.
+    /// clips.
     pub(in crate::core::sequencer::edit) fn same_gesture(&self, other: &Self) -> bool {
         self.drag_id.is_some()
             && self.drag_id == other.drag_id
-            && self.track_idx == other.track_idx
-            && self.clip_id == other.clip_id
+            && self.clips.len() == other.clips.len()
+            && self
+                .clips
+                .iter()
+                .zip(&other.clips)
+                .all(|(a, b)| a.track_idx == b.track_idx && a.clip_id == b.clip_id)
     }
 
     /// Folds a later step of the same drag in: keeps this `before`, takes its
     /// `after`.
     pub(in crate::core::sequencer::edit) fn absorb(&mut self, other: &Self) {
-        self.after = other.after;
+        for (clip, later) in self.clips.iter_mut().zip(&other.clips) {
+            clip.after = later.after;
+        }
+        self.marquee = other.marquee;
     }
 
-    /// Applies `after`. Returns [`EditResult::ClipResized`], or `NoOp` if the
-    /// clip is gone.
+    /// Applies `after`. Returns [`EditResult::ClipResized`] (one clip, not
+    /// over a marquee) or [`EditResult::ClipsResized`], or `NoOp` if the
+    /// clips are gone.
     pub(in crate::core::sequencer::edit) fn edit(
         &mut self,
         sequencer: &mut Sequencer,
     ) -> EditResult {
-        self.apply(sequencer, self.after)
+        self.apply(sequencer, |clip| clip.after, self.marquee)
     }
 
     /// Restores `before`. Same result shape as `edit()`.
@@ -91,17 +152,58 @@ impl ResizeClipEdit {
         &mut self,
         sequencer: &mut Sequencer,
     ) -> EditResult {
-        self.apply(sequencer, self.before)
+        self.apply(sequencer, |clip| clip.before, None)
     }
 
-    /// Moves the clip to `bounds`. While playing, the clip is heard in its
-    /// new window from the playhead at once (`Sequencer::set_clip_bounds`).
-    fn apply(&self, sequencer: &mut Sequencer, bounds: ClipBounds) -> EditResult {
-        match sequencer.set_clip_bounds(self.track_idx, self.clip_id, bounds) {
-            Some(clip) => EditResult::ClipResized { clip, retime: None },
-            None => EditResult::NoOp,
+    /// Moves each clip to the bounds `pick` chooses. While playing, a clip is
+    /// heard in its new window from the playhead at once
+    /// (`Sequencer::set_clip_bounds`).
+    fn apply(
+        &self,
+        sequencer: &mut Sequencer,
+        pick: impl Fn(&ClipResize) -> ClipBounds,
+        marquee: Option<TimeSelectionRect>,
+    ) -> EditResult {
+        let mut resized: Vec<_> = self
+            .clips
+            .iter()
+            .filter_map(|clip| sequencer.set_clip_bounds(clip.track_idx, clip.clip_id, pick(clip)))
+            .collect();
+        match resized.len() {
+            0 => EditResult::NoOp,
+            1 if !self.grouped => EditResult::ClipResized {
+                clip: resized.remove(0),
+                retime: None,
+            },
+            _ => EditResult::ClipsResized {
+                clips: resized,
+                marquee,
+            },
         }
     }
+}
+
+/// `marquee` with the boundary on `lead`'s dragged `edge` moved to where the
+/// edge went, when that boundary was exactly on it — a marquee drawn over
+/// the clips follows their edge, one that reaches past it stays. `None` when
+/// it stays, or when following would leave it without a tick range.
+fn followed_marquee(
+    marquee: TimeSelectionRect,
+    edge: ClipEdge,
+    lead: &ClipResize,
+) -> Option<TimeSelectionRect> {
+    let edge_tick = |bounds: ClipBounds| match edge {
+        ClipEdge::Start => bounds.start_tick,
+        ClipEdge::End => bounds.start_tick + bounds.region_end - bounds.region_start,
+    };
+    let (from, to) = (edge_tick(lead.before), edge_tick(lead.after));
+    let mut followed = marquee;
+    match edge {
+        ClipEdge::Start if marquee.start == from => followed.start = to,
+        ClipEdge::End if marquee.end == from => followed.end = to,
+        _ => return None,
+    }
+    (marquee.has_tick_range() && followed.has_tick_range()).then_some(followed)
 }
 
 #[cfg(test)]
@@ -116,7 +218,7 @@ mod tests {
     use crate::models::clip::{Clip, ClipEdge};
     use crate::models::event::Event;
 
-    use crate::core::sequencer::test_support::sequencer_with;
+    use crate::core::sequencer::test_support::{clip_at, sequencer_with};
 
     use super::*;
 
@@ -326,5 +428,161 @@ mod tests {
         record_resize(&mut sequencer, &mut record, after, Some(2));
 
         assert_eq!(record.len(), 4);
+    }
+
+    /// Three clips ending at bar 2 on tracks 0-2, a neighbour at bar 3 on
+    /// track 2 only: the ids of the three, tied.
+    fn tied_ends(sequencer: &mut Sequencer) -> Vec<(usize, Uuid)> {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        let mut tied = Vec::new();
+        for track_idx in 0..3 {
+            let clip = clip_at(0, bar * 2);
+            tied.push((track_idx, clip.id()));
+            sequencer.tracks_mut()[track_idx].add_clip(&clip);
+        }
+        sequencer.tracks_mut()[2].add_clip(&clip_at(bar * 3, bar));
+        tied
+    }
+
+    fn end_of(sequencer: &Sequencer, (track_idx, id): (usize, Uuid)) -> i32 {
+        sequencer.clip_on(track_idx, id).unwrap().end_tick()
+    }
+
+    /// A drag over a marquee moves every tied end by the same delta, held to
+    /// the tightest clip's limit (track 2's neighbour), as one undo step
+    /// however many pointer moves it takes.
+    #[test]
+    fn tied_ends_move_together_as_one_undo_step() {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        let mut sequencer = test_sequencer();
+        let tied = tied_ends(&mut sequencer);
+        let mut record = Record::new();
+
+        for target in [bar * 2 + 100, bar * 5] {
+            let edit = ResizeClipEdit::for_tied_edges(&sequencer, &tied, ClipEdge::End, target, 7)
+                .unwrap();
+            record.edit(&mut sequencer, SequencerEdit::ResizeClip(edit));
+        }
+
+        for &clip in &tied {
+            assert_eq!(
+                end_of(&sequencer, clip),
+                bar * 3,
+                "stopped at the neighbour"
+            );
+        }
+        assert_eq!(record.len(), 1);
+
+        record.undo(&mut sequencer);
+        for &clip in &tied {
+            assert_eq!(end_of(&sequencer, clip), bar * 2);
+        }
+        record.redo(&mut sequencer);
+        for &clip in &tied {
+            assert_eq!(end_of(&sequencer, clip), bar * 3);
+        }
+    }
+
+    /// Dragging the starts back reveals each clip's hidden material by the
+    /// same delta, held to the clip with the least room.
+    #[test]
+    fn tied_starts_move_by_the_same_delta() {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        let mut sequencer = test_sequencer();
+        let mut tied = Vec::new();
+        for (track_idx, hidden) in [(0, bar), (1, bar / 2)] {
+            let mut clip = clip_at(bar * 4, bar);
+            clip.region_mut()
+                .set_region(Some(hidden), Some(hidden + bar));
+            tied.push((track_idx, clip.id()));
+            sequencer.tracks_mut()[track_idx].add_clip(&clip);
+        }
+
+        let edit =
+            ResizeClipEdit::for_tied_edges(&sequencer, &tied, ClipEdge::Start, 0, 1).unwrap();
+        let mut record = Record::new();
+        record.edit(&mut sequencer, SequencerEdit::ResizeClip(edit));
+
+        for &(track_idx, id) in &tied {
+            let clip = sequencer.clip_on(track_idx, id).unwrap();
+            assert_eq!(clip.start_tick(), bar * 4 - bar / 2, "the least room wins");
+            assert_eq!(clip.end_tick(), bar * 5, "the ends stay");
+        }
+    }
+
+    /// A tied clip that is gone is skipped; with nothing left to move there is
+    /// no edit.
+    #[test]
+    fn tied_edges_with_nothing_to_move_make_no_edit() {
+        let mut sequencer = test_sequencer();
+        let tied = tied_ends(&mut sequencer);
+        let at_end = end_of(&sequencer, tied[0]);
+        assert!(
+            ResizeClipEdit::for_tied_edges(&sequencer, &tied, ClipEdge::End, at_end, 1).is_none()
+        );
+        assert!(
+            ResizeClipEdit::for_tied_edges(
+                &sequencer,
+                &[(0, Uuid::new_v4())],
+                ClipEdge::End,
+                at_end + 480,
+                1
+            )
+            .is_none()
+        );
+    }
+
+    fn marquee_over(tracks: (usize, usize), ticks: (i32, i32)) -> TimeSelectionRect {
+        TimeSelectionRect {
+            start: ticks.0,
+            end: ticks.1,
+            track_start: tracks.0,
+            track_end: tracks.1,
+        }
+    }
+
+    /// The result of the first step of a tied end drag to `target`.
+    fn first_step(sequencer: &mut Sequencer, tied: &[(usize, Uuid)], target: i32) -> EditResult {
+        let mut edit =
+            ResizeClipEdit::for_tied_edges(sequencer, tied, ClipEdge::End, target, 1).unwrap();
+        edit.edit(sequencer)
+    }
+
+    /// A marquee whose end is on the dragged end follows it, so it still
+    /// holds the clips afterwards; undo leaves putting it back to the step's
+    /// view snapshot.
+    #[test]
+    fn a_marquee_on_the_dragged_end_follows_it() {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        let mut sequencer = test_sequencer();
+        let tied = tied_ends(&mut sequencer);
+        sequencer.set_marquee(Some(marquee_over((0, 2), (0, bar * 2))));
+
+        let mut edit =
+            ResizeClipEdit::for_tied_edges(&sequencer, &tied, ClipEdge::End, bar * 3, 1).unwrap();
+        let EditResult::ClipsResized { marquee, .. } = edit.edit(&mut sequencer) else {
+            panic!("expected ClipsResized");
+        };
+        assert_eq!(marquee, Some(marquee_over((0, 2), (0, bar * 3))));
+
+        let EditResult::ClipsResized { marquee, .. } = edit.undo(&mut sequencer) else {
+            panic!("expected ClipsResized");
+        };
+        assert_eq!(marquee, None);
+    }
+
+    /// A marquee reaching past the dragged end stays as it is.
+    #[test]
+    fn a_marquee_past_the_dragged_end_stays() {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        let mut sequencer = test_sequencer();
+        let tied = tied_ends(&mut sequencer);
+        sequencer.set_marquee(Some(marquee_over((0, 2), (0, bar * 4))));
+
+        let EditResult::ClipsResized { marquee, .. } = first_step(&mut sequencer, &tied, bar * 3)
+        else {
+            panic!("expected ClipsResized");
+        };
+        assert_eq!(marquee, None);
     }
 }

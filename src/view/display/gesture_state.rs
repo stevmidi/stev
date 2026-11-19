@@ -155,6 +155,10 @@ pub(super) struct GestureState {
     /// The id every `ResizeSelectedClipRegion*` of the current edge drag
     /// carries, drawn from `next_drag_id` when the drag begins.
     pub(super) clip_resize_drag_id: u64,
+    /// The clips whose edge moves with the grabbed one in the current edge
+    /// drag, fixed at the press (`tied_clips`): `(track, clip)` pairs, the
+    /// grabbed clip first. Just the grabbed clip when no marquee holds it.
+    pub(super) clip_resize_tied: Vec<(usize, Uuid)>,
     /// Hover-only counterpart of `clip_resize_drag`: which edge (if any) is
     /// under the pointer right now, with no button held. Drives the resize
     /// cursor icon and the edge grip glyph; cleared whenever a real drag

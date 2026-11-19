@@ -14,7 +14,7 @@ use uuid::Uuid;
 use super::browser::BrowserPlugin;
 use super::clip_shape::ClipShape;
 use crate::{
-    core::input_event::InputEvent,
+    core::input_event::{InputEvent, TimeSelectionRect},
     models::clip::{Clip, ClipEdge, NoteBounds, NoteDrag},
 };
 
@@ -220,6 +220,43 @@ pub(super) struct ClipResizeDrag {
     /// drag they stay snap targets (`Display::track_snapped_tick_at`), so the
     /// edge can be dragged back to where it started, off the grid too.
     pub(super) ticks_at_press: (i32, i32),
+}
+
+/// The clips an edge drag moves with the grabbed one (`(track, clip)` pairs,
+/// the grabbed clip first): over a marquee that holds the grabbed clip, every
+/// clip on its tracks that overlaps its ticks and has its edge on exactly the
+/// grabbed edge's tick, as Ableton does — fixed at the press, so a clip the
+/// edge later passes over is never picked up. Empty when no marquee (with a
+/// tick range) holds the grabbed clip: the press then selects it and the drag
+/// moves it alone. `clips` is every clip as `(track, id, (start, end))`.
+pub(super) fn tied_clips(
+    clips: impl Iterator<Item = (usize, Uuid, (i32, i32))>,
+    marquee: Option<TimeSelectionRect>,
+    grabbed: ClipResizeDrag,
+) -> Vec<(usize, Uuid)> {
+    let Some(rect) = marquee.filter(TimeSelectionRect::has_tick_range) else {
+        return Vec::new();
+    };
+    let edge_of = |(start, end): (i32, i32)| match grabbed.edge {
+        ClipResizeEdge::Start => start,
+        ClipResizeEdge::End => end,
+    };
+    let grabbed_tick = edge_of(grabbed.ticks_at_press);
+    let in_marquee = |track_idx: usize, (start, end): (i32, i32)| {
+        (rect.track_start..=rect.track_end).contains(&track_idx)
+            && start < rect.end
+            && end > rect.start
+    };
+    if !in_marquee(grabbed.track_idx, grabbed.ticks_at_press) {
+        return Vec::new();
+    }
+    let followers = clips.filter(|&(track_idx, clip_id, ticks)| {
+        clip_id != grabbed.clip_id && in_marquee(track_idx, ticks) && edge_of(ticks) == grabbed_tick
+    });
+    [(grabbed.track_idx, grabbed.clip_id)]
+        .into_iter()
+        .chain(followers.map(|(track_idx, clip_id, _)| (track_idx, clip_id)))
+        .collect()
 }
 
 /// In-progress drag of a handle of the clip view's window band — see
@@ -475,6 +512,74 @@ impl AxisFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn uid(n: u128) -> Uuid {
+        Uuid::from_u128(n)
+    }
+
+    fn grab(track_idx: usize, n: u128, edge: ClipResizeEdge, ticks: (i32, i32)) -> ClipResizeDrag {
+        ClipResizeDrag {
+            track_idx,
+            clip_id: uid(n),
+            edge,
+            ticks_at_press: ticks,
+        }
+    }
+
+    /// Clips ending at 2400 on tracks 0, 1 and 3, one ending at 2401 on
+    /// track 2, one starting at 0 on track 4.
+    fn clips() -> Vec<(usize, Uuid, (i32, i32))> {
+        vec![
+            (0, uid(1), (0, 2400)),
+            (1, uid(2), (480, 2400)),
+            (2, uid(3), (0, 2401)),
+            (3, uid(4), (0, 2400)),
+            (4, uid(5), (0, 1200)),
+        ]
+    }
+
+    fn marquee(tracks: (usize, usize), ticks: (i32, i32)) -> Option<TimeSelectionRect> {
+        Some(TimeSelectionRect {
+            start: ticks.0,
+            end: ticks.1,
+            track_start: tracks.0,
+            track_end: tracks.1,
+        })
+    }
+
+    /// Exact ties on the marqueed tracks follow; a near miss and a clip
+    /// outside the track span do not.
+    #[test]
+    fn tied_clips_are_the_exact_ties_inside_the_marquee() {
+        let grabbed = grab(0, 1, ClipResizeEdge::End, (0, 2400));
+        let tied = tied_clips(clips().into_iter(), marquee((0, 2), (0, 4800)), grabbed);
+        assert_eq!(tied, [(0, uid(1)), (1, uid(2))]);
+    }
+
+    #[test]
+    fn tied_clips_match_the_grabbed_edge_only() {
+        let grabbed = grab(0, 1, ClipResizeEdge::Start, (0, 2400));
+        let tied = tied_clips(clips().into_iter(), marquee((0, 4), (0, 4800)), grabbed);
+        assert_eq!(tied, [(0, uid(1)), (2, uid(3)), (3, uid(4)), (4, uid(5))]);
+    }
+
+    /// No marquee, a marquee without a tick range, or one that doesn't hold
+    /// the grabbed clip: nothing is tied.
+    #[test]
+    fn tied_clips_need_a_marquee_holding_the_grabbed_clip() {
+        let grabbed = grab(0, 1, ClipResizeEdge::End, (0, 2400));
+        let alone: [(usize, Uuid); 0] = [];
+        assert_eq!(tied_clips(clips().into_iter(), None, grabbed), alone);
+        let vertical = marquee((0, 3), (1200, 1200));
+        assert_eq!(tied_clips(clips().into_iter(), vertical, grabbed), alone);
+        let other_tracks = marquee((1, 3), (0, 4800));
+        assert_eq!(
+            tied_clips(clips().into_iter(), other_tracks, grabbed),
+            alone
+        );
+        let later = marquee((0, 3), (2400, 4800));
+        assert_eq!(tied_clips(clips().into_iter(), later, grabbed), alone);
+    }
 
     /// Feeds `moves` and returns the summed output.
     fn run(filter: &mut AxisFilter, moves: &[(f32, f32)]) -> (f32, f32) {

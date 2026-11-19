@@ -602,20 +602,24 @@ impl EventHandlers {
             InputEvent::ResizeSelectedClipRegionEnd {
                 target_tick,
                 drag_id,
+                tied,
             } => {
                 self.send_sequencer(SequencerCommand::ResizeSelectedClipRegionEnd {
                     target_tick: *target_tick,
                     drag_id: *drag_id,
+                    tied: tied.clone(),
                 });
             }
 
             InputEvent::ResizeSelectedClipRegionStart {
                 target_tick,
                 drag_id,
+                tied,
             } => {
                 self.send_sequencer(SequencerCommand::ResizeSelectedClipRegionStart {
                     target_tick: *target_tick,
                     drag_id: *drag_id,
+                    tied: tied.clone(),
                 });
             }
 

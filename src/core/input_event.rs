@@ -598,6 +598,10 @@ pub(crate) enum InputEvent {
         target_tick: i32,
         /// Identifies the drag so the undo stack coalesces it into one step.
         drag_id: u64,
+        /// The clips whose edge moves with the grabbed one — `(track, clip)`
+        /// pairs, fixed at the press (`Display::tied_clips`); empty to move
+        /// only the selected clip.
+        tied: Vec<(usize, Uuid)>,
     },
     /// Arranger clip edge drag-resize (left edge).
     ResizeSelectedClipRegionStart {
@@ -605,6 +609,10 @@ pub(crate) enum InputEvent {
         target_tick: i32,
         /// Identifies the drag so the undo stack coalesces it into one step.
         drag_id: u64,
+        /// The clips whose edge moves with the grabbed one — `(track, clip)`
+        /// pairs, fixed at the press (`Display::tied_clips`); empty to move
+        /// only the selected clip.
+        tied: Vec<(usize, Uuid)>,
     },
     /// The clip view's window band drag, released: the handle's grid-snapped
     /// event tick, sent once (`Display::finish_window_edge_drag`) — the drag
