@@ -80,8 +80,7 @@ impl Sequencer {
     /// now, the keys at the lane's key length). `None` with no replay.
     pub(crate) fn step_performance_replay(&mut self, playback_tick: i32) -> Option<ReplayCue> {
         let pad = self.performance_lane.replay_position()?.pad;
-        let (meter, length) = (self.meter(), self.performance_lane_key_length());
-        let target = |note| key_index_from_note(note).map(|key| key_tick(meter, length, key));
+        let target = self.performance_key_target();
         let cue = self.performance_lane.step_replay(
             playback_tick,
             self.performance_pads.get(pad),
@@ -89,6 +88,14 @@ impl Sequencer {
         );
         self.publish_performance_replay();
         cue
+    }
+
+    /// Where a performance's note jumps to: its lane key's start at the
+    /// lane's key length (`key_tick`), `None` below the keys. What the
+    /// replay and the render both play by.
+    pub(super) fn performance_key_target(&self) -> impl Fn(u8) -> Option<i32> + use<> {
+        let (meter, length) = (self.meter(), self.performance_lane_key_length());
+        move |note| key_index_from_note(note).map(|key| key_tick(meter, length, key))
     }
 
     /// Whether the replay is in a gap: nothing sounds (decision 2), so

@@ -91,6 +91,12 @@ pub(crate) struct Sequencer {
     /// Session-only clip copy/paste buffer (see `clipboard.rs`). Not persisted,
     /// not part of the undo record. Cleared on new/load project.
     pub(super) clip_clipboard: Option<ClipClipboard>,
+    /// The performance a pad's `⌘C` copied, beside its render in
+    /// `clip_clipboard` (`520-performance-capture.md` decision 5): what a
+    /// `⌘V` onto a pad pastes. `None` when the last copy was clips or notes.
+    /// Not persisted, not part of the undo record. Cleared on new/load
+    /// project.
+    pub(super) performance_clipboard: Option<Clip>,
     /// Session-only note copy/paste buffer for the clip view (see
     /// `clipboard.rs`), separate from `clip_clipboard`. Empty when nothing
     /// is copied. Not persisted, not part of the undo record. Cleared on
@@ -244,6 +250,7 @@ impl Sequencer {
                 .collect(),
             track_mix,
             clip_clipboard: None,
+            performance_clipboard: None,
             note_clipboard: Vec::new(),
             note_clipboard_from_performance: false,
             playback_tick,
@@ -505,6 +512,7 @@ impl Sequencer {
         self.performance_pads.clear();
         self.selected_pad = 0;
         self.clip_clipboard = None;
+        self.performance_clipboard = None;
         self.note_clipboard.clear();
         self.reset_track_mix();
     }

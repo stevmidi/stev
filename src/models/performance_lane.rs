@@ -282,6 +282,73 @@ fn replay_notes<'a>(
         })
 }
 
+/// One stretch of what a performance plays, for its render
+/// (`520-performance-capture.md` decision 5): `len` ticks of the
+/// arrangement from tick `from`, placed `at` ticks into the performance.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Segment {
+    /// Where in the performance it starts, from its window start.
+    pub(crate) at: i32,
+    /// How long it plays.
+    pub(crate) len: i32,
+    /// The arrangement tick it plays from.
+    pub(crate) from: i32,
+}
+
+/// What performance `clip` plays, once through from its start, as the
+/// stretches of the arrangement it plays ([`Segment`]), in order: exactly
+/// what [`PerformanceLane::step_replay`] plays from the start, so the render
+/// sounds as the replay does. The first stretch takes the note sounding at
+/// the start, from as far into its key; after that each note start jumps
+/// (several on one tick: the last in the clip), a note ending under a longer
+/// one plays on, and where no note sounds is a gap, which places nothing.
+/// `target` is where a note's key jumps to, as for the replay.
+pub(crate) fn render_segments(clip: &Clip, target: impl Fn(u8) -> Option<i32>) -> Vec<Segment> {
+    let (start, end) = (clip.region().start(), clip.region().end());
+    let notes = || replay_notes(clip, &target);
+    // The ticks something changes on: the start, and each note's ends
+    // inside the window.
+    let mut changes: Vec<i32> = notes()
+        .flat_map(|(on, off, _)| [on, off])
+        .filter(|&tick| start < tick && tick < end)
+        .chain([start])
+        .collect();
+    changes.sort_unstable();
+    changes.dedup();
+
+    let mut segments = Vec::new();
+    // The stretch playing: where it started in the performance, and from.
+    let mut open: Option<(i32, i32)> = None;
+    let mut close = |open: &mut Option<(i32, i32)>, at: i32| {
+        if let Some((began, from)) = open.take()
+            && at > began
+        {
+            segments.push(Segment {
+                at: began - start,
+                len: at - began,
+                from,
+            });
+        }
+    };
+    for &at in &changes {
+        let jump = if at == start {
+            notes()
+                .filter(|&(on, off, _)| on <= at && at < off)
+                .max_by_key(|&(on, _, _)| on)
+        } else {
+            notes().filter(|&(on, _, _)| on == at).last()
+        };
+        if let Some((on, _, key)) = jump {
+            close(&mut open, at);
+            open = Some((at, key + at - on));
+        } else if !notes().any(|(on, off, _)| on <= at && at < off) {
+            close(&mut open, at);
+        }
+    }
+    close(&mut open, end);
+    segments
+}
+
 /// A performance clip from `presses` (`(tick, note, velocity)`, in order,
 /// the first at 0) ending at `end` (`520-performance-capture.md` decision 1):
 /// a note per press, its pitch the key, lasting until the next press (a
@@ -718,6 +785,83 @@ mod tests {
         assert_eq!(lane.replay_position().map(|position| position.pad), Some(3));
         assert_eq!(lane.step_replay(0, None, beat_key), None);
         assert_eq!(lane.replay_position(), None);
+    }
+
+    /// What one pass of the replay plays, tick by tick from the start:
+    /// `(tick in the performance, arrangement tick)` for each tick that
+    /// sounds.
+    fn replayed(clip: &Clip) -> Vec<(i32, i32)> {
+        let mut lane = PerformanceLane::new();
+        lane.start_replay(0, 0);
+        let mut playback = 7000;
+        let mut heard = Vec::new();
+        for at in 0..clip.region_length() {
+            if let Some(ReplayCue::Jump(tick)) = lane.step_replay(playback, Some(clip), beat_key) {
+                playback = tick;
+            }
+            if !lane.is_replay_silent() {
+                heard.push((at, playback));
+            }
+            playback += 1;
+        }
+        heard
+    }
+
+    /// The same, from the render's segments.
+    fn rendered(clip: &Clip) -> Vec<(i32, i32)> {
+        render_segments(clip, beat_key)
+            .into_iter()
+            .flat_map(|segment| (0..segment.len).map(move |i| (segment.at + i, segment.from + i)))
+            .collect()
+    }
+
+    #[test]
+    fn the_render_is_a_segment_per_press() {
+        let clip = performance_clip(&[(0, 64, 100), (100, 60, 100), (130, 61, 100)], 150).unwrap();
+        assert_eq!(
+            render_segments(&clip, beat_key),
+            [
+                Segment {
+                    at: 0,
+                    len: 100,
+                    from: 3840
+                },
+                Segment {
+                    at: 100,
+                    len: 30,
+                    from: 0
+                },
+                Segment {
+                    at: 130,
+                    len: 20,
+                    from: 960
+                },
+            ]
+        );
+    }
+
+    /// Decision 5 and § Open questions 3: the render plays what the replay
+    /// does, gaps, overlaps, mutes and a window that starts inside a note
+    /// included.
+    #[test]
+    fn the_render_plays_what_the_replay_plays() {
+        let mut muted = clip_of(&[(0, 100, 60), (100, 200, 64)], 200);
+        muted.select_event(muted.events().first().map(Event::id));
+        muted.toggle_muted_for_selected_events();
+        let mut late_window = clip_of(&[(0, 200, 64), (150, 300, 60)], 300);
+        late_window.region_mut().set_region(Some(50), Some(250));
+        let clips = [
+            performance_clip(&[(0, 64, 100), (100, 60, 100)], 150).unwrap(),
+            clip_of(&[(0, 40, 64), (100, 200, 60)], 200),
+            clip_of(&[(100, 200, 60)], 200),
+            clip_of(&[(0, 200, 60), (50, 100, 64)], 200),
+            clip_of(&[(0, 100, 60), (0, 100, 64), (100, 150, 30)], 150),
+            muted,
+            late_window,
+        ];
+        for clip in &clips {
+            assert_eq!(rendered(clip), replayed(clip), "{:?}", clip_notes(clip));
+        }
     }
 
     #[test]

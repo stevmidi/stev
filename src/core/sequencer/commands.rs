@@ -746,6 +746,16 @@ pub(crate) enum SequencerCommand {
     /// `Delete` on the selected pad: empties it, one undo step
     /// (`SetPerformancePadEdit`); nothing on an empty pad.
     ClearPerformancePad,
+    /// `⌘/Ctrl+C` on the selected pad: copies its performance and its
+    /// render, the clips it plays, for the arranger's paste keys
+    /// (`Sequencer::copy_performance_pad_to_clipboard`,
+    /// `520-performance-capture.md` decision 5). Not an edit; nothing on an
+    /// empty pad.
+    CopyPerformancePad,
+    /// `⌘/Ctrl+V` on the selected pad: the copied performance replaces what
+    /// it holds, one undo step (`SetPerformancePadEdit`); nothing when the
+    /// last copy was clips or notes.
+    PastePerformancePad,
 
     // --- Agent bridge ---
     /// The view's marquee changed: mirror it for the agent bridge's reads

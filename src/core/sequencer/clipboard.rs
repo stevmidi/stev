@@ -13,9 +13,16 @@
 //! The note clipboard is a separate buffer, so a note copy never discards a
 //! clip copy: each view's `⌘/Ctrl+V` pastes its own kind (`InsertNotesEdit`
 //! in `edit/event_edits.rs` for notes).
+//!
+//! A pad's copy (`520-performance-capture.md` decision 5) fills two forms
+//! at once: its performance, for another pad, and its **render** in the clip
+//! clipboard, for the arrangement: what the performance plays, as an
+//! all-track time copy, so the arranger's `⌘V`/`⇧⌘V` place it as they place
+//! any copy. Any clip or note copy after it drops the performance.
 
 use crate::core::input_event::TimeSelectionRect;
 use crate::models::clip::{Clip, CopiedNote};
+use crate::models::performance_lane::render_segments;
 use crate::models::region::Region;
 
 use super::Sequencer;
@@ -103,6 +110,7 @@ impl Sequencer {
     pub(crate) fn copy_clips_to_clipboard(&mut self, start: i32, end: i32) {
         if let Some(clipboard) = self.clipboard_snapshot(start, end) {
             self.clip_clipboard = Some(clipboard);
+            self.performance_clipboard = None;
         }
     }
 
@@ -201,7 +209,64 @@ impl Sequencer {
         {
             clipboard.track_anchor = Some(rect.track_start);
             self.clip_clipboard = Some(clipboard);
+            self.performance_clipboard = None;
         }
+    }
+
+    // --- A pad's copy ---
+
+    /// `⌘/Ctrl+C` on the selected pad (`520-performance-capture.md`
+    /// decision 5): its performance, a clip of its own, and its render
+    /// ([`render_performance`](Self::render_performance)) in the clip
+    /// clipboard, replacing what both held (the render's `None` when the
+    /// performance plays nothing on the timeline, so no older clips stay
+    /// behind to paste). Returns the performance's length; `None`, and
+    /// nothing copied, on an empty pad.
+    pub(crate) fn copy_performance_pad_to_clipboard(&mut self) -> Option<i32> {
+        let clip = self
+            .performance_pads
+            .get(self.selected_pad)?
+            .detached_copy();
+        self.clip_clipboard = self.render_performance(&clip);
+        let length = clip.region_length();
+        self.performance_clipboard = Some(clip);
+        Some(length)
+    }
+
+    /// The performance a pad's copy holds, for a paste onto a pad. `None`
+    /// when the last copy was clips or notes.
+    pub(crate) fn performance_clipboard(&self) -> Option<&Clip> {
+        self.performance_clipboard.as_ref()
+    }
+
+    /// What performance `clip` plays, rendered as an all-track time copy:
+    /// each stretch of the arrangement it plays (`render_segments`, the
+    /// replay's own rule) copied from every track, its pieces' windows
+    /// trimmed to that stretch, laid end to end from 0 in the performance's
+    /// time, with no track anchor, so each piece pastes on the track it came
+    /// from. Its span is the performance's length, so `⇧⌘V` inserts all of
+    /// it, a gap at its end included. `None` when nothing plays.
+    fn render_performance(&self, clip: &Clip) -> Option<ClipClipboard> {
+        let all = (0, self.tracks.len().saturating_sub(1));
+        let mut clips = Vec::new();
+        for segment in render_segments(clip, self.performance_key_target()) {
+            let Some(copy) =
+                self.copy_range_to_clipboard(all, segment.from, segment.from + segment.len)
+            else {
+                continue;
+            };
+            for mut piece in copy.clips {
+                piece
+                    .clip
+                    .set_start_tick(piece.clip.start_tick() + segment.at);
+                clips.push(piece);
+            }
+        }
+        (!clips.is_empty()).then(|| ClipClipboard {
+            clips,
+            span: clip.region_length(),
+            track_anchor: None,
+        })
     }
 
     // --- Note clipboard ---
@@ -220,6 +285,7 @@ impl Sequencer {
         }
         self.note_clipboard = notes;
         self.note_clipboard_from_performance = self.is_performance_lane_armed();
+        self.performance_clipboard = None;
         true
     }
 

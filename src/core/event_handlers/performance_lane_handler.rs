@@ -12,6 +12,7 @@ use undo::Record;
 
 use crate::core::sequencer::{SetPerformancePadEdit, UndoStep};
 use crate::models::{
+    clip::Clip,
     event::{Event, EventType},
     performance_lane::{key_index_from_note, key_tick, length_label},
 };
@@ -90,6 +91,41 @@ impl EventHandlers {
         }
     }
 
+    /// `⌘C` on the selected pad: its performance and its render to the
+    /// clipboard, a copy, not an edit (`520-performance-capture.md`
+    /// decision 5). The footer names it, and says so when the performance
+    /// plays nothing on the timeline (nothing for the arranger to paste).
+    /// Nothing on an empty pad.
+    pub(super) fn copy_performance_pad_workflow(&self, sequencer: &mut Sequencer) {
+        let Some(length) = sequencer.copy_performance_pad_to_clipboard() else {
+            return;
+        };
+        self.prime_os_clipboard();
+        let pad = sequencer.selected_pad() + 1;
+        let length = length_label(length, sequencer.meter());
+        self.send_status_ui_event(if sequencer.clip_clipboard().is_some() {
+            format!("Copied pad {pad} · {length}")
+        } else {
+            format!("Copied pad {pad} · {length}, which plays no clips")
+        });
+    }
+
+    /// `⌘V` on the selected pad: a copy of the copied performance replaces
+    /// what it holds, lit or not, one undo step, a clip of its own so
+    /// editing one pad never changes the other (decision 5). Nothing when
+    /// the last copy was clips or notes.
+    pub(super) fn paste_performance_pad_workflow(
+        &self,
+        sequencer: &mut Sequencer,
+        undo_record: &mut Record<UndoStep>,
+    ) {
+        let Some(clip) = sequencer.performance_clipboard().map(Clip::detached_copy) else {
+            return;
+        };
+        let edit = SetPerformancePadEdit::new(sequencer, sequencer.selected_pad(), Some(clip));
+        self.record_edit(sequencer, undo_record, edit);
+    }
+
     /// Selects pad `pad` (the view did already, on the click). With the
     /// lane selected the clip view follows it: the old performance's notes
     /// are deselected while it is still the one shown, then the new one is
@@ -139,7 +175,7 @@ mod tests {
     use crate::core::event_handlers::test_harness::{
         Harness, add_clip, harness, lead_changes, run_command, statuses,
     };
-    use crate::core::sequencer::test_support::clip_notes;
+    use crate::core::sequencer::test_support::{clip_at, clip_notes};
     use crate::core::sequencer::{SequencerCommand, UndoStep};
     use crate::core::time::Meter;
     use crate::core::transport::{Transport, TransportCommand};
@@ -448,6 +484,119 @@ mod tests {
         h.sequencer.set_selected_clip_cursor_tick(250);
         run_command(&mut h, &mut record, SequencerCommand::PasteNotes);
         assert_ne!(pad_notes(&h, 0), before);
+    }
+
+    /// The `(start, end, window start)` of each clip on track `track`.
+    fn track_clips(h: &Harness, track: usize) -> Vec<(i32, i32, i32)> {
+        h.sequencer.tracks()[track]
+            .clips()
+            .iter()
+            .map(|clip| (clip.start_tick(), clip.end_tick(), clip.region().start()))
+            .collect()
+    }
+
+    /// The captured performance (E3, bar 2, for 300 ticks, then C3, bar 1,
+    /// for 200) over an arrangement of a clip over bars 1–2 on track 0 and
+    /// one bar 2 on track 1, copied from its pad.
+    fn copied() -> (Harness, Record<UndoStep>) {
+        let (mut h, mut record, _) = captured();
+        h.sequencer.tracks_mut()[0].add_clip(&clip_at(0, 7680));
+        h.sequencer.tracks_mut()[1].add_clip(&clip_at(3840, 3840));
+        statuses(&h);
+        run_command(&mut h, &mut record, SequencerCommand::CopyPerformancePad);
+        (h, record)
+    }
+
+    #[test]
+    fn a_pads_copy_pastes_what_it_plays_on_the_tracks_it_played_from() {
+        let (mut h, mut record) = copied();
+        assert_eq!(statuses(&h), ["Copied pad 1 · under a beat"]);
+        assert_eq!(record.len(), 1, "the capture only: a copy isn't an edit");
+
+        h.sequencer.set_cursor_tick(7680);
+        run_command(&mut h, &mut record, SequencerCommand::PasteClips);
+        assert_eq!(
+            track_clips(&h, 0),
+            [(0, 7680, 0), (7680, 7980, 3840), (7980, 8180, 0)],
+            "bar 2's start, then bar 1's"
+        );
+        assert_eq!(
+            track_clips(&h, 1),
+            [(3840, 7680, 0), (7680, 7980, 0)],
+            "bar 2 only: nothing there in bar 1"
+        );
+
+        record.undo(&mut h.sequencer);
+        assert_eq!(track_clips(&h, 0), [(0, 7680, 0)]);
+        assert!(
+            h.sequencer.performance_pads().get(0).is_some(),
+            "the pad keeps it"
+        );
+    }
+
+    #[test]
+    fn paste_time_inserts_the_performances_length() {
+        let (mut h, mut record) = copied();
+        h.sequencer.set_cursor_tick(7680);
+        run_command(&mut h, &mut record, SequencerCommand::PasteTime);
+        assert_eq!(
+            track_clips(&h, 1),
+            [(3840, 7680, 0), (7680, 7980, 0)],
+            "nothing after the cursor to push"
+        );
+
+        record.undo(&mut h.sequencer);
+        h.sequencer.set_cursor_tick(0);
+        run_command(&mut h, &mut record, SequencerCommand::PasteTime);
+        assert_eq!(
+            track_clips(&h, 1),
+            [(0, 300, 0), (3840 + 500, 7680 + 500, 0)],
+            "the render at 0, bar 2 pushed along by its 500 ticks"
+        );
+    }
+
+    #[test]
+    fn a_copied_performance_pastes_onto_another_pad_as_a_clip_of_its_own() {
+        let (mut h, mut record) = copied();
+        run_command(
+            &mut h,
+            &mut record,
+            SequencerCommand::SelectPerformancePad(3),
+        );
+        run_command(&mut h, &mut record, SequencerCommand::PastePerformancePad);
+        assert_eq!(pad_notes(&h, 3), pad_notes(&h, 0));
+        let ids = [0, 3].map(|pad| h.sequencer.performance_pads().get(pad).map(Clip::id));
+        assert_ne!(ids[0], ids[1], "a clip of its own");
+
+        record.undo(&mut h.sequencer);
+        assert_eq!(pad_notes(&h, 3), None, "one undo step");
+
+        // A clip copy since: no performance to paste.
+        run_command(
+            &mut h,
+            &mut record,
+            SequencerCommand::CopyClips { start: 0, end: 960 },
+        );
+        run_command(&mut h, &mut record, SequencerCommand::PastePerformancePad);
+        assert_eq!(pad_notes(&h, 3), None);
+    }
+
+    #[test]
+    fn copying_an_empty_pad_keeps_the_clipboard() {
+        let (mut h, mut record) = copied();
+        run_command(
+            &mut h,
+            &mut record,
+            SequencerCommand::SelectPerformancePad(2),
+        );
+        statuses(&h);
+        run_command(&mut h, &mut record, SequencerCommand::CopyPerformancePad);
+        assert!(statuses(&h).is_empty());
+        assert!(h.sequencer.performance_clipboard().is_some());
+        assert_eq!(
+            h.sequencer.clip_clipboard().map(|copy| copy.span()),
+            Some(500)
+        );
     }
 
     /// Regression: `⌥Space` in the clip view played the arrangement from the

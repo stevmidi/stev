@@ -741,6 +741,14 @@ impl EventHandlers {
                 self.send_sequencer(SequencerCommand::ClearPerformancePad);
             }
 
+            InputEvent::CopyPerformancePad => {
+                self.send_sequencer(SequencerCommand::CopyPerformancePad);
+            }
+
+            InputEvent::PastePerformancePad => {
+                self.send_sequencer(SequencerCommand::PastePerformancePad);
+            }
+
             InputEvent::SetTrackPan { track_idx, pan } => {
                 self.send_sequencer(SequencerCommand::SetTrackPan {
                     track_idx: *track_idx,
