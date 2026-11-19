@@ -70,6 +70,20 @@ pub(crate) fn span_label(start: i32, end: i32, meter: Meter) -> String {
     }
 }
 
+/// A length as the footer names it, in whole bars and beats of `meter`:
+/// `6 bars`, `1 bar 2 beats`, `3 beats`; `under a beat` for less. What a
+/// performance-lane capture says it kept (`520-performance-capture.md`).
+pub(crate) fn length_label(ticks: i32, meter: Meter) -> String {
+    let bars = (ticks / meter.bar_ticks()).max(0) as usize;
+    let beats = (ticks % meter.bar_ticks() / meter.beat_ticks()).max(0) as usize;
+    match (bars, beats) {
+        (0, 0) => "under a beat".to_owned(),
+        (0, beats) => counted(beats, "beat"),
+        (bars, 0) => counted(bars, "bar"),
+        (bars, beats) => format!("{} {}", counted(bars, "bar"), counted(beats, "beat")),
+    }
+}
+
 /// A position typed as [`format_position`] writes it (`9`, `9+3`,
 /// `9 + 2.5`), or `None`. Bars count from 1; the beat offset may run past
 /// the bar (`9+5` in 4/4 is `10+1`) but not below zero.
@@ -310,6 +324,17 @@ mod tests {
         assert!(error.starts_with("line 2:"), "{error}");
         let error = parse_rows("Q4 0 1 90").unwrap_err();
         assert!(error.contains("isn't a pitch"), "{error}");
+    }
+
+    #[test]
+    fn a_length_reads_in_bars_and_beats() {
+        let four = Meter::FOUR_FOUR;
+        let (bar, beat) = (four.bar_ticks(), four.beat_ticks());
+        assert_eq!(length_label(6 * bar + 100, four), "6 bars");
+        assert_eq!(length_label(bar + 2 * beat, four), "1 bar 2 beats");
+        assert_eq!(length_label(2 * bar + beat, four), "2 bars 1 beat");
+        assert_eq!(length_label(3 * beat, four), "3 beats");
+        assert_eq!(length_label(beat - 1, four), "under a beat");
     }
 
     /// The footer's span: bars from 1 on bar lines, the ruler's positions

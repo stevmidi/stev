@@ -10,7 +10,7 @@
 
 use std::sync::atomic::Ordering;
 
-use crate::models::performance_lane::{PerformanceLane, key_index_from_note, key_tick};
+use crate::models::performance_lane::PerformanceLane;
 
 use super::Sequencer;
 
@@ -34,13 +34,5 @@ impl Sequencer {
         if !armed {
             self.performance_lane.clear();
         }
-    }
-
-    /// Where a run's press jumped to: its lane key's start at the lane's key
-    /// length (`key_tick`), `None` below the keys. What the render plays by
-    /// (`Sequencer::render_performance`).
-    pub(super) fn performance_key_target(&self) -> impl Fn(u8) -> Option<i32> + use<> {
-        let (meter, length) = (self.meter(), self.performance_lane_key_length());
-        move |note| key_index_from_note(note).map(|key| key_tick(meter, length, key))
     }
 }

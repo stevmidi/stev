@@ -22,7 +22,7 @@
 
 use crate::core::input_event::TimeSelectionRect;
 use crate::models::clip::{Clip, CopiedNote};
-use crate::models::performance_lane::render_segments;
+use crate::models::performance_lane::Take;
 use crate::models::region::Region;
 
 use super::Sequencer;
@@ -213,18 +213,18 @@ impl Sequencer {
 
     // --- The performance lane's render ---
 
-    /// What the lane's run `clip` (`PerformanceLane::take_run`) played,
+    /// What the lane's run played (`take`, `PerformanceLane::take_run`),
     /// rendered from the arrangement as it is now, as an all-track time copy
     /// (`520-performance-capture.md` decision 1): each stretch it played
-    /// (`render_segments`) copied from every track, its pieces' windows
-    /// trimmed to the stretch, laid end to end from 0 in the run's time, with
-    /// no track anchor, so each piece lands on the track it came from. Its
-    /// span is the run's length, so an insert of it takes the whole run, a
-    /// last stretch over silence included. `None` when the run played no
-    /// clips. A throwaway clipboard: the session's is left alone.
-    pub(crate) fn render_performance(&self, clip: &Clip) -> Option<ClipClipboard> {
+    /// copied from every track, its pieces' windows trimmed to the stretch,
+    /// laid end to end from 0 in the run's time, with no track anchor, so
+    /// each piece lands on the track it came from. Its span is the run's
+    /// length, so an insert of it takes the whole run, a last stretch over
+    /// silence included. `None` when the run played no clips. A throwaway
+    /// clipboard: the session's is left alone.
+    pub(crate) fn render_performance(&self, take: &Take) -> Option<ClipClipboard> {
         let mut clips = Vec::new();
-        for segment in render_segments(clip, self.performance_key_target()) {
+        for segment in &take.segments {
             let Some(copy) = self.clipboard_snapshot(segment.from, segment.from + segment.len)
             else {
                 continue;
@@ -236,9 +236,9 @@ impl Sequencer {
                 clips.push(piece);
             }
         }
-        (!clips.is_empty()).then(|| ClipClipboard {
+        (!clips.is_empty()).then_some(ClipClipboard {
             clips,
-            span: clip.region_length(),
+            span: take.length,
             track_anchor: None,
         })
     }

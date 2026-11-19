@@ -11,11 +11,11 @@
 
 use undo::Record;
 
-use crate::core::agent::format_position;
+use crate::core::agent::{format_position, length_label};
 use crate::core::sequencer::{DuplicateTimeEdit, UndoStep};
 use crate::models::{
     event::{Event, EventType},
-    performance_lane::{key_index_from_note, key_tick, length_label},
+    performance_lane::{key_index_from_note, key_tick},
 };
 
 use super::*;
@@ -55,12 +55,7 @@ impl EventHandlers {
             key_index,
         );
         let started = !transport.is_running();
-        sequencer.performance_lane_mut().press(
-            note,
-            event.velocity().unwrap_or(100),
-            target_tick,
-            started,
-        );
+        sequencer.performance_lane_mut().press(target_tick, started);
         if started {
             transport.start();
         }
@@ -93,10 +88,14 @@ impl EventHandlers {
         };
         let meter = sequencer.meter();
         let length = length_label(render.span(), meter);
-        let at = format_position(sequencer.cursor_tick(), meter);
+        let cursor = sequencer.cursor_tick();
+        let at = match format_position(cursor, meter) {
+            bar if cursor.rem_euclid(meter.bar_ticks()) == 0 => format!("bar {bar}"),
+            position => position,
+        };
         let edit = DuplicateTimeEdit::capturing(sequencer, &render);
         if self.record_edit(sequencer, undo_record, edit) {
-            self.send_status_ui_event(format!("Captured {length} at bar {at}"));
+            self.send_status_ui_event(format!("Captured {length} at {at}"));
         }
     }
 }
@@ -320,6 +319,40 @@ mod tests {
         assert_ne!(after[0], before[0], "the source moved");
         assert_eq!(after[1..], before[1..], "the render didn't");
         assert_eq!(track_clips(&h, 0)[1..], RENDER_0);
+    }
+
+    /// Regression: the render re-derived each key's jump from the key length
+    /// at the `/`, so a length changed in the middle of a run rendered
+    /// stretches nobody heard. Each press keeps where it jumped.
+    #[test]
+    fn a_key_length_changed_mid_run_renders_what_each_press_played() {
+        let (mut h, mut transport, mut record) = armed();
+        h.sequencer.tracks_mut()[0].add_clip(&clip_with_marker_notes(0, 7680));
+        h.sequencer.set_cursor_tick(7680);
+        // E3 at a beat a key: bar 2.
+        press(&mut h, &mut transport, 4);
+        play(&mut h, &mut transport, 300);
+        run_command(
+            &mut h,
+            &mut record,
+            SequencerCommand::SetPerformanceLaneKeyLength(KeyLength::Bar),
+        );
+        // C♯3 at a bar a key: bar 2 again.
+        press(&mut h, &mut transport, 1);
+        play(&mut h, &mut transport, 200);
+        slash(&mut h, &mut record);
+        assert_eq!(
+            track_clips(&h, 0),
+            [(0, 7680, 0), (7680, 7980, 3840), (7980, 8180, 3840)],
+            "both from bar 2, as heard; E3 at a bar a key would be bar 5"
+        );
+    }
+
+    #[test]
+    fn the_footer_names_a_cursor_off_a_bar_line_as_the_ruler_does() {
+        let (mut h, _transport, mut record) = played(4800);
+        slash(&mut h, &mut record);
+        assert_eq!(statuses(&h), ["Captured under a beat at 2+1"]);
     }
 
     #[test]

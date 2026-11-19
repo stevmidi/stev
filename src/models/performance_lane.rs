@@ -2,11 +2,11 @@
 //!
 //! The lane arms the physical keyboard to jump the transport to a key's start
 //! instead of capturing notes (`110-performance-lane.md`). What it holds is
-//! the **run**: the presses since playback started, on a clock of its own
-//! that counts only the ticks playback advances, which `/` renders into
-//! clips at the arranger cursor (`520-performance-capture.md` decisions 1
-//! and 2): [`performance_clip`] is the run as a clip of its presses, and
-//! [`render_segments`] the stretches of the arrangement it played.
+//! the **run**: the presses since playback started, each with where it
+//! jumped, on a clock of its own that counts only the ticks playback
+//! advances, which `/` renders into clips at the arranger cursor
+//! (`520-performance-capture.md` decisions 1 and 2): [`PerformanceLane::take_run`]
+//! gives it as a [`Take`], the stretches of the arrangement it played.
 //! [`key_index_from_note`] is the note-number → key mapping the lane triggers
 //! on, [`key_tick`] where a key jumps to (one [`KeyLength`] of the project's
 //! meter per key: a bar, half a bar or a beat), and [`note_for_key`] the
@@ -15,10 +15,6 @@
 
 use crate::core::config;
 use crate::core::time::Meter;
-use crate::models::{
-    clip::Clip,
-    event::{Event, EventType},
-};
 
 /// The lane's live state: the run its presses make. Not saved, not an undo
 /// step. See the module docs.
@@ -36,13 +32,37 @@ struct Run {
     /// while running, never the transport position (it jumps) nor the
     /// clock's (realigned at every jump, `150`).
     elapsed: i32,
-    /// Each press, `(elapsed, note, velocity)`, in order.
-    presses: Vec<(i32, u8, u8)>,
+    /// Each press, `(elapsed, target)`, in order: when it came and where it
+    /// jumped. The target is kept as it was, so a key length or meter
+    /// changed in the middle of a run renders what was heard.
+    presses: Vec<(i32, i32)>,
     /// Where playback is when the lane alone has moved it: the last press's
     /// key plus the ticks since. Playback anywhere else means something else
     /// moved it (a ruler click, `Space` from the cursor), so what follows is
     /// no longer what the presses played and the run ends.
     expected_tick: i32,
+}
+
+/// What a run played, for its render (`520-performance-capture.md`
+/// decision 1): its stretches of the arrangement, in order, and its length.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Take {
+    /// A stretch per press, laid end to end from 0.
+    pub(crate) segments: Vec<Segment>,
+    /// The run's length: where the last stretch ends.
+    pub(crate) length: i32,
+}
+
+/// One stretch of what a run played: `len` ticks of the arrangement from
+/// tick `from`, placed `at` ticks into the run.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Segment {
+    /// Where in the run it starts.
+    pub(crate) at: i32,
+    /// How long it plays.
+    pub(crate) len: i32,
+    /// The arrangement tick it plays from.
+    pub(crate) from: i32,
 }
 
 impl PerformanceLane {
@@ -56,12 +76,12 @@ impl PerformanceLane {
         self.run = None;
     }
 
-    /// A press of `note` jumped playback to `target_tick`. It starts a run
-    /// when there is none, or when `started` (it started the transport: the
-    /// run is "from the press that started the transport"), and is added to
-    /// it. A press on the same tick as the one before replaces it, as live
-    /// the latest press wins.
-    pub(crate) fn press(&mut self, note: u8, velocity: u8, target_tick: i32, started: bool) {
+    /// A press jumped playback to `target_tick`. It starts a run when there
+    /// is none, or when `started` (it started the transport: the run is
+    /// "from the press that started the transport"), and is added to it. A
+    /// press on the same tick as the one before replaces it, as live the
+    /// latest press wins.
+    pub(crate) fn press(&mut self, target_tick: i32, started: bool) {
         if started {
             self.run = None;
         }
@@ -70,14 +90,10 @@ impl PerformanceLane {
             presses: Vec::new(),
             expected_tick: target_tick,
         });
-        if run
-            .presses
-            .last()
-            .is_some_and(|&(at, _, _)| at == run.elapsed)
-        {
+        if run.presses.last().is_some_and(|&(at, _)| at == run.elapsed) {
             run.presses.pop();
         }
-        run.presses.push((run.elapsed, note, velocity));
+        run.presses.push((run.elapsed, target_tick));
         run.expected_tick = target_tick;
     }
 
@@ -96,161 +112,30 @@ impl PerformanceLane {
         run.expected_tick += 1;
     }
 
-    /// `/`: the run as a performance clip ([`performance_clip`]), ending now
-    /// (running) or where playback stopped (stopped: the clock stood still
-    /// since). The run is used up, so the next press starts the next one.
+    /// `/`: what the run played, ending now (running) or where playback
+    /// stopped (stopped: the clock stood still since): a stretch per press
+    /// from where it jumped, lasting until the next press (a release doesn't
+    /// stop the transport, so that is what played), the last until the
+    /// capture. The run is used up, so the next press starts the next one.
     /// `None` with no run, or nothing in it that lasts a tick.
-    pub(crate) fn take_run(&mut self) -> Option<Clip> {
+    pub(crate) fn take_run(&mut self) -> Option<Take> {
         let run = self.run.take()?;
-        performance_clip(&run.presses, run.elapsed)
-    }
-}
-
-/// The notes of performance `clip` the render plays, `(start, end, key)`:
-/// each unmuted note on a lane key, with where its key jumps to (`target`).
-fn key_notes<'a>(
-    clip: &'a Clip,
-    target: &'a impl Fn(u8) -> Option<i32>,
-) -> impl Iterator<Item = (i32, i32, i32)> + 'a {
-    clip.events()
-        .iter()
-        .filter(|event| event.event_type() == Some(EventType::NoteOn) && !event.is_muted())
-        .filter_map(move |event| {
-            let key = target(event.note_number()?)?;
-            Some((event.tick(), event.end_tick(), key))
-        })
-}
-
-/// One stretch of what a performance plays, for its render
-/// (`520-performance-capture.md` decision 1): `len` ticks of the
-/// arrangement from tick `from`, placed `at` ticks into the performance.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct Segment {
-    /// Where in the performance it starts, from its window start.
-    pub(crate) at: i32,
-    /// How long it plays.
-    pub(crate) len: i32,
-    /// The arrangement tick it plays from.
-    pub(crate) from: i32,
-}
-
-/// What performance `clip` plays, once through from its start, as the
-/// stretches of the arrangement it plays ([`Segment`]), in order: what the
-/// presses played live. The first stretch takes the note sounding at the
-/// start, from as far into its key; after that each note start jumps
-/// (several on one tick: the last in the clip, as live the latest press
-/// wins), a note ending under a longer one plays on, and where no note sounds
-/// is a gap, which places nothing. A run's clip ([`performance_clip`]) has
-/// neither gaps nor overlaps; the rule takes any clip. `target` is where a
-/// note's key jumps to.
-pub(crate) fn render_segments(clip: &Clip, target: impl Fn(u8) -> Option<i32>) -> Vec<Segment> {
-    let (start, end) = (clip.region().start(), clip.region().end());
-    let notes: Vec<_> = key_notes(clip, &target).collect();
-    // The ticks something changes on: the start, and each note's ends
-    // inside the window.
-    let mut changes: Vec<i32> = notes
-        .iter()
-        .flat_map(|&(on, off, _)| [on, off])
-        .filter(|&tick| start < tick && tick < end)
-        .chain([start])
-        .collect();
-    changes.sort_unstable();
-    changes.dedup();
-
-    // Where a stretch starts, from where (a jump), or a gap starts (`None`);
-    // a tick where a note ends under a longer one cuts nothing.
-    let mut cuts: Vec<(i32, Option<i32>)> = changes
-        .into_iter()
-        .filter_map(
-            |at| match play_at(|| notes.iter().copied(), at, at == start) {
-                (Some(from), _) => Some((at, Some(from))),
-                (None, false) => Some((at, None)),
-                (None, true) => None,
-            },
-        )
-        .collect();
-    cuts.push((end, None));
-    cuts.windows(2)
-        .filter_map(|pair| {
-            let ((at, from), (until, _)) = (pair[0], pair[1]);
-            Some(Segment {
-                at: at - start,
+        let ends = run.presses.iter().skip(1).map(|&(at, _)| at);
+        let segments: Vec<Segment> = run
+            .presses
+            .iter()
+            .zip(ends.chain([run.elapsed]))
+            .filter(|&(&(at, _), until)| until > at)
+            .map(|(&(at, from), until)| Segment {
+                at,
                 len: until - at,
-                from: from?,
+                from,
             })
+            .collect();
+        (!segments.is_empty()).then_some(Take {
+            segments,
+            length: run.elapsed,
         })
-        .collect()
-}
-
-/// What plays at tick `at` of a performance whose notes `notes` gives
-/// (`key_notes`): where playback jumps, if anywhere, and whether a note
-/// sounds. On the `first` tick played it takes the note sounding there,
-/// from as far into its key; after that a note starting there jumps (several:
-/// the last in the clip, as live the latest press wins). The rule
-/// [`render_segments`] cuts by.
-fn play_at<I: Iterator<Item = (i32, i32, i32)>>(
-    notes: impl Fn() -> I,
-    at: i32,
-    first: bool,
-) -> (Option<i32>, bool) {
-    let jump = if first {
-        notes()
-            .filter(|&(on, off, _)| on <= at && at < off)
-            .max_by_key(|&(on, _, _)| on)
-    } else {
-        notes().filter(|&(on, _, _)| on == at).last()
-    }
-    .map(|(on, _, key)| key + at - on);
-    // Only a tick with no jump needs to know: a jump lands on a note.
-    let sounding = jump.is_some() || notes().any(|(on, off, _)| on <= at && at < off);
-    (jump, sounding)
-}
-
-/// A performance clip from `presses` (`(tick, note, velocity)`, in order,
-/// the first at 0) ending at `end` (`520-performance-capture.md` decision 2):
-/// a note per press, its pitch the key, lasting until the next press (a
-/// release doesn't stop the transport, so that is what played), the last
-/// until `end`. Its window is `0..end`. `None` when nothing lasts a tick.
-pub(crate) fn performance_clip(presses: &[(i32, u8, u8)], end: i32) -> Option<Clip> {
-    let ends = presses.iter().skip(1).map(|&(at, _, _)| at).chain([end]);
-    let mut events = Vec::new();
-    for (&(at, note, velocity), until) in presses.iter().zip(ends) {
-        if until <= at {
-            continue;
-        }
-        events.push(Event::new(
-            at,
-            until - at,
-            vec![0x90, note, velocity.max(1)],
-        ));
-        events.push(Event::new(until, 0, vec![0x80, note, 0]));
-    }
-    if events.is_empty() {
-        return None;
-    }
-    let mut clip = Clip::new();
-    clip.region_mut().set_region(Some(0), Some(end));
-    for event in events {
-        clip.add_event(event);
-    }
-    clip.calculate_note_lengths();
-    Some(clip)
-}
-
-/// A capture's length as the footer names it, in whole bars and beats
-/// of `meter`: `6 bars`, `1 bar 2 beats`, `3 beats`; `under a beat` for less.
-pub(crate) fn length_label(ticks: i32, meter: Meter) -> String {
-    let bars = ticks / meter.bar_ticks();
-    let beats = ticks % meter.bar_ticks() / meter.beat_ticks();
-    let count = |n: i32, one: &str| match n {
-        1 => format!("1 {one}"),
-        n => format!("{n} {one}s"),
-    };
-    match (bars, beats) {
-        (0, 0) => "under a beat".to_owned(),
-        (0, beats) => count(beats, "beat"),
-        (bars, 0) => count(bars, "bar"),
-        (bars, beats) => format!("{} {}", count(bars, "bar"), count(beats, "beat")),
     }
 }
 
@@ -359,7 +244,6 @@ pub(crate) fn key_tick(meter: Meter, length: KeyLength, key_index: i32) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::sequencer::test_support::clip_notes;
 
     /// Plays `ticks` ticks from `from`, as the tick pump would.
     fn play(lane: &mut PerformanceLane, from: i32, ticks: i32) {
@@ -368,59 +252,73 @@ mod tests {
         }
     }
 
+    /// A take's stretches as `(at, len, from)`, and its length.
+    type Taken = (Vec<(i32, i32, i32)>, i32);
+
+    /// The lane's take, as [`Taken`].
+    fn taken(lane: &mut PerformanceLane) -> Option<Taken> {
+        lane.take_run().map(|take| {
+            let stretches = take
+                .segments
+                .iter()
+                .map(|segment| (segment.at, segment.len, segment.from))
+                .collect();
+            (stretches, take.length)
+        })
+    }
+
     #[test]
     fn each_press_lasts_until_the_next_and_the_last_until_the_capture() {
         let mut lane = PerformanceLane::new();
-        lane.press(64, 100, 3840, true);
+        lane.press(3840, true);
         play(&mut lane, 3840, 1000);
-        lane.press(60, 90, 0, false);
+        lane.press(0, false);
         play(&mut lane, 0, 500);
 
-        let clip = lane.take_run().expect("a run");
-        assert_eq!(clip_notes(&clip), [(0, 64, 1000), (1000, 60, 500)]);
-        assert_eq!((clip.region().start(), clip.region().end()), (0, 1500));
+        assert_eq!(
+            taken(&mut lane),
+            Some((vec![(0, 1000, 3840), (1000, 500, 0)], 1500))
+        );
         assert!(lane.take_run().is_none(), "the capture uses the run up");
     }
 
     #[test]
     fn a_stopped_capture_ends_where_playback_stopped() {
         let mut lane = PerformanceLane::new();
-        lane.press(60, 100, 0, true);
+        lane.press(0, true);
         play(&mut lane, 0, 700);
         // Stopped: no ticks reach the lane.
-        let clip = lane.take_run().expect("a run");
-        assert_eq!(clip_notes(&clip), [(0, 60, 700)]);
+        assert_eq!(taken(&mut lane), Some((vec![(0, 700, 0)], 700)));
     }
 
     #[test]
     fn the_next_run_starts_at_the_first_press_after_a_capture() {
         let mut lane = PerformanceLane::new();
-        lane.press(60, 100, 0, true);
+        lane.press(0, true);
         play(&mut lane, 0, 100);
         assert!(lane.take_run().is_some());
         play(&mut lane, 100, 50);
         assert!(lane.take_run().is_none(), "nothing pressed since");
 
-        lane.press(62, 100, 960, false);
+        lane.press(960, false);
         play(&mut lane, 960, 30);
-        let clip = lane.take_run().expect("a run");
-        assert_eq!(clip_notes(&clip), [(0, 62, 30)]);
+        assert_eq!(taken(&mut lane), Some((vec![(0, 30, 960)], 30)));
     }
 
     #[test]
     fn a_press_that_starts_the_transport_starts_a_new_run() {
         let mut lane = PerformanceLane::new();
-        lane.press(60, 100, 0, true);
+        lane.press(0, true);
         play(&mut lane, 0, 100);
-        lane.press(65, 100, 1920, true);
+        lane.press(1920, true);
         play(&mut lane, 1920, 10);
-        assert_eq!(clip_notes(&lane.take_run().unwrap()), [(0, 65, 10)]);
+        assert_eq!(taken(&mut lane), Some((vec![(0, 10, 1920)], 10)));
     }
 
     #[test]
     fn playback_moved_by_anything_but_a_press_ends_the_run() {
         let mut lane = PerformanceLane::new();
-        lane.press(60, 100, 0, true);
+        lane.press(0, true);
         play(&mut lane, 0, 100);
         // A ruler click took playback to bar 5.
         play(&mut lane, 3840, 1);
@@ -430,16 +328,16 @@ mod tests {
     #[test]
     fn presses_on_one_tick_keep_the_latest() {
         let mut lane = PerformanceLane::new();
-        lane.press(60, 100, 0, true);
-        lane.press(62, 100, 480, false);
+        lane.press(0, true);
+        lane.press(480, false);
         play(&mut lane, 480, 10);
-        assert_eq!(clip_notes(&lane.take_run().unwrap()), [(0, 62, 10)]);
+        assert_eq!(taken(&mut lane), Some((vec![(0, 10, 480)], 10)));
     }
 
     #[test]
     fn a_run_with_nothing_lasting_a_tick_captures_nothing() {
         let mut lane = PerformanceLane::new();
-        lane.press(60, 100, 0, true);
+        lane.press(0, true);
         assert!(lane.take_run().is_none());
         assert!(PerformanceLane::new().take_run().is_none());
     }
@@ -447,90 +345,10 @@ mod tests {
     #[test]
     fn clearing_the_lane_ends_the_run() {
         let mut lane = PerformanceLane::new();
-        lane.press(60, 100, 0, true);
+        lane.press(0, true);
         play(&mut lane, 0, 10);
         lane.clear();
         assert!(lane.take_run().is_none());
-    }
-
-    /// Where each key jumps in these tests: a beat a key, in 4/4.
-    fn beat_key(note: u8) -> Option<i32> {
-        key_index_from_note(note).map(|key| key_tick(Meter::FOUR_FOUR, KeyLength::Beat, key))
-    }
-
-    /// A performance of `notes` (`(start, end, note)`) with window `0..end`,
-    /// gaps and overlaps allowed, which a run never makes.
-    fn clip_of(notes: &[(i32, i32, u8)], end: i32) -> Clip {
-        let mut clip = Clip::new();
-        clip.region_mut().set_region(Some(0), Some(end));
-        for &(start, until, note) in notes {
-            clip.add_event(Event::new(start, until - start, vec![0x90, note, 100]));
-            clip.add_event(Event::new(until, 0, vec![0x80, note, 0]));
-        }
-        clip.calculate_note_lengths();
-        clip
-    }
-
-    #[test]
-    fn the_render_is_a_segment_per_press() {
-        let clip = performance_clip(&[(0, 64, 100), (100, 60, 100), (130, 61, 100)], 150).unwrap();
-        assert_eq!(
-            render_segments(&clip, beat_key),
-            [
-                Segment {
-                    at: 0,
-                    len: 100,
-                    from: 3840
-                },
-                Segment {
-                    at: 100,
-                    len: 30,
-                    from: 0
-                },
-                Segment {
-                    at: 130,
-                    len: 20,
-                    from: 960
-                },
-            ]
-        );
-    }
-
-    #[test]
-    fn a_gap_places_nothing_and_a_note_ending_under_a_longer_one_plays_on() {
-        // E3 for 40 ticks, a gap, C3 from 100 with D3 ending under it.
-        let clip = clip_of(&[(0, 40, 64), (100, 200, 60), (120, 150, 62)], 200);
-        assert_eq!(
-            render_segments(&clip, beat_key),
-            [
-                Segment {
-                    at: 0,
-                    len: 40,
-                    from: 3840
-                },
-                Segment {
-                    at: 100,
-                    len: 20,
-                    from: 0
-                },
-                Segment {
-                    at: 120,
-                    len: 80,
-                    from: 1920
-                },
-            ]
-        );
-    }
-
-    #[test]
-    fn a_length_reads_in_bars_and_beats() {
-        let four = Meter::FOUR_FOUR;
-        let (bar, beat) = (four.bar_ticks(), four.beat_ticks());
-        assert_eq!(length_label(6 * bar + 100, four), "6 bars");
-        assert_eq!(length_label(bar + 2 * beat, four), "1 bar 2 beats");
-        assert_eq!(length_label(2 * bar + beat, four), "2 bars 1 beat");
-        assert_eq!(length_label(3 * beat, four), "3 beats");
-        assert_eq!(length_label(beat - 1, four), "under a beat");
     }
 
     #[test]

@@ -37,10 +37,11 @@ else. Key files:
   press wins; two on one tick keep the last. Playback anywhere but where the
   presses left it (a ruler click, `Space` from the cursor) ends the run, as
   does disarming (`set_performance_lane_armed(false)`) or a new project. `/`
-  takes it (`take_run` → `performance_clip`: a note per press, its pitch the
-  key, lasting until the next press, the last until the capture), and
-  `render_segments` turns that into the stretches of the arrangement it
-  played (`520` decision 1). `key_index_from_note`
+  takes it (`take_run` → a `Take`: a stretch per press from where it jumped,
+  lasting until the next press, the last until the capture), the stretches
+  of the arrangement it played (`520` decision 1). Each press keeps its
+  jump target, so a key length or meter changed in the middle of a run
+  renders what was heard. `key_index_from_note`
   maps a MIDI note to a 0-based key via `config::PERFORMANCE_LANE_BASE_NOTE`
   (currently C3/60); notes below it are ignored. `key_tick(meter, length,
   key)` is where a key jumps, one **key length** (`KeyLength`) per key: a

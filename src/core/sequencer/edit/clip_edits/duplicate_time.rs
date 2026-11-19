@@ -112,36 +112,32 @@ impl DuplicateTimeEdit {
     /// clipboard, a scoped copy with no selected track).
     pub(crate) fn pasting(sequencer: &Sequencer) -> Option<Self> {
         let clipboard = sequencer.clip_clipboard()?;
-        let anchor = sequencer.cursor_tick();
-        let paste = PasteClipsEdit::from_clipboard_at(
-            sequencer,
-            clipboard,
-            anchor,
-            sequencer.selected_track_index(),
-        )?;
-        Some(Self::inserting(
-            sequencer,
-            anchor,
-            clipboard.span(),
-            anchor,
-            None,
-            paste,
-        ))
+        Self::paste_time(sequencer, clipboard, sequencer.selected_track_index())
     }
 
     /// `/` on the performance lane (`520-performance-capture.md` decision
     /// 1): Paste Time's edit with the run's render
     /// (`Sequencer::render_performance`) in place of the session clipboard,
-    /// at the cursor, on the tracks it was rendered from, inserting the run's
-    /// length. The session clipboard is untouched and the marquee stays.
-    /// `None` when the render places nothing.
+    /// on the tracks it was rendered from (it has no track anchor). The
+    /// session clipboard is untouched and the marquee stays. `None` when the
+    /// render places nothing.
     pub(crate) fn capturing(sequencer: &Sequencer, render: &ClipClipboard) -> Option<Self> {
+        Self::paste_time(sequencer, render, None)
+    }
+
+    /// Paste Time's edit for `clipboard`: pasted at the cursor, aimed at
+    /// `target_track` as `⌘V` aims it, after inserting its span.
+    fn paste_time(
+        sequencer: &Sequencer,
+        clipboard: &ClipClipboard,
+        target_track: Option<usize>,
+    ) -> Option<Self> {
         let anchor = sequencer.cursor_tick();
-        let paste = PasteClipsEdit::from_clipboard_at(sequencer, render, anchor, None)?;
+        let paste = PasteClipsEdit::from_clipboard_at(sequencer, clipboard, anchor, target_track)?;
         Some(Self::inserting(
             sequencer,
             anchor,
-            render.span(),
+            clipboard.span(),
             anchor,
             None,
             paste,
