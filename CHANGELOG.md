@@ -31,6 +31,7 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ### Changed
 
+- Delete Time now takes `⌘⌫`, the Mac's delete key with ⌘, as well as `⌘` with forward delete (fn+delete on a laptop), which was its only key before. Every delete in Stev now works with either delete key. The Keyboard tab names the keys as the Mac's keyboard does: `Delete` for the delete key, `Fwd Delete` for forward delete. If you bound `⌘⌫` to a command of your own, that binding stays and Delete Time keeps only `⌘` with forward delete: a key you bound now always beats a default a new version adds.
 - While the performance lane is selected, playback never wraps at the loop end: `Space`, a ruler click and the lane's keys all play straight past it, and the loop shows dimmed. Select a track and it loops again. Before, a key let go before the loop end let playback wrap to the loop start.
 - Each key on the performance lane now jumps a beat instead of a bar, the beat of the project's meter: in 4/4, C3 is bar 1, C♯3 bar 1 beat 2, E3 bar 2, C4 bar 4. The keyboard reaches 68 beats from C3 (17 bars of 4/4) instead of 68 bars.
 - A click on the arranger's ruler now starts playback from that point and leaves the cursor and the marquee where they are, as Ableton's scrub area does. Audition a marqueed section from a bar or two before it, transpose, click again, without marqueeing it again. A click in the lanes still places the cursor.

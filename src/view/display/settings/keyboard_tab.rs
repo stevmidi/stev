@@ -419,8 +419,8 @@ const FIXED: &[FixedGroup] = &[
             ("↓  Enter", "From the search into the list"),
             ("↑", "Back to the search, from the first row"),
             ("Enter", "Record a new key for the command"),
-            ("Backspace", "Unbind the command"),
-            ("⌘Backspace", "Reset the command to its default"),
+            ("⌫", "Unbind the command"),
+            ("⌘⌫", "Reset the command to its default"),
         ],
     ),
     (
@@ -478,7 +478,7 @@ const FIXED: &[FixedGroup] = &[
         &[
             ("Drag", "Mark a span of pitch bend or the mod wheel"),
             ("⌘A", "Mark the whole curve"),
-            ("Delete", "Clear the span: a wheel to rest, a CC held"),
+            ("⌫", "Clear the span: a wheel to rest, a CC held"),
             ("Esc", "Drop the span, then give back the keyboard"),
         ],
     ),
@@ -497,13 +497,13 @@ const FIXED: &[FixedGroup] = &[
                 "Right-click",
                 "On a knob: assign it, then turn a control in the plugin",
             ),
-            ("Delete", "Remove the selected knob's mapping"),
+            ("⌫", "Remove the selected knob's mapping"),
             ("Esc", "Stop assigning, or give back the keyboard"),
             (
                 "Click",
                 "Lane selected: on a pad, select it (a capture goes there)",
             ),
-            ("Delete", "Lane selected: empty the selected pad"),
+            ("⌫", "Lane selected: empty the selected pad"),
             (
                 "⌘C",
                 "Lane selected: copy the selected pad, to paste in the arranger",
@@ -519,7 +519,7 @@ const FIXED: &[FixedGroup] = &[
         &[
             ("Enter", "Open the project or template, import the clip"),
             ("⌘R", "Rename the file or folder"),
-            ("Backspace", "Delete the file or folder"),
+            ("⌫", "Delete the file or folder"),
             ("⌘C", "Copy the project"),
             ("⌘X", "Cut the project, to move it"),
             ("⌘V", "Paste the project into the folder"),
@@ -554,10 +554,25 @@ fn key_label(keys: &str) -> String {
 /// `Ctrl+` elsewhere, `⌥` as `Opt+` / `Alt+`, `⇧` as `Shift+`, `⌃` (macOS's
 /// Control) as `Ctrl+`. Spelled out on macOS too: the bundled fonts have no
 /// `⌥`, and a mix of glyphs and words reads worse than words.
+///
+/// The two delete keys take the name printed on the keyboard: `⌫` is
+/// `Delete` on a Mac and `Backspace` elsewhere, `⌦` (forward delete, fn+⌫
+/// on a laptop) `Fwd Delete` on a Mac and `Delete` elsewhere.
 fn key_label_for(keys: &str, mac: bool) -> String {
     let mut label = String::with_capacity(keys.len() + 8);
     let mut chars = keys.chars().peekable();
     while let Some(c) = chars.next() {
+        let key = match c {
+            '⌫' if mac => Some("Delete"),
+            '⌫' => Some("Backspace"),
+            '⌦' if mac => Some("Fwd Delete"),
+            '⌦' => Some("Delete"),
+            _ => None,
+        };
+        if let Some(key) = key {
+            label.push_str(key);
+            continue;
+        }
         let name = match c {
             '⌘' if mac => "Cmd",
             '⌘' | '⌃' => "Ctrl",
@@ -587,15 +602,31 @@ pub(in crate::view::display) fn chord_label(chord: Chord) -> String {
 /// A command's `chords` as shown on this platform, two spaces apart:
 /// `\  /`. The tab's rows and the footer's hints.
 pub(in crate::view::display) fn chords_label(chords: &[Chord]) -> String {
+    chords_label_for(chords, cfg!(target_os = "macos"))
+}
+
+/// [`chords_label`] for `mac` or not. On a Mac a forward-delete chord whose
+/// `⌫` twin is also bound is left out: `⌫` is the Mac's delete key and the
+/// pair is one key there, so Delete the selection reads `Delete`, not
+/// `Delete  Fwd Delete`. Elsewhere they are two keys and both are listed.
+fn chords_label_for(chords: &[Chord], mac: bool) -> String {
     chords
         .iter()
-        .map(|&chord| chord_label(chord))
+        .filter(|&&chord| {
+            !(mac
+                && chord.key == Key::Delete
+                && chords.contains(&Chord {
+                    key: Key::Backspace,
+                    ..chord
+                }))
+        })
+        .map(|&chord| key_label_for(&chord_glyphs(chord), mac))
         .collect::<Vec<_>>()
         .join("  ")
 }
 
 /// `chord` written as [`FIXED`]'s keys are: the modifier glyphs, then the
-/// key's symbol or name (`\`, `Space`, `Delete`).
+/// key's symbol or name (`\`, `Space`, `⌫`).
 fn chord_glyphs(chord: Chord) -> String {
     let mut glyphs = String::new();
     for (held, glyph) in [
@@ -611,6 +642,9 @@ fn chord_glyphs(chord: Chord) -> String {
     glyphs.push_str(match chord.key {
         // egui's symbol is U+2212, a minus sign; the key prints a hyphen.
         Key::Minus => "-",
+        // Named per platform by `key_label_for`.
+        Key::Backspace => "⌫",
+        Key::Delete => "⌦",
         key => key.symbol_or_name(),
     });
     glyphs
@@ -781,8 +815,8 @@ mod tests {
 
     use super::{
         FIXED, KeyboardFocus, KeyboardTab, Recording, ShortcutLine, ShortcutRow, TabClick, TabKey,
-        TextField, chord_glyphs, is_keyboard_tab_key, key_label_for, recorded_chord, row_lines,
-        scroll_to_show_line, shortcut_lines, shortcut_rows,
+        TextField, chord_glyphs, chords_label_for, is_keyboard_tab_key, key_label_for,
+        recorded_chord, row_lines, scroll_to_show_line, shortcut_lines, shortcut_rows,
     };
     use crate::core::input_event::{InputEvent, KeyModifiers};
     use crate::core::keymap::{ACTIONS, Action, Chord, Keymap};
@@ -888,6 +922,34 @@ mod tests {
         assert_eq!(key_label_for("⇧ arrows", false), "Shift arrows");
         assert_eq!(key_label_for("⌘ drag", true), "Cmd drag");
         assert_eq!(key_label_for("Q", true), "Q");
+        assert_eq!(key_label_for("⌘⌫", true), "Cmd+Delete");
+        assert_eq!(key_label_for("⌘⌫", false), "Ctrl+Backspace");
+        assert_eq!(key_label_for("⌦", true), "Fwd Delete");
+        assert_eq!(key_label_for("⌦", false), "Delete");
+    }
+
+    /// On a Mac a `⌦`/`⌫` pair is one key, `Delete`; elsewhere both are
+    /// listed. A forward delete bound alone stays listed on a Mac.
+    #[test]
+    fn a_delete_pair_is_one_key_on_a_mac() {
+        let chord = |key, command| Chord {
+            key,
+            command,
+            alt: false,
+            shift: false,
+            ctrl: false,
+        };
+        let pair = [chord(Key::Delete, false), chord(Key::Backspace, false)];
+        assert_eq!(chords_label_for(&pair, true), "Delete");
+        assert_eq!(chords_label_for(&pair, false), "Delete  Backspace");
+        let time = [chord(Key::Delete, true), chord(Key::Backspace, true)];
+        assert_eq!(chords_label_for(&time, true), "Cmd+Delete");
+        assert_eq!(
+            chords_label_for(&time, false),
+            "Ctrl+Delete  Ctrl+Backspace"
+        );
+        let forward = [chord(Key::Delete, true)];
+        assert_eq!(chords_label_for(&forward, true), "Cmd+Fwd Delete");
     }
 
     #[test]

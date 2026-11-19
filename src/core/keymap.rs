@@ -733,7 +733,7 @@ pub(crate) const ACTIONS: &[ActionInfo] = &[
         "Delete time",
         ARRANGER,
         Scope::Arranger,
-        &[Chord::cmd(Key::Delete)],
+        &[Chord::cmd(Key::Delete), Chord::cmd(Key::Backspace)],
     ),
     row(
         Action::InsertEmptyClip,
@@ -967,10 +967,13 @@ impl Keymap {
     /// name or a rule this version doesn't know), a removed action, an
     /// edited file. An action whose stored chords are all skipped keeps its
     /// defaults rather than going unbound by accident; an empty list stored
-    /// is unbound, as saved. Should what is left conflict, the action later in
-    /// [`ACTIONS`] order loses the chord.
+    /// is unbound, as saved. Should what is left conflict, a chord the user
+    /// bound beats a default, so a default added in a new version never takes
+    /// a chord from the user; between two of the same kind, the action later
+    /// in [`ACTIONS`] order loses the chord.
     pub(crate) fn from_overrides(overrides: &BTreeMap<String, Vec<ChordDto>>) -> Self {
         let mut chords = default_chords();
+        let mut overridden = vec![false; ACTIONS.len()];
         for (id, dtos) in overrides {
             let Some(i) = ACTIONS.iter().position(|info| info.id == id) else {
                 continue;
@@ -985,14 +988,19 @@ impl Keymap {
                 continue;
             }
             chords[i] = list;
+            overridden[i] = true;
         }
+        // Whether action `j` keeps a chord from action `i` it shares it with.
+        let wins = |j: usize, i: usize| (overridden[j], i > j) > (overridden[i], j > i);
+        let held = chords.clone();
         for (i, info) in ACTIONS.iter().enumerate() {
-            let (earlier, rest) = chords.split_at_mut(i);
-            rest[0].retain(|chord| {
-                !ACTIONS
-                    .iter()
-                    .zip(earlier.iter())
-                    .any(|(other, held)| other.scope.overlaps(info.scope) && held.contains(chord))
+            chords[i].retain(|chord| {
+                !ACTIONS.iter().enumerate().any(|(j, other)| {
+                    j != i
+                        && other.scope.overlaps(info.scope)
+                        && held[j].contains(chord)
+                        && wins(j, i)
+                })
             });
         }
         Keymap::from_chords(chords)
@@ -1160,6 +1168,28 @@ mod tests {
         for info in ACTIONS {
             assert!(seen.insert(info.action), "{:?} listed twice", info.action);
             assert_eq!(info.action.info().id, info.id);
+        }
+    }
+
+    /// `⌫` is the Mac's delete key and `⌦` its forward twin: a default on
+    /// either has the other with the same modifiers, so a delete works
+    /// whichever key is pressed (`⌘⌦` alone once made Delete Time
+    /// unreachable from a laptop's delete key).
+    #[test]
+    fn every_default_delete_takes_both_delete_keys() {
+        for info in ACTIONS {
+            for &chord in info.defaults {
+                let twin = match chord.key {
+                    Key::Delete => Key::Backspace,
+                    Key::Backspace => Key::Delete,
+                    _ => continue,
+                };
+                assert!(
+                    info.defaults.contains(&Chord { key: twin, ..chord }),
+                    "{} lacks the other delete key",
+                    info.label
+                );
+            }
         }
     }
 
@@ -1675,15 +1705,44 @@ mod tests {
         }
     }
 
-    /// An edited file putting one chord on two overlapping actions: the
-    /// later in table order loses it.
+    /// A chord the user bound that a default also has (a default added
+    /// since, or an edited file): the user's binding keeps it, whichever
+    /// comes first in table order, as a recording would have taken it.
     #[test]
-    fn a_conflicting_file_costs_the_later_action_its_chord() {
+    fn a_users_chord_beats_a_default() {
         // Merge (later) given Split's `⌘E`, Split left alone in the file.
         let overrides = BTreeMap::from([(
             "arranger.merge".to_owned(),
             vec![ChordDto::from(Chord::cmd(Key::E))],
         )]);
+        let keymap = Keymap::from_overrides(&overrides);
+        assert_eq!(keymap.chords(Action::Merge), &[Chord::cmd(Key::E)]);
+        assert!(keymap.chords(Action::Split).is_empty());
+        assert!(conflict_free(&keymap));
+        // `⌘⌫` bound to Merge before Delete Time had it as a default: Merge
+        // keeps it, Delete Time keeps `⌘⌦`.
+        let overrides = BTreeMap::from([(
+            "arranger.merge".to_owned(),
+            vec![ChordDto::from(Chord::cmd(Key::Backspace))],
+        )]);
+        let keymap = Keymap::from_overrides(&overrides);
+        assert_eq!(keymap.chords(Action::Merge), &[Chord::cmd(Key::Backspace)]);
+        assert_eq!(
+            keymap.chords(Action::DeleteTime),
+            &[Chord::cmd(Key::Delete)]
+        );
+        assert!(conflict_free(&keymap));
+    }
+
+    /// An edited file putting one chord on two overlapping actions the user
+    /// bound: the later in table order loses it.
+    #[test]
+    fn a_conflicting_file_costs_the_later_action_its_chord() {
+        let e = vec![ChordDto::from(Chord::cmd(Key::E))];
+        let overrides = BTreeMap::from([
+            ("arranger.split".to_owned(), e.clone()),
+            ("arranger.merge".to_owned(), e),
+        ]);
         let keymap = Keymap::from_overrides(&overrides);
         assert_eq!(keymap.chords(Action::Split), &[Chord::cmd(Key::E)]);
         assert!(keymap.chords(Action::Merge).is_empty());
