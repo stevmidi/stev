@@ -41,43 +41,46 @@ impl NotePairing {
     }
 }
 
-impl Clip {
-    /// Walks the event list once, matching each `NoteOff` to the most recent
-    /// unmatched `NoteOn` of the same note number (a per-pitch stack, so
-    /// overlapping same-pitch notes nest). See [`NotePairing`].
-    pub(super) fn pair_note_events(&self) -> NotePairing {
-        let mut note_on_stacks: HashMap<u8, Vec<usize>> = HashMap::new();
-        let mut on_to_off = HashMap::new();
-        let mut orphan_note_offs = Vec::new();
+/// Walks `events` once, matching each `NoteOff` to the most recent unmatched
+/// `NoteOn` of the same note number (a per-pitch stack, so overlapping
+/// same-pitch notes nest). See [`NotePairing`].
+pub(super) fn pair_notes(events: &[Event]) -> NotePairing {
+    let mut note_on_stacks: HashMap<u8, Vec<usize>> = HashMap::new();
+    let mut on_to_off = HashMap::new();
+    let mut orphan_note_offs = Vec::new();
 
-        for (idx, event) in self.events.iter().enumerate() {
-            let Some(note) = event.note_number() else {
-                continue;
-            };
+    for (idx, event) in events.iter().enumerate() {
+        let Some(note) = event.note_number() else {
+            continue;
+        };
 
-            match event.event_type() {
-                Some(EventType::NoteOn) => {
-                    note_on_stacks.entry(note).or_default().push(idx);
-                }
-                Some(EventType::NoteOff) => {
-                    match note_on_stacks.get_mut(&note).and_then(Vec::pop) {
-                        Some(on_idx) => {
-                            on_to_off.insert(on_idx, idx);
-                        }
-                        None => orphan_note_offs.push(idx),
-                    }
-                }
-                None => {}
+        match event.event_type() {
+            Some(EventType::NoteOn) => {
+                note_on_stacks.entry(note).or_default().push(idx);
             }
+            Some(EventType::NoteOff) => match note_on_stacks.get_mut(&note).and_then(Vec::pop) {
+                Some(on_idx) => {
+                    on_to_off.insert(on_idx, idx);
+                }
+                None => orphan_note_offs.push(idx),
+            },
+            None => {}
         }
+    }
 
-        let open_note_ons = note_on_stacks.into_values().flatten().collect();
+    let open_note_ons = note_on_stacks.into_values().flatten().collect();
 
-        NotePairing {
-            on_to_off,
-            open_note_ons,
-            orphan_note_offs,
-        }
+    NotePairing {
+        on_to_off,
+        open_note_ons,
+        orphan_note_offs,
+    }
+}
+
+impl Clip {
+    /// [`pair_notes`] over this clip's event list.
+    pub(super) fn pair_note_events(&self) -> NotePairing {
+        pair_notes(&self.events)
     }
 
     /// Clones of the `NoteOn`s no `NoteOff` has closed — the notes still held

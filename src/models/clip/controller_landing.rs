@@ -3,7 +3,8 @@
 //! `370-wheel-capture.md` § Decisions 5–7, which `400-parameter-knobs.md`
 //! decision 10 applies per parameter.
 //!
-//! A take's notes are added to the clip. Its controllers *replace*: for each
+//! A take's notes are added to the clip, same-pitch overlaps resolved as the
+//! piano roll resolves them. Its controllers *replace*: for each
 //! controller the take moved, the clip's own data for it goes from the take's
 //! first move to the end of the take's window, the take's moves come in, and
 //! at the window's end the value the clip's old curve had there is written
@@ -22,6 +23,7 @@
 //! ([`clear_controller_span`](Clip::clear_controller_span),
 //! `380-wheel-lane.md` decision 18, `archive/390-knob-panel.md` decision 13).
 
+use std::collections::HashSet;
 use std::ops::Range;
 
 use crate::{
@@ -29,7 +31,7 @@ use crate::{
     models::{controllers::ControllerValues, event::Event, knobs::PluginParam},
 };
 
-use super::Clip;
+use super::{Clip, pairing::pair_notes};
 
 impl Clip {
     /// The controller values in force just before event tick `tick`: per
@@ -142,7 +144,10 @@ impl Clip {
     }
 
     /// Lands `take` — a captured take in this clip's event ticks — by the
-    /// latch rule (see the module docs). Its notes are added. For each
+    /// latch rule (see the module docs). Its notes are added as the piano
+    /// roll adds notes ([`insert_notes`](Self::insert_notes)): an existing
+    /// note of the same pitch a captured one starts inside ends at its start,
+    /// and one starting inside a captured note cuts it there. For each
     /// controller it moves before `wheel_end` (never past the window's end),
     /// the clip's own moves of that controller from the take's first move up
     /// to `wheel_end` make way for the take's, and the old curve's value at
@@ -195,9 +200,21 @@ impl Clip {
             );
         }
 
-        for event in take {
+        // The take's notes go in as pairs, through the piano roll's same-pitch
+        // overlap rule: added as bare edges, the per-pitch pairing would match
+        // an earlier note's off to a captured note overlapping it (#35).
+        let pairing = pair_notes(take);
+        let mut pairs: Vec<(usize, usize)> = pairing.on_to_off.into_iter().collect();
+        pairs.sort_unstable();
+        let paired: HashSet<usize> = pairs.iter().flat_map(|&(on, off)| [on, off]).collect();
+        self.insert_notes(
+            pairs
+                .iter()
+                .map(|&(on, off)| (take[on].clone(), take[off].clone())),
+        );
+        for (idx, event) in take.iter().enumerate() {
             let is_late_move = !event.is_note_edge() && event.tick() >= wheel_end;
-            if !is_late_move {
+            if !paired.contains(&idx) && !is_late_move {
                 self.add_event(event.clone());
             }
         }
@@ -410,6 +427,63 @@ mod tests {
         clip.restore_events(events);
         clip.region_mut().set_region(Some(0), Some(BAR * 4));
         clip
+    }
+
+    /// A note edge `(tick, on, pitch)`: a `NoteOn` at velocity 100, else a
+    /// `NoteOff`.
+    fn edge(tick: i32, on: bool, pitch: u8) -> Event {
+        let status = if on { 0x90 } else { 0x80 };
+        Event::new(tick, 0, vec![status, pitch, if on { 100 } else { 0 }])
+    }
+
+    /// The clip's notes as `(start, end, pitch)`, by start.
+    fn notes(clip: &Clip) -> Vec<(i32, i32, u8)> {
+        let mut notes: Vec<(i32, i32, u8)> = clip
+            .events()
+            .iter()
+            .filter(|event| event.event_type() == Some(EventType::NoteOn))
+            .map(|event| (event.tick(), event.end_tick(), event.note_number().unwrap()))
+            .collect();
+        notes.sort_unstable();
+        notes
+    }
+
+    /// #35: a captured note starting inside an earlier same-pitch note ends
+    /// that note at its start and keeps the length it was played with —
+    /// landed as bare edges, the earlier note's off paired with the captured
+    /// note's on, cutting it to a sliver and stretching the earlier note to
+    /// the captured release.
+    #[test]
+    fn a_take_note_overlapping_an_earlier_note_trims_it_and_keeps_its_length() {
+        let mut clip = clip_with(vec![edge(0, true, 60), edge(960, false, 60)]);
+        clip.land_take(&[edge(900, true, 60), edge(1800, false, 60)], BAR * 4);
+        assert_eq!(notes(&clip), vec![(0, 900, 60), (900, 1800, 60)]);
+    }
+
+    /// The other way round: an existing note starting inside a captured one
+    /// cuts the captured note there, as a pasted note is cut, and a note of
+    /// another pitch is left alone.
+    #[test]
+    fn a_take_note_overlapping_a_later_note_is_trimmed_by_it() {
+        let mut clip = clip_with(vec![
+            edge(900, true, 60),
+            edge(1800, false, 60),
+            edge(0, true, 64),
+            edge(1800, false, 64),
+        ]);
+        clip.land_take(
+            &[
+                edge(0, true, 60),
+                edge(0, true, 67),
+                edge(960, false, 60),
+                edge(960, false, 67),
+            ],
+            BAR * 4,
+        );
+        assert_eq!(
+            notes(&clip),
+            vec![(0, 900, 60), (0, 960, 67), (0, 1800, 64), (900, 1800, 60)]
+        );
     }
 
     /// Clearing a span with nothing in it, or rewriting moves of a parameter

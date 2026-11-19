@@ -52,7 +52,8 @@ capture covers it. Key files: `src/core/midi/input.rs`,
   spread as they were pressed (`100` § Notes held into a take). A knob has no rest to be
   off, so where it stands is never carried in.
 - **A take into a clip replaces that clip's controller data over the span played**
-  (`370-wheel-capture.md`, `Clip::land_take`): its notes are added, but for each controller
+  (`370-wheel-capture.md`, `Clip::land_take`): its notes are added (same-pitch overlaps
+  trimmed as the piano roll trims them, `Clip::insert_notes`), but for each controller
   the take moved — a wheel or a knob's parameter — the clip's own moves of it go from the
   take's first move to the end of the take's window, the take's come in, and the old
   curve's value at the window end is written back (for a parameter, only where the clip
