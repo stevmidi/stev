@@ -609,9 +609,9 @@ impl Display {
     }
 
     /// Extends an in-progress clip edge drag: recomputes the pointer's
-    /// snapped absolute tick (`track_snapped_tick_at` on the clip's track: a
-    /// neighbouring clip's edge in reach, else the grid, as cursor placement
-    /// snaps) and sends it as the new target, tagged with
+    /// snapped absolute tick (`track_snapped_tick_at` on the clip's track: the
+    /// nearer of a neighbouring clip's edge and the grid line, as cursor
+    /// placement snaps) and sends it as the new target, tagged with
     /// the drag's id so the whole drag is one undo step. Not gated on
     /// `is_mouse_inside_clip_content`, same rationale as the other drags.
     pub(super) fn extend_clip_resize_drag(&mut self, x: f32) {
