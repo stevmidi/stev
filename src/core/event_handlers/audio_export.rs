@@ -28,7 +28,6 @@ use crate::core::{
     sequencer::{AudioExportJob, AudioExportOutcome, AudioExportRefusal, AudioExportRun},
     transport::TickOutcome,
 };
-use crate::models::performance_lane::ReplayCue;
 
 use super::*;
 
@@ -117,10 +116,9 @@ impl EventHandlers {
         Ok(())
     }
 
-    /// One tick of playback at `at`: the performance replay cues what it
-    /// plays (`520-performance-capture.md` decision 4), the transport
-    /// advances, and the tracks play. A loop wrap is re-anchored in between,
-    /// before the tick reaches the sequencer: deferred to the transport's events, a burst of ticks
+    /// One tick of playback at `at`: the transport advances, and the tracks
+    /// play. A loop wrap is re-anchored in between, before the tick reaches
+    /// the sequencer: deferred to the transport's events, a burst of ticks
     /// handled in one wakeup plays past the region end into the next clip
     /// (the stuck-note bug, `150-clock-position-sync.md`). The one tick
     /// path, for the clock's ticks and an audio export's steps alike.
@@ -131,20 +129,9 @@ impl EventHandlers {
         transport: &mut Transport,
     ) {
         // The lane's run counts the ticks playback advances
-        // (`520-performance-capture.md` decision 8), from where it is now.
+        // (`520-performance-capture.md` decision 2), from where it is now.
         let playback_tick = sequencer.playback_tick();
         sequencer.performance_lane_mut().advance(playback_tick);
-        // The replay's jump lands before the tick, as a press between two
-        // ticks would, and is re-anchored here for the same reason a wrap is.
-        match sequencer.step_performance_replay(playback_tick) {
-            Some(ReplayCue::Jump(tick)) => {
-                transport.move_playback(tick);
-                self.reanchor_playback(tick, sequencer, transport);
-                sequencer.chase_notes(tick);
-            }
-            Some(ReplayCue::Silence) => self.release_all_notes(sequencer),
-            None => {}
-        }
         if let TickOutcome::Wrapped(anchor) = transport.tick() {
             self.reanchor_playback(anchor, sequencer, transport);
         }

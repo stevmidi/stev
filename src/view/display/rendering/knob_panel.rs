@@ -4,8 +4,7 @@
 //! pointer to the value, and the parameter's name under it, shortened to
 //! fit — with a clip open, a lane switch coloured as the gutter's labels
 //! are. The selected knob, while the panel has the keyboard, gets corner
-//! brackets around its dial. With the performance lane selected the cells
-//! hold its pads instead (`draw_pads`). An unassigned knob has an empty dial and a dim placeholder label; an
+//! brackets around its dial. An unassigned knob has an empty dial and a dim placeholder label; an
 //! armed one reads `Turn…` in `accent`. A track whose knobs can't drive
 //! anything shows the panel's hint instead. See `030-ui-design.md` § Knob
 //! Panel.
@@ -13,9 +12,7 @@
 use std::f32::consts::TAU;
 
 use egui::text::LayoutJob;
-use egui::{
-    Align2, CornerRadius, FontId, Painter, Pos2, Rect, Shape, Stroke, StrokeKind, Vec2, pos2, vec2,
-};
+use egui::{Align2, CornerRadius, FontId, Painter, Pos2, Rect, Shape, Stroke, pos2, vec2};
 
 use super::output_menu::draw_truncated_at;
 use super::*;
@@ -43,11 +40,6 @@ const ARMED_LABEL: &str = "Turn…";
 const PLACEHOLDER_LABELS: [&str; KNOB_COUNT] = [
     "Knob 1", "Knob 2", "Knob 3", "Knob 4", "Knob 5", "Knob 6", "Knob 7", "Knob 8",
 ];
-/// A pad's side as a share of the dial it stands in for: a little inside the
-/// dial's square, so a lit pad doesn't crowd its brackets.
-const PAD_SCALE: f32 = 0.8;
-/// A pad's corner rounding.
-const PAD_RADIUS: f32 = 3.0;
 /// Points kept clear at each end of a label, so names in neighbouring
 /// columns never touch.
 const LABEL_INSET_X: f32 = 2.0;
@@ -71,10 +63,6 @@ impl Display {
             (panel.min.y + offset.y)..=(panel.max.y + offset.y),
             Stroke::new(1.0, grid_seam_color()),
         );
-        if let Some(pads) = self.pad_rects() {
-            self.draw_pads(painter, &pads, offset);
-            return;
-        }
         if let Some(hint) = self.knob_hint() {
             painter.text(
                 panel.translate(offset).center(),
@@ -144,67 +132,21 @@ impl Display {
             // already says the panel has the keyboard and the label may be
             // `accent` for its lane (`400-parameter-knobs.md` decision 14).
             if selected == Some(knob) {
-                draw_brackets(painter, rects.frame);
+                let stroke = Stroke::new(FRAME_W, theme::fg_dim());
+                // On pixel centres, so a one-pixel line lights one row or
+                // column instead of greying two: crisp, and the same tone
+                // across and down.
+                let snap = |p: Pos2| {
+                    pos2(
+                        painter.round_to_pixel_center(p.x),
+                        painter.round_to_pixel_center(p.y),
+                    )
+                };
+                for corner in frame_brackets(rects.frame) {
+                    painter.add(Shape::line(corner.map(snap).to_vec(), stroke));
+                }
             }
         }
-    }
-
-    /// The performance lane's pads in the knobs' cells
-    /// (`520-performance-capture.md` decision 3): each a square the size of a
-    /// dial, filled in `accent` when it holds a performance (lit), an
-    /// outline when it is empty, `fg` under the pointer; the selected pad in
-    /// the selected knob's corner brackets, always, since one pad always is.
-    /// No text: the footer names the pad under the pointer.
-    fn draw_pads(&self, painter: &Painter, pads: &[KnobRects], offset: Vec2) {
-        let hovered = self.pad_under_pointer();
-        for (pad, rects) in pads.iter().enumerate() {
-            let square = Rect::from_center_size(
-                rects.center + offset,
-                vec2(rects.radius, rects.radius) * 2.0 * PAD_SCALE,
-            );
-            let lit = self.performance_pads.lengths[pad].is_some();
-            let edge = if hovered == Some(pad) {
-                theme::fg()
-            } else {
-                theme::fg_dim()
-            };
-            if lit {
-                painter.rect_filled(square, PAD_RADIUS, theme::accent());
-            }
-            painter.rect_stroke(
-                square,
-                PAD_RADIUS,
-                Stroke::new(1.0, if lit { theme::accent() } else { edge }),
-                StrokeKind::Inside,
-            );
-            if lit && hovered == Some(pad) {
-                painter.rect_stroke(
-                    square,
-                    PAD_RADIUS,
-                    Stroke::new(1.0, edge),
-                    StrokeKind::Outside,
-                );
-            }
-            if self.performance_pads.selected == pad {
-                draw_brackets(painter, rects.frame.translate(offset));
-            }
-        }
-    }
-}
-
-/// The selection mark: quiet corner brackets around `frame`, neutral, on
-/// pixel centres, so a one-pixel line lights one row or column instead of
-/// greying two.
-fn draw_brackets(painter: &Painter, frame: Rect) {
-    let stroke = Stroke::new(FRAME_W, theme::fg_dim());
-    let snap = |p: Pos2| {
-        pos2(
-            painter.round_to_pixel_center(p.x),
-            painter.round_to_pixel_center(p.y),
-        )
-    };
-    for corner in frame_brackets(frame) {
-        painter.add(Shape::line(corner.map(snap).to_vec(), stroke));
     }
 }
 

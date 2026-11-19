@@ -96,9 +96,7 @@ impl Display {
     /// other one's. The knob panel's selection is its own: a lane switch
     /// leaves it alone.
     pub(in crate::view::display) fn set_clip_lane(&mut self, lane: ClipLane) {
-        // A performance has no lower lane (`lower_lane_h`): the choice waits
-        // for the next track's clip, unswitched.
-        if lane == self.render.clip_lane || self.shows_performance() {
+        if lane == self.render.clip_lane {
             return;
         }
         self.render.clip_lane = lane;
@@ -163,10 +161,7 @@ impl Display {
     /// else, and for what goes on past it — a clipboard chord, which first
     /// hands the keyboard back to the notes as a note command does, and Esc
     /// during an audio export, which goes on to cancel it.
-    pub(in crate::view::display) fn focus_key_press(
-        &mut self,
-        event: &InputEvent,
-    ) -> Option<(Key, Option<Action>)> {
+    pub(super) fn focus_key_press(&mut self, event: &InputEvent) -> Option<(Key, Option<Action>)> {
         match *event {
             InputEvent::KeyPressed { key, .. }
                 if key == Key::Escape && self.is_exporting_audio() =>

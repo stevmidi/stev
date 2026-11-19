@@ -6,6 +6,7 @@
 use crate::core::input_event::TimeSelectionRect;
 
 use super::super::super::Sequencer;
+use super::super::super::clipboard::ClipClipboard;
 use super::super::EditResult;
 use super::insert_silence::InsertSilenceEdit;
 use super::paste::PasteClipsEdit;
@@ -19,8 +20,8 @@ use super::paste::PasteClipsEdit;
 /// is opened by pushing every clip at or after the anchor to the right by
 /// the copy's width, on every track, so nothing is destroyed. Always global —
 /// a partial shift would desync the tracks, the same alignment concern
-/// `InsertSilenceEdit` guards against. The two differ only in what they
-/// paste and where:
+/// `InsertSilenceEdit` guards against. They differ only in what they paste
+/// and where:
 ///
 /// - **Duplicate Time** ([`from_time_range`](Self::from_time_range)) pastes
 ///   a throwaway every-track copy of `[start, end)` at `end`, and moves the
@@ -30,8 +31,11 @@ use super::paste::PasteClipsEdit;
 ///   exactly (the session clipboard at the cursor, on the tracks `⌘V` would
 ///   use), inserting `ClipClipboard::span` ticks first — the copied range's
 ///   length, so a copy ending in silence keeps it. The marquee stays.
+/// - **A performance capture** ([`capturing`](Self::capturing), `/` on the
+///   lane) is Paste Time with the lane run's render in place of the session
+///   clipboard (`520-performance-capture.md` decision 1).
 ///
-/// Either way it is the composition of the two edits that already do each
+/// Each is the composition of the two edits that already do each
 /// half — same worked-example reuse shape as `InsertSilenceEdit`/
 /// `DeleteInRangeEdit` (composing `SplitClipsEdit`):
 ///
@@ -125,7 +129,26 @@ impl DuplicateTimeEdit {
         ))
     }
 
-    /// The shared tail of both constructors: the gap of `width` at `anchor`.
+    /// `/` on the performance lane (`520-performance-capture.md` decision
+    /// 1): Paste Time's edit with the run's render
+    /// (`Sequencer::render_performance`) in place of the session clipboard,
+    /// at the cursor, on the tracks it was rendered from, inserting the run's
+    /// length. The session clipboard is untouched and the marquee stays.
+    /// `None` when the render places nothing.
+    pub(crate) fn capturing(sequencer: &Sequencer, render: &ClipClipboard) -> Option<Self> {
+        let anchor = sequencer.cursor_tick();
+        let paste = PasteClipsEdit::from_clipboard_at(sequencer, render, anchor, None)?;
+        Some(Self::inserting(
+            sequencer,
+            anchor,
+            render.span(),
+            anchor,
+            None,
+            paste,
+        ))
+    }
+
+    /// The shared tail of the constructors: the gap of `width` at `anchor`.
     fn inserting(
         sequencer: &Sequencer,
         anchor: i32,

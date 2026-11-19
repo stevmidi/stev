@@ -129,11 +129,6 @@ pub(crate) enum TransportCommand {
         /// Absolute (arrangement) tick to start from.
         tick: i32,
     },
-    /// `⌥Space` on the performance lane: replays the selected pad's
-    /// performance from the clip view's cursor in it, starting the transport
-    /// if it is stopped and taking over if it plays
-    /// (`520-performance-capture.md` decision 4). Nothing on an empty pad.
-    PlayPerformance,
     /// Stop playback.
     Stop,
     /// Start if stopped, stop if playing.
@@ -161,9 +156,9 @@ pub(crate) struct Transport {
     loop_enabled: Arc<AtomicBool>,
     /// Whether the arranger performance lane is selected (armed), shared
     /// with the sequencer, which sets it: while it is, playback never wraps
-    /// at the loop end, so a performance plays straight on as its capture,
-    /// replay and render all assume (`520-performance-capture.md` decision
-    /// 7). The loop itself is untouched.
+    /// at the loop end, so a run plays straight on as its render assumes
+    /// (`520-performance-capture.md` decision 5). The loop itself is
+    /// untouched.
     performance_lane_armed: Arc<AtomicBool>,
 
     // --- Communication ---
@@ -265,18 +260,10 @@ impl Transport {
     /// reading `cursor_tick`. Used by the arranger performance lane to jump
     /// to a bar position on a NoteOn trigger.
     pub(crate) fn jump_and_chase(&mut self, tick: i32) {
-        self.move_playback(tick);
+        self.playback_tick.store(tick, Ordering::Relaxed);
         self.transport_event_tx
             .send(TransportEvent::PlaybackTickResetWithChase(tick))
             .ok();
-    }
-
-    /// Moves playback to `tick` and sends no [`TransportEvent`]: the tick
-    /// pump re-anchors this jump itself, before the tick plays, as it does a
-    /// loop wrap. The performance replay's jumps, which land between two
-    /// ticks of one wakeup (`EventHandlers::play_tick`).
-    pub(crate) fn move_playback(&mut self, tick: i32) {
-        self.playback_tick.store(tick, Ordering::Relaxed);
     }
 
     /// Hands the `"clock"` thread what it needs to realign its free-running

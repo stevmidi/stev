@@ -64,7 +64,6 @@ impl EventHandlers {
             })
             .ok();
         self.emit_tracks(sequencer, None);
-        self.send_performance_pads_ui_event(sequencer);
 
         self.set_view_state(ViewState::Arranger);
 

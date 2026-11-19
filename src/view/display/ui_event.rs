@@ -20,7 +20,6 @@ use crate::{
     metadata::clip_view::ClipView,
     models::clip::EventSpaceRetime,
     models::knobs::{KnobParams, ParamId, UNASSIGNED_KNOBS},
-    models::performance_lane::PAD_COUNT,
     models::track::{InstrumentRef, TrackShift},
 };
 
@@ -289,14 +288,6 @@ pub(crate) enum UiEvent {
     /// The arranger performance lane was armed (selected) — mutually
     /// exclusive with `TrackSelected`, which implicitly deselects it.
     PerformanceLaneSelected,
-    /// What the performance lane's pads hold (`520-performance-capture.md`
-    /// decision 6): sent when a pad changes, and with every project loaded.
-    /// Not which is selected: the view selects on the click, and both sides
-    /// go back to pad 1 on a load.
-    PerformancePads {
-        /// Each pad's performance length in ticks, `None` for an empty pad.
-        lengths: [Option<i32>; PAD_COUNT],
-    },
     /// Set the piano roll's duplicate span (`gesture.duplicate_span`) — sent
     /// after a `⌘/Ctrl+D` over one, its undo and redo
     /// (`EditResult::EventsModified::duplicate_span`), so presses chain and

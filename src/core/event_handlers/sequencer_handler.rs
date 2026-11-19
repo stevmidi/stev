@@ -14,8 +14,8 @@ use crate::core::sequencer::{
     DragNotesEdit, DuplicateClipsEdit, DuplicateTimeEdit, InsertNotesEdit, InsertSilenceEdit,
     MoveClipEdit, MoveRangeEdit, MuteInRangeEdit, MuteSelectedEventsEdit, NudgeSelectedEventsEdit,
     NudgeSelectedEventsLengthEdit, PasteClipsEdit, QuantizeEventsEdit, RenameTrackEdit,
-    SetMeterEdit, SetPerformancePadEdit, SetTempoEdit, SetTrackOutputEdit, SplitClipsEdit,
-    TempoGesture, TransposeSelectedEventsEdit, UndoStep, top_step,
+    SetMeterEdit, SetTempoEdit, SetTrackOutputEdit, SplitClipsEdit, TempoGesture,
+    TransposeSelectedEventsEdit, UndoStep, top_step,
 };
 use crate::core::time::TapTempo;
 use crate::models::clip::ClipEdge;
@@ -97,8 +97,8 @@ impl EventHandlers {
             return;
         }
         match cmd {
-            // On the armed lane `/` keeps the lane's run on the selected pad
-            // instead (`520-performance-capture.md` decision 8).
+            // On the armed lane `/` renders the lane's run at the cursor
+            // instead (`520-performance-capture.md` decision 1).
             SequencerCommand::Commit { .. } if sequencer.is_performance_lane_armed() => {
                 self.capture_performance_workflow(sequencer, undo_record);
             }
@@ -630,24 +630,6 @@ impl EventHandlers {
                 self.request_repaint();
             }
 
-            // The view selected it already, on the click.
-            SequencerCommand::SelectPerformancePad(pad) => {
-                self.select_performance_pad_workflow(sequencer, *pad);
-            }
-
-            SequencerCommand::ClearPerformancePad => {
-                let edit = SetPerformancePadEdit::new(sequencer, sequencer.selected_pad(), None);
-                self.record_edit(sequencer, undo_record, edit);
-            }
-
-            SequencerCommand::CopyPerformancePad => {
-                self.copy_performance_pad_workflow(sequencer);
-            }
-
-            SequencerCommand::PastePerformancePad => {
-                self.paste_performance_pad_workflow(sequencer, undo_record);
-            }
-
             // Answered above, ahead of the holds.
             SequencerCommand::SetMarquee(_)
             | SequencerCommand::SetModalOpen(_)
@@ -753,7 +735,7 @@ mod tests {
     use crate::core::agent::{AgentReply, AgentRequest};
     use crate::core::event_handlers::SavedProject;
     use crate::core::event_handlers::test_harness::{
-        Harness, add_clip, harness, lead_changes, run_command, statuses,
+        Harness, add_clip, harness, run_command, statuses,
     };
     use crate::core::midi::message::Controller;
     use crate::core::paths::project_dir;
@@ -2134,7 +2116,11 @@ mod tests {
 
         assert_eq!(h.sequencer.selected_track_index(), Some(0));
         assert_eq!(h.sequencer.selected_clip_id(), Some(lead_id));
-        assert_eq!(lead_changes(&h.ui_events).last(), Some(&Some(lead_id)));
+        let lead = h.ui_events.try_iter().filter_map(|event| match event {
+            UiEvent::LeadClipChanged { clip_view } => Some(clip_view.map(|view| view.clip_id)),
+            _ => None,
+        });
+        assert_eq!(lead.last(), Some(Some(lead_id)));
     }
 
     /// Range mute (`M`), a marquee split (`⌘E`) and Insert Silence (`⌘I`)

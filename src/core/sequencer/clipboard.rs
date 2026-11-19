@@ -14,11 +14,11 @@
 //! clip copy: each view's `⌘/Ctrl+V` pastes its own kind (`InsertNotesEdit`
 //! in `edit/event_edits.rs` for notes).
 //!
-//! A pad's copy (`520-performance-capture.md` decision 5) fills two forms
-//! at once: its performance, for another pad, and its **render** in the clip
-//! clipboard, for the arrangement: what the performance plays, as an
-//! all-track time copy, so the arranger's `⌘V`/`⇧⌘V` place it as they place
-//! any copy. Any clip or note copy after it drops the performance.
+//! `/` on the performance lane renders its run here too
+//! ([`render_performance`](Sequencer::render_performance)), into a throwaway
+//! clipboard that `DuplicateTimeEdit::capturing` inserts at the cursor, so
+//! the real clipboard is never touched (`520-performance-capture.md`
+//! decision 1).
 
 use crate::core::input_event::TimeSelectionRect;
 use crate::models::clip::{Clip, CopiedNote};
@@ -109,7 +109,7 @@ impl Sequencer {
     /// (leaving any existing clipboard content intact) when nothing overlaps.
     pub(crate) fn copy_clips_to_clipboard(&mut self, start: i32, end: i32) {
         if let Some(clipboard) = self.clipboard_snapshot(start, end) {
-            self.set_clip_clipboard(clipboard);
+            self.clip_clipboard = Some(clipboard);
         }
     }
 
@@ -124,14 +124,6 @@ impl Sequencer {
         end: i32,
     ) -> Option<ClipClipboard> {
         self.copy_range_to_clipboard((0, self.tracks.len().saturating_sub(1)), start, end)
-    }
-
-    /// A clip copy: `clipboard` replaces what the clip clipboard held, and
-    /// any pad's copy goes with it, so a `⌘V` onto a pad has nothing to
-    /// paste (`520-performance-capture.md` decision 5).
-    fn set_clip_clipboard(&mut self, clipboard: ClipClipboard) {
-        self.clip_clipboard = Some(clipboard);
-        self.performance_clipboard = None;
     }
 
     /// The current clipboard contents, if anything has been copied this
@@ -215,45 +207,22 @@ impl Sequencer {
             self.copy_range_to_clipboard((rect.track_start, rect.track_end), rect.start, rect.end)
         {
             clipboard.track_anchor = Some(rect.track_start);
-            self.set_clip_clipboard(clipboard);
+            self.clip_clipboard = Some(clipboard);
         }
     }
 
-    // --- A pad's copy ---
+    // --- The performance lane's render ---
 
-    /// `⌘/Ctrl+C` on the selected pad (`520-performance-capture.md`
-    /// decision 5): its performance, a clip of its own, and its render
-    /// ([`render_performance`](Self::render_performance)) in the clip
-    /// clipboard, replacing what both held (the render's `None` when the
-    /// performance plays nothing on the timeline, so no older clips stay
-    /// behind to paste). Returns the performance's length; `None`, and
-    /// nothing copied, on an empty pad.
-    pub(crate) fn copy_performance_pad_to_clipboard(&mut self) -> Option<i32> {
-        let clip = self
-            .performance_pads
-            .get(self.selected_pad)?
-            .detached_copy();
-        self.clip_clipboard = self.render_performance(&clip);
-        let length = clip.region_length();
-        self.performance_clipboard = Some(clip);
-        Some(length)
-    }
-
-    /// The performance a pad's copy holds, for a paste onto a pad. `None`
-    /// when clips were copied since; a note copy leaves it, the notes having
-    /// a clipboard of their own.
-    pub(crate) fn performance_clipboard(&self) -> Option<&Clip> {
-        self.performance_clipboard.as_ref()
-    }
-
-    /// What performance `clip` plays, rendered as an all-track time copy:
-    /// each stretch of the arrangement it plays (`render_segments`, the
-    /// replay's own rule) copied from every track, its pieces' windows
-    /// trimmed to that stretch, laid end to end from 0 in the performance's
-    /// time, with no track anchor, so each piece pastes on the track it came
-    /// from. Its span is the performance's length, so `⇧⌘V` inserts all of
-    /// it, a gap at its end included. `None` when nothing plays.
-    fn render_performance(&self, clip: &Clip) -> Option<ClipClipboard> {
+    /// What the lane's run `clip` (`PerformanceLane::take_run`) played,
+    /// rendered from the arrangement as it is now, as an all-track time copy
+    /// (`520-performance-capture.md` decision 1): each stretch it played
+    /// (`render_segments`) copied from every track, its pieces' windows
+    /// trimmed to the stretch, laid end to end from 0 in the run's time, with
+    /// no track anchor, so each piece lands on the track it came from. Its
+    /// span is the run's length, so an insert of it takes the whole run, a
+    /// last stretch over silence included. `None` when the run played no
+    /// clips. A throwaway clipboard: the session's is left alone.
+    pub(crate) fn render_performance(&self, clip: &Clip) -> Option<ClipClipboard> {
         let mut clips = Vec::new();
         for segment in render_segments(clip, self.performance_key_target()) {
             let Some(copy) = self.clipboard_snapshot(segment.from, segment.from + segment.len)
@@ -289,18 +258,11 @@ impl Sequencer {
             return false;
         }
         self.note_clipboard = notes;
-        self.note_clipboard_from_performance = self.is_performance_lane_armed();
         true
     }
 
-    /// The copied notes the open clip can take, empty if none have been
-    /// copied this session. A performance takes only notes copied from a
-    /// performance: a track's notes there would be jumps nobody played
-    /// (`520-performance-capture.md` decision 5).
+    /// The copied notes, empty if none have been copied this session.
     pub(crate) fn note_clipboard(&self) -> &[CopiedNote] {
-        if self.is_performance_lane_armed() && !self.note_clipboard_from_performance {
-            return &[];
-        }
         &self.note_clipboard
     }
 }

@@ -15,11 +15,6 @@ impl Display {
             match event {
                 UiEvent::TrackSelected { track_idx } => {
                     self.selected_track_idx = Some(track_idx);
-                    // The pads go with the lane, and their keyboard with
-                    // them, so coming back to the lane doesn't find it there.
-                    if self.key_focus == KeyFocus::Pads {
-                        self.key_focus = KeyFocus::Pane;
-                    }
                     self.in_pane(Pane::Arranger, Self::reveal_selected_track);
                     #[cfg(target_os = "macos")]
                     self.sync_live_instrument_target();
@@ -32,9 +27,6 @@ impl Display {
                 // (`sync_time_selection_to_cursor`).
                 UiEvent::PerformanceLaneSelected => {
                     self.selected_track_idx = None;
-                }
-                UiEvent::PerformancePads { lengths } => {
-                    self.performance_pads.lengths = lengths;
                 }
                 UiEvent::TimeSelectionSet { rect } => {
                     self.gesture.time_selection = Some(rect);
@@ -183,9 +175,6 @@ impl Display {
                     self.sync_instruments_to_tracks(&instruments);
                     #[cfg(not(target_os = "macos"))]
                     let _ = instruments;
-                    // Pad 1, as the sequencer's `new_project` (the pads
-                    // themselves follow in `PerformancePads`).
-                    self.performance_pads.selected = 0;
                     // A new or loaded project is a fresh start: it lands in
                     // the arranger with no modal overlay up, and with the
                     // keyboard — opened from the browser, the next key is

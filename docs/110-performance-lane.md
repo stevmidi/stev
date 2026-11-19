@@ -2,12 +2,12 @@
 
 A reserved row in the arranger, above track 1, that arms the physical MIDI keyboard
 for jump triggering (a bar, half a bar or a beat a key) instead of normal note
-capture. Played live; `/` keeps what was played as a performance on one of the
-lane's eight pads (`520-performance-capture.md`), off the timeline. Saved: the
-key length and the pads. Key files:
+capture. Played live; `/` renders what was played into ordinary clips at the
+arranger cursor (`520-performance-capture.md`). Saved: the key length, nothing
+else. Key files:
 `src/models/performance_lane.rs`, `src/core/sequencer/performance_lane.rs`,
 `src/core/event_handlers/performance_lane_handler.rs`,
-`src/view/display/rendering/arranger.rs`, `src/view/display/performance_pads.rs`.
+`src/view/display/rendering/arranger.rs`.
 
 ## Scope
 
@@ -16,20 +16,21 @@ key length and the pads. Key files:
   leaves playback running (deliberately — a release doesn't stop the
   transport, so a performer flowing between bars gets no awkward pause; they
   stop playback themselves when done). **The scope changed deliberately on
-  2026-11-18** (`520-performance-capture.md` § A deliberate change): an
-  earlier iteration recorded its triggers as lane data shown on the timeline,
-  and that was removed on purpose; what came back is different, a captured
-  performance as material, kept off the timeline on one of eight pads and
-  turned into ordinary clips only when placed. No trigger is drawn on the
-  lane or saved as it happens: the lane keeps its **run** (the presses since
-  playback started, in memory), `/` frames it into a performance clip on the
-  selected pad, an undoable edit, and the pads are saved (`ProjectData`'s
-  `performance_pads`, beside `performance_lane_key_length`, `060`). Don't add
-  trigger data or per-trigger drawing to the lane itself.
-- `PerformanceLane` (`models/performance_lane.rs`) holds the **run** and the
-  **replay** `⌥Space` plays a pad with (`520` decision 4 and § Phases 3: a
-  clock of its own driving the same jumps from `play_tick`). The run
-  (`520` decision 8): the presses since the one that started the transport
+  2026-11-18, revised 2026-11-19** (`520-performance-capture.md` § A
+  deliberate change): an earlier iteration recorded its triggers as lane data
+  shown on the timeline, and that was removed on purpose; what came back is
+  different, a capture that leaves ordinary clips on the tracks and nothing on
+  the lane. No trigger is drawn on the lane or saved: the lane keeps its
+  **run** (the presses since playback started, in memory), and `/` renders it
+  from the arrangement and inserts the result at the arranger cursor, one
+  undoable edit. `ProjectData` (`060`) carries one performance-lane field,
+  the key length (`performance_lane_key_length`). Don't add trigger data,
+  stored performances or per-trigger drawing to the lane (a first design kept
+  performances on eight pads, with a piano roll and a replay; it was removed
+  because a stored path drifts with the arrangement, `520` § Why the pads
+  went).
+- `PerformanceLane` (`models/performance_lane.rs`) holds the **run**
+  (`520` decision 2): the presses since the one that started the transport
   (or since the last `/`), each stamped with the run's own clock, the ticks
   playback has advanced since its first press (`PerformanceLane::advance`,
   called from `play_tick` before the transport moves). Monophonic, the latest
@@ -37,9 +38,9 @@ key length and the pads. Key files:
   presses left it (a ruler click, `Space` from the cursor) ends the run, as
   does disarming (`set_performance_lane_armed(false)`) or a new project. `/`
   takes it (`take_run` → `performance_clip`: a note per press, its pitch the
-  key, lasting until the next press, the last until the capture). The
-  **pads** are `PerformancePads` on the sequencer (`Sequencer::performance_pads`,
-  the selected one `selected_pad`, view state); see `520`. `key_index_from_note`
+  key, lasting until the next press, the last until the capture), and
+  `render_segments` turns that into the stretches of the arrangement it
+  played (`520` decision 1). `key_index_from_note`
   maps a MIDI note to a 0-based key via `config::PERFORMANCE_LANE_BASE_NOTE`
   (currently C3/60); notes below it are ignored. `key_tick(meter, length,
   key)` is where a key jumps, one **key length** (`KeyLength`) per key: a
@@ -78,9 +79,8 @@ key length and the pads. Key files:
   doesn't hold (a load has no selected track for a moment), so its flag is
   stored, not derived.
 - **While the lane is selected, a command aimed at the selected track does
-  nothing**: no lead clip (the clip view shows the selected pad's
-  performance instead, `520-performance-capture.md` decision 2), no
-  clip capture (`/` keeps the lane's run instead, § MIDI routing), no knob, no `v`, no rename, no plugin from the browser with Enter;
+  nothing**: no lead clip (the clip view shows "No clip at the cursor"), no
+  clip capture (`/` renders the lane's run instead, § MIDI routing), no knob, no `v`, no rename, no plugin from the browser with Enter;
   no marquee, so `⇧`-arrows, a `⇧`-click and `⌘A` start none, and `⌥←`/`⌥→`
   have no track's clip edges to jump to; a marquee-scoped `⌘V` pastes nothing
   (`ClipClipboard::target_track`), while an all-track one pastes as ever.
@@ -94,19 +94,17 @@ key length and the pads. Key files:
   restored: a step recorded while armed has no track in its snapshot and
   leaves the selection as it is (`restore_view_workflow`,
   `050-undo-redo.md` § Invariants).
-- **No loop wrap while the lane is selected** (`520` decision 7): `Transport`
+- **No loop wrap while the lane is selected** (`520` decision 5): `Transport`
   holds the same `performance_lane_armed` atomic and `Transport::tick` never
   wraps at the loop end while it is set, so `Space`, a ruler click and every
-  press play straight past it, and a performance's capture, replay and render
-  agree with what was heard. Select a track and it wraps again at the next
+  press play straight past it, and a run's render agrees with what was
+  heard. Select a track and it wraps again at the next
   loop end, if playback is inside the region. The loop itself (`loop_enabled`,
   the region) is untouched, nothing is saved or undoable, and the arranger
   draws the region dimmed as with looping off (`Display::is_loop_enabled`
   reads both). Until 2026-11-18 a press suspended the wrap and its release
   resumed it, so a key let go before the loop end let playback wrap.
-- `performance_lane_armed: Arc<AtomicBool>` (`SharedAtomics`) is also read
-  by `EventHandlers`' key routing, so `⌥Space` plays the selected pad from
-  either pane (`520` decision 4), and by
+- `performance_lane_armed: Arc<AtomicBool>` (`SharedAtomics`) is read by
   `MidiInputForwarder` on its own thread to suppress **every audible route**
   while armed — both the MIDI-OUT thru-forward and the hosted CLAP instrument
   tap (`instrument_midi_tx`). The physical keyboard drives the transport
@@ -130,7 +128,11 @@ key length and the pads. Key files:
   themselves (Play/spacebar) when the performance is over; and no loop wrap
   waits on it (§ Arming).
 - **`/`** (`SequencerCommand::Commit`, while armed): `capture_performance_workflow`
-  instead of a clip capture, the run onto the selected pad (`520`).
+  instead of a clip capture: the run rendered (`Sequencer::render_performance`)
+  and inserted at the arranger cursor (`DuplicateTimeEdit::capturing`, Paste
+  Time's edit), one undo step, nothing selected, the clipboard untouched; the
+  footer names it (`Captured 6 bars at bar 13`) or says there was nothing to
+  keep (`520` decision 1).
 
 ## Rendering
 

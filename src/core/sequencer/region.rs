@@ -32,12 +32,7 @@ impl Sequencer {
     /// `⌥Space` in the clip view: where playback from the lead clip's cursor
     /// starts in the arrangement — the clip's start when the cursor sits on
     /// material outside the window (`Clip::play_from_arrangement_tick`).
-    /// `None` with the lane selected: a performance has no place in the
-    /// arrangement to play from (its own replay is `520` phase 3).
     pub(crate) fn selected_clip_play_from_tick(&self) -> Option<i32> {
-        if self.is_performance_lane_armed() {
-            return None;
-        }
         self.selected_clip()
             .map(|clip| clip.play_from_arrangement_tick(clip.cursor_tick()))
     }
@@ -261,13 +256,7 @@ impl Sequencer {
 
     /// Maps the arranger cursor into the selected clip's event-tick space and
     /// parks the clip cursor there — done on entering the clip view.
-    /// A performance's cursor is its own: a performance has no place in the
-    /// arrangement to map the arranger cursor into
-    /// (`520-performance-capture.md` decision 3).
     pub(crate) fn sync_selected_clip_cursor_with_arranger(&mut self) {
-        if self.is_performance_lane_armed() {
-            return;
-        }
         let absolute_tick = self.cursor_tick();
         if let Some(clip) = self.selected_clip_mut() {
             clip.sync_clip_cursor_with_absolute_tick(absolute_tick);

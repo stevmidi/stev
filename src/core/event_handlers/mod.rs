@@ -89,11 +89,6 @@ pub(crate) struct EventHandlers {
     /// Whether the open clip has selected events — see
     /// `SharedAtomics::has_event_selection`.
     has_event_selection: Arc<AtomicBool>,
-    /// Whether the performance lane is selected — see
-    /// `SharedAtomics::performance_lane_armed`. Read by the UI thread's key
-    /// routing: `⌥Space` plays the selected pad's performance then, from
-    /// either pane (`520-performance-capture.md` decision 4).
-    performance_lane_armed: Arc<AtomicBool>,
     /// Live mirror of the persisted MIDI-output offset, published for the
     /// `"midiout"` thread when the MIDI settings modal is confirmed. See
     /// `160-midi-out-offset.md`.
@@ -126,7 +121,6 @@ impl EventHandlers {
         audio_export_job_tx: Sender<AudioExportJob>,
         view_state: Arc<AtomicU8>,
         has_event_selection: Arc<AtomicBool>,
-        performance_lane_armed: Arc<AtomicBool>,
         midi_out_offset_ms: Arc<AtomicI32>,
         audio_export: Arc<AudioExportAtomics>,
         repaint_ctx: Arc<OnceLock<egui::Context>>,
@@ -139,7 +133,6 @@ impl EventHandlers {
             audio_export_job_tx,
             view_state,
             has_event_selection,
-            performance_lane_armed,
             midi_out_offset_ms,
             audio_export,
             repaint_ctx,
@@ -180,11 +173,5 @@ impl EventHandlers {
     /// `publish_event_selection` keeps).
     fn has_event_selection(&self) -> bool {
         self.has_event_selection.load(Ordering::Relaxed)
-    }
-
-    /// Whether the performance lane is selected (the mirror the sequencer
-    /// keeps).
-    fn is_performance_lane_armed(&self) -> bool {
-        self.performance_lane_armed.load(Ordering::Relaxed)
     }
 }

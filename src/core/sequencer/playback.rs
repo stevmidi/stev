@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 
 use rtrb::Producer;
 
-use crate::core::config::{MAX_TRACKS, PITCH_PREVIEW_MS};
+use crate::core::config::PITCH_PREVIEW_MS;
 use crate::core::midi::message::midi3;
 use crate::core::midi::message::rewrite_channel;
 use crate::core::midi::out_queue::MidiOutMessage;
@@ -116,13 +116,8 @@ impl Sequencer {
         self.mark_audio_export(at);
         let exporting = self.is_exporting_audio();
         self.ticks_into_take = self.ticks_into_take.saturating_add(1);
-        // Read audibility once, before the `&mut` loop below. A gap in the
-        // performance replay is silence: every track plays as muted.
-        let audible = if self.is_performance_replay_silent() {
-            [false; MAX_TRACKS]
-        } else {
-            self.track_audibility()
-        };
+        // Read audibility once, before the `&mut` loop below.
+        let audible = self.track_audibility();
         for (track_idx, track) in self.tracks.iter_mut().enumerate() {
             // A MIDI Out track sits an export out whole: it sends nothing
             // and its playback doesn't advance, so nothing is recorded as
@@ -437,7 +432,6 @@ mod tests {
     use crate::models::clip::Clip;
     use crate::models::event::Event;
     use crate::models::knobs::UNASSIGNED_KNOBS;
-    use crate::models::performance_lane::ReplayCue;
     use crate::models::track::TrackOutput;
 
     use super::Sequencer;
@@ -714,29 +708,6 @@ mod tests {
         muted_note.tick(Instant::now());
         let slot = muted_note.tracks()[0].slot();
         assert_eq!(muted_note.track_mix.last_note_on(slot), None);
-    }
-
-    #[test]
-    fn a_gap_in_the_performance_replay_sends_no_note() {
-        let (mut sequencer, _midi_out_rx) = sequencer_and_midi_out_rx(config::TEMPO_US_DEFAULT);
-        midi_out_track_with_one_note(&mut sequencer);
-        // A performance whose only note starts a beat in: a gap from 0.
-        let mut performance = clip_at(0, 1920);
-        performance.add_event(Event::new(960, 960, vec![0x90, 60, 100]));
-        performance.add_event(Event::new(1920, 0, vec![0x80, 60, 0]));
-        performance.calculate_note_lengths();
-        sequencer.set_performance_pad(0, Some(performance));
-        sequencer.set_performance_lane_armed(true);
-        assert!(sequencer.start_performance_replay());
-        assert_eq!(
-            sequencer.step_performance_replay(0),
-            Some(ReplayCue::Silence)
-        );
-
-        sequencer.reset_to_tick(0);
-        sequencer.tick(Instant::now());
-        let slot = sequencer.tracks()[0].slot();
-        assert_eq!(sequencer.track_mix.last_note_on(slot), None);
     }
 
     #[test]

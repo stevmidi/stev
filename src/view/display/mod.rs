@@ -87,7 +87,6 @@ mod knob_params;
 mod modal_focus;
 mod output_menu;
 mod pane;
-mod performance_pads;
 mod pointer_state;
 mod project_dialog;
 mod project_state;
@@ -115,7 +114,6 @@ use self::output_menu::OutputMenuHit;
 use self::pane::{
     KeyFocus, Pane, PaneRects, PanelSize, clip_event_tick_at, clip_pane_frame_value, pane_rects,
 };
-use self::performance_pads::PadsShown;
 use self::project_dialog::ProjectDialog;
 use self::project_state::ProjectViewState;
 use self::render_state::RenderState;
@@ -134,7 +132,7 @@ pub(crate) use ui_event::{TrackLane, TrackRoute, UiEvent};
 
 use std::sync::{
     Arc,
-    atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU8, AtomicU16, Ordering},
+    atomic::{AtomicBool, AtomicI32, AtomicU8, AtomicU16, Ordering},
 };
 
 use crossbeam_channel::{Receiver, Sender};
@@ -151,7 +149,7 @@ use crate::core::plugin_host::PluginAudioHandle;
 use crate::core::plugin_host::catalog::PluginCatalogEntry;
 use crate::core::time::{Meter, pixels_to_ticks, px_per_beat_to_ppt, snap_to_grid};
 use crate::models::clip::{min_window_length, window_with_edge_at};
-use crate::models::performance_lane::{KeyLength, ReplayPosition};
+use crate::models::performance_lane::KeyLength;
 #[cfg(target_os = "macos")]
 use crate::view::appkit::MainGlContext;
 use crate::{
@@ -216,10 +214,6 @@ pub(crate) struct Display {
     /// [`KeyLength::to_bits`]. Read through
     /// [`performance_lane_key_length`](Self::performance_lane_key_length).
     performance_lane_key_length: Arc<AtomicU8>,
-    /// Where the performance replay is, packed by
-    /// [`ReplayPosition::to_bits`]: the clip pane's playhead in a
-    /// performance (`lead_clip_playback_tick`).
-    performance_replay: Arc<AtomicI64>,
     /// Shared "transport running" flag.
     running: Arc<AtomicBool>,
     /// Shared transport playback position, ticks. The clip pane maps it into
@@ -301,10 +295,6 @@ pub(crate) struct Display {
     /// The knob panel beside the clip view: its drag, wheel turn and CC
     /// field (which has the keyboard while open). See `knob_panel.rs`.
     knob_panel: KnobPanel,
-    /// What the performance lane's pads hold and which is selected, drawn in
-    /// the knob panel's column while the lane is selected. See
-    /// `performance_pads.rs`.
-    performance_pads: PadsShown,
     /// The open Save As field or unsaved-changes prompt, if any — it has the
     /// keyboard while open. See `project_dialog.rs`.
     project_dialog: Option<ProjectDialog>,
@@ -471,7 +461,6 @@ impl Display {
         tempo: Arc<AtomicI32>,
         meter: Arc<AtomicU16>,
         performance_lane_key_length: Arc<AtomicU8>,
-        performance_replay: Arc<AtomicI64>,
         running: Arc<AtomicBool>,
         playback_tick: Arc<AtomicI32>,
         cursor_tick: Arc<AtomicI32>,
@@ -488,7 +477,6 @@ impl Display {
             tempo,
             meter,
             performance_lane_key_length,
-            performance_replay,
             running,
             playback_tick,
             cursor_tick,
@@ -515,7 +503,6 @@ impl Display {
             tempo_chip: TempoChip::default(),
             meter_chip: MeterChip::default(),
             knob_panel: KnobPanel::default(),
-            performance_pads: PadsShown::default(),
             project_dialog: None,
             project_dialog_shown: false,
             raise_main_window: false,
@@ -614,7 +601,7 @@ impl Display {
 
     /// Whether playback loops at the region end: looping is on and the
     /// performance lane isn't selected, where playback never wraps
-    /// (`520-performance-capture.md` decision 7).
+    /// (`520-performance-capture.md` decision 5).
     fn is_loop_enabled(&self) -> bool {
         self.loop_enabled.load(Ordering::Relaxed) && !self.performance_lane_selected()
     }
@@ -704,7 +691,6 @@ impl Display {
                 KeyFocus::Pane
             }
             KeyFocus::KnobPanel(_) if self.knob_rects().is_none() => KeyFocus::Pane,
-            KeyFocus::Pads if self.pad_rects().is_none() => KeyFocus::Pane,
             focus => focus,
         }
     }
@@ -860,22 +846,12 @@ impl Display {
     ///
     /// A take session's take is off the arrangement: its span is where it is
     /// heard in place, from the insert point for as long as its window.
-    ///
-    /// A performance is off the arrangement too: its playhead is the
-    /// replay's own clock (`520-performance-capture.md` decision 4), shown
-    /// while the replay plays the pad the panel shows.
     fn lead_clip_playback_tick(&self) -> Option<i32> {
         let lead = self.lead_clip_time.as_ref()?;
         let window = (
             lead.region_start.load(Ordering::Relaxed),
             lead.region_end.load(Ordering::Relaxed),
         );
-        if self.shows_performance() {
-            let replay =
-                ReplayPosition::from_bits(self.performance_replay.load(Ordering::Relaxed))?;
-            return (replay.pad == self.performance_pads.selected)
-                .then_some(window.0 + replay.tick);
-        }
         let span = match &self.take_session {
             Some(session) => (session.start_tick, session.start_tick + window.1 - window.0),
             None => self

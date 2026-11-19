@@ -36,9 +36,6 @@ pub(crate) enum Action {
     TogglePlayback,
     /// Cubase's "Start": in the clip view, restart from the clip cursor; in
     /// the arranger, the same as [`TogglePlayback`](Self::TogglePlayback).
-    /// With the performance lane selected, from either pane, replay the
-    /// selected pad (`TransportCommand::PlayPerformance`,
-    /// `520-performance-capture.md` decision 4).
     PlayFromCursor,
     /// Stop and return to the cursor (`TransportCommand::Stop`).
     Stop,
@@ -488,7 +485,7 @@ pub(crate) const ACTIONS: &[ActionInfo] = &[
     row(
         Action::PlayFromCursor,
         "transport.play_from_cursor",
-        "Restart from the cursor or replay the pad",
+        "Restart from the cursor",
         TRANSPORT,
         Scope::Global,
         &[Chord::plain(Key::Space).alt()],

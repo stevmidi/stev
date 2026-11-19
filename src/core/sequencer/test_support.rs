@@ -2,7 +2,7 @@
 
 use std::sync::{
     Arc,
-    atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU8, AtomicU16, Ordering},
+    atomic::{AtomicBool, AtomicI32, AtomicU8, AtomicU16, Ordering},
 };
 use std::time::Instant;
 
@@ -56,7 +56,6 @@ pub(super) fn sequencer_with_outputs(
         Arc::new(AtomicU8::new(0)),
         Arc::new(AtomicBool::new(false)),
         Arc::new(AtomicU8::new(KeyLength::default().to_bits())),
-        Arc::new(AtomicI64::new(-1)),
         Arc::new(TrackMixAtomics::new()),
         Arc::new(AudioExportAtomics::default()),
     );

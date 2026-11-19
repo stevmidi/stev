@@ -731,17 +731,6 @@ pub(crate) enum InputEvent {
     /// A click on one of the performance lane's gutter labels (`Bar`, `½`,
     /// `Beat`): how far each lane key jumps (`SequencerCommand::SetPerformanceLaneKeyLength`).
     SetPerformanceLaneKeyLength(KeyLength),
-    /// A click on a performance pad (`SequencerCommand::SelectPerformancePad`).
-    SelectPerformancePad(usize),
-    /// `Delete` with the pad column focused
-    /// (`SequencerCommand::ClearPerformancePad`).
-    ClearPerformancePad,
-    /// `⌘/Ctrl+C` with the pad column focused
-    /// (`SequencerCommand::CopyPerformancePad`).
-    CopyPerformancePad,
-    /// `⌘/Ctrl+V` with the pad column focused
-    /// (`SequencerCommand::PastePerformancePad`).
-    PastePerformancePad,
     /// Arranger track-header volume/pan bar drag: the view resolves the target
     /// track and the absolute value for the current pointer position and
     /// forwards it each time it changes. Not undoable — see

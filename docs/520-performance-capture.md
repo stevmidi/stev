@@ -1,6 +1,6 @@
 # Capturing a Performance-Lane Performance
 
-**Status: revised 2026-11-19, the revision agreed and not built (§ Build plan). Issue: #39 (closed with the first design; the revision's commits say `Part of #39`, § Open questions 1).** The first design (agreed 2026-11-18, all four phases built 2026-11-18/19) kept a performance as the path of jumps on one of eight pads, edited in the piano roll, replayed with `⌥Space` and rendered to clips on `⌘C`. Hand-testing showed the stored path drifts with the arrangement (§ Why the pads went). The revision: **`/` on the armed lane renders what you just heard into ordinary clips and inserts them at the arranger cursor**, one undo step. Nothing is kept on the lane. The pads, the performance piano roll, the replay and the pad clipboard go; the run, the render rule, the no-wrap rule and Paste Time stay. Launch quantize is still deferred to a design of its own (§ Launch quantize).
+**Status: revised 2026-11-19, the revision agreed and built the same day (§ Build plan). Issue: #39 (closed with the first design; the revision's commits say `Part of #39`, § Open questions 1).** The first design (agreed 2026-11-18, all four phases built 2026-11-18/19) kept a performance as the path of jumps on one of eight pads, edited in the piano roll, replayed with `⌥Space` and rendered to clips on `⌘C`. Hand-testing showed the stored path drifts with the arrangement (§ Why the pads went), and the first design's pads, piano roll, replay and pad clipboard are gone from the code. The revision: **`/` on the armed lane renders what you just heard into ordinary clips and inserts them at the arranger cursor**, one undo step. Nothing is kept on the lane. The pads, the performance piano roll, the replay and the pad clipboard go; the run, the render rule, the no-wrap rule and Paste Time stay. Launch quantize is still deferred to a design of its own (§ Launch quantize).
 
 ## Background
 
@@ -68,11 +68,11 @@ A frozen copy of the arrangement under the path was considered (2026-11-19): it 
 
 ## Build plan
 
-One phase, mostly removal. The first design's phases are commits `3f361f0` (capture and pads), `28d29c4`/`eeb106d`/`9f806c2` (the piano roll), `b1c2c4e`/`00488bb`/`fc8eac6` (the replay), `cd74a23`/`086f6f9`/`d16bb07` (the clipboard), with `848ba2f` (lane key names) and the shortcut commits after them interleaved; reverting them whole would also undo what stays, so remove by hand with their diffs as the map.
+**Built 2026-11-19**, one phase, mostly removal. The piano roll, replay and clipboard commits were reverse-applied whole (their `src` changes only, newest first, skipping `848ba2f`); the pads were taken out of `3f361f0` file by file, keeping the run, the no-wrap rule and `ClipData::of`/`into_clip`. As built: the render is `Sequencer::render_performance` (`sequencer/clipboard.rs`), the insert `DuplicateTimeEdit::capturing`, the footer's position `format_position` (`Captured 6 bars at bar 13`, `at bar 13+2` off a bar line). The first design's phases are commits `3f361f0` (capture and pads), `28d29c4`/`eeb106d`/`9f806c2` (the piano roll), `b1c2c4e`/`00488bb`/`fc8eac6` (the replay), `cd74a23`/`086f6f9`/`d16bb07` (the clipboard), with `848ba2f` (lane key names) and the shortcut commits after them interleaved; reverting them whole would also undo what stays, so remove by hand with their diffs as the map.
 
 **Keep**
 - `PerformanceLane`'s run (`press`, `advance`, `take_run`, `Run::expected_tick`) and `performance_clip`, the run as an intermediate clip the render reads.
-- `render_segments` and what it needs (`replay_notes`, `play_at`, `performance_key_target`, rename them for the render now that nothing replays), `render_performance` (`sequencer/clipboard.rs`): the render rule.
+- `render_segments` and what it needs (`replay_notes`, renamed `key_notes`; `play_at`; `performance_key_target`), `render_performance` (`sequencer/clipboard.rs`): the render rule.
 - Decision 5: `Transport`'s no-wrap while armed, `Sequencer::playback_is_looping`, the dimmed loop.
 - Paste Time (`DuplicateTimeEdit::pasting`) and `ClipClipboard::span`, unchanged.
 - The key length and the lane keyboard (`510`).

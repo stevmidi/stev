@@ -499,19 +499,6 @@ const FIXED: &[FixedGroup] = &[
             ),
             ("⌫", "Remove the selected knob's mapping"),
             ("Esc", "Stop assigning, or give back the keyboard"),
-            (
-                "Click",
-                "Lane selected: on a pad, select it (a capture goes there)",
-            ),
-            ("⌫", "Lane selected: empty the selected pad"),
-            (
-                "⌘C",
-                "Lane selected: copy the selected pad, to paste in the arranger",
-            ),
-            (
-                "⌘V",
-                "Lane selected: paste a copied pad onto the selected one",
-            ),
         ],
     ),
     (

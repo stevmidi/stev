@@ -297,7 +297,6 @@ impl Display {
     pub(in crate::view::display) fn window_edge_at(&self, x: f32, y: f32) -> Option<ClipEdge> {
         if self.active_pane() != Pane::Clip
             || self.lead_clip_time.is_none()
-            || self.shows_performance()
             || !self.is_mouse_on_timeline_strip(x, y)
         {
             return None;

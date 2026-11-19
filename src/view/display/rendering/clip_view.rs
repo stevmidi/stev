@@ -54,7 +54,7 @@ impl Display {
         let clip_area_h = self.track_area_h() - Self::TIMELINE_H;
 
         let note_area_top = clip_area_top + Self::NOTE_AREA_TOP_GAP;
-        let note_area_h = clip_area_h - Self::NOTE_AREA_TOP_GAP - self.lower_lane_h();
+        let note_area_h = clip_area_h - Self::NOTE_AREA_TOP_GAP - Self::LOWER_LANE_H;
 
         // Rows fitted to the home note range saved when the clip opened (or
         // the user's key-column zoom), centred on the user's vertical scroll
@@ -70,34 +70,15 @@ impl Display {
         )
     }
 
-    /// The lower lane's height: none under a performance, whose velocities,
-    /// wheels and knobs don't apply (`520-performance-capture.md`
-    /// decision 2), so its keys get the room.
-    fn lower_lane_h(&self) -> f32 {
-        if self.shows_performance() {
-            0.0
-        } else {
-            Self::LOWER_LANE_H
-        }
-    }
-
-    /// Whether the clip view shows a performance: the performance lane is
-    /// selected, so the panel holds the selected pad's
-    /// (`520-performance-capture.md` decision 2).
-    pub(in crate::view::display) fn shows_performance(&self) -> bool {
-        self.performance_lane_selected()
-    }
-
     /// The lower lane under the note grid: the velocity bars or a wheel's
-    /// curve, across the content width; no height under a performance
-    /// ([`lower_lane_h`](Self::lower_lane_h)). The one source of its place, for
+    /// curve, across the content width. The one source of its place, for
     /// its background, its drawing, the gutter switch beside it and the
     /// hit-tests.
     pub(super) fn lower_lane_rect(&self, geom: &NoteAreaGeom) -> Rect {
         let content_x = self.content_origin_x();
         Rect::from_min_size(
             pos2(content_x, geom.top + geom.h),
-            vec2(self.content_right_x() - content_x, self.lower_lane_h()),
+            vec2(self.content_right_x() - content_x, Self::LOWER_LANE_H),
         )
     }
 
@@ -365,9 +346,6 @@ impl Display {
         }
 
         self.draw_event_marquee(painter, geom);
-        if self.shows_performance() {
-            return;
-        }
         let lane = self.lower_lane_rect(geom);
         // Divider — `grid_seam_color()` groove at 2px, the same lane-boundary
         // treatment as the note grid's B/C octave seam and the arranger's

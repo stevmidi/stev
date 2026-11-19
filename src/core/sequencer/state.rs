@@ -11,7 +11,7 @@
 
 use std::sync::{
     Arc,
-    atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU8, AtomicU16, Ordering},
+    atomic::{AtomicBool, AtomicI32, AtomicU8, AtomicU16, Ordering},
 };
 use std::time::Instant;
 
@@ -39,7 +39,7 @@ use crate::{
     models::{
         clip::{Clip, CopiedNote},
         knobs::UNASSIGNED_KNOBS,
-        performance_lane::{KeyLength, PerformanceLane, PerformancePads},
+        performance_lane::{KeyLength, PerformanceLane},
         track::{Track, TrackOutput},
     },
 };
@@ -91,20 +91,11 @@ pub(crate) struct Sequencer {
     /// Session-only clip copy/paste buffer (see `clipboard.rs`). Not persisted,
     /// not part of the undo record. Cleared on new/load project.
     pub(super) clip_clipboard: Option<ClipClipboard>,
-    /// The performance a pad's `⌘C` copied, beside its render in
-    /// `clip_clipboard` (`520-performance-capture.md` decision 5): what a
-    /// `⌘V` onto a pad pastes. `None` when the last copy was clips or notes.
-    /// Not persisted, not part of the undo record. Cleared on new/load
-    /// project.
-    pub(super) performance_clipboard: Option<Clip>,
     /// Session-only note copy/paste buffer for the clip view (see
     /// `clipboard.rs`), separate from `clip_clipboard`. Empty when nothing
     /// is copied. Not persisted, not part of the undo record. Cleared on
     /// new/load project.
     pub(super) note_clipboard: Vec<CopiedNote>,
-    /// Whether `note_clipboard`'s notes were copied from a performance: only
-    /// those paste into one (`520-performance-capture.md` decision 5).
-    pub(super) note_clipboard_from_performance: bool,
 
     // --- Region and playback state ---
     /// Playback position, shared with the transport / UI.
@@ -173,8 +164,9 @@ pub(crate) struct Sequencer {
     pub(super) audio_export_atomics: Arc<AudioExportAtomics>,
 
     // --- Arranger performance lane ---
-    /// The run the lane's presses make while it is armed, which `/` keeps
-    /// as a performance (`520-performance-capture.md` decision 8). Not saved.
+    /// The run the lane's presses make while it is armed, which `/` renders
+    /// at the cursor (`520-performance-capture.md` decisions 1 and 2). Not
+    /// saved.
     pub(super) performance_lane: PerformanceLane,
     /// True while the performance lane (not a regular track) is selected,
     /// which arms the physical MIDI keyboard for bar-jump triggering
@@ -186,18 +178,6 @@ pub(crate) struct Sequencer {
     /// view (`SharedAtomics::performance_lane_key_length`). Saved with the
     /// project; not an undo step (`510-performance-lane-keyboard.md` § Step 1b).
     pub(super) performance_lane_key_length: Arc<AtomicU8>,
-    /// Where the performance replay is, for the clip view's playhead
-    /// (`SharedAtomics::performance_replay`). Kept by the replay accessors
-    /// in `performance_lane.rs`.
-    pub(super) performance_replay: Arc<AtomicI64>,
-    /// The lane's eight pads, the performances `/` kept on the lane
-    /// (`520-performance-capture.md` decision 6). Saved with the project;
-    /// changed through `SetPerformancePadEdit`.
-    pub(super) performance_pads: PerformancePads,
-    /// The selected pad: the one a capture goes to. View state, as the
-    /// selected knob: not saved, not an undo step, pad 1 in a project just
-    /// opened.
-    pub(super) selected_pad: usize,
 
     // --- Agent bridge ---
     /// The view's arranger marquee, mirrored here on every change
@@ -233,7 +213,6 @@ impl Sequencer {
         arm_channel: Arc<AtomicU8>,
         performance_lane_armed: Arc<AtomicBool>,
         performance_lane_key_length: Arc<AtomicU8>,
-        performance_replay: Arc<AtomicI64>,
         track_mix: Arc<TrackMixAtomics>,
         audio_export_atomics: Arc<AudioExportAtomics>,
     ) -> Self {
@@ -250,9 +229,7 @@ impl Sequencer {
                 .collect(),
             track_mix,
             clip_clipboard: None,
-            performance_clipboard: None,
             note_clipboard: Vec::new(),
-            note_clipboard_from_performance: false,
             playback_tick,
             cursor_tick,
             region_start,
@@ -276,9 +253,6 @@ impl Sequencer {
             performance_lane: PerformanceLane::new(),
             performance_lane_armed,
             performance_lane_key_length,
-            performance_replay,
-            performance_pads: PerformancePads::default(),
-            selected_pad: 0,
             marquee: None,
             modal_open: false,
         }
@@ -408,7 +382,7 @@ impl Sequencer {
 
     /// Whether playback is actually wrapping — the loop is on *and*
     /// `playback_tick` is inside the region and the performance lane isn't
-    /// armed (`520-performance-capture.md` decision 7), the same condition
+    /// armed (`520-performance-capture.md` decision 5), the same condition
     /// `Transport::tick` wraps on. A start after the region end runs linearly
     /// with the loop flag still set; running capture sizes and windows such a
     /// take as linear (`100-running-capture.md`).
@@ -509,10 +483,7 @@ impl Sequencer {
         self.set_meter(Meter::FOUR_FOUR);
         self.set_performance_lane_key_length(KeyLength::default());
         self.set_performance_lane_armed(false);
-        self.performance_pads.clear();
-        self.selected_pad = 0;
         self.clip_clipboard = None;
-        self.performance_clipboard = None;
         self.note_clipboard.clear();
         self.reset_track_mix();
     }
@@ -623,7 +594,7 @@ mod tests {
     }
 
     /// The armed performance lane never wraps (`520-performance-capture.md`
-    /// decision 7), so playback isn't looping there, the flag on or not.
+    /// decision 5), so playback isn't looping there, the flag on or not.
     #[test]
     fn playback_is_not_looping_while_the_performance_lane_is_armed() {
         let mut seq = sequencer_at_tempo(config::TEMPO_US_DEFAULT).0;

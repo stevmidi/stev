@@ -137,20 +137,6 @@ impl Clip {
         self.id
     }
 
-    /// A copy that is a clip of its own: a new id, and a window and cursor
-    /// not shared with this one (a plain clone shares both), nothing
-    /// selected. The events stay shared until either is edited
-    /// ([`events_mut`](Self::events_mut)). For a performance pasted onto
-    /// another pad, so editing one never changes the other.
-    pub(crate) fn detached_copy(&self) -> Clip {
-        let mut copy = self.clone();
-        copy.generate_new_id();
-        copy.region = Region::new(self.region.start(), self.region.end());
-        copy.cursor_tick = Arc::new(AtomicI32::new(self.cursor_tick()));
-        let _ = copy.clear_event_selection();
-        copy
-    }
-
     /// The loop window in event-tick space.
     pub(crate) fn region(&self) -> &Region {
         &self.region
@@ -228,33 +214,5 @@ impl Clip {
         self.events
             .iter()
             .any(|event| event.event_type() == Some(EventType::NoteOn))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_detached_copy_shares_nothing_it_could_change() {
-        let mut clip = Clip::new();
-        clip.region_mut().set_region(Some(0), Some(960));
-        clip.add_event(Event::new(0, 480, vec![0x90, 60, 100]));
-        clip.add_event(Event::new(480, 0, vec![0x80, 60, 0]));
-        clip.set_cursor_tick(240);
-        let _ = clip.select_all_events();
-
-        let mut copy = clip.detached_copy();
-        assert_ne!(copy.id(), clip.id());
-        assert_eq!(copy.cursor_tick(), 240);
-        assert!(copy.selected_event_ids().is_empty());
-
-        copy.region_mut().set_region(None, Some(480));
-        copy.set_cursor_tick(0);
-        let _ = copy.select_all_events();
-        copy.delete_selected_events();
-        assert_eq!(clip.region().end(), 960);
-        assert_eq!(clip.cursor_tick(), 240);
-        assert_eq!(clip.events().len(), 2);
     }
 }

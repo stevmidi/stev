@@ -37,7 +37,6 @@ use super::Sequencer;
 mod clip_edits;
 mod event_edits;
 mod meter_edit;
-mod performance_pad_edit;
 mod tempo_edit;
 mod track_edits;
 mod undo_step;
@@ -54,7 +53,6 @@ pub(crate) use event_edits::{
     TransposeSelectedEventsEdit,
 };
 pub(crate) use meter_edit::SetMeterEdit;
-pub(crate) use performance_pad_edit::SetPerformancePadEdit;
 pub(crate) use tempo_edit::{SetTempoEdit, TempoGesture};
 pub(crate) use track_edits::{
     AddTrackEdit, RemoveTrackEdit, RenameTrackEdit, SetKnobParamEdit, SetTrackOutputEdit,
@@ -431,8 +429,8 @@ pub(crate) enum EditResult {
     /// duplicate / a take inserted by `/`) — re-render that clip and re-sync
     /// the event selection.
     EventsModified {
-        /// Where the clip is: a track, or a pad of the performance lane.
-        home: ClipHome,
+        /// Track the clip is on.
+        track_idx: usize,
         /// The clip whose events changed.
         clip_id: Uuid,
         /// The event selection after the edit.
@@ -490,13 +488,6 @@ pub(crate) enum EditResult {
     /// knobs drive (`TracksChanged`, no shift), and the lead clip, whose
     /// moves may have changed with the knob.
     KnobsChanged,
-    /// What a performance-lane pad holds changed (`SetPerformancePadEdit`'s
-    /// edit and undo). The handler re-sends the view the pads, and the
-    /// clip view the performance when the pad is the one it shows.
-    PerformancePadChanged {
-        /// Which pad.
-        pad: usize,
-    },
     /// A track's output changed (`SetTrackOutputEdit`'s edit and undo). The
     /// handler re-sends the view its track list and has `Display` bring the
     /// plugin in `slot` in line with `instrument` (`UiEvent::SlotInstrument`):
@@ -521,72 +512,23 @@ pub(crate) enum EditResult {
     NoOp,
 }
 
-impl EditResult {
-    /// Whether the edit was on a performance (`EventsModified` on
-    /// `ClipHome::Lane`): its step then undoes with the view as it is, as
-    /// the pad it is on does, since the pads aren't the arrangement
-    /// (`520-performance-capture.md`, `UndoStep::leave_view`).
-    pub(crate) fn is_on_lane(&self) -> bool {
-        matches!(
-            self,
-            EditResult::EventsModified {
-                home: ClipHome::Lane,
-                ..
-            }
-        )
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Clip lookup shared by every edit
 // ---------------------------------------------------------------------------
 
-/// Where a clip lives: on a track, or on the performance lane, which holds
-/// the performances on its pads (`520-performance-capture.md` decision 1,
-/// § Open questions 5). The clip accessors resolve it
-/// ([`Sequencer::clip_on`]), so a note edit, quantize and undo work alike on
-/// a track's clip and a pad's. A lane clip is found by its id on whichever
-/// pad holds it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ClipHome {
-    /// On the track at this index.
-    Track(usize),
-    /// On one of the performance lane's pads.
-    Lane,
-}
-
-impl From<usize> for ClipHome {
-    /// The track at this index.
-    fn from(track_idx: usize) -> Self {
-        ClipHome::Track(track_idx)
-    }
-}
-
 impl Sequencer {
-    /// The clip with this id at `home` (a track index is a track), or `None`
-    /// if either is gone.
-    pub(crate) fn clip_on(&self, home: impl Into<ClipHome>, clip_id: Uuid) -> Option<&Clip> {
-        match home.into() {
-            ClipHome::Track(track_idx) => self.tracks().get(track_idx)?.get_clip_by_id(clip_id),
-            ClipHome::Lane => self.performance_pads().find(clip_id),
-        }
+    /// The clip with this id on `track_idx`, or `None` if either is gone.
+    pub(crate) fn clip_on(&self, track_idx: usize, clip_id: Uuid) -> Option<&Clip> {
+        self.tracks().get(track_idx)?.get_clip_by_id(clip_id)
     }
 
-    /// Mutable [`clip_on`](Self::clip_on). Not for moving a track clip's
-    /// events: that goes through [`edit_clip_events`](Self::edit_clip_events),
-    /// or a note sounding under a running playhead can hang.
-    pub(crate) fn clip_on_mut(
-        &mut self,
-        home: impl Into<ClipHome>,
-        clip_id: Uuid,
-    ) -> Option<&mut Clip> {
-        match home.into() {
-            ClipHome::Track(track_idx) => self
-                .tracks_mut()
-                .get_mut(track_idx)?
-                .get_clip_by_id_mut(clip_id),
-            ClipHome::Lane => self.performance_pads_mut().find_mut(clip_id),
-        }
+    /// Mutable [`clip_on`](Self::clip_on). Not for moving a clip's events:
+    /// that goes through [`edit_clip_events`](Self::edit_clip_events), or a
+    /// note sounding under a running playhead can hang.
+    pub(crate) fn clip_on_mut(&mut self, track_idx: usize, clip_id: Uuid) -> Option<&mut Clip> {
+        self.tracks_mut()
+            .get_mut(track_idx)?
+            .get_clip_by_id_mut(clip_id)
     }
 
     /// Moves the clip with this id on `track_idx` to `bounds` — an edge edit
@@ -611,29 +553,22 @@ impl Sequencer {
         Some(ClipMetadata::from_clip(track_idx, clip))
     }
 
-    /// Runs `edit` on the clip with this id at `home`; `None` if either is
-    /// gone. While the transport runs, a note the edit stops sounding at
+    /// Runs `edit` on the clip with this id on `track_idx`; `None` if either
+    /// is gone. While the transport runs, a note the edit stops sounding at
     /// the playhead is released rather than left hanging
     /// ([`Track::edit_clip_events`](crate::models::track::Track::edit_clip_events)).
-    ///
-    /// No track plays a lane clip (`ClipHome::Lane`): its edit is heard on
-    /// the replay's next pass, so there is nothing sounding to release.
     pub(crate) fn edit_clip_events<R>(
         &mut self,
-        home: impl Into<ClipHome>,
+        track_idx: usize,
         clip_id: Uuid,
         edit: impl FnOnce(&mut Clip) -> R,
     ) -> Option<R> {
-        let home = home.into();
-        if let ClipHome::Track(track_idx) = home
-            && self.is_running()
-        {
-            return self
-                .tracks_mut()
-                .get_mut(track_idx)?
-                .edit_clip_events(clip_id, edit);
+        if !self.is_running() {
+            return self.clip_on_mut(track_idx, clip_id).map(edit);
         }
-        self.clip_on_mut(home, clip_id).map(edit)
+        self.tracks_mut()
+            .get_mut(track_idx)?
+            .edit_clip_events(clip_id, edit)
     }
 
     /// As [`edit_clip_events`](Self::edit_clip_events), for a retime that
@@ -797,18 +732,15 @@ sequencer_edit_dispatch!(
     SetKnobParam(SetKnobParamEdit),
     SetTempo(SetTempoEdit),
     SetMeter(SetMeterEdit),
-    SetPerformancePad(SetPerformancePadEdit),
 );
 
 impl SequencerEdit {
     /// Whether an undo or redo of this edit puts back the view around it
     /// ([`UndoStep`]): every edit that changes clips or notes does, as in
-    /// Ableton; the tempo, the meter, a track's name, its output, a knob's
-    /// mapping and a performance pad undo with the view as it is, and a
-    /// track add or remove keeps its own selection rule (`050-undo-redo.md`
-    /// § Track add / remove). Exhaustive, so a new edit has to be placed.
-    /// A note edit on a performance leaves the view alone whatever its kind
-    /// ([`EditResult::is_on_lane`], decided when it is recorded).
+    /// Ableton; the tempo, the meter, a track's name, its output and a
+    /// knob's mapping undo with the view as it is, and a track add or remove
+    /// keeps its own selection rule (`050-undo-redo.md` § Track add /
+    /// remove). Exhaustive, so a new edit has to be placed.
     pub(crate) fn restores_view(&self) -> bool {
         match self {
             SequencerEdit::CommitClip(_)
@@ -844,8 +776,7 @@ impl SequencerEdit {
             | SequencerEdit::SetTrackOutput(_)
             | SequencerEdit::SetKnobParam(_)
             | SequencerEdit::SetTempo(_)
-            | SequencerEdit::SetMeter(_)
-            | SequencerEdit::SetPerformancePad(_) => false,
+            | SequencerEdit::SetMeter(_) => false,
         }
     }
 }

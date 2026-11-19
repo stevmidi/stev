@@ -136,16 +136,9 @@ impl EventHandlers {
                 transport.set_loop_enabled(false);
                 play_from_tick(*tick, transport, sequencer);
             }
-            TransportCommand::PlayPerformance => {
-                if sequencer.start_performance_replay() {
-                    transport.start();
-                } else {
-                    self.send_status_ui_event(nothing_to_replay(sequencer.selected_pad()));
-                }
-            }
             TransportCommand::TogglePlayback => {
                 if transport.is_running() {
-                    stop(transport, sequencer);
+                    transport.stop();
                 } else {
                     // `restart_from_cursor` starts playback from the cursor.
                     sequencer.begin_running_take(sequencer.cursor_tick());
@@ -155,7 +148,7 @@ impl EventHandlers {
             }
             TransportCommand::Stop => {
                 sequencer.reset_capture();
-                stop(transport, sequencer);
+                transport.stop();
                 transport.reset_playback_to_cursor();
             }
             TransportCommand::ToggleMetronomeMute => {
@@ -170,22 +163,7 @@ impl EventHandlers {
 /// export's run.
 fn play_from_tick(tick: i32, transport: &mut Transport, sequencer: &mut Sequencer) {
     sequencer.begin_running_take(tick);
-    stop(transport, sequencer);
+    transport.stop();
     transport.jump_and_chase(tick);
     transport.start();
-}
-
-/// Stops the transport and ends the performance replay with it, here rather
-/// than on the stop's [`TransportEvent::Stopped`], which can arrive after a
-/// replay the next command started (`520-performance-capture.md` § Phases 3).
-/// Every stop a command makes goes through here.
-fn stop(transport: &Transport, sequencer: &mut Sequencer) {
-    sequencer.stop_performance_replay();
-    transport.stop();
-}
-
-/// The footer's line for `⌥Space` on an empty pad `pad`: nothing plays, and
-/// it says why. Pads count from 1.
-fn nothing_to_replay(pad: usize) -> String {
-    format!("Nothing on pad {} to play", pad + 1)
 }
