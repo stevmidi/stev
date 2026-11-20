@@ -849,10 +849,7 @@ impl Display {
         clip_event_tick_at(self.playback_tick(), span, window)
     }
 
-    /// The clip view's span `span` (event ticks) on the arrangement, where
-    /// the lead clip plays it (`clip_span_in_arrangement`): what `⌘L` sets
-    /// the loop to from the clip view. `None` with no lead clip, or when
-    /// nothing of the span is heard.
+    /// The clip view's span on the arrangement, for `⌘L` (`clip_span_in_arrangement`).
     fn lead_clip_span_in_arrangement(&self, span: (i32, i32)) -> Option<(i32, i32)> {
         let (clip_span, window) = self.lead_clip_placement()?;
         clip_span_in_arrangement(span, clip_span, window)

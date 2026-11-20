@@ -304,6 +304,8 @@ impl Sequencer {
         let (span, ruler_origin) = match (frame, marquee(frame)) {
             (_, Some(span)) => (span, 0),
             (Some(CaptureFrame::ClipSpan((start, end))), None) => {
+                // The view's `⌘L` maps the same span the same way, cut to the
+                // window first (`clip_span_in_arrangement`, `view/display/pane.rs`).
                 let window_start = clip.region().start();
                 let offset = clip.start_tick() - window_start;
                 let ruler_origin = offset + self.meter().bar_line_at_or_before(window_start);

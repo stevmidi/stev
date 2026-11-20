@@ -1399,20 +1399,20 @@ impl Display {
             // `None`, which the handler turns into a bare loop toggle. Bare `L`
             // is deliberately unbound (it used to match any modifiers).
             //
-            // In the clip view the operand is the piano roll's span, mapped
-            // onto the arrangement where the lead clip plays it; the arranger's
-            // marquee is never read there (an undo can put one back while the
-            // clip view has the keyboard). A span of which nothing is heard
-            // (outside the window) does nothing rather than toggle.
+            // In the clip view the operand is the piano roll's span on the
+            // arrangement (`clip_span_in_arrangement`), never the arranger's
+            // marquee; a span of which nothing is heard does nothing.
             InputEvent::Action(Action::SetLoop) => {
                 let time_bounds = match self.view_state() {
                     ViewState::Arranger => self.gesture.time_selection.map(|r| (r.start, r.end)),
                     ViewState::Clip => match self.gesture.duplicate_span {
-                        Some(span) => match self.lead_clip_span_in_arrangement(span) {
-                            Some(bounds) => Some(bounds),
-                            None => return true,
-                        },
                         None => None,
+                        Some(span) => {
+                            let Some(bounds) = self.lead_clip_span_in_arrangement(span) else {
+                                return true;
+                            };
+                            Some(bounds)
+                        }
                     },
                 };
                 self.input_event_tx
