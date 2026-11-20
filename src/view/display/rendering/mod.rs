@@ -1003,39 +1003,31 @@ impl Display {
     /// track lane at `y`, using the same `tick_to_screen_x` geometry the
     /// arranger draws with. Arranger only.
     ///
-    /// Of the clips with an edge within `CLIP_EDGE_HIT_PX`, the one with the
-    /// earliest `start_tick` wins (the first in `clip_shapes` on a tie), and
-    /// on it the Start edge before the End — which resolves the one
-    /// ambiguous case, two clips touching exactly, in favour of the earlier
-    /// clip's right edge over the later clip's left edge.
+    /// Of the edges within `CLIP_EDGE_HIT_PX`, an edge of the clip under the
+    /// pointer wins, then the nearer one (`clip_edge_hit`), as in Ableton:
+    /// with two clips touching or a hair apart, the pointer's side of the
+    /// seam picks the clip, so both edges stay reachable.
     ///
     /// Only presses within the lane's top `CLIP_HEADER_H`-px grab band
     /// (`clip_resize_band`) count — lower down, an x near a shared clip
     /// boundary must stay free for cursor placement / time selection.
     pub(super) fn clip_edge_at(&self, x: f32, y: f32) -> Option<ClipResizeDrag> {
         let track_idx = self.grab_band_track_at(y)?;
-        let near = |tick: i32| (x - self.tick_to_screen_x(tick)).abs() <= Self::CLIP_EDGE_HIT_PX;
-        self.render
+        let clips = self
+            .render
             .clip_shapes
             .iter()
             .filter(|shape| shape.track_idx() == track_idx)
-            .filter_map(|shape| {
-                let edge = if near(shape.start_tick()) {
-                    ClipResizeEdge::Start
-                } else if near(shape.end_tick()) {
-                    ClipResizeEdge::End
-                } else {
-                    return None;
-                };
-                Some((shape, edge))
-            })
-            .min_by_key(|(shape, _)| shape.start_tick())
-            .map(|(shape, edge)| ClipResizeDrag {
-                ticks_at_press: (shape.start_tick(), shape.end_tick()),
-                track_idx,
-                clip_id: shape.clip_id(),
-                edge,
-            })
+            .map(|shape| {
+                let start_x = self.tick_to_screen_x(shape.start_tick());
+                (shape, start_x, self.tick_to_screen_x(shape.end_tick()))
+            });
+        clip_edge_hit(x, clips, Self::CLIP_EDGE_HIT_PX).map(|(shape, edge)| ClipResizeDrag {
+            ticks_at_press: (shape.start_tick(), shape.end_tick()),
+            track_idx,
+            clip_id: shape.clip_id(),
+            edge,
+        })
     }
 
     /// Screen x → the tick a pointer at `(x, y)` lands on: in the arranger,
@@ -1720,6 +1712,39 @@ fn note_at_grid_point(
         .map(|(id, ..)| id)
 }
 
+/// The clip edge a pointer at screen `x` grabs, of `clips` given as
+/// `(clip, start_x, end_x)`: any edge within `hit_px`, either side of it. An
+/// edge of the clip the pointer is over (`start_x <= x < end_x`) beats one
+/// whose clip it is outside, then the nearer edge wins, then the earlier
+/// clip. So where two clips touch or stand a few pixels apart, the left
+/// clip's end is grabbed from inside it and the right clip's start from
+/// inside that one, Ableton's rule; in the gap itself the nearer edge. The
+/// reach outside a clip stays, so a lone edge is as easy to catch as before.
+fn clip_edge_hit<T: Copy>(
+    x: f32,
+    clips: impl Iterator<Item = (T, f32, f32)>,
+    hit_px: f32,
+) -> Option<(T, ClipResizeEdge)> {
+    clips
+        .flat_map(|(clip, start_x, end_x)| {
+            let inside = (start_x..end_x).contains(&x);
+            [
+                (ClipResizeEdge::Start, start_x),
+                (ClipResizeEdge::End, end_x),
+            ]
+            .map(|(edge, edge_x)| (clip, edge, inside, (x - edge_x).abs(), start_x))
+        })
+        .filter(|&(.., distance, _)| distance <= hit_px)
+        .min_by(
+            |&(_, _, a_in, a_dist, a_start), &(_, _, b_in, b_dist, b_start)| {
+                b_in.cmp(&a_in)
+                    .then(a_dist.total_cmp(&b_dist))
+                    .then(a_start.total_cmp(&b_start))
+            },
+        )
+        .map(|(clip, edge, ..)| (clip, edge))
+}
+
 /// Widest a note's edge zone gets, in screen pixels — see [`note_part_at`].
 const NOTE_EDGE_HIT_PX: f32 = 5.0;
 
@@ -1752,7 +1777,9 @@ mod tests {
         gap_spans, nearest_snap_tick, seam_inset_band, seam_y, snap_edge_ticks, tick_overlap,
         track_header_rects, track_name_row,
     };
-    use super::{ClipResizeDrag, ClipResizeEdge, NotePart, note_at_grid_point, note_part_at};
+    use super::{
+        ClipResizeDrag, ClipResizeEdge, NotePart, clip_edge_hit, note_at_grid_point, note_part_at,
+    };
     use super::{
         MeterBar, TRACK_METER_CHANNEL_GAP, TRACK_METER_FALL, TRACK_METER_GAP, TRACK_METER_W,
         TRACK_METER_ZERO_DB_HEIGHT, audio_meter_bar, db_to_meter_height, meter_centre_rect,
@@ -2131,6 +2158,52 @@ mod tests {
     fn note_at_grid_point_ignores_a_pointer_off_the_grid() {
         let notes = [(Uuid::new_v4(), 60, 0, 480)].into_iter();
         assert_eq!(note_at_grid_point(notes, false, 60, 240), None);
+    }
+
+    /// `clip_edge_hit` over clips given as `(name, start_x, end_x)`.
+    fn edge_hit(
+        x: f32,
+        clips: &[(&'static str, f32, f32)],
+    ) -> Option<(&'static str, ClipResizeEdge)> {
+        clip_edge_hit(x, clips.iter().copied(), 5.0)
+    }
+
+    #[test]
+    fn touching_clips_give_each_side_of_the_seam_its_own_edge() {
+        let clips = [("a", 0.0, 100.0), ("b", 100.0, 200.0)];
+        assert_eq!(edge_hit(97.0, &clips), Some(("a", ClipResizeEdge::End)));
+        assert_eq!(edge_hit(99.5, &clips), Some(("a", ClipResizeEdge::End)));
+        assert_eq!(edge_hit(100.0, &clips), Some(("b", ClipResizeEdge::Start)));
+        assert_eq!(edge_hit(103.0, &clips), Some(("b", ClipResizeEdge::Start)));
+    }
+
+    #[test]
+    fn a_tiny_gap_leaves_both_edges_reachable() {
+        // The regression: a 2px gap, where the left clip's end used to win
+        // the whole 12px span both reaches cover.
+        let clips = [("a", 0.0, 100.0), ("b", 102.0, 200.0)];
+        assert_eq!(edge_hit(98.0, &clips), Some(("a", ClipResizeEdge::End)));
+        assert_eq!(edge_hit(100.5, &clips), Some(("a", ClipResizeEdge::End)));
+        assert_eq!(edge_hit(101.5, &clips), Some(("b", ClipResizeEdge::Start)));
+        assert_eq!(edge_hit(104.0, &clips), Some(("b", ClipResizeEdge::Start)));
+        // Dead centre of the gap: the earlier clip.
+        assert_eq!(edge_hit(101.0, &clips), Some(("a", ClipResizeEdge::End)));
+    }
+
+    #[test]
+    fn a_lone_edge_keeps_its_reach_outside_the_clip() {
+        let clips = [("a", 100.0, 200.0)];
+        assert_eq!(edge_hit(95.0, &clips), Some(("a", ClipResizeEdge::Start)));
+        assert_eq!(edge_hit(205.0, &clips), Some(("a", ClipResizeEdge::End)));
+        assert_eq!(edge_hit(94.9, &clips), None);
+        assert_eq!(edge_hit(150.0, &clips), None);
+    }
+
+    #[test]
+    fn a_narrow_clip_gives_the_nearer_of_its_edges() {
+        let clips = [("a", 100.0, 106.0)];
+        assert_eq!(edge_hit(101.0, &clips), Some(("a", ClipResizeEdge::Start)));
+        assert_eq!(edge_hit(105.0, &clips), Some(("a", ClipResizeEdge::End)));
     }
 
     #[test]

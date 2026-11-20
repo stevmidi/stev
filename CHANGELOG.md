@@ -29,6 +29,7 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ### Fixed
 
+- Where two clips touch or sit a few pixels apart in the arranger, both edges can be dragged: the side of the seam the pointer is on picks the clip, as in Ableton. Before, the left clip's end always won.
 - Turning a knob assigned to a parameter of some CLAP plugins (TAL's, and others built with JUCE's CLAP wrapper), or playing a clip that moves one, no longer crashes Stev. Stev now sends the parameter's handle the plugin asked for with every move.
 
 ## [0.17.0] - 2026-11-20
