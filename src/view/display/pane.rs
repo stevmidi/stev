@@ -216,14 +216,72 @@ pub(super) fn clip_event_tick_at(
     Some(region_start + (tick - clip_start).rem_euclid(region_len))
 }
 
+/// Maps the clip view's span `span` (event ticks, end exclusive) onto the
+/// arrangement — the clip spanning `clip_span` (arrangement ticks) and
+/// looping its region `region` (event ticks) across it — for `⌘L` in the
+/// clip view. The span is cut to the region and placed on its first pass
+/// (the capture's punch-in mapping, `Sequencer::capture_framing`), then cut
+/// to the clip's end. `None` when nothing of it is heard: outside the
+/// region, or a clip shorter than the span's offset into it.
+pub(super) fn clip_span_in_arrangement(
+    span: (i32, i32),
+    clip_span: (i32, i32),
+    region: (i32, i32),
+) -> Option<(i32, i32)> {
+    let (clip_start, clip_end) = clip_span;
+    let (region_start, region_end) = region;
+    let offset = clip_start - region_start;
+    let start = span.0.max(region_start) + offset;
+    let end = (span.1.min(region_end) + offset).min(clip_end);
+    (start < end).then_some((start, end))
+}
+
 #[cfg(test)]
 mod tests {
     use egui::{Rect, pos2};
 
     use super::{
         ClipPanel, PANE_GAP_Y, Pane, PaneLayout, PanelSize, clip_event_tick_at,
-        clip_pane_frame_value, pane_rects,
+        clip_pane_frame_value, clip_span_in_arrangement, pane_rects,
     };
+
+    /// `⌘L` in the clip view: the span lands where its notes are heard,
+    /// on the clip's first pass, off-grid ends kept as they are.
+    #[test]
+    fn clip_span_maps_onto_the_clips_first_pass() {
+        // Clip at bar 5 (7680), its window event ticks 960..4800.
+        let clip_span = (7680, 7680 + 7680);
+        let region = (960, 4800);
+        assert_eq!(
+            clip_span_in_arrangement((1920, 2900), clip_span, region),
+            Some((8640, 9620))
+        );
+    }
+
+    /// A span reaching outside the window is cut to it; one wholly outside,
+    /// or past a clip trimmed shorter than its window, maps to nothing.
+    #[test]
+    fn clip_span_is_cut_to_the_window_and_the_clip() {
+        let region = (960, 4800);
+        assert_eq!(
+            clip_span_in_arrangement((0, 6000), (7680, 15360), region),
+            Some((7680, 11520))
+        );
+        assert_eq!(
+            clip_span_in_arrangement((4800, 6000), (7680, 15360), region),
+            None
+        );
+        // The clip only 960 ticks long: the span's end is cut to it, and a
+        // span starting past it maps to nothing.
+        assert_eq!(
+            clip_span_in_arrangement((960, 3840), (7680, 8640), region),
+            Some((7680, 8640))
+        );
+        assert_eq!(
+            clip_span_in_arrangement((1920, 3840), (7680, 8640), region),
+            None
+        );
+    }
 
     /// Regression: docked, the arranger drew the lead clip's region (its
     /// event-tick snapshot) as the loop region, so `⌘L` seemed to leave the

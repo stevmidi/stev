@@ -573,7 +573,7 @@ pub(crate) const ACTIONS: &[ActionInfo] = &[
         "transport.set_loop",
         "Set the loop, or loop on / off",
         TRANSPORT,
-        Scope::Arranger,
+        Scope::Global,
         &[Chord::cmd(Key::L)],
     ),
     // --- Project & app ---
@@ -1258,16 +1258,15 @@ mod tests {
         }
     }
 
-    /// `⌘L` sets the loop only from the arranger: in the clip view it does
-    /// nothing at all (no loop toggle either). Pinned because an undo can
-    /// put a marquee back while the clip view has the keyboard, and the loop
-    /// keys must not reach it from there.
+    /// `⌘L` sets the loop from either pane: the arranger's marquee, or the
+    /// clip view's span (the view picks the operand by pane, so an arranger
+    /// marquee an undo put back never reaches it from the clip view).
     #[test]
-    fn set_loop_is_a_no_op_in_the_clip_view() {
+    fn set_loop_works_in_both_panes() {
         let keymap = Keymap::default();
         let cmd_l = Chord::cmd(Key::L);
         assert_eq!(keymap.resolve(cmd_l, Pane::Arranger), Some(Action::SetLoop));
-        assert_eq!(keymap.resolve(cmd_l, Pane::Clip), None);
+        assert_eq!(keymap.resolve(cmd_l, Pane::Clip), Some(Action::SetLoop));
     }
 
     #[test]

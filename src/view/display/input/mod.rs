@@ -1398,12 +1398,27 @@ impl Display {
             // the precedence rule to the handler; a collapsed selection yields
             // `None`, which the handler turns into a bare loop toggle. Bare `L`
             // is deliberately unbound (it used to match any modifiers).
-            InputEvent::Action(Action::SetLoop) => self
-                .input_event_tx
-                .send(InputEvent::SetRegionToTimeSelectionOrToggleLoop {
-                    time_bounds: self.gesture.time_selection.map(|r| (r.start, r.end)),
-                })
-                .is_ok(),
+            //
+            // In the clip view the operand is the piano roll's span, mapped
+            // onto the arrangement where the lead clip plays it; the arranger's
+            // marquee is never read there (an undo can put one back while the
+            // clip view has the keyboard). A span of which nothing is heard
+            // (outside the window) does nothing rather than toggle.
+            InputEvent::Action(Action::SetLoop) => {
+                let time_bounds = match self.view_state() {
+                    ViewState::Arranger => self.gesture.time_selection.map(|r| (r.start, r.end)),
+                    ViewState::Clip => match self.gesture.duplicate_span {
+                        Some(span) => match self.lead_clip_span_in_arrangement(span) {
+                            Some(bounds) => Some(bounds),
+                            None => return true,
+                        },
+                        None => None,
+                    },
+                };
+                self.input_event_tx
+                    .send(InputEvent::SetRegionToTimeSelectionOrToggleLoop { time_bounds })
+                    .is_ok()
+            }
             // Shift+⌘/Ctrl+D — Ableton "Duplicate Time", the global form:
             // insert time at the selection end (pushing every track's later
             // clips right), drop the copy into the gap on every track, then

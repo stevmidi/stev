@@ -112,7 +112,8 @@ use self::instrument::InstrumentHost;
 use self::knob_panel::KnobPanel;
 use self::output_menu::OutputMenuHit;
 use self::pane::{
-    KeyFocus, Pane, PaneRects, PanelSize, clip_event_tick_at, clip_pane_frame_value, pane_rects,
+    KeyFocus, Pane, PaneRects, PanelSize, clip_event_tick_at, clip_pane_frame_value,
+    clip_span_in_arrangement, pane_rects,
 };
 use self::project_dialog::ProjectDialog;
 use self::project_state::ProjectViewState;
@@ -843,10 +844,25 @@ impl Display {
     /// longer loops the transport on its clip, so the clip's own playback
     /// counter stalls whenever playback runs elsewhere — see
     /// `archive/210-docked-clip-panel.md`.
-    ///
-    /// A take session's take is off the arrangement: its span is where it is
-    /// heard in place, from the insert point for as long as its window.
     fn lead_clip_playback_tick(&self) -> Option<i32> {
+        let (span, window) = self.lead_clip_placement()?;
+        clip_event_tick_at(self.playback_tick(), span, window)
+    }
+
+    /// The clip view's span `span` (event ticks) on the arrangement, where
+    /// the lead clip plays it (`clip_span_in_arrangement`): what `⌘L` sets
+    /// the loop to from the clip view. `None` with no lead clip, or when
+    /// nothing of the span is heard.
+    fn lead_clip_span_in_arrangement(&self, span: (i32, i32)) -> Option<(i32, i32)> {
+        let (clip_span, window) = self.lead_clip_placement()?;
+        clip_span_in_arrangement(span, clip_span, window)
+    }
+
+    /// Where the lead clip plays, `(span, window)`: its arrangement span
+    /// (end exclusive) and its window in event ticks. A take session's take
+    /// is off the arrangement: its span is where it is heard in place, from
+    /// the insert point for as long as its window.
+    fn lead_clip_placement(&self) -> Option<((i32, i32), (i32, i32))> {
         let lead = self.lead_clip_time.as_ref()?;
         let window = (
             lead.region_start.load(Ordering::Relaxed),
@@ -861,7 +877,7 @@ impl Display {
                 .find(|shape| shape.clip_id() == lead.clip_id)
                 .map(|shape| (shape.start_tick(), shape.end_tick()))?,
         };
-        clip_event_tick_at(self.playback_tick(), span, window)
+        Some((span, window))
     }
 
     /// Whether the transport is running, as this frame renders it: the clip
