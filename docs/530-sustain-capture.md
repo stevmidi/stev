@@ -1,0 +1,58 @@
+# Sustain Capture
+
+**Status: design agreed 2026-11-20; not built. Issue: #40.** The sustain pedal (CC64) is recorded like the two wheels: it lands in the capture buffer, `/` keeps it in the take and lays it into a clip by `370`'s landing rule, playback sets it right at every discontinuity, and the piano roll's lower lane gets a fourth view, `SUS`, beside `VEL`, `PB` and `MW`. One rule is the pedal's own: a jump or a loop wrap lifts the pedal before playback presses it again where it lands, so notes released at the jump stop ringing. Read `090` (what the buffer records), `370` (wheel capture), `380` (the wheel lane) and `050` § Invariants (the controller chase) first.
+
+## Background
+
+Sustain is played live but never recorded (`090`). A piano, Rhodes or pad take played with the pedal sounds different once it's a clip: the notes go dry and the voicings fall apart. It is the biggest exception to "keep what you just played" (`280` § Principle). It was left out because "a sustain stuck on holds every note, so it would need the note-release machinery rather than this chase" (`090`), and a CC in a clip (imported, pasted) is still played as it comes and never chased (`Track::chase_controllers`), for the same reason.
+
+Reading the code on 2026-11-20 showed that the existing controller machinery already covers almost all of it, once CC64 has a rest (`Controller::rest`) of 0, as the mod wheel does:
+
+- **A stop** releases every note first (`release_all_notes`), then puts every controller with a rest that the track's playback moved back to rest (`Sequencer::reset_wheels`, `ControllerTracker::take_resets`). The pedal lifts after the note-offs, so nothing hangs: this is the stuck-pedal worry, already handled by the order.
+- **A clip end into a gap** chases a controller with a rest back to rest, so a pedal never carries past its clip. **A split's right half** that starts with the pedal down presses it on arrival (`Track::tick`'s arrival chase, `Clip::controllers_at`).
+- **A seek** into a pedalled stretch presses the pedal before the notes chased there (controllers drain after `pending_note_offs`, before `pending_note_ons`).
+- **The player's own pedal** on the armed track is left alone by a stop or a seek (`Track::hand_controller_to_player`).
+- **Capture**: the landing rule (`Clip::land_take`: the span from the first move to the window's end, the old value written back), the carry of a controller off its rest into a running take (`begin_running_take`, `Clip::carry_wheels_onto`), the take session's wheel end past the last note-off (`370` decision 10) and the merge's edges (`models/clip/merge.rs`) are all per controller, keyed on having a rest.
+
+What the chase doesn't cover is the jump (decision 4).
+
+## Decisions (2026-11-20)
+
+1. **CC64, the sustain pedal, joins the two wheels as a recorded controller with a rest of 0.** `message::is_recorded` lets it through, so it reaches the capture buffer from a port like a wheel move (the computer keyboard has no pedal). `Controller::rest` gives `Cc(64)` `Some(0)`. The list of controllers with a rest (`Controller::WHEELS` today) gains it as a third entry and is renamed, as it no longer holds only wheels (say `Controller::RESTING`; `is_wheel` likewise), and every place that walks it follows: the followed set of the chase, the stop's resets, the live values carried into a take (`live_wheels`), the landing, the merge's edges. The values are recorded as sent, 0–127: no threshold at 64, so a continuous pedal's half-pedalling is kept, and the synth reads it as it does live. A pedal's polarity is the keyboard's setting, not Stev's.
+2. **Recorded, landed and framed like a wheel.** Every rule of `370` applies unchanged, per controller: a take's window is its notes' window; the pedal's span runs from its first move in the window to the window's end, latched there with the old value written back; a pedal untouched in a take leaves the clip's pedal alone; a pedal held down when the transport starts is carried onto the start tick. The take session's tail rule (`370` decision 10) keeps the pedal release after the last chord, never past the clip's window end. A new clip's window is still `040`'s: a pedal lifted past the clip's end is dropped and the sound stops at the end, as it does for any note that rings past a clip; `[`/`]` widens the window.
+3. **A pedal-only running take lands in the lead clip**, as a wheel-only take does (`370` decisions 3–4): play along with the loop working only the pedal, press `/`, and it replaces the clip's pedal over the span played, framed by the pass holding the last pedal move. That's how a take played dry gets pedalled afterwards. A stopped take of pedal moves alone commits nothing, and none commits without a lead clip, as for the wheels.
+4. **A jump lifts the pedal.** A jump (a seek, a loop wrap, a performance-lane jump: everything through `reanchor_playback`) releases the sounding notes, but under a pedal held down on both sides of the jump the chase sends nothing (it sends only what differs), so the notes keep ringing into the jump target: a loop of a pedalled pad turns to mud at every wrap. So on a jump, a track whose playback has the pedal down sends a pedal-up at once, beside the note releases, and the chase then presses it again where playback lands if the pedal is down there. Only on jumps: a clip end, a split boundary and every other continuous re-seek keep the chase's "only what differs", or a pedal held across a split would be cut at the split. Only the pedal: a wheel lifted to rest on every wrap would dip through centre (why `050` says a stop resets the wheels but a jump never does). A pedal the player holds (handed over, decision 1) isn't lifted.
+5. **Edits under a held pedal ring on.** An edit that releases a sounding note (a mute, `#19`; a delete; a transpose) sends its note-off, and with the pedal down the note sounds until the pedal lifts, as on a piano. Not changed.
+6. **The clip's pedal and the player's double up.** Playing over a clip with pedal data, the clip's pedal-ups release the notes the player sustains, as the wheels and live notes already double up (`note-sources-double-up`, Ableton does the same). Not changed.
+7. **The lane: `SUS`, a fourth label in the gutter.** `ClipLane::Sustain`, below `MW` in the gutter (`VEL`, `PB`, `MW`, `SUS`; four rows in the 80 px lane), `CycleClipLane` (`W`) going `VEL → PB → MW → SUS → VEL`, the data dot when the lead clip has pedal moves. Drawn as the mod wheel is (`380` decision 9): 0 at the bottom, 127 at the top, so a press and a lift come out as steps by the existing step rule and half-pedalling shows as it was played. Everything `380` decisions 14–19 give the wheel lanes applies: `KeyFocus::WheelLane`, a span drag, `⌘A`, `Delete` returning the span to rest (the pedal up), the note keys handing back. Nothing draws values.
+8. **Existing projects play their pedal right.** A clip that already holds CC64 (imported, pasted) is now chased, lifted on stop and on a jump, and shown in the lane. No project format change: a clip event is its MIDI bytes. A changelog line says so, as it changes how such a project sounds.
+9. **Everything that renders the arrangement follows.** The audio export renders through the same playback (`130` § Audio export), and so does the performance capture (`520`, where question 3's "plain CCs (sustain) in neither" becomes "the pedal latched in both"). MIDI Out tracks get the same pedal-ups as plugin tracks.
+
+## Walkthrough
+
+A 4-bar clip of chords played dry, the lead clip, the loop on it.
+
+1. Play. On the second pass, pedal the chords, lifting and pressing again at each chord change.
+2. `/`. No notes in the buffer, so the take is the pass holding the last pedal move (decision 3). The pedal moved, so its span runs from its first press to the end of bar 4, and at the end the old value (up) is written back.
+3. The loop wraps: the pedal is down at the end of bar 4 only if the take held it there, and the jump lifts it either way (decision 4), so bar 1 starts clean. Bar 1 presses it again if the take had it down there.
+4. `W` to `SUS` shows the presses as steps under the chords. ⌘Z restores the dry clip.
+
+## What to check
+
+- **The jump's order.** `reanchor_playback` invalidates the controllers, seeks (the chase queues what is due at the next tick) and then releases the notes now. The lift goes out now too, after the note-offs or before them (either releases the notes), but always before the chase's press at the next tick, and it must leave the tracker knowing the pedal is up so the chase presses it again: the invalidate's `STALE` would otherwise resend "down" to a synth told "up" without the tracker knowing. A test through `run_command` (the `muted-note-release` lesson): a loop wrap with the pedal down on both sides sends up then down; a wrap from down to up sends one up; a split boundary under a held pedal sends nothing.
+- **The arrival and gap chases**: a clip ending with the pedal down lifts it there; the next clip starting with it down presses it; adjacent clips with it down on both sides send nothing (the split-boundary cases of `split-boundary-note-hang-fix`, now for the pedal).
+- **The stop's resets** include the pedal, after the note releases, on both outputs; a pedal the player holds on the armed track stays down.
+- **Capture**: the carry of a pedal held into a take, the landing over a clip with pedal data (replaced, not interleaved), a notes-only take leaving the pedal alone, riding the pedal alone leaving the wheels, the take session's release after the last chord landing.
+- **The MCP server** (`360`): the reads already list CC64 moves as `cc64`; leave them. `replace_clip_notes`'s `clear_wheels` keeps clearing only the two wheels unless it reads the renamed list; decide when building which it should, and keep its description true.
+
+## Not in this design
+
+- Other CCs (the sostenuto and soft pedals, CC66/67, expression CC11), aftertouch.
+- A sustain threshold, re-pedal cleanup, or turning held pedal into longer notes: what you play is what you get (`capture-no-post-processing`).
+- Ringing a new clip's pedal tail past its end (decision 2).
+- Drawing pedal data in the lane (`380` decision 11).
+
+## Phases
+
+1. **Recording and playback.** CC64's rest and the renamed list (decision 1), `is_recorded`, the jump lift (decision 4), the pedal-only running take (decision 3). Tests: `controllers.rs` (the pedal followed, reset on a stop, the lift on a jump and not on a re-seek), `message.rs` (the rest, `is_recorded`), the capture and landing cases above, the jump's order through `run_command`. Docs: `090`, `370` (sustain no longer out of scope), `050` § Invariants (the pedal chased and lifted on a jump; CCs other than the three still played as they come), `100` § Notes held into a take, `520` question 3. Changelog: the sustain pedal is recorded and kept by `/`; clips with sustain now let go of it on a stop, a jump and a loop wrap.
+2. **The `SUS` lane** (decision 7). The lane variant, its gutter label and hit-test, the data dot, the cycle, the focus and delete reused. Tests: the cycle with four lanes, the keymap still conflict-free, the delete returning the pedal to up. Docs: `380`, `030` (the gutter), `010` (`W`'s cycle), `020` (the lane choice). Changelog: the piano roll's lower lane shows the sustain pedal.
