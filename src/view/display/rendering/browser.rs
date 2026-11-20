@@ -8,7 +8,7 @@ use egui::{Id, LayerId, Order, Pos2, Shape, StrokeKind, Vec2, epaint::QuadraticB
 use super::super::browser::{
     BROWSER_DISCLOSURE_W, BROWSER_FONT_SIZE, BROWSER_ICON_W, BROWSER_INDENT_X, BROWSER_LIST_PAD_Y,
     BROWSER_ROW_H, BrowserCategory, BrowserItem, TOGGLE_WASH_SIZE, browser_icon_x,
-    browser_row_rect, browser_text_x,
+    browser_row_rect, browser_row_tops, browser_text_x,
 };
 use super::*;
 
@@ -393,9 +393,12 @@ impl Display {
         let selected = tree.selected();
         let scroll = self.browser.scroll;
         let hovered = self.hovered_browser_row();
-        let first = (scroll / BROWSER_ROW_H) as usize;
-        for (i, row) in rows.iter().enumerate().skip(first) {
-            let row_rect = browser_row_rect(panel.min, width, i, scroll);
+        let tops = browser_row_tops(rows);
+        for (i, (row, &row_top)) in rows.iter().zip(&tops).enumerate() {
+            let row_rect = browser_row_rect(panel.min, width, row_top, scroll);
+            if row_rect.max.y < list.min.y {
+                continue;
+            }
             let top = row_rect.min.y;
             if top > list.max.y {
                 break;

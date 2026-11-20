@@ -22,6 +22,7 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ### Changed
 
+- The browser leaves a little space above each category (Recent, Projects, Templates, Clips, Plugins), so the groups are easier to tell apart.
 - Quieter colours in two places: the piano keys' white keys are a mid-grey instead of near-white, so the notes stand out more than the keyboard beside them, and a track header's volume and pan bars are a softer shade of the track's colour, so the header column no longer competes with the clips.
 - The performance lane's keys look like a keyboard: a slightly taller strip with the white keys unbroken and the black keys hanging from the top, where before the black keys disappeared into the lane and the strip read as a dashed line.
 

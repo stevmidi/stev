@@ -85,11 +85,34 @@ pub(in crate::view::display) fn clamp_browser_width(width: f32) -> f32 {
     }
 }
 
-/// Row `idx` of the tree with the list scrolled `scroll` points, in a panel
-/// `width` wide whose top-left corner is `origin`: the panel's width less its
-/// separator. Where the rows are drawn and the rename field sits.
-pub(super) fn browser_row_rect(origin: Pos2, width: f32, idx: usize, scroll: f32) -> Rect {
-    let top = origin.y + BROWSER_LIST_PAD_Y + idx as f32 * BROWSER_ROW_H - scroll;
+/// Space above every category row but the first, so the categories read as
+/// groups rather than one long list.
+pub(super) const BROWSER_CATEGORY_GAP: f32 = 8.0;
+
+/// Where each of `rows` starts in the list's content (its first row at 0),
+/// then the content's height: `rows.len() + 1` values. A row is
+/// `BROWSER_ROW_H` tall, and a category row after the first has
+/// [`BROWSER_CATEGORY_GAP`] above it. Every row geometry reads these.
+pub(super) fn browser_row_tops(rows: &[BrowserRow]) -> Vec<f32> {
+    let mut tops = Vec::with_capacity(rows.len() + 1);
+    let mut y = 0.0;
+    for (i, row) in rows.iter().enumerate() {
+        if i > 0 && matches!(row.item, BrowserItem::Category(_)) {
+            y += BROWSER_CATEGORY_GAP;
+        }
+        tops.push(y);
+        y += BROWSER_ROW_H;
+    }
+    tops.push(y);
+    tops
+}
+
+/// The row starting `top` into the list's content ([`browser_row_tops`]) with
+/// the list scrolled `scroll` points, in a panel `width` wide whose top-left
+/// corner is `origin`: the panel's width less its separator. Where the rows
+/// are drawn and the rename field sits.
+pub(super) fn browser_row_rect(origin: Pos2, width: f32, top: f32, scroll: f32) -> Rect {
+    let top = origin.y + BROWSER_LIST_PAD_Y + top - scroll;
     Rect::from_min_max(
         pos2(origin.x, top),
         pos2(origin.x + width - 1.0, top + BROWSER_ROW_H),
@@ -97,11 +120,20 @@ pub(super) fn browser_row_rect(origin: Pos2, width: f32, idx: usize, scroll: f32
 }
 
 /// The row index under `y`, measured from the panel's top, with the list
-/// scrolled `scroll` points — the inverse of [`browser_row_rect`]. `None`
-/// in the pad above the first row; past the last row it is an index the
+/// scrolled `scroll` points and its rows at `tops` ([`browser_row_tops`]) —
+/// the inverse of [`browser_row_rect`]. `None` in the pad above the first row
+/// and in the gap above a category; past the last row it is an index the
 /// tree doesn't have.
-pub(super) fn browser_row_at(y: f32, scroll: f32) -> Option<usize> {
-    (y >= BROWSER_LIST_PAD_Y).then(|| ((y - BROWSER_LIST_PAD_Y + scroll) / BROWSER_ROW_H) as usize)
+pub(super) fn browser_row_at(tops: &[f32], y: f32, scroll: f32) -> Option<usize> {
+    if y < BROWSER_LIST_PAD_Y {
+        return None;
+    }
+    let content_y = y - BROWSER_LIST_PAD_Y + scroll;
+    let idx = tops
+        .partition_point(|&top| top <= content_y)
+        .checked_sub(1)?;
+    let past_end = idx + 1 >= tops.len();
+    (past_end || content_y < tops[idx] + BROWSER_ROW_H).then_some(idx)
 }
 
 /// The footer band in canvas space, given the `canvas` rect, the footer's
@@ -977,11 +1009,11 @@ impl BrowserTree {
     }
 }
 
-/// The browser list's scroll (points) after scrolling so row `selected` is
-/// wholly on screen, moving `scroll` as little as possible; the list is
-/// `list_h` points tall. A list shorter than a row shows the row's top.
-pub(super) fn browser_scroll_to_show(scroll: f32, selected: usize, list_h: f32) -> f32 {
-    let top = selected as f32 * BROWSER_ROW_H;
+/// The browser list's scroll (points) after scrolling so the row starting
+/// `top` into the list's content ([`browser_row_tops`]) is wholly on screen,
+/// moving `scroll` as little as possible; the list is `list_h` points tall. A
+/// list shorter than a row shows the row's top.
+pub(super) fn browser_scroll_to_show(scroll: f32, top: f32, list_h: f32) -> f32 {
     if top < scroll {
         top
     } else if top + BROWSER_ROW_H > scroll + list_h {
@@ -1173,7 +1205,7 @@ impl Display {
             && self.is_over_browser(p.x, p.y)
             && p.y < self.browser_list_bottom()
             && !self.is_on_browser_edge(p.x, p.y))
-        .then(|| browser_row_at(p.y, self.browser.scroll))
+        .then(|| browser_row_at(&self.browser_row_tops(), p.y, self.browser.scroll))
         .flatten()
     }
 
@@ -1194,9 +1226,16 @@ impl Display {
         self.browser_list_bottom() - self.render.canvas_rect.min.y - BROWSER_LIST_PAD_Y
     }
 
+    /// Where each row starts in the list's content, then its height
+    /// ([`browser_row_tops`]).
+    pub(super) fn browser_row_tops(&self) -> Vec<f32> {
+        browser_row_tops(self.browser.tree.rows())
+    }
+
     /// The furthest the list scrolls: its last row's bottom at the list's.
     fn browser_max_scroll(&self) -> f32 {
-        self.browser.tree.rows().len() as f32 * BROWSER_ROW_H - self.browser_list_h()
+        let content_h = self.browser_row_tops().last().copied().unwrap_or(0.0);
+        content_h - self.browser_list_h()
     }
 
     /// Re-lists the Plugins category from the plugin catalog — on showing
@@ -1307,8 +1346,11 @@ impl Display {
 
     /// Scrolls the list as little as needed to show row `idx` whole.
     pub(super) fn scroll_browser_to_row(&mut self, idx: usize) {
+        let Some(&top) = self.browser_row_tops().get(idx) else {
+            return self.clamp_browser_scroll();
+        };
         self.browser.scroll =
-            browser_scroll_to_show(self.browser.scroll, idx, self.browser_list_h());
+            browser_scroll_to_show(self.browser.scroll, top, self.browser_list_h());
         self.clamp_browser_scroll();
     }
 
@@ -1329,7 +1371,7 @@ impl Display {
         let row = browser_row_rect(
             self.render.canvas_rect.min,
             self.browser.width,
-            idx,
+            *self.browser_row_tops().get(idx)?,
             self.browser.scroll,
         );
         let list_top = self.render.canvas_rect.min.y + BROWSER_LIST_PAD_Y;
@@ -1349,7 +1391,11 @@ impl Display {
             .browser
             .tree
             .rows()
-            .get(browser_row_at(y, self.browser.scroll)?)?
+            .get(browser_row_at(
+                &self.browser_row_tops(),
+                y,
+                self.browser.scroll,
+            )?)?
             .item
         {
             BrowserItem::Category(category) if category.plus_action().is_some() => category,
@@ -1492,7 +1538,7 @@ impl Display {
             }
             return;
         }
-        let Some(idx) = browser_row_at(y, self.browser.scroll) else {
+        let Some(idx) = browser_row_at(&self.browser_row_tops(), y, self.browser.scroll) else {
             return;
         };
         let Some(item) = self
@@ -1751,16 +1797,59 @@ mod tests {
         names.iter().map(|s| s.to_string()).collect()
     }
 
+    /// Two categories of two projects each: rows 0 and 3 are categories.
+    fn two_categories() -> Vec<BrowserRow> {
+        let category = |category| BrowserRow {
+            item: BrowserItem::Category(category),
+            depth: 0,
+        };
+        let project = |name: &str| BrowserRow {
+            item: BrowserItem::Project {
+                folder: None,
+                name: name.to_string(),
+            },
+            depth: 1,
+        };
+        vec![
+            category(BrowserCategory::Recent),
+            project("a"),
+            project("b"),
+            category(BrowserCategory::Projects),
+            project("c"),
+            project("d"),
+        ]
+    }
+
+    #[test]
+    fn a_gap_sits_above_every_category_but_the_first() {
+        let h = BROWSER_ROW_H;
+        let gap = BROWSER_CATEGORY_GAP;
+        assert_eq!(
+            browser_row_tops(&two_categories()),
+            vec![
+                0.0,
+                h,
+                2.0 * h,
+                3.0 * h + gap,
+                4.0 * h + gap,
+                5.0 * h + gap,
+                6.0 * h + gap
+            ]
+        );
+        assert_eq!(browser_row_tops(&[]), vec![0.0]);
+    }
+
     #[test]
     fn row_at_inverts_row_rect() {
         let origin = pos2(0.0, 0.0);
+        let tops = browser_row_tops(&two_categories());
         for scroll in [0.0, 13.0, 2.0 * BROWSER_ROW_H] {
-            for idx in 0..5 {
-                let rect = browser_row_rect(origin, 200.0, idx, scroll);
+            for (idx, &top) in tops[..tops.len() - 1].iter().enumerate() {
+                let rect = browser_row_rect(origin, 200.0, top, scroll);
                 for y in [rect.min.y, rect.center().y, rect.max.y - 0.01] {
                     if y >= BROWSER_LIST_PAD_Y {
                         assert_eq!(
-                            browser_row_at(y, scroll),
+                            browser_row_at(&tops, y, scroll),
                             Some(idx),
                             "y {y} scroll {scroll}"
                         );
@@ -1768,7 +1857,17 @@ mod tests {
                 }
             }
         }
-        assert_eq!(browser_row_at(BROWSER_LIST_PAD_Y - 0.5, 0.0), None);
+        assert_eq!(browser_row_at(&tops, BROWSER_LIST_PAD_Y - 0.5, 0.0), None);
+    }
+
+    #[test]
+    fn the_gap_above_a_category_is_no_row() {
+        let tops = browser_row_tops(&two_categories());
+        let gap_y = BROWSER_LIST_PAD_Y + 3.0 * BROWSER_ROW_H + BROWSER_CATEGORY_GAP * 0.5;
+        assert_eq!(browser_row_at(&tops, gap_y, 0.0), None);
+        // Past the last row: an index the tree doesn't have.
+        let below = BROWSER_LIST_PAD_Y + tops[6] + 1.0;
+        assert_eq!(browser_row_at(&tops, below, 0.0), Some(6));
     }
 
     #[test]
@@ -2500,22 +2599,22 @@ mod tests {
     fn browser_scroll_moves_only_as_far_as_needed() {
         let h = BROWSER_ROW_H;
         // Already wholly visible: stays put.
-        assert_eq!(browser_scroll_to_show(0.0, 3, 10.0 * h), 0.0);
+        assert_eq!(browser_scroll_to_show(0.0, 3.0 * h, 10.0 * h), 0.0);
         // Below: its bottom lands on the list's bottom.
-        assert_eq!(browser_scroll_to_show(0.0, 12, 10.0 * h), 3.0 * h);
+        assert_eq!(browser_scroll_to_show(0.0, 12.0 * h, 10.0 * h), 3.0 * h);
         // Above: its top lands on the list's top.
-        assert_eq!(browser_scroll_to_show(5.0 * h, 2, 10.0 * h), 2.0 * h);
+        assert_eq!(browser_scroll_to_show(5.0 * h, 2.0 * h, 10.0 * h), 2.0 * h);
         // Part-scrolled off the top: brought fully in.
-        assert_eq!(browser_scroll_to_show(2.5 * h, 2, 10.0 * h), 2.0 * h);
+        assert_eq!(browser_scroll_to_show(2.5 * h, 2.0 * h, 10.0 * h), 2.0 * h);
         // Part-cut at the bottom (list not a whole number of rows tall).
-        assert_eq!(browser_scroll_to_show(0.0, 9, 9.5 * h), 0.5 * h);
+        assert_eq!(browser_scroll_to_show(0.0, 9.0 * h, 9.5 * h), 0.5 * h);
         // A list shorter than a row shows the row's top.
-        assert_eq!(browser_scroll_to_show(0.0, 4, h * 0.5), 4.0 * h);
+        assert_eq!(browser_scroll_to_show(0.0, 4.0 * h, h * 0.5), 4.0 * h);
     }
 
     #[test]
     fn a_category_plus_sits_inside_the_right_end_of_its_row() {
-        let row = browser_row_rect(pos2(0.0, 0.0), 240.0, 0, 0.0);
+        let row = browser_row_rect(pos2(0.0, 0.0), 240.0, 0.0, 0.0);
         let button = category_plus_rect(row);
         assert!(row.contains_rect(button));
         assert_eq!(button.max.x, row.max.x - CATEGORY_PLUS_RIGHT_X);
