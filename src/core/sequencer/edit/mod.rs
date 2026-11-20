@@ -706,6 +706,11 @@ macro_rules! sequencer_edit_dispatch {
                 // `,`/`.` amend the running commit they step
                 // (`540-earlier-pass.md` decision 4); any other step on top
                 // of it ends the steps, and its kept buffer goes (decision 6).
+                // This relies on `undo` offering every new edit to the top
+                // step's merge, which it skips while the record is marked
+                // saved: Stev never calls `set_saved`. If it ever does, a
+                // step would become an undo step of its own and the buffer
+                // would stay until the commit leaves the record.
                 if let SequencerEdit::CommitClip(commit) = self {
                     if let SequencerEdit::StepPass(step) = &other
                         && commit.absorb(step)
