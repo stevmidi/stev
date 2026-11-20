@@ -4,8 +4,9 @@
 //! pointer to the value, and the parameter's name under it, shortened to
 //! fit — with a clip open, a lane switch coloured as the gutter's labels
 //! are. The selected knob, while the panel has the keyboard, gets corner
-//! brackets around its dial. An unassigned knob has an empty dial and a dim placeholder label; an
-//! armed one reads `Turn…` in `accent`. A track whose knobs can't drive
+//! brackets around its dial. An unassigned knob has an empty dial and a
+//! placeholder label, both drawn a step dimmer than an assigned knob's
+//! ([`UNASSIGNED_STRENGTH`]); an armed one reads `Turn…` in `accent`. A track whose knobs can't drive
 //! anything shows the panel's hint instead. See `030-ui-design.md` § Knob
 //! Panel.
 
@@ -40,6 +41,10 @@ const ARMED_LABEL: &str = "Turn…";
 const PLACEHOLDER_LABELS: [&str; KNOB_COUNT] = [
     "Knob 1", "Knob 2", "Knob 3", "Knob 4", "Knob 5", "Knob 6", "Knob 7", "Knob 8",
 ];
+/// How strongly an unassigned knob's dial and label are drawn, unless it is
+/// selected, armed or under the pointer: dimmer than an assigned knob's, so
+/// the knobs that drive a parameter stand out from the ones that don't.
+const UNASSIGNED_STRENGTH: f32 = 0.55;
 /// Points kept clear at each end of a label, so names in neighbouring
 /// columns never touch.
 const LABEL_INSET_X: f32 = 2.0;
@@ -92,7 +97,17 @@ impl Display {
                 frame: rects.frame.translate(offset),
                 ..*rects
             };
-            draw_knob(painter, &rects, shown.value, accent);
+            // An unassigned knob steps back unless something points at it.
+            let strength = if shown.param.is_none()
+                && armed != Some(knob)
+                && selected != Some(knob)
+                && hovered != Some(knob)
+            {
+                UNASSIGNED_STRENGTH
+            } else {
+                1.0
+            };
+            draw_knob(painter, &rects, shown.value, accent, strength);
             // The gutter's toggle colours, the knob's label being its lane's
             // switch: `accent` while its lane is up, so the lane stays named
             // once the panel loses the keyboard and the brackets go; `fg`
@@ -106,7 +121,10 @@ impl Display {
             } else if shown.param.is_some() {
                 (self.knob_name(knob).unwrap_or("?"), name_color)
             } else {
-                (PLACEHOLDER_LABELS[knob], name_color)
+                (
+                    PLACEHOLDER_LABELS[knob],
+                    name_color.gamma_multiply(strength),
+                )
             };
             // The gutter's data marker, for a clip with moves of the knob's
             // parameter (`400-parameter-knobs.md` decision 12).
@@ -185,8 +203,15 @@ fn label_width(cell_w: f32, marked: bool) -> f32 {
 }
 
 /// One knob's dial: the trough, the value arc in `accent` and the pointer;
-/// an empty dial — trough and a dim pointer at 0 — with no value.
-fn draw_knob(painter: &Painter, rects: &KnobRects, value: Option<f64>, accent: Color32) {
+/// an empty dial — trough and a dim pointer at 0 — with no value. The trough
+/// and pointer are drawn at `strength` (1.0 in full).
+fn draw_knob(
+    painter: &Painter,
+    rects: &KnobRects,
+    value: Option<f64>,
+    accent: Color32,
+    strength: f32,
+) {
     let arc_r = (rects.radius - ARC_W * 0.5).max(1.0);
     let start = knob_angle(0.0);
     painter.add(arc(
@@ -194,7 +219,7 @@ fn draw_knob(painter: &Painter, rects: &KnobRects, value: Option<f64>, accent: C
         arc_r,
         start,
         start + SWEEP,
-        theme::fg_dim().gamma_multiply(TROUGH_ALPHA),
+        theme::fg_dim().gamma_multiply(TROUGH_ALPHA * strength),
     ));
     if let Some(value) = value {
         let end = knob_angle(value);
@@ -209,7 +234,10 @@ fn draw_knob(painter: &Painter, rects: &KnobRects, value: Option<f64>, accent: C
     } else {
         theme::fg_dim()
     };
-    painter.line_segment([rects.center, tip], Stroke::new(1.5, pointer));
+    painter.line_segment(
+        [rects.center, tip],
+        Stroke::new(1.5, pointer.gamma_multiply(strength)),
+    );
 }
 
 /// An arc of radius `r` about `center` from screen angle `from` to `to`
