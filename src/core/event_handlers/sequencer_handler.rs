@@ -1980,7 +1980,7 @@ mod tests {
             vec![
                 "Agent: 1 new clip, bar 3",
                 "Agent: new notes on track 2, bar 3",
-                "Agent: tempo 100.0 BPM",
+                "Agent: tempo 100.00 BPM",
             ]
         );
         assert!(

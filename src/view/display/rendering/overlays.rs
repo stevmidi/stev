@@ -85,7 +85,7 @@ impl Display {
         // the row centred that moved every chip in it. A value wider than its
         // template (a four-digit bar, a peak past 100%) still widens its chip.
         let mut readouts: Vec<(&str, String, Color32, &str)> = vec![
-            ("BPM", format_bpm(self.tempo_us()), theme::fg(), "000.0"),
+            ("BPM", format_bpm(self.tempo_us()), theme::fg(), "000.00"),
             ("METER", self.meter().to_string(), theme::fg(), "16/8"),
             (
                 "POS",

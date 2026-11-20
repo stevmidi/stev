@@ -768,9 +768,10 @@ pub(crate) fn create_audio_export_dir(
 /// `<base> <tempo>bpm <n>-<d> bar <bar>` (e.g. `Sketch 120bpm 4-4 bar 9`) for
 /// an export starting at arrangement tick `start_tick`, in bars of `meter`
 /// (1-based, as on screen). A DAW import needs the tempo, the meter and
-/// where to drop the files, and a WAV carries none of them. The tempo shows a
-/// tenth only when it has one (`120.5bpm`). While `taken` says a name is in
-/// use, ` 2`, ` 3`, … go after it.
+/// where to drop the files, and a WAV carries none of them. The tempo is
+/// [`format_bpm`]'s, the one played, without trailing zeros (`120bpm`,
+/// `120.5bpm`, `117.35bpm`). While `taken` says a name is in use, ` 2`,
+/// ` 3`, … go after it.
 fn audio_export_dir_name(
     base: &str,
     tempo_us: i32,
@@ -779,7 +780,7 @@ fn audio_export_dir_name(
     taken: impl Fn(&str) -> bool,
 ) -> String {
     let bpm = format_bpm(tempo_us);
-    let bpm = bpm.strip_suffix(".0").unwrap_or(&bpm);
+    let bpm = bpm.trim_end_matches('0').trim_end_matches('.');
     let stem = format!(
         "{base} {bpm}bpm {}-{} bar {}",
         meter.numerator(),
@@ -838,7 +839,7 @@ fn clip_export_name(
 #[cfg(test)]
 mod tests {
     use crate::core::paths::scratch_dir;
-    use crate::core::time::{bpm_tenths_to_tempo_us, bpm_to_tempo_us};
+    use crate::core::time::{bpm_hundredths_to_tempo_us, bpm_to_tempo_us};
 
     use super::*;
 
@@ -1344,12 +1345,26 @@ mod tests {
         let six_eight = Meter::parse("6/8").unwrap();
         let name = audio_export_dir_name(
             "Waltz",
-            bpm_tenths_to_tempo_us(1_205),
+            bpm_hundredths_to_tempo_us(12_050),
             six_eight,
             six_eight.bars_to_ticks(2),
             |_| false,
         );
         assert_eq!(name, "Waltz 120.5bpm 6-8 bar 3");
+    }
+
+    /// Issue #33: the folder carries the tempo to the hundredth, the one the
+    /// stems were rendered at, so a DAW set to it keeps them on its grid.
+    #[test]
+    fn audio_export_dir_name_keeps_a_tempo_hundredth() {
+        let name = audio_export_dir_name(
+            "Sketch",
+            bpm_hundredths_to_tempo_us(11_735),
+            Meter::FOUR_FOUR,
+            0,
+            |_| false,
+        );
+        assert_eq!(name, "Sketch 117.35bpm 4-4 bar 1");
     }
 
     #[test]

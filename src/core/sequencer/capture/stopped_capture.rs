@@ -399,7 +399,8 @@ mod tests {
         fit_tempo(&mut seq, &mut record);
         let fitted = seq.selected_clip().unwrap();
 
-        assert_eq!(seq.tempo_us(), 620_370);
+        // 96.7166… BPM unrounded; the fit lands on the hundredth (issue #33).
+        assert_eq!(seq.tempo_us(), 620_347);
         assert_eq!(fitted.region_length(), bar * 3);
         assert_eq!(
             window_note_ons(fitted),

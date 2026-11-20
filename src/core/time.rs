@@ -272,40 +272,51 @@ pub const fn ticks_to_microseconds(tempo: i32, ticks: i32) -> i32 {
     tempo / PPQN * ticks
 }
 
-/// A BPM → µs-per-quarter tempo (truncating). The app shows a tempo through
-/// [`format_bpm`].
+/// A whole BPM → µs-per-quarter tempo, rounded to the nearest µs (so it is
+/// a hundredth of a BPM exactly, [`round_tempo_us`]). The app shows a tempo
+/// through [`format_bpm`].
 pub const fn bpm_to_tempo_us(bpm: i32) -> i32 {
-    MICROSECONDS_PER_MINUTE / bpm
+    (MICROSECONDS_PER_MINUTE + bpm / 2) / bpm
 }
 
 /// A µs-per-quarter tempo → BPM, for tests to compare against with a
-/// tolerance; the app goes through tenths ([`tempo_us_to_bpm_tenths`]).
+/// tolerance; the app goes through hundredths ([`tempo_us_to_bpm_hundredths`]).
 #[cfg(test)]
 pub const fn tempo_us_to_bpm(tempo: i32) -> f32 {
     MICROSECONDS_PER_MINUTE as f32 / tempo as f32
 }
 
-/// Microseconds in a minute, times ten — relates a µs-per-quarter tempo to
-/// tenths of a BPM, the header's BPM resolution.
-const MICROSECONDS_PER_TENTH_BPM_MINUTE: i64 = 600_000_000;
+/// Microseconds in a minute, times a hundred — relates a µs-per-quarter
+/// tempo to hundredths of a BPM, the app's tempo resolution.
+const MICROSECONDS_PER_HUNDREDTH_BPM_MINUTE: i64 = 6_000_000_000;
 
 /// The slowest tempo the app sets, in BPM — by hand, a drag or tapping.
 pub(crate) const TEMPO_BPM_MIN: i32 = 20;
 /// The fastest tempo the app sets, in BPM — see [`TEMPO_BPM_MIN`].
 pub(crate) const TEMPO_BPM_MAX: i32 = 300;
 
-/// A tempo in tenths of a BPM → µs per quarter, rounded to the nearest µs.
-/// `tenths` must be positive.
-pub(crate) fn bpm_tenths_to_tempo_us(tenths: i32) -> i32 {
-    let tenths = i64::from(tenths);
-    ((MICROSECONDS_PER_TENTH_BPM_MINUTE + tenths / 2) / tenths) as i32
+/// A tempo in hundredths of a BPM → µs per quarter, rounded to the nearest
+/// µs. `hundredths` must be positive. Across the app's tempo range
+/// neighbouring hundredths are at least 6 µs apart, so the round trip
+/// through [`tempo_us_to_bpm_hundredths`] is exact.
+pub(crate) fn bpm_hundredths_to_tempo_us(hundredths: i32) -> i32 {
+    let hundredths = i64::from(hundredths);
+    ((MICROSECONDS_PER_HUNDREDTH_BPM_MINUTE + hundredths / 2) / hundredths) as i32
 }
 
-/// A µs-per-quarter tempo → the nearest tenth of a BPM (what the header
+/// A µs-per-quarter tempo → the nearest hundredth of a BPM (what the header
 /// shows). `tempo_us` must be positive.
-pub(crate) fn tempo_us_to_bpm_tenths(tempo_us: i32) -> i32 {
+pub(crate) fn tempo_us_to_bpm_hundredths(tempo_us: i32) -> i32 {
     // The units are reciprocal: the same rounded division goes either way.
-    bpm_tenths_to_tempo_us(tempo_us)
+    bpm_hundredths_to_tempo_us(tempo_us)
+}
+
+/// A µs-per-quarter tempo moved onto the nearest hundredth of a BPM. Every
+/// tempo the app sets goes through it (`SetTempoEdit`, Enter's fit,
+/// `⌥=`/`⌥-`), so the tempo shown is the tempo played, and a DAW set to it
+/// keeps exported stems on its grid (issue #33). `tempo_us` must be positive.
+pub(crate) fn round_tempo_us(tempo_us: i32) -> i32 {
+    bpm_hundredths_to_tempo_us(tempo_us_to_bpm_hundredths(tempo_us))
 }
 
 /// Clamps a µs-per-quarter tempo to [`TEMPO_BPM_MIN`]..=[`TEMPO_BPM_MAX`].
@@ -321,32 +332,35 @@ pub(crate) const fn clamp_tempo_us(tempo_us: i32) -> i32 {
     }
 }
 
-/// Clamps a tempo in tenths of a BPM to [`TEMPO_BPM_MIN`]..=[`TEMPO_BPM_MAX`].
-pub(crate) const fn clamp_bpm_tenths(tenths: i32) -> i32 {
-    if tenths < TEMPO_BPM_MIN * 10 {
-        TEMPO_BPM_MIN * 10
-    } else if tenths > TEMPO_BPM_MAX * 10 {
-        TEMPO_BPM_MAX * 10
+/// Clamps a tempo in hundredths of a BPM to
+/// [`TEMPO_BPM_MIN`]..=[`TEMPO_BPM_MAX`].
+pub(crate) const fn clamp_bpm_hundredths(hundredths: i32) -> i32 {
+    if hundredths < TEMPO_BPM_MIN * 100 {
+        TEMPO_BPM_MIN * 100
+    } else if hundredths > TEMPO_BPM_MAX * 100 {
+        TEMPO_BPM_MAX * 100
     } else {
-        tenths
+        hundredths
     }
 }
 
-/// A µs-per-quarter tempo as the header shows it: to the nearest tenth of a
-/// BPM, one decimal (`120.0`). The BPM field opens with the same text.
+/// A µs-per-quarter tempo as the header shows it: to the nearest hundredth
+/// of a BPM, always two decimals (`120.00`), as a DAW's tempo field does.
+/// The BPM field opens with the same text.
 pub(crate) fn format_bpm(tempo_us: i32) -> String {
-    let tenths = tempo_us_to_bpm_tenths(tempo_us);
-    format!("{}.{}", tenths / 10, tenths % 10)
+    let hundredths = tempo_us_to_bpm_hundredths(tempo_us);
+    format!("{}.{:02}", hundredths / 100, hundredths % 100)
 }
 
-/// A typed BPM → tenths of a BPM, clamped to the app's tempo range; `None`
-/// when it isn't a number. A comma works as the decimal point too.
-pub(crate) fn parse_bpm_tenths(text: &str) -> Option<i32> {
-    let bpm: f32 = text.trim().replace(',', ".").parse().ok()?;
+/// A typed BPM → hundredths of a BPM, clamped to the app's tempo range;
+/// `None` when it isn't a number. A comma works as the decimal point too.
+pub(crate) fn parse_bpm_hundredths(text: &str) -> Option<i32> {
+    let bpm: f64 = text.trim().replace(',', ".").parse().ok()?;
     if !bpm.is_finite() {
         return None;
     }
-    Some(clamp_bpm_tenths((bpm * 10.0).round() as i32))
+    let hundredths = (bpm * 100.0).round().clamp(0.0, f64::from(i32::MAX)) as i32;
+    Some(clamp_bpm_hundredths(hundredths))
 }
 
 /// The tempo (µs per quarter) that makes `scaled_ticks` of musical content last
@@ -774,16 +788,35 @@ mod tests {
     }
 
     #[test]
-    fn bpm_tenths_round_trip_through_tempo_us() {
-        assert_eq!(bpm_tenths_to_tempo_us(1200), 500_000);
-        // 120.1 BPM is 499_583.68 µs: rounded, and back to 120.1.
-        assert_eq!(bpm_tenths_to_tempo_us(1201), 499_584);
-        for tenths in [200, 901, 1200, 1335, 2999, 3000] {
+    fn bpm_hundredths_round_trip_through_tempo_us() {
+        assert_eq!(bpm_hundredths_to_tempo_us(12_000), 500_000);
+        // 120.01 BPM is 499_958.34 µs: rounded, and back to 120.01.
+        assert_eq!(bpm_hundredths_to_tempo_us(12_001), 499_958);
+        for hundredths in [2_000, 2_001, 9_001, 11_735, 12_000, 29_999, 30_000] {
             assert_eq!(
-                tempo_us_to_bpm_tenths(bpm_tenths_to_tempo_us(tenths)),
-                tenths
+                tempo_us_to_bpm_hundredths(bpm_hundredths_to_tempo_us(hundredths)),
+                hundredths
             );
         }
+    }
+
+    #[test]
+    fn whole_bpms_are_exact_hundredths() {
+        assert_eq!(bpm_to_tempo_us(90), 666_667);
+        for bpm in [TEMPO_BPM_MIN, 90, 117, 120, 140, TEMPO_BPM_MAX] {
+            let tempo_us = bpm_to_tempo_us(bpm);
+            assert_eq!(round_tempo_us(tempo_us), tempo_us);
+        }
+    }
+
+    /// Issue #33: a fitted 117.346 BPM moves to 117.35, the tempo shown.
+    #[test]
+    fn round_tempo_us_lands_on_the_hundredth_shown() {
+        let fitted = 511_308; // 117.346 BPM
+        let rounded = round_tempo_us(fitted);
+        assert_eq!(rounded, bpm_hundredths_to_tempo_us(11_735));
+        assert_eq!(format_bpm(rounded), "117.35");
+        assert_eq!(round_tempo_us(rounded), rounded);
     }
 
     #[test]
@@ -794,23 +827,25 @@ mod tests {
     }
 
     #[test]
-    fn format_bpm_shows_the_nearest_tenth() {
-        assert_eq!(format_bpm(500_000), "120.0");
-        assert_eq!(format_bpm(bpm_to_tempo_us(90)), "90.0");
-        assert_eq!(format_bpm(bpm_tenths_to_tempo_us(1201)), "120.1");
+    fn format_bpm_always_shows_two_decimals() {
+        assert_eq!(format_bpm(500_000), "120.00");
+        assert_eq!(format_bpm(bpm_to_tempo_us(90)), "90.00");
+        assert_eq!(format_bpm(bpm_hundredths_to_tempo_us(12_010)), "120.10");
+        assert_eq!(format_bpm(bpm_hundredths_to_tempo_us(12_001)), "120.01");
     }
 
     #[test]
-    fn parse_bpm_tenths_reads_decimals_and_clamps() {
-        assert_eq!(parse_bpm_tenths("120"), Some(1200));
-        assert_eq!(parse_bpm_tenths(" 98.5 "), Some(985));
-        assert_eq!(parse_bpm_tenths("98,5"), Some(985));
-        assert_eq!(parse_bpm_tenths("98.46"), Some(985));
-        assert_eq!(parse_bpm_tenths("5"), Some(TEMPO_BPM_MIN * 10));
-        assert_eq!(parse_bpm_tenths("1000"), Some(TEMPO_BPM_MAX * 10));
-        assert_eq!(parse_bpm_tenths(""), None);
-        assert_eq!(parse_bpm_tenths("fast"), None);
-        assert_eq!(parse_bpm_tenths("inf"), None);
+    fn parse_bpm_hundredths_reads_decimals_and_clamps() {
+        assert_eq!(parse_bpm_hundredths("120"), Some(12_000));
+        assert_eq!(parse_bpm_hundredths(" 98.5 "), Some(9_850));
+        assert_eq!(parse_bpm_hundredths("98,46"), Some(9_846));
+        assert_eq!(parse_bpm_hundredths("98.456"), Some(9_846));
+        assert_eq!(parse_bpm_hundredths("5"), Some(TEMPO_BPM_MIN * 100));
+        assert_eq!(parse_bpm_hundredths("1000"), Some(TEMPO_BPM_MAX * 100));
+        assert_eq!(parse_bpm_hundredths("1e12"), Some(TEMPO_BPM_MAX * 100));
+        assert_eq!(parse_bpm_hundredths(""), None);
+        assert_eq!(parse_bpm_hundredths("fast"), None);
+        assert_eq!(parse_bpm_hundredths("inf"), None);
     }
 
     #[test]

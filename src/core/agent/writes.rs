@@ -17,8 +17,8 @@ use crate::core::sequencer::{
     CreateClipsEdit, ReplaceClipNotesEdit, Sequencer, SequencerEdit, SetTempoEdit,
 };
 use crate::core::time::{
-    PPQN, TEMPO_BPM_MAX, TEMPO_BPM_MIN, bpm_tenths_to_tempo_us, clamp_bpm_tenths, format_bpm,
-    sixteenth_straight_ticks,
+    PPQN, TEMPO_BPM_MAX, TEMPO_BPM_MIN, bpm_hundredths_to_tempo_us, clamp_bpm_hundredths,
+    format_bpm, sixteenth_straight_ticks,
 };
 use crate::core::xorshift::XorShift;
 use crate::models::clip::{Clip, nearest_grid_tick, nearest_swung_grid_tick};
@@ -818,9 +818,9 @@ fn set_tempo(sequencer: &Sequencer, args: &Value) -> Result<AgentAnswer, String>
     }
     .filter(|bpm| bpm.is_finite() && *bpm > 0.0)
     .ok_or_else(|| "set_tempo needs bpm, a number like 96 or 92.5.".to_owned())?;
-    let tenths = (bpm * 10.0).round().min(f64::from(i32::MAX)) as i32;
-    let clamped = clamp_bpm_tenths(tenths);
-    let tempo_us = bpm_tenths_to_tempo_us(clamped);
+    let hundredths = (bpm * 100.0).round().min(f64::from(i32::MAX)) as i32;
+    let clamped = clamp_bpm_hundredths(hundredths);
+    let tempo_us = bpm_hundredths_to_tempo_us(clamped);
     let shown = format_bpm(tempo_us);
     let Some(edit) = SetTempoEdit::new(sequencer, tempo_us, None) else {
         return Ok(AgentAnswer::Reply(AgentReply::ok(format!(
@@ -828,7 +828,7 @@ fn set_tempo(sequencer: &Sequencer, args: &Value) -> Result<AgentAnswer, String>
         ))));
     };
     let mut reply = format!("Tempo set to {shown} BPM, as one undo step.");
-    if clamped != tenths {
+    if clamped != hundredths {
         reply.push_str(&format!(
             " Stev's tempos run {TEMPO_BPM_MIN}–{TEMPO_BPM_MAX} BPM, so {bpm} was clamped."
         ));
@@ -1242,20 +1242,25 @@ mod tests {
         let Ok(AgentAnswer::Write(write)) = set_tempo(&sequencer, &json!({ "bpm": 92.5 })) else {
             panic!("expected a write");
         };
-        assert_eq!(write.footer, "Agent: tempo 92.5 BPM");
+        assert_eq!(write.footer, "Agent: tempo 92.50 BPM");
         let mut record = Record::new();
         record.edit(&mut sequencer, write.edit);
-        assert_eq!(format_bpm(sequencer.tempo_us()), "92.5");
+        assert_eq!(format_bpm(sequencer.tempo_us()), "92.50");
+
+        let Ok(AgentAnswer::Write(write)) = set_tempo(&sequencer, &json!({ "bpm": 117.35 })) else {
+            panic!("expected a write");
+        };
+        assert_eq!(write.footer, "Agent: tempo 117.35 BPM");
 
         let Ok(AgentAnswer::Reply(reply)) = set_tempo(&sequencer, &json!({ "bpm": "92.5" })) else {
             panic!("expected a reply");
         };
-        assert_says(&reply.text, "already 92.5");
+        assert_says(&reply.text, "already 92.50");
 
         let Ok(AgentAnswer::Write(write)) = set_tempo(&sequencer, &json!({ "bpm": 900 })) else {
             panic!("expected a write");
         };
-        assert_says(&write.reply, "300.0 BPM");
+        assert_says(&write.reply, "300.00 BPM");
         assert_says(&write.reply, "clamped");
         assert!(set_tempo(&sequencer, &json!({ "bpm": -3 })).is_err());
     }

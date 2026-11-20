@@ -7,7 +7,7 @@
 //! the sequencer thread. See `030-ui-design.md` § Header & Footer.
 //!
 //! The text field is the header chips' shared one ([`show_header_field`],
-//! [`field_event`]); the drag maths is [`dragged_bpm_tenths`], unit-tested.
+//! [`field_event`]); the drag maths is [`dragged_bpm_hundredths`], unit-tested.
 
 use std::sync::atomic::Ordering;
 
@@ -15,7 +15,8 @@ use egui::{FontId, Ui};
 
 use crate::core::input_event::InputEvent;
 use crate::core::time::{
-    bpm_tenths_to_tempo_us, clamp_bpm_tenths, format_bpm, parse_bpm_tenths, tempo_us_to_bpm_tenths,
+    bpm_hundredths_to_tempo_us, clamp_bpm_hundredths, format_bpm, parse_bpm_hundredths,
+    tempo_us_to_bpm_hundredths,
 };
 
 use super::header_chip::{HeaderChipRects, show_header_field};
@@ -38,12 +39,12 @@ struct TempoDrag {
     /// size doesn't jump the tempo, and at the tempo range's ends, so turning
     /// round there acts at once.
     travel: f32,
-    /// The tempo where `travel` counts from, in tenths of a BPM.
-    anchor_tenths: i32,
+    /// The tempo where `travel` counts from, in hundredths of a BPM.
+    anchor_hundredths: i32,
     /// Whether ⇧ (0.1 BPM steps) was held at the last move.
     fine: bool,
-    /// The last tempo sent, in tenths of a BPM.
-    last_tenths: i32,
+    /// The last tempo sent, in hundredths of a BPM.
+    last_hundredths: i32,
 }
 
 /// The BPM chip's state: where it is, what the pointer is doing on it, and
@@ -77,16 +78,16 @@ impl TempoChip {
     }
 }
 
-/// The tempo `dy_up` pixels of upward drag from a tempo of `anchor_tenths`
-/// gives, in tenths of a BPM: a whole BPM a step, a tenth with `fine`,
+/// The tempo `dy_up` pixels of upward drag from a tempo of `anchor_hundredths`
+/// gives, in hundredths of a BPM: a whole BPM a step, a tenth with `fine`,
 /// clamped to the app's tempo range — and whether it was clamped. A partial
 /// step counts for nothing.
-fn dragged_bpm_tenths(anchor_tenths: i32, dy_up: f32, fine: bool) -> (i32, bool) {
-    let step = if fine { 1 } else { 10 };
+fn dragged_bpm_hundredths(anchor_hundredths: i32, dy_up: f32, fine: bool) -> (i32, bool) {
+    let step = if fine { 10 } else { 100 };
     let steps = (dy_up / DRAG_PX_PER_STEP).trunc() as i32;
-    let tenths = anchor_tenths + steps * step;
-    let clamped = clamp_bpm_tenths(tenths);
-    (clamped, clamped != tenths)
+    let hundredths = anchor_hundredths + steps * step;
+    let clamped = clamp_bpm_hundredths(hundredths);
+    (clamped, clamped != hundredths)
 }
 
 impl Display {
@@ -100,15 +101,15 @@ impl Display {
     /// nothing has moved yet).
     pub(in crate::view::display) fn begin_tempo_drag(&mut self) {
         let start_tempo_us = self.tempo_us();
-        let start_tenths = tempo_us_to_bpm_tenths(start_tempo_us);
+        let start_hundredths = tempo_us_to_bpm_hundredths(start_tempo_us);
         self.tempo_chip.hover = false;
         self.tempo_chip.drag = Some(TempoDrag {
             drag_id: self.gesture.take_drag_id(),
             start_tempo_us,
             travel: 0.0,
-            anchor_tenths: start_tenths,
+            anchor_hundredths: start_hundredths,
             fine: false,
-            last_tenths: start_tenths,
+            last_hundredths: start_hundredths,
         });
     }
 
@@ -123,22 +124,23 @@ impl Display {
         if fine != drag.fine {
             drag.fine = fine;
             drag.travel = 0.0;
-            drag.anchor_tenths = drag.last_tenths;
+            drag.anchor_hundredths = drag.last_hundredths;
         }
         drag.travel -= dy;
-        let (tenths, clamped) = dragged_bpm_tenths(drag.anchor_tenths, drag.travel, fine);
+        let (hundredths, clamped) =
+            dragged_bpm_hundredths(drag.anchor_hundredths, drag.travel, fine);
         if clamped {
             drag.travel = 0.0;
-            drag.anchor_tenths = tenths;
+            drag.anchor_hundredths = hundredths;
         }
-        if tenths == drag.last_tenths {
+        if hundredths == drag.last_hundredths {
             return;
         }
-        drag.last_tenths = tenths;
-        let tempo_us = if tenths == tempo_us_to_bpm_tenths(drag.start_tempo_us) {
+        drag.last_hundredths = hundredths;
+        let tempo_us = if hundredths == tempo_us_to_bpm_hundredths(drag.start_tempo_us) {
             drag.start_tempo_us
         } else {
-            bpm_tenths_to_tempo_us(tenths)
+            bpm_hundredths_to_tempo_us(hundredths)
         };
         let drag_id = Some(drag.drag_id);
         self.input_event_tx
@@ -157,7 +159,7 @@ impl Display {
         let Some(drag) = self.tempo_chip.drag.take() else {
             return;
         };
-        if drag.last_tenths != tempo_us_to_bpm_tenths(drag.start_tempo_us) {
+        if drag.last_hundredths != tempo_us_to_bpm_hundredths(drag.start_tempo_us) {
             self.input_event_tx
                 .send(InputEvent::SetTempo {
                     tempo_us: drag.start_tempo_us,
@@ -186,13 +188,13 @@ impl Display {
         let Some(field) = self.tempo_chip.field.take() else {
             return;
         };
-        let Some(tenths) = parse_bpm_tenths(&field.text) else {
+        let Some(hundredths) = parse_bpm_hundredths(&field.text) else {
             return;
         };
-        if tenths != tempo_us_to_bpm_tenths(self.tempo_us()) {
+        if hundredths != tempo_us_to_bpm_hundredths(self.tempo_us()) {
             self.input_event_tx
                 .send(InputEvent::SetTempo {
-                    tempo_us: bpm_tenths_to_tempo_us(tenths),
+                    tempo_us: bpm_hundredths_to_tempo_us(hundredths),
                     drag_id: None,
                 })
                 .ok();
@@ -230,34 +232,52 @@ impl Display {
 
 #[cfg(test)]
 mod tests {
-    use super::{DRAG_PX_PER_STEP, dragged_bpm_tenths};
+    use super::{DRAG_PX_PER_STEP, dragged_bpm_hundredths};
 
     #[test]
     fn a_drag_steps_whole_bpm_and_fine_steps_tenths() {
         let step = DRAG_PX_PER_STEP;
-        assert_eq!(dragged_bpm_tenths(1203, 0.0, false), (1203, false));
-        assert_eq!(dragged_bpm_tenths(1203, step * 2.0, false), (1223, false));
-        assert_eq!(dragged_bpm_tenths(1203, -step * 3.0, false), (1173, false));
-        assert_eq!(dragged_bpm_tenths(1203, step * 2.0, true), (1205, false));
+        assert_eq!(dragged_bpm_hundredths(12_030, 0.0, false), (12_030, false));
+        assert_eq!(
+            dragged_bpm_hundredths(12_030, step * 2.0, false),
+            (12_230, false)
+        );
+        assert_eq!(
+            dragged_bpm_hundredths(12_030, -step * 3.0, false),
+            (11_730, false)
+        );
+        assert_eq!(
+            dragged_bpm_hundredths(12_030, step * 2.0, true),
+            (12_050, false)
+        );
     }
 
     /// Less than a step's distance, either way, changes nothing.
     #[test]
     fn a_partial_step_counts_for_nothing() {
         let almost = DRAG_PX_PER_STEP * 0.9;
-        assert_eq!(dragged_bpm_tenths(1200, almost, false), (1200, false));
-        assert_eq!(dragged_bpm_tenths(1200, -almost, false), (1200, false));
+        assert_eq!(
+            dragged_bpm_hundredths(12_000, almost, false),
+            (12_000, false)
+        );
+        assert_eq!(
+            dragged_bpm_hundredths(12_000, -almost, false),
+            (12_000, false)
+        );
     }
 
     /// Past the range's end the tempo stops there, and says so — the drag
     /// re-anchors, so turning round acts at once.
     #[test]
     fn a_drag_stops_at_the_tempo_range() {
-        assert_eq!(dragged_bpm_tenths(2990, 1000.0, false), (3000, true));
-        assert_eq!(dragged_bpm_tenths(210, -1000.0, false), (200, true));
         assert_eq!(
-            dragged_bpm_tenths(2990, DRAG_PX_PER_STEP, false),
-            (3000, false)
+            dragged_bpm_hundredths(29_900, 1000.0, false),
+            (30_000, true)
+        );
+        assert_eq!(dragged_bpm_hundredths(2_100, -1000.0, false), (2_000, true));
+        assert_eq!(
+            dragged_bpm_hundredths(29_900, DRAG_PX_PER_STEP, false),
+            (30_000, false)
         );
     }
 }

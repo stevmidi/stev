@@ -116,7 +116,7 @@ Nine tools in three groups. Each description below is close to the text the serv
 
 **`set_tempo`** — Set the project tempo. One undo step (`SetTempoEdit`).
 
-- In: `bpm` (clamped to the app's range).
+- In: `bpm` (clamped to the app's range, rounded to a hundredth).
 - Out: the tempo set.
 
 Left out on purpose, for now: deleting clips (⌘Z covers an agent's own mistakes, and the user can delete), moving clips, muting tracks, changing the meter, touching plugins or their parameters, starting the transport, and narrowing `replace_clip_notes` to the clip panel's note selection ("tidy these notes"; whole-clip replace covers it until use shows otherwise). Each is a small tool if it's missed, but every write tool is one more way to surprise the user.

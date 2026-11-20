@@ -38,6 +38,8 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ### Changed
 
+- Tempos are shown and set to the hundredth of a BPM, as in a DAW: the BPM chip always shows two decimals (`117.35`) and takes them typed. Enter's tempo fit, `⌥=`/`⌥-` and tap tempo land on a hundredth, so the tempo shown is the tempo played. An audio export's folder name carries that tempo (`Sketch 117.35bpm 4-4 bar 1`), so stems line up with a DAW set to it for the whole song; before, the fit's tempo was shown rounded to a tenth and the stems drifted against the DAW's grid. The chip's drag still steps a whole BPM, or a tenth with `⇧`. The agent bridge's `set_tempo` takes hundredths too.
+
 - Clips with sustain pedal data (imported or pasted, and now recorded ones) let go of the pedal on a stop, at the end of a clip, on a jump and at every loop wrap, so notes no longer ring on into the next pass. A seek into a pedalled stretch presses the pedal there. A project that holds CC64 may sound different: notes that used to ring past a stop or a wrap now end. A pedal you hold yourself is left alone. The agent bridge's `replace_clip_notes` with `clear_wheels` now clears the pedal too.
 
 - In the arranger clip edges are snap targets beside the grid lines, as in Ableton: the pointer lands on whichever is nearer, an edge of a clip on the track under it or a grid line. The cursor line, a click, a marquee drag and `⇧`-click land exactly on an edge that is off the grid, so a gap of any length between clips can be selected and deleted with the mouse; dragging a clip's edge snaps to the edges of the clips beside it on the same track, and back to where it started.

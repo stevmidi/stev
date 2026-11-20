@@ -3,7 +3,7 @@
 //! burst sends a step per change; the steps of one gesture merge into a single
 //! undo step (`SequencerEdit::merge`).
 
-use crate::core::time::clamp_tempo_us;
+use crate::core::time::{clamp_tempo_us, round_tempo_us};
 
 use super::{EditResult, Sequencer};
 
@@ -28,8 +28,9 @@ pub(crate) struct SetTempoEdit {
 }
 
 impl SetTempoEdit {
-    /// Sets the tempo to `tempo_us`, clamped to the app's range. `None` when
-    /// that is the tempo already — no undo step for a change that changes
+    /// Sets the tempo to `tempo_us`, clamped to the app's range and rounded
+    /// to a hundredth of a BPM (`round_tempo_us`). `None` when that is the
+    /// tempo already — no undo step for a change that changes
     /// nothing.
     pub(crate) fn new(
         sequencer: &Sequencer,
@@ -37,7 +38,7 @@ impl SetTempoEdit {
         gesture: Option<TempoGesture>,
     ) -> Option<Self> {
         let before = sequencer.tempo_us();
-        let after = clamp_tempo_us(tempo_us);
+        let after = round_tempo_us(clamp_tempo_us(tempo_us));
         (before != after).then_some(SetTempoEdit {
             before,
             after,
@@ -81,7 +82,9 @@ mod tests {
 
     use crate::core::sequencer::test_support::test_sequencer;
     use crate::core::sequencer::{Sequencer, SequencerEdit};
-    use crate::core::time::{TEMPO_BPM_MAX, bpm_to_tempo_us};
+    use crate::core::time::{
+        TEMPO_BPM_MAX, bpm_hundredths_to_tempo_us, bpm_to_tempo_us, tempo_us_to_bpm_hundredths,
+    };
 
     use super::{SetTempoEdit, TempoGesture};
 
@@ -125,13 +128,25 @@ mod tests {
         assert_eq!(sequencer.tempo_us(), bpm_to_tempo_us(TEMPO_BPM_MAX));
     }
 
+    /// A tapped tempo (any µs) lands on a hundredth of a BPM (issue #33).
+    #[test]
+    fn tempo_is_rounded_to_a_hundredth() {
+        let mut sequencer = test_sequencer();
+        let mut record = Record::new();
+        set(&mut record, &mut sequencer, 511_308, None);
+        let hundredths = tempo_us_to_bpm_hundredths(sequencer.tempo_us());
+        assert_eq!(hundredths, 11_735);
+        assert_eq!(sequencer.tempo_us(), bpm_hundredths_to_tempo_us(hundredths));
+    }
+
     #[test]
     fn a_drag_is_one_undo_step() {
         let mut sequencer = test_sequencer();
         let start = sequencer.tempo_us();
         let mut record = Record::new();
 
-        for tempo_us in [490_000, 480_000, 470_000] {
+        // 125, 150 and 160 BPM: exact hundredths, so they land as sent.
+        for tempo_us in [480_000, 400_000, 375_000] {
             set(
                 &mut record,
                 &mut sequencer,
@@ -143,7 +158,7 @@ mod tests {
         record.undo(&mut sequencer);
         assert_eq!(sequencer.tempo_us(), start);
         record.redo(&mut sequencer);
-        assert_eq!(sequencer.tempo_us(), 470_000);
+        assert_eq!(sequencer.tempo_us(), 375_000);
     }
 
     /// A drag back to where it started (or Esc) leaves no undo step.

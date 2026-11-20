@@ -24,7 +24,9 @@ impl Sequencer {
     /// player's natural speed regardless of loop size. `adjust_to_tempo`
     /// retimes the clip's events and bar-snaps its region, then
     /// [`Self::octave_correct_clip_tempo`] pulls an implausible result back an
-    /// octave. Returns the tempo and how the clip's event ticks moved; `None`
+    /// octave. Both tempos are rounded to a hundredth of a BPM
+    /// (`time::round_tempo_us`), so the clip plays up to 0.004% off how it
+    /// was played and the tempo shown is exact (issue #33). Returns the tempo and how the clip's event ticks moved; `None`
     /// when the tempo doesn't change (the clip is untouched).
     pub(in crate::core::sequencer) fn fit_first_clip_tempo(
         clip: &mut Clip,
@@ -35,7 +37,8 @@ impl Sequencer {
         let played = clip.region_length();
         let target_length = time::snap_to_grid(played, bar).max(bar);
 
-        let next_tempo = time::scaled_tempo_us(current_tempo, played, target_length)?;
+        let next_tempo =
+            time::round_tempo_us(time::scaled_tempo_us(current_tempo, played, target_length)?);
         if next_tempo == current_tempo {
             return None;
         }
@@ -72,6 +75,8 @@ impl Sequencer {
         } else {
             return None;
         };
+        // Half a hundredth isn't always one.
+        let octaved = time::round_tempo_us(octaved);
 
         Some((octaved, clip.adjust_to_tempo(octaved, tempo, meter)))
     }
@@ -103,7 +108,11 @@ impl Sequencer {
         meter: Meter,
     ) -> Option<(i32, EventSpaceRetime)> {
         let current_length = clip.region_length();
-        let next_tempo = time::scaled_tempo_us(current_tempo, current_length, target_length)?;
+        let next_tempo = time::round_tempo_us(time::scaled_tempo_us(
+            current_tempo,
+            current_length,
+            target_length,
+        )?);
 
         Some((
             next_tempo,
@@ -142,6 +151,40 @@ mod tests {
             Some(bar + 100)
         );
         assert_eq!(Sequencer::rescaled_length(bar, -1, three_four), None);
+    }
+
+    /// Issue #33: Enter's fit lands on a hundredth of a BPM, so the tempo
+    /// shown (and written into an export's folder name) is the one played,
+    /// and the clip is still whole bars.
+    #[test]
+    fn fit_lands_on_a_hundredth_of_a_bpm() {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        let mut clip = first_clip(bar * 2 + 37);
+
+        let (tempo, _) = Sequencer::fit_first_clip_tempo(
+            &mut clip,
+            time::bpm_to_tempo_us(120),
+            Meter::FOUR_FOUR,
+        )
+        .unwrap();
+
+        // Unrounded, 2 bars + 37 ticks at 120 BPM fits to 119.4246… BPM.
+        assert_eq!(time::format_bpm(tempo), "119.42");
+        assert_eq!(time::round_tempo_us(tempo), tempo);
+        assert_eq!(clip.region_length(), bar * 2);
+    }
+
+    /// Halving or doubling a hundredth lands on a hundredth too.
+    #[test]
+    fn octave_correct_lands_on_a_hundredth() {
+        let mut clip = first_clip(Meter::FOUR_FOUR.bar_ticks());
+        // 160.01 BPM → 80.005, rounded to 80.01 or 80.00.
+        let fast = time::bpm_hundredths_to_tempo_us(16_001);
+
+        let (tempo, _) =
+            Sequencer::octave_correct_clip_tempo(&mut clip, fast, Meter::FOUR_FOUR).unwrap();
+
+        assert_eq!(time::round_tempo_us(tempo), tempo);
     }
 
     /// A fitted tempo at/below ~50 BPM is octaved up: tempo ×2, clip length
