@@ -8,7 +8,7 @@
 
 use undo::Record;
 
-use crate::core::sequencer::{EdgeTarget, ResizeClipEdit, RetimeClipEdit, UndoStep};
+use crate::core::sequencer::{EdgeTarget, ResizeClipEdit, RetimeClipEdit, RetimeRefusal, UndoStep};
 use crate::models::clip::{ClipBounds, ClipEdge, EventSpaceRetime};
 
 use super::*;
@@ -118,34 +118,45 @@ impl EventHandlers {
     /// a no-op with more than one clip, or when the clip is already whole
     /// bars from a bar line. Works while playing: the edit moves the playhead
     /// with the retimed notes, so the pass plays on in phase
-    /// (`Sequencer::retime_clip_events`).
+    /// (`Sequencer::retime_clip_events`). Refused in the footer when the
+    /// fitted tempo is outside the app's range (issue #42).
     pub(super) fn fit_first_clip_tempo_workflow(
         &self,
         sequencer: &mut Sequencer,
         undo_record: &mut Record<UndoStep>,
     ) {
-        self.record_edit(
-            sequencer,
-            undo_record,
-            RetimeClipEdit::fit_sole_clip(sequencer),
-        );
+        let edit = RetimeClipEdit::fit_sole_clip(sequencer);
+        self.record_retime(sequencer, undo_record, edit);
     }
 
     /// `⌥=`/`⌥-` (`SequencerCommand::RescaleSelectedClipTempo`): stretches the
     /// selected clip `direction` bars longer/shorter, retiming its notes and,
     /// for the project's only clip, the tempo (`RetimeClipEdit`, undoable —
-    /// the tempo with it). A no-op on a one-bar clip shrinking.
+    /// the tempo with it). A no-op on a one-bar clip shrinking; refused in
+    /// the footer when the tempo would leave the app's range (issue #42).
     pub(super) fn rescale_selected_clip_workflow(
         &self,
         sequencer: &mut Sequencer,
         undo_record: &mut Record<UndoStep>,
         direction: i32,
     ) {
-        self.record_edit(
-            sequencer,
-            undo_record,
-            RetimeClipEdit::rescale_selected(sequencer, direction),
-        );
+        let edit = RetimeClipEdit::rescale_selected(sequencer, direction);
+        self.record_retime(sequencer, undo_record, edit);
+    }
+
+    /// Records a retime, or puts its refusal in the footer.
+    fn record_retime(
+        &self,
+        sequencer: &mut Sequencer,
+        undo_record: &mut Record<UndoStep>,
+        edit: Result<Option<RetimeClipEdit>, RetimeRefusal>,
+    ) {
+        match edit {
+            Ok(edit) => {
+                self.record_edit(sequencer, undo_record, edit);
+            }
+            Err(refusal) => self.send_status_ui_event(refusal.message()),
+        }
     }
 
     /// Records a `ResizeClipEdit` moving `clip_id` (selected track) to
@@ -199,7 +210,7 @@ mod tests {
     use undo::Record;
 
     use crate::core::event_handlers::test_harness::{
-        Harness, add_clip, harness, run_command as run,
+        Harness, add_clip, harness, run_command as run, statuses,
     };
     use crate::core::sequencer::SequencerCommand;
     use crate::core::time::{self, Meter};
@@ -329,6 +340,36 @@ mod tests {
 
         assert_eq!(h.sequencer.tempo_us(), tempo_before);
         assert_eq!(record.len(), 0);
+    }
+
+    /// Regression (issue #42): a retime that would leave the app's tempo
+    /// range is refused in the footer, recorded nowhere, and leaves the clip
+    /// and the tempo as they were. `⌥=` on the only clip, half a bar at 120
+    /// BPM, would make it 1½ bars at 360.
+    #[test]
+    fn a_retime_past_the_tempo_range_is_refused_in_the_footer() {
+        let mut h = harness();
+        add_clip(&mut h.sequencer, 0);
+        h.handlers
+            .sync_clip_selection_to_cursor_workflow(&mut h.sequencer);
+        h.sequencer.set_tempo(time::bpm_to_tempo_us(120));
+        let mut record = Record::new();
+        let tempo_before = h.sequencer.tempo_us();
+        let length_before = window_length(&h);
+
+        run(
+            &mut h,
+            &mut record,
+            SequencerCommand::RescaleSelectedClipTempo(1),
+        );
+
+        assert_eq!(record.len(), 0);
+        assert_eq!(h.sequencer.tempo_us(), tempo_before);
+        assert_eq!(window_length(&h), length_before);
+        assert_eq!(
+            statuses(&h),
+            vec!["That would set 360.00 BPM; tempos run 20–300 BPM".to_owned()]
+        );
     }
 
     /// A window band drag released at event tick `tick`.

@@ -60,7 +60,7 @@ pub(crate) use move_range::MoveRangeEdit;
 pub(crate) use mute_in_range::MuteInRangeEdit;
 pub(crate) use paste::PasteClipsEdit;
 pub(crate) use resize_clip::ResizeClipEdit;
-pub(crate) use retime_clip::RetimeClipEdit;
+pub(crate) use retime_clip::{RetimeClipEdit, RetimeRefusal};
 pub(crate) use split::SplitClipsEdit;
 pub(crate) use transpose_clips::TransposeClipsEdit;
 

@@ -45,7 +45,8 @@ mod undo_step;
 pub(crate) use clip_edits::{
     CommitClipEdit, CreateClipsEdit, DeleteInRangeEdit, DeleteTimeEdit, DuplicateClipsEdit,
     DuplicateTimeEdit, InsertSilenceEdit, MoveClipEdit, MoveRangeEdit, MuteInRangeEdit,
-    PasteClipsEdit, ResizeClipEdit, RetimeClipEdit, SplitClipsEdit, TransposeClipsEdit,
+    PasteClipsEdit, ResizeClipEdit, RetimeClipEdit, RetimeRefusal, SplitClipsEdit,
+    TransposeClipsEdit,
 };
 pub(crate) use event_edits::{
     ClearControllerSpanEdit, DeleteSelectedEventsEdit, DragEventsVelocityEdit, DragNotesEdit,

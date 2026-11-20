@@ -300,7 +300,9 @@ mod tests {
 
     /// Records Enter's tempo fit to the project's only clip on `record`.
     fn fit_tempo(seq: &mut Sequencer, record: &mut Record<SequencerEdit>) {
-        let fit = RetimeClipEdit::fit_sole_clip(seq).expect("a clip to fit");
+        let fit = RetimeClipEdit::fit_sole_clip(seq)
+            .unwrap()
+            .expect("a clip to fit");
         record.edit(seq, SequencerEdit::RetimeClip(fit));
     }
 

@@ -49,6 +49,10 @@ Breaking entries are marked **Breaking** and say what to do about them.
 - A click on the arranger's ruler now starts playback from that point and leaves the cursor and the marquee where they are, as Ableton's scrub area does. Audition a marqueed section from a bar or two before it, transpose, click again, without marqueeing it again. A click in the lanes still places the cursor.
 - `⌥↑`/`⌥↓` no longer step the selected track in the arranger (they did as a side effect, the ⌥ ignored); plain `↑`/`↓` still do.
 
+### Fixed
+
+- Enter's tempo fit and `⌥=`/`⌥-` on a project's only clip no longer set a tempo outside 20–300 BPM, the range the BPM chip sets. A press that would is refused, the clip and the tempo stay as they were, and the footer says what tempo it would have set. Before, a few `⌥=` presses on a short clip could take the project past 300 BPM, and the chip snapped it back at the first touch (issue #42).
+
 ## [0.16.1] - 2026-11-15
 
 ### Changed

@@ -6,11 +6,16 @@
 //! whole number of bars by changing the tempo rather than by rounding the
 //! edge, and `⌥=`/`⌥-` fix a bar count that came out wrong. Nothing about
 //! either is stored: each acts on what's there when the key is pressed.
+//! Either is refused, with a footer line, when it would set a tempo the
+//! BPM chip couldn't (issue #42).
 
 use std::sync::Arc;
 
 use uuid::Uuid;
 
+use crate::core::time::{
+    TEMPO_BPM_MAX, TEMPO_BPM_MIN, clamp_tempo_us, format_bpm, scaled_tempo_us,
+};
 use crate::metadata::clip_metadata::ClipMetadata;
 use crate::models::{
     clip::{Clip, ClipBounds, EventSpaceRetime},
@@ -23,6 +28,25 @@ use super::super::EditResult;
 // ---------------------------------------------------------------------------
 // RetimeClipEdit
 // ---------------------------------------------------------------------------
+
+/// Why a retime was refused: it would set the project tempo (µs per
+/// quarter, held here) outside the app's range, `TEMPO_BPM_MIN`..=
+/// `TEMPO_BPM_MAX`. Nothing changes and no undo step is recorded, and the
+/// footer says why — as a transpose leaving MIDI's range is refused, and
+/// rather than clamping, which would stop the clip lasting as long as it
+/// was played (issue #42).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RetimeRefusal(i32);
+
+impl RetimeRefusal {
+    /// The footer line.
+    pub(crate) fn message(self) -> String {
+        format!(
+            "That would set {} BPM; tempos run {TEMPO_BPM_MIN}–{TEMPO_BPM_MAX} BPM",
+            format_bpm(self.0)
+        )
+    }
+}
 
 /// Everything a retime changes: where the clip sits, its events and the
 /// project tempo.
@@ -81,39 +105,70 @@ pub(crate) struct RetimeClipEdit {
 
 impl RetimeClipEdit {
     /// Fits the tempo to the project's only clip as it stands (Enter).
-    /// `None` unless there is exactly one clip, or when it is already whole
-    /// bars from a bar line — nothing to fit.
-    pub(crate) fn fit_sole_clip(sequencer: &Sequencer) -> Option<Self> {
+    /// `Ok(None)` unless there is exactly one clip, or when it is already
+    /// whole bars from a bar line — nothing to fit; refused when the fitted
+    /// tempo, after its one octave step, is outside the app's range.
+    pub(crate) fn fit_sole_clip(sequencer: &Sequencer) -> Result<Option<Self>, RetimeRefusal> {
         if sequencer.number_of_clips() != 1 {
-            return None;
+            return Ok(None);
         }
-        let (track_idx, clip) = sequencer
+        let Some((track_idx, clip)) = sequencer
             .tracks()
             .iter()
             .enumerate()
-            .find_map(|(idx, track)| track.clips().first().map(|clip| (idx, clip)))?;
-        let bar = sequencer.meter().bar_ticks();
+            .find_map(|(idx, track)| track.clips().first().map(|clip| (idx, clip)))
+        else {
+            return Ok(None);
+        };
+        let meter = sequencer.meter();
+        let bar = meter.bar_ticks();
         if clip.region_length() % bar == 0 && clip.region().start() % bar == 0 {
-            return None;
+            return Ok(None);
+        }
+        if let Some(tempo_us) =
+            Sequencer::fitted_tempo_us(clip.region_length(), sequencer.tempo_us(), meter)
+        {
+            check_tempo(tempo_us)?;
         }
 
-        Some(Self::new(sequencer, track_idx, clip, Retime::FitTempo))
+        Ok(Some(Self::new(
+            sequencer,
+            track_idx,
+            clip,
+            Retime::FitTempo,
+        )))
     }
 
     /// Stretches the selected clip `direction` bars longer/shorter (`⌥=`/`⌥-`).
-    /// `None` without a selected clip, or when it is one bar and can't shrink.
-    pub(crate) fn rescale_selected(sequencer: &Sequencer, direction: i32) -> Option<Self> {
-        let track_idx = sequencer.selected_track_index()?;
-        let clip = sequencer.selected_clip()?;
-        let target_length =
-            Sequencer::rescaled_length(clip.region_length(), direction, sequencer.meter())?;
+    /// `Ok(None)` without a selected clip, or when it is one bar and can't
+    /// shrink; refused when it is the project's only clip and the tempo
+    /// that keeps its wall-clock length is outside the app's range.
+    pub(crate) fn rescale_selected(
+        sequencer: &Sequencer,
+        direction: i32,
+    ) -> Result<Option<Self>, RetimeRefusal> {
+        let (Some(track_idx), Some(clip)) =
+            (sequencer.selected_track_index(), sequencer.selected_clip())
+        else {
+            return Ok(None);
+        };
+        let length = clip.region_length();
+        let Some(target_length) = Sequencer::rescaled_length(length, direction, sequencer.meter())
+        else {
+            return Ok(None);
+        };
+        if sequencer.number_of_clips() == 1
+            && let Some(tempo_us) = scaled_tempo_us(sequencer.tempo_us(), length, target_length)
+        {
+            check_tempo(tempo_us)?;
+        }
 
-        Some(Self::new(
+        Ok(Some(Self::new(
             sequencer,
             track_idx,
             clip,
             Retime::Rescale(target_length),
-        ))
+        )))
     }
 
     /// The edit on `clip` (on `track_idx`), its state before taken now.
@@ -235,6 +290,15 @@ impl RetimeClipEdit {
     }
 }
 
+/// `Ok` when the BPM chip could set `tempo_us`, else the refusal.
+fn check_tempo(tempo_us: i32) -> Result<(), RetimeRefusal> {
+    if clamp_tempo_us(tempo_us) == tempo_us {
+        Ok(())
+    } else {
+        Err(RetimeRefusal(tempo_us))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::Ordering;
@@ -245,7 +309,7 @@ mod tests {
 
     use crate::core::sequencer::{ClipInstrumentEvent, SequencerEdit};
 
-    use crate::core::time::Meter;
+    use crate::core::time::{self, Meter};
     use crate::models::clip::{Clip, ClipEdge};
 
     use crate::core::sequencer::test_support::{
@@ -304,7 +368,7 @@ mod tests {
         let before_tempo = sequencer.tempo_us();
         let before_cursor = clip(&sequencer).cursor_tick();
 
-        let edit = RetimeClipEdit::fit_sole_clip(&sequencer).unwrap();
+        let edit = RetimeClipEdit::fit_sole_clip(&sequencer).unwrap().unwrap();
         let mut record = Record::new();
         record.edit(&mut sequencer, SequencerEdit::RetimeClip(edit));
 
@@ -345,7 +409,7 @@ mod tests {
             .set_bounds(target);
         let before_start = target.region_start;
 
-        let mut edit = RetimeClipEdit::fit_sole_clip(&sequencer).unwrap();
+        let mut edit = RetimeClipEdit::fit_sole_clip(&sequencer).unwrap().unwrap();
         let EditResult::ClipResized {
             retime: Some(fit), ..
         } = edit.edit(&mut sequencer)
@@ -378,7 +442,7 @@ mod tests {
             .unwrap()
             .set_bounds(whole);
         assert!(
-            RetimeClipEdit::fit_sole_clip(&sequencer).is_none(),
+            RetimeClipEdit::fit_sole_clip(&sequencer).unwrap().is_none(),
             "already whole bars"
         );
 
@@ -388,7 +452,7 @@ mod tests {
         other.region_mut().set_region(Some(0), Some(bar));
         sequencer.tracks_mut()[0].add_clip(&other);
         assert!(
-            RetimeClipEdit::fit_sole_clip(&sequencer).is_none(),
+            RetimeClipEdit::fit_sole_clip(&sequencer).unwrap().is_none(),
             "a second clip"
         );
     }
@@ -480,7 +544,7 @@ mod tests {
         play_from(&mut sequencer, bar * 2);
         assert_eq!(drain(&mut plugin_rx), vec![[0x90, 60, 100]]);
 
-        let mut edit = RetimeClipEdit::fit_sole_clip(&sequencer).unwrap();
+        let mut edit = RetimeClipEdit::fit_sole_clip(&sequencer).unwrap().unwrap();
         edit.edit(&mut sequencer);
 
         let fitted = &sequencer.tracks()[0].clips()[0];
@@ -504,7 +568,7 @@ mod tests {
     fn undoing_the_fit_keeps_playback_in_phase_and_a_sounding_note_sounding() {
         let bar = Meter::FOUR_FOUR.bar_ticks();
         let (mut sequencer, mut plugin_rx) = running_with_unfitted_clip();
-        let mut edit = RetimeClipEdit::fit_sole_clip(&sequencer).unwrap();
+        let mut edit = RetimeClipEdit::fit_sole_clip(&sequencer).unwrap().unwrap();
         edit.edit(&mut sequencer);
         let fitted_on = sequencer.tracks()[0].clips()[0].events()[0].tick();
         play_from(&mut sequencer, fitted_on);
@@ -533,7 +597,9 @@ mod tests {
 
     /// Records `⌥=`/`⌥-` (`direction`) on the selected clip.
     fn rescale(sequencer: &mut Sequencer, record: &mut Record<SequencerEdit>, direction: i32) {
-        let edit = RetimeClipEdit::rescale_selected(sequencer, direction).unwrap();
+        let edit = RetimeClipEdit::rescale_selected(sequencer, direction)
+            .unwrap()
+            .unwrap();
         record.edit(sequencer, SequencerEdit::RetimeClip(edit));
     }
 
@@ -588,7 +654,11 @@ mod tests {
         sequencer.tracks_mut()[0].add_clip(&other);
         add_selected(&mut sequencer, &clip_at(0, bar));
         let tempo = sequencer.tempo_us();
-        assert!(RetimeClipEdit::rescale_selected(&sequencer, -1).is_none());
+        assert!(
+            RetimeClipEdit::rescale_selected(&sequencer, -1)
+                .unwrap()
+                .is_none()
+        );
 
         let mut record = Record::new();
         rescale(&mut sequencer, &mut record, 1);
@@ -632,6 +702,61 @@ mod tests {
         assert_eq!(drain(&mut plugin_rx), vec![[0x80, 60, 0]]);
     }
 
+    /// Regression (issue #42): `⌥=` on the project's only clip, one bar at
+    /// 80 BPM, goes to 160 and 240 BPM, then refuses the press that would
+    /// make it 320 — the clip and the tempo stay as they were.
+    #[test]
+    fn rescale_refuses_a_tempo_above_the_range() {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        let (mut sequencer, _) = sequencer_with(false);
+        sequencer.set_tempo(time::bpm_to_tempo_us(80));
+        add_selected(&mut sequencer, &clip_at(0, bar));
+
+        let mut record = Record::new();
+        rescale(&mut sequencer, &mut record, 1);
+        rescale(&mut sequencer, &mut record, 1);
+        assert_eq!(time::format_bpm(sequencer.tempo_us()), "240.00");
+
+        let Err(refusal) = RetimeClipEdit::rescale_selected(&sequencer, 1) else {
+            panic!("320 BPM is past the range");
+        };
+        assert_eq!(time::format_bpm(refusal.0), "320.00");
+        assert_eq!(clip(&sequencer).region_length(), bar * 3);
+    }
+
+    /// With a second clip `⌥=` leaves the tempo alone, so however far it
+    /// stretches the clip there is nothing to refuse.
+    #[test]
+    fn rescale_with_a_second_clip_is_never_refused() {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        let (mut sequencer, _) = sequencer_with(false);
+        sequencer.set_tempo(time::bpm_to_tempo_us(TEMPO_BPM_MAX));
+        sequencer.tracks_mut()[0].add_clip(&clip_at(bar * 20, bar));
+        add_selected(&mut sequencer, &clip_at(0, bar));
+
+        assert!(matches!(
+            RetimeClipEdit::rescale_selected(&sequencer, 1),
+            Ok(Some(_))
+        ));
+    }
+
+    /// Regression (issue #42): Enter on a very short only clip — an eighth of
+    /// a bar at 120 BPM fits to one bar at 960, 480 after its one octave step
+    /// — is refused, the clip untouched.
+    #[test]
+    fn the_fit_refuses_a_tempo_above_the_range_after_its_octave_step() {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        let (mut sequencer, _) = sequencer_with(false);
+        sequencer.set_tempo(time::bpm_to_tempo_us(120));
+        add_selected(&mut sequencer, &clip_at(0, bar / 8));
+
+        let Err(refusal) = RetimeClipEdit::fit_sole_clip(&sequencer) else {
+            panic!("480 BPM is past the range");
+        };
+        assert_eq!(time::format_bpm(refusal.0), "480.00");
+        assert_eq!(clip(&sequencer).region_length(), bar / 8);
+    }
+
     /// Regression: `⌥-` on a fitted first clip whose window starts on an odd
     /// bar of its event space halved the start off the bar line, so a
     /// following Enter — with nothing left to fit — still shifted the event
@@ -655,6 +780,6 @@ mod tests {
             0,
             "window on a bar line"
         );
-        assert!(RetimeClipEdit::fit_sole_clip(&sequencer).is_none());
+        assert!(RetimeClipEdit::fit_sole_clip(&sequencer).unwrap().is_none());
     }
 }

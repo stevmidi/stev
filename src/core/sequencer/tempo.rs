@@ -23,8 +23,8 @@ impl Sequencer {
     /// region, which needn't match the phrase, so the tempo lands near the
     /// player's natural speed regardless of loop size. `adjust_to_tempo`
     /// retimes the clip's events and bar-snaps its region, then
-    /// [`Self::octave_correct_clip_tempo`] pulls an implausible result back an
-    /// octave. Both tempos land on a hundredth of a BPM
+    /// [`Self::octave_corrected_tempo_us`] pulls an implausible result back an
+    /// octave, retiming the clip again. Both tempos land on a hundredth of a BPM
     /// (`time::round_tempo_us`), so the clip plays up to 0.004% off how it
     /// was played and the tempo shown is exact (issue #33). Returns the tempo
     /// and how the clip's event ticks moved; `None` when the tempo doesn't
@@ -34,40 +34,52 @@ impl Sequencer {
         current_tempo: i32,
         meter: Meter,
     ) -> Option<(i32, EventSpaceRetime)> {
-        let bar = meter.bar_ticks();
-        let played = clip.region_length();
-        let target_length = time::snap_to_grid(played, bar).max(bar);
-
-        let next_tempo = time::scaled_tempo_us(current_tempo, played, target_length)?;
-        if next_tempo == current_tempo {
-            return None;
-        }
-
+        let (next_tempo, octaved) = Self::fit_tempos(clip.region_length(), current_tempo, meter)?;
         let retime = clip.adjust_to_tempo(next_tempo, current_tempo, meter);
 
-        Some(
-            match Self::octave_correct_clip_tempo(clip, next_tempo, meter) {
-                Some((octaved, octave_retime)) => (octaved, retime.then(octave_retime)),
-                None => (next_tempo, retime),
-            },
-        )
+        Some(match octaved {
+            Some(octaved) => (
+                octaved,
+                retime.then(clip.adjust_to_tempo(octaved, next_tempo, meter)),
+            ),
+            None => (next_tempo, retime),
+        })
+    }
+
+    /// The tempo [`fit_first_clip_tempo`](Self::fit_first_clip_tempo) would
+    /// set for a clip `played` ticks long, without touching the clip — what
+    /// `RetimeClipEdit` checks against the app's tempo range before it
+    /// fits (issue #42). `None` when the tempo wouldn't change.
+    pub(in crate::core::sequencer) fn fitted_tempo_us(
+        played: i32,
+        current_tempo: i32,
+        meter: Meter,
+    ) -> Option<i32> {
+        Self::fit_tempos(played, current_tempo, meter)
+            .map(|(next_tempo, octaved)| octaved.unwrap_or(next_tempo))
+    }
+
+    /// The fit's two tempos for a clip `played` ticks long: the one that
+    /// makes it the closest whole number of bars, and the octave correction
+    /// of that ([`octave_corrected_tempo_us`](Self::octave_corrected_tempo_us)),
+    /// if any. `None` when the first is the current tempo.
+    fn fit_tempos(played: i32, current_tempo: i32, meter: Meter) -> Option<(i32, Option<i32>)> {
+        let bar = meter.bar_ticks();
+        let target_length = time::snap_to_grid(played, bar).max(bar);
+        let next_tempo = time::scaled_tempo_us(current_tempo, played, target_length)?;
+        (next_tempo != current_tempo)
+            .then(|| (next_tempo, Self::octave_corrected_tempo_us(next_tempo)))
     }
 
     /// Reinterprets an implausibly slow/fast just-detected first-clip `tempo`
-    /// as an octave error and corrects `clip` for it: at or below
-    /// `FIRST_CLIP_TEMPO_US_SLOW` (~50 BPM) → tempo up an octave and the clip's
-    /// bar count doubled; at or above `FIRST_CLIP_TEMPO_US_FAST` (~140 BPM) →
-    /// tempo down an octave and the bar count halved. The automatic form of
-    /// the manual rescale — `adjust_to_tempo` keeps the clip's wall-clock
-    /// timing, only the metric reading changes. A single step: anything still
-    /// out of band after it is left for the user to rescale by hand. Returns
-    /// the corrected tempo and the clip's retime, `None` when `tempo` is in
-    /// band.
-    fn octave_correct_clip_tempo(
-        clip: &mut Clip,
-        tempo: i32,
-        meter: Meter,
-    ) -> Option<(i32, EventSpaceRetime)> {
+    /// as an octave error: at or below `FIRST_CLIP_TEMPO_US_SLOW` (~50 BPM)
+    /// → an octave up, at or above `FIRST_CLIP_TEMPO_US_FAST` (~140 BPM) →
+    /// an octave down; the fit's second `adjust_to_tempo` doubles or halves
+    /// the clip's bar count with it. A single step: a tempo still out of
+    /// band after it is left for the user to rescale by hand, and one
+    /// outside the app's range refuses the fit (`RetimeClipEdit`). `None`
+    /// when `tempo` is in band.
+    fn octave_corrected_tempo_us(tempo: i32) -> Option<i32> {
         let octaved = if tempo >= config::FIRST_CLIP_TEMPO_US_SLOW {
             tempo / 2
         } else if tempo <= config::FIRST_CLIP_TEMPO_US_FAST {
@@ -76,8 +88,22 @@ impl Sequencer {
             return None;
         };
         // Half a hundredth isn't always one.
-        let octaved = time::round_tempo_us(octaved);
+        Some(time::round_tempo_us(octaved))
+    }
 
+    /// Corrects `clip`, just fitted to `tempo`, for an octave error
+    /// ([`octave_corrected_tempo_us`](Self::octave_corrected_tempo_us)) —
+    /// the automatic form of the manual rescale: `adjust_to_tempo` keeps the
+    /// clip's wall-clock timing, only the metric reading changes. Returns
+    /// the corrected tempo and the clip's retime, `None` when `tempo` is in
+    /// band.
+    #[cfg(test)]
+    fn octave_correct_clip_tempo(
+        clip: &mut Clip,
+        tempo: i32,
+        meter: Meter,
+    ) -> Option<(i32, EventSpaceRetime)> {
+        let octaved = Self::octave_corrected_tempo_us(tempo)?;
         Some((octaved, clip.adjust_to_tempo(octaved, tempo, meter)))
     }
 
