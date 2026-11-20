@@ -100,6 +100,7 @@ fn read_parameters(instance: &mut PluginInstance<StevClapHost>) -> ParamValues {
                 info.max_value,
                 info.default_value,
                 info.flags.contains(ParamInfoFlags::IS_STEPPED),
+                info.cookie,
             );
             read.push((info.id.get(), param, plain));
         }

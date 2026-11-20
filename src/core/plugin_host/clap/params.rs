@@ -21,7 +21,7 @@ use clack_host::events::event_types::ParamValueEvent;
 use clack_host::events::io::{EventBuffer, OutputEventBuffer, TryPushError};
 use clack_host::events::spaces::CoreEventSpace;
 use clack_host::events::{EventFlags, Pckn, UnknownEvent};
-use clack_host::utils::ClapId;
+use clack_host::utils::{ClapId, Cookie};
 use log::debug;
 use rtrb::{Consumer, Producer, RingBuffer};
 
@@ -84,12 +84,24 @@ pub(super) struct ClapParam {
     info: ParameterInfo,
     /// Its plain range.
     range: ParamRange,
+    /// The plugin's own handle on it (`clap_param_info.cookie`), sent back
+    /// with every value event. CLAP lets a plugin trust it over the ID, and
+    /// some do: the JUCE wrapper (TAL's plugins) dereferences it without a
+    /// check, so an event without it crashes the plugin.
+    cookie: Cookie,
 }
 
 impl ClapParam {
     /// A parameter called `name`, ranging over `min..=max`, whose default is
-    /// the plain value `default`.
-    pub(super) fn new(name: String, min: f64, max: f64, default: f64, stepped: bool) -> Self {
+    /// the plain value `default`, with the plugin's `cookie` for it.
+    pub(super) fn new(
+        name: String,
+        min: f64,
+        max: f64,
+        default: f64,
+        stepped: bool,
+        cookie: Cookie,
+    ) -> Self {
         let range = ParamRange { min, max, stepped };
         Self {
             info: ParameterInfo {
@@ -98,6 +110,7 @@ impl ClapParam {
                 steps: range.steps(),
             },
             range,
+            cookie,
         }
     }
 }
@@ -341,12 +354,13 @@ impl VoiceParams {
             debug!("clap: event buffer full; dropped a move of {id}");
             return false;
         }
-        events.push(&ParamValueEvent::new(
-            time,
-            clap_id,
-            Pckn::match_all(),
-            param.range.plain(value),
-        ));
+        let event =
+            ParamValueEvent::new(time, clap_id, Pckn::match_all(), param.range.plain(value));
+        // SAFETY: the cookie is the one the plugin gave for this very
+        // parameter, and CLAP keeps it valid until a full rescan, which only
+        // a deactivated plugin may ask for, or the plugin's destruction; the
+        // voice holding this table goes with the plugin.
+        events.push(&unsafe { event.with_cookie(param.cookie) });
         true
     }
 
@@ -439,15 +453,27 @@ mod tests {
         ParamValues::new([
             (
                 7,
-                ClapParam::new("Cutoff".to_owned(), 20.0, 20_000.0, 10_010.0, false),
+                ClapParam::new(
+                    "Cutoff".to_owned(),
+                    20.0,
+                    20_000.0,
+                    10_010.0,
+                    false,
+                    test_cookie(),
+                ),
                 20.0,
             ),
             (
                 9,
-                ClapParam::new("Mode".to_owned(), 0.0, 2.0, 0.0, true),
+                ClapParam::new("Mode".to_owned(), 0.0, 2.0, 0.0, true, Cookie::empty()),
                 0.0,
             ),
         ])
+    }
+
+    /// Cutoff's cookie: any address will do, the tests never follow it.
+    fn test_cookie() -> Cookie {
+        Cookie::from_raw(std::ptr::dangling_mut::<u8>().cast())
     }
 
     fn id(id: u32) -> ClapId {
@@ -695,6 +721,27 @@ mod tests {
         editor.send(9, 1.0);
         voice.drain_moves(&mut events);
         assert_eq!(sent(&events), vec![(0, 1.0), (0, 2.0), (64, 20_000.0)]);
+    }
+
+    /// A JUCE plugin reads the parameter through the cookie alone: an event
+    /// without it crashed TAL-U-NO-LX the first time a knob moved cutoff.
+    #[test]
+    fn a_move_carries_the_cookie_the_plugin_gave_for_its_parameter() {
+        let (mut editor, mut voice) = sides();
+        let mut events = EventBuffer::with_capacity(EVENT_CAPACITY);
+        assert!(voice.queue(&mut events, 7, 1.0, 64));
+        editor.send(9, 0.5);
+        voice.drain_moves(&mut events);
+        let cookies: Vec<(u32, Cookie)> = events
+            .iter()
+            .filter_map(|event| match event.as_core_event()? {
+                CoreEventSpace::ParamValue(value) => {
+                    Some((value.param_id()?.get(), value.cookie()))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(cookies, vec![(9, Cookie::empty()), (7, test_cookie())]);
     }
 
     #[test]
