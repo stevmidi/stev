@@ -126,16 +126,18 @@ impl ControllerTracker {
 
     /// Playback is about to jump (a seek, a loop wrap). Returns the pedal-up
     /// (channel 0, like [`take_resets`](Self::take_resets)) for the caller
-    /// to send now when the track's playback has sent the pedal, else
-    /// nothing: the jump releases the sounding notes, and a pedal
-    /// down on both sides of it would otherwise hold them ringing into the
-    /// jump target, since the chase sends only what differs. The pedal is
-    /// then known to be up, so the next [`chase`](Self::chase) presses it
-    /// again where playback lands down — and sends nothing where it lands
-    /// up. A pedal sent up is lifted too: that last value may sit in the
-    /// dropped delay queue. A pedal the player holds
-    /// ([`hand_over`](Self::hand_over)) isn't the track's to lift. Only the
-    /// pedal: a wheel lifted to rest on every wrap would dip through centre.
+    /// to send now when the track's playback may have the pedal down — its
+    /// last value sent off 0, or not known to have been heard — else
+    /// nothing: the jump releases the sounding notes, and a pedal down on
+    /// both sides of it would otherwise hold them ringing into the jump
+    /// target, since the chase sends only what differs. The pedal is then
+    /// known to be up, so the next [`chase`](Self::chase) presses it again
+    /// where playback lands down — and sends nothing where it lands up. A
+    /// pedal last sent up isn't lifted: like any other controller, the chase
+    /// resends that "up", which the dropped delay queue may have held. A
+    /// pedal the player holds ([`hand_over`](Self::hand_over)) isn't the
+    /// track's to lift. Only the pedal: a wheel lifted to rest on every wrap
+    /// would dip through centre.
     ///
     /// Every other controller's last value may not have been heard either —
     /// the `"midiout"` thread drops its delay queue on every stop and jump
@@ -145,7 +147,8 @@ impl ControllerTracker {
     pub(crate) fn jump(&mut self) -> Vec<Vec<u8>> {
         let mut lifted = Vec::new();
         for (controller, sent) in &mut self.sent.0 {
-            if *controller == Controller::SUSTAIN {
+            // `STALE` is never 0, so a pedal not known to be up lifts too.
+            if *controller == Controller::SUSTAIN && *sent != 0.0 {
                 *sent = 0.0;
                 lifted.push(controller.message(0));
             } else {
@@ -472,6 +475,28 @@ mod tests {
         assert_eq!(tracker.jump(), vec![PEDAL_UP.to_vec()]);
         tracker.chase(&ControllerValues::default(), FOLLOWED);
         assert!(drain(&mut tracker).is_empty());
+    }
+
+    /// A pedal last sent up isn't lifted on a jump; the chase resends the
+    /// up, which the dropped delay queue may have held, as for a wheel.
+    #[test]
+    fn a_jump_leaves_a_lifted_pedal_to_the_chase() {
+        let mut tracker = ControllerTracker::default();
+        observe(&mut tracker, &PEDAL_DOWN);
+        observe(&mut tracker, &PEDAL_UP);
+        assert!(tracker.jump().is_empty());
+        tracker.chase(&ControllerValues::default(), FOLLOWED);
+        assert_eq!(drain(&mut tracker), vec![PEDAL_UP.to_vec()]);
+    }
+
+    /// Two jumps with no tick between: the first lift is known heard (it
+    /// goes out at once), so the second sends nothing new.
+    #[test]
+    fn a_second_jump_before_a_tick_sends_no_second_lift() {
+        let mut tracker = ControllerTracker::default();
+        observe(&mut tracker, &PEDAL_DOWN);
+        assert_eq!(tracker.jump(), vec![PEDAL_UP.to_vec()]);
+        assert!(tracker.jump().is_empty());
     }
 
     /// A jump lifts only the pedal: a bend is resent by the chase, never

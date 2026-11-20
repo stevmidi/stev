@@ -293,8 +293,9 @@ impl LiveInputRouter {
             self.live_notes.set(note, on);
         }
 
-        // Note edges, the two wheels and the sustain pedal go on to the sequencer (capture,
-        // `is_recorded`); only note edges to the note logger.
+        // Note edges, the two wheels and the sustain pedal go on to the
+        // sequencer (capture, `is_recorded`); only note edges to the note
+        // logger.
         if parse_note(&msg).is_some() {
             self.note_logger_command_tx
                 .send(NoteLoggerCommand::LogInputEvent(midi3(&msg)))

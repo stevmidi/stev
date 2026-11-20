@@ -162,8 +162,9 @@ impl Clip {
     /// `start_tick` the value of a controller held from hidden material
     /// before the window (the track's arrival chase, `Track::tick`) — a wheel
     /// or the pedal off its rest, anything else moved there — and at
-    /// `end_tick` the rest of a wheel or the pedal the window leaves off it (the chase when playback moves on,
-    /// `Track::seek`); a CC with no rest stays where it is. `kept` is the
+    /// `end_tick` the rest of a wheel or the pedal the window leaves off it
+    /// (the chase when playback moves on, `Track::seek`); a CC with no rest
+    /// stays where it is. `kept` is the
     /// window's events ([`windowed_events`](Self::windowed_events)); muted
     /// ones never sound, so they move nothing.
     fn wheel_edges(&self, kept: &[Event], start_tick: i32, end_tick: i32) -> Vec<Event> {

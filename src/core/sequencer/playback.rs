@@ -365,7 +365,10 @@ impl Sequencer {
     /// values it sent — the jump drops the `"midiout"` delay queue the last
     /// of them may still have sat in ([`Track::jump_controllers`],
     /// `530-sustain-capture.md` decision 4). Called before the seek, whose
-    /// chase presses the pedal again where playback lands down.
+    /// chase presses the pedal again where playback lands down. On MIDI Out
+    /// the lift and the jump's note-offs (the `NoteLogger`'s `ReleaseNotes`,
+    /// on another channel) reach the `"midiout"` thread in either order;
+    /// both orders release the notes, so neither is enforced.
     pub(crate) fn jump_controllers(&mut self) {
         for track_idx in 0..self.tracks.len() {
             let lift = self.tracks[track_idx].jump_controllers();
@@ -918,6 +921,56 @@ mod tests {
         sequencer.tick(at);
 
         assert_eq!(midi_out_bytes(&midi_out_rx), vec![vec![0xE0, 0x00, 0x40]]);
+    }
+
+    /// A plugin track gets the pedal's lift on a jump and its reset on a
+    /// stop on its slot, now; the chase presses it again on the clip's
+    /// instant (`530-sustain-capture.md` decision 4). The player's own pedal
+    /// is left down by both.
+    #[test]
+    fn a_plugin_tracks_pedal_lifts_on_a_jump_and_a_stop() {
+        const PEDAL_DOWN: [u8; 3] = [0xB0, 64, 127];
+        const PEDAL_UP: [u8; 3] = [0xB0, 64, 0];
+        let pedal_events = |rx: &mut Consumer<ClipInstrumentEvent>| -> Vec<([u8; 3], bool)> {
+            std::iter::from_fn(|| rx.pop().ok())
+                .filter_map(|e| {
+                    let msg = e.message.midi()?;
+                    (msg[..2] == [0xB0, 64])
+                        .then_some((msg, matches!(e.when, EventTime::Immediate)))
+                })
+                .collect()
+        };
+        let (mut sequencer, mut rx) = sequencer_and_plugin_rx(config::TEMPO_US_DEFAULT);
+        instrument_track_0(&mut sequencer);
+        let mut clip = clip_at(0, 960);
+        clip.add_event(Event::new(0, 0, PEDAL_DOWN.to_vec()));
+        sequencer.tracks_mut()[0].add_clip(&clip);
+        sequencer.reset_to_tick(0);
+        let at = Instant::now();
+        for _ in 0..200 {
+            sequencer.tick(at);
+        }
+        assert_eq!(pedal_events(&mut rx), vec![(PEDAL_DOWN, false)]);
+
+        // What `reanchor_playback` does on a jump to 100.
+        sequencer.jump_controllers();
+        assert_eq!(pedal_events(&mut rx), vec![(PEDAL_UP, true)], "lifted now");
+        sequencer.reset_to_tick(100);
+        sequencer.tick(at);
+        assert_eq!(pedal_events(&mut rx), vec![(PEDAL_DOWN, false)]);
+
+        sequencer.reset_controllers();
+        assert_eq!(pedal_events(&mut rx), vec![(PEDAL_UP, true)]);
+
+        // The player presses the pedal on the armed track: theirs.
+        sequencer.select_track(sequencer.track_id_by_index(0));
+        sequencer.reset_to_tick(100);
+        sequencer.tick(at);
+        sequencer.handle_midi_input(&PEDAL_DOWN, 101);
+        pedal_events(&mut rx);
+        sequencer.jump_controllers();
+        sequencer.reset_controllers();
+        assert!(pedal_events(&mut rx).is_empty());
     }
 
     #[test]

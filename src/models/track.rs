@@ -759,16 +759,16 @@ impl Track {
     }
 
     /// Messages (channel 0) putting every wheel and the pedal the track's
-    /// playback moved back to rest, for the sequencer to send at once: a transport stop
-    /// (no [`tick`](Self::tick) runs to drain a chase) or a track leaving the
-    /// arrangement. Nothing stays due.
+    /// playback moved back to rest, for the sequencer to send at once: a
+    /// transport stop (no [`tick`](Self::tick) runs to drain a chase) or a
+    /// track leaving the arrangement. Nothing stays due.
     pub(crate) fn take_controller_resets(&mut self) -> Vec<Vec<u8>> {
         self.controllers.take_resets()
     }
 
     /// Playback is about to jump (a seek, a loop wrap — `reanchor_playback`):
     /// the pedal-up (channel 0) for the sequencer to send now, if the
-    /// track's playback has the pedal, and the next [`seek`](Self::seek)
+    /// track's playback may have the pedal down, and the next [`seek`](Self::seek)
     /// resends the controller values the synth may not have heard — see
     /// [`ControllerTracker::jump`].
     pub(crate) fn jump_controllers(&mut self) -> Vec<Vec<u8>> {
