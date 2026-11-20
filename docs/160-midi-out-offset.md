@@ -74,7 +74,7 @@ MIDI out (`MidiOutMessage::at`). Everything else is `MidiOutMessage::now`:
 | `MidiInputForwarder` live thru (`midi/input.rs`) | Playing a key must not feel laggy — same rationale as the CLAP live-note path bypassing the schedule delay |
 | `Sequencer::chase_notes` | A seek has no tick instant; the instrument path uses `EventTime::Immediate` here and MIDI out matches it |
 | `NoteLogger::release_notes` | The stuck-note safety net; delaying a release is never right |
-| `Sequencer::reset_wheels` / `silence_leaving_track` | A stop or a track leaving: the wheel resets go with the note releases. A seek's wheel *chase* is ordinary clip playback (`Track::tick` drains it) and carries the next tick's instant |
+| `Sequencer::reset_controllers` / `silence_leaving_track` | A stop or a track leaving: the wheel resets go with the note releases. A seek's wheel *chase* is ordinary clip playback (`Track::tick` drains it) and carries the next tick's instant |
 | `Sequencer::preview_note` / `preview_notes` (`MidiOut` tracks) | UI-driven auditioning, not clip playback |
 
 ### The queue

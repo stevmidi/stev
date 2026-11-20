@@ -762,7 +762,7 @@ impl Track {
     /// playback moved back to rest, for the sequencer to send at once: a transport stop
     /// (no [`tick`](Self::tick) runs to drain a chase) or a track leaving the
     /// arrangement. Nothing stays due.
-    pub(crate) fn take_wheel_resets(&mut self) -> Vec<Vec<u8>> {
+    pub(crate) fn take_controller_resets(&mut self) -> Vec<Vec<u8>> {
         self.controllers.take_resets()
     }
 
@@ -771,7 +771,7 @@ impl Track {
     /// track's playback has the pedal, and the next [`seek`](Self::seek)
     /// resends the controller values the synth may not have heard — see
     /// [`ControllerTracker::jump`].
-    pub(crate) fn jump_controllers(&mut self) -> Option<Vec<u8>> {
+    pub(crate) fn jump_controllers(&mut self) -> Vec<Vec<u8>> {
         self.controllers.jump()
     }
 
@@ -1942,7 +1942,7 @@ mod tests {
         assert!(wheel_moves_until(&mut track, 700).is_empty());
         track.seek(300);
         assert!(wheel_moves_until(&mut track, 2400).is_empty());
-        assert!(track.take_wheel_resets().is_empty());
+        assert!(track.take_controller_resets().is_empty());
     }
 
     /// The right half of a split whose left half bent up: arriving at its
@@ -1964,7 +1964,7 @@ mod tests {
         );
 
         // A jump, as `reanchor_playback` makes it.
-        assert_eq!(track.jump_controllers(), None, "no pedal to lift");
+        assert!(track.jump_controllers().is_empty(), "no pedal to lift");
         track.seek(500);
         assert_eq!(
             wheel_moves_until(&mut track, 900),
@@ -1987,7 +1987,7 @@ mod tests {
         // Neither a seek past it nor a stop sends anything for it.
         track.seek(300);
         assert!(wheel_moves_until(&mut track, 400).is_empty());
-        assert!(track.take_wheel_resets().is_empty());
+        assert!(track.take_controller_resets().is_empty());
     }
 
     #[test]
@@ -1996,12 +1996,12 @@ mod tests {
         track.add_clip(&clip_bent_up(0));
         track.seek(0);
         wheel_moves_until(&mut track, 400);
-        assert_eq!(track.take_wheel_resets(), vec![BEND_CENTRE.to_vec()]);
+        assert_eq!(track.take_controller_resets(), vec![BEND_CENTRE.to_vec()]);
 
         track.seek(0);
         wheel_moves_until(&mut track, 400);
         track.hand_controller_to_player(&[0xE5, 0x00, 0x20]);
-        assert!(track.take_wheel_resets().is_empty());
+        assert!(track.take_controller_resets().is_empty());
     }
 
     /// A clip `[start, start + 960)` holding note 60 and, at each `(tick,
@@ -2035,9 +2035,9 @@ mod tests {
                 (150, vec![0xB0, 66, 127])
             ]
         );
-        assert_eq!(track.take_wheel_resets(), vec![BEND_CENTRE.to_vec()]);
+        assert_eq!(track.take_controller_resets(), vec![BEND_CENTRE.to_vec()]);
 
-        assert_eq!(track.jump_controllers(), None);
+        assert!(track.jump_controllers().is_empty());
         track.seek(300);
         assert_eq!(
             wheel_moves_until(&mut track, 400),
@@ -2068,7 +2068,7 @@ mod tests {
 
         track.seek(0);
         wheel_moves_until(&mut track, 400);
-        assert_eq!(track.take_wheel_resets(), vec![PEDAL_UP.to_vec()]);
+        assert_eq!(track.take_controller_resets(), vec![PEDAL_UP.to_vec()]);
     }
 
     /// The pedal held across a split boundary isn't cut there: the right
@@ -2112,7 +2112,7 @@ mod tests {
         track.seek(0);
         wheel_moves_until(&mut track, 400);
 
-        assert_eq!(track.jump_controllers(), Some(PEDAL_UP.to_vec()));
+        assert_eq!(track.jump_controllers(), vec![PEDAL_UP.to_vec()]);
         track.seek(200);
         assert_eq!(
             wheel_moves_until(&mut track, 400),

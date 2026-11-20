@@ -356,10 +356,10 @@ impl Sequencer {
         if is_note_on(message) {
             self.capture_last_note_at = Some(Instant::now());
         }
-        if let Some((wheel, value)) = parse_controller(message)
-            && let Some(i) = wheel.resting_index()
+        if let Some((controller, value)) = parse_controller(message)
+            && let Some(i) = controller.resting_index()
         {
-            self.live_wheels[i] = (Some(value) != wheel.rest()).then(|| midi3(message));
+            self.live_resting[i] = (Some(value) != controller.rest()).then(|| midi3(message));
         }
 
         self.add_midi_event_to_capture(message, tick);
@@ -407,7 +407,7 @@ impl Sequencer {
         let first_on = held.iter().map(Event::tick).min().unwrap_or(0);
 
         self.reset_capture();
-        for wheel in self.live_wheels.into_iter().flatten() {
+        for wheel in self.live_resting.into_iter().flatten() {
             self.capture_clip
                 .add_event(Event::from_midi_with_tick(&wheel, start_tick));
         }
@@ -635,7 +635,7 @@ impl Sequencer {
     /// the left edge to reveal it.
     ///
     /// Every target carries the wheels off their rest where the kept span
-    /// starts onto its start ([`Clip::carry_wheels_onto`]): a wheel set in an
+    /// starts onto its start ([`Clip::carry_resting_onto`]): a wheel set in an
     /// earlier pass, or before the transport started, and held, is part of
     /// the take (`370-wheel-capture.md` § Decisions 7). A new clip also holds
     /// each knob's start value there ([`Clip::hold_start_values`]), so the
@@ -684,7 +684,7 @@ impl Sequencer {
                 );
                 let (pass_start, pass_end) = (pass_start + tolerance, pass_end + tolerance);
                 capture.relocate_late_notes_to_region_start(pass_start, pass_end, tolerance);
-                capture.carry_wheels_onto(pass_start);
+                capture.carry_resting_onto(pass_start);
                 capture.hold_start_values(pass_start);
                 capture.fold_into_loop(pass_start, pass_end, self.region_start(), loop_len);
 
@@ -703,7 +703,7 @@ impl Sequencer {
                 // At least the region: a marquee may run past the content.
                 let retained_end =
                     anchor_tick + self.linear_content_length(anchor_tick).max(region_length);
-                capture.carry_wheels_onto(retained_start);
+                capture.carry_resting_onto(retained_start);
                 capture.hold_start_values(retained_start);
 
                 capture
@@ -728,7 +728,7 @@ impl Sequencer {
                     .region_mut()
                     .set_region(Some(region_start_tick), Some(region_end_tick));
                 capture.sort_events_by_tick();
-                capture.carry_wheels_onto(region_start_tick);
+                capture.carry_resting_onto(region_start_tick);
                 capture.calculate_note_lengths();
 
                 if let (RunningCaptureTarget::InsertFromArranger, Some(loop_len)) =

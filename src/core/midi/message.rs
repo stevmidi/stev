@@ -301,6 +301,20 @@ mod tests {
         assert_eq!(Controller::Cc(0).rest(), None);
     }
 
+    /// `RESTING` lists exactly the controllers `rest` gives a rest, so none
+    /// is recorded but never reset, or reset but never chased.
+    #[test]
+    fn resting_lists_exactly_the_controllers_with_a_rest() {
+        let midi = std::iter::once(Controller::PitchBend).chain((0..128).map(Controller::Cc));
+        for controller in midi {
+            assert_eq!(
+                controller.is_resting(),
+                Controller::RESTING.contains(&controller),
+                "{controller:?}"
+            );
+        }
+    }
+
     #[test]
     fn pitch_bend_value_reassembles_lsb_then_msb() {
         assert_eq!(pitch_bend_value([0xE0, 0x00, 0x40]), 8192);

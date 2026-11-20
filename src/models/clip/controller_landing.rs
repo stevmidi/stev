@@ -10,7 +10,7 @@
 //! at the window's end the value the clip's old curve had there is written
 //! back, if it differs from the take's last. A controller the take didn't
 //! move is left alone. A wheel or the pedal off its rest where a take starts counts as a
-//! move there ([`carry_wheels_onto`](Clip::carry_wheels_onto)); a parameter
+//! move there ([`carry_resting_onto`](Clip::carry_resting_onto)); a parameter
 //! has no rest, so it never does. Instead, where a clip has no earlier data
 //! for a parameter, the value it stood at when the take turned it — recorded
 //! just ahead of the turn's first move (`Sequencer::hold_knob`) — is written
@@ -49,22 +49,22 @@ impl Clip {
     /// the pedal off its rest there that doesn't move exactly there already,
     /// its last unmuted move before `tick` (value and channel), restamped at
     /// `tick`. Only those: a CC with no rest is never "off" it.
-    pub(crate) fn carried_wheel_moves(&self, tick: i32) -> Vec<Event> {
+    pub(crate) fn carried_resting_moves(&self, tick: i32) -> Vec<Event> {
         Controller::RESTING
             .into_iter()
-            .filter_map(|wheel| {
-                let (event, value) = self.last_move_before(wheel, tick)?;
-                (Some(value) != wheel.rest_value() && !self.has_move_at(wheel, tick))
+            .filter_map(|resting| {
+                let (event, value) = self.last_move_before(resting, tick)?;
+                (Some(value) != resting.rest_value() && !self.has_move_at(resting, tick))
                     .then(|| event.copy_at(tick))
             })
             .collect()
     }
 
     /// A take starting at event tick `tick` carries every wheel off its rest
-    /// there ([`carried_wheel_moves`](Self::carried_wheel_moves)): the moves
+    /// there ([`carried_resting_moves`](Self::carried_resting_moves)): the moves
     /// are added at `tick`.
-    pub(crate) fn carry_wheels_onto(&mut self, tick: i32) {
-        let carried = self.carried_wheel_moves(tick);
+    pub(crate) fn carry_resting_onto(&mut self, tick: i32) {
+        let carried = self.carried_resting_moves(tick);
         if carried.is_empty() {
             return;
         }
@@ -82,7 +82,7 @@ impl Clip {
     /// last pass left. Then the turn's start value, sent on the same tick as
     /// its first move, goes from there
     /// ([`drop_superseded_controller_moves`](Self::drop_superseded_controller_moves)).
-    /// A new clip's counterpart of [`carry_wheels_onto`](Self::carry_wheels_onto),
+    /// A new clip's counterpart of [`carry_resting_onto`](Self::carry_resting_onto),
     /// called with the start of what the clip keeps.
     pub(crate) fn hold_start_values(&mut self, tick: i32) {
         self.hold_start_values_of(tick, |_| true);
@@ -601,7 +601,7 @@ mod tests {
     #[test]
     fn a_wheel_off_rest_is_carried_but_a_parameter_never_is() {
         let clip = clip_with(vec![param(100, 1, 0.9), modw(200, 50)]);
-        let carried = clip.carried_wheel_moves(BAR);
+        let carried = clip.carried_resting_moves(BAR);
         assert_eq!(carried.len(), 1);
         assert_eq!(carried[0].midi_message(), &[0xB0, 0x01, 50]);
     }
@@ -840,7 +840,7 @@ mod tests {
             modw(300, 0),
         ]);
 
-        clip.carry_wheels_onto(BAR);
+        clip.carry_resting_onto(BAR);
 
         assert_eq!(
             wheel_moves(&clip),
@@ -853,7 +853,7 @@ mod tests {
         );
 
         let mut moving = clip_with(vec![modw(100, 40), modw(BAR, 60)]);
-        moving.carry_wheels_onto(BAR);
+        moving.carry_resting_onto(BAR);
         assert_eq!(
             wheel_moves(&moving),
             vec![(100, vec![0xB0, 0x01, 40]), (BAR, vec![0xB0, 0x01, 60])]
@@ -1060,7 +1060,7 @@ mod tests {
             knob(BAR + 100, 15, 60),
         ]);
         assert!(
-            clip.carried_wheel_moves(BAR)
+            clip.carried_resting_moves(BAR)
                 .iter()
                 .all(|event| { event.controller_move().is_some_and(|(c, _)| c.is_resting()) })
         );

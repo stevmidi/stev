@@ -240,7 +240,7 @@ pass alone — same "last pass only" rule, no exception for the cursor.
   clip's own over the span played (`Clip::land_take`, `370-wheel-capture.md`): per wheel
   the take moved, from its first move to the **wheel end**, where the old curve's value
   is written back. A wheel off its rest at the window start counts as a move there
-  (`carry_wheels_onto` in `normalize_running_capture`, every target)
+  (`carry_resting_onto` in `normalize_running_capture`, every target)
 - The wheel end (`CaptureInsert::wheel_end`) is the end of the loop **pass** the window
   starts in, not the window's: a one-bar loop over a four-bar clip latches to the loop's
   end, and a wheel move after the wrap belongs to another pass and stays out
@@ -281,7 +281,7 @@ the take:
   quarter) so a note added seconds later doesn't land deep in the bar. A rolled chord
   stays rolled, a block chord a block. Each keeps its real release, which arrives while
   playing, so its length is how long it was really held into the take;
-- **each wheel and the sustain pedal when off its rest** — `Sequencer::live_wheels`, the
+- **each wheel and the sustain pedal when off its rest** — `Sequencer::live_resting`, the
   player's last move of each (whatever the buffer's resets did since), on the start tick
   ahead of the notes. At rest nothing is carried. A bend held into the take is kept too
   (`370` § Decisions 7): it springs back to centre on release, but held, it is what was

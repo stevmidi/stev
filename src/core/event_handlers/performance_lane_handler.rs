@@ -102,40 +102,21 @@ impl EventHandlers {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    };
-
-    use crossbeam_channel::unbounded;
+    use std::sync::atomic::Ordering;
 
     use std::time::Instant;
 
     use undo::Record;
 
     use crate::core::config::PERFORMANCE_LANE_BASE_NOTE;
-    use crate::core::event_handlers::test_harness::{Harness, harness, run_command, statuses};
+    use crate::core::event_handlers::test_harness::{
+        Harness, harness, run_command, statuses, transport,
+    };
     use crate::core::sequencer::test_support::{clip_at, clip_notes, clip_with_marker_notes, rect};
     use crate::core::sequencer::{SequencerCommand, UndoStep};
     use crate::core::time::Meter;
     use crate::core::transport::Transport;
     use crate::models::performance_lane::KeyLength;
-
-    /// A transport over `h`'s shared state, as the `"sequencer"` thread holds
-    /// one beside the sequencer.
-    fn transport(h: &Harness) -> Transport {
-        Transport::new(
-            unbounded().0,
-            unbounded().0,
-            h.playback_tick.clone(),
-            h.cursor_tick.clone(),
-            h.running.clone(),
-            h.region.0.clone(),
-            h.region.1.clone(),
-            Arc::new(AtomicBool::new(true)),
-            h.performance_lane_armed.clone(),
-        )
-    }
 
     /// Where pressing key `key_index` with the lane at `length` (and `meter`)
     /// takes playback.

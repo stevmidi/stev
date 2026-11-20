@@ -83,7 +83,7 @@ impl TakeFraming {
             .collect();
         let last_off = notes.iter().map(Event::tick).fold(end, i32::max);
         let wheel_end = self.wheel_end(last_off);
-        let carried = self.take.carried_wheel_moves(start);
+        let carried = self.take.carried_resting_moves(start);
         let wheels: Vec<Event> = self
             .take
             .events()

@@ -20,7 +20,7 @@ use crate::core::sequencer::test_support::{clip_at, note_off, note_on};
 use crate::core::sequencer::{Sequencer, SequencerCommand, UndoStep};
 use crate::core::shared_atomics::{AudioExportAtomics, TrackMixAtomics};
 use crate::core::time::{Meter, TapTempo};
-use crate::core::transport::TransportCommand;
+use crate::core::transport::{Transport, TransportCommand, TransportEvent};
 use crate::models::performance_lane::KeyLength;
 use crate::view::display::UiEvent;
 
@@ -162,6 +162,30 @@ pub(crate) fn add_clip(sequencer: &mut Sequencer, start_tick: i32) -> (Uuid, Uui
     let clip_id = clip.id();
     sequencer.tracks_mut()[0].add_clip(&clip);
     (clip_id, note_id)
+}
+
+/// A stopped transport over `h`'s shared state, looping, as the
+/// `"sequencer"` thread holds one beside the sequencer, and the far end of
+/// its events.
+pub(crate) fn transport_with_events(h: &Harness) -> (Transport, Receiver<TransportEvent>) {
+    let (events_tx, events) = unbounded();
+    let transport = Transport::new(
+        events_tx,
+        unbounded().0,
+        h.playback_tick.clone(),
+        h.cursor_tick.clone(),
+        h.running.clone(),
+        h.region.0.clone(),
+        h.region.1.clone(),
+        Arc::new(AtomicBool::new(true)),
+        h.performance_lane_armed.clone(),
+    );
+    (transport, events)
+}
+
+/// [`transport_with_events`], its events dropped.
+pub(crate) fn transport(h: &Harness) -> Transport {
+    transport_with_events(h).0
 }
 
 /// Runs `cmd` through the handlers, recording on `record`.

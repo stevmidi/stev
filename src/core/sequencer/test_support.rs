@@ -236,6 +236,11 @@ pub(crate) fn param_moves(events: &[Event]) -> Vec<(i32, ParamId, f64)> {
         .collect()
 }
 
+/// Everything sent to MIDI Out on `rx` since the last call, as bytes.
+pub(crate) fn midi_out_bytes(rx: &Receiver<MidiOutMessage>) -> Vec<Vec<u8>> {
+    rx.try_iter().map(|message| message.bytes).collect()
+}
+
 /// The wheel moves among `events` as `(tick, message)`.
 pub(crate) fn wheel_moves(events: &[Event]) -> Vec<(i32, Vec<u8>)> {
     events

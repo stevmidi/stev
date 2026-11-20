@@ -66,7 +66,7 @@ capture covers it. Key files: `src/core/midi/input.rs`,
   from at the window's start, as its stand-in for a rest (`Clip::hold_start_values`,
   `400` decision 10). A
   controller the take didn't move is left alone; a wheel off its rest where the take's
-  window starts counts as a move there (`Clip::carry_wheels_onto`), for new clips too.
+  window starts counts as a move there (`Clip::carry_resting_onto`), for new clips too.
 - **Ride a wheel or turn a knob alone over a playing loop and `/` keeps it in the lead
   clip**: running, a take of controller moves with no notes lands in the lead clip by the
   same rule, framed by the loop pass holding its last move. It needs a lead clip (a clip of automation alone

@@ -37,7 +37,7 @@ impl EventHandlers {
                 // wheels instead (`Track::seek`), so a loop wrap mid-bend
                 // doesn't dip through centre. After the note releases, so
                 // the pedal lifting lets nothing hang.
-                sequencer.reset_wheels();
+                sequencer.reset_controllers();
             }
         }
     }
@@ -176,35 +176,15 @@ fn play_from_tick(tick: i32, transport: &mut Transport, sequencer: &mut Sequence
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-    use std::sync::atomic::AtomicBool;
     use std::time::Instant;
 
-    use crossbeam_channel::unbounded;
+    use crate::core::sequencer::test_support::{cc_at, clip_at, midi_out_bytes, note_off, note_on};
 
-    use crate::core::sequencer::test_support::clip_at;
-    use crate::models::event::Event;
-
-    use super::super::test_harness::{Harness, harness};
+    use super::super::test_harness::{Harness, harness, transport};
     use super::*;
 
     const PEDAL_DOWN: [u8; 3] = [0xB0, 64, 127];
     const PEDAL_UP: [u8; 3] = [0xB0, 64, 0];
-
-    /// A stopped transport on the harness's shared state.
-    fn transport(h: &Harness) -> Transport {
-        Transport::new(
-            unbounded().0,
-            unbounded().0,
-            h.playback_tick.clone(),
-            h.cursor_tick.clone(),
-            h.running.clone(),
-            h.region.0.clone(),
-            h.region.1.clone(),
-            Arc::new(AtomicBool::new(true)),
-            h.performance_lane_armed.clone(),
-        )
-    }
 
     /// Track 0 (MIDI Out, channel 0) holds a clip over the loop `[0, 3840)`:
     /// a note at 0 and the pedal pressed at `down`, never lifted. Played
@@ -212,12 +192,8 @@ mod tests {
     fn pedalled_from(down: i32) -> Harness {
         let mut h = harness();
         let mut clip = clip_at(0, 3840);
-        for (tick, message) in [
-            (0, vec![0x90, 60, 100]),
-            (down, PEDAL_DOWN.to_vec()),
-            (480, vec![0x80, 60, 0]),
-        ] {
-            clip.add_event(Event::new(tick, 0, message));
+        for event in [note_on(0), cc_at(down, 64, 127), note_off(480)] {
+            clip.add_event(event);
         }
         clip.sort_events_by_tick();
         h.sequencer.tracks_mut()[0].add_clip(&clip);
@@ -237,9 +213,8 @@ mod tests {
 
     /// The pedal moves sent to MIDI Out since the last call.
     fn pedal_moves(h: &Harness) -> Vec<Vec<u8>> {
-        h.midi_out
-            .try_iter()
-            .map(|message| message.bytes)
+        midi_out_bytes(&h.midi_out)
+            .into_iter()
             .filter(|bytes| bytes.get(..2) == Some(&[0xB0, 64]))
             .collect()
     }

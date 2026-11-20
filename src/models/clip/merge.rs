@@ -178,10 +178,10 @@ impl Clip {
             .filter(|&(controller, value)| controller.rest_value() != Some(value))
             .map(|(controller, value)| Event::controller_move_at(start_tick, controller, value, 0))
             .collect();
-        edges.extend(Controller::RESTING.into_iter().filter_map(|wheel| {
-            let rest = wheel.rest()?;
-            (at_end.get(wheel) != Some(f64::from(rest)))
-                .then(|| Event::new(end_tick, 0, wheel.message(rest)))
+        edges.extend(Controller::RESTING.into_iter().filter_map(|resting| {
+            let rest = resting.rest()?;
+            (at_end.get(resting) != Some(f64::from(rest)))
+                .then(|| Event::new(end_tick, 0, resting.message(rest)))
         }));
         edges
     }

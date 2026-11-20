@@ -125,8 +125,9 @@ impl ControllerTracker {
     }
 
     /// Playback is about to jump (a seek, a loop wrap). Returns the pedal-up
-    /// (channel 0) for the caller to send now when the track's playback has
-    /// sent the pedal: the jump releases the sounding notes, and a pedal
+    /// (channel 0, like [`take_resets`](Self::take_resets)) for the caller
+    /// to send now when the track's playback has sent the pedal, else
+    /// nothing: the jump releases the sounding notes, and a pedal
     /// down on both sides of it would otherwise hold them ringing into the
     /// jump target, since the chase sends only what differs. The pedal is
     /// then known to be up, so the next [`chase`](Self::chase) presses it
@@ -141,15 +142,17 @@ impl ControllerTracker {
     /// (`160-midi-out-offset.md`), so a bend's return to centre just before
     /// a loop wrap can be lost. The next chase resends every controller the
     /// track has sent that has a value where playback lands.
-    pub(crate) fn jump(&mut self) -> Option<Vec<u8>> {
-        let lifted = self.sent.remove(Controller::SUSTAIN).is_some();
-        for (_, sent) in &mut self.sent.0 {
-            *sent = STALE;
+    pub(crate) fn jump(&mut self) -> Vec<Vec<u8>> {
+        let mut lifted = Vec::new();
+        for (controller, sent) in &mut self.sent.0 {
+            if *controller == Controller::SUSTAIN {
+                *sent = 0.0;
+                lifted.push(controller.message(0));
+            } else {
+                *sent = STALE;
+            }
         }
-        lifted.then(|| {
-            self.sent.set(Controller::SUSTAIN, 0.0);
-            Controller::SUSTAIN.message(0)
-        })
+        lifted
     }
 
     /// The next due controller and its value, taken off the due list —
@@ -286,7 +289,7 @@ mod tests {
     }
 
     #[test]
-    fn after_an_invalidate_a_chase_resends_what_the_track_sent() {
+    fn after_a_jump_a_chase_resends_what_the_track_sent() {
         let mut tracker = ControllerTracker::default();
         observe(&mut tracker, &BEND_UP);
         observe(&mut tracker, &BEND_CENTRE);
@@ -384,7 +387,7 @@ mod tests {
     }
 
     #[test]
-    fn after_an_invalidate_a_chase_resends_a_parameter() {
+    fn after_a_jump_a_chase_resends_a_parameter() {
         let mut tracker = ControllerTracker::default();
         tracker.observe(CUTOFF, 0.75);
         tracker.jump();
@@ -456,7 +459,7 @@ mod tests {
     fn a_jump_lifts_the_pedal_and_the_chase_presses_it_again() {
         let mut tracker = ControllerTracker::default();
         observe(&mut tracker, &PEDAL_DOWN);
-        assert_eq!(tracker.jump(), Some(PEDAL_UP.to_vec()));
+        assert_eq!(tracker.jump(), vec![PEDAL_UP.to_vec()]);
         tracker.chase(&pedal(127), FOLLOWED);
         assert_eq!(drain(&mut tracker), vec![PEDAL_DOWN.to_vec()]);
     }
@@ -466,7 +469,7 @@ mod tests {
     fn a_jump_onto_a_lifted_pedal_sends_one_up() {
         let mut tracker = ControllerTracker::default();
         observe(&mut tracker, &PEDAL_DOWN);
-        assert_eq!(tracker.jump(), Some(PEDAL_UP.to_vec()));
+        assert_eq!(tracker.jump(), vec![PEDAL_UP.to_vec()]);
         tracker.chase(&ControllerValues::default(), FOLLOWED);
         assert!(drain(&mut tracker).is_empty());
     }
@@ -477,7 +480,7 @@ mod tests {
     fn a_jump_lifts_only_the_pedal() {
         let mut tracker = ControllerTracker::default();
         observe(&mut tracker, &BEND_UP);
-        assert_eq!(tracker.jump(), None);
+        assert!(tracker.jump().is_empty());
         tracker.chase(&wheels(0x3000, 0), FOLLOWED);
         assert_eq!(drain(&mut tracker), vec![BEND_UP.to_vec()]);
     }
@@ -489,7 +492,7 @@ mod tests {
         let mut tracker = ControllerTracker::default();
         observe(&mut tracker, &PEDAL_DOWN);
         tracker.hand_to_player(&[0xB0, 64, 127]);
-        assert_eq!(tracker.jump(), None);
+        assert!(tracker.jump().is_empty());
         assert!(tracker.take_resets().is_empty());
     }
 }

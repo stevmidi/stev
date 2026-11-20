@@ -10,7 +10,7 @@
 //!
 //! The `release_*` / `reset*` methods are the discontinuity handlers — mute,
 //! seek, loop wrap, transport stop — that stop a clip-driven note from hanging
-//! in external gear or in a plugin; [`reset_wheels`](Sequencer::reset_wheels)
+//! in external gear or in a plugin; [`reset_controllers`](Sequencer::reset_controllers)
 //! does the same for a wheel or the sustain pedal a clip left off its rest
 //! when the transport stops, and [`jump_controllers`](Sequencer::jump_controllers)
 //! lifts the pedal on a jump.
@@ -310,7 +310,7 @@ impl Sequencer {
             }
             TrackOutput::Instrument(_) => self.release_slot_instrument_notes(slot),
         }
-        self.send_wheel_resets(track_idx);
+        self.send_controller_resets(track_idx);
     }
 
     /// Puts back to its rest every wheel and the sustain pedal a track's
@@ -320,20 +320,20 @@ impl Sequencer {
     /// (`Track::hand_controller_to_player`), and a knob's parameter has no
     /// rest: it stays where it was
     /// (`400-parameter-knobs.md` decision 9).
-    pub(crate) fn reset_wheels(&mut self) {
+    pub(crate) fn reset_controllers(&mut self) {
         for track_idx in 0..self.tracks.len() {
-            self.send_wheel_resets(track_idx);
+            self.send_controller_resets(track_idx);
         }
     }
 
     /// Sends the track at `track_idx` the resets for every wheel and the
-    /// pedal its playback moved ([`Track::take_wheel_resets`]), now, on its
+    /// pedal its playback moved ([`Track::take_controller_resets`]), now, on its
     /// own output.
-    fn send_wheel_resets(&mut self, track_idx: usize) {
+    fn send_controller_resets(&mut self, track_idx: usize) {
         let Some(track) = self.tracks.get_mut(track_idx) else {
             return;
         };
-        let resets = track.take_wheel_resets();
+        let resets = track.take_controller_resets();
         self.send_to_track_now(track_idx, resets);
     }
 
@@ -368,9 +368,8 @@ impl Sequencer {
     /// chase presses the pedal again where playback lands down.
     pub(crate) fn jump_controllers(&mut self) {
         for track_idx in 0..self.tracks.len() {
-            if let Some(lift) = self.tracks[track_idx].jump_controllers() {
-                self.send_to_track_now(track_idx, vec![lift]);
-            }
+            let lift = self.tracks[track_idx].jump_controllers();
+            self.send_to_track_now(track_idx, lift);
         }
     }
 
@@ -435,8 +434,8 @@ mod tests {
     use crate::core::sequencer::ClipInstrumentEvent;
     use crate::core::sequencer::instrument_event::{EventTime, VoiceMessage};
     use crate::core::sequencer::test_support::{
-        clip_at, instrument_track_0, param_at, sequencer_at_tempo, sequencer_with_outputs,
-        stub_instrument,
+        clip_at, instrument_track_0, midi_out_bytes, param_at, sequencer_at_tempo,
+        sequencer_with_outputs, stub_instrument,
     };
     use crate::core::time::monotonic_nanos_at;
     use crate::models::clip::Clip;
@@ -831,12 +830,6 @@ mod tests {
         sequencer.tracks_mut()[0].add_clip(&clip);
     }
 
-    fn midi_out_bytes(rx: &Receiver<MidiOutMessage>) -> Vec<Vec<u8>> {
-        std::iter::from_fn(|| rx.try_recv().ok())
-            .map(|m| m.bytes)
-            .collect()
-    }
-
     #[test]
     fn a_stop_centres_a_bend_a_clip_left_on_its_tracks_channel() {
         let (mut sequencer, midi_out_rx) = sequencer_and_midi_out_rx(config::TEMPO_US_DEFAULT);
@@ -851,13 +844,13 @@ mod tests {
         }
         midi_out_bytes(&midi_out_rx);
 
-        sequencer.reset_wheels();
+        sequencer.reset_controllers();
 
         let sent: Vec<_> = std::iter::from_fn(|| midi_out_rx.try_recv().ok()).collect();
         assert_eq!(sent.len(), 1);
         assert_eq!(sent[0].bytes, vec![0xE5, 0x00, 0x40]);
         assert_eq!(sent[0].at, None, "a reset goes out now");
-        sequencer.reset_wheels();
+        sequencer.reset_controllers();
         assert!(midi_out_rx.try_recv().is_err(), "only once");
     }
 
@@ -873,7 +866,7 @@ mod tests {
         }
         drain_plugin_events(&mut rx);
 
-        sequencer.reset_wheels();
+        sequencer.reset_controllers();
 
         let event = rx.pop().expect("the reset");
         assert_eq!(
@@ -896,7 +889,7 @@ mod tests {
         sequencer.handle_midi_input(&[0xE0, 0x00, 0x30], 200);
         midi_out_bytes(&midi_out_rx);
 
-        sequencer.reset_wheels();
+        sequencer.reset_controllers();
 
         assert!(midi_out_bytes(&midi_out_rx).is_empty());
     }

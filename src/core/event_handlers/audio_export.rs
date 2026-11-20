@@ -335,7 +335,6 @@ mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::Duration;
 
-    use crossbeam_channel::{Receiver, unbounded};
     use egui::Key;
     use rtrb::RingBuffer;
     use undo::Record;
@@ -347,7 +346,9 @@ mod tests {
     use crate::core::sequencer::{AudioExportPlan, StemPlan};
     use crate::core::time::Meter;
 
-    use super::super::test_harness::{Harness, harness, run_command, statuses};
+    use super::super::test_harness::{
+        Harness, harness, run_command, statuses, transport_with_events,
+    };
     use super::*;
 
     const BAR: i32 = Meter::FOUR_FOUR.bars_to_ticks(1);
@@ -492,28 +493,10 @@ mod tests {
         assert_eq!(statuses(&h), [FINISH_EXPORT_FIRST; 4]);
     }
 
-    /// A transport on the harness's shared state, looping, and the far end
-    /// of its events.
-    fn transport(h: &Harness) -> (Transport, Receiver<TransportEvent>) {
-        let (events_tx, events) = unbounded();
-        let transport = Transport::new(
-            events_tx,
-            unbounded().0,
-            h.playback_tick.clone(),
-            h.cursor_tick.clone(),
-            h.running.clone(),
-            h.region.0.clone(),
-            h.region.1.clone(),
-            Arc::new(AtomicBool::new(true)),
-            h.performance_lane_armed.clone(),
-        );
-        (transport, events)
-    }
-
     #[test]
     fn the_run_is_stepped_from_the_selections_start_to_its_end() {
         let mut h = harness();
-        let (mut transport, events) = transport(&h);
+        let (mut transport, events) = transport_with_events(&h);
         let metronome = Metronome::new(Arc::new(AtomicBool::new(true)), RingBuffer::new(1).0);
         h.cursor_tick.store(7, Ordering::Relaxed);
         let mut exported = plan(&[(0, "01 Synth.wav")], Vec::new());

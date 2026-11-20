@@ -692,7 +692,7 @@ mod tests {
         // Nor when the run's stop puts the wheels back: the track never
         // played, so there is no bend to undo on the wire.
         sequencer.finish_audio_export();
-        sequencer.reset_wheels();
+        sequencer.reset_controllers();
         assert_eq!(midi_out.try_iter().count(), 0);
 
         // Ordinary playback of the same bar sends them, and its stop the
@@ -702,7 +702,7 @@ mod tests {
             sequencer.tick(tick_at(&sequencer, origin, tick));
         }
         assert_eq!(midi_out.try_iter().count(), 3, "the note and the bend");
-        sequencer.reset_wheels();
+        sequencer.reset_controllers();
         assert_eq!(midi_out.try_iter().count(), 1, "the bend back to centre");
     }
 
