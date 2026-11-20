@@ -20,6 +20,8 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-11-20
+
 ### Added
 
 - `⌘L` works in the clip view: drag a span in the piano roll and press `⌘L` to loop just that stretch of the clip in the arranger, wherever the clip sits. The loop keeps the span's ends as you drew them, even off the arranger's grid. With no span `⌘L` turns looping on or off, as in the arranger. The loop stays where you put it when you go back to the arranger or open another clip.
