@@ -13,9 +13,7 @@ use std::sync::Arc;
 
 use uuid::Uuid;
 
-use crate::core::time::{
-    TEMPO_BPM_MAX, TEMPO_BPM_MIN, clamp_tempo_us, format_bpm, scaled_tempo_us,
-};
+use crate::core::time::{Meter, TEMPO_BPM_MAX, TEMPO_BPM_MIN, clamp_tempo_us, format_bpm};
 use crate::metadata::clip_metadata::ClipMetadata;
 use crate::models::{
     clip::{Clip, ClipBounds, EventSpaceRetime},
@@ -74,6 +72,20 @@ enum Retime {
     Rescale(i32),
 }
 
+impl Retime {
+    /// The tempo this retime of a clip `length` ticks long sets, from
+    /// `current_tempo` — the same maths `edit()` runs on the clip, without
+    /// touching it. `None` when the tempo wouldn't change.
+    fn tempo_us(self, length: i32, current_tempo: i32, meter: Meter) -> Option<i32> {
+        match self {
+            Retime::FitTempo => Sequencer::fitted_tempo_us(length, current_tempo, meter),
+            Retime::Rescale(target_length) => {
+                Sequencer::rescaled_tempo_us(length, current_tempo, target_length)
+            }
+        }
+    }
+}
+
 /// Retimes one clip's events and, when it is the project's only clip, the
 /// project tempo with them — Enter's fit ([`fit_sole_clip`](Self::fit_sole_clip))
 /// or `⌥=`/`⌥-` ([`rescale_selected`](Self::rescale_selected)). Either way the
@@ -125,18 +137,8 @@ impl RetimeClipEdit {
         if clip.region_length() % bar == 0 && clip.region().start() % bar == 0 {
             return Ok(None);
         }
-        if let Some(tempo_us) =
-            Sequencer::fitted_tempo_us(clip.region_length(), sequencer.tempo_us(), meter)
-        {
-            check_tempo(tempo_us)?;
-        }
 
-        Ok(Some(Self::new(
-            sequencer,
-            track_idx,
-            clip,
-            Retime::FitTempo,
-        )))
+        Self::new(sequencer, track_idx, clip, Retime::FitTempo).map(Some)
     }
 
     /// Stretches the selected clip `direction` bars longer/shorter (`⌥=`/`⌥-`).
@@ -152,32 +154,41 @@ impl RetimeClipEdit {
         else {
             return Ok(None);
         };
-        let length = clip.region_length();
-        let Some(target_length) = Sequencer::rescaled_length(length, direction, sequencer.meter())
+        let Some(target_length) =
+            Sequencer::rescaled_length(clip.region_length(), direction, sequencer.meter())
         else {
             return Ok(None);
         };
-        if sequencer.number_of_clips() == 1
-            && let Some(tempo_us) = scaled_tempo_us(sequencer.tempo_us(), length, target_length)
-        {
-            check_tempo(tempo_us)?;
-        }
 
-        Ok(Some(Self::new(
-            sequencer,
-            track_idx,
-            clip,
-            Retime::Rescale(target_length),
-        )))
+        Self::new(sequencer, track_idx, clip, Retime::Rescale(target_length)).map(Some)
     }
 
-    /// The edit on `clip` (on `track_idx`), its state before taken now.
-    fn new(sequencer: &Sequencer, track_idx: usize, clip: &Clip, retime_kind: Retime) -> Self {
-        Self {
+    /// The edit on `clip` (on `track_idx`), its state before taken now —
+    /// refused when it sets the tempo and that tempo is outside the app's
+    /// range ([`Retime::tempo_us`], the tempo `edit()` will set).
+    fn new(
+        sequencer: &Sequencer,
+        track_idx: usize,
+        clip: &Clip,
+        retime_kind: Retime,
+    ) -> Result<Self, RetimeRefusal> {
+        let sets_tempo = sequencer.number_of_clips() == 1;
+        if sets_tempo
+            && let Some(tempo_us) = retime_kind.tempo_us(
+                clip.region_length(),
+                sequencer.tempo_us(),
+                sequencer.meter(),
+            )
+            && clamp_tempo_us(tempo_us) != tempo_us
+        {
+            return Err(RetimeRefusal(tempo_us));
+        }
+
+        Ok(Self {
             track_idx,
             clip_id: clip.id(),
             retime_kind,
-            sets_tempo: sequencer.number_of_clips() == 1,
+            sets_tempo,
             before: RetimedState {
                 bounds: clip.bounds(),
                 events: Arc::clone(clip.shared_events()),
@@ -186,7 +197,7 @@ impl RetimeClipEdit {
             },
             after: None,
             retime: EventSpaceRetime::IDENTITY,
-        }
+        })
     }
 
     /// First call: retimes the clip (and, for the only clip, the tempo) and
@@ -287,15 +298,6 @@ impl RetimeClipEdit {
             clip: metadata,
             retime: Some(retime),
         }
-    }
-}
-
-/// `Ok` when the BPM chip could set `tempo_us`, else the refusal.
-fn check_tempo(tempo_us: i32) -> Result<(), RetimeRefusal> {
-    if clamp_tempo_us(tempo_us) == tempo_us {
-        Ok(())
-    } else {
-        Err(RetimeRefusal(tempo_us))
     }
 }
 
