@@ -30,8 +30,7 @@ pub(crate) struct SetTempoEdit {
 impl SetTempoEdit {
     /// Sets the tempo to `tempo_us`, clamped to the app's range and rounded
     /// to a hundredth of a BPM (`round_tempo_us`). `None` when that is the
-    /// tempo already — no undo step for a change that changes
-    /// nothing.
+    /// tempo already — no undo step for a change that changes nothing.
     pub(crate) fn new(
         sequencer: &Sequencer,
         tempo_us: i32,

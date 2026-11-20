@@ -359,13 +359,15 @@ pub(crate) fn parse_bpm_hundredths(text: &str) -> Option<i32> {
     if !bpm.is_finite() {
         return None;
     }
-    let hundredths = (bpm * 100.0).round().clamp(0.0, f64::from(i32::MAX)) as i32;
-    Some(clamp_bpm_hundredths(hundredths))
+    let range = f64::from(TEMPO_BPM_MIN * 100)..=f64::from(TEMPO_BPM_MAX * 100);
+    Some((bpm * 100.0).round().clamp(*range.start(), *range.end()) as i32)
 }
 
 /// The tempo (µs per quarter) that makes `scaled_ticks` of musical content last
 /// as long as `reference_ticks` did at `current_tempo_us` — the maths behind
-/// clip tempo rescale. `None` if either length is non-positive.
+/// clip tempo rescale — rounded to a hundredth of a BPM ([`round_tempo_us`]),
+/// so the fit and `⌥=`/`⌥-` land on a tempo the header shows exactly. `None`
+/// if either length is non-positive.
 pub(crate) fn scaled_tempo_us(
     current_tempo_us: i32,
     scaled_ticks: i32,
@@ -378,7 +380,9 @@ pub(crate) fn scaled_tempo_us(
     let numerator = i64::from(current_tempo_us) * i64::from(scaled_ticks);
     let denominator = i64::from(reference_ticks);
 
-    Some(((numerator + denominator / 2) / denominator) as i32)
+    Some(round_tempo_us(
+        ((numerator + denominator / 2) / denominator) as i32,
+    ))
 }
 
 /// How far back a tap still counts toward the tempo; a tap this long after

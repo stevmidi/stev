@@ -183,7 +183,8 @@ impl Display {
     }
 
     /// Closes the field, setting the tempo to what was typed. Nothing when it
-    /// isn't a number, or is the tempo shown already.
+    /// isn't a number; the tempo already set makes no undo step
+    /// (`SetTempoEdit::new`).
     fn commit_tempo_field(&mut self) {
         let Some(field) = self.tempo_chip.field.take() else {
             return;
@@ -191,14 +192,12 @@ impl Display {
         let Some(hundredths) = parse_bpm_hundredths(&field.text) else {
             return;
         };
-        if hundredths != tempo_us_to_bpm_hundredths(self.tempo_us()) {
-            self.input_event_tx
-                .send(InputEvent::SetTempo {
-                    tempo_us: bpm_hundredths_to_tempo_us(hundredths),
-                    drag_id: None,
-                })
-                .ok();
-        }
+        self.input_event_tx
+            .send(InputEvent::SetTempo {
+                tempo_us: bpm_hundredths_to_tempo_us(hundredths),
+                drag_id: None,
+            })
+            .ok();
     }
 
     /// While the field is open it gets first look at every event, by the

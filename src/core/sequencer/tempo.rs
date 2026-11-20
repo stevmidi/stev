@@ -24,10 +24,11 @@ impl Sequencer {
     /// player's natural speed regardless of loop size. `adjust_to_tempo`
     /// retimes the clip's events and bar-snaps its region, then
     /// [`Self::octave_correct_clip_tempo`] pulls an implausible result back an
-    /// octave. Both tempos are rounded to a hundredth of a BPM
+    /// octave. Both tempos land on a hundredth of a BPM
     /// (`time::round_tempo_us`), so the clip plays up to 0.004% off how it
-    /// was played and the tempo shown is exact (issue #33). Returns the tempo and how the clip's event ticks moved; `None`
-    /// when the tempo doesn't change (the clip is untouched).
+    /// was played and the tempo shown is exact (issue #33). Returns the tempo
+    /// and how the clip's event ticks moved; `None` when the tempo doesn't
+    /// change (the clip is untouched).
     pub(in crate::core::sequencer) fn fit_first_clip_tempo(
         clip: &mut Clip,
         current_tempo: i32,
@@ -37,8 +38,7 @@ impl Sequencer {
         let played = clip.region_length();
         let target_length = time::snap_to_grid(played, bar).max(bar);
 
-        let next_tempo =
-            time::round_tempo_us(time::scaled_tempo_us(current_tempo, played, target_length)?);
+        let next_tempo = time::scaled_tempo_us(current_tempo, played, target_length)?;
         if next_tempo == current_tempo {
             return None;
         }
@@ -108,11 +108,7 @@ impl Sequencer {
         meter: Meter,
     ) -> Option<(i32, EventSpaceRetime)> {
         let current_length = clip.region_length();
-        let next_tempo = time::round_tempo_us(time::scaled_tempo_us(
-            current_tempo,
-            current_length,
-            target_length,
-        )?);
+        let next_tempo = time::scaled_tempo_us(current_tempo, current_length, target_length)?;
 
         Some((
             next_tempo,
