@@ -85,6 +85,11 @@ impl<G> KeptPasses<G> {
         self.passes[index]
     }
 
+    /// The pass `/` took.
+    pub(super) fn last(&self) -> i32 {
+        self.passes[self.passes.len() - 1]
+    }
+
     /// The footer line for the pass at `index` (decision 8).
     pub(super) fn label(&self, index: usize) -> String {
         let back = self.passes.len() - 1 - index;
@@ -138,21 +143,26 @@ impl<G: PassFraming + Copy> Passes<G> {
         Ok((kept, index))
     }
 
-    /// The take shows the pass at `index` now; the kept passes, or `None`
-    /// with none kept.
-    pub(super) fn show(&mut self, index: usize) -> Option<&KeptPasses<G>> {
-        let Self::Kept(kept) = self else {
-            return None;
-        };
-        kept.shown = index;
-        Some(kept)
-    }
-
-    /// Drops the kept buffer: another step went on top, so `,`/`.` can't
-    /// reach the commit again (decision 6).
-    pub(super) fn drop_buffer(&mut self) {
-        if matches!(self, Self::Kept(_) | Self::Pending(_)) {
-            *self = Self::None;
+    /// The edit recorded on top of the commit whose take is in clip
+    /// `clip_id`: `step` when it is a pass step. A step of this take moves
+    /// the pass shown (decision 4) and returns it, for the commit to take
+    /// in; anything else drops the kept buffer, since `,`/`.` can't reach
+    /// the commit again (decision 6), and returns `None`.
+    pub(super) fn absorb<'a>(
+        &mut self,
+        step: Option<&'a PassStepEdit>,
+        clip_id: Uuid,
+    ) -> Option<&'a PassStepEdit> {
+        match (self, step) {
+            (Self::Kept(kept), Some(step)) if step.clip_id == clip_id => {
+                kept.shown = step.shown;
+                Some(step)
+            }
+            (passes @ (Self::Kept(_) | Self::Pending(_)), _) => {
+                *passes = Self::None;
+                None
+            }
+            _ => None,
         }
     }
 
@@ -206,13 +216,23 @@ pub(crate) struct PassStepEdit {
     /// The clip's event selection, reported both ways.
     selected_event_ids: Vec<Uuid>,
     /// The pass's index among the commit's passes.
-    pub(super) shown: usize,
+    shown: usize,
+    /// The events an insert's step landed, for the insert's redo; empty for
+    /// a new clip's.
+    pub(super) take: Vec<Event>,
 }
 
 impl PassStepEdit {
     /// The step from `clip` (on track `track_idx`) to `stepped`, the same
-    /// clip showing the pass at `shown`.
-    pub(super) fn new(track_idx: usize, clip: &Clip, stepped: &Clip, shown: usize) -> Self {
+    /// clip showing the pass at `shown`, with `take` the events an insert
+    /// landed in it.
+    pub(super) fn new(
+        track_idx: usize,
+        clip: &Clip,
+        stepped: &Clip,
+        shown: usize,
+        take: Vec<Event>,
+    ) -> Self {
         Self {
             track_idx,
             clip_id: clip.id(),
@@ -220,6 +240,7 @@ impl PassStepEdit {
             before: ClipContent::of(clip),
             selected_event_ids: stepped.selected_event_ids(),
             shown,
+            take,
         }
     }
 

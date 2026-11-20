@@ -45,7 +45,7 @@ use super::{detach, detached_clone};
 /// `540-earlier-pass.md`). A step amends this edit rather than becoming an
 /// undo step of its own ([`absorb`](Self::absorb)), so one ⌘Z removes the
 /// take whatever pass it shows. The buffer goes once another step is
-/// recorded on top ([`drop_passes`](Self::drop_passes)), since the keys can
+/// recorded on top ([`absorb`](Self::absorb) again), since the keys can
 /// never reach it again.
 pub(crate) struct CommitClipEdit {
     /// Track the clip lives on.
@@ -157,26 +157,20 @@ impl CommitClipEdit {
             .ok_or(PassRefusal::NoRunningTake)?;
         let mut framed = kept.grid.frame(kept.buffer.clone(), kept.pass(index));
         framed.detect_and_store_swing();
-        let edit = PassStepEdit::new(self.track_idx, clip, &framed, index);
+        let edit = PassStepEdit::new(self.track_idx, clip, &framed, index, Vec::new());
         Ok((edit, kept.label(index)))
     }
 
-    /// Takes in a pass step made to its clip, so the step amends this edit
-    /// (decision 4): the clip it keeps shows the new pass, and the next step
-    /// goes from there. `false` for a step to another clip, or when there
-    /// are no passes to step through.
-    pub(in crate::core::sequencer::edit) fn absorb(&mut self, step: &PassStepEdit) -> bool {
-        if step.clip_id != self.clip.id() || self.passes.show(step.shown).is_none() {
+    /// Takes in the edit recorded on top, `step` when it is a pass step
+    /// ([`Passes::absorb`]): a step of this clip amends this edit (decision
+    /// 4), the clip it keeps showing the new pass, and anything else drops
+    /// the kept buffer. Whether the step was taken in.
+    pub(in crate::core::sequencer::edit) fn absorb(&mut self, step: Option<&PassStepEdit>) -> bool {
+        let Some(step) = self.passes.absorb(step, self.clip.id()) else {
             return false;
-        }
+        };
         step.put_in(&mut self.clip);
         true
-    }
-
-    /// Drops the kept buffer: another step went on top, so `,`/`.` can't
-    /// reach this commit again (decision 6).
-    pub(in crate::core::sequencer::edit) fn drop_passes(&mut self) {
-        self.passes.drop_buffer();
     }
 
     /// Whether the commit keeps a buffer to step through.
@@ -477,7 +471,7 @@ mod tests {
             edit.edit(sequencer),
             EditResult::EventsModified { .. }
         ));
-        assert!(commit.absorb(&edit), "the step amends the commit");
+        assert!(commit.absorb(Some(&edit)), "the step amends the commit");
         Ok(label)
     }
 

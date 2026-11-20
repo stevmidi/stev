@@ -175,36 +175,26 @@ impl InsertCaptureEdit {
         };
         let events = kept
             .grid
-            .land(kept.buffer.clone(), kept.pass(index))
+            .land(kept.buffer.clone(), kept.pass(index), kept.last())
             .unwrap_or_default();
         let mut stepped = clip.clone();
         stepped.restore_shared_events(Arc::clone(pre_events));
         stepped.restore_event_selection(&clip.selected_event_ids());
         stepped.land_take(&events, kept.grid.wheel_end());
-        let edit = PassStepEdit::new(self.state.track_idx, clip, &stepped, index);
+        let edit = PassStepEdit::new(self.state.track_idx, clip, &stepped, index, events);
         Ok((edit, kept.label(index)))
     }
 
-    /// Takes in a pass step made to its clip, so the step amends this edit
-    /// (decision 4): a redo lands the pass it shows. `false` for a step to
-    /// another clip, or when there are no passes to step through.
-    pub(super) fn absorb(&mut self, step: &PassStepEdit) -> bool {
-        if step.clip_id != self.state.clip_id {
-            return false;
-        }
-        let Some(kept) = self.passes.show(step.shown) else {
+    /// Takes in the edit recorded on top, `step` when it is a pass step
+    /// ([`Passes::absorb`]): a step of this clip amends this edit (decision
+    /// 4), so a redo lands the pass it shows, and anything else drops the
+    /// kept buffer. Whether the step was taken in.
+    pub(super) fn absorb(&mut self, step: Option<&PassStepEdit>) -> bool {
+        let Some(step) = self.passes.absorb(step, self.state.clip_id) else {
             return false;
         };
-        self.events = kept
-            .grid
-            .land(kept.buffer.clone(), kept.pass(step.shown))
-            .unwrap_or_default();
+        self.events.clone_from(&step.take);
         true
-    }
-
-    /// Drops the kept buffer: another step went on top (decision 6).
-    pub(super) fn drop_passes(&mut self) {
-        self.passes.drop_buffer();
     }
 
     /// Whether the insert keeps a buffer to step through.

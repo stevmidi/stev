@@ -180,17 +180,17 @@ impl InsertGrid {
         }
     }
 
-    /// `capture` framed on pass `pass`, as the running `/` frames its last
-    /// pass, cropped to the window and rebased to 0: the wheels held into it
+    /// `capture` framed on pass `pass`, as the running `/` frames `last`,
+    /// the pass it took, cropped to the window and rebased to 0: the wheels held into it
     /// carried onto its start, a note within the tolerance of its loop
     /// pass's wrap pulled onto that pass's start (kept only when the anchor
     /// is the loop start). An earlier pass leaves out what the pass after it
     /// claims: the notes just before its loop pass's wrap, and anything past
     /// one loop from its start when the clip is longer than the loop. `None`
     /// when nothing in it lands.
-    pub(super) fn frame(&self, mut capture: Clip, pass: i32) -> Option<Clip> {
+    pub(super) fn frame(&self, mut capture: Clip, pass: i32, last: i32) -> Option<Clip> {
         let tolerance = config::LATE_NOTE_TOLERANCE_TICKS;
-        let earlier = pass < self.last_pass(&capture);
+        let earlier = pass < last;
         let window_start = self.anchor + self.loop_len.map_or(0, |len| pass * len);
         let window_len = match self.loop_len {
             Some(len) if earlier => self.region_length.min(len),
@@ -217,10 +217,11 @@ impl InsertGrid {
     }
 
     /// The events pass `pass` of `capture` lands in the clip, in its event
-    /// ticks: the [framed](Self::frame) window, punched in, the notes the
-    /// clip's end would cut dropped. `None` when nothing lands.
-    pub(crate) fn land(&self, capture: Clip, pass: i32) -> Option<Vec<Event>> {
-        let mut capture = self.frame(capture, pass)?;
+    /// ticks, `last` the pass `/` took: the [framed](Self::frame) window,
+    /// punched in, the notes the clip's end would cut dropped. `None` when
+    /// nothing lands.
+    pub(crate) fn land(&self, capture: Clip, pass: i32, last: i32) -> Option<Vec<Event>> {
+        let mut capture = self.frame(capture, pass, last)?;
         if let Some((start, end)) = self.punch_in {
             capture.punch_in(start, end);
         }
@@ -251,20 +252,17 @@ impl PassFraming for InsertGrid {
         let Some(len) = self.loop_len else {
             return vec![last];
         };
-        let notes = buffer.has_notes();
-        counted(
-            buffer.events().iter().filter_map(|event| {
-                if notes {
-                    (event.event_type() == Some(EventType::NoteOn))
-                        .then(|| self.pass_of_note(event.tick(), len))
-                } else {
-                    event
-                        .controller_move()
-                        .map(|_| self.window_of(event.tick(), len))
-                }
-            }),
-            last,
-        )
+        let events = buffer.events().iter();
+        if buffer.has_notes() {
+            let note_ons = events.filter(|event| event.event_type() == Some(EventType::NoteOn));
+            counted(
+                note_ons.map(|event| self.pass_of_note(event.tick(), len)),
+                last,
+            )
+        } else {
+            let moves = events.filter(|event| event.controller_move().is_some());
+            counted(moves.map(|event| self.window_of(event.tick(), len)), last)
+        }
     }
 }
 
@@ -333,7 +331,7 @@ mod tests {
 
     /// The note-on ticks pass `pass` of `clip` lands, in the clip's ticks.
     fn landed(grid: InsertGrid, clip: &Clip, pass: i32) -> Vec<i32> {
-        grid.land(clip.clone(), pass)
+        grid.land(clip.clone(), pass, grid.last_pass(clip))
             .unwrap_or_default()
             .iter()
             .filter(|e| e.event_type() == Some(EventType::NoteOn))

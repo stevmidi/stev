@@ -579,7 +579,7 @@ impl Sequencer {
             punch_in,
         };
         let last = grid.last_pass(&capture);
-        let events = grid.land(capture, last)?;
+        let events = grid.land(capture, last, last)?;
         let insert = CaptureInsert {
             track_idx,
             clip_id,
@@ -1025,7 +1025,7 @@ mod tests {
         };
         let capture = seq.kept_capture();
         let last = grid.last_pass(&capture);
-        grid.frame(capture, last)
+        grid.frame(capture, last, last)
     }
 
     /// A bar-1 note in the capture buffer lands in bar 1 of the normalized clip.

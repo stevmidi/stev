@@ -712,22 +712,17 @@ macro_rules! sequencer_edit_dispatch {
                 // saved: Stev never calls `set_saved`. If it ever does, a
                 // step would become an undo step of its own and the buffer
                 // would stay until the commit leaves the record.
-                if let SequencerEdit::CommitClip(commit) = self {
-                    if let SequencerEdit::StepPass(step) = &other
-                        && commit.absorb(step)
-                    {
-                        return undo::Merged::Yes;
-                    }
-                    commit.drop_passes();
-                }
-                // The running insert likewise (phase 2).
-                if let SequencerEdit::InsertCapture(insert) = self {
-                    if let SequencerEdit::StepPass(step) = &other
-                        && insert.absorb(step)
-                    {
-                        return undo::Merged::Yes;
-                    }
-                    insert.drop_passes();
+                let step = match &other {
+                    SequencerEdit::StepPass(step) => Some(step),
+                    _ => None,
+                };
+                let absorbed = match self {
+                    SequencerEdit::CommitClip(commit) => commit.absorb(step),
+                    SequencerEdit::InsertCapture(insert) => insert.absorb(step),
+                    _ => false,
+                };
+                if absorbed {
+                    return undo::Merged::Yes;
                 }
                 undo::Merged::No(other)
             }
