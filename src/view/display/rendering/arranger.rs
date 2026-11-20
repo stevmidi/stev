@@ -13,6 +13,12 @@ use super::output_menu::{draw_hover_wash, draw_truncated};
 use super::*;
 use crate::view::display::fields::track_rename::{TRACK_NAME_FONT_SIZE, track_number_label};
 
+/// How far the volume and pan bars' fill sits from the trough towards the
+/// track colour. At full colour the bars were as loud as the clip headers and
+/// drew the eye to the header column; the full colour is kept for the 4px
+/// selection block (`030-ui-design.md` § Arranger Track Header).
+const MIX_BAR_STRENGTH: f32 = 0.75;
+
 impl Display {
     /// Paints the arranger lane fills, gutter, per-track header chrome and the
     /// groove seams between tracks. Called from `rendering/mod.rs` **before**
@@ -563,9 +569,10 @@ impl Display {
 
     /// Draws `track_idx`'s two header bars: volume (fills left→right along the
     /// fader taper) above pan (fills from the centre outward). `accent` is the
-    /// track colour, used at full opacity for the fill — the one place a small
-    /// accent signal is allowed (`030-ui-design.md`). Readout is right-aligned
-    /// so no text measurement is needed.
+    /// track colour, blended into the trough at [`MIX_BAR_STRENGTH`] for the
+    /// fill, so the bars stay quieter than the clips and the 4px selection
+    /// block (`030-ui-design.md` § Arranger Track Header). Readout is
+    /// right-aligned so no text measurement is needed.
     fn draw_track_mix_bars(
         &self,
         painter: &Painter,
@@ -579,6 +586,7 @@ impl Display {
         // Trough: the groove tone, a few RGB steps darker than the canvas
         // (brightness, not alpha — `030-ui-design.md`).
         let trough = grid_seam_color();
+        let fill = trough.lerp_to_gamma(accent, MIX_BAR_STRENGTH);
         let font = FontId::proportional(11.0);
 
         // --- Volume ---
@@ -591,7 +599,7 @@ impl Display {
                     vec2(bars.volume.width() * frac, bars.volume.height()),
                 ),
                 CornerRadius::ZERO,
-                accent,
+                fill,
             );
         }
         let vol_text = if volume_db <= mix::MIN_DB {
@@ -620,7 +628,7 @@ impl Display {
             painter.rect_filled(
                 Rect::from_min_max(pos2(x0, bars.pan.min.y), pos2(x1, bars.pan.max.y)),
                 CornerRadius::ZERO,
-                accent,
+                fill,
             );
         }
         // Centre tick, always visible.

@@ -163,8 +163,14 @@ else. Key files:
   no bar or beat line crosses the lane; the key edges, every beat, are the lines
   there. Each key (`KEY_COUNT`, 68 from C3; `note_for_key`, the
   inverse of `key_index_from_note`) spans its key length, from `key_tick` to the next,
-  in a thin strip along the lane's bottom edge (`KEY_STRIP_H`, 5pt), in the
-  piano roll's `piano_key_white`/`piano_key_black`, from `tick_to_screen_x` in
+  in a thin strip along the lane's bottom edge (`KEY_STRIP_H`, 8pt), in the
+  piano roll's `piano_key_white`/`piano_key_black`, drawn as a keyboard: the
+  white runs unbroken along the strip, each black key is a block hanging
+  `BLACK_KEY_DEPTH` (0.6) of the way down from its top, and a 1px groove under
+  it, at its middle, is where the white keys either side meet
+  (`black_key_parts`). Drawn flat, white and black alternating at 5pt, the
+  black keys vanished into the dark lane and the strip read as a dashed line
+  (changed 2026-11-20). From `tick_to_screen_x` in
   the project meter, so it follows zoom, scroll, the meter and the key length
   (redrawn at the new width as soon as it changes); time past the 68th key has
   none. Filling the whole row with the keys was tried first and read
@@ -175,10 +181,11 @@ else. Key files:
   once a key fits the widest sharp's name and its padding, but only at a beat a
   key: at a bar or half a bar the C's alone mark the octaves (`labels_every_key`),
   each clipped to its key. Only the visible keys are drawn (`visible_keys`). The
-  strip is drawn armed or not, at `UNARMED_KEY_STRENGTH` unarmed; the lane fill
+  strip is drawn armed or not, unarmed blended opaquely
+  `UNARMED_KEY_STRENGTH` of the way from the lane fill; the lane fill
   is the usual one (the accent tint while armed). While armed every key the live
   keyboard holds (`LiveNotes`, which wakes the UI on each edge) lights its piece
-  of the strip in `theme::accent()`, with a wash (`HELD_KEY_WASH`) over its span
+  of the strip (a black key's hanging block only) in `theme::accent()`, with a wash (`HELD_KEY_WASH`) over its span
   above: what the hands hold, not just the key the transport jumped to. Unarmed,
   held keys light nothing in the lane.
 - **Otherwise barebones**: no per-trigger visualization, no "Bar N" label, no

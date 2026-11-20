@@ -104,9 +104,20 @@ pub(crate) fn region() -> Color32 {
     active_palette().region
 }
 
-/// The active theme's `piano_key_white` colour.
+/// How far a white key sits from the black key towards the palette's
+/// `piano_key_white`: at full strength the keys were the brightest thing on
+/// screen, louder than the notes beside them (`030-ui-design.md` § Piano Roll).
+const PIANO_KEY_WHITE_STRENGTH: f32 = 0.6;
+
+/// The active theme's white piano key: its `piano_key_white`, pulled towards
+/// the black key by [`PIANO_KEY_WHITE_STRENGTH`] (an opaque blend, so
+/// brightness rather than alpha). Every key drawing reads it, the piano roll
+/// and the performance lane's strip alike.
 pub(crate) fn piano_key_white() -> Color32 {
-    active_palette().piano_key_white
+    let palette = active_palette();
+    palette
+        .piano_key_black
+        .lerp_to_gamma(palette.piano_key_white, PIANO_KEY_WHITE_STRENGTH)
 }
 
 /// The active theme's `piano_key_black` colour.

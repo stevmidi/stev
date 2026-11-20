@@ -6,7 +6,8 @@
 //! length (a bar, half a bar or a beat, `KeyLength`) from `key_tick(k)`,
 //! picked from the `Bar` / `½` / `Beat` labels in the gutter
 //! (§ Step 1b): a thin strip along the lane's bottom edge carries each
-//! key, white or black as on the piano roll, the plain lane above it the
+//! key, drawn as a keyboard (an unbroken white strip, each black key a block
+//! hanging from its top), the plain lane above it the
 //! names (the C's always, every key once a beat key is wide enough), and a key the
 //! live keyboard holds lights while the lane is armed. Static: it changes
 //! with zoom, scroll and the meter, never with playing (the playhead is the
@@ -26,7 +27,13 @@ use crate::models::pitch::pitch_class_name;
 /// Height of the key strip along the lane's bottom edge. Narrow, as the
 /// piano roll's key column is: the piano roll's near-white and near-black
 /// read well in a narrow band and stark filling the whole row (tried first).
-const KEY_STRIP_H: f32 = 5.0;
+const KEY_STRIP_H: f32 = 8.0;
+
+/// How far down the strip a black key hangs, as a share of `KEY_STRIP_H`; the
+/// white strip runs unbroken beneath it. Drawn flat, white and black
+/// alternating, the black keys vanished into the dark lane and the strip
+/// read as a dashed line.
+const BLACK_KEY_DEPTH: f32 = 0.6;
 
 /// Strength of the key strip while the lane is unarmed, so the row doesn't
 /// compete with the tracks under it; armed, it is drawn at full strength.
@@ -123,12 +130,15 @@ impl Display {
             .x;
         let label_every_key =
             labels_every_key(length.in_meter(meter), ppt * key_ticks as f32, label_w);
+        // Opaque, so a black key drawn over the white strip shows its own
+        // tone rather than a blend of the two.
+        let lane_fill = lane_grid_fill(armed, accent);
         let (white, black) = if armed {
             (theme::piano_key_white(), theme::piano_key_black())
         } else {
             (
-                theme::piano_key_white().gamma_multiply(UNARMED_KEY_STRENGTH),
-                theme::piano_key_black().gamma_multiply(UNARMED_KEY_STRENGTH),
+                lane_fill.lerp_to_gamma(theme::piano_key_white(), UNARMED_KEY_STRENGTH),
+                lane_fill.lerp_to_gamma(theme::piano_key_black(), UNARMED_KEY_STRENGTH),
             )
         };
         let label_color = theme::fg_dim();
@@ -142,19 +152,31 @@ impl Display {
             let above = Rect::from_x_y_ranges(left..=right, lane_top..=strip_top);
             let key = Rect::from_x_y_ranges(left..=right, strip_top..=strip_bottom);
             let lit = armed && self.live_notes.is_held(note);
-            let key_fill = if lit {
+            if lit {
                 p.rect_filled(
                     above,
                     CornerRadius::ZERO,
                     accent.gamma_multiply(HELD_KEY_WASH),
                 );
-                accent
-            } else if is_black_key(pitch_class(note)) {
-                black
+            }
+            if is_black_key(pitch_class(note)) {
+                // White beneath, the black key hanging from the top, and the
+                // seam where the two white keys either side meet under it.
+                let (hanging, under) = black_key_parts(key);
+                p.rect_filled(key, CornerRadius::ZERO, white);
+                p.rect_filled(
+                    hanging,
+                    CornerRadius::ZERO,
+                    if lit { accent } else { black },
+                );
+                p.vline(
+                    under.min.x,
+                    under.y_range(),
+                    Stroke::new(1.0_f32, grid_seam_color()),
+                );
             } else {
-                white
-            };
-            p.rect_filled(key, CornerRadius::ZERO, key_fill);
+                p.rect_filled(key, CornerRadius::ZERO, if lit { accent } else { white });
+            }
 
             if let Some(seam_w) = key_seam_w(key_index) {
                 p.vline(
@@ -302,6 +324,17 @@ fn key_seam_w(key_index: i32) -> Option<f32> {
     let note = note_for_key(key_index)?;
     let below = note.checked_sub(1).filter(|_| key_index > 0)?;
     row_seam_w(below)
+}
+
+/// A black key's two parts in its slice `key` of the strip: the block hanging
+/// `BLACK_KEY_DEPTH` of the way down from its top, and the zero-width span
+/// below it, at the slice's middle, where the white keys either side meet.
+fn black_key_parts(key: Rect) -> (Rect, Rect) {
+    let hang_bottom = key.top() + key.height() * BLACK_KEY_DEPTH;
+    let hanging = Rect::from_x_y_ranges(key.x_range(), key.top()..=hang_bottom);
+    let mid_x = key.center().x.round();
+    let under = Rect::from_x_y_ranges(mid_x..=mid_x, hang_bottom..=key.bottom());
+    (hanging, under)
 }
 
 /// Whether every key is named, not just the C's: only at a beat a key
@@ -459,6 +492,20 @@ mod tests {
             assert_eq!(key_seam_w(key_index), None, "key index {key_index}");
         }
         assert_eq!(key_seam_w(KEY_COUNT), None, "past the last key");
+    }
+
+    #[test]
+    fn a_black_key_hangs_from_the_top_over_an_unbroken_white_strip() {
+        let key = Rect::from_x_y_ranges(100.0..=120.0, 10.0..=20.0);
+        let (hanging, under) = black_key_parts(key);
+        assert_eq!(hanging.x_range(), key.x_range(), "the slice's full width");
+        assert_eq!(hanging.top(), key.top());
+        assert_eq!(hanging.bottom(), 10.0 + 10.0 * BLACK_KEY_DEPTH);
+        assert!(hanging.bottom() < key.bottom(), "white shows below it");
+        assert_eq!(under.top(), hanging.bottom());
+        assert_eq!(under.bottom(), key.bottom());
+        assert_eq!(under.min.x, 110.0, "the white keys meet at its middle");
+        assert_eq!(under.width(), 0.0);
     }
 
     #[test]
