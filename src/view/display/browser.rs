@@ -564,6 +564,9 @@ pub(super) struct BrowserTree {
     /// [`rebuild_rows`](Self::rebuild_rows) whenever one of them changes —
     /// read every frame, so not rebuilt per read.
     rows: Vec<BrowserRow>,
+    /// Where each of `rows` starts in the list, then the list's height
+    /// ([`browser_row_tops`]): set with `rows`, so the two never disagree.
+    row_tops: Vec<f32>,
     /// The selected item, `None` until something is selected.
     selected: Option<BrowserItem>,
     /// When the selected project, template, clip or folder was armed to be
@@ -586,6 +589,7 @@ impl Default for BrowserTree {
             collapsed: HashSet::from([BrowserCategory::Clips, BrowserCategory::Plugins]),
             expanded: HashSet::new(),
             rows: Vec::new(),
+            row_tops: browser_row_tops(&[]),
             selected: None,
             delete_armed: None,
             new_folder: false,
@@ -721,6 +725,7 @@ impl BrowserTree {
                 );
             }
         }
+        self.row_tops = browser_row_tops(&rows);
         self.rows = rows;
     }
 
@@ -748,6 +753,12 @@ impl BrowserTree {
     /// The visible rows, top to bottom.
     pub(super) fn rows(&self) -> &[BrowserRow] {
         &self.rows
+    }
+
+    /// Where each visible row starts in the list's content, then the
+    /// content's height ([`browser_row_tops`]).
+    pub(super) fn row_tops(&self) -> &[f32] {
+        &self.row_tops
     }
 
     /// Whether `item` is one of the visible rows.
@@ -1205,7 +1216,7 @@ impl Display {
             && self.is_over_browser(p.x, p.y)
             && p.y < self.browser_list_bottom()
             && !self.is_on_browser_edge(p.x, p.y))
-        .then(|| browser_row_at(&self.browser_row_tops(), p.y, self.browser.scroll))
+        .then(|| browser_row_at(self.browser.tree.row_tops(), p.y, self.browser.scroll))
         .flatten()
     }
 
@@ -1226,15 +1237,9 @@ impl Display {
         self.browser_list_bottom() - self.render.canvas_rect.min.y - BROWSER_LIST_PAD_Y
     }
 
-    /// Where each row starts in the list's content, then its height
-    /// ([`browser_row_tops`]).
-    pub(super) fn browser_row_tops(&self) -> Vec<f32> {
-        browser_row_tops(self.browser.tree.rows())
-    }
-
     /// The furthest the list scrolls: its last row's bottom at the list's.
     fn browser_max_scroll(&self) -> f32 {
-        let content_h = self.browser_row_tops().last().copied().unwrap_or(0.0);
+        let content_h = self.browser.tree.row_tops().last().copied().unwrap_or(0.0);
         content_h - self.browser_list_h()
     }
 
@@ -1346,7 +1351,7 @@ impl Display {
 
     /// Scrolls the list as little as needed to show row `idx` whole.
     pub(super) fn scroll_browser_to_row(&mut self, idx: usize) {
-        let Some(&top) = self.browser_row_tops().get(idx) else {
+        let Some(&top) = self.browser.tree.row_tops().get(idx) else {
             return self.clamp_browser_scroll();
         };
         self.browser.scroll =
@@ -1371,7 +1376,7 @@ impl Display {
         let row = browser_row_rect(
             self.render.canvas_rect.min,
             self.browser.width,
-            *self.browser_row_tops().get(idx)?,
+            *self.browser.tree.row_tops().get(idx)?,
             self.browser.scroll,
         );
         let list_top = self.render.canvas_rect.min.y + BROWSER_LIST_PAD_Y;
@@ -1392,7 +1397,7 @@ impl Display {
             .tree
             .rows()
             .get(browser_row_at(
-                &self.browser_row_tops(),
+                self.browser.tree.row_tops(),
                 y,
                 self.browser.scroll,
             )?)?
@@ -1538,7 +1543,7 @@ impl Display {
             }
             return;
         }
-        let Some(idx) = browser_row_at(&self.browser_row_tops(), y, self.browser.scroll) else {
+        let Some(idx) = browser_row_at(self.browser.tree.row_tops(), y, self.browser.scroll) else {
             return;
         };
         let Some(item) = self
