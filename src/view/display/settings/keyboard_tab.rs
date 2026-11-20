@@ -476,9 +476,15 @@ const FIXED: &[FixedGroup] = &[
     (
         "Controller lane",
         &[
-            ("Drag", "Mark a span of pitch bend or the mod wheel"),
+            (
+                "Drag",
+                "Mark a span of pitch bend, the mod wheel or the sustain pedal",
+            ),
             ("⌘A", "Mark the whole curve"),
-            ("⌫", "Clear the span: a wheel to rest, a CC held"),
+            (
+                "⌫",
+                "Clear the span: a wheel to rest, the pedal up, a CC held",
+            ),
             ("Esc", "Drop the span, then give back the keyboard"),
         ],
     ),
