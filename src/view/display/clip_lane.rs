@@ -1,8 +1,9 @@
 //! [`ClipLane`] — which lane the piano roll shows under its notes: the
-//! velocity bars, one of the two wheels' recorded curves, or one of the
-//! knobs' lanes. View state only (`RenderState::clip_lane`): never saved,
+//! velocity bars, one of the resting controllers' recorded curves (the two
+//! wheels and the sustain pedal), or one of the knobs' lanes. View state only (`RenderState::clip_lane`): never saved,
 //! never switched by anything but the user. See `380-wheel-lane.md` and
-//! `400-parameter-knobs.md` decision 12.
+//! `400-parameter-knobs.md` decision 12 and `530-sustain-capture.md`
+//! decision 7.
 
 use crate::core::midi::message::Controller;
 
@@ -16,6 +17,8 @@ pub(super) enum ClipLane {
     PitchBend,
     /// The lead clip's mod wheel (CC1).
     Modulation,
+    /// The lead clip's sustain pedal (CC64), drawn as the mod wheel is.
+    Sustain,
     /// Knob `n`'s lane (`0..KNOB_COUNT`, the knobs' reading order): by
     /// position, so the lane stays up across a change of track and shows
     /// that track's knob there (`Display::clip_lane_controller`).
@@ -25,31 +28,34 @@ pub(super) enum ClipLane {
 impl ClipLane {
     /// The lanes the gutter switches and their labels, top to bottom as it
     /// stacks them. The knob lanes switch from the knobs' own labels.
-    pub(super) const GUTTER: [(ClipLane, &'static str); 3] = [
+    pub(super) const GUTTER: [(ClipLane, &'static str); 4] = [
         (ClipLane::Velocity, "VEL"),
         (ClipLane::PitchBend, "PB"),
         (ClipLane::Modulation, "MW"),
+        (ClipLane::Sustain, "SUS"),
     ];
 
     /// The lane after this one (`Action::CycleClipLane`): VEL → PB → MW →
-    /// back to VEL, the gutter's three. The knobs' lanes are picked by a
+    /// SUS → back to VEL, the gutter's four. The knobs' lanes are picked by a
     /// click on the knob only (`400-parameter-knobs.md` decision 14): from
     /// one, the cycle starts again at VEL.
     pub(super) fn next(self) -> ClipLane {
         match self {
             ClipLane::Velocity => ClipLane::PitchBend,
             ClipLane::PitchBend => ClipLane::Modulation,
-            ClipLane::Modulation | ClipLane::Knob(_) => ClipLane::Velocity,
+            ClipLane::Modulation => ClipLane::Sustain,
+            ClipLane::Sustain | ClipLane::Knob(_) => ClipLane::Velocity,
         }
     }
 
-    /// The wheel the lane draws: `None` for velocity, and for a knob's lane,
+    /// The controller the lane draws — a wheel or the pedal: `None` for velocity, and for a knob's lane,
     /// whose parameter is the selected track's to say.
     pub(super) fn controller(self) -> Option<Controller> {
         match self {
             ClipLane::Velocity | ClipLane::Knob(_) => None,
             ClipLane::PitchBend => Some(Controller::PitchBend),
             ClipLane::Modulation => Some(Controller::MOD_WHEEL),
+            ClipLane::Sustain => Some(Controller::SUSTAIN),
         }
     }
 }
@@ -60,23 +66,32 @@ mod tests {
     use crate::core::midi::message::Controller;
     use crate::models::knobs::KNOB_COUNT;
 
-    /// The cycle is the gutter's three lanes, VEL, PB, MW, back to VEL; the
-    /// knobs' lanes are never in it, and from one the cycle goes to VEL.
+    /// The cycle is the gutter's four lanes, VEL, PB, MW, SUS, back to VEL;
+    /// the knobs' lanes are never in it, and from one the cycle goes to VEL.
     #[test]
-    fn the_lanes_cycle_vel_pb_mw_and_skip_the_knobs() {
+    fn the_lanes_cycle_vel_pb_mw_sus_and_skip_the_knobs() {
         assert_eq!(ClipLane::default(), ClipLane::Velocity);
         assert_eq!(ClipLane::Velocity.next(), ClipLane::PitchBend);
         assert_eq!(ClipLane::PitchBend.next(), ClipLane::Modulation);
-        assert_eq!(ClipLane::Modulation.next(), ClipLane::Velocity);
+        assert_eq!(ClipLane::Modulation.next(), ClipLane::Sustain);
+        assert_eq!(ClipLane::Sustain.next(), ClipLane::Velocity);
+        let cycle: Vec<ClipLane> = ClipLane::GUTTER.iter().map(|&(lane, _)| lane).collect();
+        for (i, &lane) in cycle.iter().enumerate() {
+            assert_eq!(
+                lane.next(),
+                cycle[(i + 1) % cycle.len()],
+                "the gutter's order"
+            );
+        }
         for knob in 0..KNOB_COUNT {
             assert_eq!(ClipLane::Knob(knob).next(), ClipLane::Velocity);
         }
     }
 
-    /// The wheels' lanes draw their controllers; velocity and a knob's lane
-    /// none.
+    /// The wheels' and the pedal's lanes draw their controllers; velocity
+    /// and a knob's lane none.
     #[test]
-    fn only_the_wheel_lanes_draw_a_controller() {
+    fn only_the_resting_lanes_draw_a_controller() {
         assert_eq!(
             ClipLane::PitchBend.controller(),
             Some(Controller::PitchBend)
@@ -85,6 +100,7 @@ mod tests {
             ClipLane::Modulation.controller(),
             Some(Controller::MOD_WHEEL)
         );
+        assert_eq!(ClipLane::Sustain.controller(), Some(Controller::SUSTAIN));
         assert_eq!(ClipLane::Velocity.controller(), None);
         assert_eq!(ClipLane::Knob(0).controller(), None);
     }

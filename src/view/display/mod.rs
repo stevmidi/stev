@@ -40,7 +40,7 @@
 //!   played as a piano, `view::computer_keyboard`): its toggle and the notes
 //!   it sends.
 //! - `clip_lane.rs` — which lane the piano roll shows under its notes
-//!   (`ClipLane`: velocity, pitch bend or the mod wheel).
+//!   (`ClipLane`: velocity, pitch bend, the mod wheel or the sustain pedal).
 //! - `output_menu.rs` — the track header's output menu (MIDI channel /
 //!   remove the plugin), opened from a track's output chip; drawn by
 //!   `rendering/output_menu.rs`.

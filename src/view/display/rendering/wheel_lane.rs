@@ -1,7 +1,7 @@
 //! The piano roll's lower lane when it shows a controller, and the gutter
-//! switch that picks the lane (`ClipLane`): the `VEL` / `PB` / `MW` labels
-//! left of the lane, and the lead clip's pitch bend, mod wheel or a knob's
-//! parameter drawn as a line: built as playback holds it, each value flat until the
+//! switch that picks the lane (`ClipLane`): the `VEL` / `PB` / `MW` / `SUS`
+//! labels left of the lane, and the lead clip's pitch bend, mod wheel,
+//! sustain pedal or a knob's parameter drawn as a line: built as playback holds it, each value flat until the
 //! next move steps off it ([`wheel_path`]), then drawn as a DAW draws
 //! automation — a straight line from move to move, a held value and the jump
 //! off it still a step ([`ease_steps`]) — and thinned ([`simplify`]), under
@@ -9,7 +9,8 @@
 //! ([`fold_wheel_columns`]) so what is drawn follows the lane's width, not
 //! the event count. The knob lanes switch from the knobs' labels
 //! (`rendering/knob_panel.rs`). See `380-wheel-lane.md`,
-//! `archive/390-knob-panel.md` decisions 11–13.
+//! `530-sustain-capture.md` decision 7, `archive/390-knob-panel.md`
+//! decisions 11–13.
 
 use egui::{Align2, CornerRadius, FontId, Painter, Pos2, Rect, Shape, Stroke, pos2, vec2};
 
@@ -36,7 +37,7 @@ impl Display {
     const WHEEL_CORNER_PX: f32 = 4.0;
     /// Space left of a gutter label.
     const LANE_LABEL_INSET_X: f32 = 12.0;
-    /// Radius of the data marker beside `PB` / `MW`.
+    /// Radius of the data marker beside `PB` / `MW` / `SUS`.
     const LANE_MARKER_R: f32 = 2.0;
     /// Gap between a gutter label and its data marker's centre.
     const LANE_MARKER_GAP: f32 = 6.0;
@@ -86,11 +87,12 @@ impl Display {
                 .is_some_and(|lane| lane != shown)
     }
 
-    /// Draws the gutter's lane switch: `VEL`, `PB`, `MW` stacked,
+    /// Draws the gutter's lane switch: `VEL`, `PB`, `MW`, `SUS` stacked,
     /// coloured as the header's toggles are (`toggle_icon_color`): the shown
     /// one `accent`, one under the pointer `fg`, the rest `fg_dim` — so a
     /// hover is never mistaken for the shown lane. A dot, in the label's
-    /// colour, beside a wheel's label when the lead clip has moves for it.
+    /// colour, beside a wheel's or the pedal's label when the lead clip has
+    /// moves for it.
     pub(super) fn draw_lane_gutter(&self, painter: &Painter, geom: &NoteAreaGeom) {
         let gutter = self.lane_gutter_rect(geom);
         let hovered = self.canvas_pointer().and_then(|p| lane_label_in(gutter, p));
@@ -234,7 +236,7 @@ impl Display {
     }
 }
 
-/// Row `i` of the gutter's three label rows, top to bottom.
+/// Row `i` of the gutter's label rows (`ClipLane::GUTTER`), top to bottom.
 fn lane_label_row(gutter: Rect, i: usize) -> Rect {
     let row_h = gutter.height() / ClipLane::GUTTER.len() as f32;
     Rect::from_min_size(
@@ -255,8 +257,9 @@ fn lane_label_in(gutter: Rect, pos: Pos2) -> Option<ClipLane> {
 }
 
 /// Where `value` sits in the lane, `0.0` at the bottom to `1.0` at the top:
-/// pitch bend centred, its rest (`0x2000`) exactly halfway; the mod wheel,
-/// as any CC, from 0 to 127; a parameter across its range.
+/// pitch bend centred, its rest (`0x2000`) exactly halfway; the mod wheel
+/// and the sustain pedal, as any CC, from 0 to 127 (a pedal's press and lift
+/// a step, half-pedalling between); a parameter across its range.
 fn wheel_fraction(wheel: Controller, value: u16) -> f32 {
     match wheel {
         Controller::PitchBend => {
@@ -766,18 +769,23 @@ mod tests {
 
     #[test]
     fn a_gutter_row_picks_its_lane() {
-        let gutter = Rect::from_min_size(pos2(0.0, 100.0), vec2(88.0, 81.0));
+        // Four rows of 20 px each.
+        let gutter = Rect::from_min_size(pos2(0.0, 100.0), vec2(88.0, 80.0));
         assert_eq!(
             lane_label_in(gutter, pos2(10.0, 101.0)),
             Some(ClipLane::Velocity)
         );
         assert_eq!(
-            lane_label_in(gutter, pos2(10.0, 140.0)),
+            lane_label_in(gutter, pos2(10.0, 125.0)),
             Some(ClipLane::PitchBend)
         );
         assert_eq!(
-            lane_label_in(gutter, pos2(87.0, 180.0)),
+            lane_label_in(gutter, pos2(87.0, 145.0)),
             Some(ClipLane::Modulation)
+        );
+        assert_eq!(
+            lane_label_in(gutter, pos2(10.0, 179.0)),
+            Some(ClipLane::Sustain)
         );
         assert_eq!(lane_label_in(gutter, pos2(10.0, 99.0)), None);
         assert_eq!(lane_label_in(gutter, pos2(89.0, 140.0)), None);
@@ -794,5 +802,14 @@ mod tests {
     fn the_mod_wheel_runs_from_bottom_to_top() {
         assert_eq!(wheel_fraction(Controller::MOD_WHEEL, 0), 0.0);
         assert_eq!(wheel_fraction(Controller::MOD_WHEEL, 127), 1.0);
+    }
+
+    /// The pedal is drawn as the mod wheel: up at the bottom, down at the
+    /// top, half-pedalling between.
+    #[test]
+    fn the_pedal_runs_from_bottom_to_top() {
+        assert_eq!(wheel_fraction(Controller::SUSTAIN, 0), 0.0);
+        assert_eq!(wheel_fraction(Controller::SUSTAIN, 127), 1.0);
+        assert!((wheel_fraction(Controller::SUSTAIN, 64) - 0.504).abs() < 0.001);
     }
 }

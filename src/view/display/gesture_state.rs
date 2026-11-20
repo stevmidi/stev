@@ -103,7 +103,7 @@ pub(super) struct GestureState {
     pub(super) duplicate_span: Option<(i32, i32)>,
     /// The wheel lane's span, `(start, end)` in event ticks snapped like the
     /// cursor — what `Delete` returns to rest (`380-wheel-lane.md` decision
-    /// 16). Marked by a drag in the PB / MW lane or `⌘A` there; dropped with
+    /// 16). Marked by a drag in the PB / MW / SUS lane or `⌘A` there; dropped with
     /// the lane's keyboard focus, on a lead-clip change or a switch of
     /// wheel, by `Esc`, and by the `Delete` that uses it. Never empty. View
     /// state, like the time selection: never saved, and separate from the

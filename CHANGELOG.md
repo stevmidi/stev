@@ -22,6 +22,7 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ### Added
 
+- The piano roll's lower lane shows the sustain pedal: click `SUS` below `MW` left of the lane, or press `W`, which now cycles `VEL`, `PB`, `MW`, `SUS`. A press and a lift draw as steps, half-pedalling as played. A dot beside `SUS` means the clip has pedal data. Drag a span and press Delete to lift the pedal there, or ⌘A then Delete to clear it from the clip.
 - The sustain pedal is recorded. Pedal while you play and `/` keeps it in the take, laid into the clip like the mod wheel: from your first press to the end of the window, replacing what the clip had there. Ride the pedal alone over a looping clip and `/` adds pedalling to a take you played dry. A pedal held down when you start the transport is kept. Values are kept as played, so a continuous pedal's half-pedalling survives.
 
 - Drag a clip's edge with a marquee over several tracks and every clip in the marquee whose edge is at exactly the same place moves with it, as in Ableton: the ends (or starts) stay level, the drag stops where the tightest clip runs out of room, and it is one undo step. The marquee stays through the press and follows the edge you drag when its edge is on it. Without a marquee, or when the clip you grab isn't inside it, only that clip moves, as before.

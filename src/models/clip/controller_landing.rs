@@ -951,6 +951,35 @@ mod tests {
         );
     }
 
+    /// The `SUS` lane's `Delete` returns the pedal to up over the span: the
+    /// presses inside go, a lift goes in at the start, and the pedal held
+    /// down at the end is pressed again there (`530-sustain-capture.md`
+    /// decision 7).
+    #[test]
+    fn clearing_a_pedal_span_lifts_the_pedal() {
+        let pedal = |tick, value| Event::new(tick, 0, Controller::SUSTAIN.message(value));
+        let mut clip = clip_with(vec![
+            pedal(0, 127),
+            modw(100, 30),
+            pedal(BAR, 0),
+            pedal(BAR + 10, 127),
+            pedal(BAR * 3, 0),
+        ]);
+
+        assert!(clip.clear_controller_span(Controller::SUSTAIN, 480, BAR * 2));
+
+        assert_eq!(
+            wheel_moves(&clip),
+            vec![
+                (0, vec![0xB0, 64, 127]),
+                (100, vec![0xB0, 0x01, 30]),
+                (480, vec![0xB0, 64, 0]),
+                (BAR * 2, vec![0xB0, 64, 127]),
+                (BAR * 3, vec![0xB0, 64, 0]),
+            ]
+        );
+    }
+
     /// A span over a wheel at rest throughout changes nothing.
     #[test]
     fn clearing_a_wheel_span_at_rest_is_a_no_op() {

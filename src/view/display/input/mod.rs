@@ -193,7 +193,7 @@ impl Display {
         // clip pane.
         let in_header_column =
             arranger && self.is_mouse_inside_clip_content(x, y) && x < self.content_origin_x();
-        // The gutter's lane switch keeps a wheel lane's focus from PB to MW
+        // The gutter's lane switch keeps a controller lane's focus from PB to MW or SUS
         // (`set_clip_lane` decides).
         let on_lane_switch = is_clip_events_view && self.clip_lane_label_at(x, y).is_some();
         if !in_header_column && !on_lane_switch {
@@ -355,7 +355,7 @@ impl Display {
             return true;
         }
 
-        // The gutter left of the lower lane: `VEL` / `PB` / `MW` pick the
+        // The gutter left of the lower lane: `VEL` / `PB` / `MW` / `SUS` pick the
         // lane it shows (`380-wheel-lane.md`).
         if is_clip_events_view && let Some(lane) = self.clip_lane_label_at(x, y) {
             self.set_clip_lane(lane);
