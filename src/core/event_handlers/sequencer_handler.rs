@@ -105,6 +105,9 @@ impl EventHandlers {
             SequencerCommand::Commit { frame } => {
                 self.commit_workflow(sequencer, undo_record, *frame);
             }
+            SequencerCommand::StepPass(step) => {
+                self.step_pass_workflow(sequencer, undo_record, *step);
+            }
 
             SequencerCommand::InsertEmptyClip { time_bounds } => {
                 self.record_edit(

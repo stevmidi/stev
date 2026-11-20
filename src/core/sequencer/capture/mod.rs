@@ -1,7 +1,7 @@
 //! Committing the live capture buffer into clips.
 //!
 //! Every incoming note is fed into `capture_clip` (a rolling buffer) as it
-//! arrives. `build_committed_capture_clip` freezes a slice of it into a new
+//! arrives. `build_committed_capture` freezes a slice of it into a new
 //! clip at the cursor (placed on the track — undoably — by `CommitClipEdit`);
 //! `build_running_capture_insert` picks the slice `InsertCaptureEdit` inserts
 //! into an existing clip, from either pane. The
@@ -19,6 +19,9 @@
 //!   `220-capture-without-pending-view.md`).
 //! - `take_framing.rs` — the take session the stopped `/` into a clip opens:
 //!   framing the notes to insert, heard in place (`archive/290-framing-a-take.md`).
+//! - `passes.rs` — the pass grid of a looping take, and one pass framed
+//!   into a new clip (the running `/`, and `,`/`.` after it,
+//!   `540-earlier-pass.md`).
 //! - `window.rs` — the pure `calculate_*` helpers that derive bar-aligned
 //!   capture / phrase windows (`100-running-capture.md`, `040-phrase-detection.md`).
 //! - `phrase_tokens.rs` — phrase-token detection: where the last phrase starts.
@@ -27,6 +30,7 @@
 
 #[cfg(debug_assertions)]
 mod capture_fixture;
+mod passes;
 mod phrase_tokens;
 mod stopped_capture;
 pub(super) mod take_framing;
@@ -51,6 +55,8 @@ use crate::{
 };
 
 use super::Sequencer;
+
+pub(crate) use passes::PassGrid;
 
 /// A take's notes ready to insert into an existing clip — what
 /// [`Sequencer::build_running_capture_insert`] and a take session's Enter
@@ -180,8 +186,19 @@ impl RunningCaptureTarget {
 }
 
 impl Sequencer {
+    /// [`build_committed_capture`](Self::build_committed_capture) without
+    /// the pass grid.
+    #[cfg(test)]
+    pub(crate) fn build_committed_capture_clip(
+        &self,
+        marquee: Option<(i32, i32)>,
+    ) -> Option<(usize, Clip)> {
+        self.build_committed_capture(marquee)
+            .map(|(track_idx, clip, _)| (track_idx, clip))
+    }
+
     /// Builds the clip a running-capture commit would place — the pure half of
-    /// the commit, returning `(track index, positioned clip)` without touching
+    /// the commit, returning `(track index, positioned clip, pass grid)` without touching
     /// the track or the capture buffer. `None` when the capture holds no note or
     /// the clip wouldn't fit before the next clip on the track, so a no-op
     /// commit never enters the undo record. [`CommitClipEdit`] does the add
@@ -195,11 +212,15 @@ impl Sequencer {
     /// there. The `/` asks [`capture_framing`](Self::capture_framing)
     /// first, which says why a marquee can't frame one.
     ///
+    /// The pass grid is the one the clip was framed on, when `,`/`.` can
+    /// step it through the earlier passes: while looping, with a marquee or
+    /// without (`540-earlier-pass.md` decision 9).
+    ///
     /// [`CommitClipEdit`]: crate::core::sequencer::edit::CommitClipEdit
-    pub(crate) fn build_committed_capture_clip(
+    pub(crate) fn build_committed_capture(
         &self,
         marquee: Option<(i32, i32)>,
-    ) -> Option<(usize, Clip)> {
+    ) -> Option<(usize, Clip, Option<PassGrid>)> {
         if !self.capture_clip.has_notes() {
             return None;
         }
@@ -225,10 +246,25 @@ impl Sequencer {
         clip.detect_and_store_swing();
 
         clip.set_start_tick(start_tick);
+        let grid = self.pass_grid(anchor_tick, region_length);
 
         // A gap under the minimum clip length: the floor above made the clip wider than
         // the space, and `Track::add_clip` would refuse it.
-        track.fits(&clip).then_some((track_idx, clip))
+        track.fits(&clip).then_some((track_idx, clip, grid))
+    }
+
+    /// The pass grid a new clip `region_length` long from `anchor_tick` is
+    /// framed on while looping; `None` for a linear take, which has no
+    /// passes.
+    fn pass_grid(&self, anchor_tick: i32, region_length: i32) -> Option<PassGrid> {
+        self.playback_is_looping().then(|| {
+            PassGrid::new(
+                self.region_start(),
+                self.capture_loop_length(),
+                anchor_tick,
+                region_length,
+            )
+        })
     }
 
     /// The region (playable) length of a running commit at the cursor, with
@@ -665,7 +701,7 @@ impl Sequencer {
             .then(|| self.capture_loop_length());
 
         match (target, transport_loop) {
-            (RunningCaptureTarget::NewClip, Some(loop_len)) => {
+            (RunningCaptureTarget::NewClip, Some(_)) => {
                 // The *region-grid* pass holding the last note-on — "the last
                 // wrap" as the loop shows it, whatever the cursor — kept whole:
                 // the slice from the cursor is the region, the rest is pre-roll
@@ -675,23 +711,9 @@ impl Sequencer {
                 // early: the anticipating note selects the pass it starts
                 // and is relocated onto its downbeat (held length intact)
                 // before the fold, never dragging the previous pass along.
-                let tolerance = config::LATE_NOTE_TOLERANCE_TICKS;
-                let (pass_start, pass_end) = Self::calculate_running_region(
-                    &capture,
-                    self.region_start() - tolerance,
-                    loop_len,
-                    Some(loop_len),
-                );
-                let (pass_start, pass_end) = (pass_start + tolerance, pass_end + tolerance);
-                capture.relocate_late_notes_to_region_start(pass_start, pass_end, tolerance);
-                capture.carry_resting_onto(pass_start);
-                capture.hold_start_values(pass_start);
-                capture.fold_into_loop(pass_start, pass_end, self.region_start(), loop_len);
-
-                let phase = (anchor_tick - self.region_start()).rem_euclid(loop_len);
-                capture
-                    .region_mut()
-                    .set_region(Some(phase), Some(phase + region_length));
+                let grid = self.pass_grid(anchor_tick, region_length)?;
+                let pass = grid.last_pass(&capture);
+                capture = grid.frame(capture, pass);
             }
             (RunningCaptureTarget::NewClip, None) => {
                 // Whole bars of material before the anchor (a cursor moved

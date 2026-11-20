@@ -48,7 +48,7 @@ mod retime_clip;
 mod split;
 mod transpose_clips;
 
-pub(crate) use commit_clip::CommitClipEdit;
+pub(crate) use commit_clip::{CommitClipEdit, PassRefusal, PassStep, PassStepEdit};
 pub(crate) use create_clips::CreateClipsEdit;
 pub(crate) use delete_in_range::DeleteInRangeEdit;
 pub(crate) use delete_time::DeleteTimeEdit;

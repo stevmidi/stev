@@ -11,7 +11,7 @@ use crate::core::agent::{AgentReply, AgentRequest};
 use crate::core::input_event::{CaptureFrame, TimeSelectionRect};
 use crate::core::midi::message::Controller;
 use crate::core::project::{LibraryChange, ProjectAction, SaveOutcome};
-use crate::core::sequencer::{AudioExportOutcome, TempoGesture};
+use crate::core::sequencer::{AudioExportOutcome, PassStep, TempoGesture};
 use crate::core::time::Meter;
 use crate::core::view_state::Pane;
 use crate::models::clip::{Clip, ClipEdge, NoteDrag};
@@ -54,6 +54,11 @@ pub(crate) enum SequencerCommand {
         /// The focused pane's time selection, if any.
         frame: Option<CaptureFrame>,
     },
+    /// `,`/`.`: step the clip the last running `/` made to the pass before
+    /// or after the one it shows, amending that commit's undo step
+    /// (`540-earlier-pass.md`). Refused with a footer line unless that
+    /// commit is the newest undo step.
+    StepPass(PassStep),
     /// Place the clip cursor at an absolute tick — the clip-view equivalent of
     /// a timeline click.
     CommitClipClickByTicks(i32),

@@ -172,6 +172,30 @@ impl Clip {
             .collect()
     }
 
+    /// Drops every note whose `NoteOn` falls in `window`, its `NoteOff` with
+    /// it, still held or not. A pass of a running take framed on its own
+    /// drops the notes just before its end that anticipate the next pass's
+    /// downbeat (`540-earlier-pass.md` decision 7).
+    pub(crate) fn drop_notes_starting_in(&mut self, window: Range<i32>) {
+        let pairing = self.pair_note_events();
+        let mut dropped = vec![false; self.events.len()];
+        for (idx, event) in self.events.iter().enumerate() {
+            if event.event_type() == Some(EventType::NoteOn) && window.contains(&event.tick()) {
+                dropped[idx] = true;
+                if let Some(&off) = pairing.on_to_off.get(&idx) {
+                    dropped[off] = true;
+                }
+            }
+        }
+        if !dropped.contains(&true) {
+            return;
+        }
+        let mut dropped = dropped.into_iter();
+        self.events_mut()
+            .retain(|_| !dropped.next().unwrap_or(false));
+        self.update_delta_ticks();
+    }
+
     /// Keeps the events whose ticks fall in `[window_start, window_end)` — a
     /// span of exactly one loop — and folds them onto the loop's phase circle:
     /// `tick' = (tick - phase_origin).rem_euclid(loop_len)`. Note pairs travel
@@ -425,6 +449,33 @@ mod tests {
             clip.add_event(e);
         }
         clip
+    }
+
+    #[test]
+    fn drop_notes_starting_in_takes_the_pairs_and_held_notes_starting_there() {
+        let mut clip = clip_with(vec![
+            on(0, 60),
+            off(500, 60),
+            on(100, 62),
+            off(150, 62),
+            on(120, 64),
+            on(300, 65),
+        ]);
+        clip.drop_notes_starting_in(100..200);
+        let left: Vec<(i32, Option<EventType>)> = clip
+            .events()
+            .iter()
+            .map(|e| (e.tick(), e.event_type()))
+            .collect();
+        assert_eq!(
+            left,
+            vec![
+                (0, Some(EventType::NoteOn)),
+                (500, Some(EventType::NoteOff)),
+                (300, Some(EventType::NoteOn)),
+            ],
+            "the note sounding across the window and the one after it stay"
+        );
     }
 
     #[test]

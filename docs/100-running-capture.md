@@ -113,11 +113,11 @@ when `region_start < clip.start_tick()`, silently dropping events. The correct s
 
 There are two running-capture commit paths in `capture/mod.rs`:
 
-#### `build_committed_capture_clip` + `CommitClipEdit` — arranger, new clip
+#### `build_committed_capture` + `CommitClipEdit` — arranger, new clip
 
 The new-clip commit is undoable, and is split in two for it:
-`Sequencer::build_committed_capture_clip(&self) -> Option<(track_idx, Clip)>` is the pure
-half — everything below, ending with the positioned clip and a `Track::fits` check, touching
+`Sequencer::build_committed_capture(&self, marquee) -> Option<(track_idx, Clip, Option<PassGrid>)>`
+is the pure half — everything below, ending with the positioned clip and a `Track::fits` check, touching
 neither the track nor the buffer — and `CommitClipEdit::from_running_capture` freezes that
 clip; its `edit()` does the `add_clip` and clears the capture buffer (once — a redo never
 wipes a take started since), its `undo()` lifts the clip by id. `None` from the builder
@@ -172,7 +172,7 @@ Edge Drag-Resize*): the event list stays whole, only `start_tick`/`region` say w
 - **Looping take** (`playback_is_looping()`): the **last pass only** — the **region-grid**
   pass holding the last note-on, `[region_start + j·L, region_start + (j+1)·L)`, read
   `LATE_NOTE_TOLERANCE_TICKS` early (see *Late-note relocation* below)
-  (`calculate_running_region` anchored on `region_start`), i.e. "the last wrap" exactly as
+  (`PassGrid::last_pass`, `capture/passes.rs`), i.e. "the last wrap" exactly as
   the loop shows it, **whatever the cursor** — kept whole by `Clip::fold_into_loop`
   (`tick' = (tick − region_start).rem_euclid(L)`; a note held across the wrap is closed at
   `L − 1`, as `crop` would). Phases the pass has not reached yet stay **empty** — never
@@ -218,6 +218,24 @@ The region-grid pass is the wrap as the user hears it; the cursor only chooses t
 and where it sits. Consequence: a note
 played after the wrap belongs to the *next* pass, so committing right after it keeps that
 pass alone — same "last pass only" rule, no exception for the cursor.
+
+#### Stepping to an earlier pass (`,` / `.`)
+
+`540-earlier-pass.md`. A looping new-clip commit, marquee-framed or not, keeps what it consumed: the
+builder returns the `PassGrid` it framed on (loop start and length, the anchor's phase,
+the region length), and `CommitClipEdit::edit` takes the buffer (`kept_capture`'s knob
+filter applied) instead of dropping it, so a later loop change doesn't move the passes.
+The passes are the grid passes holding a note-on (`PassGrid::passes`, a silent one
+skipped), from the first the buffer holds to the one `/` took. `,`/`.` re-frame the buffer
+on another pass exactly as `/` framed the last (`PassGrid::frame`: the late-note rule, the
+carry of a held wheel or pedal, the knob start values, the fold, the region slice), and
+swap only the clip's events and swing through `edit_clip_events`, so its id, start, region
+and length stay and a sounding note of the old pass is released. Notes in the last
+`LATE_NOTE_TOLERANCE_TICKS` of a pass are dropped when framing it: by the grid they are the
+next pass's anticipating downbeat (the last pass never holds any, since such a note would
+have made the next pass the last). The step (`PassStepEdit`) merges into the commit
+(`050-undo-redo.md`). Notes played after the `/` go into the fresh buffer and aren't
+part of the steps.
 
 #### `build_running_capture_insert` — existing clip, from either view
 - Undoable: `InsertCaptureEdit::from_running_capture` records it

@@ -42,6 +42,11 @@ pub(crate) enum Action {
     /// Freeze the capture into a clip, or into the lead clip
     /// (`SequencerCommand::Commit`).
     Commit,
+    /// Step the clip the last running `/` made back a pass
+    /// (`SequencerCommand::StepPass`, `540-earlier-pass.md`).
+    EarlierPass,
+    /// Step it forward a pass again.
+    LaterPass,
     /// Move the start edge of a clip to the cursor.
     ClipStartToCursor,
     /// Move the end edge of a clip to the cursor.
@@ -506,6 +511,22 @@ pub(crate) const ACTIONS: &[ActionInfo] = &[
         TRANSPORT,
         Scope::Global,
         &[Chord::plain(Key::Backslash), Chord::plain(Key::Slash)],
+    ),
+    row(
+        Action::EarlierPass,
+        "capture.earlier_pass",
+        "Step the take back a pass",
+        TRANSPORT,
+        Scope::Global,
+        &[Chord::plain(Key::Comma)],
+    ),
+    row(
+        Action::LaterPass,
+        "capture.later_pass",
+        "Step the take forward a pass",
+        TRANSPORT,
+        Scope::Global,
+        &[Chord::plain(Key::Period)],
     ),
     row(
         Action::ClipStartToCursor,

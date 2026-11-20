@@ -1,6 +1,6 @@
 # Earlier Pass
 
-**Status: design agreed 2026-11-20, not built.** After a running `/`, `,` swaps the clip it just made for the pass played before it, and `.` steps forward again, so a great pass followed by a fumbled one is not lost. `/` itself is unchanged. Each step changes the same clip in place; there is no mode, no view and no confirm, and one ⌘Z still removes the take. Read `100` (running capture, *What a new clip retains*), `050` (undo) and `440` (undo view state) first.
+**Status: design agreed 2026-11-20; phase 1 built 2026-11-20, phase 2 not built.** After a running `/`, `,` swaps the clip it just made for the pass played before it, and `.` steps forward again, so a great pass followed by a fumbled one is not lost. `/` itself is unchanged. Each step changes the same clip in place; there is no mode, no view and no confirm, and one ⌘Z still removes the take. Read `100` (running capture, *What a new clip retains*), `050` (undo) and `440` (undo view state) first.
 
 ## Background
 
@@ -29,7 +29,7 @@ Other apps: Logic Pro's "Select Previous/Next Take or Comp" (`⇧⌘↑`/`⇧⌘
 6. **The commit keeps its buffer.** At the commit, the edit takes the capture buffer it consumes (`std::mem::take` rather than dropping it), along with the anchor, region length, loop start and length, and clock shift it was framed with. A later loop change therefore doesn't shift the passes. Notes played after the `/` go into the fresh buffer as before and aren't part of the steps. The kept buffer is dropped when the next step is recorded on top of the commit, since the keys can never act on it again (decision 5). At most one buffer is kept at a time.
 7. **Passes are counted on the commit's pass grid.** They run from the first pass the buffer holds (the transport start or the last `/`) to the one `/` took. A pass holding no note-on is skipped, so a pass spent listening doesn't count. The first pass may be partial (a start mid-loop) and the last one too (a mid-pass `/`); each is framed as `/` would frame it. Each step re-frames the buffer exactly as `/` does, only with the pass index moved: the early-note rule (`LATE_NOTE_TOLERANCE_TICKS`), the carry of a held wheel or pedal, the knob start values and the retained pre-roll before the region.
 8. **Footer lines.** A step says where it is: "Pass 2 back of 5", or "Last pass" back at the one `/` took. Refusals: "No earlier pass" at the first, "Already the last pass" at the last, "No running take to step through" when decision 5 doesn't hold, "The take isn't looping" for a linear running take (decision 9). In fg/fg_dim, no colour (`no-alarm-colours-in-ui`).
-9. **Phase 1 covers the looping, unframed new-clip commit**, the fumble case. A linear running take (the transport not looping) has no passes, and its steps are refused. A marquee-framed `/` (`470`) and the running insert/overdub into the lead clip (`InsertCaptureEdit`, `470` phase 2) are phase 2. A stopped `/` and the take session are not affected.
+9. **Phase 1 covers the looping new-clip commit**, the fumble case, with or without a marquee framing it (`470`; moved from phase 2 on 2026-11-20 after hand-testing: ⌘L loops over the marquee and leaves it, so the usual `/` is marquee-framed, and while looping it is framed on the same pass grid). A linear running take (the transport not looping) has no passes, and its steps are refused. The running insert/overdub into the lead clip (`InsertCaptureEdit`, `470` phase 2) is phase 2. A stopped `/` and the take session are not affected.
 
 ## Walkthrough
 
@@ -52,6 +52,15 @@ A 4-bar loop, no lead clip, the transport running.
 - **The kept buffer is dropped** once another step is recorded (a test reading the edit's buffer after the next edit).
 - **The keymap**: the two rows conflict-free (`ACTIONS`' test), the Keyboard tab listing them.
 
+## As built (phase 1)
+
+- The grid is `PassGrid` (`sequencer/capture/passes.rs`), returned by `Sequencer::build_committed_capture` and used by the `/` itself, so the last pass and a stepped one are framed by one function (`PassGrid::frame`).
+- Framing a pass drops the notes in its last `LATE_NOTE_TOLERANCE_TICKS` (`Clip::drop_notes_starting_in`): by the grid they are the next pass's early downbeat, and the late-note relocation would otherwise have pulled them onto this pass's start. The last pass never holds such notes, so `/` is unchanged.
+- The step is `PassStepEdit` (`commit_clip.rs`), merged into the commit by `SequencerEdit::merge`; the same merge drops the kept buffer when any other edit goes on top. The workflow is `step_pass_workflow` (`clip_lifecycle.rs`), which records with `undo_record.edit` rather than `record_edit` so the commit's view snapshots are untouched.
+- A marquee-framed `/` steps too: it runs the same looping framing with the marquee's start as the anchor and its width as the region, so the clip keeps the marquee's span on every pass.
+- A step re-detects the clip's swing on the new pass, as `/` detects it.
+- The keys follow `acts_on_pane`'s default, as `/` does: pressed with the browser focused they take the keyboard to the pane.
+
 ## Not in this design
 
 - Browsing or auditioning passes before the `/`: what `/` takes is still the last pass. Seeing the passes while playing is the separate "visual feedback during capture" idea.
@@ -61,5 +70,5 @@ A 4-bar loop, no lead clip, the transport running.
 
 ## Phases
 
-1. **The new-clip running commit** (decisions 1–9). `CommitClipEdit` keeps the buffer and its framing; a pass-indexed variant of the looping `NewClip` framing; the two actions and their workflow; the amend of the step on top; the footer lines. Tests: `capture/mod.rs` (the framing per pass index, the skipped silent pass, the carry), `commit_clip.rs` (the amend, the undo and redo, the dropped buffer), the workflow through `run_command` (the refusals, the release while running), `keymap.rs`. Docs: `100` (*What a new clip retains*: the steps), `050` (the amend), `010` (the keys), `020` (that it isn't a mode). Changelog: `,`/`.` step a running take back to an earlier pass.
-2. **The marquee-framed commit and the running insert.** A marquee `/` steps its span through the earlier passes. A running insert or overdub into the lead clip keeps its buffer the same way, and a step re-lands that pass over the clip's events from before the insert (`InsertCaptureEdit`'s undo state), so passes never stack.
+1. **The new-clip running commit** (decisions 1–9), a marquee-framed one included. `CommitClipEdit` keeps the buffer and its framing; a pass-indexed variant of the looping `NewClip` framing; the two actions and their workflow; the amend of the step on top; the footer lines. Tests: `capture/mod.rs` (the framing per pass index, the skipped silent pass, the carry), `commit_clip.rs` (the amend, the undo and redo, the dropped buffer), the workflow through `run_command` (the refusals, the release while running), `keymap.rs`. Docs: `100` (*What a new clip retains*: the steps), `050` (the amend), `010` (the keys), `020` (that it isn't a mode). Changelog: `,`/`.` step a running take back to an earlier pass.
+2. **The running insert.** (The marquee-framed commit moved into phase 1, decision 9.) A running insert or overdub into the lead clip keeps its buffer the same way, and a step re-lands that pass over the clip's events from before the insert (`InsertCaptureEdit`'s undo state), so passes never stack.

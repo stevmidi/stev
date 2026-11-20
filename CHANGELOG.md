@@ -22,6 +22,8 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ### Added
 
+- Step a running take back to an earlier pass. After `/` while looping, press `,` and the clip it just made holds the pass you played before instead, `,` again the one before that, and `.` steps forward again, so a great pass followed by a fumbled one isn't lost. The clip changes in place while the transport keeps running, and the footer says which pass it shows ("Pass 2 back of 5"). Passes you only listened through are skipped. It works until you make another edit; one ⌘Z still takes the whole take away.
+
 - The piano roll's lower lane shows the sustain pedal: click `SUS` below `MW` left of the lane, or press `W`, which now cycles `VEL`, `PB`, `MW`, `SUS`. A press and a lift draw as steps, half-pedalling as played. A dot beside `SUS` means the clip has pedal data. Drag a span and press Delete to lift the pedal there, or ⌘A then Delete to clear it from the clip.
 - The sustain pedal is recorded. Pedal while you play and `/` keeps it in the take, laid into the clip like the mod wheel: from your first press to the end of the window, replacing what the clip had there. Ride the pedal alone over a looping clip and `/` adds pedalling to a take you played dry. A pedal held down when you start the transport is kept. Values are kept as played, so a continuous pedal's half-pedalling survives.
 

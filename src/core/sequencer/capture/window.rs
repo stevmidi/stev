@@ -79,7 +79,7 @@ impl Sequencer {
     /// controller move, a wheel's or a knob's — the notes frame a take whenever it has them, so a bend easing
     /// back after a wrap can't pull the window off them
     /// (`370-wheel-capture.md` § Decisions 4). `0` with neither.
-    fn take_framing_tick(clip: &Clip) -> i32 {
+    pub(super) fn take_framing_tick(clip: &Clip) -> i32 {
         let newest_first = || clip.events().iter().rev();
         newest_first()
             .find(|event| event.event_type() == Some(EventType::NoteOn))

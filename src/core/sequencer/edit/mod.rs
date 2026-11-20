@@ -44,7 +44,8 @@ mod undo_step;
 pub(crate) use clip_edits::{
     CommitClipEdit, CreateClipsEdit, DeleteInRangeEdit, DeleteTimeEdit, DuplicateClipsEdit,
     DuplicateTimeEdit, InsertSilenceEdit, MoveClipEdit, MoveRangeEdit, MuteInRangeEdit,
-    PasteClipsEdit, ResizeClipEdit, RetimeClipEdit, SplitClipsEdit, TransposeClipsEdit,
+    PassRefusal, PassStep, PassStepEdit, PasteClipsEdit, ResizeClipEdit, RetimeClipEdit,
+    SplitClipsEdit, TransposeClipsEdit,
 };
 pub(crate) use event_edits::{
     ClearControllerSpanEdit, DeleteSelectedEventsEdit, DragEventsVelocityEdit, DragNotesEdit,
@@ -615,7 +616,8 @@ impl Sequencer {
 /// invocation below. Each edit type also converts `Into` its variant, so a
 /// handler can record it without naming the variant. `edit`/`undo` dispatch
 /// straight through; `merge` is hand-written to coalesce only
-/// `DragEventsVelocity`, `ResizeClip`, `DragNotes` and `SetTempo`.
+/// `DragEventsVelocity`, `ResizeClip`, `DragNotes` and `SetTempo`, and to
+/// fold a `StepPass` into the `CommitClip` it steps.
 macro_rules! sequencer_edit_dispatch {
     ($($variant:ident($type:ty)),* $(,)?) => {
         /// Undoable edits on the sequencer.
@@ -701,6 +703,17 @@ macro_rules! sequencer_edit_dispatch {
                     a.absorb(b);
                     return undo::Merged::Yes;
                 }
+                // `,`/`.` amend the running commit they step
+                // (`540-earlier-pass.md` decision 4); any other step on top
+                // of it ends the steps, and its kept buffer goes (decision 6).
+                if let SequencerEdit::CommitClip(commit) = self {
+                    if let SequencerEdit::StepPass(step) = &other
+                        && commit.absorb(step)
+                    {
+                        return undo::Merged::Yes;
+                    }
+                    commit.drop_passes();
+                }
                 undo::Merged::No(other)
             }
         }
@@ -709,6 +722,7 @@ macro_rules! sequencer_edit_dispatch {
 
 sequencer_edit_dispatch!(
     CommitClip(CommitClipEdit),
+    StepPass(PassStepEdit),
     CreateClips(CreateClipsEdit),
     DuplicateClips(DuplicateClipsEdit),
     DuplicateTime(DuplicateTimeEdit),
@@ -754,6 +768,7 @@ impl SequencerEdit {
     pub(crate) fn restores_view(&self) -> bool {
         match self {
             SequencerEdit::CommitClip(_)
+            | SequencerEdit::StepPass(_)
             | SequencerEdit::CreateClips(_)
             | SequencerEdit::DuplicateClips(_)
             | SequencerEdit::DuplicateTime(_)

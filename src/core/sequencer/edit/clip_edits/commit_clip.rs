@@ -3,8 +3,14 @@
 //! it back as it was when undone. An empty clip (`⇧⌘M`) is a paste instead
 //! (`insert_empty_clips.rs`), since it can cover several tracks.
 
+use std::sync::Arc;
+
+use uuid::Uuid;
+
+use crate::core::sequencer::capture::PassGrid;
 use crate::metadata::clip_metadata::ClipMetadata;
 use crate::models::clip::Clip;
+use crate::models::event::Event;
 
 use super::super::super::Sequencer;
 use super::super::EditResult;
@@ -16,7 +22,7 @@ use super::{detach, detached_clone};
 
 /// Puts one frozen clip, committed from the capture, on one track (see
 /// `050-undo-redo.md`): the capture commits build the clip here via
-/// [`Sequencer::build_committed_capture_clip`] (running) or
+/// [`Sequencer::build_committed_capture`] (running) or
 /// [`Sequencer::build_stopped_capture_clip`] (stopped) and let `edit()` place
 /// it.
 ///
@@ -36,6 +42,15 @@ use super::{detach, detached_clone};
 /// reverts the project tempo the first clip's confirm may have detected, and
 /// carries no selection context — the handler reads the live selection, since
 /// lifting a clip doesn't touch it.
+///
+/// A looping running commit keeps the buffer it consumed and the
+/// grid it was framed on, so `,`/`.` can step the clip back and forward
+/// through the passes the buffer held ([`step_pass`](Self::step_pass),
+/// `540-earlier-pass.md`). A step amends this edit rather than becoming an
+/// undo step of its own ([`absorb`](Self::absorb)), so one ⌘Z removes the
+/// take whatever pass it shows. The buffer goes once another step is
+/// recorded on top ([`drop_passes`](Self::drop_passes)), since the keys can
+/// never reach it again.
 pub(crate) struct CommitClipEdit {
     /// Track the clip lives on.
     track_idx: usize,
@@ -46,6 +61,81 @@ pub(crate) struct CommitClipEdit {
     clip: Clip,
     /// `true` until the first `edit()` has cleared `capture_clip`.
     consume_capture: bool,
+    /// What `,`/`.` can step the clip through.
+    passes: Passes,
+}
+
+/// The passes of a commit `,`/`.` step through (`540-earlier-pass.md`).
+enum Passes {
+    /// None: a stopped commit, or one whose buffer was dropped.
+    None,
+    /// A linear running take, which has no passes.
+    Linear,
+    /// A looping running take not yet placed: the first `edit()` takes the
+    /// buffer.
+    Pending(PassGrid),
+    /// A looping running take, with the buffer it consumed.
+    Kept(KeptPasses),
+}
+
+/// The buffer a looping running commit consumed, and where in it the clip
+/// is.
+struct KeptPasses {
+    /// The grid the commit was framed on.
+    grid: PassGrid,
+    /// The capture buffer as the commit read it, knob moves no knob holds
+    /// dropped (`Sequencer::kept_capture`).
+    buffer: Clip,
+    /// The passes holding a note-on, up to the one `/` took, in order.
+    passes: Vec<i32>,
+    /// The index in `passes` of the one the clip shows.
+    shown: usize,
+}
+
+impl KeptPasses {
+    /// The footer line for the pass at `index` (decision 8).
+    fn label(&self, index: usize) -> String {
+        let back = self.passes.len() - 1 - index;
+        if back == 0 {
+            "Last pass".to_owned()
+        } else {
+            format!("Pass {back} back of {}", self.passes.len())
+        }
+    }
+}
+
+/// Which way `,`/`.` step a running take.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PassStep {
+    /// `,`: the pass before.
+    Earlier,
+    /// `.`: the pass after.
+    Later,
+}
+
+/// Why `,`/`.` did nothing (`540-earlier-pass.md` decision 8).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PassRefusal {
+    /// The newest undo step isn't a running new-clip commit (decision 5).
+    NoRunningTake,
+    /// A linear running take has no passes (decision 9).
+    NotLooping,
+    /// The clip shows the first pass.
+    NoEarlier,
+    /// The clip shows the pass `/` took.
+    AlreadyLast,
+}
+
+impl PassRefusal {
+    /// The footer line saying why.
+    pub(crate) fn message(self) -> &'static str {
+        match self {
+            Self::NoRunningTake => "No running take to step through",
+            Self::NotLooping => "The take isn't looping",
+            Self::NoEarlier => "No earlier pass",
+            Self::AlreadyLast => "Already the last pass",
+        }
+    }
 }
 
 impl CommitClipEdit {
@@ -58,11 +148,13 @@ impl CommitClipEdit {
         sequencer: &Sequencer,
         marquee: Option<(i32, i32)>,
     ) -> Option<Self> {
-        let (track_idx, clip) = sequencer.build_committed_capture_clip(marquee)?;
+        let (track_idx, clip, grid) = sequencer.build_committed_capture(marquee)?;
+        let passes = grid.map_or(Passes::Linear, Passes::Pending);
         Some(Self {
             track_idx,
             clip,
             consume_capture: true,
+            passes,
         })
     }
 
@@ -80,6 +172,7 @@ impl CommitClipEdit {
             track_idx,
             clip,
             consume_capture: true,
+            passes: Passes::None,
         })
     }
 
@@ -99,6 +192,18 @@ impl CommitClipEdit {
         }
 
         if self.consume_capture {
+            if let Passes::Pending(grid) = self.passes {
+                let mut buffer = std::mem::replace(&mut sequencer.capture_clip, Clip::new());
+                sequencer.keep_knob_moves(&mut buffer);
+                let last = grid.last_pass(&buffer);
+                let passes = grid.passes(&buffer, last);
+                self.passes = Passes::Kept(KeptPasses {
+                    grid,
+                    shown: passes.len().saturating_sub(1),
+                    buffer,
+                    passes,
+                });
+            }
             sequencer.reset_capture();
             self.consume_capture = false;
         }
@@ -125,6 +230,143 @@ impl CommitClipEdit {
             None => EditResult::NoOp,
         }
     }
+
+    /// The step `,` or `.` makes to the clip, with its footer line, or why
+    /// there is none: the pass before or after the one it shows, framed as
+    /// `/` framed the one it took (`540-earlier-pass.md` decisions 3 and 7).
+    /// The caller has checked this is the newest undo step (decision 5).
+    pub(crate) fn step_pass(
+        &self,
+        sequencer: &Sequencer,
+        step: PassStep,
+    ) -> Result<(PassStepEdit, String), PassRefusal> {
+        let kept = match &self.passes {
+            Passes::Kept(kept) => kept,
+            Passes::Linear => return Err(PassRefusal::NotLooping),
+            Passes::None | Passes::Pending(_) => return Err(PassRefusal::NoRunningTake),
+        };
+        let index = match step {
+            PassStep::Earlier => kept.shown.checked_sub(1).ok_or(PassRefusal::NoEarlier)?,
+            PassStep::Later => Some(kept.shown + 1)
+                .filter(|&later| later < kept.passes.len())
+                .ok_or(PassRefusal::AlreadyLast)?,
+        };
+        if sequencer.clip_on(self.track_idx, self.clip.id()).is_none() {
+            return Err(PassRefusal::NoRunningTake);
+        }
+        let mut framed = kept.grid.frame(kept.buffer.clone(), kept.passes[index]);
+        framed.detect_and_store_swing();
+        let edit = PassStepEdit {
+            track_idx: self.track_idx,
+            clip_id: self.clip.id(),
+            events: Arc::clone(framed.shared_events()),
+            swing_pct: framed.swing_pct(),
+            shown: index,
+            before: None,
+        };
+        Ok((edit, kept.label(index)))
+    }
+
+    /// Takes in a pass step made to its clip, so the step amends this edit
+    /// (decision 4): the clip it keeps shows the new pass, and the next step
+    /// goes from there. `false` for a step to another clip, or when there
+    /// are no passes to step through.
+    pub(in crate::core::sequencer::edit) fn absorb(&mut self, step: &PassStepEdit) -> bool {
+        let Passes::Kept(kept) = &mut self.passes else {
+            return false;
+        };
+        if step.clip_id != self.clip.id() {
+            return false;
+        }
+        kept.shown = step.shown;
+        self.clip.restore_shared_events(Arc::clone(&step.events));
+        self.clip.set_swing_pct(step.swing_pct);
+        true
+    }
+
+    /// Drops the kept buffer: another step went on top, so `,`/`.` can't
+    /// reach this commit again (decision 6).
+    pub(in crate::core::sequencer::edit) fn drop_passes(&mut self) {
+        if matches!(self.passes, Passes::Kept(_) | Passes::Pending(_)) {
+            self.passes = Passes::None;
+        }
+    }
+
+    /// Whether the commit keeps a buffer to step through.
+    #[cfg(test)]
+    pub(crate) fn keeps_buffer(&self) -> bool {
+        matches!(self.passes, Passes::Kept(_))
+    }
+}
+
+/// `,`/`.`: the clip a running `/` made shows another pass of the take
+/// (`540-earlier-pass.md`). Only its events change, through
+/// [`Sequencer::edit_clip_events`], so the old pass's sounding notes are
+/// released. Built by [`CommitClipEdit::step_pass`], it merges into the
+/// commit ([`CommitClipEdit::absorb`]); its own undo, for a step that stays
+/// on its own, puts the events back.
+pub(crate) struct PassStepEdit {
+    /// Track the clip is on.
+    track_idx: usize,
+    /// The clip the `/` made.
+    clip_id: Uuid,
+    /// The pass's events, framed as the clip's.
+    events: Arc<Vec<Event>>,
+    /// The swing detected in them.
+    swing_pct: u8,
+    /// Its index among the commit's passes.
+    shown: usize,
+    /// The events and swing the clip had before, for `undo()`.
+    before: Option<(Arc<Vec<Event>>, u8)>,
+}
+
+impl PassStepEdit {
+    /// Puts the pass's events in the clip.
+    pub(in crate::core::sequencer::edit) fn edit(
+        &mut self,
+        sequencer: &mut Sequencer,
+    ) -> EditResult {
+        let (events, swing_pct) = (Arc::clone(&self.events), self.swing_pct);
+        self.before = sequencer.edit_clip_events(self.track_idx, self.clip_id, |clip| {
+            let before = (Arc::clone(clip.shared_events()), clip.swing_pct());
+            clip.restore_shared_events(events);
+            clip.set_swing_pct(swing_pct);
+            before
+        });
+        if self.before.is_none() {
+            return EditResult::NoOp;
+        }
+        self.modified()
+    }
+
+    /// Puts back the events from before.
+    pub(in crate::core::sequencer::edit) fn undo(
+        &mut self,
+        sequencer: &mut Sequencer,
+    ) -> EditResult {
+        let Some((events, swing_pct)) = self.before.take() else {
+            return EditResult::NoOp;
+        };
+        let Some(()) = sequencer.edit_clip_events(self.track_idx, self.clip_id, |clip| {
+            clip.restore_shared_events(events);
+            clip.set_swing_pct(swing_pct);
+        }) else {
+            return EditResult::NoOp;
+        };
+        self.modified()
+    }
+
+    /// `EventsModified` for the clip, nothing selected: the new events have
+    /// ids of their own.
+    fn modified(&self) -> EditResult {
+        EditResult::EventsModified {
+            track_idx: self.track_idx,
+            clip_id: self.clip_id,
+            selected_event_ids: Vec::new(),
+            inserted_take: None,
+            duplicate_span: None,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -139,8 +381,9 @@ mod tests {
     use crate::core::time::{self, Meter};
 
     use crate::core::sequencer::test_support::{
-        clip_at, instrument_track_0, note_off, note_on, sequencer_with,
+        cc_at, clip_at, instrument_track_0, note_off, note_on, sequencer_with,
     };
+    use crate::models::event::EventType;
 
     use super::*;
 
@@ -355,5 +598,288 @@ mod tests {
         sequencer.tick(Instant::now());
 
         assert_eq!(drain(&mut plugin_rx), vec![[0x80, 60, 0]]);
+    }
+
+    // --- `,`/`.`: earlier passes (`540-earlier-pass.md`) ---
+
+    const BAR: i32 = Meter::FOUR_FOUR.bar_ticks();
+
+    /// Looping over `[0, loop_len)`, playback at its start, the cursor at
+    /// `cursor`, track 0 selected.
+    fn looping(loop_len: i32, cursor: i32) -> Sequencer {
+        let mut sequencer = sequencer_with(true).0;
+        let track_id = sequencer.track_id_by_index(0).unwrap();
+        sequencer.select_track(Some(track_id));
+        sequencer.set_global_region(0, loop_len);
+        sequencer.playback_tick.store(0, Ordering::Relaxed);
+        sequencer.cursor_tick.store(cursor, Ordering::Relaxed);
+        sequencer
+    }
+
+    /// A `pitch` note from `on` to `off` into the capture buffer.
+    fn play(sequencer: &mut Sequencer, pitch: u8, on: i32, off: i32) {
+        let capture = &mut sequencer.capture_clip;
+        capture.add_event(Event::new(on, 0, vec![0x90, pitch, 100]));
+        capture.add_event(Event::new(off, 0, vec![0x80, pitch, 0]));
+    }
+
+    /// What a step may change in the committed clip: its events (tick,
+    /// message) and swing, with its region and start, which it may not.
+    type Shape = (Vec<(i32, Vec<u8>)>, u8, (i32, i32), i32);
+
+    fn shape(sequencer: &Sequencer, id: Uuid) -> Shape {
+        let clip = sequencer.tracks()[0].get_clip_by_id(id).unwrap();
+        let events = clip
+            .events()
+            .iter()
+            .map(|e| (e.tick(), e.midi_message().to_vec()))
+            .collect();
+        let region = (clip.region().start(), clip.region().end());
+        (events, clip.swing_pct(), region, clip.start_tick())
+    }
+
+    /// The pitches of the committed clip's note-ons, in order.
+    fn pitches(sequencer: &Sequencer, id: Uuid) -> Vec<u8> {
+        let clip = sequencer.tracks()[0].get_clip_by_id(id).unwrap();
+        clip.events()
+            .iter()
+            .filter(|e| e.event_type() == Some(EventType::NoteOn))
+            .filter_map(Event::note_number)
+            .collect()
+    }
+
+    /// One `,` or `.` as the handler makes it: the step, merged into the
+    /// commit. Returns its footer line.
+    fn step(
+        sequencer: &mut Sequencer,
+        commit: &mut CommitClipEdit,
+        step: PassStep,
+    ) -> Result<String, PassRefusal> {
+        let (mut edit, label) = commit.step_pass(sequencer, step)?;
+        assert!(matches!(
+            edit.edit(sequencer),
+            EditResult::EventsModified { .. }
+        ));
+        assert!(commit.absorb(&edit), "the step amends the commit");
+        Ok(label)
+    }
+
+    /// Stepping back to the first pass and forward again gives back exactly
+    /// the clip `/` made, events and region, and each step lands on the
+    /// commit's grid: the start, region and length never move.
+    fn assert_round_trips(mut sequencer: Sequencer, passes: usize, case: &str) {
+        let (mut commit, clip) = commit(&mut sequencer);
+        let made = shape(&sequencer, clip.clip_id);
+        for _ in 1..passes {
+            step(&mut sequencer, &mut commit, PassStep::Earlier).expect(case);
+            let stepped = shape(&sequencer, clip.clip_id);
+            assert_eq!(stepped.2, made.2, "{case}: the region stays");
+            assert_eq!(stepped.3, made.3, "{case}: the start stays");
+        }
+        assert_eq!(
+            step(&mut sequencer, &mut commit, PassStep::Earlier),
+            Err(PassRefusal::NoEarlier),
+            "{case}"
+        );
+        for _ in 1..passes {
+            step(&mut sequencer, &mut commit, PassStep::Later).expect(case);
+        }
+        assert_eq!(
+            step(&mut sequencer, &mut commit, PassStep::Later),
+            Err(PassRefusal::AlreadyLast),
+            "{case}"
+        );
+        assert_eq!(shape(&sequencer, clip.clip_id), made, "{case}");
+    }
+
+    #[test]
+    fn stepping_back_and_forward_gives_back_the_clip_slash_made() {
+        // A start at phase 0: one note a pass.
+        let mut s = looping(BAR, 0);
+        for (pass, pitch) in [(0, 60), (1, 62), (2, 64)] {
+            play(&mut s, pitch, pass * BAR + 100, pass * BAR + 400);
+        }
+        assert_round_trips(s, 3, "a start at phase 0");
+
+        // A start mid-loop: the first pass is its second half.
+        let mut s = looping(BAR * 2, 0);
+        play(&mut s, 60, BAR + 300, BAR + 600);
+        play(&mut s, 62, BAR * 2 + 100, BAR * 2 + 400);
+        play(&mut s, 64, BAR * 3 + 700, BAR * 3 + 900);
+        assert_round_trips(s, 2, "a partial first pass");
+
+        // A mid-pass `/`: the last pass only its first beat.
+        let mut s = looping(BAR * 2, 0);
+        play(&mut s, 60, 100, 400);
+        play(&mut s, 62, BAR + 100, BAR + 400);
+        play(&mut s, 64, BAR * 2 + 100, BAR * 2 + 200);
+        assert_round_trips(s, 2, "a partial last pass");
+
+        // The cursor mid-loop: the region is a slice from its phase.
+        let mut s = looping(BAR * 2, BAR);
+        play(&mut s, 60, 100, BAR + 400);
+        play(&mut s, 62, BAR * 2 + BAR + 100, BAR * 3 + 400);
+        assert_round_trips(s, 2, "the cursor mid-loop");
+
+        // An early chord before the wrap starts the last pass.
+        let mut s = looping(BAR * 2, 0);
+        play(&mut s, 50, 600, 900);
+        for pitch in [60, 64, 67] {
+            play(&mut s, pitch, BAR * 2 - 40, BAR * 2 + 400);
+        }
+        assert_round_trips(s, 2, "an early chord");
+
+        // A held pedal, carried onto the pass stepped to.
+        let mut s = looping(BAR, 0);
+        s.capture_clip.add_event(cc_at(50, 64, 127));
+        for pass in 0..3 {
+            play(&mut s, 60, pass * BAR + 100, pass * BAR + 400);
+        }
+        assert_round_trips(s, 3, "a held pedal");
+    }
+
+    /// Each step shows that pass, and the footer says where it is.
+    #[test]
+    fn each_step_shows_its_pass_and_names_it() {
+        let mut sequencer = looping(BAR, 0);
+        for (pass, pitch) in [(0, 60), (1, 62), (2, 64)] {
+            play(&mut sequencer, pitch, pass * BAR + 100, pass * BAR + 400);
+        }
+        let (mut commit, clip) = commit(&mut sequencer);
+        let id = clip.clip_id;
+        assert_eq!(pitches(&sequencer, id), vec![64]);
+
+        let mut back = || step(&mut sequencer, &mut commit, PassStep::Earlier);
+        assert_eq!(back().as_deref(), Ok("Pass 1 back of 3"));
+        assert_eq!(back().as_deref(), Ok("Pass 2 back of 3"));
+        assert_eq!(pitches(&sequencer, id), vec![60]);
+        assert_eq!(
+            step(&mut sequencer, &mut commit, PassStep::Later).as_deref(),
+            Ok("Pass 1 back of 3")
+        );
+        assert_eq!(pitches(&sequencer, id), vec![62]);
+        assert_eq!(
+            step(&mut sequencer, &mut commit, PassStep::Later).as_deref(),
+            Ok("Last pass")
+        );
+        assert_eq!(pitches(&sequencer, id), vec![64]);
+    }
+
+    /// A pass spent listening isn't counted: one step back from the third
+    /// pass is the first.
+    #[test]
+    fn a_silent_pass_is_skipped() {
+        let mut sequencer = looping(BAR, 0);
+        play(&mut sequencer, 60, 100, 400);
+        play(&mut sequencer, 64, BAR * 2 + 100, BAR * 2 + 400);
+        let (mut commit, clip) = commit(&mut sequencer);
+
+        let label = step(&mut sequencer, &mut commit, PassStep::Earlier);
+        assert_eq!(label.as_deref(), Ok("Pass 1 back of 2"));
+        assert_eq!(pitches(&sequencer, clip.clip_id), vec![60]);
+    }
+
+    /// The early chord that starts the last pass (the case of
+    /// `commit_clip_to_track_early_chord_starts_the_next_pass`) stays out of
+    /// the pass before it, stepped back to: it is the next pass's.
+    #[test]
+    fn stepping_back_past_an_early_chord_leaves_it_out() {
+        let mut sequencer = looping(BAR * 2, 0);
+        play(&mut sequencer, 50, 600, 900);
+        play(&mut sequencer, 52, BAR + 600, BAR + 900);
+        for (pitch, on) in [(60, BAR * 2 - 40), (64, BAR * 2 - 30), (67, BAR * 2 - 20)] {
+            play(&mut sequencer, pitch, on, BAR * 2 + 400);
+        }
+        let (mut commit, clip) = commit(&mut sequencer);
+        assert_eq!(pitches(&sequencer, clip.clip_id), vec![60, 64, 67]);
+
+        step(&mut sequencer, &mut commit, PassStep::Earlier).unwrap();
+
+        assert_eq!(pitches(&sequencer, clip.clip_id), vec![50, 52]);
+    }
+
+    /// A pedal pressed in the first pass and held is carried onto the start
+    /// of the second when stepped back to it, as `/` would carry it.
+    #[test]
+    fn a_pedal_held_from_an_earlier_pass_is_carried_onto_the_pass_stepped_to() {
+        let mut sequencer = looping(BAR, 0);
+        sequencer.capture_clip.add_event(cc_at(50, 64, 127));
+        for pass in 0..3 {
+            play(&mut sequencer, 60, pass * BAR + 100, pass * BAR + 400);
+        }
+        let (mut commit, clip) = commit(&mut sequencer);
+
+        step(&mut sequencer, &mut commit, PassStep::Earlier).unwrap();
+
+        let clip = sequencer.tracks()[0].get_clip_by_id(clip.clip_id).unwrap();
+        let pedal: Vec<(i32, Vec<u8>)> = clip
+            .events()
+            .iter()
+            .filter(|e| !e.is_note_edge())
+            .map(|e| (e.tick(), e.midi_message().to_vec()))
+            .collect();
+        assert_eq!(pedal, vec![(0, vec![0xB0, 64, 127])]);
+    }
+
+    /// A linear running take has no passes; a stopped commit has none to
+    /// step through.
+    #[test]
+    fn only_a_looping_running_commit_steps() {
+        let mut linear = test_sequencer();
+        play(&mut linear, 60, 100, 400);
+        let (commit_linear, _) = commit(&mut linear);
+        assert_eq!(
+            commit_linear.step_pass(&linear, PassStep::Earlier).err(),
+            Some(PassRefusal::NotLooping)
+        );
+
+        let mut stopped = looping(BAR, 0);
+        play(&mut stopped, 60, 100, 400);
+        let mut commit_stopped = CommitClipEdit::from_stopped_capture(&stopped, None).unwrap();
+        commit_stopped.edit(&mut stopped);
+        assert_eq!(
+            commit_stopped.step_pass(&stopped, PassStep::Earlier).err(),
+            Some(PassRefusal::NoRunningTake)
+        );
+    }
+
+    /// A marquee over the loop (⌘L leaves it there) frames the `/`, and the
+    /// clip steps through the passes all the same, its span staying the
+    /// marquee's: the marquee anchors the same pass grid.
+    #[test]
+    fn a_marquee_framed_commit_steps_its_span_through_the_passes() {
+        let mut sequencer = looping(BAR * 2, 0);
+        play(&mut sequencer, 60, BAR + 100, BAR + 400);
+        play(&mut sequencer, 62, BAR * 3 + 100, BAR * 3 + 400);
+        play(&mut sequencer, 64, BAR * 5 + 100, BAR * 5 + 400);
+        let mut commit = CommitClipEdit::from_running_capture(&sequencer, Some((BAR, BAR * 2)))
+            .expect("a take to commit");
+        let EditResult::ClipCommitted { clip } = commit.edit(&mut sequencer) else {
+            panic!("expected ClipCommitted");
+        };
+        let made = shape(&sequencer, clip.clip_id);
+        assert_eq!(made.3, BAR, "at the marquee's start");
+        assert_eq!(pitches(&sequencer, clip.clip_id), vec![64]);
+
+        let label = step(&mut sequencer, &mut commit, PassStep::Earlier);
+        assert_eq!(label.as_deref(), Ok("Pass 1 back of 3"));
+        assert_eq!(pitches(&sequencer, clip.clip_id), vec![62]);
+        let stepped = shape(&sequencer, clip.clip_id);
+        assert_eq!((stepped.2, stepped.3), (made.2, made.3), "the span stays");
+
+        step(&mut sequencer, &mut commit, PassStep::Later).unwrap();
+        assert_eq!(shape(&sequencer, clip.clip_id), made);
+    }
+
+    /// The commit keeps the buffer it consumed, and the knob moves no knob
+    /// holds go from it as from the clip.
+    #[test]
+    fn the_commit_keeps_the_buffer_it_consumed() {
+        let mut sequencer = looping(BAR, 0);
+        play(&mut sequencer, 60, 100, 400);
+        play(&mut sequencer, 62, BAR + 100, BAR + 400);
+        let (commit, _) = commit(&mut sequencer);
+        assert!(commit.keeps_buffer());
+        assert!(sequencer.capture_clip.events().is_empty());
     }
 }

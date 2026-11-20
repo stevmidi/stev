@@ -11,7 +11,7 @@
 
 use egui::Key;
 
-use crate::core::sequencer::TempoGesture;
+use crate::core::sequencer::{PassStep, TempoGesture};
 use crate::core::{
     input_event::{InputEvent, KeyModifiers, is_pane_focus_key},
     keymap::Action,
@@ -115,6 +115,12 @@ impl EventHandlers {
 
             InputEvent::Commit { frame } => {
                 self.send_sequencer(SequencerCommand::Commit { frame: *frame });
+            }
+            InputEvent::Action(Action::EarlierPass) => {
+                self.send_sequencer(SequencerCommand::StepPass(PassStep::Earlier));
+            }
+            InputEvent::Action(Action::LaterPass) => {
+                self.send_sequencer(SequencerCommand::StepPass(PassStep::Later));
             }
 
             InputEvent::Action(Action::MuteNotes) => self.handle_mute(),
