@@ -11,7 +11,9 @@
 //! The `release_*` / `reset*` methods are the discontinuity handlers — mute,
 //! seek, loop wrap, transport stop — that stop a clip-driven note from hanging
 //! in external gear or in a plugin; [`reset_wheels`](Sequencer::reset_wheels)
-//! does the same for a wheel a clip left off neutral when the transport stops.
+//! does the same for a wheel or the sustain pedal a clip left off its rest
+//! when the transport stops, and [`jump_controllers`](Sequencer::jump_controllers)
+//! lifts the pedal on a jump.
 
 use std::time::{Duration, Instant};
 
@@ -311,9 +313,10 @@ impl Sequencer {
         self.send_wheel_resets(track_idx);
     }
 
-    /// Puts back to its rest every wheel a track's clips moved — on a
-    /// transport stop, where no [`tick`](Self::tick) runs to send a chase. A
-    /// wheel the player moved last on the armed track is left where it is
+    /// Puts back to its rest every wheel and the sustain pedal a track's
+    /// clips moved — on a transport stop, after the notes are released, where
+    /// no [`tick`](Self::tick) runs to send a chase. A wheel or pedal the
+    /// player moved last on the armed track is left where it is
     /// (`Track::hand_controller_to_player`), and a knob's parameter has no
     /// rest: it stays where it was
     /// (`400-parameter-knobs.md` decision 9).
@@ -323,8 +326,9 @@ impl Sequencer {
         }
     }
 
-    /// Sends the track at `track_idx` the resets for every wheel its playback
-    /// moved ([`Track::take_wheel_resets`]), now, on its own output.
+    /// Sends the track at `track_idx` the resets for every wheel and the
+    /// pedal its playback moved ([`Track::take_wheel_resets`]), now, on its
+    /// own output.
     fn send_wheel_resets(&mut self, track_idx: usize) {
         let Some(track) = self.tracks.get_mut(track_idx) else {
             return;
@@ -355,12 +359,18 @@ impl Sequencer {
         }
     }
 
-    /// Makes every track's next seek resend the controller values it sent
-    /// ([`Track::invalidate_controllers`]) — for a jump, which drops the
-    /// `"midiout"` delay queue the last of them may still have sat in.
-    pub(crate) fn invalidate_controllers(&mut self) {
-        for track in &mut self.tracks {
-            track.invalidate_controllers();
+    /// Playback is about to jump: lifts, now, the sustain pedal of every
+    /// track whose playback has it, so the notes the jump releases stop
+    /// ringing, and makes every track's next seek resend the controller
+    /// values it sent — the jump drops the `"midiout"` delay queue the last
+    /// of them may still have sat in ([`Track::jump_controllers`],
+    /// `530-sustain-capture.md` decision 4). Called before the seek, whose
+    /// chase presses the pedal again where playback lands down.
+    pub(crate) fn jump_controllers(&mut self) {
+        for track_idx in 0..self.tracks.len() {
+            if let Some(lift) = self.tracks[track_idx].jump_controllers() {
+                self.send_to_track_now(track_idx, vec![lift]);
+            }
         }
     }
 
@@ -910,7 +920,7 @@ mod tests {
         midi_out_bytes(&midi_out_rx);
 
         // What `reanchor_playback` does on the wrap.
-        sequencer.invalidate_controllers();
+        sequencer.jump_controllers();
         sequencer.reset_to_tick(0);
         sequencer.tick(at);
 

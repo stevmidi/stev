@@ -185,7 +185,8 @@ pub(crate) fn tool_list() -> Value {
     check_properties["notes"] = replace_properties["notes"].clone();
     replace_properties["clear_wheels"] = json!({
         "type": "boolean",
-        "description": "Also remove the clip's pitch bend and mod wheel moves. Default false.",
+        "description": "Also remove the clip's pitch bend, mod wheel and sustain pedal moves. \
+            Default false.",
     });
     json!([
         {
@@ -279,8 +280,8 @@ pub(crate) fn tool_list() -> Value {
             "name": "replace_clip_notes",
             "description": "Replace every note in one clip, keeping its position, window and \
                 length: for \"vary this\", tidying and reharmonising a clip get_context lists. \
-                Cleaned up as create_clips cleans, on the clip's own swing. Pitch bend and mod \
-                wheel stay unless clear_wheels. One undo step.",
+                Cleaned up as create_clips cleans, on the clip's own swing. Pitch bend, mod \
+                wheel and sustain pedal stay unless clear_wheels. One undo step.",
             "inputSchema": {
                 "type": "object",
                 "properties": replace_properties,

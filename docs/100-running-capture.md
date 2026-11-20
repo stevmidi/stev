@@ -281,10 +281,12 @@ the take:
   quarter) so a note added seconds later doesn't land deep in the bar. A rolled chord
   stays rolled, a block chord a block. Each keeps its real release, which arrives while
   playing, so its length is how long it was really held into the take;
-- **each wheel when off its rest** — `Sequencer::live_wheels`, the player's last move of
-  each (whatever the buffer's resets did since), on the start tick ahead of the notes. At
-  rest nothing is carried. A bend held into the take is kept too (`370` § Decisions 7):
-  it springs back to centre on release, but held, it is what was played.
+- **each wheel and the sustain pedal when off its rest** — `Sequencer::live_wheels`, the
+  player's last move of each (whatever the buffer's resets did since), on the start tick
+  ahead of the notes. At rest nothing is carried. A bend held into the take is kept too
+  (`370` § Decisions 7): it springs back to centre on release, but held, it is what was
+  played. So is a pedal held down when the transport starts (`530-sustain-capture.md`
+  decision 2), at its value, half-pedalling included.
 
 They go in at **cursor** ticks, since the clock's numbering isn't known until input
 arrives; `capture_held_start` marks them as not yet placed. The take's first input while

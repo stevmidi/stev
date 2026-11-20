@@ -161,8 +161,8 @@ impl Clip {
     /// no event in it holds, so a bake sounds as the clip did: at
     /// `start_tick` the value of a controller held from hidden material
     /// before the window (the track's arrival chase, `Track::tick`) — a wheel
-    /// off its rest, anything else moved there — and at `end_tick` the rest of
-    /// a wheel the window leaves off it (the chase when playback moves on,
+    /// or the pedal off its rest, anything else moved there — and at
+    /// `end_tick` the rest of a wheel or the pedal the window leaves off it (the chase when playback moves on,
     /// `Track::seek`); a CC with no rest stays where it is. `kept` is the
     /// window's events ([`windowed_events`](Self::windowed_events)); muted
     /// ones never sound, so they move nothing.
@@ -178,7 +178,7 @@ impl Clip {
             .filter(|&(controller, value)| controller.rest_value() != Some(value))
             .map(|(controller, value)| Event::controller_move_at(start_tick, controller, value, 0))
             .collect();
-        edges.extend(Controller::WHEELS.into_iter().filter_map(|wheel| {
+        edges.extend(Controller::RESTING.into_iter().filter_map(|wheel| {
             let rest = wheel.rest()?;
             (at_end.get(wheel) != Some(f64::from(rest)))
                 .then(|| Event::new(end_tick, 0, wheel.message(rest)))

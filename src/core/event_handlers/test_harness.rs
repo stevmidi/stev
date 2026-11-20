@@ -14,6 +14,7 @@ use rtrb::RingBuffer;
 use undo::Record;
 use uuid::Uuid;
 
+use crate::core::midi::out_queue::MidiOutMessage;
 use crate::core::project::{LibraryChange, ProjectAction, StorageJob};
 use crate::core::sequencer::test_support::{clip_at, note_off, note_on};
 use crate::core::sequencer::{Sequencer, SequencerCommand, UndoStep};
@@ -39,6 +40,9 @@ pub(crate) struct Harness {
     pub(crate) transport_commands: Receiver<TransportCommand>,
     /// Everything they sent to the `"sequencer"` thread.
     pub(crate) sequencer_commands: Receiver<SequencerCommand>,
+    /// Everything the sequencer sent to MIDI Out (track 0 is a MIDI Out
+    /// track on channel 0).
+    pub(crate) midi_out: Receiver<MidiOutMessage>,
     /// `SharedAtomics::has_event_selection`.
     pub(crate) has_event_selection: Arc<AtomicBool>,
     /// `SharedAtomics::audio_export`.
@@ -67,13 +71,14 @@ pub(crate) struct Harness {
 }
 
 /// Handlers over unbounded channels (every receiver but the `UiEvent`,
-/// transport and sequencer-command ones dropped, so sends are silent
-/// no-ops) and a
+/// transport, sequencer-command and MIDI Out ones dropped, so sends are
+/// silent no-ops) and a
 /// sequencer with track 0 selected.
 pub(crate) fn harness() -> Harness {
     let (ui_event_tx, ui_events) = unbounded();
     let (transport_command_tx, transport_commands) = unbounded();
     let (sequencer_command_tx, sequencer_commands) = unbounded();
+    let (midi_out_tx, midi_out) = unbounded();
     let has_event_selection = Arc::new(AtomicBool::new(false));
     let audio_export = Arc::new(AudioExportAtomics::default());
     let handlers = EventHandlers::new(
@@ -96,7 +101,7 @@ pub(crate) fn harness() -> Harness {
     let performance_lane_armed = Arc::new(AtomicBool::new(false));
     let (plugin_midi_tx, _plugin_midi_rx) = RingBuffer::new(64);
     let mut sequencer = Sequencer::new(
-        unbounded().0,
+        midi_out_tx,
         plugin_midi_tx,
         RingBuffer::new(8).0,
         playback_tick.clone(),
@@ -130,6 +135,7 @@ pub(crate) fn harness() -> Harness {
         ui_events,
         transport_commands,
         sequencer_commands,
+        midi_out,
         has_event_selection,
         audio_export,
         cursor_tick,

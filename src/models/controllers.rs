@@ -1,6 +1,7 @@
 //! What a track's clip playback has done to the synth's performance
-//! controllers — pitch bend, the mod wheel (CC1) and the parameters its knobs
-//! drive — so that no discontinuity leaves one where the last message happened to put it.
+//! controllers — pitch bend, the mod wheel (CC1), the sustain pedal (CC64)
+//! and the parameters its knobs drive — so that no discontinuity leaves one
+//! where the last message happened to put it.
 //!
 //! Notes have a release (a `NoteOff`); a controller has none, so a take that
 //! ends mid-bend would leave the synth detuned after a stop, a seek, a loop
@@ -8,8 +9,12 @@
 //! value its playback sent each controller and which values are due at the
 //! next tick: every track seek [`chase`](ControllerTracker::chase)s the values
 //! in force where playback lands (`Clip::controllers_at`), sending only what
-//! differs. The two wheels have a rest: in a gap they chase back to it, and a
-//! stop [`take_resets`](ControllerTracker::take_resets) them there. A
+//! differs. The two wheels and the pedal have a rest
+//! ([`Controller::RESTING`]): in a gap they chase back to it, and a stop
+//! [`take_resets`](ControllerTracker::take_resets) them there. A jump lifts
+//! the pedal at once ([`jump`](ControllerTracker::jump)), so the notes it
+//! releases stop ringing even where the pedal is down on both sides of it
+//! (`530-sustain-capture.md` decision 4). A
 //! parameter has none (`400-parameter-knobs.md` decision 9): it is chased
 //! where a clip has data for it and otherwise left where it was, a stop
 //! included. Values are `f64`: a MIDI controller's in its own units, a
@@ -82,8 +87,8 @@ const STALE: f64 = f64::NAN;
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ControllerTracker {
     /// Per controller: the last value the track's playback sent — since the
-    /// last [`take_resets`](Self::take_resets), for a wheel — [`STALE`]
-    /// after an [`invalidate`](Self::invalidate). Nothing for one it sent
+    /// last [`take_resets`](Self::take_resets), for one with a rest —
+    /// [`STALE`] after a [`jump`](Self::jump). Nothing for one it sent
     /// none (the synth is at rest, or where the player put it).
     sent: ControllerValues,
     /// The values to send at the next tick, in the order they go.
@@ -119,16 +124,32 @@ impl ControllerTracker {
         }
     }
 
-    /// The synth may not have heard the last value sent — the `"midiout"`
-    /// thread drops its delay queue on every stop and jump
-    /// (`160-midi-out-offset.md`), so a
-    /// bend's return to centre just before a loop wrap can be lost. The next
-    /// [`chase`](Self::chase) resends every controller the track has sent
-    /// that has a value where playback lands.
-    pub(crate) fn invalidate(&mut self) {
+    /// Playback is about to jump (a seek, a loop wrap). Returns the pedal-up
+    /// (channel 0) for the caller to send now when the track's playback has
+    /// sent the pedal: the jump releases the sounding notes, and a pedal
+    /// down on both sides of it would otherwise hold them ringing into the
+    /// jump target, since the chase sends only what differs. The pedal is
+    /// then known to be up, so the next [`chase`](Self::chase) presses it
+    /// again where playback lands down — and sends nothing where it lands
+    /// up. A pedal sent up is lifted too: that last value may sit in the
+    /// dropped delay queue. A pedal the player holds
+    /// ([`hand_over`](Self::hand_over)) isn't the track's to lift. Only the
+    /// pedal: a wheel lifted to rest on every wrap would dip through centre.
+    ///
+    /// Every other controller's last value may not have been heard either —
+    /// the `"midiout"` thread drops its delay queue on every stop and jump
+    /// (`160-midi-out-offset.md`), so a bend's return to centre just before
+    /// a loop wrap can be lost. The next chase resends every controller the
+    /// track has sent that has a value where playback lands.
+    pub(crate) fn jump(&mut self) -> Option<Vec<u8>> {
+        let lifted = self.sent.remove(Controller::SUSTAIN).is_some();
         for (_, sent) in &mut self.sent.0 {
             *sent = STALE;
         }
+        lifted.then(|| {
+            self.sent.set(Controller::SUSTAIN, 0.0);
+            Controller::SUSTAIN.message(0)
+        })
     }
 
     /// The next due controller and its value, taken off the due list —
@@ -140,16 +161,17 @@ impl ControllerTracker {
     }
 
     /// For a transport stop or a track leaving the arrangement: a message
-    /// putting every wheel the track sent back to its rest (channel 0) —
-    /// even one it last sent at rest, which the stop may have dropped — and
-    /// nothing left due. A controller with no rest stays where it is.
+    /// putting every controller with a rest the track sent back to it
+    /// (channel 0) — the wheels and the pedal, even one it last sent at
+    /// rest, which the stop may have dropped — and nothing left due. A
+    /// controller with no rest stays where it is.
     pub(crate) fn take_resets(&mut self) -> Vec<Vec<u8>> {
         self.due.clear();
-        Controller::WHEELS
+        Controller::RESTING
             .into_iter()
-            .filter_map(|wheel| {
-                self.sent.remove(wheel)?;
-                Some(wheel.message(wheel.rest()?))
+            .filter_map(|resting| {
+                self.sent.remove(resting)?;
+                Some(resting.message(resting.rest()?))
             })
             .collect()
     }
@@ -164,8 +186,8 @@ impl ControllerTracker {
     }
 
     /// The player moved `controller` on this track: the synth now sits where
-    /// the player put it, not where a clip did, so a stop leaves that wheel
-    /// alone and a seek only moves it to a clip value.
+    /// the player put it, not where a clip did, so a stop or a jump leaves
+    /// that wheel or pedal alone and a seek only moves it to a clip value.
     pub(crate) fn hand_over(&mut self, controller: Controller) {
         self.sent.remove(controller);
     }
@@ -183,9 +205,24 @@ mod tests {
     /// A parameter a knob holds.
     const CUTOFF: Controller = Controller::Param(test_param(714));
 
-    /// The wheels and one knob's parameter, as a track with a knob on it
-    /// follows them.
-    const FOLLOWED: [Controller; 3] = [Controller::PitchBend, Controller::MOD_WHEEL, CUTOFF];
+    /// The wheels, the pedal and one knob's parameter, as a track with a
+    /// knob on it follows them.
+    const FOLLOWED: [Controller; 4] = [
+        Controller::PitchBend,
+        Controller::MOD_WHEEL,
+        Controller::SUSTAIN,
+        CUTOFF,
+    ];
+
+    const PEDAL_DOWN: [u8; 3] = [0xB0, 64, 127];
+    const PEDAL_UP: [u8; 3] = [0xB0, 64, 0];
+
+    /// Values with the pedal at `pedal` and the wheels at rest.
+    fn pedal(pedal: u16) -> ControllerValues {
+        let mut values = ControllerValues::default();
+        values.set(Controller::SUSTAIN, f64::from(pedal));
+        values
+    }
 
     /// Records a played message, as the track does.
     fn observe(tracker: &mut ControllerTracker, msg: &[u8]) {
@@ -253,11 +290,11 @@ mod tests {
         let mut tracker = ControllerTracker::default();
         observe(&mut tracker, &BEND_UP);
         observe(&mut tracker, &BEND_CENTRE);
-        tracker.invalidate();
+        tracker.jump();
         tracker.chase(&ControllerValues::default(), FOLLOWED);
         assert_eq!(drain(&mut tracker), vec![BEND_CENTRE.to_vec()]);
         // A wheel it never sent stays untouched.
-        tracker.invalidate();
+        tracker.jump();
         tracker.chase(&ControllerValues::default(), FOLLOWED);
         assert_eq!(drain(&mut tracker), vec![BEND_CENTRE.to_vec()]);
     }
@@ -350,7 +387,7 @@ mod tests {
     fn after_an_invalidate_a_chase_resends_a_parameter() {
         let mut tracker = ControllerTracker::default();
         tracker.observe(CUTOFF, 0.75);
-        tracker.invalidate();
+        tracker.jump();
         let mut target = ControllerValues::default();
         target.set(CUTOFF, 0.75);
         tracker.chase(&target, FOLLOWED);
@@ -380,17 +417,79 @@ mod tests {
         assert_eq!(values.get(CUTOFF), None);
     }
 
-    /// A controller the track doesn't follow (a sustain pedal in an
+    /// A controller the track doesn't follow (a sostenuto pedal in an
     /// imported clip, a parameter no knob holds) is never chased.
     #[test]
     fn a_chase_visits_only_the_followed_controllers() {
         let mut tracker = ControllerTracker::default();
         let mut target = ControllerValues::default();
         target.set(CUTOFF, 0.5);
-        target.set(Controller::Cc(64), 127.0);
+        target.set(Controller::Cc(66), 127.0);
         target.set(Controller::Param(test_param(1)), 0.5);
         tracker.chase(&target, FOLLOWED);
         assert_eq!(next_sent(&mut tracker), Some((CUTOFF, 0.5)));
         assert!(tracker.next_due().is_none());
+    }
+
+    // --- The sustain pedal (`530-sustain-capture.md`) ---
+
+    /// The pedal is chased like the mod wheel: down where a clip holds it
+    /// down, back up in a gap, and up on a stop.
+    #[test]
+    fn the_pedal_is_chased_and_lifted_on_a_stop() {
+        let mut tracker = ControllerTracker::default();
+        tracker.chase(&pedal(127), FOLLOWED);
+        assert_eq!(drain(&mut tracker), vec![PEDAL_DOWN.to_vec()]);
+        tracker.chase(&pedal(127), FOLLOWED);
+        assert!(drain(&mut tracker).is_empty(), "held across a re-seek");
+        tracker.chase(&ControllerValues::default(), FOLLOWED);
+        assert_eq!(drain(&mut tracker), vec![PEDAL_UP.to_vec()]);
+
+        observe(&mut tracker, &PEDAL_DOWN);
+        assert_eq!(tracker.take_resets(), vec![PEDAL_UP.to_vec()]);
+        assert!(tracker.take_resets().is_empty());
+    }
+
+    /// A jump with the pedal down on both sides lifts it now and presses
+    /// it again at the chase.
+    #[test]
+    fn a_jump_lifts_the_pedal_and_the_chase_presses_it_again() {
+        let mut tracker = ControllerTracker::default();
+        observe(&mut tracker, &PEDAL_DOWN);
+        assert_eq!(tracker.jump(), Some(PEDAL_UP.to_vec()));
+        tracker.chase(&pedal(127), FOLLOWED);
+        assert_eq!(drain(&mut tracker), vec![PEDAL_DOWN.to_vec()]);
+    }
+
+    /// A jump from down to up sends the one lift and nothing at the chase.
+    #[test]
+    fn a_jump_onto_a_lifted_pedal_sends_one_up() {
+        let mut tracker = ControllerTracker::default();
+        observe(&mut tracker, &PEDAL_DOWN);
+        assert_eq!(tracker.jump(), Some(PEDAL_UP.to_vec()));
+        tracker.chase(&ControllerValues::default(), FOLLOWED);
+        assert!(drain(&mut tracker).is_empty());
+    }
+
+    /// A jump lifts only the pedal: a bend is resent by the chase, never
+    /// sent to rest first.
+    #[test]
+    fn a_jump_lifts_only_the_pedal() {
+        let mut tracker = ControllerTracker::default();
+        observe(&mut tracker, &BEND_UP);
+        assert_eq!(tracker.jump(), None);
+        tracker.chase(&wheels(0x3000, 0), FOLLOWED);
+        assert_eq!(drain(&mut tracker), vec![BEND_UP.to_vec()]);
+    }
+
+    /// The player's own pedal is theirs: a jump doesn't lift it, a stop
+    /// doesn't reset it.
+    #[test]
+    fn a_jump_leaves_the_players_pedal_down() {
+        let mut tracker = ControllerTracker::default();
+        observe(&mut tracker, &PEDAL_DOWN);
+        tracker.hand_to_player(&[0xB0, 64, 127]);
+        assert_eq!(tracker.jump(), None);
+        assert!(tracker.take_resets().is_empty());
     }
 }

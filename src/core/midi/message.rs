@@ -1,5 +1,5 @@
 //! Raw MIDI byte helpers: the fixed-size [`Midi3`] the in-process instrument
-//! route carries, note-edge and wheel parsing, which live input a take records,
+//! route carries, note-edge and controller parsing, which live input a take records,
 //! channel rewriting and channel-message validation.
 
 use crate::models::knobs::PluginParam;
@@ -25,6 +25,9 @@ pub(crate) const CONTROL_CHANGE: u8 = 0xB0;
 /// The mod wheel's controller number — never a knob's (`models::knobs`).
 pub(crate) const MOD_WHEEL_CC: u8 = 0x01;
 
+/// The sustain pedal's controller number (`530-sustain-capture.md`).
+pub(crate) const SUSTAIN_CC: u8 = 64;
+
 /// The channel-0 Control Change that puts controller `cc` at `value` — the
 /// caller rewrites the channel for its output.
 pub(crate) fn control_change(cc: u8, value: u8) -> Midi3 {
@@ -48,8 +51,9 @@ pub(crate) fn parse_note(msg: &[u8]) -> Option<(usize, bool)> {
 /// (`090-recording-midi-input.md`): pitch bend, a Control Change by number —
 /// the mod wheel (CC1) among them, and any other CC a clip holds (pasted,
 /// imported, an older project's CC knobs) — or a plugin parameter a knob
-/// drives. The two wheels have a rest a stop returns them to; anything else
-/// has none and stays where it was. Ordered pitch bend, CCs by number,
+/// drives. The two wheels and the sustain pedal (CC64) have a rest a stop
+/// returns them to ([`RESTING`](Self::RESTING)); anything else has none and
+/// stays where it was. Ordered pitch bend, CCs by number,
 /// parameters by ID: the order a track chases and a clip lists them in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) enum Controller {
@@ -69,30 +73,41 @@ impl Controller {
     /// The mod wheel, CC1, at rest at 0.
     pub(crate) const MOD_WHEEL: Controller = Controller::Cc(MOD_WHEEL_CC);
 
-    /// The two wheels, in the order the wheel lanes list them
-    /// ([`wheel_index`](Self::wheel_index)).
-    pub(crate) const WHEELS: [Controller; 2] = [Controller::PitchBend, Controller::MOD_WHEEL];
+    /// The sustain pedal, CC64, at rest up (0).
+    pub(crate) const SUSTAIN: Controller = Controller::Cc(SUSTAIN_CC);
 
-    /// Whether the controller is one of the two wheels — the ones with a
-    /// [`rest`](Self::rest).
-    pub(crate) const fn is_wheel(self) -> bool {
+    /// The controllers with a [`rest`](Self::rest) — the two wheels and the
+    /// sustain pedal — in the order the lanes list them
+    /// ([`resting_index`](Self::resting_index)): the ones a take records, a
+    /// track chases back to rest and a stop resets.
+    pub(crate) const RESTING: [Controller; 3] = [
+        Controller::PitchBend,
+        Controller::MOD_WHEEL,
+        Controller::SUSTAIN,
+    ];
+
+    /// Whether the controller is one of [`RESTING`](Self::RESTING) — the
+    /// ones with a [`rest`](Self::rest).
+    pub(crate) const fn is_resting(self) -> bool {
         self.rest().is_some()
     }
 
-    /// The controller's position in [`WHEELS`](Self::WHEELS), `None` for a
-    /// CC that isn't the mod wheel.
-    pub(crate) fn wheel_index(self) -> Option<usize> {
-        Self::WHEELS.iter().position(|&wheel| wheel == self)
+    /// The controller's position in [`RESTING`](Self::RESTING), `None` for
+    /// one without a rest.
+    pub(crate) fn resting_index(self) -> Option<usize> {
+        Self::RESTING.iter().position(|&resting| resting == self)
     }
 
     /// Where the controller rests, if it has a rest: bend centred, mod wheel
-    /// down. `None` for any other CC or a parameter — a filter cutoff "at
+    /// down, the pedal up. Values are kept as sent, 0–127 for the pedal, with
+    /// no threshold at 64: a continuous pedal's half-pedalling plays as
+    /// played. `None` for any other CC or a parameter — a filter cutoff "at
     /// rest" at 0 would be wrong, so it is never reset (`archive/390-knob-panel.md`
     /// decision 8, `400-parameter-knobs.md` decision 9).
     pub(crate) const fn rest(self) -> Option<u16> {
         match self {
             Controller::PitchBend => Some(PITCH_BEND_CENTRE),
-            Controller::Cc(MOD_WHEEL_CC) => Some(0),
+            Controller::Cc(MOD_WHEEL_CC | SUSTAIN_CC) => Some(0),
             Controller::Cc(_) | Controller::Param(_) => None,
         }
     }
@@ -141,10 +156,11 @@ pub(crate) fn parse_controller(msg: &[u8]) -> Option<(Controller, u16)> {
     }
 }
 
-/// The wheel `msg` moves — pitch bend or the mod wheel — and its value, or
-/// `None` for anything else, any other CC included.
-pub(crate) fn parse_wheel(msg: &[u8]) -> Option<(Controller, u16)> {
-    parse_controller(msg).filter(|(controller, _)| controller.is_wheel())
+/// The controller with a rest `msg` moves — pitch bend, the mod wheel or the
+/// sustain pedal ([`Controller::RESTING`]) — and its value, or `None` for
+/// anything else, any other CC included.
+pub(crate) fn parse_resting(msg: &[u8]) -> Option<(Controller, u16)> {
+    parse_controller(msg).filter(|(controller, _)| controller.is_resting())
 }
 
 /// A 7-bit MIDI data byte as `0.0..=1.0`, the form plugin formats take.
@@ -158,11 +174,11 @@ pub(crate) fn pitch_bend_value(bytes: Midi3) -> u16 {
     u16::from(bytes[1] & 0x7F) | (u16::from(bytes[2] & 0x7F) << 7)
 }
 
-/// Whether a take records live-input `msg`: a note edge or a wheel move
-/// ([`parse_wheel`]). Everything else on the input is played live only — a
-/// hardware controller's CC among it.
+/// Whether a take records live-input `msg`: a note edge, a wheel move or
+/// the sustain pedal ([`parse_resting`]). Everything else on the input is
+/// played live only — a hardware controller's CC among it.
 pub(crate) fn is_recorded(msg: &[u8]) -> bool {
-    parse_note(msg).is_some() || parse_wheel(msg).is_some()
+    parse_note(msg).is_some() || parse_resting(msg).is_some()
 }
 
 /// Whether `message` is a complete channel voice message: status `0x80`–`0xEF`
@@ -194,7 +210,7 @@ pub(crate) fn rewrite_channel(msg: &mut [u8], midi_channel: u8) {
 #[cfg(test)]
 mod tests {
     use super::{
-        Controller, is_channel_message, is_recorded, parse_controller, parse_note, parse_wheel,
+        Controller, is_channel_message, is_recorded, parse_controller, parse_note, parse_resting,
         pitch_bend_value, unit_7bit,
     };
     use crate::models::knobs::test_param;
@@ -228,24 +244,28 @@ mod tests {
     }
 
     #[test]
-    fn parse_wheel_reads_bend_and_the_mod_wheel_only() {
+    fn parse_resting_reads_bend_the_mod_wheel_and_the_pedal_only() {
         assert_eq!(
-            parse_wheel(&[0xE3, 0x00, 0x40]),
+            parse_resting(&[0xE3, 0x00, 0x40]),
             Some((Controller::PitchBend, 0x2000))
         );
         assert_eq!(
-            parse_wheel(&[0xE0, 0x7F, 0x7F]),
+            parse_resting(&[0xE0, 0x7F, 0x7F]),
             Some((Controller::PitchBend, 0x3FFF))
         );
         assert_eq!(
-            parse_wheel(&[0xB5, 0x01, 90]),
+            parse_resting(&[0xB5, 0x01, 90]),
             Some((Controller::MOD_WHEEL, 90))
         );
-        // Other controllers (sustain, CC74), notes and short messages aren't.
-        assert_eq!(parse_wheel(&[0xB0, 64, 127]), None);
-        assert_eq!(parse_wheel(&[0xB0, 74, 64]), None);
-        assert_eq!(parse_wheel(&[0x90, 60, 100]), None);
-        assert_eq!(parse_wheel(&[0xE0, 0x00]), None);
+        assert_eq!(
+            parse_resting(&[0xB2, 64, 127]),
+            Some((Controller::SUSTAIN, 127))
+        );
+        // Other controllers (sostenuto, CC74), notes and short messages aren't.
+        assert_eq!(parse_resting(&[0xB0, 66, 127]), None);
+        assert_eq!(parse_resting(&[0xB0, 74, 64]), None);
+        assert_eq!(parse_resting(&[0x90, 60, 100]), None);
+        assert_eq!(parse_resting(&[0xE0, 0x00]), None);
     }
 
     #[test]
@@ -272,9 +292,11 @@ mod tests {
     }
 
     #[test]
-    fn only_the_two_wheels_rest() {
+    fn only_the_two_wheels_and_the_pedal_rest() {
         assert_eq!(Controller::PitchBend.rest(), Some(0x2000));
         assert_eq!(Controller::MOD_WHEEL.rest(), Some(0));
+        assert_eq!(Controller::SUSTAIN.rest(), Some(0));
+        assert_eq!(Controller::Cc(66).rest(), None);
         assert_eq!(Controller::Cc(14).rest(), None);
         assert_eq!(Controller::Cc(0).rest(), None);
     }
@@ -304,18 +326,22 @@ mod tests {
         }
         assert!(Controller::PitchBend < Controller::Cc(0));
         assert!(Controller::Cc(127) < Controller::Param(test_param(0)));
-        for (i, wheel) in Controller::WHEELS.into_iter().enumerate() {
-            assert_eq!(wheel.wheel_index(), Some(i));
+        for (i, resting) in Controller::RESTING.into_iter().enumerate() {
+            assert_eq!(resting.resting_index(), Some(i));
         }
-        assert_eq!(Controller::Cc(14).wheel_index(), None);
+        assert_eq!(Controller::Cc(14).resting_index(), None);
     }
 
     #[test]
-    fn a_take_records_note_edges_and_the_two_wheels() {
+    fn a_take_records_note_edges_the_two_wheels_and_the_pedal() {
         assert!(is_recorded(&[0x90, 60, 100]));
         assert!(is_recorded(&[0x80, 60, 0]));
         assert!(is_recorded(&[0xE0, 0x00, 0x50]));
         assert!(is_recorded(&[0xB0, 0x01, 64]));
+        // Half-pedalling and a lift alike.
+        assert!(is_recorded(&[0xB0, 64, 40]));
+        assert!(is_recorded(&[0xB0, 64, 0]));
+        assert!(!is_recorded(&[0xB0, 66, 127]));
         assert!(!is_recorded(&[0xB0, 123, 0]));
         assert!(!is_recorded(&[0xC0, 5]));
         assert!(!is_recorded(&[0xD0, 40]));

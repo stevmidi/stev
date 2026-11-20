@@ -1,6 +1,6 @@
 ## Recording MIDI input
 
-Every note and wheel move played on the armed track goes into the capture
+Every note, wheel move and sustain-pedal move played on the armed track goes into the capture
 buffer, whatever the transport is doing; `/` commits from it (`100`, `220`,
 `archive/290`). There is no record mode: live recording on `R` was removed, since
 capture covers it. Key files: `src/core/midi/input.rs`,
@@ -8,16 +8,19 @@ capture covers it. Key files: `src/core/midi/input.rs`,
 
 ### What a take records
 
-- **Note edges and two wheels — pitch bend and the mod wheel (CC1).** A
-  `LiveInputRouter` forwards a message to the sequencer only when
-  `message::is_recorded` says so: a note edge or a wheel move (`parse_note`,
-  `parse_wheel`), from a port or the computer keyboard alike. Everything else on the
-  input — sustain, a hardware controller's other CCs, aftertouch, program change — is
-  played live (thru and the plugin tap) and never recorded. The `NoteLogger` still gets
+- **Note edges, two wheels — pitch bend and the mod wheel (CC1) — and the sustain pedal
+  (CC64).** A `LiveInputRouter` forwards a message to the sequencer only when
+  `message::is_recorded` says so: a note edge or a move of a controller with a rest
+  (`parse_note`, `parse_resting`), from a port or the computer keyboard alike (which has no
+  pedal). The pedal is recorded as sent, 0–127, with no threshold at 64, so a continuous
+  pedal's half-pedalling is kept (`530-sustain-capture.md` decision 1). Everything else on the
+  input — the sostenuto and soft pedals, a hardware controller's other CCs, aftertouch,
+  program change — is played live (thru and the plugin tap) and never recorded. The `NoteLogger` still gets
   only note edges. The capture buffer behind `/` stores a controller move like a note, at
   its own tick; the clip thumbnail ignores it. One type names what is recorded besides
   notes: `Controller` (`core/midi/message.rs`), pitch bend, a CC by number or a plugin
-  parameter by ID; only the two wheels have a rest (`Controller::rest`).
+  parameter by ID; only the two wheels and the pedal have a rest (`Controller::rest`,
+  listed in `Controller::RESTING`): bend centred, the mod wheel and the pedal at 0.
 - **A knob's parameter, turned by hand** (`400-parameter-knobs.md` decision 10). A turn is
   not MIDI, so it doesn't come through the router: `Display` sends `HoldKnob` at the
   turn's start, `SetKnobValue` per move and `ReleaseKnob` at its end, whether the turn is
@@ -34,10 +37,12 @@ capture covers it. Key files: `src/core/midi/input.rs`,
   buffer behind a note played since, so a late one slots in by its tick (`add_late_event`).
 - **Played back like any clip event, and kept honest at every discontinuity** — a
   controller has no release, so `Track`'s `ControllerTracker` chases the value in force on
-  every seek, and a stop resets the wheels; a knob's parameter has no rest and stays where
-  it was (`050-undo-redo.md` § Invariants). Sustain is deliberately not a recorded
-  controller, and a clip's sustain moves (imported) are never chased: a sustain stuck on
-  holds every note, so it would need the note-release machinery rather than this chase.
+  every seek, and a stop resets the wheels and lifts the pedal, after the notes are
+  released; a knob's parameter has no rest and stays where it was (`050-undo-redo.md`
+  § Invariants). The pedal has one rule of its own: a jump or a loop wrap lifts it at once,
+  so the notes the jump releases stop ringing, and the chase presses it again where
+  playback lands down (`530-sustain-capture.md` decision 4). A clip's other CCs (imported,
+  pasted) play as they come and are never chased.
 - **Shown in the piano roll's controller lanes** (`380-wheel-lane.md`, `archive/390-knob-panel.md`):
   the lane under the notes switches to pitch bend, the mod wheel or a knob's parameter and draws
   the lead clip's moves as a line (move to move as a DAW draws it, a held value and its jump stepped). The one edit there clears

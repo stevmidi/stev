@@ -205,7 +205,8 @@ pub(crate) struct Track {
     /// Which controllers the track's playback has moved, and the values due
     /// at the next [`tick`](Self::tick) — drained after
     /// `pending_note_offs`, before `pending_note_ons`, so a chased note
-    /// sounds at the chased bend. Only the wheels are chased
+    /// sounds at the chased bend. Only the wheels, the pedal and the knobs'
+    /// parameters are chased
     /// ([`chase_controllers`](Self::chase_controllers)). See
     /// `models::controllers`.
     controllers: ControllerTracker,
@@ -442,14 +443,17 @@ impl Track {
     }
 
     /// Chases `target` — the values in force where playback lands — on the
-    /// controllers this track follows: the two wheels and its knobs'
-    /// parameters. A CC in a clip
-    /// (pasted, imported, a CC knob's from an older project) plays as it
-    /// comes and is never chased: a sustain pedal chased down by a seek would
-    /// hold every note past the stop that releases it.
+    /// controllers this track follows: those with a rest (the two wheels and
+    /// the sustain pedal, [`Controller::RESTING`]) and its knobs'
+    /// parameters. Any other CC in a clip (pasted, imported, a CC knob's from
+    /// an older project) plays as it comes and is never chased: with no rest
+    /// to return to, a stop could never let go of it. The pedal can be
+    /// chased because a stop lifts it after releasing the notes, and a jump
+    /// lifts it before the chase presses it again
+    /// ([`jump_controllers`](Self::jump_controllers)).
     fn chase_controllers(&mut self, target: &ControllerValues) {
         let params = self.knobs.iter().flatten().copied();
-        let followed = Controller::WHEELS
+        let followed = Controller::RESTING
             .into_iter()
             .chain(params.map(Controller::Param));
         self.controllers.chase(target, followed);
@@ -754,8 +758,8 @@ impl Track {
         std::mem::take(&mut self.pending_note_offs)
     }
 
-    /// Messages (channel 0) putting every wheel the track's playback moved
-    /// back to its rest, for the sequencer to send at once: a transport stop
+    /// Messages (channel 0) putting every wheel and the pedal the track's
+    /// playback moved back to rest, for the sequencer to send at once: a transport stop
     /// (no [`tick`](Self::tick) runs to drain a chase) or a track leaving the
     /// arrangement. Nothing stays due.
     pub(crate) fn take_wheel_resets(&mut self) -> Vec<Vec<u8>> {
@@ -763,11 +767,12 @@ impl Track {
     }
 
     /// Playback is about to jump (a seek, a loop wrap — `reanchor_playback`):
-    /// the synth may not have heard the last controller values sent, so the
-    /// next [`seek`](Self::seek) resends them — see
-    /// [`ControllerTracker::invalidate`].
-    pub(crate) fn invalidate_controllers(&mut self) {
-        self.controllers.invalidate();
+    /// the pedal-up (channel 0) for the sequencer to send now, if the
+    /// track's playback has the pedal, and the next [`seek`](Self::seek)
+    /// resends the controller values the synth may not have heard — see
+    /// [`ControllerTracker::jump`].
+    pub(crate) fn jump_controllers(&mut self) -> Option<Vec<u8>> {
+        self.controllers.jump()
     }
 
     /// The player moved a controller live on this track (`msg`): a stop or
@@ -932,7 +937,7 @@ impl Track {
     /// else the next clip after it, else `None` past the end, and seeks that
     /// clip internally. Muted clips are skipped. The controllers chase the
     /// values in force there — the containing clip's; in a gap the wheels'
-    /// rest — for the next [`tick`](Self::tick) to send
+    /// and the pedal's rest — for the next [`tick`](Self::tick) to send
     /// ([`ControllerTracker::chase`]).
     pub(crate) fn seek(&mut self, playback_tick: i32) {
         // A new arrival: whichever clip start we land on gets chased afresh.
@@ -1958,8 +1963,8 @@ mod tests {
             vec![(500, BEND_UP.to_vec())]
         );
 
-        // A jump, as `Sequencer::reset_to_tick` makes it.
-        track.invalidate_controllers();
+        // A jump, as `reanchor_playback` makes it.
+        assert_eq!(track.jump_controllers(), None, "no pedal to lift");
         track.seek(500);
         assert_eq!(
             wheel_moves_until(&mut track, 900),
@@ -2010,12 +2015,13 @@ mod tests {
         clip
     }
 
-    /// A CC — an older project's CC knob, a pasted or imported one — plays
-    /// as it comes, is never chased by a seek and never reset by a stop:
-    /// only the wheels are (`400-parameter-knobs.md` decision 13).
+    /// A CC — an older project's CC knob, a pasted or imported one, the
+    /// sostenuto pedal — plays as it comes, is never chased by a seek and
+    /// never reset by a stop: only the wheels and the sustain pedal are
+    /// (`400-parameter-knobs.md` decision 13).
     #[test]
     fn a_cc_plays_as_it_comes_and_is_neither_chased_nor_reset() {
-        let mut clip = clip_with_ccs(0, &[(150, 14, 90), (150, 64, 127)]);
+        let mut clip = clip_with_ccs(0, &[(150, 14, 90), (150, 66, 127)]);
         clip.add_event(Event::new(100, 0, BEND_UP.to_vec()));
         clip.sort_events_by_tick();
         let mut track = Track::new(TrackOutput::MidiOut { channel: 0 }, 0, 0);
@@ -2026,16 +2032,91 @@ mod tests {
             vec![
                 (100, BEND_UP.to_vec()),
                 (150, vec![0xB0, 14, 90]),
-                (150, vec![0xB0, 64, 127])
+                (150, vec![0xB0, 66, 127])
             ]
         );
         assert_eq!(track.take_wheel_resets(), vec![BEND_CENTRE.to_vec()]);
 
-        track.invalidate_controllers();
+        assert_eq!(track.jump_controllers(), None);
         track.seek(300);
         assert_eq!(
             wheel_moves_until(&mut track, 400),
             vec![(300, BEND_UP.to_vec())]
+        );
+    }
+
+    const PEDAL_DOWN: [u8; 3] = [0xB0, 64, 127];
+    const PEDAL_UP: [u8; 3] = [0xB0, 64, 0];
+
+    /// A clip `[start, start + 960)` holding note 60 with the pedal pressed
+    /// at event tick `down` and never lifted.
+    fn clip_pedalled_from(start_tick: i32, down: i32) -> Clip {
+        clip_with_ccs(start_tick, &[(down, 64, 127)])
+    }
+
+    /// A clip ending with the pedal down lifts it where playback leaves it
+    /// for a gap, and a stop lifts it too (`530-sustain-capture.md`).
+    #[test]
+    fn a_clip_ending_pedalled_lifts_the_pedal_when_playback_leaves_it() {
+        let mut track = Track::new(TrackOutput::MidiOut { channel: 0 }, 0, 0);
+        track.add_clip(&clip_pedalled_from(0, 100));
+        track.seek(0);
+        assert_eq!(
+            wheel_moves_until(&mut track, 1200),
+            vec![(100, PEDAL_DOWN.to_vec()), (961, PEDAL_UP.to_vec())]
+        );
+
+        track.seek(0);
+        wheel_moves_until(&mut track, 400);
+        assert_eq!(track.take_wheel_resets(), vec![PEDAL_UP.to_vec()]);
+    }
+
+    /// The pedal held across a split boundary isn't cut there: the right
+    /// half's arrival chase finds it down already and sends nothing; a clip
+    /// starting pedalled after one ending up presses it on arrival.
+    #[test]
+    fn a_pedal_held_across_a_split_sends_nothing_at_the_boundary() {
+        let mut left = clip_pedalled_from(0, 100);
+        left.region_mut().set_region(Some(0), Some(500));
+        let mut right = clip_pedalled_from(0, 100);
+        right.set_start_tick(500);
+        right.region_mut().set_region(Some(500), Some(960));
+
+        let mut track = Track::new(TrackOutput::MidiOut { channel: 0 }, 0, 0);
+        track.add_clip(&left);
+        track.add_clip(&right);
+        track.seek(0);
+        assert_eq!(
+            wheel_moves_until(&mut track, 900),
+            vec![(100, PEDAL_DOWN.to_vec())]
+        );
+
+        let mut dry = clip_with_note_60(0);
+        dry.region_mut().set_region(Some(0), Some(500));
+        let mut track = Track::new(TrackOutput::MidiOut { channel: 0 }, 0, 0);
+        track.add_clip(&dry);
+        track.add_clip(&right);
+        track.seek(0);
+        assert_eq!(
+            wheel_moves_until(&mut track, 900),
+            vec![(500, PEDAL_DOWN.to_vec())]
+        );
+    }
+
+    /// A jump with the pedal down on both sides: lifted at once, pressed
+    /// again by the chase at the next tick.
+    #[test]
+    fn a_jump_lifts_the_pedal_before_the_chase_presses_it_again() {
+        let mut track = Track::new(TrackOutput::MidiOut { channel: 0 }, 0, 0);
+        track.add_clip(&clip_pedalled_from(0, 0));
+        track.seek(0);
+        wheel_moves_until(&mut track, 400);
+
+        assert_eq!(track.jump_controllers(), Some(PEDAL_UP.to_vec()));
+        track.seek(200);
+        assert_eq!(
+            wheel_moves_until(&mut track, 400),
+            vec![(200, PEDAL_DOWN.to_vec())]
         );
     }
 

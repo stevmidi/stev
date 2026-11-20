@@ -1,5 +1,5 @@
 //! Landing a captured take's controller moves in a clip — pitch bend, the
-//! mod wheel and the knobs' parameters — by the latch rule of
+//! mod wheel, the sustain pedal and the knobs' parameters — by the latch rule of
 //! `370-wheel-capture.md` § Decisions 5–7, which `400-parameter-knobs.md`
 //! decision 10 applies per parameter.
 //!
@@ -9,7 +9,7 @@
 //! first move to the end of the take's window, the take's moves come in, and
 //! at the window's end the value the clip's old curve had there is written
 //! back, if it differs from the take's last. A controller the take didn't
-//! move is left alone. A wheel off its rest where a take starts counts as a
+//! move is left alone. A wheel or the pedal off its rest where a take starts counts as a
 //! move there ([`carry_wheels_onto`](Clip::carry_wheels_onto)); a parameter
 //! has no rest, so it never does. Instead, where a clip has no earlier data
 //! for a parameter, the value it stood at when the take turned it — recorded
@@ -45,12 +45,12 @@ impl Clip {
         values
     }
 
-    /// What a take starting at event tick `tick` carries: for each wheel off
-    /// its rest there that doesn't move exactly there already, its last
-    /// unmuted move before `tick` (value and channel), restamped at `tick`.
-    /// Only the wheels: a CC with no rest is never "off" it.
+    /// What a take starting at event tick `tick` carries: for each wheel or
+    /// the pedal off its rest there that doesn't move exactly there already,
+    /// its last unmuted move before `tick` (value and channel), restamped at
+    /// `tick`. Only those: a CC with no rest is never "off" it.
     pub(crate) fn carried_wheel_moves(&self, tick: i32) -> Vec<Event> {
-        Controller::WHEELS
+        Controller::RESTING
             .into_iter()
             .filter_map(|wheel| {
                 let (event, value) = self.last_move_before(wheel, tick)?;
@@ -98,7 +98,7 @@ impl Clip {
             let Some((controller, _)) = event.controller_move() else {
                 continue;
             };
-            if controller.is_wheel() || !holds(controller) || seen.contains(&controller) {
+            if controller.is_resting() || !holds(controller) || seen.contains(&controller) {
                 continue;
             }
             seen.push(controller);
@@ -1062,7 +1062,7 @@ mod tests {
         assert!(
             clip.carried_wheel_moves(BAR)
                 .iter()
-                .all(|event| { event.controller_move().is_some_and(|(c, _)| c.is_wheel()) })
+                .all(|event| { event.controller_move().is_some_and(|(c, _)| c.is_resting()) })
         );
 
         clip.land_take(&[knob(600, 14, 90)], BAR * 2);

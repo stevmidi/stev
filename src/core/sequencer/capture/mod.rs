@@ -357,7 +357,7 @@ impl Sequencer {
             self.capture_last_note_at = Some(Instant::now());
         }
         if let Some((wheel, value)) = parse_controller(message)
-            && let Some(i) = wheel.wheel_index()
+            && let Some(i) = wheel.resting_index()
         {
             self.live_wheels[i] = (Some(value) != wheel.rest()).then(|| midi3(message));
         }
@@ -3250,6 +3250,74 @@ mod tests {
             ]
         );
         assert!(take_after_wheel(&[[0xE0, 0, 0x60], [0xE0, 0, 0x40]]).is_empty());
+    }
+
+    /// The sustain pedal held down into the take starts it on the cursor,
+    /// as a wheel does; one lifted adds nothing; half-pedalling is carried
+    /// at its value (`530-sustain-capture.md` decisions 1–2).
+    #[test]
+    fn a_pedal_held_down_is_carried_into_the_take() {
+        assert_eq!(
+            take_after_wheel(&[[0xB0, 64, 127]]),
+            vec![(0, Controller::SUSTAIN.message(127))]
+        );
+        assert_eq!(
+            take_after_wheel(&[[0xB0, 64, 40]]),
+            vec![(0, Controller::SUSTAIN.message(40))]
+        );
+        assert!(take_after_wheel(&[[0xB0, 64, 127], [0xB0, 64, 0]]).is_empty());
+    }
+
+    /// Running with a lead clip, riding the pedal alone replaces the clip's
+    /// pedal from the first press to the window's end and leaves its mod
+    /// wheel; ⌘Z brings the old pedal back (`530-sustain-capture.md`
+    /// decision 3).
+    #[test]
+    fn a_running_take_of_the_pedal_alone_lands_in_the_lead_clip() {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        let mut seq = make_sequencer(0, bar * 2);
+        add_and_select_clip(&mut seq, 0, bar * 2);
+        let curve = vec![mod_at(0, 20), cc_at(200, 64, 127), cc_at(bar, 64, 0)];
+        seq.selected_clip_mut()
+            .unwrap()
+            .restore_events(curve.clone());
+        for event in [cc_at(400, 64, 0), cc_at(700, 64, 127)] {
+            seq.capture_clip.add_event(event);
+        }
+        let mut record = Record::new();
+
+        let edit = InsertCaptureEdit::from_running_capture(&seq, None).unwrap();
+        record.edit(&mut seq, SequencerEdit::InsertCapture(edit));
+
+        assert_eq!(
+            wheel_moves(seq.selected_clip().unwrap().events()),
+            vec![
+                (0, vec![0xB0, 0x01, 20]),
+                (200, vec![0xB0, 64, 127]),
+                (400, vec![0xB0, 64, 0]),
+                (700, vec![0xB0, 64, 127]),
+            ]
+        );
+        record.undo(&mut seq);
+        assert_eq!(
+            wheel_moves(seq.selected_clip().unwrap().events()),
+            wheel_moves(&curve)
+        );
+    }
+
+    /// A take with notes and no pedal leaves the clip's pedal alone.
+    #[test]
+    fn a_notes_only_take_leaves_the_clips_pedal() {
+        let curve = vec![cc_at(0, 64, 127), cc_at(1000, 64, 0)];
+        let mut seq = take_over_curve(curve.clone(), &[]);
+
+        seq.insert_running_capture().unwrap();
+
+        assert_eq!(selected_clip_note_on_ticks(&seq), vec![100]);
+        assert_eq!(
+            wheel_moves(seq.selected_clip().unwrap().events()),
+            wheel_moves(&curve)
+        );
     }
 
     /// The held notes commit with a running `/` into a selected clip too.

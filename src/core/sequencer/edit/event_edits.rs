@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 use uuid::Uuid;
 
-use crate::core::midi::message::{Controller, parse_wheel};
+use crate::core::midi::message::{Controller, parse_resting};
 use crate::models::{
     clip::{Clip, NoteDrag, min_max},
     event::{Event, EventType},
@@ -334,7 +334,8 @@ fn with_duplicate_span(mut result: EditResult, span: Option<(i32, i32)>) -> Edit
 /// The agent bridge's `replace_clip_notes` (`360-mcp-server.md` § Writing):
 /// every note in the clip, hidden ones outside its window included, swapped
 /// for `notes` (cleaned up and built by the bridge), the clip's position,
-/// window and length kept. The wheel moves stay unless `clear_wheels`. The
+/// window and length kept. The wheel and sustain pedal moves stay unless
+/// `clear_wheels`. The
 /// clip needn't be the lead. The selection keeps what survives (a selected
 /// wheel move); the new notes aren't selected, as a commit's aren't.
 pub(crate) struct ReplaceClipNotesEdit {
@@ -342,7 +343,7 @@ pub(crate) struct ReplaceClipNotesEdit {
     state: ClipEventsEditState,
     /// The new notes as `(note_on, note_off)`; redo adds the same ids.
     notes: Vec<(Event, Event)>,
-    /// Whether the pitch bend and mod wheel moves go too.
+    /// Whether the pitch bend, mod wheel and sustain pedal moves go too.
     clear_wheels: bool,
 }
 
@@ -369,8 +370,8 @@ impl ReplaceClipNotesEdit {
         })
     }
 
-    /// Snapshots the clip's events, drops its notes (and wheel moves, with
-    /// `clear_wheels`) and inserts the new notes.
+    /// Snapshots the clip's events, drops its notes (and wheel and pedal
+    /// moves, with `clear_wheels`) and inserts the new notes.
     pub(super) fn edit(&mut self, sequencer: &mut Sequencer) -> EditResult {
         let (notes, clear_wheels) = (&self.notes, self.clear_wheels);
         self.state.edit_with(sequencer, |clip| {
@@ -378,8 +379,8 @@ impl ReplaceClipNotesEdit {
                 .events()
                 .iter()
                 .filter(|event| {
-                    let is_wheel = parse_wheel(event.midi_message()).is_some();
-                    !event.is_note_edge() && !(clear_wheels && is_wheel)
+                    let is_resting = parse_resting(event.midi_message()).is_some();
+                    !event.is_note_edge() && !(clear_wheels && is_resting)
                 })
                 .cloned()
                 .collect();

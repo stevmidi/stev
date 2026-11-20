@@ -11,7 +11,8 @@ use super::*;
 impl EventHandlers {
     /// Reacts to a [`TransportEvent`]:
     /// re-anchor after a plain reset, additionally chase notes after a
-    /// reset-with-chase, or release notes and reset the wheels on stop.
+    /// reset-with-chase, or release notes and reset the wheels and the
+    /// sustain pedal on stop.
     pub(crate) fn handle_transport_event(
         &self,
         event: &TransportEvent,
@@ -34,7 +35,8 @@ impl EventHandlers {
                 self.release_all_notes(sequencer);
                 // Only on a stop: every jump while running chases the
                 // wheels instead (`Track::seek`), so a loop wrap mid-bend
-                // doesn't dip through centre.
+                // doesn't dip through centre. After the note releases, so
+                // the pedal lifting lets nothing hang.
                 sequencer.reset_wheels();
             }
         }
@@ -45,7 +47,11 @@ impl EventHandlers {
     /// flush sounding notes (MIDI-out `NoteLogger` + CLAP `instrument_notes`) so
     /// nothing hangs across the discontinuity. That flush drops the
     /// `"midiout"` delay queue, so the re-seek resends every controller value a
-    /// track sent (`Sequencer::invalidate_controllers`) rather than trust it arrived. A loop wrap leaves the clock
+    /// track sent rather than trust it arrived; and a track whose playback
+    /// has the sustain pedal lifts it now, before the re-seek's chase presses
+    /// it again at the next tick where playback lands down, or the released
+    /// notes would ring on into the jump target (`Sequencer::jump_controllers`,
+    /// `530-sustain-capture.md` decision 4). A loop wrap leaves the clock
     /// phases equal in principle and a few ticks of command latency apart in
     /// practice, so the realign only nudges the phase there — it must never move
     /// the clock out of the loop it has free-run to, or running capture keeps
@@ -64,7 +70,7 @@ impl EventHandlers {
         sequencer: &mut Sequencer,
         transport: &Transport,
     ) {
-        sequencer.invalidate_controllers();
+        sequencer.jump_controllers();
         sequencer.reset_to_tick(new_tick);
         transport.align_clock_with_playback();
         self.release_all_notes(sequencer);
@@ -166,4 +172,149 @@ fn play_from_tick(tick: i32, transport: &mut Transport, sequencer: &mut Sequence
     transport.stop();
     transport.jump_and_chase(tick);
     transport.start();
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+    use std::time::Instant;
+
+    use crossbeam_channel::unbounded;
+
+    use crate::core::sequencer::test_support::clip_at;
+    use crate::models::event::Event;
+
+    use super::super::test_harness::{Harness, harness};
+    use super::*;
+
+    const PEDAL_DOWN: [u8; 3] = [0xB0, 64, 127];
+    const PEDAL_UP: [u8; 3] = [0xB0, 64, 0];
+
+    /// A stopped transport on the harness's shared state.
+    fn transport(h: &Harness) -> Transport {
+        Transport::new(
+            unbounded().0,
+            unbounded().0,
+            h.playback_tick.clone(),
+            h.cursor_tick.clone(),
+            h.running.clone(),
+            h.region.0.clone(),
+            h.region.1.clone(),
+            Arc::new(AtomicBool::new(true)),
+            h.performance_lane_armed.clone(),
+        )
+    }
+
+    /// Track 0 (MIDI Out, channel 0) holds a clip over the loop `[0, 3840)`:
+    /// a note at 0 and the pedal pressed at `down`, never lifted. Played
+    /// from 0 up to 3000, what it sent dropped.
+    fn pedalled_from(down: i32) -> Harness {
+        let mut h = harness();
+        let mut clip = clip_at(0, 3840);
+        for (tick, message) in [
+            (0, vec![0x90, 60, 100]),
+            (down, PEDAL_DOWN.to_vec()),
+            (480, vec![0x80, 60, 0]),
+        ] {
+            clip.add_event(Event::new(tick, 0, message));
+        }
+        clip.sort_events_by_tick();
+        h.sequencer.tracks_mut()[0].add_clip(&clip);
+        h.sequencer.reset_to_tick(0);
+        tick(&mut h, 3000);
+        pedal_moves(&h);
+        h
+    }
+
+    /// Plays `ticks` ticks.
+    fn tick(h: &mut Harness, ticks: usize) {
+        let at = Instant::now();
+        for _ in 0..ticks {
+            h.sequencer.tick(at);
+        }
+    }
+
+    /// The pedal moves sent to MIDI Out since the last call.
+    fn pedal_moves(h: &Harness) -> Vec<Vec<u8>> {
+        h.midi_out
+            .try_iter()
+            .map(|message| message.bytes)
+            .filter(|bytes| bytes.get(..2) == Some(&[0xB0, 64]))
+            .collect()
+    }
+
+    /// A jump into a stretch where the pedal is down, from one where it is
+    /// down too: the pedal lifts at once, so the notes the jump releases
+    /// stop ringing, and the chase presses it again at the next tick
+    /// (`530-sustain-capture.md` decision 4).
+    #[test]
+    fn a_jump_under_a_held_pedal_lifts_it_then_presses_it_again() {
+        let mut h = pedalled_from(100);
+        let transport = transport(&h);
+
+        h.handlers
+            .reanchor_playback(1000, &mut h.sequencer, &transport);
+        assert_eq!(pedal_moves(&h), vec![PEDAL_UP.to_vec()], "lifted now");
+        tick(&mut h, 1);
+        assert_eq!(pedal_moves(&h), vec![PEDAL_DOWN.to_vec()]);
+    }
+
+    /// A loop wrap from the pedal down to where it is up sends the one lift.
+    #[test]
+    fn a_wrap_onto_a_lifted_pedal_sends_one_up() {
+        let mut h = pedalled_from(100);
+        let transport = transport(&h);
+
+        h.handlers
+            .reanchor_playback(0, &mut h.sequencer, &transport);
+        tick(&mut h, 50);
+        assert_eq!(pedal_moves(&h), vec![PEDAL_UP.to_vec()]);
+    }
+
+    /// The clip's own press at the loop start follows the lift on a wrap.
+    #[test]
+    fn a_wrap_onto_a_press_lifts_then_plays_the_press() {
+        let mut h = pedalled_from(0);
+        let transport = transport(&h);
+
+        h.handlers
+            .reanchor_playback(0, &mut h.sequencer, &transport);
+        tick(&mut h, 50);
+        assert_eq!(
+            pedal_moves(&h),
+            vec![PEDAL_UP.to_vec(), PEDAL_DOWN.to_vec()]
+        );
+    }
+
+    /// A stop lifts the pedal a clip left down, once.
+    #[test]
+    fn a_stop_lifts_the_clips_pedal() {
+        let mut h = pedalled_from(100);
+        let transport = transport(&h);
+
+        h.handlers
+            .handle_transport_event(&TransportEvent::Stopped, &mut h.sequencer, &transport);
+        assert_eq!(pedal_moves(&h), vec![PEDAL_UP.to_vec()]);
+        h.handlers
+            .handle_transport_event(&TransportEvent::Stopped, &mut h.sequencer, &transport);
+        assert!(pedal_moves(&h).is_empty());
+    }
+
+    /// The player's own pedal on the armed track is theirs: neither a jump
+    /// nor a stop lifts it.
+    #[test]
+    fn the_players_pedal_is_left_down_by_a_jump_and_a_stop() {
+        let mut h = pedalled_from(100);
+        let transport = transport(&h);
+        h.sequencer.handle_midi_input(&PEDAL_DOWN, 3000);
+        pedal_moves(&h);
+
+        h.handlers
+            .reanchor_playback(1000, &mut h.sequencer, &transport);
+        assert!(pedal_moves(&h).is_empty());
+        h.handlers
+            .handle_transport_event(&TransportEvent::Stopped, &mut h.sequencer, &transport);
+        assert!(pedal_moves(&h).is_empty());
+    }
 }

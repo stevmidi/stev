@@ -793,7 +793,8 @@ fn replace_clip_notes(
     let edit = ReplaceClipNotesEdit::new(sequencer, track_idx, clip.id(), pairs, clear_wheels)
         .ok_or_else(clip_gone)?;
     let reply = format!(
-        "Replaced the notes of clip {} ({}, {range}) with {}, wheels {}, as one undo step.\n{}",
+        "Replaced the notes of clip {} ({}, {range}) with {}, wheels and pedal {}, as one \
+         undo step.\n{}",
         short_id(clip),
         track_title(track_idx, track),
         counted(count, "note"),
@@ -1168,6 +1169,7 @@ mod tests {
             (480, vec![0x80, 50, 0]),
             (960, vec![0x90, 60, 90]),
             (1200, vec![0xE0, 0, 0x50]),
+            (1300, vec![0xB0, 64, 127]),
             (1920, vec![0x80, 60, 0]),
         ] {
             clip.add_event(Event::new(tick, 0, message));
@@ -1179,7 +1181,7 @@ mod tests {
 
         let args = json!({ "clip": id, "notes": "E4 0 1 80\nG4 3.5 2 80", "humanize": false });
         let write = replace_clip_notes(&sequencer, &args, &mut Jitter::from_seed(1)).unwrap();
-        assert_says(&write.reply, "with 2 notes, wheels kept");
+        assert_says(&write.reply, "with 2 notes, wheels and pedal kept");
         assert_says(&write.reply, "1 note cut at the clip end");
         assert_eq!(write.footer, "Agent: new notes on track 1, bar 2");
         let mut record = Record::new();
@@ -1193,9 +1195,10 @@ mod tests {
             replaced
                 .events()
                 .iter()
-                .filter(|e| e.tick() == 1200)
+                .filter(|e| [1200, 1300].contains(&e.tick()))
                 .count(),
-            1
+            2,
+            "the bend and the pedal stay"
         );
         assert_eq!(replaced.start_tick(), BAR);
         assert_eq!(replaced.region_length(), BAR);
@@ -1212,8 +1215,11 @@ mod tests {
         record.edit(&mut sequencer, write.edit);
         let cleared = &sequencer.tracks()[0].clips()[0];
         assert!(
-            cleared.events().iter().all(|e| e.tick() != 1200),
-            "the bend went"
+            cleared
+                .events()
+                .iter()
+                .all(|e| ![1200, 1300].contains(&e.tick())),
+            "the bend and the pedal went"
         );
     }
 

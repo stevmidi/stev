@@ -10,7 +10,7 @@ What the code does today:
 
 - **Recorded, never committed alone.** Every bend and mod-wheel move on the armed track lands in the capture buffer (`090`), but "a take is its notes" (`100` § Invariants): every gate and window reads notes, and a buffer of wheel moves alone commits nothing (then `a_capture_of_wheel_moves_alone_commits_nothing`; phase 2 split it in two).
 - **Wheels ride inside the notes' window and are added.** A running insert brings the wheel moves in its window, the one after the last note-off included (`Clip::cloned_events_in_range`); the take session's Enter brings those from the window start to the last note-off (`TakeFraming::framed_events`). Both *add* them to the clip's own, so a second pass over a clip that already has a curve interleaves the two.
-- **Other controllers aren't recorded.** Sustain, other CCs and aftertouch play live only (`090`).
+- **Other controllers aren't recorded.** Sustain, other CCs and aftertouch play live only (`090`). Since `530` the sustain pedal is recorded too, as a third controller with a rest, and every rule below applies to it per controller.
 - **Playback is already right.** `WheelTracker` (`src/models/wheels.rs`; since `390` phase 2 `ControllerTracker` in `models/controllers.rs`) chases the value in force on every seek, from `Clip::controllers_at`, which folds every wheel move before the playback point, the clip's material outside its window included.
 
 ## Decisions (2026-10-30)
@@ -49,7 +49,7 @@ A 4-bar clip with a mod sweep across it, the lead clip, the loop on bar 3 only.
 - Showing the data (an automation lane, `280` § Not planned).
 - A wheel-only stopped take, gesture splitting, a glide at the hand-back.
 - MCP writes of wheel rows (`360`): the reads list them, the writes stay notes-only. If this lands, a write tool could feed the same landing rule later.
-- Sustain (`090`: it needs the note-release machinery, not this chase).
+- Sustain: out of scope here, then designed and built in `530-sustain-capture.md` as a third controller with a rest under the same rules, the chase covering it once a stop lifts the pedal after the note releases and a jump lifts it before the chase presses it again.
 
 ## Build (phases)
 
