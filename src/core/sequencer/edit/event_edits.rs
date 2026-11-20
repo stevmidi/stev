@@ -25,7 +25,9 @@ use crate::models::{
     event::{Event, EventType},
 };
 
+use super::super::capture::InsertGrid;
 use super::super::{CaptureInsert, Sequencer};
+use super::pass_steps::{PassRefusal, PassStep, PassStepEdit, Passes};
 use super::{EditResult, SequencerEdit};
 
 // ---------------------------------------------------------------------------
@@ -45,6 +47,14 @@ use super::{EditResult, SequencerEdit};
 /// A commit never changes the event selection: both directions report the
 /// selection the clip had when the edit was built, and the inserted notes
 /// are not selected.
+///
+/// A looping running insert keeps the buffer it consumed and how it landed
+/// it, so `,`/`.` can re-land an earlier pass over the clip's events from
+/// before the insert, its undo state, so passes never stack
+/// ([`step_pass`](Self::step_pass), `540-earlier-pass.md` phase 2). As
+/// with [`CommitClipEdit`](super::CommitClipEdit), a step amends this edit
+/// ([`absorb`](Self::absorb)) and the buffer goes once another step is
+/// recorded on top.
 pub(crate) struct InsertCaptureEdit {
     /// The target clip, its selection, and the pre-insert snapshot.
     state: ClipEventsEditState,
@@ -56,6 +66,8 @@ pub(crate) struct InsertCaptureEdit {
     wheel_end: i32,
     /// `true` until the first `edit()` has cleared the capture buffer.
     consume_capture: bool,
+    /// What `,`/`.` can step the take through.
+    passes: Passes<InsertGrid>,
 }
 
 impl InsertCaptureEdit {
@@ -67,19 +79,25 @@ impl InsertCaptureEdit {
         sequencer: &Sequencer,
         punch_in: Option<(i32, i32)>,
     ) -> Option<Self> {
-        Self::consuming(sequencer, sequencer.build_running_capture_insert(punch_in)?)
+        let (insert, grid) = sequencer.build_running_capture_insert(punch_in)?;
+        let passes = Passes::running(grid.loops().then_some(grid));
+        Self::consuming(sequencer, insert, passes)
     }
 
     /// Enter in a take session (`archive/290-framing-a-take.md`): the framed notes
     /// [`Sequencer::finish_take_framing`] returned, inserted at the target's
     /// clip cursor. `None` when the target clip is gone.
     pub(crate) fn from_insert(sequencer: &Sequencer, insert: CaptureInsert) -> Option<Self> {
-        Self::consuming(sequencer, insert)
+        Self::consuming(sequencer, insert, Passes::None)
     }
 
     /// An insert of `insert` into its clip, armed to clear the capture
-    /// buffer it came from.
-    fn consuming(sequencer: &Sequencer, insert: CaptureInsert) -> Option<Self> {
+    /// buffer it came from, `passes` to step through.
+    fn consuming(
+        sequencer: &Sequencer,
+        insert: CaptureInsert,
+        passes: Passes<InsertGrid>,
+    ) -> Option<Self> {
         let selected_event_ids = sequencer
             .clip_on(insert.track_idx, insert.clip_id)?
             .selected_event_ids();
@@ -93,6 +111,7 @@ impl InsertCaptureEdit {
             events: insert.events,
             wheel_end: insert.wheel_end,
             consume_capture: true,
+            passes,
         })
     }
 
@@ -124,6 +143,7 @@ impl InsertCaptureEdit {
         }
 
         if self.consume_capture && !matches!(result, EditResult::NoOp) {
+            self.passes.keep(sequencer);
             sequencer.reset_capture();
             self.consume_capture = false;
         }
@@ -133,6 +153,64 @@ impl InsertCaptureEdit {
     /// Restores the clip's events from before the insert.
     pub(super) fn undo(&mut self, sequencer: &mut Sequencer) -> EditResult {
         self.state.undo(sequencer)
+    }
+
+    /// The step `,` or `.` makes to the clip, with its footer line, or why
+    /// there is none: the pass before or after the one it shows, landed as
+    /// `/` landed the one it took, over the clip's events from before the
+    /// insert. The clip keeps the selection it has now, less the notes of
+    /// the pass it leaves. The caller has checked this is the newest undo
+    /// step (decision 5).
+    pub(crate) fn step_pass(
+        &self,
+        sequencer: &Sequencer,
+        step: PassStep,
+    ) -> Result<(PassStepEdit, String), PassRefusal> {
+        let (kept, index) = self.passes.step(step)?;
+        let (Some(pre_events), Some(clip)) = (
+            &self.state.pre_events,
+            sequencer.clip_on(self.state.track_idx, self.state.clip_id),
+        ) else {
+            return Err(PassRefusal::NoRunningTake);
+        };
+        let events = kept
+            .grid
+            .land(kept.buffer.clone(), kept.pass(index))
+            .unwrap_or_default();
+        let mut stepped = clip.clone();
+        stepped.restore_shared_events(Arc::clone(pre_events));
+        stepped.restore_event_selection(&clip.selected_event_ids());
+        stepped.land_take(&events, kept.grid.wheel_end());
+        let edit = PassStepEdit::new(self.state.track_idx, clip, &stepped, index);
+        Ok((edit, kept.label(index)))
+    }
+
+    /// Takes in a pass step made to its clip, so the step amends this edit
+    /// (decision 4): a redo lands the pass it shows. `false` for a step to
+    /// another clip, or when there are no passes to step through.
+    pub(super) fn absorb(&mut self, step: &PassStepEdit) -> bool {
+        if step.clip_id != self.state.clip_id {
+            return false;
+        }
+        let Some(kept) = self.passes.show(step.shown) else {
+            return false;
+        };
+        self.events = kept
+            .grid
+            .land(kept.buffer.clone(), kept.pass(step.shown))
+            .unwrap_or_default();
+        true
+    }
+
+    /// Drops the kept buffer: another step went on top (decision 6).
+    pub(super) fn drop_passes(&mut self) {
+        self.passes.drop_buffer();
+    }
+
+    /// Whether the insert keeps a buffer to step through.
+    #[cfg(test)]
+    pub(crate) fn keeps_buffer(&self) -> bool {
+        self.passes.keeps_buffer()
     }
 }
 
@@ -819,6 +897,29 @@ mod tests {
         sequencer.select_clip(Some(clip_id));
 
         (sequencer, note_60_id, note_64_id)
+    }
+
+    /// A take session's insert (Enter, stopped) has no passes to step
+    /// through (`540-earlier-pass.md` § Not in this design).
+    #[test]
+    fn a_take_session_insert_does_not_step() {
+        let (mut sequencer, _, _) = sequencer_with_two_notes();
+        let insert = CaptureInsert {
+            track_idx: 0,
+            clip_id: sequencer.selected_clip_id().unwrap(),
+            events: vec![
+                Event::new(500, 0, vec![0x90, 67, 90]),
+                Event::new(600, 0, vec![0x80, 67, 0]),
+            ],
+            wheel_end: 960,
+        };
+        let mut edit = InsertCaptureEdit::from_insert(&sequencer, insert).unwrap();
+        edit.edit(&mut sequencer);
+        assert!(!edit.keeps_buffer());
+        assert_eq!(
+            edit.step_pass(&sequencer, PassStep::Earlier).err(),
+            Some(PassRefusal::NoRunningTake)
+        );
     }
 
     #[test]

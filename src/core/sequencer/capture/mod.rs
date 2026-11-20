@@ -56,7 +56,7 @@ use crate::{
 
 use super::Sequencer;
 
-pub(crate) use passes::PassGrid;
+pub(crate) use passes::{InsertGrid, PassFraming, PassGrid};
 
 /// A take's notes ready to insert into an existing clip — what
 /// [`Sequencer::build_running_capture_insert`] and a take session's Enter
@@ -163,26 +163,10 @@ impl CaptureFraming {
     }
 }
 
-/// Whether a running-capture commit produces a fresh clip or is inserted into
-/// an existing one — see [`normalize_running_capture`](Sequencer::normalize_running_capture).
-#[derive(Clone, Copy)]
-enum RunningCaptureTarget {
-    /// Commit into a new standalone clip: the whole last pass is kept, the
-    /// region is the slice from the cursor.
-    NewClip,
-    /// Insert into the selected clip from the arranger: the pinned window,
-    /// with wrap-anticipating notes relocated to the loop start.
-    InsertFromArranger,
-}
-
-impl RunningCaptureTarget {
-    /// Whether `capture` is a take this target lands: a new clip needs a
-    /// note, an insert also takes wheel moves alone (`370-wheel-capture.md`
-    /// § Decisions 3).
-    fn lands(self, capture: &Clip) -> bool {
-        capture.has_notes()
-            || matches!(self, Self::InsertFromArranger) && capture.has_controller_moves()
-    }
+/// Whether `capture` is a take a running insert lands: a note, or wheel moves
+/// alone (`370-wheel-capture.md` § Decisions 3). A new clip needs a note.
+fn insert_lands(capture: &Clip) -> bool {
+    capture.has_notes() || capture.has_controller_moves()
 }
 
 impl Sequencer {
@@ -227,11 +211,7 @@ impl Sequencer {
         };
 
         let anchor_tick = self.capture_anchor_tick(start_tick);
-        let mut clip = self.normalize_running_capture(
-            anchor_tick,
-            region_length,
-            RunningCaptureTarget::NewClip,
-        )?;
+        let mut clip = self.normalize_running_capture(anchor_tick, region_length)?;
         clip.detect_and_store_swing();
 
         clip.set_start_tick(start_tick);
@@ -338,7 +318,7 @@ impl Sequencer {
                 span: (start, end),
                 ruler_origin,
             })
-        } else if RunningCaptureTarget::InsertFromArranger.lands(&self.kept_capture()) {
+        } else if insert_lands(&self.kept_capture()) {
             Err(MarqueeRefusal::OutsideClip)
         } else {
             Ok(CaptureFraming::Unframed)
@@ -541,12 +521,17 @@ impl Sequencer {
     /// lands ([`Clip::punch_in`]), and the wheels latch to its end at the
     /// latest.
     ///
+    /// The landing is frozen in the [`InsertGrid`] returned with the events,
+    /// so `,`/`.` can land the earlier passes the same way
+    /// (`540-earlier-pass.md` phase 2).
+    ///
     /// [`InsertCaptureEdit`]: crate::core::sequencer::edit::InsertCaptureEdit
     pub(crate) fn build_running_capture_insert(
         &self,
         punch_in: Option<(i32, i32)>,
-    ) -> Option<CaptureInsert> {
-        if !RunningCaptureTarget::InsertFromArranger.lands(&self.kept_capture()) {
+    ) -> Option<(CaptureInsert, InsertGrid)> {
+        let capture = self.kept_capture();
+        if !insert_lands(&capture) {
             return None;
         }
 
@@ -554,50 +539,54 @@ impl Sequencer {
         let clip = self.selected_clip()?;
         let clip_id = clip.id();
         let clip_start_tick = clip.start_tick();
-        let clip_region_start = clip.region().start();
         let region_length = clip.region_length().max(time::min_clip_length_ticks());
         let anchor = self.overdub_anchor(clip_start_tick, region_length);
+        let loop_len = self
+            .playback_is_looping()
+            .then(|| self.capture_loop_length());
+        let phase = loop_len.map_or(0, |len| (anchor - self.region_start()).rem_euclid(len));
 
         // The crop window is the target clip's length, pinned at the anchor's
-        // phase in the arranger loop (independent of the clip).
-        let mut capture = self.normalize_running_capture(
-            self.capture_anchor_tick(anchor),
-            region_length,
-            RunningCaptureTarget::InsertFromArranger,
-        )?;
-
-        // Shift from anchor-relative space into the clip's event ticks: the
-        // clip's first arrangement tick is event tick `region.start` (non-zero
-        // once its left edge was dragged in), then the anchor's offset into
-        // the clip. Onsets the shift would push past the clip end — phases
-        // before the anchor, played after the wrap — are dropped, not parked
-        // out of region. The crop above rebased the window to 0 and closed
-        // every note inside it, so the whole room keeps every note; it also
-        // keeps a wheel moved after the last note-off (a bend easing back).
+        // phase in the arranger loop (independent of the clip). Shifted from
+        // anchor-relative space into the clip's event ticks: the clip's first
+        // arrangement tick is event tick `region.start` (non-zero once its
+        // left edge was dragged in), then the anchor's offset into the clip.
+        // Onsets the shift would push past the clip end — phases before the
+        // anchor, played after the wrap — are dropped, not parked out of
+        // region. The crop rebased the window to 0 and closed every note
+        // inside it, so the whole room keeps every note; it also keeps a
+        // wheel moved after the last note-off (a bend easing back).
         let clip_offset = anchor - clip_start_tick;
         let room = region_length - clip_offset;
-        let insert_at = clip_region_start + clip_offset;
+        let insert_at = clip.region().start() + clip_offset;
         // `land_take` keeps the wheel span inside the clip.
-        let mut wheel_room = if self.playback_is_looping() {
-            let loop_len = self.capture_loop_length();
-            loop_len - (anchor - self.region_start()).rem_euclid(loop_len)
-        } else {
-            room
-        };
+        let mut wheel_room = loop_len.map_or(room, |len| len - phase);
         // The punch-in, in the window's ticks (tick 0 is the anchor).
-        if let Some((start, end)) = punch_in {
+        let punch_in = punch_in.map(|(start, end)| {
             let (start, end) = (start - anchor, end - anchor);
-            capture.punch_in(start.max(0), end.min(room));
             wheel_room = wheel_room.min(end);
-        }
+            (start.max(0), end.min(room))
+        });
 
-        let events = Self::capture_events_to_insert(&capture, insert_at, room);
-        (!events.is_empty()).then_some(CaptureInsert {
+        let grid = InsertGrid {
+            anchor: self.capture_anchor_tick(anchor),
+            loop_len,
+            phase,
+            region_length,
+            insert_at,
+            room,
+            wheel_end: insert_at + wheel_room,
+            punch_in,
+        };
+        let last = grid.last_pass(&capture);
+        let events = grid.land(capture, last)?;
+        let insert = CaptureInsert {
             track_idx,
             clip_id,
             events,
-            wheel_end: insert_at + wheel_room,
-        })
+            wheel_end: grid.wheel_end(),
+        };
+        Some((insert, grid))
     }
 
     /// Where a running insert into a clip spanning `clip_start` for `length`
@@ -625,7 +614,7 @@ impl Sequencer {
     }
 
     /// Converts a live MIDI capture into a finalized, clip-local form ready for
-    /// commit.
+    /// a new clip.
     ///
     /// The raw capture buffer (`self.capture_clip`) holds events in absolute
     /// transport ticks. Whether the take is *looping* or *linear* follows
@@ -633,7 +622,7 @@ impl Sequencer {
     /// start after the region end is linear even with the loop flag on. In clip
     /// view the transport loop is the clip's own bounds.
     ///
-    /// **`NewClip`** keeps the take as played and lets the region do the hiding:
+    /// A new clip keeps the take as played and lets the region do the hiding:
     ///
     /// - looping: the *last pass only* — the **region-grid** pass holding the
     ///   last note-on ("the last wrap" as the loop shows it, whatever the
@@ -659,7 +648,7 @@ impl Sequencer {
     /// A silent region with retained pre-roll is still a clip: the user drags
     /// the left edge to reveal it.
     ///
-    /// Every target carries the wheels off their rest where the kept span
+    /// Both carry the wheels off their rest where the kept span
     /// starts onto its start ([`Clip::carry_resting_onto`]): a wheel set in an
     /// earlier pass, or before the transport started, and held, is part of
     /// the take (`370-wheel-capture.md` § Decisions 7). A new clip also holds
@@ -667,21 +656,15 @@ impl Sequencer {
     /// stretch before a turn plays where the knob stood; an insert leaves
     /// that to [`Clip::land_take`], which knows the clip's own data.
     ///
-    /// **The insert targets** select a window of `region_length` ticks pinned
-    /// at `anchor_tick`'s phase ([`Self::calculate_running_region`]) and crop
-    /// to it; `InsertFromArranger` relocates wrap-anticipating notes to the
-    /// *loop* start first (kept by the crop only when that is the anchor).
+    /// A running insert frames its window through [`InsertGrid`] instead:
+    /// `region_length` ticks pinned at the anchor's phase
+    /// ([`Self::calculate_running_region`]), cropped, wrap-anticipating notes
+    /// relocated to the *loop* start first (kept by the crop only when that
+    /// is the anchor).
     ///
-    /// Either way the result's tick origin is `0`. Returns `None` when nothing
-    /// survives: no note for a new clip, neither a note nor a wheel move for
-    /// an insert, whose pass a take of wheel moves alone is framed by
-    /// ([`Self::calculate_running_region`]).
-    fn normalize_running_capture(
-        &self,
-        anchor_tick: i32,
-        region_length: i32,
-        target: RunningCaptureTarget,
-    ) -> Option<Clip> {
+    /// Either way the result's tick origin is `0`. Returns `None` without a
+    /// note.
+    fn normalize_running_capture(&self, anchor_tick: i32, region_length: i32) -> Option<Clip> {
         let mut capture = self.kept_capture();
         let bar = self.meter().bar_ticks();
 
@@ -689,8 +672,8 @@ impl Sequencer {
             .playback_is_looping()
             .then(|| self.capture_loop_length());
 
-        match (target, transport_loop) {
-            (RunningCaptureTarget::NewClip, Some(loop_len)) => {
+        match transport_loop {
+            Some(loop_len) => {
                 // The *region-grid* pass holding the last note-on — "the last
                 // wrap" as the loop shows it, whatever the cursor — kept whole:
                 // the slice from the cursor is the region, the rest is pre-roll
@@ -704,7 +687,7 @@ impl Sequencer {
                 let pass = grid.last_pass(&capture);
                 capture = grid.frame(capture, pass);
             }
-            (RunningCaptureTarget::NewClip, None) => {
+            None => {
                 // Whole bars of material before the anchor (a cursor moved
                 // later mid-take), kept before `region.start`.
                 let first_on = Self::first_inserted_event_tick(capture.events(), EventType::NoteOn);
@@ -727,40 +710,9 @@ impl Sequencer {
                     .region_mut()
                     .set_region(Some(pre_roll), Some(pre_roll + region_length));
             }
-            (insert, _) => {
-                let (region_start_tick, region_end_tick) = Self::calculate_running_region(
-                    &capture,
-                    anchor_tick,
-                    region_length,
-                    transport_loop,
-                );
-
-                capture
-                    .region_mut()
-                    .set_region(Some(region_start_tick), Some(region_end_tick));
-                capture.sort_events_by_tick();
-                capture.carry_resting_onto(region_start_tick);
-                capture.calculate_note_lengths();
-
-                if let (RunningCaptureTarget::InsertFromArranger, Some(loop_len)) =
-                    (insert, transport_loop)
-                {
-                    // The loop pass the window sits in — the window starts at
-                    // the anchor's phase into it.
-                    let loop_start_tick = region_start_tick
-                        - (anchor_tick - self.region_start()).rem_euclid(loop_len);
-                    capture.relocate_late_notes_to_region_start(
-                        loop_start_tick,
-                        loop_start_tick + loop_len,
-                        config::LATE_NOTE_TOLERANCE_TICKS,
-                    );
-                }
-
-                capture.crop(region_length);
-            }
         }
 
-        target.lands(&capture).then_some(capture)
+        capture.has_notes().then_some(capture)
     }
 
     /// The capture buffer as `/` would frame it now, for the agent's
@@ -779,11 +731,8 @@ impl Sequencer {
             let anchor = self.capture_anchor_tick(self.cursor_tick());
             // The length only sizes a linear take's window: a looping one is
             // widened to the whole pass below.
-            let mut clip = self.normalize_running_capture(
-                anchor,
-                self.linear_content_length(anchor),
-                RunningCaptureTarget::NewClip,
-            )?;
+            let mut clip =
+                self.normalize_running_capture(anchor, self.linear_content_length(anchor))?;
             let (window_start, window_end) = (clip.region().start(), clip.region().end());
             let place = if self.playback_is_looping() {
                 clip.region_mut()
@@ -1058,7 +1007,26 @@ mod tests {
         assert!(seq.capture_last_note_at.is_none());
     }
 
-    // --- normalize_running_capture ---
+    // --- the running insert's window (`InsertGrid::frame`) ---
+
+    /// The window a running insert into a clip `region_len` long at tick 0
+    /// frames on `seq`'s loop, rebased to 0.
+    fn insert_window(seq: &Sequencer, region_len: i32) -> Option<Clip> {
+        let loop_len = seq.playback_is_looping().then(|| seq.capture_loop_length());
+        let grid = InsertGrid {
+            anchor: 0,
+            loop_len,
+            phase: loop_len.map_or(0, |len| (-seq.region_start()).rem_euclid(len)),
+            region_length: region_len,
+            insert_at: 0,
+            room: region_len,
+            wheel_end: region_len,
+            punch_in: None,
+        };
+        let capture = seq.kept_capture();
+        let last = grid.last_pass(&capture);
+        grid.frame(capture, last)
+    }
 
     /// A bar-1 note in the capture buffer lands in bar 1 of the normalized clip.
     #[test]
@@ -1069,9 +1037,7 @@ mod tests {
         seq.capture_clip.add_event(note_on(600));
         seq.capture_clip.add_event(note_off(900));
 
-        let result = seq
-            .normalize_running_capture(0, bar * 2, RunningCaptureTarget::InsertFromArranger)
-            .unwrap();
+        let result = insert_window(&seq, bar * 2).unwrap();
 
         let on_tick = result
             .events()
@@ -1096,9 +1062,7 @@ mod tests {
         seq.capture_clip.add_event(note_on(note_tick));
         seq.capture_clip.add_event(note_off(note_tick + 300));
 
-        let result = seq
-            .normalize_running_capture(0, bar * 2, RunningCaptureTarget::InsertFromArranger)
-            .unwrap();
+        let result = insert_window(&seq, bar * 2).unwrap();
 
         let on_tick = result
             .events()
@@ -1118,10 +1082,7 @@ mod tests {
     fn normalize_running_capture_returns_none_on_empty_buffer() {
         let bar = Meter::FOUR_FOUR.bar_ticks();
         let seq = make_sequencer(0, bar * 2);
-        assert!(
-            seq.normalize_running_capture(0, bar * 2, RunningCaptureTarget::InsertFromArranger)
-                .is_none()
-        );
+        assert!(insert_window(&seq, bar * 2).is_none());
     }
 
     /// After crop, all event ticks are within `[0, region_length)`.
@@ -1134,9 +1095,7 @@ mod tests {
         seq.capture_clip.add_event(note_on(bar + 600));
         seq.capture_clip.add_event(note_off(bar + 900));
 
-        let result = seq
-            .normalize_running_capture(0, region_len, RunningCaptureTarget::InsertFromArranger)
-            .unwrap();
+        let result = insert_window(&seq, region_len).unwrap();
 
         for event in result.events() {
             assert!(
@@ -3641,7 +3600,7 @@ mod tests {
         take.extend(pitched_note(65, 6000, 6200)); // after
         let seq = punch_into_lead_clip(&take);
 
-        let insert = seq.build_running_capture_insert(Some(marquee)).unwrap();
+        let (insert, _) = seq.build_running_capture_insert(Some(marquee)).unwrap();
 
         let notes: Vec<(i32, Vec<u8>)> = insert
             .events

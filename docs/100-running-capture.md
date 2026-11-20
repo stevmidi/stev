@@ -81,11 +81,11 @@ before the region playback runs in and then loops, so at commit the take is loop
 the clip at the cursor holds the last pass at its region phase; after the region playback
 never wraps and the take is linear (see *Looping vs linear*).
 
-- **`NewClip`**: uses `cursor_tick` as anchor.
+- **A new clip**: uses `cursor_tick` as anchor.
   `cursor_tick` shares coordinate space with `clock_tick`. (The anchor sets the region
   slice and the clip's placement; the *pass* it keeps is chosen on the region grid — see
   *What a new clip retains*.)
-- **`InsertFromArranger`** (the insert into an existing clip, from **both** views):
+- **The running insert** (into an existing clip, from **both** views):
   **an overdub — everything lands where it was heard, wherever the cursors are.**
   Anchored on the first arrangement tick of the clip that playback goes through
   (`Sequencer::overdub_anchor`): the clip's start, or the loop's start when looping and
@@ -158,7 +158,7 @@ the buffer cleared by decision — redo is the way back. See `050-undo-redo.md`.
     collapsed loop region can be zero-width, and `crop(0)` divides by zero in
     `Region::snap_to_grid`). A gap smaller than that no-ops. The *linear* content is still rounded up to the next bar;
     only the clamp/floor is finer.
-- Target: `RunningCaptureTarget::NewClip`
+- Framing: `normalize_running_capture` (the looping pass through `PassGrid::frame`)
 - Result: a new clip placed at `cursor_tick`, `end_tick = cursor + region_length`; the
   region is `[phase, phase + region_length)` in the clip's event space, and the rest of
   the loop is retained around it (below).
@@ -237,6 +237,21 @@ have made the next pass the last). The step (`PassStepEdit`) merges into the com
 (`050-undo-redo.md`). Notes played after the `/` go into the fresh buffer and aren't
 part of the steps.
 
+A looping running **insert** into the lead clip steps the same way (`540` phase 2). The
+builder returns its landing frozen in an `InsertGrid` (the anchor, the loop and the anchor's
+phase, the window length, where it lands in the clip, the room, the wheel end, the
+punch-in), and `/` lands its last pass through that grid (`InsertGrid::land`), so the
+last pass and a stepped one land one way. Its passes are the anchor-pinned windows
+`[anchor + k·L, …)`; the last is the one `calculate_running_region` pins. A note-on within
+`LATE_NOTE_TOLERANCE_TICKS` of a loop wrap counts toward the window whose loop pass starts
+there, which relocates it onto its downbeat; a take of wheel moves alone counts the
+windows holding a move. A step re-lands the pass over the clip's events from before the
+insert (`InsertCaptureEdit`'s undo state) with `Clip::land_take`, so passes never stack,
+and keeps the clip's selection less the old pass's notes. Framing an earlier window drops
+what the window after it claims: the notes in the last tolerance of its loop pass, and,
+in a clip longer than the loop, anything a loop past its start. A linear insert and a
+take session's Enter have no passes.
+
 #### `build_running_capture_insert` — existing clip, from either view
 - Undoable: `InsertCaptureEdit::from_running_capture` records it
   (`220-capture-without-pending-view.md`). The builder is pure and returns
@@ -248,7 +263,8 @@ part of the steps.
   `capture_anchor_tick`
 - Window size: `clip.region_length()`, pinned at the anchor's phase in the arranger loop
   (which is independent of the clip)
-- Target: `RunningCaptureTarget::InsertFromArranger`
+- Framing: `InsertGrid::frame` (the pinned window, the late-note relocation, the crop),
+  then `InsertGrid::land` (the punch-in, the shift into the clip)
 - `clip_offset = anchor - clip.start_tick()` shifts crop-relative ticks into
   clip-local space
 - What lands: every note whose onset fits the room left in the clip, and every
@@ -258,7 +274,7 @@ part of the steps.
   clip's own over the span played (`Clip::land_take`, `370-wheel-capture.md`): per wheel
   the take moved, from its first move to the **wheel end**, where the old curve's value
   is written back. A wheel off its rest at the window start counts as a move there
-  (`carry_resting_onto` in `normalize_running_capture`, every target)
+  (`carry_resting_onto`, in `normalize_running_capture` and `InsertGrid::frame` alike)
 - The wheel end (`CaptureInsert::wheel_end`) is the end of the loop **pass** the window
   starts in, not the window's: a one-bar loop over a four-bar clip latches to the loop's
   end, and a wheel move after the wrap belongs to another pass and stays out
@@ -328,21 +344,21 @@ running, not only note-ons, so the chord's own release brings it.
 
 ### `normalize_running_capture` parameters
 
-- `anchor_tick` — where the region starts (`NewClip`) / where the window is pinned (the
-  insert targets); see *Anchor contract*.
-- `region_length` — the region size (`NewClip`) / the crop-window size, also
-  `calculate_running_region`'s `region_len` (inserts).
-- `target`:
-  - `RunningCaptureTarget::NewClip` — the fold-and-retain path of *What a new clip retains*.
-    No crop.
-  - `RunningCaptureTarget::InsertFromArranger` — the pinned window, then
-    `relocate_late_notes_to_region_start` before crop, **keyed on the loop pass, not the
-    window**: a note within `LATE_NOTE_TOLERANCE_TICKS` of the *loop* end anticipates the
-    wrap's downbeat and is relocated to the *loop* start. The crop then keeps it exactly when
-    that downbeat is the anchor (cursor phase 0) and drops it otherwise. Keying on the window
-    instead would teleport a wrap-anticipating note to a mid-loop cursor (a phase error). A
-    linear take (no wrap to anticipate) gets no relocation. Used by
-    `build_running_capture_insert`.
+`normalize_running_capture` frames a new clip: the fold-and-retain path of *What a new
+clip retains*, no crop.
+
+- `anchor_tick` — where the region starts; see *Anchor contract*.
+- `region_length` — the region size.
+
+The running insert frames its window with `InsertGrid::frame` (`passes.rs`), on the same
+anchor contract: the window `region_length` long is pinned at `anchor_tick`'s phase
+(`calculate_running_region`'s `region_len`), then `relocate_late_notes_to_region_start`
+before the crop, **keyed on the loop pass, not the window**: a note within
+`LATE_NOTE_TOLERANCE_TICKS` of the *loop* end anticipates the wrap's downbeat and is
+relocated to the *loop* start. The crop then keeps it exactly when that downbeat is the
+anchor (cursor phase 0) and drops it otherwise. Keying on the window instead would teleport
+a wrap-anticipating note to a mid-loop cursor (a phase error). A linear take (no wrap to
+anticipate) gets no relocation.
 
 The insert paths keep the last pass's every phase (see *Notes before the playback start*),
 as a new clip does.

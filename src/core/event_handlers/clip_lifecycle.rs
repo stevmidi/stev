@@ -87,9 +87,9 @@ impl EventHandlers {
     }
 
     /// `,`/`.` (`SequencerCommand::StepPass`, `540-earlier-pass.md`): the
-    /// clip the running `/` made shows the pass before or after, while that
-    /// commit is the newest undo step with nothing to redo (decision 5, read
-    /// from the record). The step merges into the commit's undo step
+    /// take the running `/` landed, a new clip or an insert into the lead
+    /// clip, shows the pass before or after, while that commit is the newest
+    /// undo step with nothing to redo (decision 5, read from the record). The step merges into the commit's undo step
     /// (decision 4), whose view snapshots stay as they were: a step changes
     /// no view state. The footer says which pass, or why nothing changed.
     pub(super) fn step_pass_workflow(
@@ -98,15 +98,12 @@ impl EventHandlers {
         undo_record: &mut Record<UndoStep>,
         step: PassStep,
     ) {
-        let commit = top_step(undo_record)
-            .filter(|_| !undo_record.can_redo())
-            .and_then(|top| match top.sequencer_edit() {
-                SequencerEdit::CommitClip(commit) => Some(commit),
-                _ => None,
-            });
-        let stepped = commit
-            .ok_or(PassRefusal::NoRunningTake)
-            .and_then(|commit| commit.step_pass(sequencer, step));
+        let top = top_step(undo_record).filter(|_| !undo_record.can_redo());
+        let stepped = match top.map(UndoStep::sequencer_edit) {
+            Some(SequencerEdit::CommitClip(commit)) => commit.step_pass(sequencer, step),
+            Some(SequencerEdit::InsertCapture(insert)) => insert.step_pass(sequencer, step),
+            _ => Err(PassRefusal::NoRunningTake),
+        };
         let (edit, label) = match stepped {
             Ok(stepped) => stepped,
             Err(refusal) => {
@@ -159,7 +156,7 @@ mod tests {
     };
     use crate::core::input_event::CaptureFrame;
     use crate::core::sequencer::test_support::{rect, spans};
-    use crate::core::sequencer::{PassStep, SequencerCommand, SequencerEdit, UndoStep};
+    use crate::core::sequencer::{PassStep, SequencerCommand, SequencerEdit, UndoStep, top_step};
     use crate::core::time::Meter;
     use crate::core::view_state::ViewState;
     use crate::models::event::{Event, EventType};
@@ -454,10 +451,10 @@ mod tests {
         assert_eq!(pitches(&h), vec![64]);
     }
 
-    /// A linear running take has no passes, and a stopped commit or a
-    /// running insert on top is no running new-clip commit.
+    /// A linear running take has no passes, and a stopped commit on top is
+    /// no running commit.
     #[test]
-    fn steps_are_refused_on_a_linear_take_a_stopped_commit_and_an_insert() {
+    fn steps_are_refused_on_a_linear_take_and_a_stopped_commit() {
         // Playback past the loop's end never wraps.
         let mut h = harness();
         run_looping(&mut h, BAR);
@@ -475,7 +472,74 @@ mod tests {
         statuses(&h);
         earlier(&mut h, &mut record);
         assert_eq!(statuses(&h), vec!["No running take to step through"]);
+    }
 
+    /// Whether the record's newest step is a running insert keeping its
+    /// buffer.
+    fn insert_keeps_buffer(record: &Record<UndoStep>) -> bool {
+        match top_step(record).map(UndoStep::sequencer_edit) {
+            Some(SequencerEdit::InsertCapture(insert)) => insert.keeps_buffer(),
+            _ => false,
+        }
+    }
+
+    /// Phase 2: a running insert into the lead clip steps like a new clip,
+    /// each pass re-landed over the clip as it was before the insert, so
+    /// passes never stack; one undo puts the clip back, a redo the pass it
+    /// showed, and an edit on top drops the buffer.
+    #[test]
+    fn an_insert_steps_through_its_passes_over_the_clip_from_before() {
+        let mut h = harness();
+        run_looping(&mut h, BAR);
+        with_a_lead_clip(&mut h, 0, ViewState::Arranger);
+        let before = pitches(&h);
+        for (pass, pitch) in [(0, 62), (1, 64), (2, 67)] {
+            note(&mut h, pitch, pass * BAR + 100, pass * BAR + 400);
+        }
+        let mut record = slash(&mut h, None);
+        statuses(&h);
+        assert_eq!(pitches(&h), [before.clone(), vec![67]].concat());
+
+        earlier(&mut h, &mut record);
+        assert_eq!(pitches(&h), [before.clone(), vec![64]].concat());
+        assert_eq!(statuses(&h), vec!["Pass 1 back of 3"]);
+        earlier(&mut h, &mut record);
+        assert_eq!(pitches(&h), [before.clone(), vec![62]].concat());
+        later(&mut h, &mut record);
+        assert_eq!(pitches(&h), [before.clone(), vec![64]].concat());
+        assert_eq!(record.len(), 1, "the steps amend the insert");
+        statuses(&h);
+
+        run_command(&mut h, &mut record, SequencerCommand::Undo);
+        assert_eq!(pitches(&h), before, "one undo puts the clip back");
+        run_command(&mut h, &mut record, SequencerCommand::Redo);
+        assert_eq!(pitches(&h), [before.clone(), vec![64]].concat());
+        later(&mut h, &mut record);
+        assert_eq!(statuses(&h), vec!["Last pass"]);
+        assert_eq!(pitches(&h), [before.clone(), vec![67]].concat());
+
+        assert!(insert_keeps_buffer(&record));
+        h.cursor_tick.store(BAR * 4, Ordering::Relaxed);
+        run_command(
+            &mut h,
+            &mut record,
+            SequencerCommand::InsertEmptyClip { time_bounds: None },
+        );
+        assert_eq!(record.len(), 2);
+        statuses(&h);
+        earlier(&mut h, &mut record);
+        assert_eq!(statuses(&h), vec!["No running take to step through"]);
+        run_command(&mut h, &mut record, SequencerCommand::Undo);
+        assert!(
+            !insert_keeps_buffer(&record),
+            "dropped once a step was on top"
+        );
+    }
+
+    /// An insert's steps start from its own buffer: the passes the new
+    /// clip's `/` consumed before it are not among them.
+    #[test]
+    fn an_insert_after_a_commit_steps_only_its_own_passes() {
         let mut h = harness();
         let mut record = three_passes(&mut h);
         with_a_lead_clip(&mut h, 0, ViewState::Arranger);
@@ -488,7 +552,7 @@ mod tests {
         assert_eq!(record.len(), 2, "an insert into the lead clip");
         statuses(&h);
         earlier(&mut h, &mut record);
-        assert_eq!(statuses(&h), vec!["No running take to step through"]);
+        assert_eq!(statuses(&h), vec!["No earlier pass"]);
     }
 
     /// A step while running releases the old pass's sounding note at once

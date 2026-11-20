@@ -37,6 +37,7 @@ use super::Sequencer;
 mod clip_edits;
 mod event_edits;
 mod meter_edit;
+mod pass_steps;
 mod tempo_edit;
 mod track_edits;
 mod undo_step;
@@ -44,8 +45,7 @@ mod undo_step;
 pub(crate) use clip_edits::{
     CommitClipEdit, CreateClipsEdit, DeleteInRangeEdit, DeleteTimeEdit, DuplicateClipsEdit,
     DuplicateTimeEdit, InsertSilenceEdit, MoveClipEdit, MoveRangeEdit, MuteInRangeEdit,
-    PassRefusal, PassStep, PassStepEdit, PasteClipsEdit, ResizeClipEdit, RetimeClipEdit,
-    SplitClipsEdit, TransposeClipsEdit,
+    PasteClipsEdit, ResizeClipEdit, RetimeClipEdit, SplitClipsEdit, TransposeClipsEdit,
 };
 pub(crate) use event_edits::{
     ClearControllerSpanEdit, DeleteSelectedEventsEdit, DragEventsVelocityEdit, DragNotesEdit,
@@ -54,6 +54,7 @@ pub(crate) use event_edits::{
     TransposeSelectedEventsEdit,
 };
 pub(crate) use meter_edit::SetMeterEdit;
+pub(crate) use pass_steps::{PassRefusal, PassStep, PassStepEdit};
 pub(crate) use tempo_edit::{SetTempoEdit, TempoGesture};
 pub(crate) use track_edits::{
     AddTrackEdit, RemoveTrackEdit, RenameTrackEdit, SetKnobParamEdit, SetTrackOutputEdit,
@@ -617,7 +618,7 @@ impl Sequencer {
 /// handler can record it without naming the variant. `edit`/`undo` dispatch
 /// straight through; `merge` is hand-written to coalesce only
 /// `DragEventsVelocity`, `ResizeClip`, `DragNotes` and `SetTempo`, and to
-/// fold a `StepPass` into the `CommitClip` it steps.
+/// fold a `StepPass` into the `CommitClip` or `InsertCapture` it steps.
 macro_rules! sequencer_edit_dispatch {
     ($($variant:ident($type:ty)),* $(,)?) => {
         /// Undoable edits on the sequencer.
@@ -703,7 +704,7 @@ macro_rules! sequencer_edit_dispatch {
                     a.absorb(b);
                     return undo::Merged::Yes;
                 }
-                // `,`/`.` amend the running commit they step
+                // `,`/`.` amend the running commit or insert they step
                 // (`540-earlier-pass.md` decision 4); any other step on top
                 // of it ends the steps, and its kept buffer goes (decision 6).
                 // This relies on `undo` offering every new edit to the top
@@ -718,6 +719,15 @@ macro_rules! sequencer_edit_dispatch {
                         return undo::Merged::Yes;
                     }
                     commit.drop_passes();
+                }
+                // The running insert likewise (phase 2).
+                if let SequencerEdit::InsertCapture(insert) = self {
+                    if let SequencerEdit::StepPass(step) = &other
+                        && insert.absorb(step)
+                    {
+                        return undo::Merged::Yes;
+                    }
+                    insert.drop_passes();
                 }
                 undo::Merged::No(other)
             }
