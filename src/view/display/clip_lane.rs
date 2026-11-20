@@ -1,9 +1,9 @@
 //! [`ClipLane`] — which lane the piano roll shows under its notes: the
 //! velocity bars, one of the resting controllers' recorded curves (the two
-//! wheels and the sustain pedal), or one of the knobs' lanes. View state only (`RenderState::clip_lane`): never saved,
-//! never switched by anything but the user. See `380-wheel-lane.md` and
-//! `400-parameter-knobs.md` decision 12 and `530-sustain-capture.md`
-//! decision 7.
+//! wheels and the sustain pedal), or one of the knobs' lanes. View state
+//! only (`RenderState::clip_lane`): never saved, never switched by anything
+//! but the user. See `380-wheel-lane.md`, `400-parameter-knobs.md` decision
+//! 12 and `530-sustain-capture.md` decision 7.
 
 use crate::core::midi::message::Controller;
 
@@ -35,21 +35,23 @@ impl ClipLane {
         (ClipLane::Sustain, "SUS"),
     ];
 
-    /// The lane after this one (`Action::CycleClipLane`): VEL → PB → MW →
-    /// SUS → back to VEL, the gutter's four. The knobs' lanes are picked by a
-    /// click on the knob only (`400-parameter-knobs.md` decision 14): from
-    /// one, the cycle starts again at VEL.
+    /// The lane after this one (`Action::CycleClipLane`): the next of
+    /// [`GUTTER`](Self::GUTTER), top to bottom, the last back to the first.
+    /// The knobs' lanes are picked by a click on the knob only
+    /// (`400-parameter-knobs.md` decision 14): from one, the cycle starts
+    /// again at VEL.
     pub(super) fn next(self) -> ClipLane {
-        match self {
-            ClipLane::Velocity => ClipLane::PitchBend,
-            ClipLane::PitchBend => ClipLane::Modulation,
-            ClipLane::Modulation => ClipLane::Sustain,
-            ClipLane::Sustain | ClipLane::Knob(_) => ClipLane::Velocity,
-        }
+        Self::GUTTER
+            .iter()
+            .position(|&(lane, _)| lane == self)
+            .map_or(ClipLane::Velocity, |i| {
+                Self::GUTTER[(i + 1) % Self::GUTTER.len()].0
+            })
     }
 
-    /// The controller the lane draws — a wheel or the pedal: `None` for velocity, and for a knob's lane,
-    /// whose parameter is the selected track's to say.
+    /// The controller the lane draws — a wheel or the pedal: `None` for
+    /// velocity, and for a knob's lane, whose parameter is the selected
+    /// track's to say.
     pub(super) fn controller(self) -> Option<Controller> {
         match self {
             ClipLane::Velocity | ClipLane::Knob(_) => None,
@@ -75,14 +77,6 @@ mod tests {
         assert_eq!(ClipLane::PitchBend.next(), ClipLane::Modulation);
         assert_eq!(ClipLane::Modulation.next(), ClipLane::Sustain);
         assert_eq!(ClipLane::Sustain.next(), ClipLane::Velocity);
-        let cycle: Vec<ClipLane> = ClipLane::GUTTER.iter().map(|&(lane, _)| lane).collect();
-        for (i, &lane) in cycle.iter().enumerate() {
-            assert_eq!(
-                lane.next(),
-                cycle[(i + 1) % cycle.len()],
-                "the gutter's order"
-            );
-        }
         for knob in 0..KNOB_COUNT {
             assert_eq!(ClipLane::Knob(knob).next(), ClipLane::Velocity);
         }

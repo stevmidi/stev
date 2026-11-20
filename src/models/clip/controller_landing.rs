@@ -422,6 +422,10 @@ mod tests {
         Event::new(tick, 0, vec![0xB0, 0x01, value])
     }
 
+    fn pedal(tick: i32, value: u8) -> Event {
+        Event::new(tick, 0, vec![0xB0, 64, value])
+    }
+
     fn clip_with(events: Vec<Event>) -> Clip {
         let mut clip = Clip::new();
         clip.restore_events(events);
@@ -957,7 +961,6 @@ mod tests {
     /// decision 7).
     #[test]
     fn clearing_a_pedal_span_lifts_the_pedal() {
-        let pedal = |tick, value| Event::new(tick, 0, Controller::SUSTAIN.message(value));
         let mut clip = clip_with(vec![
             pedal(0, 127),
             modw(100, 30),

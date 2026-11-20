@@ -1,9 +1,10 @@
 //! The controller lanes' keyboard focus (`KeyFocus::WheelLane`) and its
-//! span: a press in the PB, MW, SUS or a knob's lane places the clip cursor,
-//! drops the note selection and gives the lane the keyboard, a press-drag
-//! there marks a span of the shown controller, `⌘A` marks the whole curve, `Delete` clears the span — a wheel back to rest (the pedal up), a knob's
-//! parameter held at the value before it (`InputEvent::ClearControllerSpan`) —
-//! `Esc` drops the span and then the focus. A note command takes the
+//! span: a press in a controller lane (a wheel's, the pedal's or a knob's)
+//! places the clip cursor, drops the note selection and gives the lane the
+//! keyboard, a press-drag there marks a span of the shown controller, `⌘A`
+//! marks the whole curve, `Delete` clears the span — a wheel back to rest
+//! (the pedal up), a knob's parameter held at the value before it
+//! (`InputEvent::ClearControllerSpan`) — `Esc` drops the span and then the focus. A note command takes the
 //! keyboard back to the notes and acts there
 //! ([`Action::leaves_wheel_lane`]). See `380-wheel-lane.md` decisions 14–19
 //! and `archive/390-knob-panel.md` decisions 11 and 13.

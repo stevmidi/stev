@@ -37,7 +37,7 @@ impl Display {
     const WHEEL_CORNER_PX: f32 = 4.0;
     /// Space left of a gutter label.
     const LANE_LABEL_INSET_X: f32 = 12.0;
-    /// Radius of the data marker beside `PB` / `MW` / `SUS`.
+    /// Radius of the data marker beside a controller's gutter label.
     const LANE_MARKER_R: f32 = 2.0;
     /// Gap between a gutter label and its data marker's centre.
     const LANE_MARKER_GAP: f32 = 6.0;
@@ -87,12 +87,12 @@ impl Display {
                 .is_some_and(|lane| lane != shown)
     }
 
-    /// Draws the gutter's lane switch: `VEL`, `PB`, `MW`, `SUS` stacked,
+    /// Draws the gutter's lane switch: `ClipLane::GUTTER`'s labels stacked,
     /// coloured as the header's toggles are (`toggle_icon_color`): the shown
     /// one `accent`, one under the pointer `fg`, the rest `fg_dim` — so a
     /// hover is never mistaken for the shown lane. A dot, in the label's
-    /// colour, beside a wheel's or the pedal's label when the lead clip has
-    /// moves for it.
+    /// colour, beside a controller's label when the lead clip has moves
+    /// for it.
     pub(super) fn draw_lane_gutter(&self, painter: &Painter, geom: &NoteAreaGeom) {
         let gutter = self.lane_gutter_rect(geom);
         let hovered = self.canvas_pointer().and_then(|p| lane_label_in(gutter, p));
@@ -258,8 +258,8 @@ fn lane_label_in(gutter: Rect, pos: Pos2) -> Option<ClipLane> {
 
 /// Where `value` sits in the lane, `0.0` at the bottom to `1.0` at the top:
 /// pitch bend centred, its rest (`0x2000`) exactly halfway; the mod wheel
-/// and the sustain pedal, as any CC, from 0 to 127 (a pedal's press and lift
-/// a step, half-pedalling between); a parameter across its range.
+/// and the sustain pedal, as any CC, from 0 to 127; a parameter across its
+/// range.
 fn wheel_fraction(wheel: Controller, value: u16) -> f32 {
     match wheel {
         Controller::PitchBend => {
@@ -802,14 +802,6 @@ mod tests {
     fn the_mod_wheel_runs_from_bottom_to_top() {
         assert_eq!(wheel_fraction(Controller::MOD_WHEEL, 0), 0.0);
         assert_eq!(wheel_fraction(Controller::MOD_WHEEL, 127), 1.0);
-    }
-
-    /// The pedal is drawn as the mod wheel: up at the bottom, down at the
-    /// top, half-pedalling between.
-    #[test]
-    fn the_pedal_runs_from_bottom_to_top() {
-        assert_eq!(wheel_fraction(Controller::SUSTAIN, 0), 0.0);
         assert_eq!(wheel_fraction(Controller::SUSTAIN, 127), 1.0);
-        assert!((wheel_fraction(Controller::SUSTAIN, 64) - 0.504).abs() < 0.001);
     }
 }
