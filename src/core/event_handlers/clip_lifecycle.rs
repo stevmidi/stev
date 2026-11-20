@@ -155,7 +155,7 @@ mod tests {
 
     use crate::core::agent::span_label;
     use crate::core::event_handlers::test_harness::{
-        Harness, add_clip, harness, run_command, statuses,
+        Harness, add_clip, harness, play, run_command, statuses,
     };
     use crate::core::input_event::CaptureFrame;
     use crate::core::sequencer::test_support::{rect, spans};
@@ -513,27 +513,5 @@ mod tests {
             edges.iter().all(|&(_, pitch, on)| !(pitch == 62 && on)),
             "{edges:?}"
         );
-    }
-
-    /// Playback of track 0 for `ticks` ticks from where it stands, as
-    /// `(tick, pitch, on)` note edges.
-    fn play(h: &mut Harness, ticks: i32) -> Vec<(i32, u8, bool)> {
-        let mut edges = Vec::new();
-        for _ in 0..ticks {
-            let tick = h.playback_tick.load(Ordering::Relaxed);
-            while let Some(event) = h.sequencer.tracks_mut()[0].tick() {
-                if event.is_muted() {
-                    continue;
-                }
-                let on = match event.event_type() {
-                    Some(EventType::NoteOn) => true,
-                    Some(EventType::NoteOff) => false,
-                    None => continue,
-                };
-                edges.push((tick, event.note_number().unwrap(), on));
-            }
-            h.playback_tick.fetch_add(1, Ordering::Relaxed);
-        }
-        edges
     }
 }

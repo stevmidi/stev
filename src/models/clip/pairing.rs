@@ -177,22 +177,23 @@ impl Clip {
     /// drops the notes just before its end that anticipate the next pass's
     /// downbeat (`540-earlier-pass.md` decision 7).
     pub(crate) fn drop_notes_starting_in(&mut self, window: Range<i32>) {
-        let pairing = self.pair_note_events();
-        let mut dropped = vec![false; self.events.len()];
-        for (idx, event) in self.events.iter().enumerate() {
-            if event.event_type() == Some(EventType::NoteOn) && window.contains(&event.tick()) {
-                dropped[idx] = true;
-                if let Some(&off) = pairing.on_to_off.get(&idx) {
-                    dropped[off] = true;
-                }
-            }
-        }
-        if !dropped.contains(&true) {
+        let starts_in_window = |event: &Event| {
+            event.event_type() == Some(EventType::NoteOn) && window.contains(&event.tick())
+        };
+        if !self.events.iter().any(starts_in_window) {
             return;
         }
-        let mut dropped = dropped.into_iter();
-        self.events_mut()
-            .retain(|_| !dropped.next().unwrap_or(false));
+        let pairing = self.pair_note_events();
+        let dropped: HashSet<Uuid> = self
+            .events
+            .iter()
+            .enumerate()
+            .filter(|(_, event)| starts_in_window(event))
+            .flat_map(|(idx, _)| [Some(idx), pairing.on_to_off.get(&idx).copied()])
+            .flatten()
+            .map(|idx| self.events[idx].id())
+            .collect();
+        self.retain_events(|event| !dropped.contains(&event.id()));
         self.update_delta_ticks();
     }
 

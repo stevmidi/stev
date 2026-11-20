@@ -251,18 +251,17 @@ impl CommitClipEdit {
                 .filter(|&later| later < kept.passes.len())
                 .ok_or(PassRefusal::AlreadyLast)?,
         };
-        if sequencer.clip_on(self.track_idx, self.clip.id()).is_none() {
-            return Err(PassRefusal::NoRunningTake);
-        }
+        let clip = sequencer
+            .clip_on(self.track_idx, self.clip.id())
+            .ok_or(PassRefusal::NoRunningTake)?;
         let mut framed = kept.grid.frame(kept.buffer.clone(), kept.passes[index]);
         framed.detect_and_store_swing();
         let edit = PassStepEdit {
             track_idx: self.track_idx,
             clip_id: self.clip.id(),
-            events: Arc::clone(framed.shared_events()),
-            swing_pct: framed.swing_pct(),
+            pass: ClipContent::of(&framed),
+            before: ClipContent::of(clip),
             shown: index,
-            before: None,
         };
         Ok((edit, kept.label(index)))
     }
@@ -279,8 +278,7 @@ impl CommitClipEdit {
             return false;
         }
         kept.shown = step.shown;
-        self.clip.restore_shared_events(Arc::clone(&step.events));
-        self.clip.set_swing_pct(step.swing_pct);
+        step.pass.put_in(&mut self.clip);
         true
     }
 
@@ -299,66 +297,76 @@ impl CommitClipEdit {
     }
 }
 
+/// What a pass step swaps in a clip: its events and the swing detected in
+/// them. The rest of the clip (id, start, region, length) stays.
+struct ClipContent {
+    /// The events, shared with the clip.
+    events: Arc<Vec<Event>>,
+    /// The clip's swing.
+    swing_pct: u8,
+}
+
+impl ClipContent {
+    /// `clip`'s events and swing.
+    fn of(clip: &Clip) -> Self {
+        Self {
+            events: Arc::clone(clip.shared_events()),
+            swing_pct: clip.swing_pct(),
+        }
+    }
+
+    /// Puts these events and swing in `clip`.
+    fn put_in(&self, clip: &mut Clip) {
+        clip.restore_shared_events(Arc::clone(&self.events));
+        clip.set_swing_pct(self.swing_pct);
+    }
+}
+
 /// `,`/`.`: the clip a running `/` made shows another pass of the take
-/// (`540-earlier-pass.md`). Only its events change, through
+/// (`540-earlier-pass.md`). Only its events and swing change, through
 /// [`Sequencer::edit_clip_events`], so the old pass's sounding notes are
 /// released. Built by [`CommitClipEdit::step_pass`], it merges into the
 /// commit ([`CommitClipEdit::absorb`]); its own undo, for a step that stays
-/// on its own, puts the events back.
+/// on its own, puts back the clip's content from before.
 pub(crate) struct PassStepEdit {
     /// Track the clip is on.
     track_idx: usize,
     /// The clip the `/` made.
     clip_id: Uuid,
-    /// The pass's events, framed as the clip's.
-    events: Arc<Vec<Event>>,
-    /// The swing detected in them.
-    swing_pct: u8,
-    /// Its index among the commit's passes.
+    /// The pass, framed as the clip's.
+    pass: ClipContent,
+    /// The clip's content before the step.
+    before: ClipContent,
+    /// The pass's index among the commit's passes.
     shown: usize,
-    /// The events and swing the clip had before, for `undo()`.
-    before: Option<(Arc<Vec<Event>>, u8)>,
 }
 
 impl PassStepEdit {
-    /// Puts the pass's events in the clip.
+    /// Puts the pass in the clip.
     pub(in crate::core::sequencer::edit) fn edit(
         &mut self,
         sequencer: &mut Sequencer,
     ) -> EditResult {
-        let (events, swing_pct) = (Arc::clone(&self.events), self.swing_pct);
-        self.before = sequencer.edit_clip_events(self.track_idx, self.clip_id, |clip| {
-            let before = (Arc::clone(clip.shared_events()), clip.swing_pct());
-            clip.restore_shared_events(events);
-            clip.set_swing_pct(swing_pct);
-            before
-        });
-        if self.before.is_none() {
-            return EditResult::NoOp;
-        }
-        self.modified()
+        self.swap_in(sequencer, &self.pass)
     }
 
-    /// Puts back the events from before.
+    /// Puts back the clip's content from before.
     pub(in crate::core::sequencer::edit) fn undo(
         &mut self,
         sequencer: &mut Sequencer,
     ) -> EditResult {
-        let Some((events, swing_pct)) = self.before.take() else {
-            return EditResult::NoOp;
-        };
-        let Some(()) = sequencer.edit_clip_events(self.track_idx, self.clip_id, |clip| {
-            clip.restore_shared_events(events);
-            clip.set_swing_pct(swing_pct);
-        }) else {
-            return EditResult::NoOp;
-        };
-        self.modified()
+        self.swap_in(sequencer, &self.before)
     }
 
-    /// `EventsModified` for the clip, nothing selected: the new events have
-    /// ids of their own.
-    fn modified(&self) -> EditResult {
+    /// Puts `content` in the clip: `EventsModified` with nothing selected
+    /// (the events have ids of their own), or `NoOp` with the clip gone.
+    fn swap_in(&self, sequencer: &mut Sequencer, content: &ClipContent) -> EditResult {
+        if sequencer
+            .edit_clip_events(self.track_idx, self.clip_id, |clip| content.put_in(clip))
+            .is_none()
+        {
+            return EditResult::NoOp;
+        }
         EditResult::EventsModified {
             track_idx: self.track_idx,
             clip_id: self.clip_id,

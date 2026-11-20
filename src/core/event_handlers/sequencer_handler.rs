@@ -742,7 +742,7 @@ mod tests {
     use crate::core::agent::{AgentReply, AgentRequest};
     use crate::core::event_handlers::SavedProject;
     use crate::core::event_handlers::test_harness::{
-        Harness, add_clip, harness, run_command, statuses,
+        Harness, add_clip, harness, play, run_command, statuses,
     };
     use crate::core::midi::message::Controller;
     use crate::core::paths::project_dir;
@@ -1664,30 +1664,6 @@ mod tests {
             copy: false,
             drag_id: 1,
         }
-    }
-
-    /// Plays track 0 for `ticks` ticks from the playback position, advancing
-    /// it as the clock would, and returns each note edge the track emits as
-    /// `(tick, pitch, is_on)`.
-    fn play(h: &mut Harness, ticks: i32) -> Vec<(i32, u8, bool)> {
-        let mut edges = Vec::new();
-        for _ in 0..ticks {
-            let tick = h.playback_tick.load(Ordering::Relaxed);
-            while let Some(event) = h.sequencer.tracks_mut()[0].tick() {
-                // Dropped here as `Sequencer::tick` drops it.
-                if event.is_muted() {
-                    continue;
-                }
-                let is_on = match event.event_type() {
-                    Some(EventType::NoteOn) => true,
-                    Some(EventType::NoteOff) => false,
-                    None => continue,
-                };
-                edges.push((tick, event.note_number().unwrap(), is_on));
-            }
-            h.playback_tick.fetch_add(1, Ordering::Relaxed);
-        }
-        edges
     }
 
     /// Asserts no `NoteOn` in `edges` lands on a pitch already sounding and

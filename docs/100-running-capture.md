@@ -9,7 +9,7 @@ Key files: `src/core/sequencer/capture/mod.rs`, `src/core/sequencer/capture/wind
 
 ### Core model
 
-A **new clip** (`build_committed_capture_clip`, placed by `CommitClipEdit`) keeps the whole
+A **new clip** (`build_committed_capture`, placed by `CommitClipEdit`) keeps the whole
 last pass of the take and uses its *region* to say which slice plays — see *What a new clip
 retains* below. The crop **window** described here is what the two
 *insert-into-existing-clip* paths use.
@@ -371,7 +371,7 @@ alone still commit nothing (`370` § Decisions 2–3).
 `calculate_running_region` must preserve:
 
 1. **Caller-set window length** (at least one arranger grid step, a beat) — `calculate_running_region` takes
-   `region_length` as given. `build_committed_capture_clip` decides it: the loop remainder from the
+   `region_length` as given. `build_committed_capture` decides it: the loop remainder from the
    cursor when playback is wrapping, else the content span (last note-on → next bar). The
    insert passes the target clip's `region_length()`.
 2. **Pinned start**: the window starts at the anchor's phase — `(start − anchor) % L == 0`
@@ -397,7 +397,7 @@ alone still commit nothing (`370` § Decisions 2–3).
 
 `Transport::tick` wraps only while the loop flag is on **and** `playback_tick` is inside
 the region. `Sequencer::playback_is_looping()` is that same condition, and it — not
-`is_loop_enabled()` — decides both the commit sizing in `build_committed_capture_clip` and whether
+`is_loop_enabled()` — decides both the commit sizing in `build_committed_capture` and whether
 `calculate_running_region` gets a `transport_loop`. A start after the region end with the
 flag still on is a linear take: content-sized, windowed straight from the anchor. Sizing it
 as a loop remainder would, once more than `L` was played, jump the pass index forward and
@@ -429,9 +429,9 @@ Tests for `normalize_running_capture` in `src/core/sequencer/capture/mod.rs`:
 - empty buffer returns `None`,
 - all events after crop are within `[0, region_length)`.
 
-Tests for `commit_clip_to_track` (the test shim over `build_committed_capture_clip` +
+Tests for `commit_clip_to_track` (the test shim over `build_committed_capture` +
 `CommitClipEdit`) in `src/core/sequencer/capture/mod.rs`, plus
-`build_committed_capture_clip_does_not_touch_the_track_or_buffer`:
+`build_committed_capture_does_not_touch_the_track_or_buffer`:
 
 - new clip is placed at `cursor_tick`,
 - all events in committed clip are 0-based (within region length),

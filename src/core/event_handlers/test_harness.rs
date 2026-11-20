@@ -6,7 +6,7 @@
 
 use std::sync::{
     Arc, OnceLock,
-    atomic::{AtomicBool, AtomicI32, AtomicU8, AtomicU16},
+    atomic::{AtomicBool, AtomicI32, AtomicU8, AtomicU16, Ordering},
 };
 
 use crossbeam_channel::{Receiver, unbounded};
@@ -21,6 +21,7 @@ use crate::core::sequencer::{Sequencer, SequencerCommand, UndoStep};
 use crate::core::shared_atomics::{AudioExportAtomics, TrackMixAtomics};
 use crate::core::time::{Meter, TapTempo};
 use crate::core::transport::{Transport, TransportCommand, TransportEvent};
+use crate::models::event::EventType;
 use crate::models::performance_lane::KeyLength;
 use crate::view::display::UiEvent;
 
@@ -247,4 +248,28 @@ pub(crate) fn statuses(h: &Harness) -> Vec<String> {
             _ => None,
         })
         .collect()
+}
+
+/// Plays track 0 for `ticks` ticks from the playback position, advancing
+/// it as the clock would, and returns each note edge the track emits as
+/// `(tick, pitch, is_on)`.
+pub(crate) fn play(h: &mut Harness, ticks: i32) -> Vec<(i32, u8, bool)> {
+    let mut edges = Vec::new();
+    for _ in 0..ticks {
+        let tick = h.playback_tick.load(Ordering::Relaxed);
+        while let Some(event) = h.sequencer.tracks_mut()[0].tick() {
+            // Dropped here as `Sequencer::tick` drops it.
+            if event.is_muted() {
+                continue;
+            }
+            let is_on = match event.event_type() {
+                Some(EventType::NoteOn) => true,
+                Some(EventType::NoteOff) => false,
+                None => continue,
+            };
+            edges.push((tick, event.note_number().unwrap(), is_on));
+        }
+        h.playback_tick.fetch_add(1, Ordering::Relaxed);
+    }
+    edges
 }

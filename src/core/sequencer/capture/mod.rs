@@ -186,17 +186,6 @@ impl RunningCaptureTarget {
 }
 
 impl Sequencer {
-    /// [`build_committed_capture`](Self::build_committed_capture) without
-    /// the pass grid.
-    #[cfg(test)]
-    pub(crate) fn build_committed_capture_clip(
-        &self,
-        marquee: Option<(i32, i32)>,
-    ) -> Option<(usize, Clip)> {
-        self.build_committed_capture(marquee)
-            .map(|(track_idx, clip, _)| (track_idx, clip))
-    }
-
     /// Builds the clip a running-capture commit would place — the pure half of
     /// the commit, returning `(track index, positioned clip, pass grid)` without touching
     /// the track or the capture buffer. `None` when the capture holds no note or
@@ -701,7 +690,7 @@ impl Sequencer {
             .then(|| self.capture_loop_length());
 
         match (target, transport_loop) {
-            (RunningCaptureTarget::NewClip, Some(_)) => {
+            (RunningCaptureTarget::NewClip, Some(loop_len)) => {
                 // The *region-grid* pass holding the last note-on — "the last
                 // wrap" as the loop shows it, whatever the cursor — kept whole:
                 // the slice from the cursor is the region, the rest is pre-roll
@@ -711,7 +700,7 @@ impl Sequencer {
                 // early: the anticipating note selects the pass it starts
                 // and is relocated onto its downbeat (held length intact)
                 // before the fold, never dragging the previous pass along.
-                let grid = self.pass_grid(anchor_tick, region_length)?;
+                let grid = PassGrid::new(self.region_start(), loop_len, anchor_tick, region_length);
                 let pass = grid.last_pass(&capture);
                 capture = grid.frame(capture, pass);
             }
@@ -1178,13 +1167,13 @@ mod tests {
     /// The builder is the pure half of the commit: it positions the clip but
     /// leaves the track and the capture buffer exactly as they were.
     #[test]
-    fn build_committed_capture_clip_does_not_touch_the_track_or_buffer() {
+    fn build_committed_capture_does_not_touch_the_track_or_buffer() {
         let bar = Meter::FOUR_FOUR.bar_ticks();
         let mut seq = make_sequencer(0, bar * 2);
         seq.capture_clip.add_event(note_on(600));
         seq.capture_clip.add_event(note_off(900));
 
-        let (track_idx, clip) = seq.build_committed_capture_clip(None).unwrap();
+        let (track_idx, clip, _) = seq.build_committed_capture(None).unwrap();
 
         assert_eq!(track_idx, seq.selected_track_index().unwrap());
         assert_eq!(clip.start_tick(), 0);
@@ -2281,7 +2270,7 @@ mod tests {
             seq.capture_clip.add_event(mod_at(tick, 90));
         }
 
-        assert!(seq.build_committed_capture_clip(None).is_none());
+        assert!(seq.build_committed_capture(None).is_none());
         assert!(seq.build_stopped_capture_clip(None).is_none());
         add_and_select_clip(&mut seq, 0, bar * 2);
         assert!(!seq.open_take_framing(ViewState::Clip));
@@ -2416,7 +2405,7 @@ mod tests {
             seq.capture_clip.add_event(cc_at(tick, 14, 90));
         }
 
-        assert!(seq.build_committed_capture_clip(None).is_none());
+        assert!(seq.build_committed_capture(None).is_none());
         assert!(seq.build_stopped_capture_clip(None).is_none());
         add_and_select_clip(&mut seq, 0, bar * 2);
         assert!(!seq.open_take_framing(ViewState::Clip));
@@ -2439,7 +2428,7 @@ mod tests {
             seq.capture_clip.add_event(event);
         }
 
-        let (_, clip) = seq.build_committed_capture_clip(None).unwrap();
+        let (_, clip, _) = seq.build_committed_capture(None).unwrap();
 
         assert_eq!(
             wheel_moves(clip.events()),
@@ -2558,7 +2547,7 @@ mod tests {
         let mut seq = sequencer_with_knob(bar * 2);
         turn(&mut seq, 0.2, &[(100, 0.4), (400, 0.9)]);
 
-        assert!(seq.build_committed_capture_clip(None).is_none());
+        assert!(seq.build_committed_capture(None).is_none());
         assert!(seq.build_stopped_capture_clip(None).is_none());
         add_and_select_clip(&mut seq, 0, bar * 2);
         assert!(!seq.open_take_framing(ViewState::Clip));
@@ -2574,7 +2563,7 @@ mod tests {
         seq.capture_clip.add_event(note_off(300));
         turn(&mut seq, 0.2, &[(bar, 0.3), (bar + 400, 0.9)]);
 
-        let (_, clip) = seq.build_committed_capture_clip(None).unwrap();
+        let (_, clip, _) = seq.build_committed_capture(None).unwrap();
 
         assert_eq!(
             param_moves(clip.events()),
@@ -2656,7 +2645,7 @@ mod tests {
         turn(&mut seq, 0.2, &[(400, 0.9)]);
         seq.set_track_knobs(0, UNASSIGNED_KNOBS);
 
-        let (_, clip) = seq.build_committed_capture_clip(None).unwrap();
+        let (_, clip, _) = seq.build_committed_capture(None).unwrap();
 
         assert!(param_moves(clip.events()).is_empty());
     }
@@ -3483,8 +3472,8 @@ mod tests {
         let mut seq = make_sequencer(0, bar * 8);
         note_each_bar(&mut seq, 8);
 
-        let (_, clip) = seq
-            .build_committed_capture_clip(Some((bar * 2, bar * 4)))
+        let (_, clip, _) = seq
+            .build_committed_capture(Some((bar * 2, bar * 4)))
             .unwrap();
 
         assert_eq!(clip.start_tick(), bar * 2);
@@ -3512,9 +3501,7 @@ mod tests {
         seq.capture_clip.add_event(note_on(early));
         seq.capture_clip.add_event(note_off(early + 300));
 
-        let (_, clip) = seq
-            .build_committed_capture_clip(Some((bar, bar * 2)))
-            .unwrap();
+        let (_, clip, _) = seq.build_committed_capture(Some((bar, bar * 2))).unwrap();
 
         assert_eq!(
             note_on_ticks(&clip),
@@ -3553,8 +3540,8 @@ mod tests {
             seq.capture_clip.add_event(note_off(t + 300));
         }
 
-        let (_, clip) = seq
-            .build_committed_capture_clip(Some((bar * 2, bar * 4)))
+        let (_, clip, _) = seq
+            .build_committed_capture(Some((bar * 2, bar * 4)))
             .unwrap();
 
         assert_eq!(clip.start_tick(), bar * 2);
@@ -3576,8 +3563,8 @@ mod tests {
         seq.loop_enabled.store(false, Ordering::Relaxed);
         note_each_bar(&mut seq, 2);
 
-        let (_, clip) = seq
-            .build_committed_capture_clip(Some((bar * 6, bar * 9)))
+        let (_, clip, _) = seq
+            .build_committed_capture(Some((bar * 6, bar * 9)))
             .unwrap();
 
         assert_eq!(clip.start_tick(), bar * 6);
@@ -3598,7 +3585,7 @@ mod tests {
         note_each_bar(&mut seq, 8);
         let marquee = (bar * 2, bar * 4);
 
-        assert!(seq.build_committed_capture_clip(Some(marquee)).is_none());
+        assert!(seq.build_committed_capture(Some(marquee)).is_none());
         assert_eq!(
             marquee_refusal(&seq, marquee),
             Some(MarqueeRefusal::OverlapsClip)
@@ -3613,7 +3600,7 @@ mod tests {
         let seq = make_sequencer(0, bar * 2);
         seq.running.store(true, Ordering::Relaxed);
         assert_eq!(marquee_refusal(&seq, (bar * 4, bar * 6)), None);
-        assert!(seq.build_committed_capture_clip(Some((0, bar))).is_none());
+        assert!(seq.build_committed_capture(Some((0, bar))).is_none());
     }
 
     // --- The punch-in overdub (`470-marquee-capture.md` decision 9) ---
