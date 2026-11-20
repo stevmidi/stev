@@ -53,6 +53,7 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ### Fixed
 
+- A take captured into a clip no longer mangles a note it overlaps at the same pitch. Before, a captured note that started inside an earlier note was cut to a sliver and the earlier note stretched to the captured release; now the captured note keeps the length you played and the earlier one is trimmed where the captured note starts, as when you place notes in the piano roll (issue #35).
 - Enter's tempo fit and `⌥=`/`⌥-` on a project's only clip no longer set a tempo outside 20–300 BPM, the range the BPM chip sets. A press that would is refused, the clip and the tempo stay as they were, and the footer says what tempo it would have set. Before, a few `⌥=` presses on a short clip could take the project past 300 BPM, and the chip snapped it back at the first touch (issue #42).
 
 ## [0.16.1] - 2026-11-15
