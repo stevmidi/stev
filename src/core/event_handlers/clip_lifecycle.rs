@@ -89,9 +89,9 @@ impl EventHandlers {
     /// `,`/`.` (`SequencerCommand::StepPass`, `540-earlier-pass.md`): the
     /// take the running `/` landed, a new clip or an insert into the lead
     /// clip, shows the pass before or after, while that commit is the newest
-    /// undo step with nothing to redo (decision 5, read from the record). The step merges into the commit's undo step
-    /// (decision 4), whose view snapshots stay as they were: a step changes
-    /// no view state. The footer says which pass, or why nothing changed.
+    /// undo step with nothing to redo (decision 5, read from the record).
+    /// The step merges into the commit's undo step (decision 4), whose view
+    /// snapshots stay as they were: a step changes no view state. The footer says which pass, or why nothing changed.
     pub(super) fn step_pass_workflow(
         &self,
         sequencer: &mut Sequencer,

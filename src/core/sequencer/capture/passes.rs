@@ -165,26 +165,47 @@ impl InsertGrid {
         (tick - self.anchor).div_euclid(loop_len)
     }
 
-    /// The pass a note-on at `tick` is counted in: its window, but a note
-    /// within [`LATE_NOTE_TOLERANCE_TICKS`](config::LATE_NOTE_TOLERANCE_TICKS)
-    /// of a loop wrap anticipates the downbeat after it, so it counts toward
-    /// the window whose loop pass starts there, which pulls it onto that
-    /// downbeat ([`frame`](Self::frame)).
-    fn pass_of_note(&self, tick: i32, loop_len: i32) -> i32 {
+    /// The pass a note-on at `tick` lands in, or `None` when it lands in
+    /// none, as [`land`](Self::land) places it: its window, at its offset
+    /// into it. A note within
+    /// [`LATE_NOTE_TOLERANCE_TICKS`](config::LATE_NOTE_TOLERANCE_TICKS) of a
+    /// loop wrap anticipates the downbeat after it, and is pulled onto the
+    /// start of the loop pass there ([`frame`](Self::frame)): the start of
+    /// the next window when the anchor is the loop start, before every
+    /// window otherwise, where the crop drops it.
+    fn pass_of_note(&self, tick: i32, loop_len: i32) -> Option<i32> {
         let loop_phase = (tick - self.anchor + self.phase).rem_euclid(loop_len);
         let to_wrap = loop_len - loop_phase;
         if to_wrap <= config::LATE_NOTE_TOLERANCE_TICKS {
-            self.window_of(tick + to_wrap + self.phase, loop_len)
-        } else {
-            self.window_of(tick, loop_len)
+            let downbeat = tick + to_wrap;
+            return (self.phase == 0 && self.lands_at(0))
+                .then(|| self.window_of(downbeat, loop_len));
         }
+        self.pass_of_move(tick, loop_len)
+    }
+
+    /// The pass an event at `tick` that stays where it was played lands in,
+    /// or `None` when its offset into its window falls outside what lands.
+    fn pass_of_move(&self, tick: i32, loop_len: i32) -> Option<i32> {
+        self.lands_at((tick - self.anchor).rem_euclid(loop_len))
+            .then(|| self.window_of(tick, loop_len))
+    }
+
+    /// Whether an event `offset` ticks into its window lands: inside the
+    /// room before the clip's end, and inside the punch-in when there is
+    /// one.
+    fn lands_at(&self, offset: i32) -> bool {
+        offset < self.room
+            && self
+                .punch_in
+                .is_none_or(|(start, end)| (start..end).contains(&offset))
     }
 
     /// `capture` framed on pass `pass`, as the running `/` frames `last`,
-    /// the pass it took, cropped to the window and rebased to 0: the wheels held into it
-    /// carried onto its start, a note within the tolerance of its loop
-    /// pass's wrap pulled onto that pass's start (kept only when the anchor
-    /// is the loop start). An earlier pass leaves out what the pass after it
+    /// the pass it took, cropped to the window and rebased to 0: the wheels
+    /// held into it carried onto its start, a note within the tolerance of
+    /// its loop pass's wrap pulled onto that pass's start (kept only when
+    /// the anchor is the loop start). An earlier pass leaves out what the pass after it
     /// claims: the notes just before its loop pass's wrap, and anything past
     /// one loop from its start when the clip is longer than the loop. `None`
     /// when nothing in it lands.
@@ -246,8 +267,9 @@ impl PassFraming for InsertGrid {
         })
     }
 
-    /// The passes holding a note-on, or in a take of controller moves alone
-    /// the passes holding one.
+    /// The passes a note-on lands in, or in a take of controller moves alone
+    /// the passes one lands in: a pass that would land nothing, its notes
+    /// all outside the punch-in or past the clip's end, isn't one.
     fn passes(&self, buffer: &Clip, last: i32) -> Vec<i32> {
         let Some(len) = self.loop_len else {
             return vec![last];
@@ -256,12 +278,15 @@ impl PassFraming for InsertGrid {
         if buffer.has_notes() {
             let note_ons = events.filter(|event| event.event_type() == Some(EventType::NoteOn));
             counted(
-                note_ons.map(|event| self.pass_of_note(event.tick(), len)),
+                note_ons.filter_map(|event| self.pass_of_note(event.tick(), len)),
                 last,
             )
         } else {
             let moves = events.filter(|event| event.controller_move().is_some());
-            counted(moves.map(|event| self.window_of(event.tick(), len)), last)
+            counted(
+                moves.filter_map(|event| self.pass_of_move(event.tick(), len)),
+                last,
+            )
         }
     }
 }
@@ -388,5 +413,34 @@ mod tests {
         let clip = buffer(&[100, BAR * 3 / 4, BAR + 200, BAR + BAR * 3 / 4]);
         assert_eq!(landed(grid, &clip, 0), vec![100]);
         assert_eq!(landed(grid, &clip, 1), vec![200]);
+    }
+
+    /// A pass whose notes all miss the punch-in lands nothing, so it isn't
+    /// one to step to.
+    #[test]
+    fn a_pass_landing_nothing_is_not_counted() {
+        let grid = InsertGrid {
+            punch_in: Some((0, BAR / 2)),
+            ..insert_grid(BAR, BAR)
+        };
+        let clip = buffer(&[100, BAR + BAR * 3 / 4, BAR * 2 + 200]);
+        assert_eq!(grid.passes(&clip, 2), vec![0, 2]);
+    }
+
+    /// With the anchor mid-loop, a note just before the loop's wrap lands in
+    /// no window (the relocation puts it before each), so a pass holding
+    /// only that note isn't counted either.
+    #[test]
+    fn an_early_note_off_the_anchor_counts_nowhere() {
+        let grid = InsertGrid {
+            phase: BAR,
+            ..insert_grid(BAR * 2, BAR * 2)
+        };
+        // Window 0 is loop ticks [BAR, 3·BAR): the wrap sits at its middle.
+        let clip = buffer(&[100, BAR - 40, BAR * 3 + 100]);
+        assert_eq!(grid.passes(&clip, 1), vec![0, 1]);
+        let clip = buffer(&[BAR - 40, BAR * 2 + 100]);
+        assert_eq!(grid.passes(&clip, 1), vec![1]);
+        assert!(grid.land(clip.clone(), 0, 1).is_none(), "nothing lands");
     }
 }
