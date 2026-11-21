@@ -14,6 +14,7 @@ use rtrb::RingBuffer;
 use undo::Record;
 use uuid::Uuid;
 
+use crate::core::metronome::Metronome;
 use crate::core::midi::out_queue::MidiOutMessage;
 use crate::core::project::{LibraryChange, ProjectAction, StorageJob};
 use crate::core::sequencer::test_support::{clip_at, note_off, note_on};
@@ -185,6 +186,11 @@ pub(crate) fn transport_with_events(h: &Harness) -> (Transport, Receiver<Transpo
 }
 
 /// [`transport_with_events`], its events dropped.
+/// A metronome that never clicks, for the transport commands that take one.
+pub(crate) fn muted_metronome() -> Metronome {
+    Metronome::new(Arc::new(AtomicBool::new(true)), RingBuffer::new(1).0)
+}
+
 pub(crate) fn transport(h: &Harness) -> Transport {
     transport_with_events(h).0
 }

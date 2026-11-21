@@ -16,7 +16,7 @@
 //! (`510-performance-lane-keyboard.md`).
 
 use crate::core::config;
-use crate::core::time::Meter;
+use crate::core::time::{Meter, snap_to_grid};
 
 /// The lane's live state: the run its presses make, and a stop waiting for
 /// the next beat. Not saved, not an undo step. See the module docs.
@@ -128,18 +128,18 @@ impl PerformanceLane {
         run.expected_tick += 1;
     }
 
-    /// Whether a stop is waiting for the next beat.
-    pub(crate) fn is_stop_pending(&self) -> bool {
-        self.stop_pending
+    /// `Space` while running, with playback about to play `playback_tick`:
+    /// whether to stop now. With the lane `armed` and playback off a beat of
+    /// `meter`, the stop waits for the next beat instead
+    /// ([`take_due_stop`](Self::take_due_stop)); a second press while it
+    /// waits stops at once (`550-phase-jumps.md` § The stop on the beat).
+    pub(crate) fn stop_now(&mut self, meter: Meter, playback_tick: i32, armed: bool) -> bool {
+        let wait = armed && !self.stop_pending && phase_offset(meter, playback_tick) != 0;
+        self.stop_pending = wait;
+        !wait
     }
 
-    /// Asks playback to stop at the next beat; a press cancels it.
-    pub(crate) fn request_stop(&mut self) {
-        self.stop_pending = true;
-    }
-
-    /// Drops a stop waiting for the next beat: playback stopped or started
-    /// some other way.
+    /// Drops a stop waiting for the next beat: playback is starting again.
     pub(crate) fn cancel_stop(&mut self) {
         self.stop_pending = false;
     }
@@ -296,19 +296,14 @@ pub(crate) fn key_tick(meter: Meter, length: KeyLength, key_index: i32) -> i32 {
 
 /// How far past its key's start a press while running jumps, when playback
 /// is about to play `playback_tick`: its distance from the nearest beat of
-/// `meter`, in `-beat/2 + 1 ..= beat/2` (exactly half a beat counts as late).
+/// `meter` ([`snap_to_grid`]), in `-beat/2 .. beat/2` (exactly half a beat
+/// counts as early, for the next beat).
 /// The press jumps to its key plus this, so the key's start sounds on a beat
 /// of the grid playback was on and the beat never breaks: a late press skips
 /// the start of its key, an early one plays the end of what comes before it
 /// (`550-phase-jumps.md`).
 pub(crate) fn phase_offset(meter: Meter, playback_tick: i32) -> i32 {
-    let beat = meter.beat_ticks();
-    let into_beat = playback_tick.rem_euclid(beat);
-    if into_beat * 2 <= beat {
-        into_beat
-    } else {
-        into_beat - beat
-    }
+    playback_tick - snap_to_grid(playback_tick, meter.beat_ticks())
 }
 
 #[cfg(test)]
@@ -482,49 +477,54 @@ mod tests {
     }
 
     #[test]
-    fn a_stop_waits_for_the_next_beat() {
+    fn a_stop_off_a_beat_waits_for_the_next_one() {
+        let meter = Meter::FOUR_FOUR;
         let mut lane = PerformanceLane::new();
-        assert!(!lane.take_due_stop(Meter::FOUR_FOUR, 0), "nothing asked");
-        lane.request_stop();
-        assert!(!lane.take_due_stop(Meter::FOUR_FOUR, PPQN + 1));
-        assert!(!lane.take_due_stop(Meter::FOUR_FOUR, 2 * PPQN - 1));
-        assert!(lane.take_due_stop(Meter::FOUR_FOUR, 2 * PPQN));
-        assert!(!lane.is_stop_pending(), "used up");
+        assert!(!lane.take_due_stop(meter, 0), "nothing asked");
+        assert!(!lane.stop_now(meter, PPQN + 1, true));
+        assert!(!lane.take_due_stop(meter, 2 * PPQN - 1));
+        assert!(lane.take_due_stop(meter, 2 * PPQN));
+        assert!(!lane.take_due_stop(meter, 3 * PPQN), "used up");
+    }
+
+    #[test]
+    fn a_stop_on_a_beat_unarmed_or_asked_twice_is_now() {
+        let meter = Meter::FOUR_FOUR;
+        let mut lane = PerformanceLane::new();
+        assert!(lane.stop_now(meter, 2 * PPQN, true), "on a beat");
+        assert!(lane.stop_now(meter, PPQN + 1, false), "unarmed");
+        assert!(!lane.stop_now(meter, PPQN + 1, true));
+        assert!(lane.stop_now(meter, PPQN + 2, true), "asked again");
+        assert!(!lane.take_due_stop(meter, 2 * PPQN), "nothing left waiting");
     }
 
     #[test]
     fn a_press_cancels_a_waiting_stop() {
         let mut lane = PerformanceLane::new();
-        lane.request_stop();
+        assert!(!lane.stop_now(Meter::FOUR_FOUR, 300, true));
         lane.press(960, 0, false);
         assert!(!lane.take_due_stop(Meter::FOUR_FOUR, 960));
     }
 
+    /// Where a press jumps relative to its key, by where playback is: on a
+    /// beat at it, late past it, early ahead of it, half a beat counting as
+    /// early for the next beat, before bar 1 alike.
     #[test]
-    fn a_press_on_the_beat_jumps_to_its_key() {
-        assert_eq!(phase_offset(Meter::FOUR_FOUR, 0), 0);
-        assert_eq!(phase_offset(Meter::FOUR_FOUR, 7 * PPQN), 0);
-    }
-
-    #[test]
-    fn a_late_press_jumps_past_its_key() {
-        assert_eq!(phase_offset(Meter::FOUR_FOUR, 2 * PPQN + 300), 300);
-        assert_eq!(phase_offset(Meter::FOUR_FOUR, PPQN + 1), 1);
-    }
-
-    #[test]
-    fn an_early_press_jumps_ahead_of_its_key() {
-        assert_eq!(phase_offset(Meter::FOUR_FOUR, 2 * PPQN - 200), -200);
-        assert_eq!(phase_offset(Meter::FOUR_FOUR, PPQN - 1), -1);
-    }
-
-    #[test]
-    fn half_a_beat_counts_as_late() {
-        assert_eq!(phase_offset(Meter::FOUR_FOUR, PPQN / 2), PPQN / 2);
-        assert_eq!(
-            phase_offset(Meter::FOUR_FOUR, PPQN / 2 + 1),
-            -(PPQN / 2 - 1)
-        );
+    fn a_press_lands_its_offset_from_the_nearest_beat() {
+        for (tick, offset) in [
+            (0, 0),
+            (7 * PPQN, 0),
+            (2 * PPQN + 300, 300),
+            (PPQN + 1, 1),
+            (2 * PPQN - 200, -200),
+            (PPQN - 1, -1),
+            (PPQN / 2 - 1, PPQN / 2 - 1),
+            (PPQN / 2, -(PPQN / 2)),
+            (-100, -100),
+            (-PPQN + 100, 100),
+        ] {
+            assert_eq!(phase_offset(Meter::FOUR_FOUR, tick), offset, "tick {tick}");
+        }
     }
 
     #[test]
@@ -534,12 +534,6 @@ mod tests {
         assert_eq!(eighth, PPQN / 2);
         assert_eq!(phase_offset(six_eight, 3 * eighth + 100), 100);
         assert_eq!(phase_offset(six_eight, 3 * eighth - 100), -100);
-    }
-
-    #[test]
-    fn a_press_before_bar_1_measures_from_the_beat_it_is_in() {
-        assert_eq!(phase_offset(Meter::FOUR_FOUR, -100), -100);
-        assert_eq!(phase_offset(Meter::FOUR_FOUR, -PPQN + 100), 100);
     }
 
     #[test]

@@ -51,9 +51,9 @@ It is how the lane plays, not a correction: what is heard is the jump, made at t
 
 Added 2026-11-21 after the first hand test. A performance usually ends with `Space`, then the cursor is moved to where the take goes and `/` inserts it. `Space` stopped where it was pressed, so the run ended off the beat and the inserted clips ended mid-beat. With phase jumps, playback's beat grid is the take's grid, so a stop on a beat gives a take of whole beats.
 
-- **`Space` while running with the lane armed, off a beat, waits for the next beat** and stops there (`PerformanceLane::request_stop`; `play_tick` stops the transport once playback's next tick is a beat, `take_due_stop`). Up to a beat more plays, and it is in the take, since it was heard. On a beat it stops at once.
+- **`Space` while running with the lane armed, off a beat, waits for the next beat** and stops there (`PerformanceLane::stop_now`; `play_tick` stops the transport once playback's next tick is a beat, `take_due_stop`). Up to a beat more plays, and it is in the take, since it was heard. On a beat it stops at once.
 - **A second `Space` while the stop waits stops at once**, the way out.
-- **A press while it waits cancels it**: playing on means the performance isn't over. So does a ruler click, `Stop` or starting again.
+- **A press while it waits cancels it**: playing on means the performance isn't over. Starting playback again (`Space`, a ruler click: `begin_running_take`) drops one left over.
 - **Disarming while it waits doesn't cancel it**: the stop was asked for, and it still lands on the beat.
 - Unarmed, `Space` stops where it is pressed, as before. Nothing shows that a stop is waiting: it lasts under a beat. If it ever feels unresponsive, a waiting cue on the play state is the first thing to try.
 
@@ -67,7 +67,7 @@ How it feels decides these, so they start as below and are changed by hand after
 
 ## What changes
 
-- `handle_performance_lane_midi_input`: the jump target is `T` when the press starts the transport, otherwise `phase_target(meter, p, T)`, with `p` the playback tick at the press (`transport.playback_tick()`, the tick the run's `expected_tick` holds). `press` and `jump_and_chase` both get that tick. The pure helper `phase_target` sits beside `key_tick` in `models/performance_lane.rs` and holds the arithmetic and its tests.
+- `handle_performance_lane_midi_input`: the jump target is `T` when the press starts the transport, otherwise `T + phase_offset(meter, p)`, with `p` the playback tick at the press (`transport.playback_tick()`, the tick the run's `expected_tick` holds). `press` and `jump_and_chase` both get that tick. The pure helper `phase_offset` sits beside `key_tick` in `models/performance_lane.rs` and holds the arithmetic and its tests.
 - `PerformanceLane::press` takes the offset beside the jumped-to tick; `Run::lead` holds the first press's, and `take_run` shifts by it (decision 5).
 
 As built, the pump reads the click's position before the advance, so a press between ticks sees the tick about to play: it measures that tick's offset and the next tick plays the jumped-to position. A press exactly on a beat jumps to the key's start, which clicks; one a tick after it jumps a tick in, which doesn't. No beat clicks twice or is skipped (`Metronome`'s `a_phase_jump_keeps_the_click_a_beat_apart`).
@@ -75,7 +75,7 @@ As built, the pump reads the click's position before the advance, so a press bet
 
 ## Tests
 
-- `phase_target`: on the beat → `T`; late by `d < b/2` → `T + d`; early by `d < b/2` → `T - d`; exactly half a beat (pick a side and pin it); x/8 measures to the eighth; `T = 0` early → below 0 (or clamped, as decision 4 settles).
+- `phase_offset`: on the beat → `T`; late by `d < b/2` → `T + d`; early by `d < b/2` → `T - d`; exactly half a beat counts as early (`snap_to_grid`'s tie); x/8 measures to the eighth; `T = 0` early → below 0 (or clamped, as decision 4 settles).
 - A press while running jumps to `T + offset`; the press that starts the transport jumps to `T`.
 - The run keeps the phase jump, and `advance` doesn't end the run after it (`expected_tick` is the jumped-to tick).
 - The render: a run started by a press while stopped renders as today; a run whose first press came while running, late or early, is shifted so `T` is at the cursor, with the length adjusted; later presses' content stays on the grid it was heard on.

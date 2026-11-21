@@ -2,8 +2,9 @@
 //! performance lane is armed: a `NoteOn` on a mapped key jumps the transport to
 //! that key (`key_tick`, a bar, half a bar or a beat a key), at the press's
 //! offset from the nearest beat while running so the beat never breaks
-//! (`phase_offset`, `550-phase-jumps.md`), and joins the lane's run (`520-performance-capture.md` decision 2), which `/`
-//! renders into clips at the arranger cursor (decision 1). A `NoteOff` does
+//! (`phase_offset`, `550-phase-jumps.md`), and joins the lane's run
+//! (`520-performance-capture.md` decision 2), which `/` renders into clips
+//! at the arranger cursor (decision 1). A `NoteOff` does
 //! nothing: releasing the key doesn't stop playback, so a performer stops on
 //! their own terms, and no loop wrap waits on it (the loop doesn't wrap while
 //! the lane is selected, decision 5).
@@ -111,19 +112,16 @@ impl EventHandlers {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::Ordering;
 
     use std::time::Instant;
 
-    use rtrb::RingBuffer;
     use undo::Record;
 
     use crate::core::config::PERFORMANCE_LANE_BASE_NOTE;
     use crate::core::event_handlers::test_harness::{
-        Harness, harness, run_command, statuses, transport,
+        Harness, harness, muted_metronome, run_command, statuses, transport,
     };
-    use crate::core::metronome::Metronome;
     use crate::core::sequencer::test_support::{clip_at, clip_notes, clip_with_marker_notes, rect};
     use crate::core::sequencer::{SequencerCommand, UndoStep};
     use crate::core::time::Meter;
@@ -379,12 +377,11 @@ mod tests {
 
     /// `Space`.
     fn space(h: &mut Harness, transport: &mut Transport) {
-        let metronome = Metronome::new(Arc::new(AtomicBool::new(true)), RingBuffer::new(1).0);
         h.handlers.handle_transport_command(
             &TransportCommand::TogglePlayback,
             transport,
             &mut h.sequencer,
-            &metronome,
+            &muted_metronome(),
         );
     }
 
@@ -430,7 +427,6 @@ mod tests {
         space(&mut h, &mut transport);
         space(&mut h, &mut transport);
         assert!(!transport.is_running());
-        assert!(!h.sequencer.performance_lane_mut().is_stop_pending());
     }
 
     #[test]

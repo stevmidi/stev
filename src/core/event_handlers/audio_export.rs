@@ -139,9 +139,8 @@ impl EventHandlers {
         // `Space` on the armed lane waits for the next beat
         // (`550-phase-jumps.md` § The stop on the beat): stop once playback
         // has reached it, so the run ends on a whole beat.
-        let meter = sequencer.meter();
-        let next = sequencer.playback_tick();
-        if sequencer.performance_lane_mut().take_due_stop(meter, next) {
+        let (meter, tick) = (sequencer.meter(), sequencer.playback_tick());
+        if sequencer.performance_lane_mut().take_due_stop(meter, tick) {
             transport.stop();
         }
     }
@@ -340,11 +339,10 @@ fn plural(n: usize) -> &'static str {
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::Ordering;
     use std::time::Duration;
 
     use egui::Key;
-    use rtrb::RingBuffer;
     use undo::Record;
 
     use crate::core::input_event::{InputEvent, KeyModifiers};
@@ -355,7 +353,7 @@ mod tests {
     use crate::core::time::Meter;
 
     use super::super::test_harness::{
-        Harness, harness, run_command, statuses, transport_with_events,
+        Harness, harness, muted_metronome, run_command, statuses, transport_with_events,
     };
     use super::*;
 
@@ -505,7 +503,7 @@ mod tests {
     fn the_run_is_stepped_from_the_selections_start_to_its_end() {
         let mut h = harness();
         let (mut transport, events) = transport_with_events(&h);
-        let metronome = Metronome::new(Arc::new(AtomicBool::new(true)), RingBuffer::new(1).0);
+        let metronome = muted_metronome();
         h.cursor_tick.store(7, Ordering::Relaxed);
         let mut exported = plan(&[(0, "01 Synth.wav")], Vec::new());
         (exported.start_tick, exported.end_tick) = (BAR, 2 * BAR);
