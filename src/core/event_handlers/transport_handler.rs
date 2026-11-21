@@ -6,6 +6,8 @@
 
 use log::debug;
 
+use crate::models::performance_lane::phase_offset;
+
 use super::*;
 
 impl EventHandlers {
@@ -144,8 +146,20 @@ impl EventHandlers {
             }
             TransportCommand::TogglePlayback => {
                 if transport.is_running() {
-                    transport.stop();
+                    // On the armed lane, off a beat, the stop waits for the
+                    // next one (`550-phase-jumps.md` § The stop on the
+                    // beat); a second press while it waits stops at once.
+                    let off_beat = phase_offset(sequencer.meter(), sequencer.playback_tick()) != 0;
+                    let armed = sequencer.is_performance_lane_armed();
+                    let lane = sequencer.performance_lane_mut();
+                    if armed && off_beat && !lane.is_stop_pending() {
+                        lane.request_stop();
+                    } else {
+                        lane.cancel_stop();
+                        transport.stop();
+                    }
                 } else {
+                    sequencer.performance_lane_mut().cancel_stop();
                     // `restart_from_cursor` starts playback from the cursor.
                     sequencer.begin_running_take(sequencer.cursor_tick());
                     transport.restart_from_cursor();
@@ -153,6 +167,7 @@ impl EventHandlers {
                 }
             }
             TransportCommand::Stop => {
+                sequencer.performance_lane_mut().cancel_stop();
                 sequencer.reset_capture();
                 transport.stop();
                 transport.reset_playback_to_cursor();
@@ -168,6 +183,7 @@ impl EventHandlers {
 /// starts again, leaving the cursor: `PlayFromTick`, and the seek of an audio
 /// export's run.
 fn play_from_tick(tick: i32, transport: &mut Transport, sequencer: &mut Sequencer) {
+    sequencer.performance_lane_mut().cancel_stop();
     sequencer.begin_running_take(tick);
     transport.stop();
     transport.jump_and_chase(tick);

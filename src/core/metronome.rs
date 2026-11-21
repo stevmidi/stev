@@ -302,6 +302,37 @@ mod tests {
         );
     }
 
+    /// The steps (one per clock tick) on which a click sounds, playing from
+    /// 0 to `press`, then from `jump` on, `after` ticks: a lane press on the
+    /// tick about to play `press`, landing at `jump`.
+    fn click_steps(press: i32, jump: i32, after: i32) -> Vec<i32> {
+        let (mut m, mut rx) = make(false);
+        let positions = (0..press).chain(jump..jump + after);
+        positions
+            .enumerate()
+            .filter_map(|(step, tick)| {
+                m.on_tick(Instant::now(), tick, Meter::FOUR_FOUR, true);
+                let step = i32::try_from(step).expect("a short test");
+                rx.pop().is_ok().then_some(step)
+            })
+            .collect()
+    }
+
+    /// Regression (`550-phase-jumps.md` decision 6): a lane press lands at
+    /// its key plus its offset from the nearest beat, so the click keeps one
+    /// beat between clicks across it, pressed late, early or on the beat. A
+    /// jump to the key's start restarted the click wherever the press fell.
+    #[test]
+    fn a_phase_jump_keeps_the_click_a_beat_apart() {
+        let bar_5 = 4 * 4 * PPQN;
+        let every_beat: Vec<i32> = (0..6).map(|beat| beat * PPQN).collect();
+        for offset in [300, -200, 0, 1, -1, PPQN / 2] {
+            let press = 2 * PPQN + offset;
+            let steps = click_steps(press, bar_5 + offset, 6 * PPQN - press);
+            assert_eq!(steps, every_beat, "offset {offset}");
+        }
+    }
+
     /// Starting on a bar line strikes its downbeat first, whatever beat the
     /// clock was counting in on while stopped.
     #[test]

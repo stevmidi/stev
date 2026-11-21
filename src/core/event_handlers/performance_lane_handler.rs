@@ -1,7 +1,8 @@
 //! The `EventHandlers` chokepoint for raw MIDI-IN while the arranger
 //! performance lane is armed: a `NoteOn` on a mapped key jumps the transport to
-//! the start of that key (`key_tick`, a bar, half a bar or a beat a key) and
-//! joins the lane's run (`520-performance-capture.md` decision 2), which `/`
+//! that key (`key_tick`, a bar, half a bar or a beat a key), at the press's
+//! offset from the nearest beat while running so the beat never breaks
+//! (`phase_offset`, `550-phase-jumps.md`), and joins the lane's run (`520-performance-capture.md` decision 2), which `/`
 //! renders into clips at the arranger cursor (decision 1). A `NoteOff` does
 //! nothing: releasing the key doesn't stop playback, so a performer stops on
 //! their own terms, and no loop wrap waits on it (the loop doesn't wrap while
@@ -15,7 +16,7 @@ use crate::core::agent::{format_position, length_label};
 use crate::core::sequencer::{DuplicateTimeEdit, UndoStep};
 use crate::models::{
     event::{Event, EventType},
-    performance_lane::{key_index_from_note, key_tick},
+    performance_lane::{key_index_from_note, key_tick, phase_offset},
 };
 
 use super::*;
@@ -49,13 +50,21 @@ impl EventHandlers {
         let Some(key_index) = key_index_from_note(note) else {
             return;
         };
-        let target_tick = key_tick(
-            sequencer.meter(),
-            sequencer.performance_lane_key_length(),
-            key_index,
-        );
+        let meter = sequencer.meter();
+        let key_start = key_tick(meter, sequencer.performance_lane_key_length(), key_index);
         let started = !transport.is_running();
-        sequencer.performance_lane_mut().press(target_tick, started);
+        // Running, the key's start sounds on the beat nearest the press:
+        // playback's next tick is `offset` from a beat, and the jump lands
+        // as far from the key's start. Stopped, there is no beat to keep.
+        let offset = if started {
+            0
+        } else {
+            phase_offset(meter, sequencer.playback_tick())
+        };
+        let target_tick = key_start + offset;
+        sequencer
+            .performance_lane_mut()
+            .press(target_tick, offset, started);
         if started {
             transport.start();
         }
@@ -102,20 +111,23 @@ impl EventHandlers {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::Ordering;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     use std::time::Instant;
 
+    use rtrb::RingBuffer;
     use undo::Record;
 
     use crate::core::config::PERFORMANCE_LANE_BASE_NOTE;
     use crate::core::event_handlers::test_harness::{
         Harness, harness, run_command, statuses, transport,
     };
+    use crate::core::metronome::Metronome;
     use crate::core::sequencer::test_support::{clip_at, clip_notes, clip_with_marker_notes, rect};
     use crate::core::sequencer::{SequencerCommand, UndoStep};
     use crate::core::time::Meter;
-    use crate::core::transport::Transport;
+    use crate::core::transport::{Transport, TransportCommand};
     use crate::models::performance_lane::KeyLength;
 
     /// Where pressing key `key_index` with the lane at `length` (and `meter`)
@@ -208,7 +220,8 @@ mod tests {
     /// The armed lane over an arrangement of a clip over bars 1–2 on track 0
     /// (a note every 500 ticks) and one over bar 2 on track 1, the cursor
     /// at `cursor`, after a run of E3 (bar 2) for 300 ticks then C3 (bar 1)
-    /// for 200, a beat a key.
+    /// for 200, a beat a key. C3 comes 300 ticks into a beat, so it lands
+    /// 300 ticks into bar 1 (`550-phase-jumps.md`).
     fn played(cursor: i32) -> (Harness, Transport, Record<UndoStep>) {
         let (mut h, mut transport, record) = armed();
         h.sequencer.tracks_mut()[0].add_clip(&clip_with_marker_notes(0, 7680));
@@ -223,7 +236,7 @@ mod tests {
     }
 
     /// What the run in [`played`] renders on each track, inserted at 7680.
-    const RENDER_0: [(i32, i32, i32); 2] = [(7680, 7980, 3840), (7980, 8180, 0)];
+    const RENDER_0: [(i32, i32, i32); 2] = [(7680, 7980, 3840), (7980, 8180, 300)];
     const RENDER_1: [(i32, i32, i32); 1] = [(7680, 7980, 0)];
 
     #[test]
@@ -234,7 +247,7 @@ mod tests {
         assert_eq!(
             track_clips(&h, 0),
             [[(0, 7680, 0)].as_slice(), &RENDER_0].concat(),
-            "bar 2's start, then bar 1's, on the track they came from"
+            "bar 2's start, then bar 1 from where C3 landed, on the track they came from"
         );
         assert_eq!(
             track_clips(&h, 1),
@@ -320,14 +333,142 @@ mod tests {
             &mut record,
             SequencerCommand::SetPerformanceLaneKeyLength(KeyLength::Bar),
         );
-        // C♯3 at a bar a key: bar 2 again.
+        // C♯3 at a bar a key: bar 2 again, 300 ticks in (its phase).
         press(&mut h, &mut transport, 1);
         play(&mut h, &mut transport, 200);
         slash(&mut h, &mut record);
         assert_eq!(
             track_clips(&h, 0),
-            [(0, 7680, 0), (7680, 7980, 3840), (7980, 8180, 3840)],
+            [(0, 7680, 0), (7680, 7980, 3840), (7980, 8180, 3840 + 300)],
             "both from bar 2, as heard; E3 at a bar a key would be bar 5"
+        );
+    }
+
+    /// Where playback is after pressing key `key_index` (a beat a key) with
+    /// playback about to play `at`, running.
+    fn jump_while_running(at: i32, key_index: u8) -> i32 {
+        let (mut h, mut transport, _record) = armed();
+        transport.start();
+        h.playback_tick.store(at, Ordering::Relaxed);
+        press(&mut h, &mut transport, key_index);
+        h.playback_tick.load(Ordering::Relaxed)
+    }
+
+    /// `550-phase-jumps.md`: running, a press lands at its key plus its
+    /// offset from the nearest beat, so the beat never breaks.
+    #[test]
+    fn a_press_while_running_keeps_the_beat() {
+        let beat = Meter::FOUR_FOUR.beat_ticks();
+        assert_eq!(jump_while_running(2 * beat, 4), 4 * beat, "on the beat");
+        assert_eq!(
+            jump_while_running(2 * beat + 300, 4),
+            4 * beat + 300,
+            "late"
+        );
+        assert_eq!(
+            jump_while_running(2 * beat - 200, 4),
+            4 * beat - 200,
+            "early"
+        );
+        assert_eq!(
+            jump_while_running(beat - 100, 0),
+            -100,
+            "early onto bar 1: just before it"
+        );
+    }
+
+    /// `Space`.
+    fn space(h: &mut Harness, transport: &mut Transport) {
+        let metronome = Metronome::new(Arc::new(AtomicBool::new(true)), RingBuffer::new(1).0);
+        h.handlers.handle_transport_command(
+            &TransportCommand::TogglePlayback,
+            transport,
+            &mut h.sequencer,
+            &metronome,
+        );
+    }
+
+    /// `550-phase-jumps.md` § The stop on the beat: `Space` on the armed
+    /// lane, off a beat, plays on to the next beat and stops there, so the
+    /// run ends on a whole beat.
+    #[test]
+    fn space_on_the_armed_lane_stops_on_the_next_beat() {
+        let beat = Meter::FOUR_FOUR.beat_ticks();
+        let (mut h, mut transport, _record) = armed();
+        press(&mut h, &mut transport, 4);
+        play(&mut h, &mut transport, beat + 300);
+        space(&mut h, &mut transport);
+        assert!(transport.is_running(), "waits for the beat");
+        play(&mut h, &mut transport, beat - 301);
+        assert!(transport.is_running(), "a tick short of it");
+        play(&mut h, &mut transport, 1);
+        assert!(!transport.is_running());
+        assert_eq!(h.playback_tick.load(Ordering::Relaxed), 6 * beat);
+        let take = h.sequencer.performance_lane_mut().take_run();
+        assert_eq!(
+            take.map(|take| take.length),
+            Some(2 * beat),
+            "two whole beats"
+        );
+    }
+
+    #[test]
+    fn space_on_a_beat_stops_at_once() {
+        let beat = Meter::FOUR_FOUR.beat_ticks();
+        let (mut h, mut transport, _record) = armed();
+        press(&mut h, &mut transport, 4);
+        play(&mut h, &mut transport, beat);
+        space(&mut h, &mut transport);
+        assert!(!transport.is_running());
+    }
+
+    #[test]
+    fn a_second_space_while_the_stop_waits_stops_at_once() {
+        let (mut h, mut transport, _record) = armed();
+        press(&mut h, &mut transport, 4);
+        play(&mut h, &mut transport, 300);
+        space(&mut h, &mut transport);
+        space(&mut h, &mut transport);
+        assert!(!transport.is_running());
+        assert!(!h.sequencer.performance_lane_mut().is_stop_pending());
+    }
+
+    #[test]
+    fn a_press_while_the_stop_waits_keeps_playing() {
+        let beat = Meter::FOUR_FOUR.beat_ticks();
+        let (mut h, mut transport, _record) = armed();
+        press(&mut h, &mut transport, 4);
+        play(&mut h, &mut transport, 300);
+        space(&mut h, &mut transport);
+        press(&mut h, &mut transport, 0);
+        play(&mut h, &mut transport, 2 * beat);
+        assert!(transport.is_running());
+    }
+
+    /// Unarmed, `Space` stops where it is pressed, as ever.
+    #[test]
+    fn space_off_the_lane_stops_at_once() {
+        let mut h = harness();
+        let mut transport = transport(&h);
+        space(&mut h, &mut transport);
+        assert!(transport.is_running(), "the first press starts");
+        play(&mut h, &mut transport, 300);
+        space(&mut h, &mut transport);
+        assert!(!transport.is_running());
+    }
+
+    /// The press that starts the transport has no beat to keep: it jumps
+    /// to its key's start, wherever playback was parked.
+    #[test]
+    fn the_press_that_starts_the_transport_jumps_to_its_key() {
+        let (mut h, mut transport, _record) = armed();
+        h.playback_tick
+            .store(Meter::FOUR_FOUR.beat_ticks() + 300, Ordering::Relaxed);
+        press(&mut h, &mut transport, 4);
+        assert!(transport.is_running());
+        assert_eq!(
+            h.playback_tick.load(Ordering::Relaxed),
+            4 * Meter::FOUR_FOUR.beat_ticks()
         );
     }
 

@@ -122,8 +122,24 @@ else. Key files:
   it needs `&mut Transport`, which `Sequencer` doesn't own.
 - **NoteOn**: joins the run (`PerformanceLane::press`, a new run when it
   starts the transport), starts the transport if not already running, and
-  `jump_and_chase(target_tick)` to the key's start (`key_tick`, at the length
-  the sequencer holds).
+  `jump_and_chase(target_tick)` to the key (`key_tick`, at the length the
+  sequencer holds). **A phase jump** (`550-phase-jumps.md`): while running, the
+  target is the key's start plus `phase_offset`, the distance of playback's
+  next tick from the nearest beat of the meter (−½…+½ beat, half counting as
+  late), so the key's start sounds on a beat of the grid playback was on: a
+  late press skips the start of its key, an early one plays the end of what
+  comes before it (below 0 for an early press onto bar 1), and the beat never
+  breaks, so the metronome, counting from playback, stays steady through
+  presses. The press that starts the transport jumps to the key's start
+  exactly. The run keeps its first press's offset, and `take_run` shifts the
+  take by it so the first key's start lands at 0, the cursor: a capture's bar
+  lines stay on the grid (`550` decision 5).
+- **`Space` while running stops on the next beat** (`550` § The stop on the
+  beat): off a beat it sets the lane's waiting stop (`request_stop`), and
+  `play_tick` stops the transport once playback's next tick is a beat
+  (`take_due_stop`), so a run stopped with `Space` is whole beats. A second
+  `Space` stops at once; a press, a ruler click, `Stop` or a start cancels
+  the wait.
 - **NoteOff**: does nothing. Deliberately not `transport.stop()`: the
   transport keeps playing past the release, so the performer stops it
   themselves (Play/spacebar) when the performance is over; and no loop wrap

@@ -136,6 +136,14 @@ impl EventHandlers {
             self.reanchor_playback(anchor, sequencer, transport);
         }
         sequencer.tick(at);
+        // `Space` on the armed lane waits for the next beat
+        // (`550-phase-jumps.md` § The stop on the beat): stop once playback
+        // has reached it, so the run ends on a whole beat.
+        let meter = sequencer.meter();
+        let next = sequencer.playback_tick();
+        if sequencer.performance_lane_mut().take_due_stop(meter, next) {
+            transport.stop();
+        }
     }
 
     /// The offline render asks for the run's ticks due before `until`, a
