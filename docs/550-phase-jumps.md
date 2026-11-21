@@ -51,7 +51,7 @@ It is how the lane plays, not a correction: what is heard is the jump, made at t
 
 Added 2026-11-21 after the first hand test. A performance usually ends with `Space`, then the cursor is moved to where the take goes and `/` inserts it. `Space` stopped where it was pressed, so the run ended off the beat and the inserted clips ended mid-beat. With phase jumps, playback's beat grid is the take's grid, so a stop on a beat gives a take of whole beats.
 
-- **`Space` while running with the lane armed, off a beat, waits for the next beat** and stops there (`PerformanceLane::stop_now`; `play_tick` stops the transport once playback's next tick is a beat, `take_due_stop`). Up to a beat more plays, and it is in the take, since it was heard. On a beat it stops at once.
+- **`Space` during a performance, off a beat, waits for the next beat** and stops there: the lane armed and a run going (a press since playback started, `520` decision 2). With the lane selected and no key pressed, playback is just the arrangement, and `Space` stops at once (found in review 2026-11-21) (`PerformanceLane::stop_now`; `play_tick` stops the transport once playback's next tick is a beat, `take_due_stop`). Up to a beat more plays, and it is in the take, since it was heard. On a beat it stops at once.
 - **A second `Space` while the stop waits stops at once**, the way out.
 - **A press while it waits cancels it**: playing on means the performance isn't over. Starting playback again (`Space`, a ruler click: `begin_running_take`) drops one left over.
 - **Disarming while it waits doesn't cancel it**: the stop was asked for, and it still lands on the beat.
@@ -67,7 +67,7 @@ How it feels decides these, so they start as below and are changed by hand after
 
 ## What changes
 
-- `handle_performance_lane_midi_input`: the jump target is `T` when the press starts the transport, otherwise `T + phase_offset(meter, p)`, with `p` the playback tick at the press (`transport.playback_tick()`, the tick the run's `expected_tick` holds). `press` and `jump_and_chase` both get that tick. The pure helper `phase_offset` sits beside `key_tick` in `models/performance_lane.rs` and holds the arithmetic and its tests.
+- `handle_performance_lane_midi_input`: the jump target is `T` when the press starts the transport, otherwise `T + phase_offset(meter, p)`, with `p` the playback tick at the press (`sequencer.playback_tick()`: between two ticks of the pump it holds the tick about to play, the one the run's `expected_tick` holds). `press` and `jump_and_chase` both get that tick. The pure helper `phase_offset` sits beside `key_tick` in `models/performance_lane.rs` and holds the arithmetic and its tests.
 - `PerformanceLane::press` takes the offset beside the jumped-to tick; `Run::lead` holds the first press's, and `take_run` shifts by it (decision 5).
 
 As built, the pump reads the click's position before the advance, so a press between ticks sees the tick about to play: it measures that tick's offset and the next tick plays the jumped-to position. A press exactly on a beat jumps to the key's start, which clicks; one a tick after it jumps a tick in, which doesn't. No beat clicks twice or is skipped (`Metronome`'s `a_phase_jump_keeps_the_click_a_beat_apart`).

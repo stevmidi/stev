@@ -134,8 +134,8 @@ else. Key files:
   exactly. The run keeps its first press's offset, and `take_run` shifts the
   take by it so the first key's start lands at 0, the cursor: a capture's bar
   lines stay on the grid (`550` decision 5).
-- **`Space` while running stops on the next beat** (`550` § The stop on the
-  beat): off a beat `PerformanceLane::stop_now` leaves the stop waiting, and
+- **`Space` during a performance stops on the next beat** (`550` § The stop
+  on the beat), with a run going (no key pressed: at once): off a beat `PerformanceLane::stop_now` leaves the stop waiting, and
   `play_tick` stops the transport once playback's next tick is a beat
   (`take_due_stop`), so a run stopped with `Space` is whole beats. A second
   `Space` stops at once; a press cancels the wait, and a start

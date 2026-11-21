@@ -185,12 +185,12 @@ pub(crate) fn transport_with_events(h: &Harness) -> (Transport, Receiver<Transpo
     (transport, events)
 }
 
-/// [`transport_with_events`], its events dropped.
 /// A metronome that never clicks, for the transport commands that take one.
 pub(crate) fn muted_metronome() -> Metronome {
     Metronome::new(Arc::new(AtomicBool::new(true)), RingBuffer::new(1).0)
 }
 
+/// [`transport_with_events`], its events dropped.
 pub(crate) fn transport(h: &Harness) -> Transport {
     transport_with_events(h).0
 }

@@ -23,7 +23,7 @@ Breaking entries are marked **Breaking** and say what to do about them.
 ### Changed
 
 - A press on the performance lane keeps the beat. While playing, a key now jumps to its bar or beat plus however far your press was from the nearest beat: press a little late and you cut in a little way into the bar, press a little early and the bar starts right on the beat you were aiming for. Before, each press restarted the beat wherever it fell, so the metronome jumped with every press and a captured performance drifted off the grid. Now the click stays steady to play against, and a capture's bar lines line up with the arrangement's. The press that starts playback still starts its key exactly.
-- `Space` with the performance lane selected stops on the next beat instead of where you press it, so a performance you stop and then capture with `/` is whole beats long. Press `Space` again to stop at once.
+- `Space` during a performance on the performance lane stops on the next beat instead of where you press it, so a performance you stop and then capture with `/` is whole beats long. Press `Space` again to stop at once.
 - Knobs with no parameter assigned are drawn dimmer in the knob panel, so the ones that drive a parameter stand out. Pointing at, selecting or arming an empty knob shows it in full.
 - The browser leaves a little space above each category (Recent, Projects, Templates, Clips, Plugins), so the groups are easier to tell apart.
 - Quieter colours in two places: the piano keys' white keys are a mid-grey instead of near-white, so the notes stand out more than the keyboard beside them, and a track header's volume and pan bars are a softer shade of the track's colour, so the header column no longer competes with the clips.

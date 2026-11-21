@@ -441,6 +441,18 @@ mod tests {
         assert!(transport.is_running());
     }
 
+    /// With the lane selected but no key pressed, `Space` plays the
+    /// arrangement and stops where it is pressed.
+    #[test]
+    fn space_on_the_lane_with_no_press_stops_at_once() {
+        let (mut h, mut transport, _record) = armed();
+        space(&mut h, &mut transport);
+        assert!(transport.is_running());
+        play(&mut h, &mut transport, 300);
+        space(&mut h, &mut transport);
+        assert!(!transport.is_running());
+    }
+
     /// Unarmed, `Space` stops where it is pressed, as ever.
     #[test]
     fn space_off_the_lane_stops_at_once() {

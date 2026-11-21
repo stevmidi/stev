@@ -129,12 +129,16 @@ impl PerformanceLane {
     }
 
     /// `Space` while running, with playback about to play `playback_tick`:
-    /// whether to stop now. With the lane `armed` and playback off a beat of
-    /// `meter`, the stop waits for the next beat instead
+    /// whether to stop now. During a performance (the lane `armed` and a run
+    /// of presses going) with playback off a beat of `meter`, the stop waits
+    /// for the next beat instead
     /// ([`take_due_stop`](Self::take_due_stop)); a second press while it
     /// waits stops at once (`550-phase-jumps.md` § The stop on the beat).
     pub(crate) fn stop_now(&mut self, meter: Meter, playback_tick: i32, armed: bool) -> bool {
-        let wait = armed && !self.stop_pending && phase_offset(meter, playback_tick) != 0;
+        let wait = armed
+            && self.run.is_some()
+            && !self.stop_pending
+            && phase_offset(meter, playback_tick) != 0;
         self.stop_pending = wait;
         !wait
     }
@@ -298,6 +302,7 @@ pub(crate) fn key_tick(meter: Meter, length: KeyLength, key_index: i32) -> i32 {
 /// is about to play `playback_tick`: its distance from the nearest beat of
 /// `meter` ([`snap_to_grid`]), in `-beat/2 .. beat/2` (exactly half a beat
 /// counts as early, for the next beat).
+///
 /// The press jumps to its key plus this, so the key's start sounds on a beat
 /// of the grid playback was on and the beat never breaks: a late press skips
 /// the start of its key, an early one plays the end of what comes before it
@@ -476,10 +481,17 @@ mod tests {
         );
     }
 
+    /// A lane with a run going, as a performance leaves it.
+    fn performing() -> PerformanceLane {
+        let mut lane = PerformanceLane::new();
+        lane.press(0, 0, true);
+        lane
+    }
+
     #[test]
     fn a_stop_off_a_beat_waits_for_the_next_one() {
         let meter = Meter::FOUR_FOUR;
-        let mut lane = PerformanceLane::new();
+        let mut lane = performing();
         assert!(!lane.take_due_stop(meter, 0), "nothing asked");
         assert!(!lane.stop_now(meter, PPQN + 1, true));
         assert!(!lane.take_due_stop(meter, 2 * PPQN - 1));
@@ -490,7 +502,7 @@ mod tests {
     #[test]
     fn a_stop_on_a_beat_unarmed_or_asked_twice_is_now() {
         let meter = Meter::FOUR_FOUR;
-        let mut lane = PerformanceLane::new();
+        let mut lane = performing();
         assert!(lane.stop_now(meter, 2 * PPQN, true), "on a beat");
         assert!(lane.stop_now(meter, PPQN + 1, false), "unarmed");
         assert!(!lane.stop_now(meter, PPQN + 1, true));
@@ -498,9 +510,18 @@ mod tests {
         assert!(!lane.take_due_stop(meter, 2 * PPQN), "nothing left waiting");
     }
 
+    /// With the lane selected but no key pressed, playback is just the
+    /// arrangement: `Space` stops at once.
+    #[test]
+    fn a_stop_with_no_run_is_now() {
+        let mut lane = PerformanceLane::new();
+        assert!(lane.stop_now(Meter::FOUR_FOUR, PPQN + 1, true));
+        assert!(!lane.take_due_stop(Meter::FOUR_FOUR, 2 * PPQN));
+    }
+
     #[test]
     fn a_press_cancels_a_waiting_stop() {
-        let mut lane = PerformanceLane::new();
+        let mut lane = performing();
         assert!(!lane.stop_now(Meter::FOUR_FOUR, 300, true));
         lane.press(960, 0, false);
         assert!(!lane.take_due_stop(Meter::FOUR_FOUR, 960));
