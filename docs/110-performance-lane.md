@@ -50,8 +50,8 @@ else. Key files:
   timeline, note `n` on key `n` plus whole cycles, the cycles chosen so the
   hand's middle key is the copy nearest the cursor (`KeybedWindow::hand`,
   `nearest_copy_tick`: a tie at half a cycle the copy ahead, never before bar
-  1; a note that would still fall before bar 1 lands a cycle on,
-  `Hand::key_index`). The phase offset (`550`) is added to that key's start.
+  1; a hand that would still put notes before bar 1, a high one near the
+  start, sits a cycle on, whole). The phase offset (`550`) is added to that key's start.
   So the hand reaches about half a cycle either side of the cursor, ±15 bars
   at a beat a key in 4/4, ±60 at a bar a key; it is never split, a cursor
   move moves it whole, and the playhead never moves it. The guess is moved
@@ -218,7 +218,7 @@ else. Key files:
   keyboard holds (`LiveNotes`, which wakes the UI on each edge) lights its piece
   of the strip (a black key's hanging block only) in `theme::accent()`, with a wash (`HELD_KEY_WASH`) over its span
   above: what the hands hold, not just the key the transport jumped to. A
-  held key lights only the key its press landed on (`Hand::notes_on`; every
+  held key lights only the key its press landed on (`Hand::note_on`; every
   copy on screen lit until `560` phase 2). Unarmed, held keys light nothing
   in the lane.
 - **The lit window** (`560-performance-lane-reach.md` § 3–5): the keys the

@@ -290,9 +290,10 @@ impl AudioExportAtomics {
 /// right now, as a 128-bit set — what the piano roll's keys light up for —
 /// and the guess of the notes the keyboard covers (`KeybedWindow`), which a
 /// performance-lane press jumps by and the lane lights
-/// (`560-performance-lane-reach.md` § 2 and § 4). Written by whichever input thread routes the message
+/// (`560-performance-lane-reach.md` § 2 and § 4). Written by whichever input
+/// thread routes the message
 /// ([`LiveInputRouter`](crate::core::midi::input::LiveInputRouter)), read by
-/// the render thread.
+/// the render thread and the `"sequencer"` thread.
 pub(crate) struct LiveNotes {
     /// Notes 0–63 in the first word, 64–127 in the second; bit `n % 64`.
     bits: [AtomicU64; 2],
@@ -323,11 +324,8 @@ impl LiveNotes {
             return;
         };
         if on {
-            // Two input threads (a port, the computer keys) may race here;
-            // the loser's move is lost, and the next note puts it right.
-            let mut keybed = self.keybed();
-            keybed.played(note as u8);
-            self.keybed.store(keybed.to_bits(), Ordering::Relaxed);
+            // Two input threads (a port, the computer keys) may write here.
+            self.update_keybed(|keybed| keybed.played(note as u8));
         }
         let bit = 1u64 << (note % 64);
         let before = if on {
@@ -358,8 +356,18 @@ impl LiveNotes {
     /// The keyboard is `size` keys (settings): the guess keeps its lowest C
     /// until the next note puts it right (`KeybedWindow::resized`).
     pub(crate) fn set_keybed_size(&self, size: KeybedSize) {
-        let keybed = self.keybed().resized(size);
-        self.keybed.store(keybed.to_bits(), Ordering::Relaxed);
+        self.update_keybed(|keybed| *keybed = keybed.resized(size));
+    }
+
+    /// Applies `change` to the keybed guess, in one atomic step.
+    fn update_keybed(&self, change: impl Fn(&mut KeybedWindow)) {
+        self.keybed
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |bits| {
+                let mut keybed = KeybedWindow::from_bits(bits);
+                change(&mut keybed);
+                Some(keybed.to_bits())
+            })
+            .ok();
     }
 }
 

@@ -3,8 +3,8 @@
 //! (`key_tick`, a bar, half a bar or a beat a key), in the player's hand
 //! placed around the arranger cursor (`KeybedWindow::hand`, the keys
 //! repeating along the timeline, `560-performance-lane-reach.md` § 2), at
-//! the press's
-//! offset from the nearest beat while running so the beat never breaks
+//! the press's offset from the nearest beat while running so the beat never
+//! breaks
 //! (`phase_offset`, `550-phase-jumps.md`), and joins the lane's run
 //! (`520-performance-capture.md` decision 2), which `/` renders into clips
 //! at the arranger cursor (decision 1). A `NoteOff` does
@@ -190,7 +190,6 @@ mod tests {
         (h, transport, Record::new())
     }
 
-    /// Presses `note`, lane key `note` (a beat a key).
     /// A note-on on the armed lane, as the input thread delivers it: the
     /// keybed guess moved for it first (`LiveNotes::set`).
     fn press(h: &mut Harness, transport: &mut Transport, note: u8) {

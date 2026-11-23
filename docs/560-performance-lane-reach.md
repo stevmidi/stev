@@ -52,7 +52,7 @@ bar  61        70   73        76               82
 - **The cursor alone moves it.** The playhead, by playing, by a press or by the song running on, never moves the hand; a cursor move does, and a hardware octave shift does at the next press (§ 5). A performance keeps its mapping for as long as the cursor stays put.
 - **Never split.** The hand is always one unbroken stretch, and every press lands where it is lit.
 - **The default octave isn't bar 1.** A keyboard at its home octave reaches bars 10–22 from a cursor at bar 1; bar 1 is a few octaves down. Accepted.
-- **Before bar 1.** A hand whose stretch would put low notes before bar 1 (only near the very start, with a high hand) sends those notes a cycle on: a copy before bar 1 is never chosen.
+- **Before bar 1.** A hand whose stretch would put low notes before bar 1 (only near the very start, with a high hand) sits a cycle on, whole: a copy before bar 1 is never chosen, and the hand stays unbroken. (First built folding only the notes before bar 1 a cycle on, which split the hand there; changed in the `/simplify` pass.)
 - **The phase jump stays** (`550`): the offset from the nearest beat is added to the chosen key's tick as it is to `key_tick` today.
 
 ### 3. The keybed size

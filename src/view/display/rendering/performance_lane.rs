@@ -150,13 +150,13 @@ impl Display {
             let right = self.tick_to_screen_x(key_tick(meter, length, key_index + 1));
             let above = Rect::from_x_y_ranges(left..=right, lane_top..=strip_top);
             let key = Rect::from_x_y_ranges(left..=right, strip_top..=strip_bottom);
-            // A held note, or the window, on the key its press lands on.
-            let lights =
-                |note_lit: &dyn Fn(u8) -> bool| armed && hand.notes_on(key_index).any(note_lit);
-            let lit = lights(&|n| self.live_notes.is_held(n));
+            // The note whose press lands on this key, while armed: lit held,
+            // washed inside the window.
+            let note_here = hand.note_on(key_index).filter(|_| armed);
+            let lit = note_here.is_some_and(|n| self.live_notes.is_held(n));
             let wash = if lit {
                 Some(HELD_KEY_WASH)
-            } else if lights(&|n| keybed.contains(n)) {
+            } else if note_here.is_some_and(|n| keybed.contains(n)) {
                 Some(KEYBED_WINDOW_WASH)
             } else {
                 None
