@@ -55,8 +55,9 @@ else. Key files:
   So the hand reaches about half a cycle either side of the cursor, ±15 bars
   at a beat a key in 4/4, ±60 at a bar a key; it is never split, a cursor
   move moves it whole, and the playhead never moves it. The guess is moved
-  on the input thread at every note-on before the note reaches the
-  sequencer (`LiveNotes::set`), so a press jumps by the guess its own note
+  on the input thread at every note-on while the lane is armed, before the
+  note reaches the sequencer (`LiveNotes::lane_press`, from
+  `LiveInputRouter::route`), so a press jumps by the guess its own note
   left: a hardware octave shift takes effect at the press that shows it.
   `EventHandlers::live_notes` is how the press handler reads it. `key_tick(meter, length,
   key)` is where a key jumps, one **key length** (`KeyLength`) per key: a
@@ -218,8 +219,9 @@ else. Key files:
   keyboard holds (`LiveNotes`, which wakes the UI on each edge) lights its piece
   of the strip (a black key's hanging block only) in `theme::accent()`, with a wash (`HELD_KEY_WASH`) over its span
   above: what the hands hold, not just the key the transport jumped to. A
-  held key lights only the key its press landed on (`Hand::note_on`; every
-  copy on screen lit until `560` phase 2). Unarmed, held keys light nothing
+  held key lights once, on its key in the hand around the cursor
+  (`Hand::note_on`), where its press landed unless the guess or the cursor
+  has moved since (every copy on screen lit until `560` phase 2). Unarmed, held keys light nothing
   in the lane.
 - **The lit window** (`560-performance-lane-reach.md` § 3–5): the keys the
   player's hand is on get a fainter wash over their span above the strip
@@ -227,8 +229,13 @@ else. Key files:
   The guess of the notes the keyboard covers is `LiveNotes::keybed` (a
   `KeybedWindow` packed in one `AtomicU16`: a window of the keybed size from
   settings, starting on a C, home on C3 to the octave below, so 36–84 on a
-  49-key keybed). `LiveNotes::set` moves it at every note-on, armed or not,
-  by whole octaves, just enough to take the note in. The lane washes the
+  49-key keybed). `LiveNotes::lane_press` moves it at every note-on while
+  the lane is armed, never otherwise (nothing happens to the lane while it
+  isn't armed: notes played into an instrument, or on the computer keys in
+  another octave, leave it), by whole octaves, just enough to take the note
+  in. A size picked in settings keeps its lowest C, pulled down if need be
+  so the window still reaches note 127 and no higher
+  (`KeybedWindow::resized`). The lane washes the
   keys the window's notes land on in the hand around the cursor (the same
   `KeybedWindow::hand` a press uses, so lit is where presses go): one
   unbroken stretch, moving whole at once on a cursor move that switches the

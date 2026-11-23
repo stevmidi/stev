@@ -22,7 +22,7 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ### Added
 
-- The performance lane lights the keys your hand is on. Set your keyboard's size (25, 37, 49, 61 or 88 keys) in Settings → MIDI, and while the lane is armed the stretch of the lane your keyboard covers is tinted, and every key you press lands inside it. Stev guesses where your hand is from the notes you play: after an octave button on the keyboard, the tint and your keys move together at your next press. A key you hold lights only where its press jumped.
+- The performance lane lights the keys your hand is on. Set your keyboard's size (25, 37, 49, 61 or 88 keys) in Settings → MIDI, and while the lane is armed the stretch of the lane your keyboard covers is tinted, and every key you press lands inside it. Stev guesses where your hand is from the notes you play on the armed lane: after an octave button on the keyboard, the tint and your keys move together at your next press. A key you hold lights once, in your hand's stretch, instead of on every copy of it on screen.
 
 ### Changed
 

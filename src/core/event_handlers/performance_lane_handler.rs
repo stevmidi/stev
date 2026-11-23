@@ -191,9 +191,9 @@ mod tests {
     }
 
     /// A note-on on the armed lane, as the input thread delivers it: the
-    /// keybed guess moved for it first (`LiveNotes::set`).
+    /// keybed guess moved for it first (`LiveNotes::lane_press`).
     fn press(h: &mut Harness, transport: &mut Transport, note: u8) {
-        h.live_notes.set(usize::from(note), true);
+        h.live_notes.lane_press(note);
         h.handlers.handle_performance_lane_midi_input(
             &mut h.sequencer,
             transport,

@@ -291,6 +291,11 @@ impl LiveInputRouter {
 
         if let Some((note, on)) = parse_note(&msg) {
             self.live_notes.set(note, on);
+            // Before the note goes on to the sequencer, so its press jumps
+            // by the guess it moved.
+            if on && armed {
+                self.live_notes.lane_press(note as u8);
+            }
         }
 
         // Note edges, the two wheels and the sustain pedal go on to the
@@ -471,6 +476,22 @@ mod tests {
 
         let sent: Vec<(usize, Midi3)> = iter::from_fn(|| instrument_rx.pop().ok()).collect();
         assert_eq!(sent, [(2, note_on(0)), (2, note_off(0))]);
+    }
+
+    /// The keybed guess moves only for notes played on the armed lane
+    /// (`560-performance-lane-reach.md` § 4): nothing happens to the lane
+    /// while it isn't armed.
+    #[test]
+    fn only_a_note_on_the_armed_lane_moves_the_keybed_guess() {
+        let (mut router, _, _) = test_router(Arc::default());
+        let home = router.live_notes.keybed();
+        router.route(&[0x90, 100, 100], 0);
+        assert_eq!(router.live_notes.keybed(), home, "unarmed");
+        router.performance_lane_armed.store(true, Ordering::Relaxed);
+        router.route(&[0x80, 100, 0], 0);
+        assert_eq!(router.live_notes.keybed(), home, "a release");
+        router.route(&[0x90, 100, 100], 0);
+        assert!(router.live_notes.keybed().contains(100), "armed");
     }
 
     /// A hardware controller's CC plays live into the plugin and is never

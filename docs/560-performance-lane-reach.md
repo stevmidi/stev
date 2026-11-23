@@ -61,7 +61,7 @@ A setting (settings, not the project: it describes the hardware): the keyboard's
 
 ### 4. The lit window
 
-Stev keeps a guess of the notes the keyboard covers: a window of the keybed size starting on a C. A note outside the guess moves it by whole octaves, just enough to include the note (a hardware octave button shifts by whole octaves too, so the guess stays in step), before the note's press is handled. The lane lights the window on the stretch § 2 places it on.
+Stev keeps a guess of the notes the keyboard covers: a window of the keybed size starting on a C. A note played on the armed lane outside the guess moves it by whole octaves, just enough to include the note (notes played while the lane isn't armed never move it) (a hardware octave button shifts by whole octaves too, so the guess stays in step), before the note's press is handled. The lane lights the window on the stretch § 2 places it on.
 
 ```
 bar   1     7                       31    37
@@ -93,9 +93,9 @@ The phase jump (`550`), the key length (`510` step 1b), arming and selection (`4
 
 - **A tie** at exactly half a cycle picks the copy ahead. A copy before bar 1 is never chosen. *Built so.*
 - **Notes 120–127**: *decided in phase 1:* they wrap onto keys 0–7 like the rest of the mod, sharing them with notes 0–7 (the same names). A key is named by its note in `0..120` (`note_for_key`), so the names run C-2 … B7 across a cycle, and a held alias lights its key.
-- **Where the guess lives**: first built as view state fed each frame from `LiveNotes`. *Revised in phase 2:* in `LiveNotes` itself, one atomic, moved by the input thread at each note-on before the note goes on to the sequencer, so the press handler and the drawing read the same guess and a press always jumps by the guess its own note left. No lock (`000`). It follows notes armed or not: the keyboard's octave is the hardware's. The keybed size is set on it from settings at launch and from the settings modal.
+- **Where the guess lives**: first built as view state fed each frame from `LiveNotes`. *Revised in phase 2:* in `LiveNotes` itself, one atomic, moved by the input thread at each note-on before the note goes on to the sequencer, so the press handler and the drawing read the same guess and a press always jumps by the guess its own note left. No lock (`000`). It follows notes only while the lane is armed (*revised after code review:* first built following every note, armed or not, as the keyboard's octave is the hardware's; but nothing should happen to the lane while it isn't armed, and an instrument or the computer keys played in another octave dragged the guess there). The keybed size is set on it from settings at launch and from the settings modal.
 - **The lit window when unarmed**: drawn dimmer with the rest of the lane, or not at all. *Decided in phase 2:* not at all, as held keys light nothing unarmed.
-- **The default keybed size** *(decided in phase 2)*: 49, whose home octave is the 36–84 § 2 names. A window starts at its home octave, centred on C3 to the octave below (25 keys: 48–72; 88: 24–111). A size changed in settings keeps the window's lowest C until the next press puts it right.
+- **The default keybed size** *(decided in phase 2)*: 49, whose home octave is the 36–84 § 2 names. A window starts at its home octave, centred on C3 to the octave below (25 keys: 48–72; 88: 24–111). A size changed in settings keeps the window's lowest C until the next press puts it right, pulled down only as far as needed for the window to end at or below the lowest C past note 127 (a 25-key window at 108–132 resized to 88 keys becomes 48–135, not 108–195).
 - **The setting's place** *(decided in phase 2)*: the MIDI tab, a `KEYBED (KEYS)` row of five choices under OUT OFFSET, ↑/↓ or a click picking one, applied and saved at once.
 
 ## Changes while building
@@ -110,7 +110,7 @@ Hand-testing phase 2's first build (2026-11-23), which kept each key on its own 
 - **The hand as one block** (§ 2): the stretch chosen for the hand's middle key, every press in it, so the window is never split and every press lands where it is lit.
 - **The guess decides jumps** (§ 4). The first design kept it display only so a wrong guess could never send playback anywhere wrong; with the guess on screen, a wrong one shows where it sends the hand.
 - **The A/B argument dropped.** In use the player performs, captures with `/`, and A/B's the capture against other sections; going back and forth between performing and arranging, and the muscle memory a cursor move could cost, weighed less than the first design gave them. The cursor still decides, running or stopped, and the playhead never does: a window that moved because the song played past it was rejected.
-- **A held key lights only where its press landed**: its key in the hand's stretch. Phase 1 lit every copy on screen.
+- **A held key lights once**: its key in the hand's stretch, where its press landed unless the guess or the cursor has moved since. Phase 1 lit every copy on screen.
 
 ## What changes in code
 

@@ -307,10 +307,16 @@ impl KeybedWindow {
         self.size
     }
 
-    /// The same guess for a keyboard of `size`, from the same lowest C: the
-    /// next note outside it puts it right.
+    /// The same guess for a keyboard of `size`, from the same lowest C, but
+    /// no higher than the lowest C that still reaches note 127, so a bigger
+    /// keybed never covers mostly notes past MIDI's range. The next note
+    /// outside it puts it right.
     pub(crate) fn resized(self, size: KeybedSize) -> Self {
-        KeybedWindow { size, ..self }
+        let keys = i32::from(size.keys());
+        KeybedWindow {
+            size,
+            low: self.low.min((127 - keys + 12) / 12 * 12),
+        }
     }
 
     /// The notes covered, `low..=high`.
@@ -1114,6 +1120,18 @@ mod tests {
             window.played(0);
             assert_eq!(KeybedWindow::from_bits(window.to_bits()), window);
         }
+    }
+
+    /// A 25-key window at its top (108–132) resized to 88 keys comes down to
+    /// 48–135, not 108–195; a window low enough keeps its lowest C.
+    #[test]
+    fn a_resized_window_stays_within_midi() {
+        let mut window = KeybedWindow::new(KeybedSize::Keys25);
+        window.played(127);
+        assert_eq!(covered(window.resized(KeybedSize::Keys88)), (48, 127));
+        assert_eq!(covered(window.resized(KeybedSize::Keys49)), (84, 127));
+        let home = KeybedWindow::new(KeybedSize::Keys25);
+        assert_eq!(covered(home.resized(KeybedSize::Keys61)), (48, 108));
     }
 
     #[test]

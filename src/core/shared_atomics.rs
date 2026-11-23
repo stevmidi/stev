@@ -298,8 +298,10 @@ pub(crate) struct LiveNotes {
     /// Notes 0–63 in the first word, 64–127 in the second; bit `n % 64`.
     bits: [AtomicU64; 2],
     /// The keybed guess, packed by `KeybedWindow::to_bits`: moved at every
-    /// note-on, before the note goes on to the sequencer, so a press jumps
-    /// by the guess its own note left; resized from settings.
+    /// note-on while the performance lane is armed
+    /// ([`lane_press`](Self::lane_press)), before the note goes on to the
+    /// sequencer, so a press jumps by the guess its own note left; resized
+    /// from settings.
     keybed: AtomicU16,
     /// Wakes the reactive UI when a note edge changes the set, since a live
     /// note is not a window input event (`EventHandlers::request_repaint`).
@@ -317,16 +319,11 @@ impl LiveNotes {
     }
 
     /// Marks `note` held (`on`) or released, waking the UI if that changed
-    /// the set, and moves the keybed guess for a note-on. Out-of-range notes
-    /// are ignored.
+    /// the set. Out-of-range notes are ignored.
     pub(crate) fn set(&self, note: usize, on: bool) {
         let Some(word) = self.bits.get(note / 64) else {
             return;
         };
-        if on {
-            // Two input threads (a port, the computer keys) may write here.
-            self.update_keybed(|keybed| keybed.played(note as u8));
-        }
         let bit = 1u64 << (note % 64);
         let before = if on {
             word.fetch_or(bit, Ordering::Relaxed)
@@ -346,6 +343,15 @@ impl LiveNotes {
         self.bits
             .get(note / 64)
             .is_some_and(|word| word.load(Ordering::Relaxed) & (1u64 << (note % 64)) != 0)
+    }
+
+    /// A note-on on the armed performance lane: the keybed guess takes it
+    /// in. Only while armed: what the keyboard plays elsewhere (an
+    /// instrument, the computer keys in another octave) never moves the
+    /// lane (`560-performance-lane-reach.md` § 4).
+    pub(crate) fn lane_press(&self, note: u8) {
+        // Two input threads (a port, the computer keys) may write here.
+        self.update_keybed(|keybed| keybed.played(note));
     }
 
     /// The guess of the notes the keyboard covers.
@@ -491,7 +497,7 @@ mod tests {
     }
 
     #[test]
-    fn a_note_on_moves_the_keybed_guess_before_anything_reads_it() {
+    fn a_lane_press_moves_the_keybed_guess_and_a_held_note_does_not() {
         let live = LiveNotes::new(Default::default());
         live.set_keybed_size(KeybedSize::Keys25);
         assert_eq!(
@@ -500,12 +506,12 @@ mod tests {
             "the lowest C kept"
         );
         live.set(84, true);
+        assert!(
+            !live.keybed().contains(84),
+            "a note off the lane moves nothing"
+        );
+        live.lane_press(84);
         assert!(live.keybed().contains(84) && !live.keybed().contains(48));
-        live.set(84, false);
-        live.set(40, false);
-        assert!(live.keybed().contains(84), "a release moves nothing");
-        live.set(200, true);
-        assert!(live.keybed().contains(84), "out of range: ignored");
         live.set_keybed_size(KeybedSize::Keys49);
         assert_eq!(live.keybed().size(), KeybedSize::Keys49);
         assert!(live.keybed().contains(84));

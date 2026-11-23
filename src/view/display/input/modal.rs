@@ -116,9 +116,9 @@ impl Display {
     }
 
     /// The MIDI tab's keys: Tab and ←/→ cycle the four rows, ⇧Tab
-    /// backwards; ↑/↓ move the focused port list's cursor, nudge the
-    /// offset or step the keybed size (applied and saved at once); Enter connects the port under the
-    /// cursor. Returns whether it took the key.
+    /// backwards; ↑/↓ move the focused port list's cursor, nudge the offset
+    /// or step the keybed size (applied and saved at once); Enter connects
+    /// the port under the cursor. Returns whether it took the key.
     fn handle_midi_tab_key(&mut self, key: Key, modifiers: KeyModifiers) -> bool {
         let focus = self.settings.midi.focus;
         let step = match key {
