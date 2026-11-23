@@ -20,10 +20,15 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ## [Unreleased]
 
+### Added
+
+- The performance lane lights the keys your hand is on. Set your keyboard's size (25, 37, 49, 61 or 88 keys) in Settings → MIDI, and while the lane is armed the stretch of the lane your keyboard covers is tinted, and every key you press lands inside it. Stev guesses where your hand is from the notes you play: after an octave button on the keyboard, the tint and your keys move together at your next press. A key you hold lights only where its press jumped.
+
 ### Changed
 
+- The performance lane names only the C's, one per octave, however far you zoom in. At a beat a key it used to name every key once there was room, which crowded the lane.
 - The performance lane's keys start from the lowest MIDI note, C-2 (note 0), at bar 1, instead of C3. Shift your keyboard down five octaves to play bar 1 from where C3 used to.
-- The performance lane reaches the whole song. Its keys used to stop at bar 18 at a beat a key (bar 68 at a bar); now they repeat along the timeline every ten octaves (30 bars of 4/4 at a beat a key), and a key jumps to its copy nearest the arranger cursor: the keys reach about 15 bars either side of the cursor at a beat a key, 60 at a bar. Playing never changes what a key means, and moving the cursor away and back gives the same keys again, so you can go back and forth between performing and arranging without relearning the keyboard.
+- The performance lane reaches the whole song. Its keys used to stop at bar 18 at a beat a key (bar 68 at a bar); now they repeat along the timeline every ten octaves (30 bars of 4/4 at a beat a key), and the keys under your hand sit on the stretch of them nearest the arranger cursor: they reach about 15 bars either side of the cursor at a beat a key, 60 at a bar, and the keyboard's octave buttons move your hand within that. Only moving the cursor moves the stretch; playing never does.
 - A press on the performance lane keeps the beat. While playing, a key now jumps to its bar or beat plus however far your press was from the nearest beat: press a little late and you cut in a little way into the bar, press a little early and the bar starts right on the beat you were aiming for. Before, each press restarted the beat wherever it fell, so the metronome jumped with every press and a captured performance drifted off the grid. Now the click stays steady to play against, and a capture's bar lines line up with the arrangement's. The press that starts playback still starts its key exactly.
 - `Space` during a performance on the performance lane stops on the next beat instead of where you press it, so a performance you stop and then capture with `/` is whole beats long. Press `Space` again to stop at once.
 - Knobs with no parameter assigned are drawn dimmer in the knob panel, so the ones that drive a parameter stand out. Pointing at, selecting or arming an empty knob shows it in full.

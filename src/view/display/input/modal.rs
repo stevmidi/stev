@@ -115,9 +115,9 @@ impl Display {
         true
     }
 
-    /// The MIDI tab's keys: Tab and ←/→ cycle the three rows, ⇧Tab
-    /// backwards; ↑/↓ move the focused port list's cursor or nudge the
-    /// offset (applied and saved at once); Enter connects the port under the
+    /// The MIDI tab's keys: Tab and ←/→ cycle the four rows, ⇧Tab
+    /// backwards; ↑/↓ move the focused port list's cursor, nudge the
+    /// offset or step the keybed size (applied and saved at once); Enter connects the port under the
     /// cursor. Returns whether it took the key.
     fn handle_midi_tab_key(&mut self, key: Key, modifiers: KeyModifiers) -> bool {
         let focus = self.settings.midi.focus;
@@ -143,6 +143,10 @@ impl Display {
             MidiSettingsFocus::OutPort => self.settings.midi.output.move_selection(step),
             // Up raises the offset.
             MidiSettingsFocus::OutOffset => self.nudge_midi_out_offset(-step as i32),
+            // Up a size, as up raises the offset.
+            MidiSettingsFocus::Keybed => {
+                self.set_keybed_size(self.live_notes.keybed().size().stepped(-step))
+            }
         }
         true
     }

@@ -388,6 +388,12 @@ impl EventHandlers {
                 });
             }
 
+            InputEvent::SaveKeybedSize { size } => {
+                update_settings("keybed size", |settings| {
+                    settings.keybed_keys = size.keys();
+                });
+            }
+
             InputEvent::SaveAgentBridge { enabled } => {
                 update_settings("AI agents setting", |settings| {
                     settings.agent_bridge = *enabled;

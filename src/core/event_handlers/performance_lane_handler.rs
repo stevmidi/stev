@@ -1,8 +1,9 @@
 //! The `EventHandlers` chokepoint for raw MIDI-IN while the arranger
 //! performance lane is armed: a `NoteOn` jumps the transport to its key
-//! (`key_tick`, a bar, half a bar or a beat a key), the copy of it nearest
-//! the arranger cursor (`nearest_copy_tick`, the keys repeating along the
-//! timeline, `560-performance-lane-reach.md`), at the press's
+//! (`key_tick`, a bar, half a bar or a beat a key), in the player's hand
+//! placed around the arranger cursor (`KeybedWindow::hand`, the keys
+//! repeating along the timeline, `560-performance-lane-reach.md` § 2), at
+//! the press's
 //! offset from the nearest beat while running so the beat never breaks
 //! (`phase_offset`, `550-phase-jumps.md`), and joins the lane's run
 //! (`520-performance-capture.md` decision 2), which `/` renders into clips
@@ -19,7 +20,7 @@ use crate::core::agent::{format_position, length_label};
 use crate::core::sequencer::{DuplicateTimeEdit, UndoStep};
 use crate::models::{
     event::{Event, EventType},
-    performance_lane::{key_index_from_note, nearest_copy_tick, phase_offset},
+    performance_lane::{key_tick, phase_offset},
 };
 
 use super::*;
@@ -52,8 +53,10 @@ impl EventHandlers {
         };
         let meter = sequencer.meter();
         let started = !transport.is_running();
-        // The key's copy nearest the cursor, so the playhead moving never
-        // changes what a key means. Running, its start sounds on the beat
+        // The note's key in the hand around the cursor: the guess the input
+        // thread moved for this very note, so the press lands inside the
+        // window the lane lights, and the playhead moving never changes
+        // what a key means. Running, its start sounds on the beat
         // nearest the press: playback's next tick is `offset` from a beat,
         // and the jump lands as far from the key's start. Stopped, there is
         // no beat to keep.
@@ -62,12 +65,12 @@ impl EventHandlers {
         } else {
             phase_offset(meter, sequencer.playback_tick())
         };
-        let key_start = nearest_copy_tick(
-            meter,
-            sequencer.performance_lane_key_length(),
-            key_index_from_note(note),
-            sequencer.cursor_tick(),
-        );
+        let length = sequencer.performance_lane_key_length();
+        let hand = self
+            .live_notes
+            .keybed()
+            .hand(meter, length, sequencer.cursor_tick());
+        let key_start = key_tick(meter, length, hand.key_index(note));
         let target_tick = key_start + offset;
         sequencer
             .performance_lane_mut()
@@ -188,7 +191,10 @@ mod tests {
     }
 
     /// Presses `note`, lane key `note` (a beat a key).
+    /// A note-on on the armed lane, as the input thread delivers it: the
+    /// keybed guess moved for it first (`LiveNotes::set`).
     fn press(h: &mut Harness, transport: &mut Transport, note: u8) {
+        h.live_notes.set(usize::from(note), true);
         h.handlers.handle_performance_lane_midi_input(
             &mut h.sequencer,
             transport,
@@ -384,11 +390,12 @@ mod tests {
         key_tick(Meter::FOUR_FOUR, KeyLength::Beat, CYCLE_KEYS)
     }
 
-    /// `560` § 2: running, a press takes its key's copy nearest the
+    /// `560` § 2: running, a press lands in the hand placed around the
     /// cursor, wherever the playhead is, keeping the beat on a copy past the
-    /// first cycle too.
+    /// first cycle too. Each press here moves the guess to notes 0–48,
+    /// middle C-1 (note 24) at bar 7.
     #[test]
-    fn a_press_while_running_takes_the_copy_nearest_the_cursor() {
+    fn a_press_while_running_lands_in_the_hand_around_the_cursor() {
         let bar = Meter::FOUR_FOUR.bar_ticks();
         let from = |cursor: i32, playback: i32, key_index: u8| {
             let (mut h, mut transport, _record) = armed();
@@ -411,6 +418,29 @@ mod tests {
         );
     }
 
+    /// The split hand-testing found (`560` § Changes while building): from
+    /// a cursor near bar 60 a 49-key hand at home lay half around bar 45 and
+    /// half around bar 73. Now a run up the keys lands a beat apart all the
+    /// way, on one stretch: from bar 59½, C3's nearest copy is bar 46 (bar
+    /// 76 is 16½ bars off), so C1 (note 36) lands on bar 40.
+    #[test]
+    fn a_run_up_the_keys_lands_unbroken() {
+        let beat = Meter::FOUR_FOUR.beat_ticks();
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        let (mut h, mut transport, _record) = armed();
+        h.sequencer.set_cursor_tick(58 * bar + 2 * beat);
+        let landed: Vec<i32> = (36..=84)
+            .map(|note| {
+                press(&mut h, &mut transport, note);
+                h.playback_tick.load(Ordering::Relaxed)
+            })
+            .collect();
+        assert_eq!(landed[0], 39 * bar, "C1: bar 40");
+        for pair in landed.windows(2) {
+            assert_eq!(pair[1] - pair[0], beat);
+        }
+    }
+
     /// Note 0, the lowest, is bar 1 from a cursor there: what hand-testing
     /// the first build (C3 = bar 1, note 0 halfway round) found missing.
     #[test]
@@ -420,10 +450,10 @@ mod tests {
         assert_eq!(h.playback_tick.load(Ordering::Relaxed), 0);
     }
 
-    /// Stopped, the copy nearest the cursor, wherever playback was parked;
+    /// Stopped, the hand around the cursor, wherever playback was parked;
     /// moving the cursor back gives the same mapping again.
     #[test]
-    fn the_press_that_starts_the_transport_takes_the_copy_nearest_the_cursor() {
+    fn the_press_that_starts_the_transport_lands_in_the_hand_around_the_cursor() {
         let bar = Meter::FOUR_FOUR.bar_ticks();
         let from_cursor = |cursor: i32| {
             let (mut h, mut transport, _record) = armed();

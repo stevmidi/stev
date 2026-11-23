@@ -321,6 +321,7 @@ pub(crate) fn setup_event_handlers(
         shared_atomics.has_event_selection.clone(),
         shared_atomics.midi_out_offset_ms.clone(),
         shared_atomics.audio_export.clone(),
+        shared_atomics.live_notes.clone(),
         repaint_ctx,
     )
 }

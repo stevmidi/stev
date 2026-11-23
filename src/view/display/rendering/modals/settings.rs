@@ -1,8 +1,8 @@
 //! The settings modal (`settings/mod.rs`): one fixed-size panel with a tab
 //! strip along its top and the showing tab below — Audio (the output-device
 //! list, the sample rates, the buffer sizes and a readout of what runs,
-//! `settings/audio_tab.rs`), MIDI (the input / output port lists and the
-//! output-offset row), Appearance (the theme list),
+//! `settings/audio_tab.rs`), MIDI (the input / output port lists, the
+//! output-offset row and the keybed size), Appearance (the theme list),
 //! Keyboard (the search field over every command and fixed key,
 //! `settings/keyboard_tab.rs`), AI (*Allow AI agents*, what it is and how to connect
 //! a client, `settings/ai_tab.rs`) or About (the version, the links, the VST logo
@@ -25,6 +25,7 @@ use crate::view::display::settings::about_tab::{
 use crate::view::display::settings::ai_tab::{AiTab, ClaudeCodeSetup};
 use crate::view::display::settings::audio_tab::{AudioChoice, AudioTab, DEVICE_ROWS};
 
+use crate::models::performance_lane::KeybedSize;
 use crate::view::display::fields::{FieldStyle, MODAL_MARGIN};
 use crate::view::display::modal_focus::{AudioSettingsFocus, PortSide, SettingsTab};
 use crate::view::display::settings::keyboard_tab::{
@@ -78,7 +79,7 @@ impl ListRows {
 /// One MIDI section: its header over its rows.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Section {
-    /// The section header (`IN PORT`, `OUT PORT`, `OUT OFFSET`).
+    /// The section header (`IN PORT`, `OUT PORT`, `OUT OFFSET`, `KEYBED`).
     header: Rect,
     /// The rows a click picks: the visible ports, or the offset value.
     rows: ListRows,
@@ -94,6 +95,8 @@ struct MidiTabLayout {
     ports: [Section; 2],
     /// The output-offset section: one value row.
     offset: Section,
+    /// The keybed-size section: one row of choices.
+    keybed: Section,
 }
 
 /// Where the Audio tab's parts sit.
@@ -249,14 +252,15 @@ impl Display {
 
     /// The content height: the tallest of the Audio tab (four headers; the
     /// device list with its ghost row, the rates, the two-line buffer sizes,
-    /// the readout's three lines), the fullest MIDI tab (three headers; two
-    /// port lists of `PORT_ROWS` plus a ghost row each; the offset row) and
+    /// the readout's three lines), the fullest MIDI tab (four headers; two
+    /// port lists of `PORT_ROWS` plus a ghost row each; the offset row; the
+    /// keybed sizes) and
     /// the theme window — so switching tabs never makes the panel jump.
     fn settings_content_h() -> f32 {
         let audio = 4.0 * Self::SETTINGS_SECTION_H
             + (DEVICE_ROWS + 1 + 1 + 2 + 3) as f32 * Self::SETTINGS_ROW_H;
-        let midi = 3.0 * Self::SETTINGS_SECTION_H
-            + (2 * (PORT_ROWS + 1) + 1) as f32 * Self::SETTINGS_ROW_H;
+        let midi = 4.0 * Self::SETTINGS_SECTION_H
+            + (2 * (PORT_ROWS + 1) + 2) as f32 * Self::SETTINGS_ROW_H;
         let themes = THEME_ROWS as f32 * Self::SETTINGS_ROW_H;
         audio.max(midi).max(themes)
     }
@@ -331,7 +335,7 @@ impl Display {
     }
 
     /// The MIDI tab in `content` for `midi`'s port lists: the input section,
-    /// the output section under it, then the offset. Pure geometry.
+    /// the output section under it, then the offset and the keybed size. Pure geometry.
     fn midi_tab_layout(content: Rect, midi: &MidiTab) -> MidiTabLayout {
         let mut top = content.min.y;
         let ports = PortSide::ALL.map(|side| {
@@ -341,9 +345,11 @@ impl Display {
             top = section.area.max.y;
             section
         });
+        let offset = Self::settings_section(content, top, 1, 1);
         MidiTabLayout {
             ports,
-            offset: Self::settings_section(content, top, 1, 1),
+            offset,
+            keybed: Self::settings_section(content, offset.area.max.y, 1, 1),
         }
     }
 
@@ -530,6 +536,17 @@ impl Display {
                             .area
                             .contains(p)
                             .then_some(SettingsHit::Section(MidiSettingsFocus::OutOffset))
+                    })
+                    .or_else(|| {
+                        let sizes = KeybedSize::ALL;
+                        choice_hit(midi.keybed.rows.first, sizes.len(), p)
+                            .map(|i| SettingsHit::Keybed(sizes[i]))
+                    })
+                    .or_else(|| {
+                        midi.keybed
+                            .area
+                            .contains(p)
+                            .then_some(SettingsHit::Section(MidiSettingsFocus::Keybed))
                     })
             }
             SettingsTab::Appearance => Self::theme_rows(layout.content).hit(p).map(|i| {
@@ -1006,8 +1023,8 @@ impl Display {
         );
     }
 
-    /// The MIDI tab: the input and output port lists and the output-offset
-    /// row.
+    /// The MIDI tab: the input and output port lists, the output-offset
+    /// row and the keybed sizes.
     fn draw_midi_tab(&self, painter: &Painter, content: Rect) {
         let focus = self.settings.midi.focus;
         let layout = Self::midi_tab_layout(content, &self.settings.midi);
@@ -1037,6 +1054,34 @@ impl Display {
             FontId::proportional(Self::FONT_HINT),
             theme::fg_dim(),
         );
+
+        // A row of choices, the one in use the cursor: ↑/↓ or a click pick
+        // another, applied at once (`560-performance-lane-reach.md` § 3).
+        let focused = focus == MidiSettingsFocus::Keybed;
+        let section = layout.keybed;
+        Self::draw_settings_header(painter, section, "KEYBED (KEYS)", focused);
+        Self::draw_settings_text_right(
+            painter,
+            section.header,
+            section.header.max.x,
+            "lights the keys your hand is on in the performance lane",
+            Self::FONT_HINT,
+            theme::fg_dim(),
+        );
+        let row = section.rows.first;
+        let in_use = self.live_notes.keybed().size();
+        let count = KeybedSize::ALL.len();
+        for (i, size) in KeybedSize::ALL.into_iter().enumerate() {
+            let chosen = size == in_use;
+            let look = RowLook {
+                cursor: chosen,
+                focused,
+                active: chosen,
+                locked: false,
+            };
+            let rect = choice_rect(row, i, count);
+            Self::draw_row(painter, rect, &size.keys().to_string(), None, look);
+        }
     }
 
     /// The AI tab: the *Allow AI agents* switch — the tab's one row, so

@@ -66,16 +66,21 @@ pub(crate) enum MidiSettingsFocus {
     /// The MIDI-output offset row — a number, not a list, so the arrow keys
     /// nudge the value instead of moving a cursor. See `160-midi-out-offset.md`.
     OutOffset,
+    /// The keyboard's size, for the performance lane's lit window
+    /// (`560-performance-lane-reach.md` § 3) — a row of choices, which the
+    /// arrow keys step through.
+    Keybed,
 }
 
 impl MidiSettingsFocus {
     /// The next row, as Tab / ←/→ cycle them: IN PORT → OUT PORT → OUT
-    /// OFFSET → IN PORT.
+    /// OFFSET → KEYBED → IN PORT.
     pub(crate) fn next(self) -> MidiSettingsFocus {
         match self {
             MidiSettingsFocus::InPort => MidiSettingsFocus::OutPort,
             MidiSettingsFocus::OutPort => MidiSettingsFocus::OutOffset,
-            MidiSettingsFocus::OutOffset => MidiSettingsFocus::InPort,
+            MidiSettingsFocus::OutOffset => MidiSettingsFocus::Keybed,
+            MidiSettingsFocus::Keybed => MidiSettingsFocus::InPort,
         }
     }
 
@@ -83,18 +88,19 @@ impl MidiSettingsFocus {
     /// [`next`](Self::next).
     pub(crate) fn previous(self) -> MidiSettingsFocus {
         match self {
-            MidiSettingsFocus::InPort => MidiSettingsFocus::OutOffset,
+            MidiSettingsFocus::InPort => MidiSettingsFocus::Keybed,
             MidiSettingsFocus::OutPort => MidiSettingsFocus::InPort,
             MidiSettingsFocus::OutOffset => MidiSettingsFocus::OutPort,
+            MidiSettingsFocus::Keybed => MidiSettingsFocus::OutOffset,
         }
     }
 
-    /// The port list this row is — `None` for the offset row.
+    /// The port list this row is — `None` for the offset and keybed rows.
     pub(crate) fn port_side(self) -> Option<PortSide> {
         match self {
             MidiSettingsFocus::InPort => Some(PortSide::In),
             MidiSettingsFocus::OutPort => Some(PortSide::Out),
-            MidiSettingsFocus::OutOffset => None,
+            MidiSettingsFocus::OutOffset | MidiSettingsFocus::Keybed => None,
         }
     }
 }
@@ -201,7 +207,7 @@ mod tests {
     #[test]
     fn the_rows_cycle_back_to_the_input_list() {
         let mut focus = MidiSettingsFocus::InPort;
-        for _ in 0..3 {
+        for _ in 0..4 {
             focus = focus.next();
         }
         assert_eq!(focus, MidiSettingsFocus::InPort);
@@ -213,12 +219,13 @@ mod tests {
             MidiSettingsFocus::InPort,
             MidiSettingsFocus::OutPort,
             MidiSettingsFocus::OutOffset,
+            MidiSettingsFocus::Keybed,
         ] {
             assert_eq!(focus.next().previous(), focus);
         }
         assert_eq!(
             MidiSettingsFocus::InPort.previous(),
-            MidiSettingsFocus::OutOffset
+            MidiSettingsFocus::Keybed
         );
     }
 
@@ -228,6 +235,7 @@ mod tests {
             assert_eq!(side.focus().port_side(), Some(side));
         }
         assert_eq!(MidiSettingsFocus::OutOffset.port_side(), None);
+        assert_eq!(MidiSettingsFocus::Keybed.port_side(), None);
     }
 
     #[test]

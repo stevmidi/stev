@@ -1,7 +1,8 @@
 //! App-wide settings (not project data): the audio output, rate and buffer,
 //! the remembered MIDI ports, the MIDI-out offset, the last project folder,
-//! the recent projects, the theme index, the browser panel's width and the
-//! keyboard shortcuts the user rebound. Serialized to
+//! the recent projects, the theme index, the browser panel's width, the
+//! keyboard shortcuts the user rebound and the size of the player's
+//! keyboard. Serialized to
 //! `settings.json` in the platform config directory (`paths::config_dir`).
 //! Like the project DTOs, a new field must be `#[serde(default)]` — but here
 //! the default is often *not* the zero value, so an upgrading user gets
@@ -17,6 +18,7 @@ use super::config::{BROWSER_W_DEFAULT, MIDI_OUT_OFFSET_DEFAULT_MS, MIDI_OUT_OFFS
 use super::keymap::ChordDto;
 use super::paths::{SETTINGS_FILE_NAME, config_dir};
 use super::project::ProjectOrigin;
+use crate::models::performance_lane::KeybedSize;
 
 /// The on-disk `settings.json` shape.
 #[derive(Debug, Serialize, Deserialize)]
@@ -77,6 +79,12 @@ pub(crate) struct SettingsData {
     /// the 256 the engine always asked for.
     #[serde(default = "default_audio_buffer_frames")]
     pub(crate) audio_buffer_frames: u32,
+    /// How many keys the player's keyboard has, which the performance lane
+    /// lights its guess of the hand's position from
+    /// (`560-performance-lane-reach.md` § 3), read through
+    /// [`KeybedSize::from_keys`]. Absent before the setting existed: 49.
+    #[serde(default = "default_keybed_keys")]
+    pub(crate) keybed_keys: u8,
 }
 
 impl SettingsData {
@@ -101,6 +109,11 @@ impl SettingsData {
 /// buffer before it could be chosen.
 fn default_audio_buffer_frames() -> u32 {
     DESIRED_BUFFER_FRAMES
+}
+
+/// Serde default for [`SettingsData::keybed_keys`].
+fn default_keybed_keys() -> u8 {
+    KeybedSize::default().keys()
 }
 
 /// Serde default for [`SettingsData::browser_width`].
@@ -132,6 +145,7 @@ impl Default for SettingsData {
             audio_output_device: None,
             audio_sample_rate: None,
             audio_buffer_frames: default_audio_buffer_frames(),
+            keybed_keys: default_keybed_keys(),
         }
     }
 }
@@ -219,6 +233,23 @@ mod tests {
         let json = serde_json::to_string(&settings).unwrap();
         let back: SettingsData = serde_json::from_str(&json).unwrap();
         assert_eq!(back.audio_prefs(), prefs);
+    }
+
+    /// Settings saved before the keybed size existed take 49 keys; a size
+    /// reads back.
+    #[test]
+    fn the_keybed_size_defaults_to_49_and_round_trips() {
+        let old: SettingsData =
+            serde_json::from_str(r#"{"midi_in_port":null,"midi_out_port":null}"#).unwrap();
+        assert_eq!(KeybedSize::from_keys(old.keybed_keys), KeybedSize::Keys49);
+
+        let settings = SettingsData {
+            keybed_keys: KeybedSize::Keys25.keys(),
+            ..SettingsData::default()
+        };
+        let json = serde_json::to_string(&settings).unwrap();
+        let back: SettingsData = serde_json::from_str(&json).unwrap();
+        assert_eq!(KeybedSize::from_keys(back.keybed_keys), KeybedSize::Keys25);
     }
 
     /// The agent bridge is off in settings saved before it existed, and

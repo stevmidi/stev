@@ -41,6 +41,7 @@ use crate::core::plugin_host::{
     install_editor_keys, run_if_scan_child, start_plugin_catalog_scan, start_plugin_host,
 };
 
+use crate::models::performance_lane::KeybedSize;
 #[cfg(target_os = "macos")]
 use crate::view::appkit::{install_open_documents_handler, wire_app_menu};
 use crate::view::theme;
@@ -179,6 +180,11 @@ fn main() {
     shared_atomics
         .midi_out_offset_ms
         .store(midi_out_offset_ms, Ordering::Relaxed);
+
+    // The keybed size before any note can move the guess (`560` § 3).
+    shared_atomics
+        .live_notes
+        .set_keybed_size(KeybedSize::from_keys(settings.keybed_keys));
 
     let clock = setup_clock(shared_channels.clock_command_rx, &shared_atomics);
 

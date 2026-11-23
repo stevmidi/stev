@@ -7,15 +7,18 @@
 //! advances, which `/` renders into clips at the arranger cursor
 //! (`520-performance-capture.md` decisions 1 and 2): [`PerformanceLane::take_run`]
 //! gives it as a [`Take`], the stretches of the arrangement it played.
-//! [`key_index_from_note`] is the note-number → key mapping the lane triggers
-//! on, a cycle of [`CYCLE_KEYS`] repeating along the timeline, of which a
-//! press takes the copy nearest the arranger cursor ([`nearest_copy_tick`],
-//! `560-performance-lane-reach.md`), [`key_tick`] where a key starts (one
-//! [`KeyLength`] of the project's meter per key: a bar, half a bar or a
-//! beat), [`phase_offset`] how far into it a press while running lands, so
-//! the beat never breaks (`550-phase-jumps.md`), and [`note_for_key`] and
-//! [`notes_for_key`] the mapping's inverse, which the arranger draws the
-//! lane's keys from (`510-performance-lane-keyboard.md`).
+//! The lane's keys are a cycle of [`CYCLE_KEYS`] repeating along the
+//! timeline (`560-performance-lane-reach.md`), each named by
+//! [`note_for_key`], which the arranger draws them from
+//! (`510-performance-lane-keyboard.md`). [`KeybedWindow`] is the guess of
+//! the notes the player's keyboard covers, of a [`KeybedSize`] from
+//! settings; its [`Hand`] around the arranger cursor maps a pressed note to
+//! its key along the timeline, the whole hand on the stretch of copies
+//! nearest the cursor ([`nearest_copy_tick`] of its middle key, `560` § 2).
+//! [`key_tick`] is where a key starts (one [`KeyLength`] of the project's
+//! meter per key: a bar, half a bar or a beat), and [`phase_offset`] how far
+//! into it a press while running lands, so the beat never breaks
+//! (`550-phase-jumps.md`).
 
 use crate::core::time::{Meter, snap_to_grid};
 
@@ -203,28 +206,208 @@ impl PerformanceLane {
 /// at a bar a key, 30 bars of 4/4 at a beat.
 pub(crate) const CYCLE_KEYS: i32 = 120;
 
-/// Maps a MIDI note number to its key in the cycle, `0..CYCLE_KEYS`: the
-/// note number itself, so note 0 (C-2) is key 0, bar 1's in the first cycle
-/// (`560-performance-lane-reach.md` § 1). Notes 120–127 wrap onto keys 0–7,
-/// as their names do: an octave the cycle can't hold.
-pub(crate) fn key_index_from_note(note_number: u8) -> i32 {
-    i32::from(note_number) % CYCLE_KEYS
-}
-
-/// The note of key `key_index`, counted along the timeline from bar 1, so
-/// any copy of a key: the inverse of [`key_index_from_note`], in `0..120`
-/// (keys 0–7 give notes 0–7, not their aliases 120–127). The arranger
-/// draws the lane's keys from it (`510-performance-lane-keyboard.md`).
+/// The name of key `key_index`, counted along the timeline from bar 1, so
+/// any copy of a key: a note in `0..120`, a key being its note number in the
+/// cycle (C-2 = key 0, bar 1's in the first cycle; keys 0–7 named by notes
+/// 0–7, not by 120–127, which the next cycle's keys 0–7 play from a hand
+/// reaching past the cycle, [`Hand`]). The arranger draws the lane's keys
+/// from it (`510-performance-lane-keyboard.md`).
 pub(crate) fn note_for_key(key_index: i32) -> u8 {
     // `rem_euclid` keeps it in `0..120`.
     key_index.rem_euclid(CYCLE_KEYS) as u8
 }
 
-/// Every note that plays key `key_index`: its own ([`note_for_key`]) and,
-/// for keys 0–7, the alias an octave past the cycle (120–127). What lights a
-/// key held on the live keyboard.
-pub(crate) fn notes_for_key(key_index: i32) -> impl Iterator<Item = u8> {
-    (note_for_key(key_index)..=127).step_by(CYCLE_KEYS as usize)
+/// How many keys the player's keyboard has (`560-performance-lane-reach.md`
+/// § 3): a setting, not the project's, since it describes the hardware.
+/// Assumed to start on a C. What [`KeybedWindow`] lights.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum KeybedSize {
+    /// 25 keys, two octaves C to C.
+    Keys25,
+    /// 37 keys, three octaves.
+    Keys37,
+    /// 49 keys, four octaves: the home-octave range the design names
+    /// (notes 36–84), so the default.
+    #[default]
+    Keys49,
+    /// 61 keys, five octaves.
+    Keys61,
+    /// 88 keys, taken as starting on a C too.
+    Keys88,
+}
+
+impl KeybedSize {
+    /// The five, smallest first: the settings row's order.
+    pub(crate) const ALL: [KeybedSize; 5] = [
+        KeybedSize::Keys25,
+        KeybedSize::Keys37,
+        KeybedSize::Keys49,
+        KeybedSize::Keys61,
+        KeybedSize::Keys88,
+    ];
+
+    /// How many keys.
+    pub(crate) fn keys(self) -> u8 {
+        match self {
+            KeybedSize::Keys25 => 25,
+            KeybedSize::Keys37 => 37,
+            KeybedSize::Keys49 => 49,
+            KeybedSize::Keys61 => 61,
+            KeybedSize::Keys88 => 88,
+        }
+    }
+
+    /// The size with `keys` keys, as `settings.json` keeps it; the default
+    /// for any other count (a hand-edited file).
+    pub(crate) fn from_keys(keys: u8) -> KeybedSize {
+        KeybedSize::ALL
+            .into_iter()
+            .find(|size| size.keys() == keys)
+            .unwrap_or_default()
+    }
+
+    /// The size `step` places along [`ALL`](Self::ALL) from this one,
+    /// stopping at either end.
+    pub(crate) fn stepped(self, step: isize) -> KeybedSize {
+        let at = KeybedSize::ALL.iter().position(|&size| size == self);
+        let at = at.unwrap_or_default().saturating_add_signed(step);
+        KeybedSize::ALL[at.min(KeybedSize::ALL.len() - 1)]
+    }
+}
+
+/// Stev's guess of the notes the player's keyboard covers
+/// (`560-performance-lane-reach.md` § 4): a window of the keybed's size
+/// starting on a C, moved by whole octaves, just enough, to take in a note
+/// played outside it, as a hardware octave button shifts it. A press jumps
+/// by it ([`hand`](Self::hand)), and the lane lights it: a wrong guess (an
+/// octave off until a note near the edge) can put the whole hand a cycle
+/// away, where it is lit (`560` § 4).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct KeybedWindow {
+    /// The keyboard's size.
+    size: KeybedSize,
+    /// The lowest note it covers, a C (a multiple of 12).
+    low: i32,
+}
+
+impl KeybedWindow {
+    /// A `size` keyboard at its home octave: centred on C3 (note 60) to the
+    /// octave below, so a 49-key keybed covers notes 36–84 and a 25-key one
+    /// 48–72.
+    pub(crate) fn new(size: KeybedSize) -> Self {
+        let octaves = (i32::from(size.keys()) - 1) / 12;
+        KeybedWindow {
+            size,
+            low: 60 - 12 * (octaves / 2),
+        }
+    }
+
+    /// The keyboard's size.
+    pub(crate) fn size(self) -> KeybedSize {
+        self.size
+    }
+
+    /// The same guess for a keyboard of `size`, from the same lowest C: the
+    /// next note outside it puts it right.
+    pub(crate) fn resized(self, size: KeybedSize) -> Self {
+        KeybedWindow { size, ..self }
+    }
+
+    /// The notes covered, `low..=high`.
+    fn high(self) -> i32 {
+        self.low + i32::from(self.size.keys()) - 1
+    }
+
+    /// Whether `note` is in the window.
+    pub(crate) fn contains(self, note: u8) -> bool {
+        (self.low..=self.high()).contains(&i32::from(note))
+    }
+
+    /// `note` was played: a note outside the window moves it by whole
+    /// octaves, just enough to take it in.
+    pub(crate) fn played(&mut self, note: u8) {
+        let note = i32::from(note);
+        let octaves = if note < self.low {
+            -(self.low - note + 11) / 12
+        } else if note > self.high() {
+            (note - self.high() + 11) / 12
+        } else {
+            0
+        };
+        self.low += 12 * octaves;
+    }
+
+    /// The hand around `around_tick` (the arranger cursor) at `length` keys
+    /// of `meter`: the notes laid unbroken along the timeline, note `n` on
+    /// key `n` plus a whole number of cycles, chosen so the middle key's copy
+    /// is the one nearest `around_tick` ([`nearest_copy_tick`]: a tie the
+    /// copy ahead, none before bar 1). One stretch for the whole hand, so it
+    /// never splits (`560-performance-lane-reach.md` § 2).
+    pub(crate) fn hand(self, meter: Meter, length: KeyLength, around_tick: i32) -> Hand {
+        let middle = self.low + (i32::from(self.size.keys()) - 1) / 2;
+        let middle_key = middle.rem_euclid(CYCLE_KEYS);
+        let first = key_tick(meter, length, middle_key);
+        let cycles = (nearest_copy_tick(meter, length, middle_key, around_tick) - first)
+            / key_tick(meter, length, CYCLE_KEYS);
+        Hand {
+            shift: middle_key - middle + cycles * CYCLE_KEYS,
+        }
+    }
+
+    /// The guess as 16 bits, for `LiveNotes`: the size's place in
+    /// [`KeybedSize::ALL`] over the lowest note.
+    pub(crate) fn to_bits(self) -> u16 {
+        let size = KeybedSize::ALL.iter().position(|&size| size == self.size);
+        ((size.unwrap_or_default() as u16) << 8) | self.low as u16
+    }
+
+    /// The guess [`to_bits`](Self::to_bits) packed; a size out of range is
+    /// the default, and a lowest note that isn't a C in `0..=120` puts the
+    /// window at its home octave.
+    pub(crate) fn from_bits(bits: u16) -> Self {
+        let size = KeybedSize::ALL
+            .get(usize::from(bits >> 8))
+            .copied()
+            .unwrap_or_default();
+        let low = i32::from(bits & 0xFF);
+        if low % 12 == 0 && low <= 120 {
+            KeybedWindow { size, low }
+        } else {
+            KeybedWindow::new(size)
+        }
+    }
+}
+
+/// Where the notes of the player's hand land along the timeline, from one
+/// cursor position ([`KeybedWindow::hand`]): each note `n` on key `n +
+/// shift`, `shift` a whole number of cycles plus nothing else, so the hand
+/// lies unbroken and in order, across a cycle's wrap too. A note that would
+/// land before bar 1 (a high hand near the start) lands a cycle on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Hand {
+    /// Keys from a note's number to its key along the timeline, a multiple of
+    /// [`CYCLE_KEYS`], at least `-CYCLE_KEYS`.
+    shift: i32,
+}
+
+impl Hand {
+    /// The key along the timeline that `note` jumps to.
+    pub(crate) fn key_index(self, note: u8) -> i32 {
+        let key = i32::from(note) + self.shift;
+        if key < 0 { key + CYCLE_KEYS } else { key }
+    }
+
+    /// The notes that jump to the key at `key_index` (at most two: its own
+    /// and, for a key in the first cycle, one sent on from before bar 1):
+    /// [`key_index`](Self::key_index)'s inverse, what lights a held key.
+    pub(crate) fn notes_on(self, key_index: i32) -> impl Iterator<Item = u8> {
+        let own = key_index - self.shift;
+        let sent_on = (key_index < CYCLE_KEYS).then_some(own - CYCLE_KEYS);
+        [Some(own), sent_on]
+            .into_iter()
+            .flatten()
+            .filter_map(|note| u8::try_from(note).ok().filter(|&note| note <= 127))
+    }
 }
 
 /// How far each of the lane's keys jumps: a bar, half a bar or a beat of
@@ -585,40 +768,11 @@ mod tests {
     }
 
     #[test]
-    fn a_key_is_its_note_number() {
-        assert_eq!(key_index_from_note(0), 0, "C-2: bar 1");
-        assert_eq!(key_index_from_note(3), 3);
-        assert_eq!(key_index_from_note(60), 60, "C3");
-        assert_eq!(key_index_from_note(119), CYCLE_KEYS - 1, "B7: the last");
-    }
-
-    #[test]
-    fn notes_past_the_cycle_wrap_onto_their_names() {
-        for note in 120..=127 {
-            assert_eq!(key_index_from_note(note), key_index_from_note(note - 120));
-        }
-    }
-
-    #[test]
-    fn note_for_key_is_the_inverse_of_key_index_from_note() {
-        for note in 0..120 {
-            assert_eq!(note_for_key(key_index_from_note(note)), note);
-        }
+    fn a_key_is_named_by_its_note_number() {
         for key_index in 0..CYCLE_KEYS {
-            assert_eq!(key_index_from_note(note_for_key(key_index)), key_index);
+            assert_eq!(i32::from(note_for_key(key_index)), key_index);
         }
-        assert_eq!(note_for_key(0), 0);
-        assert_eq!(note_for_key(7), 7, "G-2, not its alias G8");
-    }
-
-    #[test]
-    fn a_key_is_played_by_its_note_and_its_alias_past_the_cycle() {
-        let notes = |key_index| notes_for_key(key_index).collect::<Vec<u8>>();
-        assert_eq!(notes(0), [0, 120]);
-        assert_eq!(notes(7), [7, 127], "G-2 and G8");
-        assert_eq!(notes(8), [8], "no alias past G8");
-        assert_eq!(notes(119), [119]);
-        assert_eq!(notes(CYCLE_KEYS + 3), [3, 123], "any copy alike");
+        assert_eq!(note_for_key(7), 7, "G-2, not G8");
     }
 
     #[test]
@@ -825,6 +979,174 @@ mod tests {
             assert_eq!(KeyLength::Bar.in_meter(meter), KeyLength::Bar);
             assert_eq!(KeyLength::Beat.in_meter(meter), KeyLength::Beat);
         }
+    }
+
+    /// The notes a window covers, as `(lowest, highest)`.
+    fn covered(window: KeybedWindow) -> (u8, u8) {
+        let notes: Vec<u8> = (0..=127).filter(|&n| window.contains(n)).collect();
+        (notes[0], notes[notes.len() - 1])
+    }
+
+    #[test]
+    fn a_keybed_starts_at_its_home_octave() {
+        let home = |size| covered(KeybedWindow::new(size));
+        assert_eq!(home(KeybedSize::Keys25), (48, 72));
+        assert_eq!(home(KeybedSize::Keys37), (48, 84));
+        assert_eq!(home(KeybedSize::Keys49), (36, 84));
+        assert_eq!(home(KeybedSize::Keys61), (36, 96));
+        assert_eq!(home(KeybedSize::Keys88), (24, 111));
+    }
+
+    #[test]
+    fn a_note_inside_the_window_leaves_it() {
+        let mut window = KeybedWindow::new(KeybedSize::Keys25);
+        for note in [48, 60, 72] {
+            window.played(note);
+            assert_eq!(covered(window), (48, 72), "note {note}");
+        }
+    }
+
+    #[test]
+    fn a_note_outside_moves_the_window_by_whole_octaves_just_enough() {
+        let mut window = KeybedWindow::new(KeybedSize::Keys25);
+        window.played(73);
+        assert_eq!(covered(window), (60, 84), "an octave up");
+        window.played(47);
+        assert_eq!(covered(window), (36, 60), "two down: one is too few");
+        window.played(110);
+        assert_eq!(covered(window), (96, 120), "five up at once");
+        window.played(127);
+        assert_eq!(covered(window), (108, 127), "the top: covered up to 132");
+        window.played(0);
+        assert_eq!(covered(window), (0, 24), "the bottom");
+    }
+
+    #[test]
+    fn a_resized_window_keeps_its_lowest_c() {
+        let mut window = KeybedWindow::new(KeybedSize::Keys25);
+        window.played(96);
+        let window = window.resized(KeybedSize::Keys49);
+        assert_eq!(window.size(), KeybedSize::Keys49);
+        assert_eq!(covered(window), (72, 120));
+    }
+
+    /// A beat a key in 4/4, the hand at home on 49 keys (36–84, middle C3
+    /// at bar 16): from a cursor at bar 73, C3's nearest copy is bar 76, so
+    /// C2 lands on bar 73 and the hand spans bars 70–82.
+    #[test]
+    fn the_hand_sits_around_the_cursor() {
+        let meter = Meter::FOUR_FOUR;
+        let bar = meter.bar_ticks();
+        let hand = KeybedWindow::new(KeybedSize::Keys49).hand(meter, KeyLength::Beat, 72 * bar);
+        let at = |note| key_tick(meter, KeyLength::Beat, hand.key_index(note));
+        assert_eq!(at(48), 72 * bar, "C2: bar 73");
+        assert_eq!(at(36), 69 * bar, "C1: bar 70");
+        assert_eq!(at(60), 75 * bar, "C3: bar 76");
+        assert_eq!(at(84), 81 * bar, "C4: bar 82");
+    }
+
+    /// The whole hand moves together, when its middle's copy switches: a
+    /// 25-key hand on notes 0–24, middle C-1 at bar 4, stays until the
+    /// cursor is half a cycle past it (bar 19), then every note moves on.
+    #[test]
+    fn a_cursor_move_switches_the_hand_whole() {
+        let meter = Meter::FOUR_FOUR;
+        let bar = meter.bar_ticks();
+        let mut window = KeybedWindow::new(KeybedSize::Keys25);
+        window.played(0);
+        for (cursor_bar, shift) in [(10, 0), (18, 0), (19, CYCLE_KEYS)] {
+            let hand = window.hand(meter, KeyLength::Beat, (cursor_bar - 1) * bar);
+            for note in [0, 12, 24] {
+                assert_eq!(
+                    hand.key_index(note),
+                    i32::from(note) + shift,
+                    "note {note} from bar {cursor_bar}"
+                );
+            }
+        }
+    }
+
+    /// A hand reaching past the cycle's end lies on unbroken: note 125 (F8)
+    /// is key 5 of the next cycle, right after B7.
+    #[test]
+    fn the_hand_runs_on_across_a_cycle() {
+        let meter = Meter::FOUR_FOUR;
+        let mut window = KeybedWindow::new(KeybedSize::Keys25);
+        window.played(127);
+        // Notes 108–132, middle 120: key 0 of the second cycle.
+        let hand = window.hand(meter, KeyLength::Bar, 115 * meter.bar_ticks());
+        assert_eq!(hand.key_index(108), 108);
+        assert_eq!(hand.key_index(119), 119);
+        assert_eq!(hand.key_index(120), CYCLE_KEYS);
+        assert_eq!(hand.key_index(125), CYCLE_KEYS + 5);
+    }
+
+    /// From bar 1 that hand's middle (key 0) is bar 1 itself, so its notes
+    /// below 120 would fall before bar 1: they land a cycle on, where they
+    /// are anyway, and notes 120–127 on keys 0–7 (as does note 0, far
+    /// outside the hand: a press of it would move the guess first).
+    #[test]
+    fn a_hand_never_lands_before_bar_one() {
+        let meter = Meter::FOUR_FOUR;
+        let mut window = KeybedWindow::new(KeybedSize::Keys25);
+        window.played(127);
+        let hand = window.hand(meter, KeyLength::Bar, 0);
+        assert_eq!(hand.key_index(120), 0);
+        assert_eq!(hand.key_index(127), 7);
+        assert_eq!(hand.key_index(108), 108, "sent a cycle on");
+        assert_eq!(hand.notes_on(0).collect::<Vec<_>>(), [120, 0]);
+        assert_eq!(hand.notes_on(108).collect::<Vec<_>>(), [108]);
+    }
+
+    /// `notes_on` is `key_index`'s inverse, every note on one key, whatever
+    /// the hand and cursor.
+    #[test]
+    fn notes_on_is_the_inverse_of_key_index() {
+        let meter = Meter::FOUR_FOUR;
+        let bar = meter.bar_ticks();
+        for played in [0, 60, 127] {
+            for cursor_bar in [1, 16, 40, 73, 200] {
+                let mut window = KeybedWindow::new(KeybedSize::Keys61);
+                window.played(played);
+                let hand = window.hand(meter, KeyLength::Beat, (cursor_bar - 1) * bar);
+                for note in 0..=127 {
+                    let key = hand.key_index(note);
+                    assert!(key >= 0);
+                    assert!(
+                        hand.notes_on(key).any(|n| n == note),
+                        "note {note}, hand at {played}, bar {cursor_bar}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_keybed_window_round_trips_through_bits() {
+        for size in KeybedSize::ALL {
+            let mut window = KeybedWindow::new(size);
+            assert_eq!(KeybedWindow::from_bits(window.to_bits()), window);
+            window.played(127);
+            assert_eq!(KeybedWindow::from_bits(window.to_bits()), window);
+            window.played(0);
+            assert_eq!(KeybedWindow::from_bits(window.to_bits()), window);
+        }
+        let home = KeybedWindow::new(KeybedSize::Keys49);
+        assert_eq!(KeybedWindow::from_bits((2 << 8) | 37), home, "not a C");
+        assert_eq!(KeybedWindow::from_bits(9 << 8 | 36), home, "no such size");
+    }
+
+    #[test]
+    fn keybed_sizes_by_key_count_and_step() {
+        for size in KeybedSize::ALL {
+            assert_eq!(KeybedSize::from_keys(size.keys()), size);
+        }
+        assert_eq!(KeybedSize::from_keys(30), KeybedSize::Keys49, "unknown");
+        assert_eq!(KeybedSize::default().keys(), 49);
+        assert_eq!(KeybedSize::Keys49.stepped(1), KeybedSize::Keys61);
+        assert_eq!(KeybedSize::Keys49.stepped(-2), KeybedSize::Keys25);
+        assert_eq!(KeybedSize::Keys88.stepped(1), KeybedSize::Keys88);
+        assert_eq!(KeybedSize::Keys25.stepped(-1), KeybedSize::Keys25);
     }
 
     #[test]

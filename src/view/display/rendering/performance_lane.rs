@@ -9,20 +9,24 @@
 //! (§ Step 1b): a thin strip along the lane's bottom edge carries each
 //! key, drawn as a keyboard (an unbroken white strip, each black key a block
 //! hanging from its top), the plain lane above it the
-//! names (the C's always, every key once a beat key is wide enough), and a key the
-//! live keyboard holds lights while the lane is armed. Static: it changes
-//! with zoom, scroll and the meter, never with playing (the playhead is the
-//! trigger's feedback).
+//! C's names, one an octave, and a key the
+//! live keyboard holds lights while the lane is armed, on the key its press
+//! landed on. While armed, the keys the player's hand is on (the guess,
+//! `LiveNotes::keybed`) are washed where its presses land: one unbroken
+//! stretch around the arranger cursor (`KeybedWindow::hand`, `560` § 2 and
+//! § 4). Static otherwise: it changes with zoom, scroll, the meter
+//! and the cursor, never with playing (the playhead is the trigger's
+//! feedback).
 
 use std::ops::Range;
 
-use egui::{Align2, Color32, CornerRadius, FontId, Painter, Pos2, Rect, Stroke, pos2, vec2};
+use egui::{Align2, CornerRadius, FontId, Painter, Pos2, Rect, Stroke, pos2, vec2};
 
 use super::arranger::lane_grid_fill;
 use super::piano_keys::{is_black_key, octave_of, pitch_class, row_seam_w};
 use super::*;
 use crate::core::time::Meter;
-use crate::models::performance_lane::{KeyLength, key_tick, note_for_key, notes_for_key};
+use crate::models::performance_lane::{KeyLength, key_tick, note_for_key};
 use crate::models::pitch::pitch_class_name;
 
 /// Height of the key strip along the lane's bottom edge. Narrow, as the
@@ -45,13 +49,13 @@ const UNARMED_KEY_STRENGTH: f32 = 0.5;
 /// own piece of the strip lights in the full accent. Tune by eye.
 const HELD_KEY_WASH: f32 = 0.25;
 
-/// Gap between a key's left edge and its label, and the least room left on
-/// its right before every key is labelled (`labels_every_key`).
-const KEY_LABEL_PAD_X: f32 = 3.0;
+/// Strength of the accent wash over the keys the player's hand is on (the
+/// keybed guess), above the strip: under a held key's, so a held key still
+/// stands out inside it. Tune by eye.
+const KEYBED_WINDOW_WASH: f32 = 0.1;
 
-/// The name the every-key label threshold is measured from: a sharp, as
-/// wide as the lane's names get (`labels_every_key`).
-const WIDEST_KEY_NAME: &str = "C#-2";
+/// Gap between a C's left edge and its name.
+const KEY_LABEL_PAD_X: f32 = 3.0;
 
 /// A gutter label's cell: its text and the room after it, so a cell's width
 /// is what a click on it takes (`key_length_labels`).
@@ -125,12 +129,6 @@ impl Display {
         let key_ticks = key_tick(meter, length, 1);
         let keys = visible_keys(self.render_scroll_x(), self.content_w(), ppt, key_ticks);
         let font = FontId::proportional(theme::FONT_SIZE_TL);
-        let label_w = p
-            .layout_no_wrap(WIDEST_KEY_NAME.to_owned(), font.clone(), Color32::WHITE)
-            .size()
-            .x;
-        let label_every_key =
-            labels_every_key(length.in_meter(meter), ppt * key_ticks as f32, label_w);
         // Opaque, so a black key drawn over the white strip shows its own
         // tone rather than a blend of the two.
         let lane_fill = lane_grid_fill(armed, accent);
@@ -143,6 +141,8 @@ impl Display {
             )
         };
         let label_color = theme::fg_dim();
+        let keybed = self.live_notes.keybed();
+        let hand = keybed.hand(meter, length, self.cursor_tick.load(Ordering::Relaxed));
 
         for key_index in keys {
             let note = note_for_key(key_index);
@@ -150,13 +150,19 @@ impl Display {
             let right = self.tick_to_screen_x(key_tick(meter, length, key_index + 1));
             let above = Rect::from_x_y_ranges(left..=right, lane_top..=strip_top);
             let key = Rect::from_x_y_ranges(left..=right, strip_top..=strip_bottom);
-            let lit = armed && notes_for_key(key_index).any(|n| self.live_notes.is_held(n));
-            if lit {
-                p.rect_filled(
-                    above,
-                    CornerRadius::ZERO,
-                    accent.gamma_multiply(HELD_KEY_WASH),
-                );
+            // A held note, or the window, on the key its press lands on.
+            let lights =
+                |note_lit: &dyn Fn(u8) -> bool| armed && hand.notes_on(key_index).any(note_lit);
+            let lit = lights(&|n| self.live_notes.is_held(n));
+            let wash = if lit {
+                Some(HELD_KEY_WASH)
+            } else if lights(&|n| keybed.contains(n)) {
+                Some(KEYBED_WINDOW_WASH)
+            } else {
+                None
+            };
+            if let Some(strength) = wash {
+                p.rect_filled(above, CornerRadius::ZERO, accent.gamma_multiply(strength));
             }
             if is_black_key(pitch_class(note)) {
                 // White beneath, the black key hanging from the top, and the
@@ -185,7 +191,10 @@ impl Display {
                 );
             }
 
-            if label_every_key || pitch_class(note) == 0 {
+            // Only the C's are named, one an octave, at every key length
+            // (every key was named at a beat once there was room, until
+            // 2026-11-23: too busy).
+            if pitch_class(note) == 0 {
                 // Clipped to its own key, so a key scrolled half off never
                 // leaves its name on the next one.
                 p.with_clip_rect(above.intersect(content)).text(
@@ -335,15 +344,6 @@ fn black_key_parts(key: Rect) -> (Rect, Rect) {
     let mid_x = key.center().x.round();
     let under = Rect::from_x_y_ranges(mid_x..=mid_x, hang_bottom..=key.bottom());
     (hanging, under)
-}
-
-/// Whether every key is named, not just the C's: only at a beat a key
-/// (`length` as it plays in the meter), and only once a key `key_w` wide has
-/// room for the widest name the lane shows (`label_w`, measured from
-/// `WIDEST_KEY_NAME`) and its padding on both sides. At a bar or half a bar
-/// a key, the C's alone mark the octaves, however far the lane is zoomed in.
-fn labels_every_key(length: KeyLength, key_w: f32, label_w: f32) -> bool {
-    length == KeyLength::Beat && key_w >= label_w + 2.0 * KEY_LABEL_PAD_X
 }
 
 /// A key's name, sharps only as the MCP units write them, with the piano
@@ -503,20 +503,6 @@ mod tests {
         assert_eq!(under.bottom(), key.bottom());
         assert_eq!(under.min.x, 110.0, "the white keys meet at its middle");
         assert_eq!(under.width(), 0.0);
-    }
-
-    #[test]
-    fn every_key_is_named_once_a_key_fits_the_widest_name() {
-        assert!(!labels_every_key(KeyLength::Beat, 20.0, 20.0));
-        assert!(!labels_every_key(KeyLength::Beat, 25.9, 20.0));
-        assert!(labels_every_key(KeyLength::Beat, 26.0, 20.0));
-    }
-
-    #[test]
-    fn only_the_cs_are_named_at_a_bar_or_half_a_bar() {
-        for length in [KeyLength::Bar, KeyLength::HalfBar] {
-            assert!(!labels_every_key(length, 1000.0, 20.0), "{length:?}");
-        }
     }
 
     #[test]

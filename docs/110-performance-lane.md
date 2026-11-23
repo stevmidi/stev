@@ -41,18 +41,24 @@ else. Key files:
   lasting until the next press, the last until the capture), the stretches
   of the arrangement it played (`520` decision 1). Each press keeps its
   jump target, so a key length or meter changed in the middle of a run
-  renders what was heard. `key_index_from_note`
-  maps a MIDI note to its key in a **cycle of 120** (`CYCLE_KEYS`, ten
-  octaves): the note number itself, `note mod 120`, so note 0 (C-2) is key 0
-  and notes 120–127 wrap onto keys 0–7. The keys repeat along the timeline, a
-  cycle after another, and a press, running or stopped, jumps to the copy of
-  its key **nearest the arranger cursor** (`nearest_copy_tick`; a tie at half
-  a cycle picks the copy ahead, a copy before bar 1 is never chosen), the
-  phase offset (`550`) added to that copy's start. So the keys reach about
-  half a cycle either side of the cursor, ±15 bars at a beat a key in 4/4, ±60
-  at a bar a key; the playhead moving never changes what a key means, and a
-  cursor moved away and back gives the same mapping again
-  (`560-performance-lane-reach.md`). `key_tick(meter, length,
+  renders what was heard. The keys form a **cycle of 120** (`CYCLE_KEYS`,
+  ten octaves), a key named by its note number (`note_for_key`, C-2 = key 0
+  = bar 1), repeating along the timeline a cycle after another. A press,
+  running or stopped, jumps by **the player's hand placed around the arranger
+  cursor** (`560-performance-lane-reach.md` § 2): the keybed guess
+  (`LiveNotes::keybed`, a `KeybedWindow`, below) laid unbroken along the
+  timeline, note `n` on key `n` plus whole cycles, the cycles chosen so the
+  hand's middle key is the copy nearest the cursor (`KeybedWindow::hand`,
+  `nearest_copy_tick`: a tie at half a cycle the copy ahead, never before bar
+  1; a note that would still fall before bar 1 lands a cycle on,
+  `Hand::key_index`). The phase offset (`550`) is added to that key's start.
+  So the hand reaches about half a cycle either side of the cursor, ±15 bars
+  at a beat a key in 4/4, ±60 at a bar a key; it is never split, a cursor
+  move moves it whole, and the playhead never moves it. The guess is moved
+  on the input thread at every note-on before the note reaches the
+  sequencer (`LiveNotes::set`), so a press jumps by the guess its own note
+  left: a hardware octave shift takes effect at the press that shows it.
+  `EventHandlers::live_notes` is how the press handler reads it. `key_tick(meter, length,
   key)` is where a key jumps, one **key length** (`KeyLength`) per key: a
   bar, half a bar or a beat (`KeyLength::ticks`: `bar_ticks`, half of it,
   `beat_ticks`, the counted beat, a quarter in x/4, an eighth in x/8), so
@@ -186,7 +192,7 @@ else. Key files:
   click anywhere else on the row arms as before. No key and no keymap action. `draw_timeline` starts the
   arranger's in-lane grid lines under the row (`ArrangerLayout::lanes_top`), so
   no bar or beat line crosses the lane; the key edges, every beat, are the lines
-  there. Each key (`note_for_key`, the inverse of `key_index_from_note`, any
+  there. Each key (named by `note_for_key`, its note number in the cycle, any
   copy along the timeline) spans its key length, from `key_tick` to the next,
   in a thin strip along the lane's bottom edge (`KEY_STRIP_H`, 8pt), in the
   piano roll's `piano_key_white`/`piano_key_black`, drawn as a keyboard: the
@@ -199,22 +205,36 @@ else. Key files:
   the project meter, so it follows zoom, scroll, the meter and the key length
   (redrawn at the new width as soon as it changes); the keys repeat for as long
   as the timeline runs (`visible_keys`, none before bar 1), B7 meeting the next
-  C-2 with the B/C seam. A key played by notes 0–7 lights for their aliases
-  120–127 too (`notes_for_key`). Filling the whole row with the keys was tried first and read
+  C-2 with the B/C seam. Filling the whole row with the keys was tried first and read
   as heavy slabs, whatever the tones: the piano roll's colours work in a narrow
   band, as in its key column. Seams at E/F (1px) and B/C (2px) in the strip, as
   on the piano roll (`row_seam_w`). The plain lane above the strip carries the
-  names in `fg_dim`: the C's always (Cubase-style, C-2 over bar 1), every key
-  once a key fits the widest sharp's name and its padding, but only at a beat a
-  key: at a bar or half a bar the C's alone mark the octaves (`labels_every_key`),
-  each clipped to its key. Only the visible keys are drawn (`visible_keys`). The
+  names in `fg_dim`: the C's only, one an octave, at every key length
+  (Cubase-style, C-2 over bar 1), each clipped to its key. Every key was named
+  at a beat a key once it was wide enough, until 2026-11-23: too busy. Only the visible keys are drawn (`visible_keys`). The
   strip is drawn armed or not, unarmed blended opaquely
   `UNARMED_KEY_STRENGTH` of the way from the lane fill; the lane fill
   is the usual one (the accent tint while armed). While armed every key the live
   keyboard holds (`LiveNotes`, which wakes the UI on each edge) lights its piece
   of the strip (a black key's hanging block only) in `theme::accent()`, with a wash (`HELD_KEY_WASH`) over its span
-  above: what the hands hold, not just the key the transport jumped to. Unarmed,
-  held keys light nothing in the lane.
+  above: what the hands hold, not just the key the transport jumped to. A
+  held key lights only the key its press landed on (`Hand::notes_on`; every
+  copy on screen lit until `560` phase 2). Unarmed, held keys light nothing
+  in the lane.
+- **The lit window** (`560-performance-lane-reach.md` § 3–5): the keys the
+  player's hand is on get a fainter wash over their span above the strip
+  (`KEYBED_WINDOW_WASH`, under a held key's), armed only, as held keys are.
+  The guess of the notes the keyboard covers is `LiveNotes::keybed` (a
+  `KeybedWindow` packed in one `AtomicU16`: a window of the keybed size from
+  settings, starting on a C, home on C3 to the octave below, so 36–84 on a
+  49-key keybed). `LiveNotes::set` moves it at every note-on, armed or not,
+  by whole octaves, just enough to take the note in. The lane washes the
+  keys the window's notes land on in the hand around the cursor (the same
+  `KeybedWindow::hand` a press uses, so lit is where presses go): one
+  unbroken stretch, moving whole at once on a cursor move that switches the
+  hand's copy, and after a hardware octave button at the next press. The
+  keybed size is picked in Settings → MIDI (`SettingsData::keybed_keys`,
+  `060`), set on `LiveNotes` at launch and by the tab.
 - **Otherwise barebones**: no per-trigger visualization, no "Bar N" label, no
   committed-trigger history. The playhead (drawn elsewhere, unconditionally
   whenever `running`, over the keys) is the only feedback for an active
@@ -222,8 +242,8 @@ else. Key files:
   trigger; it was removed as unnecessary UI complexity once the playhead was
   made reliably visible (see next section) — don't re-add it without a
   specific reason. The keys are such a reason: they show the mapping, which
-  nothing else shows, and they are static (zoom, scroll, the meter and the key
-  length change them, playing never does), where the removed visuals repeated what the
+  nothing else shows, and they are static (zoom, scroll, the meter, the key
+  length, the cursor and the keyboard's octave change them, playing never does), where the removed visuals repeated what the
   playhead already says.
 
 ## Waking the UI from a background-thread trigger

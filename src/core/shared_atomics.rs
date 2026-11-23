@@ -23,6 +23,7 @@ use egui::Context;
 use crate::core::audio::meter::ChannelLevel;
 use crate::core::config::{MAX_TRACKS, TRACK_VOLUME_DB_DEFAULT};
 use crate::models::knobs::KNOB_COUNT;
+use crate::models::performance_lane::{KeybedSize, KeybedWindow};
 
 /// Per-track mixer state — volume, stereo balance, mute and solo — plus what
 /// each track's meter reads: its last note-on (`note_on`) and its audio level
@@ -286,13 +287,19 @@ impl AudioExportAtomics {
 }
 
 /// The notes the live keyboard (a MIDI port or the computer keys) is holding
-/// right now, as a 128-bit set — what the piano roll's keys light up for.
-/// Written by whichever input thread routes the message
+/// right now, as a 128-bit set — what the piano roll's keys light up for —
+/// and the guess of the notes the keyboard covers (`KeybedWindow`), which a
+/// performance-lane press jumps by and the lane lights
+/// (`560-performance-lane-reach.md` § 2 and § 4). Written by whichever input thread routes the message
 /// ([`LiveInputRouter`](crate::core::midi::input::LiveInputRouter)), read by
 /// the render thread.
 pub(crate) struct LiveNotes {
     /// Notes 0–63 in the first word, 64–127 in the second; bit `n % 64`.
     bits: [AtomicU64; 2],
+    /// The keybed guess, packed by `KeybedWindow::to_bits`: moved at every
+    /// note-on, before the note goes on to the sequencer, so a press jumps
+    /// by the guess its own note left; resized from settings.
+    keybed: AtomicU16,
     /// Wakes the reactive UI when a note edge changes the set, since a live
     /// note is not a window input event (`EventHandlers::request_repaint`).
     repaint_ctx: Arc<OnceLock<Context>>,
@@ -303,16 +310,25 @@ impl LiveNotes {
     pub(crate) fn new(repaint_ctx: Arc<OnceLock<Context>>) -> Self {
         LiveNotes {
             bits: [AtomicU64::new(0), AtomicU64::new(0)],
+            keybed: AtomicU16::new(KeybedWindow::new(KeybedSize::default()).to_bits()),
             repaint_ctx,
         }
     }
 
     /// Marks `note` held (`on`) or released, waking the UI if that changed
-    /// the set. Out-of-range notes are ignored.
+    /// the set, and moves the keybed guess for a note-on. Out-of-range notes
+    /// are ignored.
     pub(crate) fn set(&self, note: usize, on: bool) {
         let Some(word) = self.bits.get(note / 64) else {
             return;
         };
+        if on {
+            // Two input threads (a port, the computer keys) may race here;
+            // the loser's move is lost, and the next note puts it right.
+            let mut keybed = self.keybed();
+            keybed.played(note as u8);
+            self.keybed.store(keybed.to_bits(), Ordering::Relaxed);
+        }
         let bit = 1u64 << (note % 64);
         let before = if on {
             word.fetch_or(bit, Ordering::Relaxed)
@@ -332,6 +348,18 @@ impl LiveNotes {
         self.bits
             .get(note / 64)
             .is_some_and(|word| word.load(Ordering::Relaxed) & (1u64 << (note % 64)) != 0)
+    }
+
+    /// The guess of the notes the keyboard covers.
+    pub(crate) fn keybed(&self) -> KeybedWindow {
+        KeybedWindow::from_bits(self.keybed.load(Ordering::Relaxed))
+    }
+
+    /// The keyboard is `size` keys (settings): the guess keeps its lowest C
+    /// until the next note puts it right (`KeybedWindow::resized`).
+    pub(crate) fn set_keybed_size(&self, size: KeybedSize) {
+        let keybed = self.keybed().resized(size);
+        self.keybed.store(keybed.to_bits(), Ordering::Relaxed);
     }
 }
 
@@ -438,6 +466,7 @@ pub(crate) struct SharedAtomics {
 mod tests {
     use super::{LiveNotes, TrackMixAtomics};
     use crate::core::audio::meter::ChannelLevel;
+    use crate::models::performance_lane::{KeybedSize, KeybedWindow};
 
     #[test]
     fn live_notes_track_each_held_note_across_both_words() {
@@ -451,6 +480,27 @@ mod tests {
         live.set(100, false);
         live.set(200, true);
         assert!(!live.is_held(100) && !live.is_held(127));
+    }
+
+    #[test]
+    fn a_note_on_moves_the_keybed_guess_before_anything_reads_it() {
+        let live = LiveNotes::new(Default::default());
+        live.set_keybed_size(KeybedSize::Keys25);
+        assert_eq!(
+            live.keybed(),
+            KeybedWindow::new(KeybedSize::Keys49).resized(KeybedSize::Keys25),
+            "the lowest C kept"
+        );
+        live.set(84, true);
+        assert!(live.keybed().contains(84) && !live.keybed().contains(48));
+        live.set(84, false);
+        live.set(40, false);
+        assert!(live.keybed().contains(84), "a release moves nothing");
+        live.set(200, true);
+        assert!(live.keybed().contains(84), "out of range: ignored");
+        live.set_keybed_size(KeybedSize::Keys49);
+        assert_eq!(live.keybed().size(), KeybedSize::Keys49);
+        assert!(live.keybed().contains(84));
     }
 
     #[test]

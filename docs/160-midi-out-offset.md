@@ -143,7 +143,7 @@ message — so a change applies to the next note with no restart.
 
 The settings modal's MIDI tab (`⌘/Ctrl+,`) has a
 third focus row, `MidiSettingsFocus::OutOffset`. Tab / ←/→ cycle
-IN PORT → OUT PORT → OUT OFFSET (a click on the row focuses it too); on the
+IN PORT → OUT PORT → OUT OFFSET → KEYBED (a click on the row focuses it too); on the
 offset row **↑/↓ change the value** (it is a number, not a list) and each nudge
 applies and saves at once (`Display::nudge_midi_out_offset` sends
 `InputEvent::SetMidiOutOffset`, which publishes the atomic and saves the

@@ -20,6 +20,7 @@ use egui::{Key, pos2};
 use crate::core::config;
 use crate::core::input_event::{InputEvent, KeyModifiers};
 use crate::core::settings::clamp_midi_out_offset_ms;
+use crate::models::performance_lane::KeybedSize;
 #[cfg(target_os = "macos")]
 use crate::view::appkit::{AppMenuRequest, take_app_menu_request};
 use crate::view::theme;
@@ -94,6 +95,8 @@ pub(super) enum SettingsHit {
     /// A MIDI section — its header, the offset row, or the empty and ghost
     /// slots of a port list: focuses that row.
     Section(MidiSettingsFocus),
+    /// A keybed size in the MIDI tab: picks it.
+    Keybed(KeybedSize),
     /// The AI tab's *Allow AI agents* switch: flips it.
     AgentBridge,
     /// The AI tab's Claude Code command: copies it.
@@ -273,6 +276,20 @@ impl Display {
             .ok();
     }
 
+    /// Makes `size` the keyboard's size: the performance lane lights and
+    /// jumps by it at once (its guess keeping its lowest C until the next
+    /// press, `LiveNotes::set_keybed_size`) and the sequencer saves it.
+    /// Nothing when it is the size already.
+    pub(super) fn set_keybed_size(&mut self, size: KeybedSize) {
+        if size == self.live_notes.keybed().size() {
+            return;
+        }
+        self.live_notes.set_keybed_size(size);
+        self.input_event_tx
+            .send(InputEvent::SaveKeybedSize { size })
+            .ok();
+    }
+
     /// Chooses `choice` in the Audio tab, applied at once: the engine
     /// restarts on it and the sequencer saves it (`480-audio-settings.md`
     /// decision 2). Nothing when it is what was already chosen. Only
@@ -345,6 +362,10 @@ impl Display {
             SettingsHit::AudioSection(focus) => self.settings.audio.focus = focus,
             SettingsHit::Audio(choice) => self.choose_audio(choice),
             SettingsHit::Section(focus) => self.settings.midi.focus = focus,
+            SettingsHit::Keybed(size) => {
+                self.settings.midi.focus = MidiSettingsFocus::Keybed;
+                self.set_keybed_size(size);
+            }
             SettingsHit::AgentBridge => self.toggle_agent_bridge(),
             SettingsHit::CopyCommand => self.settings.ai.request_copy(),
             SettingsHit::Port(side, idx) => {

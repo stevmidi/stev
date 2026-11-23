@@ -19,7 +19,7 @@ use crate::core::midi::out_queue::MidiOutMessage;
 use crate::core::project::{LibraryChange, ProjectAction, StorageJob};
 use crate::core::sequencer::test_support::{clip_at, note_off, note_on};
 use crate::core::sequencer::{Sequencer, SequencerCommand, UndoStep};
-use crate::core::shared_atomics::{AudioExportAtomics, TrackMixAtomics};
+use crate::core::shared_atomics::{AudioExportAtomics, LiveNotes, TrackMixAtomics};
 use crate::core::time::{Meter, TapTempo};
 use crate::core::transport::{Transport, TransportCommand, TransportEvent};
 use crate::models::event::EventType;
@@ -49,6 +49,8 @@ pub(crate) struct Harness {
     pub(crate) has_event_selection: Arc<AtomicBool>,
     /// `SharedAtomics::audio_export`.
     pub(crate) audio_export: Arc<AudioExportAtomics>,
+    /// `SharedAtomics::live_notes`: the keybed guess a lane press jumps by.
+    pub(crate) live_notes: Arc<LiveNotes>,
     /// The transport cursor, shared with the sequencer.
     pub(crate) cursor_tick: Arc<AtomicI32>,
     /// The playback position, shared with the sequencer.
@@ -83,6 +85,7 @@ pub(crate) fn harness() -> Harness {
     let (midi_out_tx, midi_out) = unbounded();
     let has_event_selection = Arc::new(AtomicBool::new(false));
     let audio_export = Arc::new(AudioExportAtomics::default());
+    let live_notes = Arc::new(LiveNotes::new(Default::default()));
     let handlers = EventHandlers::new(
         ui_event_tx,
         transport_command_tx,
@@ -93,6 +96,7 @@ pub(crate) fn harness() -> Harness {
         has_event_selection.clone(),
         Arc::new(AtomicI32::new(0)),
         audio_export.clone(),
+        live_notes.clone(),
         Arc::new(OnceLock::new()),
     );
 
@@ -140,6 +144,7 @@ pub(crate) fn harness() -> Harness {
         midi_out,
         has_event_selection,
         audio_export,
+        live_notes,
         cursor_tick,
         playback_tick,
         running,

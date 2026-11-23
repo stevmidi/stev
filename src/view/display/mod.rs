@@ -251,8 +251,9 @@ pub(crate) struct Display {
     /// The running audio export: the footer's progress, and Esc cancelling
     /// it rather than the marquee. See `SharedAtomics::audio_export`.
     audio_export: Arc<AudioExportAtomics>,
-    /// The notes the live keyboard holds, lit on the piano roll's keys. See
-    /// `SharedAtomics::live_notes`.
+    /// The notes the live keyboard holds, lit on the piano roll's keys, and
+    /// the guess of the notes it covers, lit in the performance lane
+    /// (`LiveNotes::keybed`). See `SharedAtomics::live_notes`.
     live_notes: Arc<LiveNotes>,
     /// Audio-callback deadline utilisation, shared with the audio engine and
     /// read once per frame for the header's DSP readout. `None` when no output

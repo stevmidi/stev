@@ -39,7 +39,7 @@ use crate::{
     models::{
         clip::{Clip, ClipEdge, NoteDrag},
         knobs::ParamId,
-        performance_lane::KeyLength,
+        performance_lane::{KeyLength, KeybedSize},
         track::TrackOutput,
     },
 };
@@ -871,6 +871,12 @@ pub(crate) enum InputEvent {
     SetMidiOutOffset {
         /// The new MIDI-output offset, in milliseconds.
         out_offset_ms: i32,
+    },
+    /// The settings modal's MIDI tab picked the keyboard's size: save it.
+    /// The view already lights the lane by it.
+    SaveKeybedSize {
+        /// The size picked.
+        size: KeybedSize,
     },
     /// *Allow AI agents* flipped (the settings modal's MIDI tab): save it.
     /// The view has already told the `"agent-bridge"` thread.
