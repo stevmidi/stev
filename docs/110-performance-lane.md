@@ -53,7 +53,8 @@ else. Key files:
   the stored choice is kept, so 4/4 → 3/4 → 4/4 is at a half bar again. A beat
   a key in 4/4: C3 = bar 1, C♯3 = bar 1 beat 2, E3 = bar 2, C4 = bar 4; a bar
   a key: C♯3 = bar 2, C4 = bar 13. 68 keys (to note 127) reach 68 bars, 34 or
-  68 beats. The length is picked from the gutter (§ Rendering), owned by the
+  68 beats (`560`, agreed and not built, makes the keys repeat along the
+  timeline instead). The length is picked from the gutter (§ Rendering), owned by the
   sequencer (`Sequencer::set_performance_lane_key_length`, from
   `SequencerCommand::SetPerformanceLaneKeyLength`), mirrored to the view
   through `SharedAtomics::performance_lane_key_length`, saved with the project

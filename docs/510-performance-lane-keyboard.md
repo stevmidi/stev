@@ -93,7 +93,7 @@ One phase: `KeyLength`, the command and the shared atomic, the field, the gutter
 ## Not in this design
 
 - **Step 2, one key per idea.** The keys would map to where ideas start, worked out from the clips (every bar where a clip starts on some track), so the first idea is C, the second D, the third E, on white keys only. It changes the mapping, needs a rule for staggered clip starts across tracks and a decision about jumps inside an idea, and would make a captured performance read in idea order. Kept in the notes until step 1 has been used and counting keys is still a problem.
-- **A movable base note or an octave shift for the lane.** The keyboard's 68 keys from C3 reach 68 bars, 34 or 17 (§ Step 1b); nobody has hit the end.
+- **A movable base note or an octave shift for the lane.** The keyboard's 68 keys from C3 reach 68 bars, 34 or 17 (§ Step 1b). The end was hit in use (2026-11-23); `560` replaces this with keys repeating along the timeline.
 - **Labelling bars by number in the lane.** The ruler already numbers them; the lane names keys.
 - **Recording what the lane played.** `110` keeps the lane live-only; the "capture a performance-lane performance" idea is its own design.
 
