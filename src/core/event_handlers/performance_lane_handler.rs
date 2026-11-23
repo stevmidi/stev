@@ -1,6 +1,8 @@
 //! The `EventHandlers` chokepoint for raw MIDI-IN while the arranger
-//! performance lane is armed: a `NoteOn` on a mapped key jumps the transport to
-//! that key (`key_tick`, a bar, half a bar or a beat a key), at the press's
+//! performance lane is armed: a `NoteOn` jumps the transport to its key
+//! (`key_tick`, a bar, half a bar or a beat a key), the copy of it nearest
+//! the arranger cursor (`nearest_copy_tick`, the keys repeating along the
+//! timeline, `560-performance-lane-reach.md`), at the press's
 //! offset from the nearest beat while running so the beat never breaks
 //! (`phase_offset`, `550-phase-jumps.md`), and joins the lane's run
 //! (`520-performance-capture.md` decision 2), which `/` renders into clips
@@ -17,7 +19,7 @@ use crate::core::agent::{format_position, length_label};
 use crate::core::sequencer::{DuplicateTimeEdit, UndoStep};
 use crate::models::{
     event::{Event, EventType},
-    performance_lane::{key_index_from_note, key_tick, phase_offset},
+    performance_lane::{key_index_from_note, nearest_copy_tick, phase_offset},
 };
 
 use super::*;
@@ -48,20 +50,24 @@ impl EventHandlers {
         let Some(note) = event.note_number() else {
             return;
         };
-        let Some(key_index) = key_index_from_note(note) else {
-            return;
-        };
         let meter = sequencer.meter();
-        let key_start = key_tick(meter, sequencer.performance_lane_key_length(), key_index);
         let started = !transport.is_running();
-        // Running, the key's start sounds on the beat nearest the press:
-        // playback's next tick is `offset` from a beat, and the jump lands
-        // as far from the key's start. Stopped, there is no beat to keep.
+        // The key's copy nearest the cursor, so the playhead moving never
+        // changes what a key means. Running, its start sounds on the beat
+        // nearest the press: playback's next tick is `offset` from a beat,
+        // and the jump lands as far from the key's start. Stopped, there is
+        // no beat to keep.
         let offset = if started {
             0
         } else {
             phase_offset(meter, sequencer.playback_tick())
         };
+        let key_start = nearest_copy_tick(
+            meter,
+            sequencer.performance_lane_key_length(),
+            key_index_from_note(note),
+            sequencer.cursor_tick(),
+        );
         let target_tick = key_start + offset;
         sequencer
             .performance_lane_mut()
@@ -118,7 +124,6 @@ mod tests {
 
     use undo::Record;
 
-    use crate::core::config::PERFORMANCE_LANE_BASE_NOTE;
     use crate::core::event_handlers::test_harness::{
         Harness, harness, muted_metronome, run_command, statuses, transport,
     };
@@ -126,16 +131,15 @@ mod tests {
     use crate::core::sequencer::{SequencerCommand, UndoStep};
     use crate::core::time::Meter;
     use crate::core::transport::{Transport, TransportCommand};
-    use crate::models::performance_lane::KeyLength;
+    use crate::models::performance_lane::{CYCLE_KEYS, KeyLength, key_tick};
 
-    /// Where pressing key `key_index` with the lane at `length` (and `meter`)
-    /// takes playback.
-    fn jump(length: KeyLength, meter: Meter, key_index: u8) -> i32 {
+    /// Where pressing `note` (key `note`) with the lane at `length` (and
+    /// `meter`) takes playback.
+    fn jump(length: KeyLength, meter: Meter, note: u8) -> i32 {
         let mut h = harness();
         let mut transport = transport(&h);
         h.sequencer.set_meter(meter);
         h.sequencer.set_performance_lane_key_length(length);
-        let note = PERFORMANCE_LANE_BASE_NOTE + key_index;
         h.handlers.handle_performance_lane_midi_input(
             &mut h.sequencer,
             &mut transport,
@@ -183,9 +187,8 @@ mod tests {
         (h, transport, Record::new())
     }
 
-    /// Presses lane key `key_index` (a beat a key).
-    fn press(h: &mut Harness, transport: &mut Transport, key_index: u8) {
-        let note = PERFORMANCE_LANE_BASE_NOTE + key_index;
+    /// Presses `note`, lane key `note` (a beat a key).
+    fn press(h: &mut Harness, transport: &mut Transport, note: u8) {
         h.handlers.handle_performance_lane_midi_input(
             &mut h.sequencer,
             transport,
@@ -217,8 +220,8 @@ mod tests {
 
     /// The armed lane over an arrangement of a clip over bars 1–2 on track 0
     /// (a note every 500 ticks) and one over bar 2 on track 1, the cursor
-    /// at `cursor`, after a run of E3 (bar 2) for 300 ticks then C3 (bar 1)
-    /// for 200, a beat a key. C3 comes 300 ticks into a beat, so it lands
+    /// at `cursor`, after a run of E-2 (bar 2) for 300 ticks then C-2 (bar 1)
+    /// for 200, a beat a key. C-2 comes 300 ticks into a beat, so it lands
     /// 300 ticks into bar 1 (`550-phase-jumps.md`).
     fn played(cursor: i32) -> (Harness, Transport, Record<UndoStep>) {
         let (mut h, mut transport, record) = armed();
@@ -245,7 +248,7 @@ mod tests {
         assert_eq!(
             track_clips(&h, 0),
             [[(0, 7680, 0)].as_slice(), &RENDER_0].concat(),
-            "bar 2's start, then bar 1 from where C3 landed, on the track they came from"
+            "bar 2's start, then bar 1 from where C-2 landed, on the track they came from"
         );
         assert_eq!(
             track_clips(&h, 1),
@@ -323,7 +326,7 @@ mod tests {
         let (mut h, mut transport, mut record) = armed();
         h.sequencer.tracks_mut()[0].add_clip(&clip_with_marker_notes(0, 7680));
         h.sequencer.set_cursor_tick(7680);
-        // E3 at a beat a key: bar 2.
+        // E-2 at a beat a key: bar 2.
         press(&mut h, &mut transport, 4);
         play(&mut h, &mut transport, 300);
         run_command(
@@ -331,14 +334,14 @@ mod tests {
             &mut record,
             SequencerCommand::SetPerformanceLaneKeyLength(KeyLength::Bar),
         );
-        // C♯3 at a bar a key: bar 2 again, 300 ticks in (its phase).
+        // C♯-2 at a bar a key: bar 2 again, 300 ticks in (its phase).
         press(&mut h, &mut transport, 1);
         play(&mut h, &mut transport, 200);
         slash(&mut h, &mut record);
         assert_eq!(
             track_clips(&h, 0),
             [(0, 7680, 0), (7680, 7980, 3840), (7980, 8180, 3840 + 300)],
-            "both from bar 2, as heard; E3 at a bar a key would be bar 5"
+            "both from bar 2, as heard; E-2 at a bar a key would be bar 5"
         );
     }
 
@@ -373,6 +376,64 @@ mod tests {
             -100,
             "early onto bar 1: just before it"
         );
+    }
+
+    /// A beat a key in 4/4: the keys repeat every 30 bars
+    /// (`560-performance-lane-reach.md`).
+    fn cycle() -> i32 {
+        key_tick(Meter::FOUR_FOUR, KeyLength::Beat, CYCLE_KEYS)
+    }
+
+    /// `560` § 2: running, a press takes its key's copy nearest the
+    /// cursor, wherever the playhead is, keeping the beat on a copy past the
+    /// first cycle too.
+    #[test]
+    fn a_press_while_running_takes_the_copy_nearest_the_cursor() {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        let from = |cursor: i32, playback: i32, key_index: u8| {
+            let (mut h, mut transport, _record) = armed();
+            h.sequencer.set_cursor_tick(cursor);
+            transport.start();
+            h.playback_tick.store(playback, Ordering::Relaxed);
+            press(&mut h, &mut transport, key_index);
+            h.playback_tick.load(Ordering::Relaxed)
+        };
+        assert_eq!(from(0, 24 * bar, 0), 0, "playhead at bar 25: still bar 1");
+        assert_eq!(
+            from(24 * bar, 2 * bar, 0),
+            cycle(),
+            "cursor at bar 25: bar 31"
+        );
+        assert_eq!(
+            from(39 * bar, 5 * bar + 300, 4),
+            cycle() + bar + 300,
+            "cursor at bar 40, late: E-2's copy at bar 32, the beat kept"
+        );
+    }
+
+    /// Note 0, the lowest, is bar 1 from a cursor there: what hand-testing
+    /// the first build (C3 = bar 1, note 0 halfway round) found missing.
+    #[test]
+    fn note_zero_is_bar_one() {
+        let (mut h, mut transport, _record) = armed();
+        press(&mut h, &mut transport, 0);
+        assert_eq!(h.playback_tick.load(Ordering::Relaxed), 0);
+    }
+
+    /// Stopped, the copy nearest the cursor, wherever playback was parked;
+    /// moving the cursor back gives the same mapping again.
+    #[test]
+    fn the_press_that_starts_the_transport_takes_the_copy_nearest_the_cursor() {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        let from_cursor = |cursor: i32| {
+            let (mut h, mut transport, _record) = armed();
+            h.sequencer.set_cursor_tick(cursor);
+            press(&mut h, &mut transport, 4);
+            h.playback_tick.load(Ordering::Relaxed)
+        };
+        assert_eq!(from_cursor(9 * bar), bar);
+        assert_eq!(from_cursor(26 * bar), cycle() + bar);
+        assert_eq!(from_cursor(9 * bar), bar, "the same key, the same place");
     }
 
     /// `Space`.

@@ -42,8 +42,17 @@ else. Key files:
   of the arrangement it played (`520` decision 1). Each press keeps its
   jump target, so a key length or meter changed in the middle of a run
   renders what was heard. `key_index_from_note`
-  maps a MIDI note to a 0-based key via `config::PERFORMANCE_LANE_BASE_NOTE`
-  (currently C3/60); notes below it are ignored. `key_tick(meter, length,
+  maps a MIDI note to its key in a **cycle of 120** (`CYCLE_KEYS`, ten
+  octaves): the note number itself, `note mod 120`, so note 0 (C-2) is key 0
+  and notes 120–127 wrap onto keys 0–7. The keys repeat along the timeline, a
+  cycle after another, and a press, running or stopped, jumps to the copy of
+  its key **nearest the arranger cursor** (`nearest_copy_tick`; a tie at half
+  a cycle picks the copy ahead, a copy before bar 1 is never chosen), the
+  phase offset (`550`) added to that copy's start. So the keys reach about
+  half a cycle either side of the cursor, ±15 bars at a beat a key in 4/4, ±60
+  at a bar a key; the playhead moving never changes what a key means, and a
+  cursor moved away and back gives the same mapping again
+  (`560-performance-lane-reach.md`). `key_tick(meter, length,
   key)` is where a key jumps, one **key length** (`KeyLength`) per key: a
   bar, half a bar or a beat (`KeyLength::ticks`: `bar_ticks`, half of it,
   `beat_ticks`, the counted beat, a quarter in x/4, an eighth in x/8), so
@@ -51,10 +60,9 @@ else. Key files:
   the meter's numerator is even (the arranger grid's half-bar rule);
   `KeyLength::in_meter` plays a stored half bar as a beat in an odd meter, and
   the stored choice is kept, so 4/4 → 3/4 → 4/4 is at a half bar again. A beat
-  a key in 4/4: C3 = bar 1, C♯3 = bar 1 beat 2, E3 = bar 2, C4 = bar 4; a bar
-  a key: C♯3 = bar 2, C4 = bar 13. 68 keys (to note 127) reach 68 bars, 34 or
-  68 beats (`560`, agreed and not built, makes the keys repeat along the
-  timeline instead). The length is picked from the gutter (§ Rendering), owned by the
+  a key in 4/4: C-2 = bar 1, C♯-2 = bar 1 beat 2, E-2 = bar 2, C-1 = bar 4, C3
+  = bar 16; a bar a key: C♯-2 = bar 2, C-1 = bar 13. A cycle is 120 bars, 60 or 30 of 4/4.
+  The length is picked from the gutter (§ Rendering), owned by the
   sequencer (`Sequencer::set_performance_lane_key_length`, from
   `SequencerCommand::SetPerformanceLaneKeyLength`), mirrored to the view
   through `SharedAtomics::performance_lane_key_length`, saved with the project
@@ -178,8 +186,8 @@ else. Key files:
   click anywhere else on the row arms as before. No key and no keymap action. `draw_timeline` starts the
   arranger's in-lane grid lines under the row (`ArrangerLayout::lanes_top`), so
   no bar or beat line crosses the lane; the key edges, every beat, are the lines
-  there. Each key (`KEY_COUNT`, 68 from C3; `note_for_key`, the
-  inverse of `key_index_from_note`) spans its key length, from `key_tick` to the next,
+  there. Each key (`note_for_key`, the inverse of `key_index_from_note`, any
+  copy along the timeline) spans its key length, from `key_tick` to the next,
   in a thin strip along the lane's bottom edge (`KEY_STRIP_H`, 8pt), in the
   piano roll's `piano_key_white`/`piano_key_black`, drawn as a keyboard: the
   white runs unbroken along the strip, each black key is a block hanging
@@ -189,12 +197,14 @@ else. Key files:
   black keys vanished into the dark lane and the strip read as a dashed line
   (changed 2026-11-20). From `tick_to_screen_x` in
   the project meter, so it follows zoom, scroll, the meter and the key length
-  (redrawn at the new width as soon as it changes); time past the 68th key has
-  none. Filling the whole row with the keys was tried first and read
+  (redrawn at the new width as soon as it changes); the keys repeat for as long
+  as the timeline runs (`visible_keys`, none before bar 1), B7 meeting the next
+  C-2 with the B/C seam. A key played by notes 0–7 lights for their aliases
+  120–127 too (`notes_for_key`). Filling the whole row with the keys was tried first and read
   as heavy slabs, whatever the tones: the piano roll's colours work in a narrow
   band, as in its key column. Seams at E/F (1px) and B/C (2px) in the strip, as
   on the piano roll (`row_seam_w`). The plain lane above the strip carries the
-  names in `fg_dim`: the C's always (Cubase-style, C3 over bar 1), every key
+  names in `fg_dim`: the C's always (Cubase-style, C-2 over bar 1), every key
   once a key fits the widest sharp's name and its padding, but only at a beat a
   key: at a bar or half a bar the C's alone mark the octaves (`labels_every_key`),
   each clipped to its key. Only the visible keys are drawn (`visible_keys`). The

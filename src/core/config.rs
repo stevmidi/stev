@@ -126,12 +126,6 @@ pub const TRACK_NAME_MAX_CHARS: usize = 40;
 /// Longest project name, in characters (`project_name_from_input`, the Save
 /// As field) — the file name the project is saved under.
 pub const PROJECT_NAME_MAX_CHARS: usize = 64;
-/// MIDI note number that jumps to the start of bar 1 on the arranger
-/// performance lane (C3, matching this app's Cubase-style octave convention
-/// in `piano_keys.rs`, where MIDI note 60 = C3). Each semitone above it jumps
-/// one key length further, a bar, half a bar or a beat
-/// (`models::performance_lane::key_tick`); notes below this are ignored.
-pub const PERFORMANCE_LANE_BASE_NOTE: u8 = 60;
 /// MIDI port name the (currently unused) `start_controller_thread` would bind
 /// to — the physical keypad's own port. Kept for the reference controller
 /// implementation described in `archive/010-keypad.md`.

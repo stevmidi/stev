@@ -1,8 +1,9 @@
 //! Painting the arranger's performance-lane row (`110-performance-lane.md`):
 //! the gutter and its selection accent, and in the content area the keyboard
 //! that drives the lane, lined up with where its keys jump
-//! (`510-performance-lane-keyboard.md`). Key `k` is note
-//! `PERFORMANCE_LANE_BASE_NOTE + k` (`note_for_key`) and spans one key
+//! (`510-performance-lane-keyboard.md`), repeating along the timeline a
+//! cycle of `CYCLE_KEYS` after another (`560-performance-lane-reach.md`).
+//! Key `k` is note `k` wrapped into the cycle (`note_for_key`) and spans one key
 //! length (a bar, half a bar or a beat, `KeyLength`) from `key_tick(k)`,
 //! picked from the `Bar` / `½` / `Beat` labels in the gutter
 //! (§ Step 1b): a thin strip along the lane's bottom edge carries each
@@ -21,7 +22,7 @@ use super::arranger::lane_grid_fill;
 use super::piano_keys::{is_black_key, octave_of, pitch_class, row_seam_w};
 use super::*;
 use crate::core::time::Meter;
-use crate::models::performance_lane::{KEY_COUNT, KeyLength, key_tick, note_for_key};
+use crate::models::performance_lane::{KeyLength, key_tick, note_for_key, notes_for_key};
 use crate::models::pitch::pitch_class_name;
 
 /// Height of the key strip along the lane's bottom edge. Narrow, as the
@@ -50,7 +51,7 @@ const KEY_LABEL_PAD_X: f32 = 3.0;
 
 /// The name the every-key label threshold is measured from: a sharp, as
 /// wide as the lane's names get (`labels_every_key`).
-const WIDEST_KEY_NAME: &str = "C#4";
+const WIDEST_KEY_NAME: &str = "C#-2";
 
 /// A gutter label's cell: its text and the room after it, so a cell's width
 /// is what a click on it takes (`key_length_labels`).
@@ -144,14 +145,12 @@ impl Display {
         let label_color = theme::fg_dim();
 
         for key_index in keys {
-            let Some(note) = note_for_key(key_index) else {
-                continue;
-            };
+            let note = note_for_key(key_index);
             let left = self.tick_to_screen_x(key_tick(meter, length, key_index));
             let right = self.tick_to_screen_x(key_tick(meter, length, key_index + 1));
             let above = Rect::from_x_y_ranges(left..=right, lane_top..=strip_top);
             let key = Rect::from_x_y_ranges(left..=right, strip_top..=strip_bottom);
-            let lit = armed && self.live_notes.is_held(note);
+            let lit = armed && notes_for_key(key_index).any(|n| self.live_notes.is_held(n));
             if lit {
                 p.rect_filled(
                     above,
@@ -300,9 +299,9 @@ fn key_length_label_in(labels: &[(KeyLength, Rect)], pos: Pos2) -> Option<KeyLen
 
 /// The keys (0-based, end exclusive) at least partly inside a content area
 /// `content_w` wide scrolled `scroll_x` at `pixels_per_tick`, `key_ticks` to
-/// a key: from the key at the left edge to the one at the right, held to the
-/// keys there are (`KEY_COUNT`), so the lane draws at most that many at any
-/// zoom.
+/// a key: from the key at the left edge to the one at the right, none
+/// before bar 1. The keys repeat for as long as the timeline runs
+/// (`560-performance-lane-reach.md`).
 fn visible_keys(scroll_x: f32, content_w: f32, pixels_per_tick: f32, key_ticks: i32) -> Range<i32> {
     let key_w = pixels_per_tick * key_ticks as f32;
     // A degenerate zoom (zero or not finite) shows no keys, rather than a
@@ -312,18 +311,19 @@ fn visible_keys(scroll_x: f32, content_w: f32, pixels_per_tick: f32, key_ticks: 
     }
     let first = (scroll_x / key_w).floor() as i32;
     let end = ((scroll_x + content_w) / key_w).ceil() as i32;
-    first.max(0)..end.clamp(0, KEY_COUNT)
+    first.max(0)..end.max(0)
 }
 
 /// The seam at the left edge of key `key_index`, as the piano roll draws it
 /// between the same two keys (`row_seam_w`): 2px where B meets C, 1px where
 /// E meets F, the only neighbours with no black key between them; `None` at
 /// every other boundary, which the colour change already shows, and at the
-/// first key, with none before it.
+/// first key, with none before it. Across a cycle's wrap, B7 meets C-2.
 fn key_seam_w(key_index: i32) -> Option<f32> {
-    let note = note_for_key(key_index)?;
-    let below = note.checked_sub(1).filter(|_| key_index > 0)?;
-    row_seam_w(below)
+    if key_index <= 0 {
+        return None;
+    }
+    row_seam_w(note_for_key(key_index - 1))
 }
 
 /// A black key's two parts in its slice `key` of the strip: the block hanging
@@ -355,13 +355,6 @@ fn key_name(note: u8) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::config::PERFORMANCE_LANE_BASE_NOTE;
-
-    #[test]
-    fn the_keys_end_at_note_127() {
-        assert_eq!(note_for_key(KEY_COUNT - 1), Some(127));
-        assert_eq!(note_for_key(KEY_COUNT), None);
-    }
 
     #[test]
     fn visible_keys_follow_scroll_and_zoom() {
@@ -375,14 +368,16 @@ mod tests {
     }
 
     #[test]
-    fn visible_keys_stop_where_the_keys_do() {
+    fn visible_keys_run_on_past_the_first_cycle() {
         let key_ticks = key_tick(Meter::FOUR_FOUR, KeyLength::Beat, 1);
         // Zoomed far out: a pixel a key, 1000 keys' room on screen.
         let ppt = 1.0 / key_ticks as f32;
-        assert_eq!(visible_keys(0.0, 1000.0, ppt, key_ticks), 0..KEY_COUNT);
-        // Scrolled past the last key: nothing.
+        assert_eq!(visible_keys(0.0, 1000.0, ppt, key_ticks), 0..1000);
+        // Scrolled far along: the keys there.
         let ppt = 100.0 / key_ticks as f32;
-        assert!(visible_keys(8000.0, 400.0, ppt, key_ticks).is_empty());
+        assert_eq!(visible_keys(30_000.0, 400.0, ppt, key_ticks), 300..304);
+        // Scrolled before bar 1: none there.
+        assert_eq!(visible_keys(-400.0, 300.0, ppt, key_ticks), 0..0);
     }
 
     #[test]
@@ -416,9 +411,9 @@ mod tests {
         assert_eq!(visible_keys(200.0, 400.0, ppt, bar), 2..6);
         let half = key_tick(meter, KeyLength::HalfBar, 1);
         assert_eq!(visible_keys(0.0, 400.0, ppt, half), 0..8);
-        // Zoomed far out, a bar a key still stops at the last key.
+        // Zoomed far out, a bar a key runs on as far as the screen does.
         let ppt = 1.0 / bar as f32;
-        assert_eq!(visible_keys(0.0, 1000.0, ppt, bar), 0..KEY_COUNT);
+        assert_eq!(visible_keys(0.0, 1000.0, ppt, bar), 0..1000);
     }
 
     /// The gutter row the label tests lay out in: from x 12, 24 high.
@@ -484,14 +479,16 @@ mod tests {
 
     #[test]
     fn seams_sit_only_where_two_white_keys_meet() {
-        // From C3: key 4 is E, key 5 F, key 11 B, key 12 C4.
+        // From C-2: key 4 is E, key 5 F, key 11 B, key 12 C-1.
         assert_eq!(key_seam_w(5), Some(1.0), "E/F");
         assert_eq!(key_seam_w(12), Some(2.0), "B/C");
         assert_eq!(key_seam_w(0), None, "no key before the first");
         for key_index in [1, 2, 3, 4, 6, 7, 8, 9, 10, 11, 13] {
             assert_eq!(key_seam_w(key_index), None, "key index {key_index}");
         }
-        assert_eq!(key_seam_w(KEY_COUNT), None, "past the last key");
+        assert_eq!(key_seam_w(120), Some(2.0), "B7/C-2 across the wrap");
+        assert_eq!(key_seam_w(125), Some(1.0), "E/F in the next cycle");
+        assert_eq!(key_seam_w(60), Some(2.0), "B2/C3");
     }
 
     #[test]
@@ -524,9 +521,11 @@ mod tests {
 
     #[test]
     fn keys_are_named_cubase_style_with_sharps() {
-        assert_eq!(key_name(PERFORMANCE_LANE_BASE_NOTE), "C3");
-        assert_eq!(key_name(PERFORMANCE_LANE_BASE_NOTE + 12), "C4");
+        assert_eq!(key_name(note_for_key(0)), "C-2", "bar 1's key");
+        assert_eq!(key_name(60), "C3");
+        assert_eq!(key_name(72), "C4");
         assert_eq!(key_name(61), "C#3");
         assert_eq!(key_name(127), "G8");
+        assert_eq!(key_name(note_for_key(119)), "B7", "the cycle's last key");
     }
 }

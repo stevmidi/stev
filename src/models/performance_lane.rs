@@ -8,14 +8,15 @@
 //! (`520-performance-capture.md` decisions 1 and 2): [`PerformanceLane::take_run`]
 //! gives it as a [`Take`], the stretches of the arrangement it played.
 //! [`key_index_from_note`] is the note-number → key mapping the lane triggers
-//! on, [`key_tick`] where a key starts (one [`KeyLength`] of the project's
-//! meter per key: a bar, half a bar or a beat), [`phase_offset`] how far into
-//! it a press while running lands, so the beat never breaks
-//! (`550-phase-jumps.md`), and [`note_for_key`] the
-//! mapping's inverse, which the arranger draws the lane's keys from
-//! (`510-performance-lane-keyboard.md`).
+//! on, a cycle of [`CYCLE_KEYS`] repeating along the timeline, of which a
+//! press takes the copy nearest the arranger cursor ([`nearest_copy_tick`],
+//! `560-performance-lane-reach.md`), [`key_tick`] where a key starts (one
+//! [`KeyLength`] of the project's meter per key: a bar, half a bar or a
+//! beat), [`phase_offset`] how far into it a press while running lands, so
+//! the beat never breaks (`550-phase-jumps.md`), and [`note_for_key`] and
+//! [`notes_for_key`] the mapping's inverse, which the arranger draws the
+//! lane's keys from (`510-performance-lane-keyboard.md`).
 
-use crate::core::config;
 use crate::core::time::{Meter, snap_to_grid};
 
 /// The lane's live state: the run its presses make, and a stop waiting for
@@ -196,27 +197,34 @@ impl PerformanceLane {
     }
 }
 
-/// Maps a MIDI note number to a 0-based key index (note
-/// `PERFORMANCE_LANE_BASE_NOTE` = key 0, the start of bar 1), or `None` for
-/// notes below the base note (ignored — there is nothing before bar 1).
-pub(crate) fn key_index_from_note(note_number: u8) -> Option<i32> {
-    note_number
-        .checked_sub(config::PERFORMANCE_LANE_BASE_NOTE)
-        .map(i32::from)
+/// How many keys the lane's cycle has (`560-performance-lane-reach.md`
+/// § 1): ten octaves, so the note names run unbroken across the wrap. The
+/// keys repeat along the timeline, a cycle of them after another: 120 bars
+/// at a bar a key, 30 bars of 4/4 at a beat.
+pub(crate) const CYCLE_KEYS: i32 = 120;
+
+/// Maps a MIDI note number to its key in the cycle, `0..CYCLE_KEYS`: the
+/// note number itself, so note 0 (C-2) is key 0, bar 1's in the first cycle
+/// (`560-performance-lane-reach.md` § 1). Notes 120–127 wrap onto keys 0–7,
+/// as their names do: an octave the cycle can't hold.
+pub(crate) fn key_index_from_note(note_number: u8) -> i32 {
+    i32::from(note_number) % CYCLE_KEYS
 }
 
-/// How many keys the lane has: from `PERFORMANCE_LANE_BASE_NOTE` (the start
-/// of bar 1) to note 127. 68 from C3: 68 bars a bar each, 17 bars of 4/4 a
-/// beat each.
-pub(crate) const KEY_COUNT: i32 = 128 - config::PERFORMANCE_LANE_BASE_NOTE as i32;
+/// The note of key `key_index`, counted along the timeline from bar 1, so
+/// any copy of a key: the inverse of [`key_index_from_note`], in `0..120`
+/// (keys 0–7 give notes 0–7, not their aliases 120–127). The arranger
+/// draws the lane's keys from it (`510-performance-lane-keyboard.md`).
+pub(crate) fn note_for_key(key_index: i32) -> u8 {
+    // `rem_euclid` keeps it in `0..120`.
+    key_index.rem_euclid(CYCLE_KEYS) as u8
+}
 
-/// The note of 0-based key `key_index`: the inverse of
-/// [`key_index_from_note`]. `None` outside `0..KEY_COUNT`: past note 127, or
-/// before the first key.
-pub(crate) fn note_for_key(key_index: i32) -> Option<u8> {
-    (0..KEY_COUNT)
-        .contains(&key_index)
-        .then(|| config::PERFORMANCE_LANE_BASE_NOTE + key_index as u8)
+/// Every note that plays key `key_index`: its own ([`note_for_key`]) and,
+/// for keys 0–7, the alias an octave past the cycle (120–127). What lights a
+/// key held on the live keyboard.
+pub(crate) fn notes_for_key(key_index: i32) -> impl Iterator<Item = u8> {
+    (note_for_key(key_index)..=127).step_by(CYCLE_KEYS as usize)
 }
 
 /// How far each of the lane's keys jumps: a bar, half a bar or a beat of
@@ -225,7 +233,7 @@ pub(crate) fn note_for_key(key_index: i32) -> Option<u8> {
 /// what plays is [`in_meter`](Self::in_meter) of it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub(crate) enum KeyLength {
-    /// A whole bar per key: 68 keys reach 68 bars.
+    /// A whole bar per key: a cycle of keys reaches 120 bars.
     #[default]
     Bar,
     /// Half a bar per key, in a meter whose numerator is even; in an odd one
@@ -291,11 +299,30 @@ impl KeyLength {
 
 /// Where key `key_index` jumps to, in ticks: the start of its key, one
 /// `length` of `meter` per key ([`KeyLength::ticks`]), so every jump lands on
-/// a beat in every meter. A beat a key from C3 in 4/4: C3 = bar 1, C♯3 =
-/// bar 1 beat 2, E3 = bar 2, C4 = bar 4; a bar a key: C♯3 = bar 2, C4 =
-/// bar 13. The one place the mapping lives, for the trigger and the drawing.
+/// a beat in every meter. A beat a key in 4/4: C-2 = bar 1, C♯-2 =
+/// bar 1 beat 2, E-2 = bar 2, C-1 = bar 4, C3 = bar 16; a bar a key:
+/// C♯-2 = bar 2, C-1 = bar 13. The one place the mapping lives, for the
+/// trigger and the drawing.
 pub(crate) fn key_tick(meter: Meter, length: KeyLength, key_index: i32) -> i32 {
     length.ticks(meter) * key_index
+}
+
+/// Where the copy of key `key_index` (in the cycle, `0..CYCLE_KEYS`) nearest
+/// `around_tick` starts: the keys repeat every [`CYCLE_KEYS`] keys, and a
+/// press jumps to the copy nearest the arranger cursor, running or stopped
+/// (`560-performance-lane-reach.md` § 2), so the keys reach about half a
+/// cycle back and half ahead of it, and only a cursor move changes which. A tie, exactly half a cycle either way, picks
+/// the copy ahead; a copy before bar 1 is never chosen.
+pub(crate) fn nearest_copy_tick(
+    meter: Meter,
+    length: KeyLength,
+    key_index: i32,
+    around_tick: i32,
+) -> i32 {
+    let first = key_tick(meter, length, key_index);
+    let cycle = key_tick(meter, length, CYCLE_KEYS);
+    // A half rounds up: the tie goes to the copy ahead.
+    first + snap_to_grid(around_tick - first, cycle).max(0)
 }
 
 /// How far past its key's start a press while running jumps, when playback
@@ -558,45 +585,124 @@ mod tests {
     }
 
     #[test]
-    fn key_index_from_note_below_base_is_none() {
-        assert_eq!(
-            key_index_from_note(config::PERFORMANCE_LANE_BASE_NOTE - 1),
-            None
-        );
+    fn a_key_is_its_note_number() {
+        assert_eq!(key_index_from_note(0), 0, "C-2: bar 1");
+        assert_eq!(key_index_from_note(3), 3);
+        assert_eq!(key_index_from_note(60), 60, "C3");
+        assert_eq!(key_index_from_note(119), CYCLE_KEYS - 1, "B7: the last");
     }
 
     #[test]
-    fn key_index_from_note_at_base_is_zero() {
-        assert_eq!(
-            key_index_from_note(config::PERFORMANCE_LANE_BASE_NOTE),
-            Some(0)
-        );
-    }
-
-    #[test]
-    fn key_index_from_note_above_base_increments() {
-        assert_eq!(
-            key_index_from_note(config::PERFORMANCE_LANE_BASE_NOTE + 3),
-            Some(3)
-        );
+    fn notes_past_the_cycle_wrap_onto_their_names() {
+        for note in 120..=127 {
+            assert_eq!(key_index_from_note(note), key_index_from_note(note - 120));
+        }
     }
 
     #[test]
     fn note_for_key_is_the_inverse_of_key_index_from_note() {
-        for key_index in 0..68 {
-            let note = note_for_key(key_index).expect("every key up to 68 has a note");
-            assert_eq!(key_index_from_note(note), Some(key_index));
+        for note in 0..120 {
+            assert_eq!(note_for_key(key_index_from_note(note)), note);
         }
-        assert_eq!(note_for_key(0), Some(config::PERFORMANCE_LANE_BASE_NOTE));
-        assert_eq!(note_for_key(67), Some(127));
+        for key_index in 0..CYCLE_KEYS {
+            assert_eq!(key_index_from_note(note_for_key(key_index)), key_index);
+        }
+        assert_eq!(note_for_key(0), 0);
+        assert_eq!(note_for_key(7), 7, "G-2, not its alias G8");
     }
 
     #[test]
-    fn note_for_key_is_none_where_no_key_reaches() {
-        assert_eq!(note_for_key(68), None, "past note 127");
-        assert_eq!(note_for_key(1000), None);
-        assert_eq!(note_for_key(-1), None, "before bar 1");
-        assert_eq!(note_for_key(i32::MAX), None);
+    fn a_key_is_played_by_its_note_and_its_alias_past_the_cycle() {
+        let notes = |key_index| notes_for_key(key_index).collect::<Vec<u8>>();
+        assert_eq!(notes(0), [0, 120]);
+        assert_eq!(notes(7), [7, 127], "G-2 and G8");
+        assert_eq!(notes(8), [8], "no alias past G8");
+        assert_eq!(notes(119), [119]);
+        assert_eq!(notes(CYCLE_KEYS + 3), [3, 123], "any copy alike");
+    }
+
+    #[test]
+    fn note_for_key_repeats_along_the_timeline() {
+        for key_index in [0, 5, 59, 60, 119] {
+            assert_eq!(
+                note_for_key(key_index + CYCLE_KEYS),
+                note_for_key(key_index)
+            );
+            assert_eq!(
+                note_for_key(key_index + 7 * CYCLE_KEYS),
+                note_for_key(key_index)
+            );
+        }
+    }
+
+    /// A beat a key in 4/4: a cycle is 30 bars.
+    const CYCLE_4_4: i32 = 30 * 3840;
+
+    fn nearest_beat_key(key_index: i32, around_tick: i32) -> i32 {
+        nearest_copy_tick(Meter::FOUR_FOUR, KeyLength::Beat, key_index, around_tick)
+    }
+
+    #[test]
+    fn a_cycle_is_thirty_bars_at_a_beat_a_key_in_four_four() {
+        assert_eq!(
+            key_tick(Meter::FOUR_FOUR, KeyLength::Beat, CYCLE_KEYS),
+            CYCLE_4_4
+        );
+    }
+
+    /// From bar 10, C-2 lands on bar 1; from bar 25, on bar 31.
+    #[test]
+    fn a_press_takes_the_copy_nearest_the_cursor() {
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        assert_eq!(nearest_beat_key(0, 9 * bar), 0, "bar 10: bar 1");
+        assert_eq!(nearest_beat_key(0, 24 * bar), CYCLE_4_4, "bar 25: bar 31");
+        // E-2 (bar 2) from bar 40: its second copy, bar 32.
+        assert_eq!(nearest_beat_key(4, 39 * bar), CYCLE_4_4 + bar);
+        // Far along: the copy around bar 100.
+        assert_eq!(nearest_beat_key(0, 99 * bar), 3 * CYCLE_4_4);
+    }
+
+    #[test]
+    fn half_a_cycle_either_way_picks_the_copy_ahead() {
+        let half = CYCLE_4_4 / 2;
+        assert_eq!(nearest_beat_key(0, half - 1), 0);
+        assert_eq!(nearest_beat_key(0, half), CYCLE_4_4, "the tie");
+        assert_eq!(nearest_beat_key(10, 10 * 960 + half), 10 * 960 + CYCLE_4_4);
+        assert_eq!(nearest_beat_key(10, 10 * 960 + half - 1), 10 * 960);
+    }
+
+    #[test]
+    fn a_copy_before_bar_one_is_never_chosen() {
+        // B7, the cycle's last key, from bar 1: its copy before bar 1 is a
+        // beat away, the first one a cycle less a beat.
+        assert_eq!(nearest_beat_key(CYCLE_KEYS - 1, 0), CYCLE_4_4 - 960);
+        assert_eq!(nearest_beat_key(CYCLE_KEYS - 1, -5000), CYCLE_4_4 - 960);
+    }
+
+    #[test]
+    fn the_nearest_copy_counts_in_the_chosen_length_and_meter() {
+        let four_four = Meter::FOUR_FOUR;
+        let bar = four_four.bar_ticks();
+        // A bar a key: a cycle is 120 bars, so the keys reach ±60.
+        assert_eq!(nearest_copy_tick(four_four, KeyLength::Bar, 0, 59 * bar), 0);
+        assert_eq!(
+            nearest_copy_tick(four_four, KeyLength::Bar, 0, 60 * bar),
+            120 * bar
+        );
+        // Half a bar in 6/8 (three eighths): a cycle is 60 bars.
+        let six_eight = meter(6, 8);
+        let six_bar = six_eight.bar_ticks();
+        assert_eq!(
+            nearest_copy_tick(six_eight, KeyLength::HalfBar, 2, 50 * six_bar),
+            61 * six_bar
+        );
+        // A beat in 7/8: a cycle is 120 eighths.
+        let seven_eight = meter(7, 8);
+        let eighth = seven_eight.beat_ticks();
+        assert_eq!(
+            nearest_copy_tick(seven_eight, KeyLength::Beat, 3, 100 * eighth),
+            123 * eighth
+        );
     }
 
     fn meter(numerator: u8, denominator: u8) -> Meter {
@@ -641,9 +747,9 @@ mod tests {
             "C4: bar 13"
         );
         assert_eq!(
-            key_tick(meter, bar, KEY_COUNT - 1),
-            meter.bars_to_ticks(67),
-            "G8: bar 68"
+            key_tick(meter, bar, CYCLE_KEYS - 1),
+            meter.bars_to_ticks(119),
+            "B7: bar 120, the cycle's last key"
         );
     }
 
