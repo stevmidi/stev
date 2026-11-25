@@ -1,15 +1,15 @@
 //! Painting the arranger's performance-lane row (`110-performance-lane.md`):
 //! the gutter and its selection accent, and in the content area the keyboard
 //! that drives the lane, lined up with where its keys jump
-//! (`510-performance-lane-keyboard.md`), repeating along the timeline a
-//! cycle of `CYCLE_KEYS` after another (`560-performance-lane-reach.md`).
-//! Key `k` is note `k` wrapped into the cycle (`note_for_key`) and spans one key
+//! (`510-performance-lane-keyboard.md`), running on along the timeline
+//! from bar 1 (`560-performance-lane-reach.md`). Key `k` is a white or black
+//! key by its pitch class (`key_pitch_class`, key 0 a C) and spans one key
 //! length (a bar, half a bar or a beat, `KeyLength`) from `key_tick(k)`,
 //! picked from the `Bar` / `½` / `Beat` labels in the gutter
 //! (§ Step 1b): a thin strip along the lane's bottom edge carries each
 //! key, drawn as a keyboard (an unbroken white strip, each black key a block
-//! hanging from its top), the plain lane above it the
-//! C's names, one an octave, and a key the
+//! hanging from its top), unnamed: which note plays a key depends on where
+//! the hand is (`570-lane-octave-buttons.md` § 4). A key the
 //! live keyboard holds lights while the lane is armed, on the key its press
 //! landed on. While armed, the keys the player's hand is on (the
 //! sequencer's `Hand`) are washed where its presses land: one unbroken
@@ -24,11 +24,10 @@ use std::ops::Range;
 use egui::{Align2, CornerRadius, FontId, Painter, Pos2, Rect, Stroke, pos2, vec2};
 
 use super::arranger::lane_grid_fill;
-use super::piano_keys::{is_black_key, octave_of, pitch_class, row_seam_w};
+use super::piano_keys::{is_black_key, row_seam_w};
 use super::*;
 use crate::core::time::Meter;
-use crate::models::performance_lane::{KeyLength, key_tick, note_for_key};
-use crate::models::pitch::pitch_class_name;
+use crate::models::performance_lane::{KeyLength, key_pitch_class, key_tick};
 
 /// Height of the key strip along the lane's bottom edge. Narrow, as the
 /// piano roll's key column is: the piano roll's near-white and near-black
@@ -54,9 +53,6 @@ const HELD_KEY_WASH: f32 = 0.25;
 /// above the strip: under a held key's, so a held key still
 /// stands out inside it. Tune by eye.
 const KEYBED_WINDOW_WASH: f32 = 0.1;
-
-/// Gap between a C's left edge and its name.
-const KEY_LABEL_PAD_X: f32 = 3.0;
 
 /// A gutter label's cell: its text and the room after it, so a cell's width
 /// is what a click on it takes (`key_length_labels`).
@@ -129,7 +125,6 @@ impl Display {
         let ppt = self.pixels_per_tick();
         let key_ticks = key_tick(meter, length, 1);
         let keys = visible_keys(self.render_scroll_x(), self.content_w(), ppt, key_ticks);
-        let font = FontId::proportional(theme::FONT_SIZE_TL);
         // Opaque, so a black key drawn over the white strip shows its own
         // tone rather than a blend of the two.
         let lane_fill = lane_grid_fill(armed, accent);
@@ -141,11 +136,9 @@ impl Display {
                 lane_fill.lerp_to_gamma(theme::piano_key_black(), UNARMED_KEY_STRENGTH),
             )
         };
-        let label_color = theme::fg_dim();
         let hand = self.performance_lane_hand();
 
         for key_index in keys {
-            let note = note_for_key(key_index);
             let left = self.tick_to_screen_x(key_tick(meter, length, key_index));
             let right = self.tick_to_screen_x(key_tick(meter, length, key_index + 1));
             let above = Rect::from_x_y_ranges(left..=right, lane_top..=strip_top);
@@ -164,7 +157,7 @@ impl Display {
             if let Some(strength) = wash {
                 p.rect_filled(above, CornerRadius::ZERO, accent.gamma_multiply(strength));
             }
-            if is_black_key(pitch_class(note)) {
+            if is_black_key(key_pitch_class(key_index)) {
                 // White beneath, the black key hanging from the top, and the
                 // seam where the two white keys either side meet under it.
                 let (hanging, under) = black_key_parts(key);
@@ -188,21 +181,6 @@ impl Display {
                     left,
                     strip_top..=strip_bottom,
                     Stroke::new(seam_w, grid_seam_color()),
-                );
-            }
-
-            // Only the C's are named, one an octave, at every key length
-            // (every key was named at a beat once there was room, until
-            // 2026-11-23: too busy).
-            if pitch_class(note) == 0 {
-                // Clipped to its own key, so a key scrolled half off never
-                // leaves its name on the next one.
-                p.with_clip_rect(above.intersect(content)).text(
-                    pos2(left + KEY_LABEL_PAD_X, above.center().y),
-                    Align2::LEFT_CENTER,
-                    key_name(note),
-                    font.clone(),
-                    label_color,
                 );
             }
         }
@@ -332,7 +310,7 @@ fn key_seam_w(key_index: i32) -> Option<f32> {
     if key_index <= 0 {
         return None;
     }
-    row_seam_w(note_for_key(key_index - 1))
+    row_seam_w(key_pitch_class(key_index - 1))
 }
 
 /// A black key's two parts in its slice `key` of the strip: the block hanging
@@ -344,12 +322,6 @@ fn black_key_parts(key: Rect) -> (Rect, Rect) {
     let mid_x = key.center().x.round();
     let under = Rect::from_x_y_ranges(mid_x..=mid_x, hang_bottom..=key.bottom());
     (hanging, under)
-}
-
-/// A key's name, sharps only as the MCP units write them, with the piano
-/// roll's Cubase-style octave (MIDI 60 = C3, `octave_of`).
-fn key_name(note: u8) -> String {
-    format!("{}{}", pitch_class_name(i32::from(note)), octave_of(note))
 }
 
 #[cfg(test)]
@@ -486,9 +458,8 @@ mod tests {
         for key_index in [1, 2, 3, 4, 6, 7, 8, 9, 10, 11, 13] {
             assert_eq!(key_seam_w(key_index), None, "key index {key_index}");
         }
-        assert_eq!(key_seam_w(120), Some(2.0), "B7/C-2 across the wrap");
-        assert_eq!(key_seam_w(125), Some(1.0), "E/F in the next cycle");
-        assert_eq!(key_seam_w(60), Some(2.0), "B2/C3");
+        assert_eq!(key_seam_w(120), Some(2.0), "B/C far along");
+        assert_eq!(key_seam_w(125), Some(1.0), "E/F far along");
     }
 
     #[test]
@@ -503,15 +474,5 @@ mod tests {
         assert_eq!(under.bottom(), key.bottom());
         assert_eq!(under.min.x, 110.0, "the white keys meet at its middle");
         assert_eq!(under.width(), 0.0);
-    }
-
-    #[test]
-    fn keys_are_named_cubase_style_with_sharps() {
-        assert_eq!(key_name(note_for_key(0)), "C-2", "bar 1's key");
-        assert_eq!(key_name(60), "C3");
-        assert_eq!(key_name(72), "C4");
-        assert_eq!(key_name(61), "C#3");
-        assert_eq!(key_name(127), "G8");
-        assert_eq!(key_name(note_for_key(119)), "B7", "the cycle's last key");
     }
 }

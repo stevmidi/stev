@@ -41,9 +41,9 @@ else. Key files:
   lasting until the next press, the last until the capture), the stretches
   of the arrangement it played (`520` decision 1). Each press keeps its
   jump target, so a key length or meter changed in the middle of a run
-  renders what was heard. The keys form a **cycle of 120** (`CYCLE_KEYS`,
-  ten octaves), a key named by its note number (`note_for_key`, C-2 = key 0
-  = bar 1), repeating along the timeline a cycle after another. A press,
+  renders what was heard. The keys run on along the timeline from bar 1,
+  key 0 a C (`key_pitch_class`), with no names and no octave of their own:
+  which note plays a key depends on where the hand is. A press,
   running or stopped, jumps by **the player's hand** (`Hand`,
   `570-lane-octave-buttons.md`): the notes the keyboard sends at its home
   octave (`KeybedSize::home_low`: 36–84 on a 49-key keybed, 48–72 on 25;
@@ -75,8 +75,8 @@ else. Key files:
   the meter's numerator is even (the arranger grid's half-bar rule);
   `KeyLength::in_meter` plays a stored half bar as a beat in an odd meter, and
   the stored choice is kept, so 4/4 → 3/4 → 4/4 is at a half bar again. A beat
-  a key in 4/4: C-2 = bar 1, C♯-2 = bar 1 beat 2, E-2 = bar 2, C-1 = bar 4, C3
-  = bar 16; a bar a key: C♯-2 = bar 2, C-1 = bar 13. A cycle is 120 bars, 60 or 30 of 4/4.
+  a key in 4/4: key 1 = bar 1 beat 2, key 4 = bar 2, key 12 (an octave) =
+  bar 4; a bar a key: key 1 = bar 2, key 12 = bar 13.
   The length is picked from the gutter (§ Rendering), owned by the
   sequencer (`Sequencer::set_performance_lane_key_length`, from
   `SequencerCommand::SetPerformanceLaneKeyLength`), mirrored to the view
@@ -212,8 +212,8 @@ else. Key files:
   click anywhere else on the row arms as before. No key and no keymap action. `draw_timeline` starts the
   arranger's in-lane grid lines under the row (`ArrangerLayout::lanes_top`), so
   no bar or beat line crosses the lane; the key edges, every beat, are the lines
-  there. Each key (named by `note_for_key`, its note number in the cycle, any
-  copy along the timeline) spans its key length, from `key_tick` to the next,
+  there. Each key (white or black by `key_pitch_class`, key 0 a C; unnamed
+  since `570`, as its note depends on the hand) spans its key length, from `key_tick` to the next,
   in a thin strip along the lane's bottom edge (`KEY_STRIP_H`, 8pt), in the
   piano roll's `piano_key_white`/`piano_key_black`, drawn as a keyboard: the
   white runs unbroken along the strip, each black key is a block hanging

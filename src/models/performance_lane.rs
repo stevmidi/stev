@@ -7,10 +7,10 @@
 //! advances, which `/` renders into clips at the arranger cursor
 //! (`520-performance-capture.md` decisions 1 and 2): [`PerformanceLane::take_run`]
 //! gives it as a [`Take`], the stretches of the arrangement it played.
-//! The lane's keys are a cycle of [`CYCLE_KEYS`] repeating along the
-//! timeline (`560-performance-lane-reach.md`), each named by
-//! [`note_for_key`], which the arranger draws them from
-//! (`510-performance-lane-keyboard.md`). [`Hand`] is the player's hand on
+//! The lane's keys run on along the timeline from bar 1, a keyboard of
+//! them, key 0 a C ([`key_pitch_class`], which the arranger draws them
+//! from, `510-performance-lane-keyboard.md`; unnamed,
+//! `570-lane-octave-buttons.md` § 4). [`Hand`] is the player's hand on
 //! the lane: the notes a keyboard of a [`KeybedSize`] from settings sends
 //! at its home octave, laid along the timeline by whole octaves around the
 //! arranger cursor and moved an octave by the keyboard's previous/next
@@ -200,21 +200,12 @@ impl PerformanceLane {
     }
 }
 
-/// How many keys the lane's cycle has (`560-performance-lane-reach.md`
-/// § 1): ten octaves, so the note names run unbroken across the wrap. The
-/// keys repeat along the timeline, a cycle of them after another: 120 bars
-/// at a bar a key, 30 bars of 4/4 at a beat.
-pub(crate) const CYCLE_KEYS: i32 = 120;
-
-/// The name of key `key_index`, counted along the timeline from bar 1, so
-/// any copy of a key: a note in `0..120`, a key being its note number in the
-/// cycle (C-2 = key 0, bar 1's in the first cycle; keys 0–7 named by notes
-/// 0–7, not by 120–127, which the next cycle's keys 0–7 play from a hand
-/// reaching past the cycle, [`Hand`]). The arranger draws the lane's keys
-/// from it (`510-performance-lane-keyboard.md`).
-pub(crate) fn note_for_key(key_index: i32) -> u8 {
-    // `rem_euclid` keeps it in `0..120`.
-    key_index.rem_euclid(CYCLE_KEYS) as u8
+/// The pitch class of key `key_index` (0 for a C), counted along the
+/// timeline from bar 1, key 0 a C: what makes it a white or black key in
+/// the lane's strip. A key has no octave of its own: which note plays it
+/// depends on where the hand is placed ([`Hand`], `570-lane-octave-buttons.md`).
+pub(crate) fn key_pitch_class(key_index: i32) -> u8 {
+    key_index.rem_euclid(12) as u8
 }
 
 /// How many keys the player's keyboard has (`560-performance-lane-reach.md`
@@ -394,7 +385,7 @@ impl Hand {
 /// what plays is [`in_meter`](Self::in_meter) of it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub(crate) enum KeyLength {
-    /// A whole bar per key: a cycle of keys reaches 120 bars.
+    /// A whole bar per key.
     #[default]
     Bar,
     /// Half a bar per key, in a meter whose numerator is even; in an odd one
@@ -728,36 +719,11 @@ mod tests {
     }
 
     #[test]
-    fn a_key_is_named_by_its_note_number() {
-        for key_index in 0..CYCLE_KEYS {
-            assert_eq!(i32::from(note_for_key(key_index)), key_index);
-        }
-        assert_eq!(note_for_key(7), 7, "G-2, not G8");
-    }
-
-    #[test]
-    fn note_for_key_repeats_along_the_timeline() {
-        for key_index in [0, 5, 59, 60, 119] {
-            assert_eq!(
-                note_for_key(key_index + CYCLE_KEYS),
-                note_for_key(key_index)
-            );
-            assert_eq!(
-                note_for_key(key_index + 7 * CYCLE_KEYS),
-                note_for_key(key_index)
-            );
-        }
-    }
-
-    /// A beat a key in 4/4: a cycle is 30 bars.
-    const CYCLE_4_4: i32 = 30 * 3840;
-
-    #[test]
-    fn a_cycle_is_thirty_bars_at_a_beat_a_key_in_four_four() {
-        assert_eq!(
-            key_tick(Meter::FOUR_FOUR, KeyLength::Beat, CYCLE_KEYS),
-            CYCLE_4_4
-        );
+    fn a_key_is_a_c_every_twelve_from_bar_one() {
+        assert_eq!(key_pitch_class(0), 0);
+        assert_eq!(key_pitch_class(12 * 9), 0);
+        assert_eq!(key_pitch_class(1), 1);
+        assert_eq!(key_pitch_class(12 * 30 + 11), 11);
     }
 
     fn meter(numerator: u8, denominator: u8) -> Meter {
@@ -802,9 +768,9 @@ mod tests {
             "C4: bar 13"
         );
         assert_eq!(
-            key_tick(meter, bar, CYCLE_KEYS - 1),
+            key_tick(meter, bar, 119),
             meter.bars_to_ticks(119),
-            "B7: bar 120, the cycle's last key"
+            "key 119: bar 120"
         );
     }
 
@@ -1025,7 +991,7 @@ mod tests {
                 );
                 for note in 0..=127u8 {
                     let key = hand.key_index(note);
-                    assert_eq!(i32::from(note_for_key(key)) % 12, i32::from(note) % 12);
+                    assert_eq!(key_pitch_class(key), note % 12);
                 }
             }
         }

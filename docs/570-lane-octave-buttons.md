@@ -49,7 +49,7 @@ The sequencer owns the hand's placement, as it owns the key length (`510` step 1
 - **Not saved.** Selecting the lane places the hand around the cursor, so nothing needs keeping.
 - **Not drawn unselected** (as today).
 
-The key names along the lane (`note_for_key`, the 120-key cycle) are unchanged. The hand starts on a C, so a played note's letter matches its key's, though not always its octave number.
+The key names along the lane are removed (*revised after hand-testing, 2026-11-25*; first kept, the octave numbers named the wrong note once the hand moved by octaves, and the letter alone repeats what the strip's black keys already show). With them goes the 120-key cycle, which only named the keys: a key is white or black by its pitch class (`key_pitch_class`, key 0 a C). The hand starts on a C, so a played note's letter still matches its key's.
 
 ### 5. A note outside the home octave
 
@@ -91,6 +91,7 @@ If the keyboard's octave is shifted anyway, its notes still jump (`Hand::key_ind
 - **How a placement is triggered**: the cursor is written in a few places (`Transport` on the sequencer thread, `Sequencer::set_cursor_tick`), so the hand is placed from each: `Sequencer::set_cursor_tick`, the transport handler's `MoveCursor` and `SetCursorAndSelectClip` (a click on the cursor's own spot places it too, as a click is the "put my hand here" gesture), `set_meter`, `set_performance_lane_key_length`, arming, and the keybed size, which now goes to the sequencer (`SequencerCommand::SetKeybedSize`) instead of being set on `LiveNotes` by the view.
 - **A note whose key would be before bar 1** (the keyboard's octave shifted well down, past § 5's accepted wrong press) does nothing.
 - **A held key outside the home notes** lights nothing in the lane (it did, on its mapped key, with the guess).
+- **The key names removed** (§ 4), and the 120-key cycle with them.
 - **A button arriving after the lane was left** (sent while armed, the lane left before the sequencer took it) is dropped by the sequencer pump, never recorded.
 
 ## Phases
