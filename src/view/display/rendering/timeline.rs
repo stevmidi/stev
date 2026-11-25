@@ -23,7 +23,6 @@ impl Display {
         const BAR_STROKE_W: f32 = 1.0;
         let scroll_x = self.render_scroll_x();
 
-        let sw = rect.width();
         let area_top = rect.min.y + self.timeline_top();
         let area_bottom = rect.min.y + self.track_area_bottom();
         let strip_bottom = area_top + Self::TIMELINE_H;
@@ -49,7 +48,7 @@ impl Display {
         painter.rect_filled(
             Rect::from_min_size(
                 pos2(strip_left, area_top),
-                vec2(rect.min.x + sw - strip_left, Self::TIMELINE_H),
+                vec2(content_right - strip_left, Self::TIMELINE_H),
             ),
             CornerRadius::ZERO,
             theme::bg_timeline(),
@@ -119,6 +118,20 @@ impl Display {
             0
         };
 
+        // Nothing of the grid spills into the bare canvas gap right of
+        // `content_right` (`030` § Timeline strip): a line drawn up to 1px
+        // past it is a centred stroke, half in the gap, so the lines and
+        // ruler ticks are clipped there. The bar numbers sit right of their
+        // line, so the last one on screen runs past it too: clipped to the
+        // strip, it scrolls out of sight at the grid's edge like a clip.
+        let grid_painter = painter.with_clip_rect(
+            Rect::from_x_y_ranges(rect.min.x..=content_right, rect.y_range())
+                .intersect(painter.clip_rect()),
+        );
+        let label_painter = painter.with_clip_rect(
+            Rect::from_x_y_ranges(content_x..=content_right, area_top..=strip_bottom)
+                .intersect(painter.clip_rect()),
+        );
         for i in first_visible..(first_visible + num_visible) {
             let tick = i * step_ticks;
             let x = grid_line_x(i, step_ticks, ppt, content_x, scroll_x);
@@ -141,7 +154,7 @@ impl Display {
                 GridRole::Beat => (1.0_f32, REGION_BAND_H * 0.5, theme::grid_major()),
                 GridRole::Snap => (1.0_f32, REGION_BAND_H * 0.35, theme::grid_major()),
             };
-            painter.vline(
+            grid_painter.vline(
                 x,
                 lines_top..=area_bottom,
                 Stroke::new(lane_w, line_color(role)),
@@ -149,7 +162,7 @@ impl Display {
             // The ruler is a readout, not the snap grid: fine snap lines keep
             // their in-lane groove but only every `ruler_ticks` gets a tick.
             if tiers.has_ruler_tick(tick) {
-                painter.vline(
+                grid_painter.vline(
                     x,
                     (strip_bottom - tick_h)..=strip_bottom,
                     Stroke::new(BAR_STROKE_W, tick_color),
@@ -163,7 +176,7 @@ impl Display {
             if let Some(bar_num) =
                 bar_num.filter(|_| role == GridRole::Bar && tiers.is_labelled(tick))
             {
-                painter.text(
+                label_painter.text(
                     pos2(x + 3.0, strip_bottom - REGION_BAND_H),
                     Align2::LEFT_BOTTOM,
                     bar_num,
@@ -193,7 +206,7 @@ impl Display {
             )
         };
         painter.hline(
-            rect.min.x..=(rect.min.x + sw),
+            rect.min.x..=content_right,
             strip_seam_y,
             Stroke::new(strip_seam_w, grid_seam_color()),
         );

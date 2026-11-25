@@ -29,6 +29,7 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ### Changed
 
+- The arranger now leaves a narrow strip of bare background at its right edge, matching the gap left of the grid: the ruler, the overview, the lanes and the lines between them all stop where the grid stops, rather than running on past it to the window edge.
 - The buttons of the unsaved-changes prompt, the replace prompt and the crash-recovery question now act when you let go of the mouse, not when you press it. Move off the button before letting go and nothing happens, so a slip on **Don't Save** no longer throws away your changes. The button looks pressed while you hold it.
 - When a running `/` with a marquee is refused because the marquee isn't inside the loop, the footer now names both: where the marquee is and where the loop is, so a leftover marquee, or one a little past the loop's edge, shows up at once.
 - The performance lane reaches the whole song. Its keys used to stop at bar 18 at a beat a key (bar 68 at a bar); now they run on along the timeline, and your keyboard's keys sit around the arranger cursor, so a click in the lane puts your hand there. Only moving the cursor moves it; playing never does.

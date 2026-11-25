@@ -34,7 +34,7 @@ impl Display {
         let labels_right = self.content_origin_x() - Self::TRACK_COLUMN_GRID_GAP_X;
         let content_x = self.content_origin_x();
         let content_w = self.content_w();
-        let sw = rect.width();
+        let content_right = self.content_right_x();
 
         // Track-column panel — one continuous fill from the top of the
         // overview strip, through the timeline strip and the reserved
@@ -147,7 +147,7 @@ impl Display {
                 painter.pixels_per_point(),
             );
             painter.hline(
-                rect.min.x..=(rect.min.x + sw),
+                rect.min.x..=content_right,
                 sep_y,
                 Stroke::new(ARRANGER_LANE_SEAM_W, grid_seam_color()),
             );
@@ -170,7 +170,7 @@ impl Display {
             painter.pixels_per_point(),
         );
         painter.hline(
-            rect.min.x..=rect.max.x,
+            rect.min.x..=self.content_right_x(),
             sep_y,
             Stroke::new(ARRANGER_LANE_SEAM_W, grid_seam_color()),
         );
@@ -259,7 +259,10 @@ impl Display {
     fn draw_plugin_drop_target(&self, painter: &Painter, rect: Rect, track_idx: usize) {
         let layout = self.arranger_layout();
         let top = rect.min.y + layout.lane_top(track_idx);
-        let row = Rect::from_min_max(pos2(rect.min.x, top), pos2(rect.max.x, top + layout.lane_h));
+        let row = Rect::from_min_max(
+            pos2(rect.min.x, top),
+            pos2(self.content_right_x(), top + layout.lane_h),
+        );
         painter.rect_filled(
             row,
             CornerRadius::ZERO,
