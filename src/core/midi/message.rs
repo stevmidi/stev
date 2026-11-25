@@ -188,8 +188,8 @@ pub(crate) fn is_recorded(msg: &[u8]) -> bool {
 /// (`570-lane-octave-buttons.md` § 3).
 pub(crate) fn is_lane_octave_button(msg: &[u8]) -> bool {
     matches!(
-        msg,
-        [status, LANE_OCTAVE_DOWN_CC | LANE_OCTAVE_UP_CC, _, ..] if status & 0xF0 == CONTROL_CHANGE
+        parse_controller(msg),
+        Some((Controller::Cc(LANE_OCTAVE_DOWN_CC | LANE_OCTAVE_UP_CC), _))
     )
 }
 
@@ -197,10 +197,11 @@ pub(crate) fn is_lane_octave_button(msg: &[u8]) -> bool {
 /// octave down, `Some(1)` up, on any value above 0 and any channel; `None`
 /// for the release (0) and anything else (`570-lane-octave-buttons.md` § 3).
 pub(crate) fn lane_octave(msg: &[u8]) -> Option<i32> {
-    if !is_lane_octave_button(msg) || msg[2] == 0 {
-        return None;
+    match parse_controller(msg)? {
+        (Controller::Cc(LANE_OCTAVE_DOWN_CC), 1..) => Some(-1),
+        (Controller::Cc(LANE_OCTAVE_UP_CC), 1..) => Some(1),
+        _ => None,
     }
-    Some(if msg[1] == LANE_OCTAVE_DOWN_CC { -1 } else { 1 })
 }
 
 /// Whether `message` is a complete channel voice message: status `0x80`–`0xEF`

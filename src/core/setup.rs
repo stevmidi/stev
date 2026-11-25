@@ -21,7 +21,7 @@ use crate::core::{
     time::Meter,
     timer::Timer,
 };
-use crate::models::performance_lane::{Hand, KeyLength, KeybedSize};
+use crate::models::performance_lane::{Hand, KeyLength};
 use crate::{
     core::{
         audio::ClickEvent,
@@ -56,15 +56,7 @@ pub(crate) fn setup_shared_atomics(repaint_ctx: Arc<OnceLock<Context>>) -> Share
         tempo: Arc::new(AtomicI32::new(TEMPO_US_DEFAULT)),
         meter: Arc::new(AtomicU16::new(Meter::FOUR_FOUR.to_bits())),
         performance_lane_key_length: Arc::new(AtomicU8::new(KeyLength::default().to_bits())),
-        performance_lane_hand: Arc::new(AtomicU32::new(
-            Hand::around(
-                KeybedSize::default(),
-                Meter::FOUR_FOUR,
-                KeyLength::default(),
-                0,
-            )
-            .to_bits(),
-        )),
+        performance_lane_hand: Arc::new(AtomicU32::new(Hand::default().to_bits())),
         clock_tick: Arc::new(AtomicI32::new(0)),
         clock_tick_instant_nanos: Arc::new(AtomicU64::new(0)),
         playback_tick: Arc::new(AtomicI32::new(0)),

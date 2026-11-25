@@ -27,7 +27,6 @@ use crate::core::event_handlers::{
 };
 use crate::core::metronome::Metronome;
 use crate::core::midi::input::RecordedMidi;
-use crate::core::midi::message::is_lane_octave_button;
 use crate::core::project::ProjectData;
 use crate::core::sequencer::{ExportStep, Sequencer, SequencerCommand, UndoStep};
 use crate::core::time::TapTempo;
@@ -110,10 +109,7 @@ pub(crate) fn start_sequencer_thread(
                         if let Ok((message, tick)) = midi_message {
                             if sequencer.is_performance_lane_armed() {
                                 event_handlers.handle_performance_lane_midi_input(&mut sequencer, &mut transport, &message);
-                            } else if !is_lane_octave_button(&message) {
-                                // A lane octave button sent while the lane was
-                                // armed, arriving after it was left, is never
-                                // recorded (`570` § 3).
+                            } else {
                                 let kicked = sequencer.handle_midi_input(&message, tick);
                                 // Running, the UI's ~30 fps frames show the
                                 // track's meter (and an extra wake would jitter

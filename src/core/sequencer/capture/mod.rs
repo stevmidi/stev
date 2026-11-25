@@ -44,7 +44,7 @@ use crate::{
     core::{
         config,
         input_event::CaptureFrame,
-        midi::message::{midi3, parse_controller},
+        midi::message::{is_lane_octave_button, midi3, parse_controller},
         time,
     },
     models::{
@@ -352,7 +352,13 @@ impl Sequencer {
     /// `clock_tick` it landed on — its arrangement *position*. Returns
     /// whether a note-on kicked the selected track's meter
     /// ([`kick_live_meter`](Self::kick_live_meter)).
+    /// The performance lane's octave buttons are never taken: one sent while
+    /// the lane was armed can arrive after it was left
+    /// (`570-lane-octave-buttons.md` § 3).
     pub(crate) fn handle_midi_input(&mut self, message: &[u8], tick: i32) -> bool {
+        if is_lane_octave_button(message) {
+            return false;
+        }
         // A wheel or a knob the player moves: the armed track's synth is now
         // where the player put it, not where a clip did.
         if let Some(track) = self.selected_track_mut() {
@@ -1130,6 +1136,19 @@ mod tests {
 
     /// The builder is the pure half of the commit: it positions the clip but
     /// leaves the track and the capture buffer exactly as they were.
+    /// A lane octave button sent while the lane was armed and taken after
+    /// it was left is never recorded (`570-lane-octave-buttons.md` § 3); a
+    /// CC with a rest beside it is.
+    #[test]
+    fn a_lane_octave_button_is_never_recorded() {
+        let mut seq = make_sequencer(0, Meter::FOUR_FOUR.bar_ticks() * 2);
+        seq.handle_midi_input(&[0xB0, 28, 127], 100);
+        seq.handle_midi_input(&[0xB0, 29, 0], 110);
+        assert!(seq.capture_clip.events().is_empty());
+        seq.handle_midi_input(&[0xB0, 64, 127], 120);
+        assert_eq!(seq.capture_clip.events().len(), 1);
+    }
+
     #[test]
     fn build_committed_capture_does_not_touch_the_track_or_buffer() {
         let bar = Meter::FOUR_FOUR.bar_ticks();

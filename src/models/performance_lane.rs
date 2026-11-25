@@ -305,6 +305,19 @@ pub(crate) struct Hand {
     shift: i32,
 }
 
+impl Default for Hand {
+    /// The default keyboard's hand around bar 1, at the default key length
+    /// in 4/4: the hand at launch, before settings or a project set it.
+    fn default() -> Self {
+        Hand::around(
+            KeybedSize::default(),
+            Meter::FOUR_FOUR,
+            KeyLength::default(),
+            0,
+        )
+    }
+}
+
 impl Hand {
     /// The hand of a `size` keyboard placed around `around_tick` (the
     /// arranger cursor) at `length` keys of `meter`: the whole octave
@@ -869,7 +882,6 @@ mod tests {
         }
     }
 
-    /// The notes a window covers, as `(lowest, highest)`.
     /// The notes a hand lights, lowest and highest, as the keys they land on.
     fn lit(hand: Hand) -> (i32, i32) {
         let low = hand.size().home_low();

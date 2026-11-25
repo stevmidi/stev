@@ -47,21 +47,28 @@ impl Sequencer {
 
     /// Places the hand around the cursor, undoing the buttons' moves
     /// (`570-lane-octave-buttons.md` § 2): called at every cursor move and
-    /// every change that moves the cursor's key (the meter, the key length,
-    /// the keybed size), and when the lane is selected.
+    /// every change that moves the cursor's key (the meter, the key length),
+    /// and when the lane is selected.
     pub(crate) fn place_performance_lane_hand(&self) {
-        self.set_keybed_size(self.performance_lane_hand().size());
+        self.place_hand_of(self.performance_lane_hand().size());
     }
 
     /// The keyboard has `size` keys (settings): the hand is placed afresh
     /// for it.
     pub(crate) fn set_keybed_size(&self, size: KeybedSize) {
-        self.publish_performance_lane_hand(Hand::around(
+        self.place_hand_of(size);
+    }
+
+    /// Places a `size` keyboard's hand around the cursor.
+    fn place_hand_of(&self, size: KeybedSize) {
+        let hand = Hand::around(
             size,
             self.meter(),
             self.performance_lane_key_length(),
             self.cursor_tick(),
-        ));
+        );
+        self.performance_lane_hand
+            .store(hand.to_bits(), Ordering::Relaxed);
     }
 
     /// The keyboard's previous/next button: the hand `octaves` octaves along
@@ -72,13 +79,8 @@ impl Sequencer {
         let Some(hand) = self.performance_lane_hand().moved(octaves) else {
             return false;
         };
-        self.publish_performance_lane_hand(hand);
-        true
-    }
-
-    /// Writes `hand` for the press handler and the view.
-    fn publish_performance_lane_hand(&self, hand: Hand) {
         self.performance_lane_hand
             .store(hand.to_bits(), Ordering::Relaxed);
+        true
     }
 }

@@ -17,13 +17,13 @@ use uuid::Uuid;
 use crate::core::metronome::Metronome;
 use crate::core::midi::out_queue::MidiOutMessage;
 use crate::core::project::{LibraryChange, ProjectAction, StorageJob};
-use crate::core::sequencer::test_support::{clip_at, default_hand, note_off, note_on};
+use crate::core::sequencer::test_support::{clip_at, note_off, note_on};
 use crate::core::sequencer::{Sequencer, SequencerCommand, UndoStep};
 use crate::core::shared_atomics::{AudioExportAtomics, TrackMixAtomics};
 use crate::core::time::{Meter, TapTempo};
 use crate::core::transport::{Transport, TransportCommand, TransportEvent};
 use crate::models::event::EventType;
-use crate::models::performance_lane::KeyLength;
+use crate::models::performance_lane::{Hand, KeyLength};
 use crate::view::display::UiEvent;
 
 use super::{EventHandlers, OpenProject, RecoveryKeeper, SavedProject, Storage};
@@ -117,7 +117,7 @@ pub(crate) fn harness() -> Harness {
         Arc::new(AtomicU8::new(0)),
         performance_lane_armed.clone(),
         Arc::new(AtomicU8::new(KeyLength::default().to_bits())),
-        Arc::new(AtomicU32::new(default_hand())),
+        Arc::new(AtomicU32::new(Hand::default().to_bits())),
         Arc::new(TrackMixAtomics::new()),
         audio_export.clone(),
     );

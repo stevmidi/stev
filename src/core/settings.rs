@@ -79,9 +79,9 @@ pub(crate) struct SettingsData {
     /// the 256 the engine always asked for.
     #[serde(default = "default_audio_buffer_frames")]
     pub(crate) audio_buffer_frames: u32,
-    /// How many keys the player's keyboard has, which the performance lane
-    /// lights its guess of the hand's position from
-    /// (`560-performance-lane-reach.md` § 3), read through
+    /// How many keys the player's keyboard has: the performance lane's
+    /// hand, its width and home notes (`570-lane-octave-buttons.md` § 1),
+    /// read through
     /// [`KeybedSize::from_keys`]. Absent before the setting existed: 49.
     #[serde(default = "default_keybed_keys")]
     pub(crate) keybed_keys: u8,
