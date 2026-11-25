@@ -1134,8 +1134,6 @@ mod tests {
         assert_eq!(meta.start_tick, bar * 2, "clip must start at cursor_tick");
     }
 
-    /// The builder is the pure half of the commit: it positions the clip but
-    /// leaves the track and the capture buffer exactly as they were.
     /// A lane octave button sent while the lane was armed and taken after
     /// it was left is never recorded (`570-lane-octave-buttons.md` § 3); a
     /// CC with a rest beside it is.
@@ -1149,6 +1147,8 @@ mod tests {
         assert_eq!(seq.capture_clip.events().len(), 1);
     }
 
+    /// The builder is the pure half of the commit: it positions the clip but
+    /// leaves the track and the capture buffer exactly as they were.
     #[test]
     fn build_committed_capture_does_not_touch_the_track_or_buffer() {
         let bar = Meter::FOUR_FOUR.bar_ticks();

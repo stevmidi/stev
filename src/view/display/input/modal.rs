@@ -145,7 +145,7 @@ impl Display {
             MidiSettingsFocus::OutOffset => self.nudge_midi_out_offset(-step as i32),
             // Up a size, as up raises the offset.
             MidiSettingsFocus::Keybed => {
-                self.set_keybed_size(self.performance_lane_hand().size().stepped(-step))
+                self.set_keybed_size(self.settings.midi.keybed_size.stepped(-step))
             }
         }
         true

@@ -479,6 +479,8 @@ impl Display {
         audio_export: Arc<AudioExportAtomics>,
         live_notes: Arc<LiveNotes>,
     ) -> Self {
+        // The size the sequencer was given at launch, before the view exists.
+        let keybed_size = Hand::from_bits(performance_lane_hand.load(Ordering::Relaxed)).size();
         Display {
             tempo,
             meter,
@@ -523,6 +525,7 @@ impl Display {
                 midi_in_current_port,
                 midi_out_current_port,
                 midi_out_offset_ms,
+                keybed_size,
             )),
             tracks: TrackLane::defaults(),
             gesture: GestureState::default(),

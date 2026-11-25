@@ -276,14 +276,15 @@ impl Display {
             .ok();
     }
 
-    /// Makes `size` the keyboard's size: the sequencer places the
-    /// performance lane's hand for it and saves it
+    /// Makes `size` the keyboard's size: the tab shows it at once, and the
+    /// sequencer places the performance lane's hand for it and saves it
     /// (`570-lane-octave-buttons.md` § 2). Nothing when it is the size
     /// already.
     pub(super) fn set_keybed_size(&mut self, size: KeybedSize) {
-        if size == self.performance_lane_hand().size() {
+        if size == self.settings.midi.keybed_size {
             return;
         }
+        self.settings.midi.keybed_size = size;
         self.input_event_tx
             .send(InputEvent::SetKeybedSize { size })
             .ok();

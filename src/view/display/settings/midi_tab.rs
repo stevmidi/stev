@@ -10,6 +10,7 @@
 use crossbeam_channel::Sender;
 
 use crate::core::midi::port::matching_port_index;
+use crate::models::performance_lane::KeybedSize;
 
 use super::window_start;
 use crate::view::display::browser::scroll_to_show;
@@ -116,11 +117,16 @@ pub(in crate::view::display) struct MidiTab {
     /// Editable mirror of the persisted MIDI-output offset, in milliseconds.
     /// Applied and saved on every nudge.
     pub(in crate::view::display) out_offset_ms: i32,
+    /// The keybed size picked here, stepped from and shown at once; the
+    /// sequencer places the lane's hand for it once the pick reaches it, so
+    /// steps faster than that round trip are never lost.
+    pub(in crate::view::display) keybed_size: KeybedSize,
 }
 
 impl MidiTab {
     /// Builds the tab state with its reconnect channel ends, the ports
-    /// already connected at startup, and the persisted output offset. The port
+    /// already connected at startup, the persisted output offset and the
+    /// keybed size. The port
     /// lists start empty and fill from the first `MidiPortsRefreshed`.
     pub(in crate::view::display) fn new(
         midi_in_reconnect_tx: Sender<String>,
@@ -128,12 +134,14 @@ impl MidiTab {
         midi_in_current_port: Option<String>,
         midi_out_current_port: Option<String>,
         out_offset_ms: i32,
+        keybed_size: KeybedSize,
     ) -> Self {
         MidiTab {
             input: PortList::new(midi_in_reconnect_tx, midi_in_current_port),
             output: PortList::new(midi_out_reconnect_tx, midi_out_current_port),
             focus: MidiSettingsFocus::InPort,
             out_offset_ms,
+            keybed_size,
         }
     }
 

@@ -1069,7 +1069,7 @@ impl Display {
             theme::fg_dim(),
         );
         let row = section.rows.first;
-        let in_use = self.performance_lane_hand().size();
+        let in_use = self.settings.midi.keybed_size;
         let count = KeybedSize::ALL.len();
         for (i, size) in KeybedSize::ALL.into_iter().enumerate() {
             let chosen = size == in_use;
@@ -1425,6 +1425,7 @@ mod tests {
 
     use super::{CHOICE_COLUMNS, Display, ListRows, choice_hit, choice_rect};
     use crate::core::audio::AudioDevice;
+    use crate::models::performance_lane::KeybedSize;
     use crate::view::display::settings::THEME_ROWS;
     use crate::view::display::settings::audio_tab::{AudioTab, DEVICE_ROWS};
     use crate::view::display::settings::midi_tab::{MidiTab, PORT_ROWS};
@@ -1499,6 +1500,7 @@ mod tests {
             in_current.map(str::to_owned),
             None,
             0,
+            KeybedSize::default(),
         );
         midi.input.set_ports(names(inputs));
         midi.output.set_ports(names(outputs));
