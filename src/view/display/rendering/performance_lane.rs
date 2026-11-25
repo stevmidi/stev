@@ -11,11 +11,12 @@
 //! hanging from its top), the plain lane above it the
 //! C's names, one an octave, and a key the
 //! live keyboard holds lights while the lane is armed, on the key its press
-//! landed on. While armed, the keys the player's hand is on (the guess,
-//! `LiveNotes::keybed`) are washed where its presses land: one unbroken
-//! stretch around the arranger cursor (`KeybedWindow::hand`, `560` § 2 and
-//! § 4). Static otherwise: it changes with zoom, scroll, the meter
-//! and the cursor, never with playing (the playhead is the trigger's
+//! landed on. While armed, the keys the player's hand is on (the
+//! sequencer's `Hand`) are washed where its presses land: one unbroken
+//! stretch placed by octave around the arranger cursor, moved an octave by
+//! the keyboard's previous/next buttons (`570-lane-octave-buttons.md`).
+//! Static otherwise: it changes with zoom, scroll, the meter, the cursor
+//! and those buttons, never with playing (the playhead is the trigger's
 //! feedback).
 
 use std::ops::Range;
@@ -49,8 +50,8 @@ const UNARMED_KEY_STRENGTH: f32 = 0.5;
 /// own piece of the strip lights in the full accent. Tune by eye.
 const HELD_KEY_WASH: f32 = 0.25;
 
-/// Strength of the accent wash over the keys the player's hand is on (the
-/// keybed guess), above the strip: under a held key's, so a held key still
+/// Strength of the accent wash over the keys the player's hand is on,
+/// above the strip: under a held key's, so a held key still
 /// stands out inside it. Tune by eye.
 const KEYBED_WINDOW_WASH: f32 = 0.1;
 
@@ -141,8 +142,7 @@ impl Display {
             )
         };
         let label_color = theme::fg_dim();
-        let keybed = self.live_notes.keybed();
-        let hand = keybed.hand(meter, length, self.cursor_tick.load(Ordering::Relaxed));
+        let hand = self.performance_lane_hand();
 
         for key_index in keys {
             let note = note_for_key(key_index);
@@ -150,13 +150,13 @@ impl Display {
             let right = self.tick_to_screen_x(key_tick(meter, length, key_index + 1));
             let above = Rect::from_x_y_ranges(left..=right, lane_top..=strip_top);
             let key = Rect::from_x_y_ranges(left..=right, strip_top..=strip_bottom);
-            // The note whose press lands on this key, while armed: lit held,
-            // washed inside the window.
+            // The note of the hand whose press lands on this key, while
+            // armed: lit held, washed otherwise.
             let note_here = hand.note_on(key_index).filter(|_| armed);
             let lit = note_here.is_some_and(|n| self.live_notes.is_held(n));
             let wash = if lit {
                 Some(HELD_KEY_WASH)
-            } else if note_here.is_some_and(|n| keybed.contains(n)) {
+            } else if note_here.is_some() {
                 Some(KEYBED_WINDOW_WASH)
             } else {
                 None

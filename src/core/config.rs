@@ -172,3 +172,14 @@ pub const METRONOME_CLICK_RING_CAPACITY: usize = 16;
 /// end marks from the sequencer to the plugin host's mixer. One export sends
 /// two, and the mixer drains them every callback.
 pub const EXPORT_MARK_RING_CAPACITY: usize = 4;
+
+/// The Control Change that moves the performance lane's hand an octave down,
+/// with the lane selected: the keyboard's *previous* button (CC28, the
+/// MicroLab's `⇧` + octave down) (`570-lane-octave-buttons.md` § 3). A
+/// constant until a keyboard sending another number turns up.
+pub const LANE_OCTAVE_DOWN_CC: u8 = 28;
+
+/// The Control Change that moves the performance lane's hand an octave up:
+/// the keyboard's *next* button (CC29, the MicroLab's `⇧` + octave up). See
+/// [`LANE_OCTAVE_DOWN_CC`].
+pub const LANE_OCTAVE_UP_CC: u8 = 29;

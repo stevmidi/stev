@@ -2,7 +2,7 @@
 
 use std::sync::{
     Arc,
-    atomic::{AtomicBool, AtomicI32, AtomicU8, AtomicU16, Ordering},
+    atomic::{AtomicBool, AtomicI32, AtomicU8, AtomicU16, AtomicU32, Ordering},
 };
 use std::time::Instant;
 
@@ -20,7 +20,7 @@ use crate::models::{
     clip::Clip,
     event::{Event, EventType, ParamMove},
     knobs::{ParamId, test_param},
-    performance_lane::KeyLength,
+    performance_lane::{Hand, KeyLength, KeybedSize},
     track::{InstrumentRef, Track, TrackOutput},
 };
 
@@ -56,6 +56,7 @@ pub(super) fn sequencer_with_outputs(
         Arc::new(AtomicU8::new(0)),
         Arc::new(AtomicBool::new(false)),
         Arc::new(AtomicU8::new(KeyLength::default().to_bits())),
+        Arc::new(AtomicU32::new(default_hand())),
         Arc::new(TrackMixAtomics::new()),
         Arc::new(AudioExportAtomics::default()),
     );
@@ -91,6 +92,17 @@ pub(super) fn drain(rx: &mut Consumer<ClipInstrumentEvent>) -> Vec<[u8; 3]> {
     std::iter::from_fn(|| rx.pop().ok())
         .filter_map(|e| e.message.midi())
         .collect()
+}
+
+/// The lane's hand at its startup placement, packed: 49 keys around bar 1.
+pub(crate) fn default_hand() -> u32 {
+    Hand::around(
+        KeybedSize::default(),
+        Meter::FOUR_FOUR,
+        KeyLength::default(),
+        0,
+    )
+    .to_bits()
 }
 
 /// A stopped sequencer and the far ends of both feeds the plugin host's

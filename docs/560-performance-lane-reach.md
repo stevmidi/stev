@@ -2,6 +2,8 @@
 
 **Status: agreed 2026-11-23; phase 1 built 2026-11-23, phase 2 built 2026-11-23 (both as built in `110` § Scope and § Rendering, the setting in `060`); issue #44.** Revised while hand-testing phase 1 (2026-11-23): note 0 (C-2) starts bar 1, not C3, and a press takes the copy nearest the **cursor**, running too, not the playhead. Revised again while hand-testing phase 2 (2026-11-23): **the hand jumps as one block**, the copy chosen for the middle of the guessed keyboard, so a press depends on the guess, which is no longer display only (§ 2, § 4, § Changes while building). The lane's keys repeat along the timeline, and the keys under the player's hand sit on the stretch of them nearest the cursor, so the keyboard reaches every part of a song however long it is. A keybed-size setting lets the lane light the keys the player's hand is on. Read `110` (the lane) and `510` (the keys drawn in it) first. This replaces `510` § Not in this design's "A movable base note or an octave shift" bullet.
 
+**Superseded in part by `570-lane-octave-buttons.md` (built 2026-11-25):** the guess (§ 4) is gone, the keyboard's own octave assumed at home; the hand is placed by whole octaves around the cursor instead of a cycle's copies, and the keyboard's previous/next buttons move it an octave at once (§ 5's "after a hardware octave button" no longer applies). The cycle (§ 1), the keybed size (§ 3) and the cursor alone deciding (§ 2) stand. As built: `110` § Scope and § Rendering.
+
 ## Background
 
 Today the lane has 68 keys, from note 60 (C3, `config::PERFORMANCE_LANE_BASE_NOTE`) to 127 (`KEY_COUNT`), and notes below 60 are ignored. At a beat a key in 4/4 the keys end at bar 18, and nothing after it can be reached (found in use, 2026-11-23). A small keybed makes it worse: a 25-key keyboard covers 25 of those 68 keys at a time.
@@ -61,6 +63,8 @@ A setting (settings, not the project: it describes the hardware): the keyboard's
 
 ### 4. The lit window
 
+*Replaced by `570` (2026-11-25): no guess; the lit hand is the home notes, placed around the cursor and moved by the octave buttons.*
+
 Stev keeps a guess of the notes the keyboard covers: a window of the keybed size starting on a C. A note played on the armed lane outside the guess moves it by whole octaves, just enough to include the note (notes played while the lane isn't armed never move it) (a hardware octave button shifts by whole octaves too, so the guess stays in step), before the note's press is handled. The lane lights the window on the stretch § 2 places it on.
 
 ```
@@ -82,7 +86,7 @@ bar   1     7                       31    37
   Click at bar 19:   |░░░░░|                       |▓▓▓▓▓|   moves to the next copy
   ```
 
-- **After a hardware octave button, only at the next key press.** Most keyboards send nothing for the button, so Stev can't know until a note arrives; that note moves the guess first, and its press jumps by the moved guess. Accepted.
+- **After a hardware octave button, only at the next key press** *(gone with `570`: the keyboard's previous/next buttons move it at once, and its own octave is assumed at home)*. Most keyboards send nothing for the button, so Stev can't know until a note arrives; that note moves the guess first, and its press jumps by the moved guess. Accepted.
 - **Never by playing.** Nothing about the playhead moves it.
 
 ### Unchanged
@@ -132,7 +136,7 @@ Hand-testing phase 2's first build (2026-11-23), which kept each key on its own 
 
 ## Not in this design
 
-- **Stev-side octave keys** that move the window at once, and **a CC from the keyboard's octave buttons** mapped to them. Follow-ups if the next-press update is a problem in use.
+- **Stev-side octave keys** that move the window at once, and **a CC from the keyboard's octave buttons** mapped to them. Follow-ups if the next-press update is a problem in use. *The CC is taken up by `570`; computer keys were set aside there.*
 - **A keybed not starting on C** (a "press your lowest key" learn).
 
 ## Phases

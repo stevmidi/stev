@@ -276,17 +276,16 @@ impl Display {
             .ok();
     }
 
-    /// Makes `size` the keyboard's size: the performance lane lights and
-    /// jumps by it at once (its guess keeping its lowest C until the next
-    /// press, `LiveNotes::set_keybed_size`) and the sequencer saves it.
-    /// Nothing when it is the size already.
+    /// Makes `size` the keyboard's size: the sequencer places the
+    /// performance lane's hand for it and saves it
+    /// (`570-lane-octave-buttons.md` § 2). Nothing when it is the size
+    /// already.
     pub(super) fn set_keybed_size(&mut self, size: KeybedSize) {
-        if size == self.live_notes.keybed().size() {
+        if size == self.performance_lane_hand().size() {
             return;
         }
-        self.live_notes.set_keybed_size(size);
         self.input_event_tx
-            .send(InputEvent::SaveKeybedSize { size })
+            .send(InputEvent::SetKeybedSize { size })
             .ok();
     }
 

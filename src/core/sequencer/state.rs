@@ -11,7 +11,7 @@
 
 use std::sync::{
     Arc,
-    atomic::{AtomicBool, AtomicI32, AtomicU8, AtomicU16, Ordering},
+    atomic::{AtomicBool, AtomicI32, AtomicU8, AtomicU16, AtomicU32, Ordering},
 };
 use std::time::Instant;
 
@@ -178,6 +178,12 @@ pub(crate) struct Sequencer {
     /// view (`SharedAtomics::performance_lane_key_length`). Saved with the
     /// project; not an undo step (`510-performance-lane-keyboard.md` § Step 1b).
     pub(super) performance_lane_key_length: Arc<AtomicU8>,
+    /// The player's hand on the lane (`Hand::to_bits`), shared with the view
+    /// (`SharedAtomics::performance_lane_hand`): placed around the cursor
+    /// at every cursor move, a meter, key length or keybed size change and
+    /// the lane's selection, moved an octave by the keyboard's buttons.
+    /// Written only here; not saved (`570-lane-octave-buttons.md` § 4).
+    pub(super) performance_lane_hand: Arc<AtomicU32>,
 
     // --- Agent bridge ---
     /// The view's arranger marquee, mirrored here on every change
@@ -213,6 +219,7 @@ impl Sequencer {
         arm_channel: Arc<AtomicU8>,
         performance_lane_armed: Arc<AtomicBool>,
         performance_lane_key_length: Arc<AtomicU8>,
+        performance_lane_hand: Arc<AtomicU32>,
         track_mix: Arc<TrackMixAtomics>,
         audio_export_atomics: Arc<AudioExportAtomics>,
     ) -> Self {
@@ -253,6 +260,7 @@ impl Sequencer {
             performance_lane: PerformanceLane::new(),
             performance_lane_armed,
             performance_lane_key_length,
+            performance_lane_hand,
             marquee: None,
             modal_open: false,
         }
@@ -296,6 +304,7 @@ impl Sequencer {
     /// to it directly).
     pub(crate) fn set_cursor_tick(&mut self, tick: i32) {
         self.cursor_tick.store(tick.max(0), Ordering::Relaxed);
+        self.place_performance_lane_hand();
     }
 
     /// Current playback position, in ticks.
@@ -322,15 +331,19 @@ impl Sequencer {
 
     /// Sets the project's time signature. Moves nothing: notes, clips and
     /// the loop region keep their ticks (`archive/270-time-signature.md`).
+    /// The lane's hand is placed afresh, as the cursor's key moved.
     pub(crate) fn set_meter(&self, meter: Meter) {
         self.meter.store(meter.to_bits(), Ordering::Relaxed);
+        self.place_performance_lane_hand();
     }
 
     /// Sets how far each performance-lane key jumps. Kept as chosen, a half
     /// bar in an odd meter too (`KeyLength::in_meter` decides what plays).
+    /// The lane's hand is placed afresh, as the cursor's key moved.
     pub(crate) fn set_performance_lane_key_length(&self, length: KeyLength) {
         self.performance_lane_key_length
             .store(length.to_bits(), Ordering::Relaxed);
+        self.place_performance_lane_hand();
     }
 
     /// How far each performance-lane key jumps, as chosen.

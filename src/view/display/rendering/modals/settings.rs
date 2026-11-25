@@ -1069,7 +1069,7 @@ impl Display {
             theme::fg_dim(),
         );
         let row = section.rows.first;
-        let in_use = self.live_notes.keybed().size();
+        let in_use = self.performance_lane_hand().size();
         let count = KeybedSize::ALL.len();
         for (i, size) in KeybedSize::ALL.into_iter().enumerate() {
             let chosen = size == in_use;

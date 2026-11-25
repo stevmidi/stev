@@ -181,11 +181,6 @@ fn main() {
         .midi_out_offset_ms
         .store(midi_out_offset_ms, Ordering::Relaxed);
 
-    // The keybed size before any note can move the guess (`560` § 3).
-    shared_atomics
-        .live_notes
-        .set_keybed_size(KeybedSize::from_keys(settings.keybed_keys));
-
     let clock = setup_clock(shared_channels.clock_command_rx, &shared_atomics);
 
     let transport = setup_transport(
@@ -202,6 +197,9 @@ fn main() {
         shared_channels.export_mark_tx,
         &shared_atomics,
     );
+    // The keybed size from settings, before the lane can be selected
+    // (`570-lane-octave-buttons.md` § 1).
+    sequencer.set_keybed_size(KeybedSize::from_keys(settings.keybed_keys));
 
     let event_handlers = Arc::new(setup_event_handlers(
         shared_channels.ui_event_tx.clone(),

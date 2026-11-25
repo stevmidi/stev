@@ -16,7 +16,7 @@ use crate::core::time::Meter;
 use crate::core::view_state::Pane;
 use crate::models::clip::{Clip, ClipEdge, NoteDrag};
 use crate::models::knobs::ParamId;
-use crate::models::performance_lane::KeyLength;
+use crate::models::performance_lane::{KeyLength, KeybedSize};
 use crate::models::track::TrackOutput;
 
 /// Everything the `"sequencer"` thread can be asked to do, other than the
@@ -752,6 +752,10 @@ pub(crate) enum SequencerCommand {
     /// next key pressed. Saved with the project, not an undo step
     /// (`510-performance-lane-keyboard.md` § Step 1b).
     SetPerformanceLaneKeyLength(KeyLength),
+    /// The settings modal picked the keyboard's size: the lane's hand is
+    /// placed afresh for it (`570-lane-octave-buttons.md` § 2). Settings,
+    /// not the project: the view saves it.
+    SetKeybedSize(KeybedSize),
 
     // --- Agent bridge ---
     /// The view's marquee changed: mirror it for the agent bridge's reads

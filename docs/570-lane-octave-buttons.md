@@ -1,6 +1,6 @@
 # The Lane's Octave Buttons
 
-**Status: agreed 2026-11-25, not built.** With the performance lane selected, the keyboard's previous/next buttons (CC28/CC29, on the MicroLab `⇧` + octave down/up) move the player's hand an octave down/up along the lane, at once. The keyboard's own octave stays at home. A cursor move places the hand around the cursor, and `560` § 4's guess goes. Read `560` (the lane's reach and the hand) and `110` first. This takes up `560` § Not in this design's "a CC from the keyboard's octave buttons" bullet.
+**Status: agreed and built 2026-11-25 (as built in `110` § Scope, § MIDI routing and § Rendering).** With the performance lane selected, the keyboard's previous/next buttons (CC28/CC29, on the MicroLab `⇧` + octave down/up) move the player's hand an octave down/up along the lane, at once. The keyboard's own octave stays at home. A cursor move places the hand around the cursor, and `560` § 4's guess goes. Read `560` (the lane's reach and the hand) and `110` first. This takes up `560` § Not in this design's "a CC from the keyboard's octave buttons" bullet.
 
 ## Background
 
@@ -86,6 +86,13 @@ If the keyboard's octave is shifted anyway, its notes still jump (`Hand::key_ind
 - The lane not selected: the buttons do nothing in Stev, and an Arturia plugin on the track still gets them.
 - `/` after a performance using the buttons: the capture has no CC28/CC29 in it.
 
+## Changes while building
+
+- **How a placement is triggered**: the cursor is written in a few places (`Transport` on the sequencer thread, `Sequencer::set_cursor_tick`), so the hand is placed from each: `Sequencer::set_cursor_tick`, the transport handler's `MoveCursor` and `SetCursorAndSelectClip` (a click on the cursor's own spot places it too, as a click is the "put my hand here" gesture), `set_meter`, `set_performance_lane_key_length`, arming, and the keybed size, which now goes to the sequencer (`SequencerCommand::SetKeybedSize`) instead of being set on `LiveNotes` by the view.
+- **A note whose key would be before bar 1** (the keyboard's octave shifted well down, past § 5's accepted wrong press) does nothing.
+- **A held key outside the home notes** lights nothing in the lane (it did, on its mapped key, with the guess).
+- **A button arriving after the lane was left** (sent while armed, the lane left before the sequencer took it) is dropped by the sequencer pump, never recorded.
+
 ## Phases
 
-One phase.
+One phase, built 2026-11-25.

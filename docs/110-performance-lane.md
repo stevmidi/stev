@@ -44,22 +44,30 @@ else. Key files:
   renders what was heard. The keys form a **cycle of 120** (`CYCLE_KEYS`,
   ten octaves), a key named by its note number (`note_for_key`, C-2 = key 0
   = bar 1), repeating along the timeline a cycle after another. A press,
-  running or stopped, jumps by **the player's hand placed around the arranger
-  cursor** (`560-performance-lane-reach.md` § 2): the keybed guess
-  (`LiveNotes::keybed`, a `KeybedWindow`, below) laid unbroken along the
-  timeline, note `n` on key `n` plus whole cycles, the cycles chosen so the
-  hand's middle key is the copy nearest the cursor (`KeybedWindow::hand`,
-  `nearest_copy_tick`: a tie at half a cycle the copy ahead, never before bar
-  1; a hand that would still put notes before bar 1, a high one near the
-  start, sits a cycle on, whole). The phase offset (`550`) is added to that key's start.
-  So the hand reaches about half a cycle either side of the cursor, ±15 bars
-  at a beat a key in 4/4, ±60 at a bar a key; it is never split, a cursor
-  move moves it whole, and the playhead never moves it. The guess is moved
-  on the input thread at every note-on while the lane is armed, before the
-  note reaches the sequencer (`LiveNotes::lane_press`, from
-  `LiveInputRouter::route`), so a press jumps by the guess its own note
-  left: a hardware octave shift takes effect at the press that shows it.
-  `EventHandlers::live_notes` is how the press handler reads it. `key_tick(meter, length,
+  running or stopped, jumps by **the player's hand** (`Hand`,
+  `570-lane-octave-buttons.md`): the notes the keyboard sends at its home
+  octave (`KeybedSize::home_low`: 36–84 on a 49-key keybed, 48–72 on 25;
+  the keyboard's own octave is assumed at home) laid unbroken along the
+  timeline from a C, note `n` on key `n + shift`. **Placed by whole octaves
+  around the arranger cursor** (`Hand::around`): the octave putting its middle
+  key nearest the cursor, so the cursor is always within half an octave of
+  it; a tie at half an octave the octave ahead; never before bar 1 (a
+  placement whose lowest key would fall before it takes the octave up). **The
+  keyboard's previous/next buttons** (CC28/CC29, `config::LANE_OCTAVE_DOWN_CC`
+  / `LANE_OCTAVE_UP_CC`; the MicroLab's `⇧` + octave) move it an octave down
+  or up from where it is (`Hand::moved`; down refused at bar 1), until the
+  next placement. The sequencer owns it (`Sequencer::place_performance_lane_hand`,
+  `move_performance_lane_hand`) and publishes it in
+  `SharedAtomics::performance_lane_hand` (one `AtomicU32`), which the press
+  handler and the view read. It is placed at every cursor move
+  (`Sequencer::set_cursor_tick`, and the transport handler's `MoveCursor` /
+  `SetCursorAndSelectClip`, a click on the cursor's own spot too), a meter,
+  key length or keybed size change (`SequencerCommand::SetKeybedSize`), and
+  when the lane is selected; the playhead never moves it, so a performance
+  keeps its mapping while the cursor stays put. Not saved. A note outside
+  the home notes jumps too (`Hand::key_index`, past the lit hand's edge), a
+  key before bar 1 doing nothing. The phase offset (`550`) is added to the
+  key's start. `key_tick(meter, length,
   key)` is where a key jumps, one **key length** (`KeyLength`) per key: a
   bar, half a bar or a beat (`KeyLength::ticks`: `bar_ticks`, half of it,
   `beat_ticks`, the counted beat, a quarter in x/4, an eighth in x/8), so
@@ -156,6 +164,17 @@ else. Key files:
   (`take_due_stop`), so a run stopped with `Space` is whole beats. A second
   `Space` stops at once; a press cancels the wait, and a start
   (`begin_running_take`) drops one left over.
+- **The octave buttons** (`message::lane_octave`, CC28/CC29 on any channel):
+  a press (any value above 0) moves the hand an octave
+  (`Sequencer::move_performance_lane_hand`) and wakes the UI, since a CC isn't
+  a window event, so the lit hand moves before any note; the release (0)
+  does nothing. `LiveInputRouter::route` sends them on `midi_in_tx` only while
+  armed (`is_lane_octave_button`), on the same channel as the notes so a
+  button and a note straight after arrive in order; unarmed they pass to thru
+  and the plugin tap as any CC (an Arturia plugin still gets them). Neither
+  reaches the capture buffer: armed the lane handler takes them, and the
+  sequencer pump drops one arriving after the lane was left
+  (`570-lane-octave-buttons.md` § 3).
 - **NoteOff**: does nothing. Deliberately not `transport.stop()`: the
   transport keeps playing past the release, so the performer stops it
   themselves (Play/spacebar) when the performance is over; and no loop wrap
@@ -220,28 +239,18 @@ else. Key files:
   of the strip (a black key's hanging block only) in `theme::accent()`, with a wash (`HELD_KEY_WASH`) over its span
   above: what the hands hold, not just the key the transport jumped to. A
   held key lights once, on its key in the hand around the cursor
-  (`Hand::note_on`), where its press landed unless the guess or the cursor
-  has moved since (every copy on screen lit until `560` phase 2). Unarmed, held keys light nothing
+  (`Hand::note_on`, the home notes only), where its press landed unless the
+  cursor or the buttons have moved the hand since (every copy on screen lit until `560` phase 2). Unarmed, held keys light nothing
   in the lane.
-- **The lit window** (`560-performance-lane-reach.md` § 3–5): the keys the
+- **The lit hand** (`570-lane-octave-buttons.md` § 4): the keys the
   player's hand is on get a fainter wash over their span above the strip
-  (`KEYBED_WINDOW_WASH`, under a held key's), armed only, as held keys are.
-  The guess of the notes the keyboard covers is `LiveNotes::keybed` (a
-  `KeybedWindow` packed in one `AtomicU16`: a window of the keybed size from
-  settings, starting on a C, home on C3 to the octave below, so 36–84 on a
-  49-key keybed). `LiveNotes::lane_press` moves it at every note-on while
-  the lane is armed, never otherwise (nothing happens to the lane while it
-  isn't armed: notes played into an instrument, or on the computer keys in
-  another octave, leave it), by whole octaves, just enough to take the note
-  in. A size picked in settings keeps its lowest C, pulled down if need be
-  so the window still reaches note 127 and no higher
-  (`KeybedWindow::resized`). The lane washes the
-  keys the window's notes land on in the hand around the cursor (the same
-  `KeybedWindow::hand` a press uses, so lit is where presses go): one
-  unbroken stretch, moving whole at once on a cursor move that switches the
-  hand's copy, and after a hardware octave button at the next press. The
-  keybed size is picked in Settings → MIDI (`SettingsData::keybed_keys`,
-  `060`), set on `LiveNotes` at launch and by the tab.
+  (`KEYBED_WINDOW_WASH`, under a held key's), armed only, as held keys are:
+  the keys `SharedAtomics::performance_lane_hand` puts the home notes on, the
+  same `Hand` a press uses, so lit is where presses go. One unbroken stretch,
+  moving whole on a cursor move that changes its octave and at once on an
+  octave button. The keybed size is picked in Settings → MIDI
+  (`SettingsData::keybed_keys`, `060`), set on the sequencer at launch
+  (`Sequencer::set_keybed_size`) and by the tab.
 - **Otherwise barebones**: no per-trigger visualization, no "Bar N" label, no
   committed-trigger history. The playhead (drawn elsewhere, unconditionally
   whenever `running`, over the keys) is the only feedback for an active

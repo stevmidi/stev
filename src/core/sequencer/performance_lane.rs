@@ -1,5 +1,6 @@
 //! `Sequencer`-side accessors for the arranger performance lane: its armed
-//! state and its run.
+//! state, its run and the player's hand on it ([`Hand`],
+//! `570-lane-octave-buttons.md`).
 //!
 //! The lane model itself is [`PerformanceLane`]; the trigger routing and the
 //! capture live in `event_handlers/performance_lane_handler.rs`. The armed
@@ -10,7 +11,7 @@
 
 use std::sync::atomic::Ordering;
 
-use crate::models::performance_lane::PerformanceLane;
+use crate::models::performance_lane::{Hand, KeybedSize, PerformanceLane};
 
 use super::Sequencer;
 
@@ -28,11 +29,56 @@ impl Sequencer {
 
     /// Arms / disarms the lane. Shared with `MidiInputForwarder` and
     /// `Transport`. Disarming ends the run: the presses before it can't be
-    /// kept once the lane is left.
+    /// kept once the lane is left. Arming places the hand around the cursor,
+    /// so the buttons' moves from before are gone (`570` § 4).
     pub(crate) fn set_performance_lane_armed(&mut self, armed: bool) {
         self.performance_lane_armed.store(armed, Ordering::Relaxed);
-        if !armed {
+        if armed {
+            self.place_performance_lane_hand();
+        } else {
             self.performance_lane.clear();
         }
+    }
+
+    /// The player's hand on the lane, as published to the view.
+    pub(crate) fn performance_lane_hand(&self) -> Hand {
+        Hand::from_bits(self.performance_lane_hand.load(Ordering::Relaxed))
+    }
+
+    /// Places the hand around the cursor, undoing the buttons' moves
+    /// (`570-lane-octave-buttons.md` § 2): called at every cursor move and
+    /// every change that moves the cursor's key (the meter, the key length,
+    /// the keybed size), and when the lane is selected.
+    pub(crate) fn place_performance_lane_hand(&self) {
+        self.set_keybed_size(self.performance_lane_hand().size());
+    }
+
+    /// The keyboard has `size` keys (settings): the hand is placed afresh
+    /// for it.
+    pub(crate) fn set_keybed_size(&self, size: KeybedSize) {
+        self.publish_performance_lane_hand(Hand::around(
+            size,
+            self.meter(),
+            self.performance_lane_key_length(),
+            self.cursor_tick(),
+        ));
+    }
+
+    /// The keyboard's previous/next button: the hand `octaves` octaves along
+    /// from where it is, until the next cursor move (`570` § 3). Returns
+    /// whether it moved: an octave down that would put the lowest key before
+    /// bar 1 does nothing.
+    pub(crate) fn move_performance_lane_hand(&self, octaves: i32) -> bool {
+        let Some(hand) = self.performance_lane_hand().moved(octaves) else {
+            return false;
+        };
+        self.publish_performance_lane_hand(hand);
+        true
+    }
+
+    /// Writes `hand` for the press handler and the view.
+    fn publish_performance_lane_hand(&self, hand: Hand) {
+        self.performance_lane_hand
+            .store(hand.to_bits(), Ordering::Relaxed);
     }
 }

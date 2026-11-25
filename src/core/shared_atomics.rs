@@ -23,7 +23,6 @@ use egui::Context;
 use crate::core::audio::meter::ChannelLevel;
 use crate::core::config::{MAX_TRACKS, TRACK_VOLUME_DB_DEFAULT};
 use crate::models::knobs::KNOB_COUNT;
-use crate::models::performance_lane::{KeybedSize, KeybedWindow};
 
 /// Per-track mixer state — volume, stereo balance, mute and solo — plus what
 /// each track's meter reads: its last note-on (`note_on`) and its audio level
@@ -287,22 +286,14 @@ impl AudioExportAtomics {
 }
 
 /// The notes the live keyboard (a MIDI port or the computer keys) is holding
-/// right now, as a 128-bit set — what the piano roll's keys light up for —
-/// and the guess of the notes the keyboard covers (`KeybedWindow`), which a
-/// performance-lane press jumps by and the lane lights
-/// (`560-performance-lane-reach.md` § 2 and § 4). Written by whichever input
-/// thread routes the message
+/// right now, as a 128-bit set — what the piano roll's keys and the armed
+/// performance lane's light up for. Written by whichever input thread routes
+/// the message
 /// ([`LiveInputRouter`](crate::core::midi::input::LiveInputRouter)), read by
-/// the render thread and the `"sequencer"` thread.
+/// the render thread.
 pub(crate) struct LiveNotes {
     /// Notes 0–63 in the first word, 64–127 in the second; bit `n % 64`.
     bits: [AtomicU64; 2],
-    /// The keybed guess, packed by `KeybedWindow::to_bits`: moved at every
-    /// note-on while the performance lane is armed
-    /// ([`lane_press`](Self::lane_press)), before the note goes on to the
-    /// sequencer, so a press jumps by the guess its own note left; resized
-    /// from settings.
-    keybed: AtomicU16,
     /// Wakes the reactive UI when a note edge changes the set, since a live
     /// note is not a window input event (`EventHandlers::request_repaint`).
     repaint_ctx: Arc<OnceLock<Context>>,
@@ -313,7 +304,6 @@ impl LiveNotes {
     pub(crate) fn new(repaint_ctx: Arc<OnceLock<Context>>) -> Self {
         LiveNotes {
             bits: [AtomicU64::new(0), AtomicU64::new(0)],
-            keybed: AtomicU16::new(KeybedWindow::new(KeybedSize::default()).to_bits()),
             repaint_ctx,
         }
     }
@@ -344,37 +334,6 @@ impl LiveNotes {
             .get(note / 64)
             .is_some_and(|word| word.load(Ordering::Relaxed) & (1u64 << (note % 64)) != 0)
     }
-
-    /// A note-on on the armed performance lane: the keybed guess takes it
-    /// in. Only while armed: what the keyboard plays elsewhere (an
-    /// instrument, the computer keys in another octave) never moves the
-    /// lane (`560-performance-lane-reach.md` § 4).
-    pub(crate) fn lane_press(&self, note: u8) {
-        // Two input threads (a port, the computer keys) may write here.
-        self.update_keybed(|keybed| keybed.played(note));
-    }
-
-    /// The guess of the notes the keyboard covers.
-    pub(crate) fn keybed(&self) -> KeybedWindow {
-        KeybedWindow::from_bits(self.keybed.load(Ordering::Relaxed))
-    }
-
-    /// The keyboard is `size` keys (settings): the guess keeps its lowest C
-    /// until the next note puts it right (`KeybedWindow::resized`).
-    pub(crate) fn set_keybed_size(&self, size: KeybedSize) {
-        self.update_keybed(|keybed| *keybed = keybed.resized(size));
-    }
-
-    /// Applies `change` to the keybed guess, in one atomic step.
-    fn update_keybed(&self, change: impl Fn(&mut KeybedWindow)) {
-        self.keybed
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |bits| {
-                let mut keybed = KeybedWindow::from_bits(bits);
-                change(&mut keybed);
-                Some(keybed.to_bits())
-            })
-            .ok();
-    }
 }
 
 /// The whole shared-state bundle. Built in `setup_shared_atomics`, cloned into
@@ -401,6 +360,13 @@ pub(crate) struct SharedAtomics {
     /// draw the keys and the gutter's labels (`510-performance-lane-keyboard.md`
     /// § Step 1b).
     pub(crate) performance_lane_key_length: Arc<AtomicU8>,
+    /// The player's hand on the performance lane, as
+    /// [`Hand::to_bits`](crate::models::performance_lane::Hand::to_bits): the
+    /// keybed size and where its notes land along the timeline. Written by
+    /// the `"sequencer"` thread, placed around the cursor and moved an octave
+    /// by the keyboard's previous/next buttons; read by the press handler and
+    /// by the view to light it (`570-lane-octave-buttons.md` § 4).
+    pub(crate) performance_lane_hand: Arc<AtomicU32>,
     /// Free-running musical tick counter. Written by the `"clock"` thread; held
     /// to `clock_tick ≡ playback_tick (mod region_length)` — *not* absolute
     /// equality — via [`ClockCommand::AlignToPlayback`](crate::core::clock::ClockCommand).
@@ -480,7 +446,6 @@ pub(crate) struct SharedAtomics {
 mod tests {
     use super::{LiveNotes, TrackMixAtomics};
     use crate::core::audio::meter::ChannelLevel;
-    use crate::models::performance_lane::{KeybedSize, KeybedWindow};
 
     #[test]
     fn live_notes_track_each_held_note_across_both_words() {
@@ -494,27 +459,6 @@ mod tests {
         live.set(100, false);
         live.set(200, true);
         assert!(!live.is_held(100) && !live.is_held(127));
-    }
-
-    #[test]
-    fn a_lane_press_moves_the_keybed_guess_and_a_held_note_does_not() {
-        let live = LiveNotes::new(Default::default());
-        live.set_keybed_size(KeybedSize::Keys25);
-        assert_eq!(
-            live.keybed(),
-            KeybedWindow::new(KeybedSize::Keys49).resized(KeybedSize::Keys25),
-            "the lowest C kept"
-        );
-        live.set(84, true);
-        assert!(
-            !live.keybed().contains(84),
-            "a note off the lane moves nothing"
-        );
-        live.lane_press(84);
-        assert!(live.keybed().contains(84) && !live.keybed().contains(48));
-        live.set_keybed_size(KeybedSize::Keys49);
-        assert_eq!(live.keybed().size(), KeybedSize::Keys49);
-        assert!(live.keybed().contains(84));
     }
 
     #[test]

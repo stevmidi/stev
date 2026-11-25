@@ -15,7 +15,9 @@ capture covers it. Key files: `src/core/midi/input.rs`,
   pedal). The pedal is recorded as sent, 0–127, with no threshold at 64, so a continuous
   pedal's half-pedalling is kept (`530-sustain-capture.md` decision 1). Everything else on the
   input — the sostenuto and soft pedals, a hardware controller's other CCs, aftertouch,
-  program change — is played live (thru and the plugin tap) and never recorded. The `NoteLogger` still gets
+  program change — is played live (thru and the plugin tap) and never recorded. While the
+  performance lane is armed its octave buttons (CC28/CC29) go to the sequencer too, for the
+  lane's handler, never the capture buffer (`570-lane-octave-buttons.md` § 3). The `NoteLogger` still gets
   only note edges. The capture buffer behind `/` stores a controller move like a note, at
   its own tick; the clip thumbnail ignores it. One type names what is recorded besides
   notes: `Controller` (`core/midi/message.rs`), pitch bend, a CC by number or a plugin

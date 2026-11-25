@@ -1,6 +1,8 @@
 //! [`MidiInputForwarder`] — owns the live `midir` input connection and fans
 //! each incoming message out to live MIDI-thru and the instrument-plugin tap,
-//! its note edges and wheel moves to the sequencer (for capture), and its
+//! its note edges and wheel moves to the sequencer (for capture, or the
+//! armed performance lane, which takes the keyboard's previous/next buttons
+//! too, `570-lane-octave-buttons.md` § 3), and its
 //! note edges to the `NoteLogger`. The fan-out itself is a
 //! [`LiveInputRouter`], one per source: the computer keyboard (`Display`'s
 //! note keys, routed on the `"computerkeys"` thread) gets one of its own and so
@@ -32,7 +34,7 @@ use crate::core::midi::port::VIRTUAL_PORT_NAME;
 use crate::core::{
     midi::{
         input_tick::{InputClock, input_tick_at_arrival, precise_input_tick},
-        message::{Midi3, is_recorded, midi3, parse_note, rewrite_channel},
+        message::{Midi3, is_lane_octave_button, is_recorded, midi3, parse_note, rewrite_channel},
         out_queue::MidiOutMessage,
         port::pickable_port_names,
     },
@@ -55,7 +57,8 @@ pub(crate) type RecordedMidi = (Vec<u8>, i32);
 pub(crate) struct MidiInputForwarder {
     // Communication channels
     /// Raw bytes + their `clock_tick` to the `"sequencer"` thread — only what
-    /// a take records ([`is_recorded`]).
+    /// a take records ([`is_recorded`]), and while the performance lane is
+    /// armed its octave buttons ([`is_lane_octave_button`]).
     midi_in_tx: Sender<RecordedMidi>,
     /// MIDI-thru to the `"midiout"` thread.
     midi_out_tx: Sender<MidiOutMessage>,
@@ -291,22 +294,18 @@ impl LiveInputRouter {
 
         if let Some((note, on)) = parse_note(&msg) {
             self.live_notes.set(note, on);
-            // Before the note goes on to the sequencer, so its press jumps
-            // by the guess it moved.
-            if on && armed {
-                self.live_notes.lane_press(note as u8);
-            }
-        }
-
-        // Note edges, the two wheels and the sustain pedal go on to the
-        // sequencer (capture, `is_recorded`); only note edges to the note
-        // logger.
-        if parse_note(&msg).is_some() {
             self.note_logger_command_tx
                 .send(NoteLoggerCommand::LogInputEvent(midi3(&msg)))
                 .ok();
         }
-        if is_recorded(&msg) {
+
+        // Note edges, the two wheels and the sustain pedal go on to the
+        // sequencer (capture, `is_recorded`). While the lane is armed, so do
+        // its octave buttons, on the same channel so a button and a note
+        // straight after arrive in order; the lane's handler takes them, so
+        // they never reach the capture buffer (`570` § 3). Unarmed they pass
+        // as any CC, to thru and the plugin tap above.
+        if is_recorded(&msg) || (armed && is_lane_octave_button(&msg)) {
             self.midi_in_tx.send((msg, tick)).ok();
         }
     }
@@ -478,20 +477,41 @@ mod tests {
         assert_eq!(sent, [(2, note_on(0)), (2, note_off(0))]);
     }
 
-    /// The keybed guess moves only for notes played on the armed lane
-    /// (`560-performance-lane-reach.md` § 4): nothing happens to the lane
-    /// while it isn't armed.
+    /// The keyboard's previous/next buttons (CC28/CC29) go to the
+    /// sequencer only while the lane is armed, silent there; unarmed they
+    /// pass to the plugin as any CC, unrecorded
+    /// (`570-lane-octave-buttons.md` § 3).
     #[test]
-    fn only_a_note_on_the_armed_lane_moves_the_keybed_guess() {
-        let (mut router, _, _) = test_router(Arc::default());
-        let home = router.live_notes.keybed();
-        router.route(&[0x90, 100, 100], 0);
-        assert_eq!(router.live_notes.keybed(), home, "unarmed");
+    fn the_octave_buttons_go_to_the_sequencer_only_while_armed() {
+        let (mut router, midi_in_rx, mut instrument_rx) = test_router(Arc::default());
+        router.route(&[0xB0, 29, 127], 0);
+        assert_eq!(
+            midi_in_rx.try_iter().count(),
+            0,
+            "unarmed: not to the sequencer"
+        );
+        assert_eq!(
+            iter::from_fn(|| instrument_rx.pop().ok()).count(),
+            1,
+            "unarmed: to the plugin"
+        );
         router.performance_lane_armed.store(true, Ordering::Relaxed);
-        router.route(&[0x80, 100, 0], 0);
-        assert_eq!(router.live_notes.keybed(), home, "a release");
-        router.route(&[0x90, 100, 100], 0);
-        assert!(router.live_notes.keybed().contains(100), "armed");
+        router.route(&[0xB3, 29, 127], 0);
+        router.route(&[0xB3, 29, 0], 0);
+        router.route(&[0xB0, 28, 127], 0);
+        router.route(&[0xB0, 14, 90], 0);
+        let sent: Vec<Vec<u8>> = midi_in_rx.try_iter().map(|(msg, _)| msg).collect();
+        assert_eq!(
+            sent.len(),
+            3,
+            "both buttons, press and release, no other CC"
+        );
+        assert!(sent.iter().all(|msg| matches!(msg[1], 28 | 29)));
+        assert_eq!(
+            iter::from_fn(|| instrument_rx.pop().ok()).count(),
+            0,
+            "armed: silent"
+        );
     }
 
     /// A hardware controller's CC plays live into the plugin and is never

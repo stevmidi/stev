@@ -1,11 +1,12 @@
 //! The `EventHandlers` chokepoint for raw MIDI-IN while the arranger
 //! performance lane is armed: a `NoteOn` jumps the transport to its key
 //! (`key_tick`, a bar, half a bar or a beat a key), in the player's hand
-//! placed around the arranger cursor (`KeybedWindow::hand`, the keys
-//! repeating along the timeline, `560-performance-lane-reach.md` § 2), at
-//! the press's offset from the nearest beat while running so the beat never
-//! breaks
-//! (`phase_offset`, `550-phase-jumps.md`), and joins the lane's run
+//! (`Hand`, placed by octave around the arranger cursor, the keys repeating
+//! along the timeline, `560-performance-lane-reach.md`), and the keyboard's
+//! previous/next buttons move that hand an octave
+//! (`570-lane-octave-buttons.md` § 3). A press lands at its offset from
+//! the nearest beat while running, so the beat never breaks (`phase_offset`,
+//! `550-phase-jumps.md`), and joins the lane's run
 //! (`520-performance-capture.md` decision 2), which `/` renders into clips
 //! at the arranger cursor (decision 1). A `NoteOff` does
 //! nothing: releasing the key doesn't stop playback, so a performer stops on
@@ -17,6 +18,7 @@
 use undo::Record;
 
 use crate::core::agent::{format_position, length_label};
+use crate::core::midi::message::lane_octave;
 use crate::core::sequencer::{DuplicateTimeEdit, UndoStep};
 use crate::models::{
     event::{Event, EventType},
@@ -35,7 +37,9 @@ const NOTHING_PLAYED: &str = "Nothing to keep: the run played no clips";
 impl EventHandlers {
     /// Chokepoint for raw MIDI-IN while the performance lane is armed
     /// (selected) — routes a `NoteOn` into a transport jump instead of normal
-    /// note capture. This needs `&mut Transport`, which `Sequencer` doesn't
+    /// note capture, and a press of the keyboard's previous/next button
+    /// (`lane_octave`) into an octave move of the hand, which wakes the UI
+    /// so the lit hand moves before any note is played (`570` § 4). This needs `&mut Transport`, which `Sequencer` doesn't
     /// have, so it lives here (called directly from the sequencer thread's
     /// `midi_in_rx` arm) rather than inside `Sequencer::handle_midi_input`.
     pub(crate) fn handle_performance_lane_midi_input(
@@ -44,6 +48,12 @@ impl EventHandlers {
         transport: &mut Transport,
         message: &[u8],
     ) {
+        if let Some(octaves) = lane_octave(message) {
+            if sequencer.move_performance_lane_hand(octaves) {
+                self.request_repaint();
+            }
+            return;
+        }
         let event = Event::from_midi(message);
         if event.event_type() != Some(EventType::NoteOn) {
             return;
@@ -53,10 +63,12 @@ impl EventHandlers {
         };
         let meter = sequencer.meter();
         let started = !transport.is_running();
-        // The note's key in the hand around the cursor: the guess the input
-        // thread moved for this very note, so the press lands inside the
-        // window the lane lights, and the playhead moving never changes
-        // what a key means. Running, its start sounds on the beat
+        // The note's key in the hand: placed around the cursor, moved by the
+        // buttons, which arrive in order with the notes, so a press lands
+        // where the lane lights it, and the playhead moving never changes
+        // what a key means. A note so far below the hand (the keyboard's own
+        // octave shifted down) that its key is before bar 1 does nothing.
+        // Running, its start sounds on the beat
         // nearest the press: playback's next tick is `offset` from a beat,
         // and the jump lands as far from the key's start. Stopped, there is
         // no beat to keep.
@@ -66,11 +78,11 @@ impl EventHandlers {
             phase_offset(meter, sequencer.playback_tick())
         };
         let length = sequencer.performance_lane_key_length();
-        let hand = self
-            .live_notes
-            .keybed()
-            .hand(meter, length, sequencer.cursor_tick());
-        let key_start = key_tick(meter, length, hand.key_index(note));
+        let key_index = sequencer.performance_lane_hand().key_index(note);
+        if key_index < 0 {
+            return;
+        }
+        let key_start = key_tick(meter, length, key_index);
         let target_tick = key_start + offset;
         sequencer
             .performance_lane_mut()
@@ -134,20 +146,16 @@ mod tests {
     use crate::core::sequencer::{SequencerCommand, UndoStep};
     use crate::core::time::Meter;
     use crate::core::transport::{Transport, TransportCommand};
-    use crate::models::performance_lane::{CYCLE_KEYS, KeyLength, key_tick};
+    use crate::models::performance_lane::KeyLength;
 
-    /// Where pressing `note` (key `note`) with the lane at `length` (and
-    /// `meter`) takes playback.
+    /// Where pressing key `note` (the hand's note for it, from a cursor at
+    /// bar 1) with the lane at `length` (and `meter`) takes playback.
     fn jump(length: KeyLength, meter: Meter, note: u8) -> i32 {
         let mut h = harness();
         let mut transport = transport(&h);
         h.sequencer.set_meter(meter);
         h.sequencer.set_performance_lane_key_length(length);
-        h.handlers.handle_performance_lane_midi_input(
-            &mut h.sequencer,
-            &mut transport,
-            &[0x90, note, 100],
-        );
+        press(&mut h, &mut transport, i32::from(note));
         assert!(transport.is_running(), "a key starts the transport");
         h.playback_tick.load(Ordering::Relaxed)
     }
@@ -190,14 +198,30 @@ mod tests {
         (h, transport, Record::new())
     }
 
-    /// A note-on on the armed lane, as the input thread delivers it: the
-    /// keybed guess moved for it first (`LiveNotes::lane_press`).
-    fn press(h: &mut Harness, transport: &mut Transport, note: u8) {
-        h.live_notes.lane_press(note);
+    /// A note-on of `note` on the armed lane, as the input thread delivers
+    /// it.
+    fn press_note(h: &mut Harness, transport: &mut Transport, note: u8) {
         h.handlers.handle_performance_lane_midi_input(
             &mut h.sequencer,
             transport,
             &[0x90, note, 100],
+        );
+    }
+
+    /// A press of the note that lands on key `key_index` in the hand as it
+    /// is placed now (`570-lane-octave-buttons.md`): the tests count in
+    /// keys, wherever the cursor puts the hand.
+    fn press(h: &mut Harness, transport: &mut Transport, key_index: i32) {
+        let note = key_index - h.sequencer.performance_lane_hand().key_index(0);
+        press_note(h, transport, u8::try_from(note).expect("a MIDI note"));
+    }
+
+    /// A press of the keyboard's previous (`cc` 28) or next (29) button.
+    fn button(h: &mut Harness, transport: &mut Transport, cc: u8, value: u8) {
+        h.handlers.handle_performance_lane_midi_input(
+            &mut h.sequencer,
+            transport,
+            &[0xB0, cc, value],
         );
     }
 
@@ -356,7 +380,7 @@ mod tests {
         let (mut h, mut transport, _record) = armed();
         transport.start();
         h.playback_tick.store(at, Ordering::Relaxed);
-        press(&mut h, &mut transport, key_index);
+        press(&mut h, &mut transport, i32::from(key_index));
         h.playback_tick.load(Ordering::Relaxed)
     }
 
@@ -383,86 +407,162 @@ mod tests {
         );
     }
 
-    /// A beat a key in 4/4: the keys repeat every 30 bars
-    /// (`560-performance-lane-reach.md`).
-    fn cycle() -> i32 {
-        key_tick(Meter::FOUR_FOUR, KeyLength::Beat, CYCLE_KEYS)
+    /// Where note `note` lands, pressed with the hand as it is now.
+    fn lands(h: &mut Harness, transport: &mut Transport, note: u8) -> i32 {
+        press_note(h, transport, note);
+        h.playback_tick.load(Ordering::Relaxed)
     }
 
-    /// `560` § 2: running, a press lands in the hand placed around the
-    /// cursor, wherever the playhead is, keeping the beat on a copy past the
-    /// first cycle too. Each press here moves the guess to notes 0–48,
-    /// middle C-1 (note 24) at bar 7.
+    const BAR: i32 = Meter::FOUR_FOUR.bar_ticks();
+
+    /// `570` § 2: running, a press lands in the hand placed around the
+    /// cursor, wherever the playhead is, keeping the beat far along too. 49
+    /// keys at a beat a key: from a cursor at bar 73, C3 (note 60) is on it.
     #[test]
     fn a_press_while_running_lands_in_the_hand_around_the_cursor() {
-        let bar = Meter::FOUR_FOUR.bar_ticks();
-        let from = |cursor: i32, playback: i32, key_index: u8| {
+        let from = |cursor: i32, playback: i32, note: u8| {
             let (mut h, mut transport, _record) = armed();
             h.sequencer.set_cursor_tick(cursor);
             transport.start();
             h.playback_tick.store(playback, Ordering::Relaxed);
-            press(&mut h, &mut transport, key_index);
-            h.playback_tick.load(Ordering::Relaxed)
+            lands(&mut h, &mut transport, note)
         };
-        assert_eq!(from(0, 24 * bar, 0), 0, "playhead at bar 25: still bar 1");
+        assert_eq!(from(72 * BAR, 2 * BAR, 60), 72 * BAR, "playhead at bar 3");
+        assert_eq!(from(72 * BAR, 90 * BAR, 60), 72 * BAR, "playhead at bar 91");
         assert_eq!(
-            from(24 * bar, 2 * bar, 0),
-            cycle(),
-            "cursor at bar 25: bar 31"
-        );
-        assert_eq!(
-            from(39 * bar, 5 * bar + 300, 4),
-            cycle() + bar + 300,
-            "cursor at bar 40, late: E-2's copy at bar 32, the beat kept"
+            from(72 * BAR, 5 * BAR + 300, 64),
+            72 * BAR + BAR + 300,
+            "E3 late: a bar on from C3, the beat kept"
         );
     }
 
-    /// The split hand-testing found (`560` § Changes while building): from
-    /// a cursor near bar 60 a 49-key hand at home lay half around bar 45 and
-    /// half around bar 73. Now a run up the keys lands a beat apart all the
-    /// way, on one stretch: from bar 59½, C3's nearest copy is bar 46 (bar
-    /// 76 is 16½ bars off), so C1 (note 36) lands on bar 40.
+    /// A run up the keys lands a beat apart all the way, one stretch: from
+    /// bar 59½ the octave placing C3 nearest is a tie, which goes ahead, so
+    /// C3 is on bar 61 and C1 on bar 55.
     #[test]
     fn a_run_up_the_keys_lands_unbroken() {
         let beat = Meter::FOUR_FOUR.beat_ticks();
-        let bar = Meter::FOUR_FOUR.bar_ticks();
         let (mut h, mut transport, _record) = armed();
-        h.sequencer.set_cursor_tick(58 * bar + 2 * beat);
+        h.sequencer.set_cursor_tick(58 * BAR + 2 * beat);
         let landed: Vec<i32> = (36..=84)
-            .map(|note| {
-                press(&mut h, &mut transport, note);
-                h.playback_tick.load(Ordering::Relaxed)
-            })
+            .map(|note| lands(&mut h, &mut transport, note))
             .collect();
-        assert_eq!(landed[0], 39 * bar, "C1: bar 40");
+        assert_eq!(landed[0], 54 * BAR, "C1: bar 55");
+        assert_eq!(landed[24], 60 * BAR, "C3: bar 61");
         for pair in landed.windows(2) {
             assert_eq!(pair[1] - pair[0], beat);
         }
     }
 
-    /// Note 0, the lowest, is bar 1 from a cursor there: what hand-testing
-    /// the first build (C3 = bar 1, note 0 halfway round) found missing.
+    /// From a cursor at bar 1 the hand's lowest key, C1 at home, is bar 1:
+    /// never before it.
     #[test]
-    fn note_zero_is_bar_one() {
+    fn the_hands_lowest_key_is_bar_one_from_there() {
         let (mut h, mut transport, _record) = armed();
-        press(&mut h, &mut transport, 0);
-        assert_eq!(h.playback_tick.load(Ordering::Relaxed), 0);
+        assert_eq!(lands(&mut h, &mut transport, 36), 0);
+    }
+
+    /// A note so far below the hand that its key would be before bar 1 (the
+    /// keyboard's own octave shifted down) does nothing.
+    #[test]
+    fn a_note_before_bar_one_does_nothing() {
+        let (mut h, mut transport, _record) = armed();
+        press_note(&mut h, &mut transport, 30);
+        assert!(!transport.is_running());
     }
 
     /// Stopped, the hand around the cursor, wherever playback was parked;
     /// moving the cursor back gives the same mapping again.
     #[test]
     fn the_press_that_starts_the_transport_lands_in_the_hand_around_the_cursor() {
-        let bar = Meter::FOUR_FOUR.bar_ticks();
         let from_cursor = |cursor: i32| {
             let (mut h, mut transport, _record) = armed();
             h.sequencer.set_cursor_tick(cursor);
-            press(&mut h, &mut transport, 4);
-            h.playback_tick.load(Ordering::Relaxed)
+            lands(&mut h, &mut transport, 60)
         };
-        assert_eq!(from_cursor(9 * bar), bar);
-        assert_eq!(from_cursor(26 * bar), cycle() + bar);
-        assert_eq!(from_cursor(9 * bar), bar, "the same key, the same place");
+        assert_eq!(from_cursor(9 * BAR), 9 * BAR);
+        assert_eq!(from_cursor(28 * BAR), 27 * BAR, "the octave nearest");
+        assert_eq!(
+            from_cursor(9 * BAR),
+            9 * BAR,
+            "the same key, the same place"
+        );
+    }
+
+    /// `570` § 3: the next button moves the hand an octave up, the previous
+    /// one back, on the press; a note straight after lands in the moved
+    /// hand. At a beat a key in 4/4 an octave is 3 bars.
+    #[test]
+    fn the_buttons_move_the_hand_an_octave() {
+        let (mut h, mut transport, _record) = armed();
+        h.sequencer.set_cursor_tick(72 * BAR);
+        let home = h.sequencer.performance_lane_hand();
+        button(&mut h, &mut transport, 29, 127);
+        button(&mut h, &mut transport, 29, 0);
+        assert_eq!(
+            h.sequencer.performance_lane_hand(),
+            home.moved(1).unwrap(),
+            "the release does nothing"
+        );
+        assert!(!transport.is_running(), "a button starts nothing");
+        assert_eq!(lands(&mut h, &mut transport, 60), 75 * BAR);
+        button(&mut h, &mut transport, 28, 127);
+        button(&mut h, &mut transport, 28, 127);
+        assert_eq!(lands(&mut h, &mut transport, 60), 69 * BAR);
+    }
+
+    /// An octave down that would put the hand's lowest key before bar 1
+    /// does nothing.
+    #[test]
+    fn the_previous_button_does_nothing_at_bar_one() {
+        let (mut h, mut transport, _record) = armed();
+        let home = h.sequencer.performance_lane_hand();
+        button(&mut h, &mut transport, 28, 127);
+        assert_eq!(h.sequencer.performance_lane_hand(), home);
+        assert_eq!(lands(&mut h, &mut transport, 36), 0);
+    }
+
+    /// `570` § 2: any cursor move places the hand around the cursor again,
+    /// undoing the buttons, a click on the same spot too; so do the key
+    /// length and selecting the lane.
+    #[test]
+    fn a_cursor_move_after_a_button_places_the_hand_afresh() {
+        let (mut h, mut transport, _record) = armed();
+        let at = |h: &mut Harness| h.sequencer.performance_lane_hand();
+        h.sequencer.set_cursor_tick(72 * BAR);
+        let placed = at(&mut h);
+        let up = |h: &mut Harness, transport: &mut Transport| {
+            button(h, transport, 29, 127);
+            assert_ne!(h.sequencer.performance_lane_hand(), placed);
+        };
+
+        up(&mut h, &mut transport);
+        h.handlers.handle_transport_command(
+            &TransportCommand::SetCursorAndSelectClip { tick: 72 * BAR },
+            &mut transport,
+            &mut h.sequencer,
+            &muted_metronome(),
+        );
+        assert_eq!(at(&mut h), placed, "a click on the cursor's own spot");
+
+        up(&mut h, &mut transport);
+        h.handlers.handle_transport_command(
+            &TransportCommand::MoveCursor { ticks: BAR },
+            &mut transport,
+            &mut h.sequencer,
+            &muted_metronome(),
+        );
+        assert_eq!(at(&mut h), placed, "a bar on: the same octave");
+
+        up(&mut h, &mut transport);
+        h.sequencer.set_performance_lane_key_length(KeyLength::Beat);
+        assert_eq!(at(&mut h), placed, "the key length");
+
+        up(&mut h, &mut transport);
+        h.handlers.select_track_workflow(&mut h.sequencer, 0);
+        h.handlers
+            .select_performance_lane_workflow(&mut h.sequencer);
+        assert_eq!(at(&mut h), placed, "selecting the lane");
     }
 
     /// `Space`.

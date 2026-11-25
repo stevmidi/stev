@@ -133,7 +133,7 @@ pub(crate) use ui_event::{TrackLane, TrackRoute, UiEvent};
 
 use std::sync::{
     Arc,
-    atomic::{AtomicBool, AtomicI32, AtomicU8, AtomicU16, Ordering},
+    atomic::{AtomicBool, AtomicI32, AtomicU8, AtomicU16, AtomicU32, Ordering},
 };
 
 use crossbeam_channel::{Receiver, Sender};
@@ -150,7 +150,7 @@ use crate::core::plugin_host::PluginAudioHandle;
 use crate::core::plugin_host::catalog::PluginCatalogEntry;
 use crate::core::time::{Meter, pixels_to_ticks, px_per_beat_to_ppt, snap_to_grid};
 use crate::models::clip::{min_window_length, window_with_edge_at};
-use crate::models::performance_lane::KeyLength;
+use crate::models::performance_lane::{Hand, KeyLength};
 #[cfg(target_os = "macos")]
 use crate::view::appkit::MainGlContext;
 use crate::{
@@ -215,6 +215,10 @@ pub(crate) struct Display {
     /// [`KeyLength::to_bits`]. Read through
     /// [`performance_lane_key_length`](Self::performance_lane_key_length).
     performance_lane_key_length: Arc<AtomicU8>,
+    /// The player's hand on the performance lane, packed by
+    /// [`Hand::to_bits`], written by the sequencer. Read through
+    /// [`performance_lane_hand`](Self::performance_lane_hand).
+    performance_lane_hand: Arc<AtomicU32>,
     /// Shared "transport running" flag.
     running: Arc<AtomicBool>,
     /// Shared transport playback position, ticks. The clip pane maps it into
@@ -251,9 +255,8 @@ pub(crate) struct Display {
     /// The running audio export: the footer's progress, and Esc cancelling
     /// it rather than the marquee. See `SharedAtomics::audio_export`.
     audio_export: Arc<AudioExportAtomics>,
-    /// The notes the live keyboard holds, lit on the piano roll's keys, and
-    /// the guess of the notes it covers, lit in the performance lane
-    /// (`LiveNotes::keybed`). See `SharedAtomics::live_notes`.
+    /// The notes the live keyboard holds, lit on the piano roll's keys and
+    /// the armed performance lane's. See `SharedAtomics::live_notes`.
     live_notes: Arc<LiveNotes>,
     /// Audio-callback deadline utilisation, shared with the audio engine and
     /// read once per frame for the header's DSP readout. `None` when no output
@@ -463,6 +466,7 @@ impl Display {
         tempo: Arc<AtomicI32>,
         meter: Arc<AtomicU16>,
         performance_lane_key_length: Arc<AtomicU8>,
+        performance_lane_hand: Arc<AtomicU32>,
         running: Arc<AtomicBool>,
         playback_tick: Arc<AtomicI32>,
         cursor_tick: Arc<AtomicI32>,
@@ -479,6 +483,7 @@ impl Display {
             tempo,
             meter,
             performance_lane_key_length,
+            performance_lane_hand,
             running,
             playback_tick,
             cursor_tick,
@@ -1234,6 +1239,11 @@ impl Display {
     /// odd meter too: `KeyLength::in_meter` gives what plays).
     fn performance_lane_key_length(&self) -> KeyLength {
         KeyLength::from_bits(self.performance_lane_key_length.load(Ordering::Relaxed))
+    }
+
+    /// The player's hand on the performance lane, as the sequencer placed it.
+    fn performance_lane_hand(&self) -> Hand {
+        Hand::from_bits(self.performance_lane_hand.load(Ordering::Relaxed))
     }
 
     /// The current transport playback tick.

@@ -388,7 +388,8 @@ impl EventHandlers {
                 });
             }
 
-            InputEvent::SaveKeybedSize { size } => {
+            InputEvent::SetKeybedSize { size } => {
+                self.send_sequencer(SequencerCommand::SetKeybedSize(*size));
                 update_settings("keybed size", |settings| {
                     settings.keybed_keys = size.keys();
                 });

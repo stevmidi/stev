@@ -872,9 +872,10 @@ pub(crate) enum InputEvent {
         /// The new MIDI-output offset, in milliseconds.
         out_offset_ms: i32,
     },
-    /// The settings modal's MIDI tab picked the keyboard's size: save it.
-    /// The view already lights the lane by it.
-    SaveKeybedSize {
+    /// The settings modal's MIDI tab picked the keyboard's size: the
+    /// sequencer places the lane's hand for it
+    /// (`SequencerCommand::SetKeybedSize`), and it is saved.
+    SetKeybedSize {
         /// The size picked.
         size: KeybedSize,
     },

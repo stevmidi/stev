@@ -636,6 +636,10 @@ impl EventHandlers {
                 sequencer.set_performance_lane_key_length(*length);
                 self.request_repaint();
             }
+            SequencerCommand::SetKeybedSize(size) => {
+                sequencer.set_keybed_size(*size);
+                self.request_repaint();
+            }
 
             // Answered above, ahead of the holds.
             SequencerCommand::SetMarquee(_)

@@ -2,6 +2,7 @@
 //! route carries, note-edge and controller parsing, which live input a take records,
 //! channel rewriting and channel-message validation.
 
+use crate::core::config::{LANE_OCTAVE_DOWN_CC, LANE_OCTAVE_UP_CC};
 use crate::models::knobs::PluginParam;
 
 /// A MIDI channel-voice message, fixed at 3 bytes: shorter messages (Program
@@ -181,6 +182,27 @@ pub(crate) fn is_recorded(msg: &[u8]) -> bool {
     parse_note(msg).is_some() || parse_resting(msg).is_some()
 }
 
+/// Whether `msg` is one of the performance lane's octave buttons
+/// ([`LANE_OCTAVE_DOWN_CC`], [`LANE_OCTAVE_UP_CC`]) on any channel, press
+/// or release: what goes to the lane's handler while it is armed
+/// (`570-lane-octave-buttons.md` § 3).
+pub(crate) fn is_lane_octave_button(msg: &[u8]) -> bool {
+    matches!(
+        msg,
+        [status, LANE_OCTAVE_DOWN_CC | LANE_OCTAVE_UP_CC, _, ..] if status & 0xF0 == CONTROL_CHANGE
+    )
+}
+
+/// A press of the performance lane's octave buttons: `Some(-1)` for an
+/// octave down, `Some(1)` up, on any value above 0 and any channel; `None`
+/// for the release (0) and anything else (`570-lane-octave-buttons.md` § 3).
+pub(crate) fn lane_octave(msg: &[u8]) -> Option<i32> {
+    if !is_lane_octave_button(msg) || msg[2] == 0 {
+        return None;
+    }
+    Some(if msg[1] == LANE_OCTAVE_DOWN_CC { -1 } else { 1 })
+}
+
 /// Whether `message` is a complete channel voice message: status `0x80`–`0xEF`
 /// followed by its one (program change, channel pressure) or two data bytes.
 pub(crate) fn is_channel_message(message: &[u8]) -> bool {
@@ -210,8 +232,8 @@ pub(crate) fn rewrite_channel(msg: &mut [u8], midi_channel: u8) {
 #[cfg(test)]
 mod tests {
     use super::{
-        Controller, is_channel_message, is_recorded, parse_controller, parse_note, parse_resting,
-        pitch_bend_value, unit_7bit,
+        Controller, is_channel_message, is_lane_octave_button, is_recorded, lane_octave,
+        parse_controller, parse_note, parse_resting, pitch_bend_value, unit_7bit,
     };
     use crate::models::knobs::test_param;
 
@@ -362,5 +384,30 @@ mod tests {
         assert!(!is_recorded(&[0xF8]));
         // A hardware CC plays live only.
         assert!(!is_recorded(&[0xB0, 14, 127]));
+    }
+
+    #[test]
+    fn the_lane_octave_buttons_step_on_a_press_only() {
+        assert_eq!(lane_octave(&[0xB0, 28, 127]), Some(-1), "previous: down");
+        assert_eq!(lane_octave(&[0xB0, 29, 127]), Some(1), "next: up");
+        assert_eq!(lane_octave(&[0xB0, 29, 1]), Some(1), "any value above 0");
+        assert_eq!(lane_octave(&[0xB0, 28, 0]), None, "the release");
+        assert!(is_lane_octave_button(&[0xB0, 28, 0]), "still the button");
+    }
+
+    #[test]
+    fn the_lane_octave_buttons_on_any_channel_and_no_other_cc() {
+        assert_eq!(lane_octave(&[0xBF, 28, 127]), Some(-1));
+        assert_eq!(lane_octave(&[0xB5, 29, 127]), Some(1));
+        for msg in [
+            [0xB0, 27, 127],
+            [0xB0, 30, 127],
+            [0x90, 28, 127],
+            [0xE0, 29, 127],
+        ] {
+            assert_eq!(lane_octave(&msg), None, "{msg:?}");
+            assert!(!is_lane_octave_button(&msg), "{msg:?}");
+        }
+        assert!(!is_lane_octave_button(&[0xB0, 28]), "short");
     }
 }
