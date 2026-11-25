@@ -42,7 +42,7 @@ use super::{detach, detached_clone};
 /// A looping running commit keeps the buffer it consumed and the
 /// grid it was framed on, so `,`/`.` can step the clip back and forward
 /// through the passes the buffer held ([`step_pass`](Self::step_pass),
-/// `540-earlier-pass.md`). A step amends this edit rather than becoming an
+/// `archive/540-earlier-pass.md`). A step amends this edit rather than becoming an
 /// undo step of its own ([`absorb`](Self::absorb)), so one ⌘Z removes the
 /// take whatever pass it shows. The buffer goes once another step is
 /// recorded on top ([`absorb`](Self::absorb) again), since the keys can
@@ -66,7 +66,7 @@ impl CommitClipEdit {
     /// into (`None` on an empty buffer or when it wouldn't fit before the next
     /// clip, so nothing enters the record) and arms the buffer clear.
     /// `marquee` frames it when the arranger has one
-    /// (`470-marquee-capture.md`).
+    /// (`archive/470-marquee-capture.md`).
     pub(crate) fn from_running_capture(
         sequencer: &Sequencer,
         marquee: Option<(i32, i32)>,
@@ -144,7 +144,7 @@ impl CommitClipEdit {
 
     /// The step `,` or `.` makes to the clip, with its footer line, or why
     /// there is none: the pass before or after the one it shows, framed as
-    /// `/` framed the one it took (`540-earlier-pass.md` decisions 3 and 7).
+    /// `/` framed the one it took (`archive/540-earlier-pass.md` decisions 3 and 7).
     /// The caller has checked this is the newest undo step (decision 5).
     pub(crate) fn step_pass(
         &self,
@@ -411,7 +411,7 @@ mod tests {
         assert_eq!(drain(&mut plugin_rx), vec![[0x80, 60, 0]]);
     }
 
-    // --- `,`/`.`: earlier passes (`540-earlier-pass.md`) ---
+    // --- `,`/`.`: earlier passes (`archive/540-earlier-pass.md`) ---
 
     const BAR: i32 = Meter::FOUR_FOUR.bar_ticks();
 

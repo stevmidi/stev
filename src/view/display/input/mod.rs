@@ -51,7 +51,7 @@ enum TrackHeaderKey {
     },
 }
 
-/// The arranger's marquee transpose chord (`500-marquee-transpose.md`
+/// The arranger's marquee transpose chord (`archive/500-marquee-transpose.md`
 /// decision 1): `⌥↑`/`⌥↓` a semitone up or down, `⇧⌥↑`/`⇧⌥↓` an octave.
 /// `None` for every other key or chord, `⌘` held included.
 fn marquee_transpose_key(key: Key, modifiers: KeyModifiers) -> Option<i32> {
@@ -285,7 +285,7 @@ impl Display {
         if in_header_column {
             // The gutter's `Bar` / `½` / `Beat` pick how far a lane key
             // jumps, and nothing else: no arming, no selection, no focus
-            // change (`510-performance-lane-keyboard.md` § Step 1b).
+            // change (`archive/510-performance-lane-keyboard.md` § Step 1b).
             if let Some(length) = self.key_length_label_at(x, y) {
                 self.input_event_tx
                     .send(InputEvent::SetPerformanceLaneKeyLength(length))
@@ -1301,7 +1301,7 @@ impl Display {
                 true
             }
             // ⌥↑/⌥↓ (⇧ for an octave): transpose every note in the clips
-            // the marquee covers whole (`500-marquee-transpose.md`). The
+            // the marquee covers whole (`archive/500-marquee-transpose.md`). The
             // view owns the marquee, so it resolves it here; without one
             // that has a tick range the chord is consumed and does nothing
             // — it no longer steps tracks.
@@ -1539,7 +1539,7 @@ impl Display {
                 })
                 .is_ok(),
             // `/` — the capture. The pane's time selection rides along
-            // (`470-marquee-capture.md`): the arranger's marquee frames a new
+            // (`archive/470-marquee-capture.md`): the arranger's marquee frames a new
             // clip instead of the loop, or punches in; the clip view's span
             // punches in.
             InputEvent::Action(Action::Commit) => {

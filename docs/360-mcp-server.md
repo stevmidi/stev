@@ -108,7 +108,7 @@ Nine tools in three groups. Each description below is close to the text the serv
 - Out: each new clip's id and range, and the cleanup report.
 - Edit: `PasteClipsEdit`'s shape with several targets (it already takes a list: one carve per target, `050`), built like `PasteClipsEdit::importing` (the `.mid` import, `060`), plus the optional region move. That move is a deliberate exception to "the loop region is changed only by explicit intent" (`050` § Invariants), like `DuplicateTimeEdit`'s: the argument is the intent, and undo restores the region with the clips.
 
-**`replace_clip_notes`** — Replace every note in a clip, keeping its position, window and length. For "vary this", tidying and reharmonising when the marquee sits on one clip (`get_context` lists the clips it touches). The wheels and the sustain pedal are kept unless `clear_wheels`, which clears all three (`530-sustain-capture.md`: new notes make the old pedalling meaningless). One undo step.
+**`replace_clip_notes`** — Replace every note in a clip, keeping its position, window and length. For "vary this", tidying and reharmonising when the marquee sits on one clip (`get_context` lists the clips it touches). The wheels and the sustain pedal are kept unless `clear_wheels`, which clears all three (`archive/530-sustain-capture.md`: new notes make the old pedalling meaningless). One undo step.
 
 - In: `clip`, `notes` (rows relative to the clip's start), `grid`, `humanize`, `clear_wheels` (default false).
 - Out: the cleanup report.

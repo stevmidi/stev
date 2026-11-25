@@ -594,7 +594,7 @@ impl Display {
     /// What `p` is on in the Audio tab in `content`: a device row, a rate or
     /// a buffer size chooses it, the rest of a section focuses it. While an
     /// audio export runs the tab is read-only and nothing is hit
-    /// (`480-audio-settings.md` decision 10).
+    /// (`archive/480-audio-settings.md` decision 10).
     fn audio_hit_at(&self, content: Rect, p: Pos2) -> Option<SettingsHit> {
         if self.is_exporting_audio() {
             return None;
@@ -881,7 +881,7 @@ impl Display {
     /// and the readout of what runs. Keeps redrawing until the new stream's
     /// first callback has given its buffer and latency.
     ///
-    /// While an audio export runs the tab is read-only (`480-audio-settings.md`
+    /// While an audio export runs the tab is read-only (`archive/480-audio-settings.md`
     /// decision 10): no section has the focus, no cursor shows, every choice
     /// reads `fg_dim` with the one in use keeping its bar in `fg_dim`, and
     /// the OUTPUT DEVICE header says why at its right. The readout is drawn

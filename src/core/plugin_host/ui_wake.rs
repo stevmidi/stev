@@ -4,7 +4,7 @@
 //! not. So a voice with news for the UI raises a flag here and unparks the
 //! `"plugin-host"` thread, which makes the call for it: an atomic swap, and a
 //! signal only when the flag was down. A CLAP plugin's editor turn reaches the
-//! host only through `process` (`400-parameter-knobs.md`), so without this the
+//! host only through `process` (`archive/400-parameter-knobs.md`), so without this the
 //! knob wouldn't follow while nothing else repaints. CLAP's host callbacks
 //! wake the UI this way too, as a plugin may make them from any thread.
 

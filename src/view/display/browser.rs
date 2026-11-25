@@ -18,7 +18,7 @@
 //! Its keyboard focus is view-local: while focused it takes the arrows,
 //! Enter, Delete/Backspace, Esc and the clipboard chords (⌘C copies a
 //! project, ⌘X cuts it, ⌘V pastes it into a folder, ⌥⌘V moves it there:
-//! `430-browser-clipboard.md`), and
+//! `archive/430-browser-clipboard.md`), and
 //! every other key falls through to the
 //! view underneath (`Arranger` or `Clip`), so Space still plays. The main
 //! canvas is drawn shifted right by the panel's width (an egui layer
@@ -419,7 +419,7 @@ impl BrowserItem {
     }
 
     /// The folder a project pasted with this row selected lands in
-    /// (`430-browser-clipboard.md`): the folder itself, a project's folder
+    /// (`archive/430-browser-clipboard.md`): the folder itself, a project's folder
     /// (under it or under Recent), the projects root (`Some(None)`) for the
     /// Projects category and a loose project. `None` where nothing is
     /// pasted: another category, a template, clip or plugin, the new
@@ -1073,7 +1073,7 @@ pub(super) struct BrowserPanel {
     /// row), see `fields/browser_rename.rs`.
     pub(super) rename: Option<BrowserRename>,
     /// The project ⌘C copied or ⌘X cut, which ⌘V pastes into the selected
-    /// folder (`430-browser-clipboard.md`): the browser's own, apart from
+    /// folder (`archive/430-browser-clipboard.md`): the browser's own, apart from
     /// the clip and note clipboards and the system's, and gone with the
     /// session.
     pub(super) clipboard: Option<BrowserClipboard>,
@@ -1439,7 +1439,7 @@ impl Display {
     /// it was, so done-with-the-browser is one press. The clipboard chords
     /// are the panel's too, whatever their modifiers, and keep the keyboard
     /// here: ⌘C copies the selected project, ⌘V pastes it
-    /// (`430-browser-clipboard.md`); the ⇧ forms do nothing.
+    /// (`archive/430-browser-clipboard.md`); the ⇧ forms do nothing.
     pub(super) fn handle_browser_key(&mut self, event: &InputEvent, ctx: &Context) -> bool {
         if matches!(
             event,

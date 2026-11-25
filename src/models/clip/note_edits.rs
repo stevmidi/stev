@@ -299,7 +299,7 @@ impl Clip {
     /// skipped) exactly where they are — start, end, pitch, velocity and
     /// mute — as `(note_on, note_off)` with fresh ids: what a ⌥-drag leaves
     /// behind ([`apply_note_drag`](Self::apply_note_drag),
-    /// `460-copy-drag.md` § Phase 2).
+    /// `archive/460-copy-drag.md` § Phase 2).
     pub(crate) fn note_copies(&self, event_ids: &[Uuid]) -> Vec<(Event, Event)> {
         let pairing = self.pair_note_events();
         self.note_on_indices(event_ids)

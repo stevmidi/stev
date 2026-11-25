@@ -12,7 +12,7 @@
 //! check compares against (`060-persistence.md`), a project read from disk
 //! while the view loads its plugins (`130-plugin-host.md`), and the
 //! [`RecoveryKeeper`] whose check the tick arm runs
-//! (`410-crash-recovery.md`).
+//! (`archive/410-crash-recovery.md`).
 
 use crossbeam_channel::{Receiver, never, select};
 use undo::Record;

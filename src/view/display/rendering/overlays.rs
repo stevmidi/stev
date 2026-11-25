@@ -431,7 +431,7 @@ impl Display {
     /// cursor, which the arrow keys move.
     ///
     /// With the performance lane selected the accent sits on the lane row
-    /// (`450-performance-lane-selection.md` decision 6); on the track rows
+    /// (`archive/450-performance-lane-selection.md` decision 6); on the track rows
     /// it is clipped to the lane viewport.
     pub(super) fn draw_selected_track_cursor(&self, painter: &Painter, rect: Rect) {
         if self.active_pane() == Pane::Clip {

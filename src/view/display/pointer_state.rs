@@ -151,7 +151,7 @@ pub(super) struct NoteMouseDrag {
     /// pitch once.
     pub(super) auditioned_pitch: u8,
     /// ⌥ is held on a move right now, so each step leaves copies of the
-    /// notes where they were (`460-copy-drag.md` § Phase 2). Read live each
+    /// notes where they were (`archive/460-copy-drag.md` § Phase 2). Read live each
     /// frame ([`set_copy`](Self::set_copy)), never latched at press. Always
     /// false for a resize.
     pub(super) copy: bool,
@@ -461,7 +461,7 @@ pub(super) struct ClipMoveDrag {
     /// the press point — before that a press is just a band click.
     pub(super) dragging: bool,
     /// ⌥ is held right now, so a release copies the block instead of
-    /// moving it (`460-copy-drag.md` decision 1). Read live each frame
+    /// moving it (`archive/460-copy-drag.md` decision 1). Read live each frame
     /// (`Display::sync_clip_move_copy`), never latched at press: the key can
     /// go down or up mid-drag and the release does what it says then.
     /// Always false for a keyboard nudge.

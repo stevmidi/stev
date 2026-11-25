@@ -65,13 +65,13 @@ pub(crate) const MAX_FRAMES: usize = 4096;
 pub(crate) const DESIRED_BUFFER_FRAMES: u32 = 256;
 
 /// The rate the engine assumes before a device has opened, and keeps while
-/// none is open (`480-audio-settings.md`).
+/// none is open (`archive/480-audio-settings.md`).
 pub(crate) const FALLBACK_SAMPLE_RATE: u32 = 48_000;
 
 /// What the engine shares about its stream with whoever builds something
 /// against it outside the engine: the plugin host's loads, the audio
 /// export's files and the Audio tab's readout. The engine updates it on every
-/// restart (`480-audio-settings.md` decision 5), and the callback keeps the
+/// restart (`archive/480-audio-settings.md` decision 5), and the callback keeps the
 /// measured buffer and latency current; a reader takes it fresh each time.
 pub(crate) struct StreamStatus {
     /// The rate the running stream opened at, Hz.
@@ -178,7 +178,7 @@ pub(crate) trait AudioSource: Send {
     fn render_into(&mut self, mix: &mut [Vec<f32>; 2], ctx: &RenderCtx<'_>);
 
     /// The engine rebuilt its stream (another device, a new rate:
-    /// `480-audio-settings.md` decision 5), which now runs at `sample_rate`.
+    /// `archive/480-audio-settings.md` decision 5), which now runs at `sample_rate`.
     /// Called on the `"audio-engine"` thread while no stream is running, so
     /// it may allocate. Whatever was scheduled against the old stream is
     /// stale, and a note-off lost in the drop-out would leave a note hanging:

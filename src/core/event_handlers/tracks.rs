@@ -72,7 +72,7 @@ impl EventHandlers {
 
     /// An armed knob's assignment: records a `SetKnobParamEdit` putting knob
     /// `knob` of `track_idx` on `param`. Refused, with a footer message, on a
-    /// parameter another knob of the track holds (`400-parameter-knobs.md`
+    /// parameter another knob of the track holds (`archive/400-parameter-knobs.md`
     /// decision 4) — the view checks first and names it, so this is the
     /// guard for a mirror that lagged. Removing a mapping tells the view,
     /// which says in the footer what went (decision 14).
@@ -180,7 +180,7 @@ impl EventHandlers {
     /// was the last); otherwise the selection stays on its track. The clip
     /// view keeps the keyboard if it had it (an undone add or a redone
     /// remove), on the track taking its place: only the user moves the focus
-    /// (`440-undo-view-state.md` decision 6).
+    /// (`archive/440-undo-view-state.md` decision 6).
     pub(super) fn track_removed_workflow(
         &self,
         sequencer: &mut Sequencer,
@@ -230,7 +230,7 @@ mod tests {
 
     /// Undoing the add of the selected track from the clip view keeps the
     /// clip view, on the track taking its place: only the user moves the
-    /// keyboard (`440-undo-view-state.md` decision 6). It used to leave to
+    /// keyboard (`archive/440-undo-view-state.md` decision 6). It used to leave to
     /// the arranger.
     #[test]
     fn undoing_an_add_from_the_clip_view_keeps_the_clip_view() {

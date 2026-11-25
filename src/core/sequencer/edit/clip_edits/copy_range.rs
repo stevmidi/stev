@@ -15,7 +15,7 @@ use super::paste::PasteClipsEdit;
 // ---------------------------------------------------------------------------
 
 impl PasteClipsEdit {
-    /// ⌥ + the arranger band drag (`460-copy-drag.md`): copy everything
+    /// ⌥ + the arranger band drag (`archive/460-copy-drag.md`): copy everything
     /// inside `rect` — the `[start, end)` slice of every clip it overlaps on
     /// its tracks, region-windowed with the full event list kept, as `⌘C`
     /// makes it — to `start + delta_ticks` on `track + delta_tracks`. A

@@ -1,6 +1,6 @@
 # Large Projects
 
-**Status: design agreed 2026-11-07; phase 1 (measure) done 2026-11-07; phase 2 (the save on `"storage"`) built and measured 2026-11-07; phase 3 (plugin state shared) built and measured 2026-11-07; phase 4 (clips shared, the check cached) built and measured 2026-11-07. Complete.** Issue: #23. Stev should stay on time with a project far bigger than its author makes: no late note or click while playing, through a save, a recovery copy or an edit. The work that grows with the project moves off the `"sequencer"` thread, or stops growing with it.
+**Archived 2026-11-25. Status: design agreed 2026-11-07; phase 1 (measure) done 2026-11-07; phase 2 (the save on `"storage"`) built and measured 2026-11-07; phase 3 (plugin state shared) built and measured 2026-11-07; phase 4 (clips shared, the check cached) built and measured 2026-11-07. Complete.** Issue: #23. Stev should stay on time with a project far bigger than its author makes: no late note or click while playing, through a save, a recovery copy or an edit. The work that grows with the project moves off the `"sequencer"` thread, or stops growing with it.
 
 ## Background
 

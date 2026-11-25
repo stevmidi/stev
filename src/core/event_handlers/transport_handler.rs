@@ -51,7 +51,7 @@ impl EventHandlers {
     /// has the sustain pedal lifts it now, before the re-seek's chase presses
     /// it again at the next tick where playback lands down, or the released
     /// notes would ring on into the jump target (`Sequencer::jump_controllers`,
-    /// `530-sustain-capture.md` decision 4). A loop wrap leaves the clock
+    /// `archive/530-sustain-capture.md` decision 4). A loop wrap leaves the clock
     /// phases equal in principle and a few ticks of command latency apart in
     /// practice, so the realign only nudges the phase there — it must never move
     /// the clock out of the loop it has free-run to, or running capture keeps
@@ -235,7 +235,7 @@ mod tests {
     /// A jump into a stretch where the pedal is down, from one where it is
     /// down too: the pedal lifts at once, so the notes the jump releases
     /// stop ringing, and the chase presses it again at the next tick
-    /// (`530-sustain-capture.md` decision 4).
+    /// (`archive/530-sustain-capture.md` decision 4).
     #[test]
     fn a_jump_under_a_held_pedal_lifts_it_then_presses_it_again() {
         let mut h = pedalled_from(100);

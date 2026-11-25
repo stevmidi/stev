@@ -153,7 +153,7 @@ pub(crate) struct Sequencer {
     /// the lead clip the clip view shows is the take.
     pub(super) take_framing: Option<TakeFraming>,
     /// What the last [`fingerprint`](crate::core::project::fingerprint)
-    /// hashed, for the next to reuse (`420-large-projects.md` decision 8).
+    /// hashed, for the next to reuse (`archive/420-large-projects.md` decision 8).
     fingerprint_cache: FingerprintCache,
     /// The audio export in progress, if any (`audio_export.rs`).
     pub(super) audio_export: Option<AudioExportRun>,
@@ -165,7 +165,7 @@ pub(crate) struct Sequencer {
 
     // --- Arranger performance lane ---
     /// The run the lane's presses make while it is armed, which `/` renders
-    /// at the cursor (`520-performance-capture.md` decisions 1 and 2). Not
+    /// at the cursor (`archive/520-performance-capture.md` decisions 1 and 2). Not
     /// saved.
     pub(super) performance_lane: PerformanceLane,
     /// True while the performance lane (not a regular track) is selected,
@@ -176,7 +176,7 @@ pub(crate) struct Sequencer {
     pub(super) performance_lane_armed: Arc<AtomicBool>,
     /// How far each lane key jumps (`KeyLength::to_bits`), shared with the
     /// view (`SharedAtomics::performance_lane_key_length`). Saved with the
-    /// project; not an undo step (`510-performance-lane-keyboard.md` § Step 1b).
+    /// project; not an undo step (`archive/510-performance-lane-keyboard.md` § Step 1b).
     pub(super) performance_lane_key_length: Arc<AtomicU8>,
     /// The player's hand on the lane (`Hand::to_bits`), shared with the view
     /// (`SharedAtomics::performance_lane_hand`): placed around the cursor
@@ -395,7 +395,7 @@ impl Sequencer {
 
     /// Whether playback is actually wrapping — the loop is on *and*
     /// `playback_tick` is inside the region and the performance lane isn't
-    /// armed (`520-performance-capture.md` decision 5), the same condition
+    /// armed (`archive/520-performance-capture.md` decision 5), the same condition
     /// `Transport::tick` wraps on. A start after the region end runs linearly
     /// with the loop flag still set; running capture sizes and windows such a
     /// take as linear (`100-running-capture.md`).
@@ -606,7 +606,7 @@ mod tests {
         assert!(!seq.playback_is_looping(), "flag off never wraps");
     }
 
-    /// The armed performance lane never wraps (`520-performance-capture.md`
+    /// The armed performance lane never wraps (`archive/520-performance-capture.md`
     /// decision 5), so playback isn't looping there, the flag on or not.
     #[test]
     fn playback_is_not_looping_while_the_performance_lane_is_armed() {

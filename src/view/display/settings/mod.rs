@@ -291,7 +291,7 @@ impl Display {
     }
 
     /// Chooses `choice` in the Audio tab, applied at once: the engine
-    /// restarts on it and the sequencer saves it (`480-audio-settings.md`
+    /// restarts on it and the sequencer saves it (`archive/480-audio-settings.md`
     /// decision 2). Nothing when it is what was already chosen. Only
     /// reached while the tab can be used: during an audio export its clicks
     /// and keys are refused (decision 10).

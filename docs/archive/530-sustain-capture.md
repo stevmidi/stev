@@ -1,6 +1,6 @@
 # Sustain Capture
 
-**Status: design agreed 2026-11-20; phase 1 built 2026-11-20 (`sustain-capture`); phase 2 built 2026-11-20 (`sus-lane`). Issue: #40.** The sustain pedal (CC64) is recorded like the two wheels: it lands in the capture buffer, `/` keeps it in the take and lays it into a clip by `370`'s landing rule, playback sets it right at every discontinuity, and the piano roll's lower lane gets a fourth view, `SUS`, beside `VEL`, `PB` and `MW`. One rule is the pedal's own: a jump or a loop wrap lifts the pedal before playback presses it again where it lands, so notes released at the jump stop ringing. Read `090` (what the buffer records), `370` (wheel capture), `380` (the wheel lane) and `050` § Invariants (the controller chase) first.
+**Archived 2026-11-25. Status: design agreed 2026-11-20; phase 1 built 2026-11-20 (`sustain-capture`); phase 2 built 2026-11-20 (`sus-lane`). Issue: #40.** The sustain pedal (CC64) is recorded like the two wheels: it lands in the capture buffer, `/` keeps it in the take and lays it into a clip by `370`'s landing rule, playback sets it right at every discontinuity, and the piano roll's lower lane gets a fourth view, `SUS`, beside `VEL`, `PB` and `MW`. One rule is the pedal's own: a jump or a loop wrap lifts the pedal before playback presses it again where it lands, so notes released at the jump stop ringing. Read `090` (what the buffer records), `370` (wheel capture), `380` (the wheel lane) and `050` § Invariants (the controller chase) first.
 
 ## Background
 

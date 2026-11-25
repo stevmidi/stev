@@ -1,7 +1,7 @@
 //! `EventHandlers` workflows for saving: the project and templates handed to
 //! the `"storage"` thread as a snapshot ([`Storage`]), the outcome coming
 //! back, and the project actions held while a save is on its way. See
-//! `420-large-projects.md` decisions 3 to 6 and `060-persistence.md`.
+//! `archive/420-large-projects.md` decisions 3 to 6 and `060-persistence.md`.
 
 use std::thread::JoinHandle;
 
@@ -57,7 +57,7 @@ pub(crate) enum PendingSave {
     /// The open project, to `origin`.
     Project {
         /// The project's fingerprint at the handover: what it counts as
-        /// saved as, if the save succeeds (`420-large-projects.md`
+        /// saved as, if the save succeeds (`archive/420-large-projects.md`
         /// decision 5).
         fingerprint: u64,
         /// Where it goes, as the job names it: a browser rename made while
@@ -151,7 +151,7 @@ impl EventHandlers {
     /// written has the browser re-read the tree. Once no save is left on its
     /// way, returns the project actions held meanwhile, for the caller to run
     /// in order as they came: on success they find nothing unsaved, on
-    /// failure they prompt again (`420-large-projects.md` decision 6).
+    /// failure they prompt again (`archive/420-large-projects.md` decision 6).
     pub(super) fn project_written_workflow(
         &self,
         open: &mut OpenProject,

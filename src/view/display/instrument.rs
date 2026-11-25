@@ -46,7 +46,7 @@ use super::status_message::StatusMessage;
 const RESTORE_SCAN_POLL: Duration = Duration::from_millis(100);
 
 /// How long a plugin has to be quiet before its state is captured for the
-/// crash recovery copy (`410-crash-recovery.md` decision 6): a plugin that
+/// crash recovery copy (`archive/410-crash-recovery.md` decision 6): a plugin that
 /// reports new values on every move in its editor, not only on a preset,
 /// is captured once it settles, not every frame.
 const CAPTURE_QUIET: Duration = Duration::from_secs(1);
@@ -174,7 +174,7 @@ pub(super) struct TrackInstrument {
     pub(super) entry: PluginCatalogEntry,
     /// Whether its editor was open at the end of the last frame, so the
     /// frame it closes, by whatever route, captures its state
-    /// (`410-crash-recovery.md` decision 6).
+    /// (`archive/410-crash-recovery.md` decision 6).
     editor_was_open: bool,
     /// What its voice in the mixer was activated for: the rate and the
     /// mode. Once another is wanted (the stream runs at another rate, an
@@ -441,7 +441,7 @@ impl Display {
     fn capture_slot_instrument_state(&mut self, slot: usize) {
         if let Some(state) = self.save_slot_instrument_state(slot) {
             // Made shared once, here: from the event on, every holder shares
-            // it (`420-large-projects.md` decision 7).
+            // it (`archive/420-large-projects.md` decision 7).
             let state = Arc::from(state);
             self.input_event_tx
                 .send(InputEvent::CaptureTrackInstrumentState { slot, state })
@@ -451,7 +451,7 @@ impl Display {
 
     /// Captures the state of the plugin in `slot` for the crash recovery copy
     /// once it has been quiet for [`CAPTURE_QUIET`]: after a preset, the end
-    /// of a knob turn, or its editor closing (`410-crash-recovery.md`
+    /// of a knob turn, or its editor closing (`archive/410-crash-recovery.md`
     /// decision 6). Another reason before then puts it off again.
     pub(super) fn capture_soon(&mut self, slot: usize) {
         let due = Instant::now() + CAPTURE_QUIET;
@@ -672,7 +672,7 @@ impl Display {
     /// answer its own state restore with `performEdit`s, a `rescan` or a
     /// `restartComponent` — is dropped first: it is no hand turn and no
     /// preset, and counted as one it would make a project just opened ask to
-    /// be saved (`400-parameter-knobs.md` decision 9).
+    /// be saved (`archive/400-parameter-knobs.md` decision 9).
     /// `activation` is what its voice in the mixer was activated for,
     /// `None` while an audio restart holds the voice.
     fn install_editor(
@@ -706,7 +706,7 @@ impl Display {
     /// something else than is wanted now (`PluginAudioHandle::activation`),
     /// to reactivate it, and adds it to the audio restart, starting one if
     /// none is under way: the stream runs at another rate
-    /// (`480-audio-settings.md` decision 8), or an audio export has started
+    /// (`archive/480-audio-settings.md` decision 8), or an audio export has started
     /// and wants the plugins offline, or has ended and wants them back
     /// (`archive/490-offline-export.md` decision 6). Its track is silent meanwhile,
     /// as the mixer holds such a voice silent anyway.
@@ -877,7 +877,7 @@ impl Display {
 
     /// Ends the audio restart: puts every voice it holds back in the mixer,
     /// in one frame, so the tracks come back together
-    /// (`480-audio-settings.md` decision 8). A voice activated for what is
+    /// (`archive/480-audio-settings.md` decision 8). A voice activated for what is
     /// no longer wanted (the stream has left its rate since, the export has
     /// ended) goes in all the same, and is asked back for the next restart
     /// (`return_stale_voices`).
@@ -910,7 +910,7 @@ impl Display {
     /// Loads the plugin in `slot` again from its live state, for what is
     /// wanted now, and returns its voice for the audio restart to put
     /// back in: the fallback for one that wouldn't reactivate in place
-    /// (`480-audio-settings.md` decision 8). Its voice is already out of the
+    /// (`archive/480-audio-settings.md` decision 8). Its voice is already out of the
     /// mixer. Its editor reopens if it was open. A plugin whose state can't
     /// be saved isn't loaded, rather than coming back at its default sound,
     /// and one that won't load either: its track is silent, and the footer

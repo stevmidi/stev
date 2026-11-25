@@ -220,7 +220,7 @@ impl Clip {
     }
 
     /// Keeps only what was played over event ticks `[start, end)`, a punch-in
-    /// (`470-marquee-capture.md` decision 9): a note that starts inside
+    /// (`archive/470-marquee-capture.md` decision 9): a note that starts inside
     /// stays, closed on the span's last tick if it runs past, as
     /// [`crop`](Self::crop) closes one at a window's end; a note that starts
     /// outside goes, and so does every other event outside. Nothing is
@@ -428,7 +428,7 @@ mod tests {
     }
 
     /// The tail helpers write nothing when there is nothing to change, so
-    /// shared events stay shared (`420-large-projects.md` decision 8).
+    /// shared events stay shared (`archive/420-large-projects.md` decision 8).
     #[test]
     fn a_write_that_changes_nothing_keeps_the_events_shared() {
         let (mut clip, shared) = shared_clip();

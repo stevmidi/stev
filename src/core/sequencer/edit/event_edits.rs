@@ -51,7 +51,7 @@ use super::{EditResult, SequencerEdit};
 /// A looping running insert keeps the buffer it consumed and how it landed
 /// it, so `,`/`.` can re-land an earlier pass over the clip's events from
 /// before the insert, its undo state, so passes never stack
-/// ([`step_pass`](Self::step_pass), `540-earlier-pass.md` phase 2). As
+/// ([`step_pass`](Self::step_pass), `archive/540-earlier-pass.md` phase 2). As
 /// with [`CommitClipEdit`](super::CommitClipEdit), a step amends this edit
 /// ([`absorb`](Self::absorb)) and the buffer goes once another step is
 /// recorded on top.
@@ -483,7 +483,7 @@ impl ReplaceClipNotesEdit {
 /// back to no change annuls the gesture's undo step. It targets explicit ids
 /// and keeps the event selection it was built with.
 ///
-/// A step with `copy` (⌥ held on a move, `460-copy-drag.md` § Phase 2)
+/// A step with `copy` (⌥ held on a move, `archive/460-copy-drag.md` § Phase 2)
 /// also leaves copies of the notes where the gesture found them
 /// ([`Clip::apply_note_drag`]), so the dragged notes — the selection
 /// — are the ones that land. The copies are made once per gesture and kept,
@@ -890,7 +890,7 @@ mod tests {
     }
 
     /// A take session's insert (Enter, stopped) has no passes to step
-    /// through (`540-earlier-pass.md` § Not in this design).
+    /// through (`archive/540-earlier-pass.md` § Not in this design).
     #[test]
     fn a_take_session_insert_does_not_step() {
         let (mut sequencer, _, _) = sequencer_with_two_notes();

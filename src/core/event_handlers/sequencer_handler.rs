@@ -74,7 +74,7 @@ impl EventHandlers {
                 return;
             }
             // So is a save; the actions held behind it then run as if they
-            // had just come (`420-large-projects.md` decision 6).
+            // had just come (`archive/420-large-projects.md` decision 6).
             SequencerCommand::ProjectWritten(outcome) => {
                 for (action, discard_changes) in self.project_written_workflow(open, outcome) {
                     let cmd = SequencerCommand::ProjectAction {
@@ -98,7 +98,7 @@ impl EventHandlers {
         }
         match cmd {
             // On the armed lane `/` renders the lane's run at the cursor
-            // instead (`520-performance-capture.md` decision 1).
+            // instead (`archive/520-performance-capture.md` decision 1).
             SequencerCommand::Commit { .. } if sequencer.is_performance_lane_armed() => {
                 self.capture_performance_workflow(sequencer, undo_record);
             }
@@ -1480,7 +1480,7 @@ mod tests {
         assert_eq!(record.len(), 1, "back to start leaves only the insert");
     }
 
-    /// A ⌥-drag (`460-copy-drag.md` § Phase 2): the dragged note lands and a
+    /// A ⌥-drag (`archive/460-copy-drag.md` § Phase 2): the dragged note lands and a
     /// copy stays where it was, ⌥ let go mid-drag takes the copy away and
     /// pressed again brings back the same one, the selection is left as it
     /// was, and the gesture is one undo step whose redo lands the same copy.
@@ -1791,7 +1791,7 @@ mod tests {
         assert_eq!(play(&mut h, 1800), vec![(120, 60, false)]);
     }
 
-    /// `500-marquee-transpose.md`: a note sounding when the marquee
+    /// `archive/500-marquee-transpose.md`: a note sounding when the marquee
     /// transpose lands is released at once, isn't started again at its new
     /// pitch, and nothing hangs, as with the clip view's pitch drag (whose
     /// moved `NoteOff` is still met, a stray off for the new pitch).
@@ -2001,7 +2001,7 @@ mod tests {
 
     /// Undoing a note edit after the lead moved to another clip puts back
     /// the clip it was made in as the lead, as every clip and note edit's
-    /// undo puts back the view before it (`440-undo-view-state.md`
+    /// undo puts back the view before it (`archive/440-undo-view-state.md`
     /// decision 5): the clip view shows the notes as they were. It used to
     /// stay on the new lead and only redraw the edited clip's thumbnail.
     #[test]
@@ -2327,7 +2327,7 @@ mod tests {
         assert_eq!(clip_cursor(&h), 480);
     }
 
-    /// Decision 7 (`440-undo-view-state.md`): ⌘Z after an agent write undoes
+    /// Decision 7 (`archive/440-undo-view-state.md`): ⌘Z after an agent write undoes
     /// it to what the user was looking at when it ran — the lead clip, its
     /// track, the cursor and the marquee the write read from.
     #[test]
@@ -2358,7 +2358,7 @@ mod tests {
     }
 
     /// A drag merged into one step undoes to where its first step started
-    /// and redoes to where its last ended (`440-undo-view-state.md`
+    /// and redoes to where its last ended (`archive/440-undo-view-state.md`
     /// decision 2).
     #[test]
     fn a_merged_drag_undoes_to_its_start_and_redoes_to_its_end() {
@@ -2418,7 +2418,7 @@ mod tests {
 
     /// A project that fails to open leaves the open project as it is, the
     /// focus with it: from the clip view, the clip view keeps the keyboard
-    /// (`440-undo-view-state.md` decision 6). It used to move it to the
+    /// (`archive/440-undo-view-state.md` decision 6). It used to move it to the
     /// arranger, left over from when loading was a view state of its own.
     #[test]
     fn a_failed_open_keeps_the_focus() {

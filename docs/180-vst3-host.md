@@ -276,7 +276,7 @@ A change of the stream's rate reactivates the plugin in place
 (`component::reactivate`, from `Vst3Editor::reactivate`, with the voice out
 of the mixer): `setProcessing(false)`, `setActive(false)`, then step 6's
 `setupProcessing` at the new rate and on. The voice takes the new rate and
-the tail `getTailSamples` gives now (`480-audio-settings.md`).
+the tail `getTailSamples` gives now (`archive/480-audio-settings.md`).
 
 The same path switches the plugin's mode for an audio export
 (`archive/490-offline-export.md` decision 6): `ProcessSetup::processMode` is
@@ -526,7 +526,7 @@ here, since a `crossbeam_channel` may allocate inside `pop`.
 
 ### Parameter knobs
 
-The knob panel drives a VST3 plugin's parameters by ID (`400-parameter-knobs.md`; the format-neutral side is `130` § What it does). Everything rides on the objects above:
+The knob panel drives a VST3 plugin's parameters by ID (`archive/400-parameter-knobs.md`; the format-neutral side is `130` § What it does). Everything rides on the objects above:
 
 - **Names and defaults** come from `getParameterInfo` over every index, once at load (`component::parameter_infos`): the title and `defaultNormalizedValue` by `ParamID`, kept in `Vst3Editor::parameters`. The same map names the MIDI map's targets in the load's log line. A plugin that renames its parameters later keeps the old names until it is loaded again.
 - **Values** are `getParamNormalized` on the edit controller, read each frame the panel draws (`Vst3Editor::parameter_value`). A preset change, a turn in the editor and Stev's own set all show, since each ends on the controller.

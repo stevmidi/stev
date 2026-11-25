@@ -1,5 +1,5 @@
 //! The long-take timing: an ignored release test that times what
-//! `420-large-projects.md` decision 9 leaves open, the single huge clip. The
+//! `archive/420-large-projects.md` decision 9 leaves open, the single huge clip. The
 //! recovery check reuses an unchanged clip's hash, so an edit costs the
 //! clip it touched. That clip's events are copied by its first edit after a
 //! check (the check's cache holds them too), and hashed again by the next
@@ -60,7 +60,7 @@ const MOVES_PER_SECOND: i32 = 100;
 /// Timed rounds per take and edit.
 const ROUNDS: usize = 7;
 
-/// The one-tick budget, in ms (`420-large-projects.md` decision 2).
+/// The one-tick budget, in ms (`archive/420-large-projects.md` decision 2).
 const BUDGET_MS: f64 = 1.0;
 
 /// One bar of 4/4, in ticks.

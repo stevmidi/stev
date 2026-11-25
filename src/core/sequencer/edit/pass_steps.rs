@@ -1,5 +1,5 @@
 //! `,`/`.`: stepping the take a running `/` landed back and forward through
-//! the passes its capture buffer held (`540-earlier-pass.md`). What the two
+//! the passes its capture buffer held (`archive/540-earlier-pass.md`). What the two
 //! running commits share: the buffer they keep ([`Passes`]), the step's
 //! direction and refusals, and the step itself ([`PassStepEdit`]), which
 //! amends the commit it steps. The new clip's commit is `CommitClipEdit`,
@@ -26,7 +26,7 @@ pub(crate) enum PassStep {
     Later,
 }
 
-/// Why `,`/`.` did nothing (`540-earlier-pass.md` decision 8).
+/// Why `,`/`.` did nothing (`archive/540-earlier-pass.md` decision 8).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PassRefusal {
     /// The newest undo step isn't a running commit (decision 5).
@@ -199,7 +199,7 @@ impl ClipContent {
 }
 
 /// `,`/`.`: the take a running `/` landed shows another pass
-/// (`540-earlier-pass.md`). Only the clip's events and swing change, through
+/// (`archive/540-earlier-pass.md`). Only the clip's events and swing change, through
 /// [`Sequencer::edit_clip_events`], so the old pass's sounding notes are
 /// released. Built by the commit it steps, it merges into it
 /// (`SequencerEdit::merge`); its own undo, for a step that stays on its own,

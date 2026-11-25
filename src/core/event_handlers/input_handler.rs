@@ -837,7 +837,7 @@ impl EventHandlers {
             // `Display::forward_input_event` consumes the first to drag the
             // view-local time selection's track span, the second to
             // transpose the marquee's clips. With ⌥ held the track step stays
-            // off regardless (`500-marquee-transpose.md` decision 1).
+            // off regardless (`archive/500-marquee-transpose.md` decision 1).
             ClipContext::Arranger if modifiers.alt => {}
             ClipContext::Arranger if direction < 0 => {
                 self.send_sequencer(SequencerCommand::SelectPrevTrack);

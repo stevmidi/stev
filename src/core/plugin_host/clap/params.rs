@@ -1,5 +1,5 @@
 //! A CLAP plugin's parameters, as the knobs reach them
-//! (`400-parameter-knobs.md`): the mapping between CLAP's plain values and
+//! (`archive/400-parameter-knobs.md`): the mapping between CLAP's plain values and
 //! Stev's normalized ones, and the two rings between the editor and the voice.
 //!
 //! Everything goes through `process`. A knob turned in Stev crosses to the

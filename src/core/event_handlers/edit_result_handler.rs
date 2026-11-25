@@ -377,7 +377,7 @@ mod tests {
 
     /// A clip at the start of track 0, the lead, with the cursor at
     /// `cursor_tick` and the view's marquee `marquee` mirrored, as the view
-    /// publishes it before any command (`440-undo-view-state.md`
+    /// publishes it before any command (`archive/440-undo-view-state.md`
     /// decision 4).
     fn harness_with(cursor_tick: i32, marquee: TimeSelectionRect) -> (Harness, Uuid) {
         let mut h = harness();
@@ -511,7 +511,7 @@ mod tests {
     /// A ⌥-drag copy leaves the selection on the copy — cursor on its
     /// start, its track, the copy as lead, the marquee shifted onto it —
     /// so drags chain; `⌘Z` puts back the selection from before the drag
-    /// and redo the one after (`460-copy-drag.md` decision 4).
+    /// and redo the one after (`archive/460-copy-drag.md` decision 4).
     #[test]
     fn a_copy_drag_selects_the_copy_and_undoes_to_the_source() {
         let marquee = rect(0, 1920, 0, 0);

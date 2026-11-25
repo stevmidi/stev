@@ -81,7 +81,7 @@ methods take a track's position and look the slot up in its `tracks` mirror
   sends it with the voice, as half of its `Activation` (the rate and the
   `ProcessMode`, real time or offline: `PluginHostCommand::Insert::activation`;
   the mode is § Audio export's). When an
-  outside change restarts the engine at another rate (`480-audio-settings.md`),
+  outside change restarts the engine at another rate (`archive/480-audio-settings.md`),
   the mixer holds every voice activated at the old rate silent
   (`InstrumentMixer::voice_activations`) while the UI has it back and reactivates
   it in place: `Display::return_stale_voices` sends
@@ -219,7 +219,7 @@ methods take a track's position and look the slot up in its `tracks` mirror
   `route_held`, which `route_channel` also uses for `held_note_channels` on
   MIDI-OUT) — otherwise switching the armed track mid-hold sends the note-off
   to the new track's plugin and strands the note sounding on the old one.
-- **The knob panel drives parameters, not MIDI** (`400-parameter-knobs.md`):
+- **The knob panel drives parameters, not MIDI** (`archive/400-parameter-knobs.md`):
   the knobs reach a plugin through its `InstrumentEditor`, on the main thread,
   never through a ring of Stev's own: `has_parameters` (whether the knobs can
   drive it — VST3 yes, CLAP not until `400` phase 3, whose panel shows a hint),
@@ -713,7 +713,7 @@ or the export depend on anything but the arrangement
   renders, so a device unplugged or a rate changed meanwhile is met when the
   stream reopens, by the ordinary restart; the files are written at the rate
   the run started at (`StreamStatus::sample_rate`). The Audio tab stays
-  locked during an export (`480-audio-settings.md` decision 10): a pick
+  locked during an export (`archive/480-audio-settings.md` decision 10): a pick
   there would restart the engine under the run.
 - **A run that stops advancing.** The writer gives a run up when the mixer
   has sent nothing for 3 s (`AudioExportOutcome::stopped`, `ExportShared::give_up`,
@@ -749,7 +749,7 @@ Between steps 1 and 4 the track is silent (mixer slot empty) but the instance is
 still alive and idle — safe.
 
 A plugin removed while its voice is out of the mixer to be reactivated
-(`480-audio-settings.md`) sends no `Remove`: there is nothing in the slot to
+(`archive/480-audio-settings.md`) sends no `Remove`: there is nothing in the slot to
 drop. A voice the audio restart already holds, back or reactivated, is
 dropped there and then, and the instance deactivated after it
 (`AudioRestart::forget`). One still on its way finishes a
@@ -945,7 +945,7 @@ then filling in plugin by plugin:
 `InstrumentRef.state` is the plugin's CLAP `state` blob (active preset + knob
 positions), persisted base64-encoded in the `.stev` and re-applied on load.
 It is an `Arc<[u8]>`, made once on the UI thread when a state is captured and
-shared from there rather than copied (`420-large-projects.md` decision 7):
+shared from there rather than copied (`archive/420-large-projects.md` decision 7):
 
 - **Save.** The ⌘S handler calls `Display::capture_instrument_states` *before*
   sending `ConfirmFilename`: for each loaded editor, `ClapEditor::save_state`
@@ -955,7 +955,7 @@ shared from there rather than copied (`420-large-projects.md` decision 7):
   `ConfirmFilename` → `SaveProject` on the same channel, so `from_sequencer`
   serializes the fresh blob. A plugin with no `state` extension, or a failed
   save, is skipped (the last good blob is kept).
-- **For the crash recovery copy** (`410-crash-recovery.md` decisions 6 and 7),
+- **For the crash recovery copy** (`archive/410-crash-recovery.md` decisions 6 and 7),
   the same capture, one slot at a time (`Display::capture_slot_instrument_state`),
   runs a second after the plugin last reported a preset
   (`ParameterGesture::ValuesChanged`), ended a knob turn, or closed its editor

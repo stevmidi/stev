@@ -24,7 +24,7 @@ impl EventHandlers {
     /// instead, which inserts on Enter.
     ///
     /// The view's `frame`, resolved by [`Sequencer::capture_framing`]
-    /// (`470-marquee-capture.md`), frames a new clip instead of the loop or
+    /// (`archive/470-marquee-capture.md`), frames a new clip instead of the loop or
     /// punches in a running insert. It is refused with a footer line when it
     /// can't, otherwise the footer names the span captured or punched in. It
     /// is never cleared: the view keeps it.
@@ -86,7 +86,7 @@ impl EventHandlers {
         }
     }
 
-    /// `,`/`.` (`SequencerCommand::StepPass`, `540-earlier-pass.md`): the
+    /// `,`/`.` (`SequencerCommand::StepPass`, `archive/540-earlier-pass.md`): the
     /// take the running `/` landed, a new clip or an insert into the lead
     /// clip, shows the pass before or after, while that commit is the newest
     /// undo step with nothing to redo (decision 5, read from the record).
@@ -132,7 +132,7 @@ impl EventHandlers {
     /// goes. The clip view stays where it is, docked or maximized, on "No
     /// clip at the cursor" if it showed this clip, as after undoing a delete
     /// that took the lead clip: only the user moves the keyboard
-    /// (`440-undo-view-state.md` decision 6).
+    /// (`archive/440-undo-view-state.md` decision 6).
     pub(super) fn uncommit_clip_workflow(&self, sequencer: &mut Sequencer, clip: &ClipMetadata) {
         sequencer.reset();
 
@@ -199,7 +199,7 @@ mod tests {
 
     /// A stopped `/` with a marquee lands exactly over it, says so in the
     /// footer, and an undo lifts the clip and leaves the marquee, which the
-    /// commit never touched (`470-marquee-capture.md` decisions 6–7).
+    /// commit never touched (`archive/470-marquee-capture.md` decisions 6–7).
     #[test]
     fn a_marquee_commit_names_its_span_and_undoes_to_the_same_marquee() {
         let mut h = harness();
@@ -258,7 +258,7 @@ mod tests {
     /// span each punch in: only the note played inside, cut to the clip,
     /// lands; the footer names the span, in the clip's bars for the clip
     /// view; an undo lifts the note and leaves the marquee
-    /// (`470-marquee-capture.md` decisions 9 and 11).
+    /// (`archive/470-marquee-capture.md` decisions 9 and 11).
     #[test]
     fn a_running_marquee_or_clip_span_into_the_lead_clip_punches_in() {
         let marquee = rect(BAR + 960, BAR * 3, 0, 0);
@@ -329,7 +329,7 @@ mod tests {
         assert!(statuses(&h).iter().all(|line| !line.contains("marquee")));
     }
 
-    // --- `,`/`.` (`540-earlier-pass.md`) ---
+    // --- `,`/`.` (`archive/540-earlier-pass.md`) ---
 
     /// A `pitch` note from `on` to `off`, played live.
     fn note(h: &mut Harness, pitch: u8, on: i32, off: i32) {

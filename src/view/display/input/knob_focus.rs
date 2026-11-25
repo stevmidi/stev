@@ -1,5 +1,5 @@
 //! The knob panel's keyboard focus (`KeyFocus::KnobPanel`,
-//! `400-parameter-knobs.md` decision 14): a click or right-click on a knob
+//! `archive/400-parameter-knobs.md` decision 14): a click or right-click on a knob
 //! selects it and the panel takes the keyboard, as a click on a track
 //! header gives the header column it — clip open or not. With a clip open
 //! the click also shows the knob's lane under the piano roll. `Delete`
@@ -123,7 +123,7 @@ impl Display {
     }
 
     /// The sequencer removed knob `knob`'s mapping of `param` on `track_idx`:
-    /// the footer says what went (`400-parameter-knobs.md` decision 14), so
+    /// the footer says what went (`archive/400-parameter-knobs.md` decision 14), so
     /// a `Delete` meant as a reset shows what it did.
     pub(in crate::view::display) fn show_knob_mapping_removed(
         &mut self,

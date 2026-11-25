@@ -1,7 +1,7 @@
 //! The command sweep: an ignored release test that times each
 //! [`SequencerCommand`] on the stress project at the design's target size,
 //! through the same handlers the `"sequencer"` thread runs, to find whatever
-//! passes the one-tick budget (`420-large-projects.md` phase 1). It never
+//! passes the one-tick budget (`archive/420-large-projects.md` phase 1). It never
 //! ships and never runs in CI, but `clippy --all-targets` compiles it, so it
 //! can't rot.
 //!
@@ -23,7 +23,7 @@
 //! thread) and the agent bridge, whose reads the design leaves out of
 //! scope. `SaveProject` and `SaveTemplate` time the handover
 //! alone, the snapshot and the fingerprint: the writing is the `"storage"`
-//! thread's (`420-large-projects.md` phase 2), and the harness has none.
+//! thread's (`archive/420-large-projects.md` phase 2), and the harness has none.
 
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
@@ -52,7 +52,7 @@ const ROUNDS: usize = 5;
 /// Ticks the playback row times.
 const PLAYBACK_TICKS: i32 = 20_000;
 
-/// The one-tick budget, in ms (`420-large-projects.md` decision 2).
+/// The one-tick budget, in ms (`archive/420-large-projects.md` decision 2).
 const BUDGET_MS: f64 = 1.0;
 
 /// One bar of 4/4, in ticks.

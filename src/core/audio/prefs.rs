@@ -1,6 +1,6 @@
 //! What the user chose in Settings' Audio tab, and what the engine tells the
 //! tab back: the output devices there are and the stream it is running
-//! (`480-audio-settings.md` decisions 1–4). The choice is saved in
+//! (`archive/480-audio-settings.md` decisions 1–4). The choice is saved in
 //! `settings.json`, never in a project. Plus the pure helpers the engine and
 //! the tab share: which rates and buffer sizes to offer, and their labels.
 

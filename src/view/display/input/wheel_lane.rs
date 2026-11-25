@@ -80,7 +80,7 @@ impl Display {
     /// The lane under the piano roll as it shows: the chosen one
     /// (`RenderState::clip_lane`), but velocity in place of a knob's lane
     /// whose knob has no parameter on the selected track — the lead clip's
-    /// — since a lane belongs to a parameter (`400-parameter-knobs.md`
+    /// — since a lane belongs to a parameter (`archive/400-parameter-knobs.md`
     /// decision 14). Drawn so, not stored: back on a track whose knob there
     /// has one, its lane shows again, the choice never switched by itself
     /// (`380-wheel-lane.md` decision 7).

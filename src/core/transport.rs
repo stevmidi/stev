@@ -157,7 +157,7 @@ pub(crate) struct Transport {
     /// Whether the arranger performance lane is selected (armed), shared
     /// with the sequencer, which sets it: while it is, playback never wraps
     /// at the loop end, so a run plays straight on as its render assumes
-    /// (`520-performance-capture.md` decision 5). The loop itself is
+    /// (`archive/520-performance-capture.md` decision 5). The loop itself is
     /// untouched.
     performance_lane_armed: Arc<AtomicBool>,
 

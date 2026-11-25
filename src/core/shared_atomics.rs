@@ -78,7 +78,7 @@ pub(crate) struct TrackMixAtomics {
     /// plugin's editor hasn't been told, as an `f64` bit pattern;
     /// [`NO_KNOB_VALUE`] when there is none. How a played value crosses to
     /// the render thread, which alone may touch the edit controller
-    /// (`400-parameter-knobs.md` decision 6). Written by the sequencer
+    /// (`archive/400-parameter-knobs.md` decision 6). Written by the sequencer
     /// thread ([`mark_knob_played`](Self::mark_knob_played)), taken once per
     /// frame ([`take_knob_played`](Self::take_knob_played)): only the last
     /// value of a frame reaches the editor, which is all it can show.
@@ -357,7 +357,7 @@ pub(crate) struct SharedAtomics {
     /// the stored choice, a half bar included in an odd meter. Written by the
     /// `"sequencer"` thread (`Sequencer::set_performance_lane_key_length`),
     /// the atomic being the source of truth as `meter` is; read by the view to
-    /// draw the keys and the gutter's labels (`510-performance-lane-keyboard.md`
+    /// draw the keys and the gutter's labels (`archive/510-performance-lane-keyboard.md`
     /// § Step 1b).
     pub(crate) performance_lane_key_length: Arc<AtomicU8>,
     /// The player's hand on the performance lane, as
@@ -438,7 +438,7 @@ pub(crate) struct SharedAtomics {
     /// A write of the crash recovery copy failed, so the next check writes
     /// again whether or not the project changed. Set by the `"storage"`
     /// thread, taken by the `"sequencer"` thread's check
-    /// (`410-crash-recovery.md` decision 5).
+    /// (`archive/410-crash-recovery.md` decision 5).
     pub(crate) recovery_write_failed: Arc<AtomicBool>,
 }
 

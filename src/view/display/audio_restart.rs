@@ -1,4 +1,4 @@
-//! An audio restart's plugins, spread over frames (`480-audio-settings.md`
+//! An audio restart's plugins, spread over frames (`archive/480-audio-settings.md`
 //! decision 8): the stream came back at another rate, and every plugin
 //! activated at the old one is asked back from the mixer, reactivated, one
 //! per frame, under the "Restarting audio" panel, and held until all of

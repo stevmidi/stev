@@ -29,7 +29,7 @@ use crate::{
     },
 };
 
-/// A plugin parameter's recorded move, on disk (`400-parameter-knobs.md`
+/// A plugin parameter's recorded move, on disk (`archive/400-parameter-knobs.md`
 /// decision 11).
 #[derive(Serialize, Deserialize, Clone, Copy)]
 pub(crate) struct ParamMoveData {
@@ -245,7 +245,7 @@ pub(crate) struct TrackData {
     /// project saved before knobs, and in `ProjectData::default`. A list no
     /// track could have loads unassigned (`knobs_from_saved`), and so does a
     /// project saved with CC knobs: their entries name no parameter, and
-    /// their CC numbers and positions are ignored (`400-parameter-knobs.md`
+    /// their CC numbers and positions are ignored (`archive/400-parameter-knobs.md`
     /// decision 13).
     #[serde(default, skip_serializing_if = "no_knob_assigned")]
     pub(crate) knobs: Vec<KnobData>,
@@ -356,7 +356,7 @@ fn meter_from_list(list: &[MeterData]) -> Meter {
 
 /// How far each performance-lane key jumps, on disk: `"Bar"`, `"HalfBar"`
 /// or `"Beat"`. Kept as chosen, a half bar in an odd meter too
-/// (`KeyLength::in_meter`). See `510-performance-lane-keyboard.md` § Step 1b.
+/// (`KeyLength::in_meter`). See `archive/510-performance-lane-keyboard.md` § Step 1b.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum KeyLengthData {
     /// A bar a key.
@@ -444,7 +444,7 @@ impl Default for ProjectData {
 /// [`ProjectData`] a save writes, short of the base64 and the events'
 /// [`EventData`]. So the `"sequencer"` thread takes this and the `"storage"`
 /// thread does the rest, for a save and for the recovery copy
-/// (`420-large-projects.md` decisions 3, 7 and 8, `410-crash-recovery.md`
+/// (`archive/420-large-projects.md` decisions 3, 7 and 8, `archive/410-crash-recovery.md`
 /// decision 5).
 pub(crate) struct ProjectSnapshot {
     /// The project, every state blob empty and every clip without events.
@@ -457,7 +457,7 @@ pub(crate) struct ProjectSnapshot {
 /// shared rather than copied.
 struct RawTrack {
     /// The plugin's state; empty on a track with no plugin
-    /// (`420-large-projects.md` decision 7).
+    /// (`archive/420-large-projects.md` decision 7).
     state: Arc<[u8]>,
     /// Each clip's events, in the order of the track's clips
     /// (`Clip::shared_events`, decision 8).
@@ -532,7 +532,7 @@ impl ProjectData {
     /// track count, meter and tempo), what describes a performance or a
     /// passing state reset — no clips, no track muted, the default loop
     /// region, the performance lane at a beat a key (it belongs to the piece,
-    /// `510-performance-lane-keyboard.md` § Step 1b decision 5). Applied when a template opens, so one holding clips (a project
+    /// `archive/510-performance-lane-keyboard.md` § Step 1b decision 5). Applied when a template opens, so one holding clips (a project
     /// copied into the folder by hand) still opens empty, and when one is
     /// saved. See `archive/340-templates.md` decisions 5 and 6.
     pub(crate) fn into_template(mut self) -> Self {
@@ -548,7 +548,7 @@ impl ProjectData {
 
     /// The sequencer's project as a save writes it, at once: for tests. A
     /// save takes a [`ProjectSnapshot`] and encodes it on the `"storage"`
-    /// thread (`420-large-projects.md` decision 3).
+    /// thread (`archive/420-large-projects.md` decision 3).
     #[cfg(test)]
     pub(crate) fn from_sequencer(sequencer: &Sequencer) -> Self {
         ProjectSnapshot::of(sequencer).encoded()
@@ -852,7 +852,7 @@ mod tests {
 
     /// A project saved with CC knobs (`390`) loads with its knobs
     /// unassigned: the CC numbers and positions are ignored
-    /// (`400-parameter-knobs.md` decision 13). So does one saved before
+    /// (`archive/400-parameter-knobs.md` decision 13). So does one saved before
     /// knobs.
     #[test]
     fn an_old_projects_cc_knobs_load_unassigned() {
@@ -1086,7 +1086,7 @@ mod tests {
     }
 
     /// A snapshot shares each track's plugin state rather than copying it
-    /// (`420-large-projects.md` decision 7), and still encodes it.
+    /// (`archive/420-large-projects.md` decision 7), and still encodes it.
     #[test]
     fn a_snapshot_shares_the_plugin_state_and_encodes_it() {
         let mut sequencer = test_sequencer();
@@ -1103,7 +1103,7 @@ mod tests {
     }
 
     /// A snapshot shares each clip's events rather than copying them
-    /// (`420-large-projects.md` decision 8), and still encodes them; a
+    /// (`archive/420-large-projects.md` decision 8), and still encodes them; a
     /// template's has none.
     #[test]
     fn a_snapshot_shares_the_clips_events_and_encodes_them() {

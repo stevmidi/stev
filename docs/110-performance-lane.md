@@ -3,7 +3,7 @@
 A reserved row in the arranger, above track 1, that arms the physical MIDI keyboard
 for jump triggering (a bar, half a bar or a beat a key) instead of normal note
 capture. Played live; `/` renders what was played into ordinary clips at the
-arranger cursor (`520-performance-capture.md`). Saved: the key length, nothing
+arranger cursor (`archive/520-performance-capture.md`). Saved: the key length, nothing
 else. Key files:
 `src/models/performance_lane.rs`, `src/core/sequencer/performance_lane.rs`,
 `src/core/event_handlers/performance_lane_handler.rs`,
@@ -16,7 +16,7 @@ else. Key files:
   leaves playback running (deliberately — a release doesn't stop the
   transport, so a performer flowing between bars gets no awkward pause; they
   stop playback themselves when done). **The scope changed deliberately on
-  2026-11-18, revised 2026-11-19** (`520-performance-capture.md` § A
+  2026-11-18, revised 2026-11-19** (`archive/520-performance-capture.md` § A
   deliberate change): an earlier iteration recorded its triggers as lane data
   shown on the timeline, and that was removed on purpose; what came back is
   different, a capture that leaves ordinary clips on the tracks and nothing on
@@ -94,7 +94,7 @@ else. Key files:
   — `Display::performance_lane_hit_at`, part of the same `ArrangerLayout`
   geometry `track_idx_at` uses) arms it via `select_performance_lane_workflow`.
   The arranger has **one selected row**, a track or the lane
-  (`450-performance-lane-selection.md`): arming drops the lead clip, the
+  (`archive/450-performance-lane-selection.md`): arming drops the lead clip, the
   track selection and the marquee (`clear_clip_selection_workflow`,
   `Sequencer::select_track(None)`, `clear_marquee_workflow`), and selecting a
   track disarms the lane (`switch_track_workflow`). Armed implies no selected
@@ -193,7 +193,7 @@ else. Key files:
   (`rendering/performance_lane.rs`) and hit-testing, so they can't drift apart.
   Height is `Display::PERFORMANCE_LANE_H`.
 - **The row draws the keyboard that drives it**
-  (`510-performance-lane-keyboard.md`). The whole row is drawn with the
+  (`archive/510-performance-lane-keyboard.md`). The whole row is drawn with the
   arranger's backgrounds (`draw_performance_lane_row`,
   `rendering/performance_lane.rs`): the gutter (the accent tint and 4px marker
   while armed, and the key-length labels), the lane fill and the keys.

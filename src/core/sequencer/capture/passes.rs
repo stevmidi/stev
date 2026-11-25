@@ -3,7 +3,7 @@
 //! into a new clip's content ([`PassGrid`]) or the events an insert lands in
 //! the lead clip ([`InsertGrid`]). The `/` frames the last pass; `,`/`.`
 //! frame the earlier ones from the buffer the edit kept
-//! (`540-earlier-pass.md`).
+//! (`archive/540-earlier-pass.md`).
 
 use std::iter;
 
@@ -20,13 +20,13 @@ pub(crate) trait PassFraming {
     fn last_pass(&self, buffer: &Clip) -> i32;
 
     /// The passes of `buffer` to step through, in order, up to and including
-    /// `last`: a pass spent listening isn't one (`540-earlier-pass.md`
+    /// `last`: a pass spent listening isn't one (`archive/540-earlier-pass.md`
     /// decision 7).
     fn passes(&self, buffer: &Clip, last: i32) -> Vec<i32>;
 }
 
 /// The grid a looping new-clip commit was framed on, kept with it
-/// so a later loop change doesn't shift the passes (`540-earlier-pass.md`
+/// so a later loop change doesn't shift the passes (`archive/540-earlier-pass.md`
 /// decision 6). Passes are numbered in the capture clock's ticks, read
 /// [`LATE_NOTE_TOLERANCE_TICKS`](config::LATE_NOTE_TOLERANCE_TICKS) early:
 /// a note just before a wrap anticipates the downbeat after it and belongs
@@ -123,7 +123,7 @@ fn counted(passes: impl Iterator<Item = i32>, last: i32) -> Vec<i32> {
 /// How a running insert into the lead clip lands a pass
 /// ([`Sequencer::build_running_capture_insert`]), kept with the insert so
 /// `,`/`.` land an earlier pass as the `/` landed the last
-/// (`540-earlier-pass.md` phase 2). Unlike a new clip's [`PassGrid`], the
+/// (`archive/540-earlier-pass.md` phase 2). Unlike a new clip's [`PassGrid`], the
 /// passes are windows of the clip's length pinned at the anchor's phase:
 /// pass `k` starts at `anchor + k · loop_len`. A linear take has one window,
 /// from the anchor.

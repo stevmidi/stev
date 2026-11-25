@@ -1,6 +1,6 @@
 //! The recovery timing: an ignored release test that times the crash
 //! recovery check and write on synthetic projects of growing size, as
-//! `410-crash-recovery.md` decisions 3 to 5 weighed them. It never ships and never runs in
+//! `archive/410-crash-recovery.md` decisions 3 to 5 weighed them. It never ships and never runs in
 //! CI, but `clippy --all-targets` compiles it, so it can't rot.
 //!
 //! Run with `cargo test --release recovery_timing -- --ignored --nocapture`.

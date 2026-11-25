@@ -278,7 +278,7 @@ impl EventHandlers {
     /// `⌥↑`/`⌥↓` over a marquee (`SequencerCommand::TransposeClips`): moves
     /// every note in the clips it covers whole as one undo step, and the
     /// footer names the span and the step, or why the press was refused
-    /// (`500-marquee-transpose.md` decision 7). The marquee stays, so
+    /// (`archive/500-marquee-transpose.md` decision 7). The marquee stays, so
     /// presses chain.
     pub(super) fn transpose_clips_workflow(
         &self,

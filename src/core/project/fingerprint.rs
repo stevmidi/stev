@@ -1,11 +1,11 @@
 //! [`fingerprint`]: what a project would save, as one number, hashed straight
 //! from the sequencer. The unsaved-changes check (`060-persistence.md`) and
-//! the crash recovery check (`410-crash-recovery.md` decision 4) share it, so
+//! the crash recovery check (`archive/410-crash-recovery.md` decision 4) share it, so
 //! a project has a recovery copy exactly when the quit prompt would ask. The
 //! recovery check runs during playback, so it takes no snapshot and walks no
 //! JSON: on a real project that is 0.06 ms against 1.65. A clip's events
 //! unchanged since the last fingerprint aren't hashed again
-//! ([`FingerprintCache`], `420-large-projects.md` decision 8).
+//! ([`FingerprintCache`], `archive/420-large-projects.md` decision 8).
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -352,7 +352,7 @@ mod tests {
     }
 
     /// Each thing a project saves changes both the direct hash and the JSON
-    /// one (`410-crash-recovery.md` decision 4).
+    /// one (`archive/410-crash-recovery.md` decision 4).
     #[test]
     fn the_direct_hash_sees_every_change_the_json_does() {
         let direct = fingerprint(&project());
@@ -381,7 +381,7 @@ mod tests {
     }
 
     /// After any change, a fingerprint reusing the last one's hashes equals
-    /// one hashing everything (`420-large-projects.md` decision 8).
+    /// one hashing everything (`archive/420-large-projects.md` decision 8).
     #[test]
     fn the_cached_fingerprint_equals_a_full_hash() {
         for (name, change) in SAVED_CHANGES.iter().chain(UNSAVED_CHANGES) {

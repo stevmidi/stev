@@ -127,13 +127,13 @@ impl Display {
                 )
             };
             // The gutter's data marker, for a clip with moves of the knob's
-            // parameter (`400-parameter-knobs.md` decision 12).
+            // parameter (`archive/400-parameter-knobs.md` decision 12).
             let marked = switches
                 && self
                     .knob_controller(knob)
                     .is_some_and(|param| self.lead_clip_moves(Controller::Param(param)));
             // Cut short with an ellipsis when it doesn't fit
-            // (`400-parameter-knobs.md` decision 5 — the footer shows the
+            // (`archive/400-parameter-knobs.md` decision 5 — the footer shows the
             // full name on hover).
             let name = draw_truncated_at(
                 painter,
@@ -148,7 +148,7 @@ impl Display {
             // The selected knob, while the panel has the keyboard: quiet
             // corner brackets around its dial, neutral, since the focus edge
             // already says the panel has the keyboard and the label may be
-            // `accent` for its lane (`400-parameter-knobs.md` decision 14).
+            // `accent` for its lane (`archive/400-parameter-knobs.md` decision 14).
             if selected == Some(knob) {
                 let stroke = Stroke::new(FRAME_W, theme::fg_dim());
                 // On pixel centres, so a one-pixel line lights one row or

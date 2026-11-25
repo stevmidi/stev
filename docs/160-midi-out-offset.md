@@ -131,7 +131,7 @@ message — so a change applies to the next note with no restart.
   buffer, picked in the Audio tab or run by the device, moves the schedule
   delay, and the offset is then off by the difference until the user dials it
   in again; the Audio tab's readout shows the output latency to dial it by
-  (`480-audio-settings.md` § Not in this design). `SettingsData::Default` is **hand-written**, not
+  (`archive/480-audio-settings.md` § Not in this design). `SettingsData::Default` is **hand-written**, not
   derived, so a fresh install lands on 5 rather than `i32::default()`; the
   `#[serde(default = "…")]` does the same for an upgrading user's existing file.
 - Range `0..=MIDI_OUT_OFFSET_MAX_MS` (200), clamped in

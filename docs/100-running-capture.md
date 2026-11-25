@@ -124,7 +124,7 @@ wipes a take started since), its `undo()` lifts the clip by id. `None` from the 
 (empty capture, or a gap under one grid step) means nothing enters the undo record. `commit_clip_to_track` is a `#[cfg(test)]` shim in `capture/mod.rs`'s
 tests that runs the real edit. Undo leaves
 the buffer cleared by decision — redo is the way back. See `050-undo-redo.md`.
-- **With an arranger marquee** (`470-marquee-capture.md`; `SequencerCommand::Commit` carries
+- **With an arranger marquee** (`archive/470-marquee-capture.md`; `SequencerCommand::Commit` carries
   it, a tick range only): the anchor is the marquee's start and the region length its width,
   not clamped to `available` or floored; the clip goes at the marquee's start. Looping, the
   region is `[phase(m.start), phase(m.start) + m.len)` of the same last pass; linear, the
@@ -221,7 +221,7 @@ pass alone — same "last pass only" rule, no exception for the cursor.
 
 #### Stepping to an earlier pass (`,` / `.`)
 
-`540-earlier-pass.md`. A looping new-clip commit, marquee-framed or not, keeps what it consumed: the
+`archive/540-earlier-pass.md`. A looping new-clip commit, marquee-framed or not, keeps what it consumed: the
 builder returns the `PassGrid` it framed on (loop start and length, the anchor's phase,
 the region length), and `CommitClipEdit::edit` takes the buffer (`kept_capture`'s knob
 filter applied) instead of dropping it, so a later loop change doesn't move the passes.
@@ -319,7 +319,7 @@ the take:
   player's last move of each (whatever the buffer's resets did since), on the start tick
   ahead of the notes. At rest nothing is carried. A bend held into the take is kept too
   (`370` § Decisions 7): it springs back to centre on release, but held, it is what was
-  played. So is a pedal held down when the transport starts (`530-sustain-capture.md`
+  played. So is a pedal held down when the transport starts (`archive/530-sustain-capture.md`
   decision 2), at its value, half-pedalling included.
 
 They go in at **cursor** ticks, since the clock's numbering isn't known until input

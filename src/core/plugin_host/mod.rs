@@ -177,7 +177,7 @@ pub(crate) struct ReturnedVoice(Box<dyn InstrumentVoice>);
 
 /// A voice activated and ready to go into the mixer, held by the UI until
 /// an audio restart's plugins all go back together
-/// (`480-audio-settings.md` decision 8): one reactivated in place
+/// (`archive/480-audio-settings.md` decision 8): one reactivated in place
 /// ([`PluginAudioHandle::reactivate`]) or loaded again
 /// ([`PreparedInstrument::into_ready`]). Opaque to the UI, and dropped as a
 /// [`ReturnedVoice`] is: before its instance is deactivated.
@@ -217,7 +217,7 @@ impl PluginAudioHandle {
     /// Reactivates `editor`'s plugin, in place, for what is wanted now
     /// ([`activation`](Self::activation)), with the `voice` the mixer handed
     /// back, every note reset and its gain to ramp in from silence
-    /// (`480-audio-settings.md` decisions 8 and 9). Returns the voice for
+    /// (`archive/480-audio-settings.md` decisions 8 and 9). Returns the voice for
     /// [`insert_ready`](Self::insert_ready), or why the plugin wouldn't
     /// reactivate.
     pub(crate) fn reactivate(

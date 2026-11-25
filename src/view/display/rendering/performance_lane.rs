@@ -1,7 +1,7 @@
 //! Painting the arranger's performance-lane row (`110-performance-lane.md`):
 //! the gutter and its selection accent, and in the content area the keyboard
 //! that drives the lane, lined up with where its keys jump
-//! (`510-performance-lane-keyboard.md`), running on along the timeline
+//! (`archive/510-performance-lane-keyboard.md`), running on along the timeline
 //! from bar 1 (`560-performance-lane-reach.md`). Key `k` is a white or black
 //! key by its pitch class (`key_pitch_class`, key 0 a C) and spans one key
 //! length (a bar, half a bar or a beat, `KeyLength`) from `key_tick(k)`,
@@ -210,7 +210,7 @@ impl Display {
 
     /// The key length whose gutter label holds `(x, y)`, if any. Arranger
     /// only: a click on it picks that length and does nothing else
-    /// (`510-performance-lane-keyboard.md` § Step 1b decision 3).
+    /// (`archive/510-performance-lane-keyboard.md` § Step 1b decision 3).
     pub(in crate::view::display) fn key_length_label_at(
         &self,
         x: f32,

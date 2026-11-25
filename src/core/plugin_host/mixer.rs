@@ -99,7 +99,7 @@ pub(crate) enum PluginHostCommand {
     },
     /// Hand `track`'s voice back to the UI, stopped, to be reactivated at the
     /// stream's new rate, or in the mode an audio export wants, and inserted
-    /// again (`480-audio-settings.md` decision 8, `archive/490-offline-export.md`
+    /// again (`archive/480-audio-settings.md` decision 8, `archive/490-offline-export.md`
     /// decision 6). It goes the way a removed voice does, as far as the
     /// `"plugin-host"` thread, which passes it on instead of dropping it.
     Return {
@@ -218,7 +218,7 @@ pub(super) struct InstrumentMixer {
     /// the stream's — the device's rate changed under it — is held silent
     /// rather than played at the wrong pitch and speed, until the UI has
     /// reactivated it at the new rate and inserted it again
-    /// (`480-audio-settings.md` decision 8). So is one whose mode isn't the
+    /// (`archive/480-audio-settings.md` decision 8). So is one whose mode isn't the
     /// block's: an audio export's offline render never runs a plugin still
     /// told it is live, nor the device one still told it is offline
     /// (`archive/490-offline-export.md` decision 6). An empty slot's entry means
@@ -394,7 +394,7 @@ impl AudioSource for InstrumentMixer {
     /// The events queued for the old stream are dropped, those still in the
     /// feeds too: they would all land at once, late. Every voice is sent the
     /// note reset instead, so nothing hangs from a note-off lost in the
-    /// drop-out (`480-audio-settings.md` decision 9). A rate change leaves
+    /// drop-out (`archive/480-audio-settings.md` decision 9). A rate change leaves
     /// the voices activated at the old rate held silent (see `voice_activations`)
     /// until the UI has them back (`PluginHostCommand::Return`), reactivates
     /// them and inserts them again.

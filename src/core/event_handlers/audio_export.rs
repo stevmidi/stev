@@ -129,7 +129,7 @@ impl EventHandlers {
         transport: &mut Transport,
     ) {
         // The lane's run counts the ticks playback advances
-        // (`520-performance-capture.md` decision 2), from where it is now.
+        // (`archive/520-performance-capture.md` decision 2), from where it is now.
         let playback_tick = sequencer.playback_tick();
         sequencer.performance_lane_mut().advance(playback_tick);
         if let TickOutcome::Wrapped(anchor) = transport.tick() {

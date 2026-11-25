@@ -1,7 +1,7 @@
 //! The crash recovery copy on disk: one slot in the config directory, holding
 //! the open project and where it came from, written and deleted by the
 //! `"storage"` thread (`writer`). The copy is never a project file and never
-//! written over one. See `410-crash-recovery.md`.
+//! written over one. See `archive/410-crash-recovery.md`.
 
 use std::error::Error;
 use std::fs::{self, File, OpenOptions, TryLockError};
@@ -42,7 +42,7 @@ impl RecoveryCopy {
 
     /// The project to restore, through the usual staged load. It keeps its
     /// name and folder while its file is there, and comes back untitled if
-    /// the file has gone (`410-crash-recovery.md` decision 10).
+    /// the file has gone (`archive/410-crash-recovery.md` decision 10).
     pub(crate) fn into_staged(self) -> StagedProject {
         self.staged_with(|origin| project_exists(origin.folder.as_deref(), &origin.name))
     }
@@ -76,7 +76,7 @@ pub(crate) fn recovery_path() -> PathBuf {
 
 /// The copy at `path`, `None` if there is none. For the app's startup path,
 /// holding the lock: a copy there then means a crash, and one that won't load
-/// is the caller's to report (`410-crash-recovery.md` decision 15).
+/// is the caller's to report (`archive/410-crash-recovery.md` decision 15).
 pub(crate) fn read_recovery_copy(path: &Path) -> Result<Option<RecoveryCopy>, Box<dyn Error>> {
     match fs::read_to_string(path) {
         Ok(json) => Ok(Some(serde_json::from_str(&json)?)),
@@ -140,7 +140,7 @@ fn lock_at(path: &Path) -> Option<File> {
 /// another instance has it: this one then neither offers nor writes. The
 /// system lets go when the process dies, however it dies, so a copy with a
 /// free lock means a crash. For the app's startup path alone: a `stev --mcp`
-/// taking it could turn recovery off (`410-crash-recovery.md` decision 16).
+/// taking it could turn recovery off (`archive/410-crash-recovery.md` decision 16).
 pub(crate) fn take_recovery_lock() -> Option<File> {
     lock_at(&config_dir().join(RECOVERY_LOCK_FILE_NAME))
 }

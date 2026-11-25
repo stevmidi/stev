@@ -1,6 +1,6 @@
 # The Performance Lane Is an Exclusive Selection
 
-**Status: design agreed 2026-11-12; built 2026-11-12 (the one phase; as-built in `110` § Arming, `020` § Arranger Time Selection, `050` § Invariants).** Selecting the performance lane deselects the track, as selecting a track already deselects the lane. While the lane is selected there is no selected track and no lead clip. The undo restore loses its special case for an armed lane.
+**Archived 2026-11-25. Status: design agreed 2026-11-12; built 2026-11-12 (the one phase; as-built in `110` § Arming, `020` § Arranger Time Selection, `050` § Invariants).** Selecting the performance lane deselects the track, as selecting a track already deselects the lane. While the lane is selected there is no selected track and no lead clip. The undo restore loses its special case for an armed lane.
 
 ## Background
 

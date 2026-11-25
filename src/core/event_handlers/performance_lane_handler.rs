@@ -7,7 +7,7 @@
 //! (`570-lane-octave-buttons.md` § 3). A press lands at its offset from
 //! the nearest beat while running, so the beat never breaks (`phase_offset`,
 //! `550-phase-jumps.md`), and joins the lane's run
-//! (`520-performance-capture.md` decision 2), which `/` renders into clips
+//! (`archive/520-performance-capture.md` decision 2), which `/` renders into clips
 //! at the arranger cursor (decision 1). A `NoteOff` does
 //! nothing: releasing the key doesn't stop playback, so a performer stops on
 //! their own terms, and no loop wrap waits on it (the loop doesn't wrap while
@@ -97,7 +97,7 @@ impl EventHandlers {
         self.request_repaint();
     }
 
-    /// `/` on the armed lane (`520-performance-capture.md` decision 1): the
+    /// `/` on the armed lane (`archive/520-performance-capture.md` decision 1): the
     /// run so far, ending now or where playback stopped, rendered from the
     /// arrangement as it is now and inserted at the arranger cursor, as
     /// Paste Time inserts, one undo step. Nothing is selected and the

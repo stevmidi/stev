@@ -11,7 +11,7 @@
 //! only be touched from the thread with the AppKit run loop.
 //!
 //! The knob panel reaches a plugin's parameters through it too
-//! (`400-parameter-knobs.md`): their names, their values, setting one, and
+//! (`archive/400-parameter-knobs.md`): their names, their values, setting one, and
 //! the gestures the plugin's own editor reports.
 
 use std::time::Duration;
@@ -29,7 +29,7 @@ pub(crate) struct ParameterInfo {
     /// How many steps it moves in, one fewer than its positions, or 0 when
     /// it moves smoothly. A stepped parameter's knob stops at each position
     /// and its lane holds each value until the next
-    /// (`400-parameter-knobs.md` decision 12).
+    /// (`archive/400-parameter-knobs.md` decision 12).
     pub(crate) steps: u32,
 }
 
@@ -104,7 +104,7 @@ pub(crate) trait InstrumentEditor {
     fn deactivate(&mut self);
 
     /// Reactivates the plugin for `activation`, in place: the stream's rate
-    /// changed under it (`480-audio-settings.md` decision 8), or an audio
+    /// changed under it (`archive/480-audio-settings.md` decision 8), or an audio
     /// export wants it in its offline mode, or back out of it
     /// (`archive/490-offline-export.md` decision 6). `voice` is the one its last
     /// activation made, which the mixer has stopped and let go of. The

@@ -26,7 +26,7 @@ pub(crate) const CONTROL_CHANGE: u8 = 0xB0;
 /// The mod wheel's controller number — never a knob's (`models::knobs`).
 pub(crate) const MOD_WHEEL_CC: u8 = 0x01;
 
-/// The sustain pedal's controller number (`530-sustain-capture.md`).
+/// The sustain pedal's controller number (`archive/530-sustain-capture.md`).
 pub(crate) const SUSTAIN_CC: u8 = 64;
 
 /// The channel-0 Control Change that puts controller `cc` at `value` — the
@@ -64,7 +64,7 @@ pub(crate) enum Controller {
     /// message (120–127), which [`parse_controller`] doesn't read as one.
     Cc(u8),
     /// A parameter of the track's plugin, by ID, normalized to `0.0..=1.0`
-    /// (`400-parameter-knobs.md`). Not MIDI: no message carries it, so
+    /// (`archive/400-parameter-knobs.md`). Not MIDI: no message carries it, so
     /// [`parse_controller`] never returns one. A clip holds its moves as
     /// [`ParamMove`](crate::models::event::ParamMove) events.
     Param(PluginParam),
@@ -104,7 +104,7 @@ impl Controller {
     /// no threshold at 64: a continuous pedal's half-pedalling plays as
     /// played. `None` for any other CC or a parameter — a filter cutoff "at
     /// rest" at 0 would be wrong, so it is never reset (`archive/390-knob-panel.md`
-    /// decision 8, `400-parameter-knobs.md` decision 9).
+    /// decision 8, `archive/400-parameter-knobs.md` decision 9).
     pub(crate) const fn rest(self) -> Option<u16> {
         match self {
             Controller::PitchBend => Some(PITCH_BEND_CENTRE),

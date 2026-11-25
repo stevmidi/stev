@@ -33,7 +33,7 @@ use super::paste::PasteClipsEdit;
 ///   length, so a copy ending in silence keeps it. The marquee stays.
 /// - **A performance capture** ([`capturing`](Self::capturing), `/` on the
 ///   lane) is Paste Time with the lane run's render in place of the session
-///   clipboard (`520-performance-capture.md` decision 1).
+///   clipboard (`archive/520-performance-capture.md` decision 1).
 ///
 /// Each is the composition of the two edits that already do each
 /// half — same worked-example reuse shape as `InsertSilenceEdit`/
@@ -115,7 +115,7 @@ impl DuplicateTimeEdit {
         Self::paste_time(sequencer, clipboard, sequencer.selected_track_index())
     }
 
-    /// `/` on the performance lane (`520-performance-capture.md` decision
+    /// `/` on the performance lane (`archive/520-performance-capture.md` decision
     /// 1): Paste Time's edit with the run's render
     /// (`Sequencer::render_performance`) in place of the session clipboard,
     /// on the tracks it was rendered from (it has no track anchor). The

@@ -1,8 +1,8 @@
 //! [`RecoveryKeeper`] — the `"sequencer"` thread's side of the crash recovery
 //! copy: when one should exist, and what it should hold. The writing itself
 //! is the `"storage"` thread's, down the channel saves take too ([`Storage`]),
-//! so they and the copy's jobs stay in one order. See `410-crash-recovery.md`
-//! and `420-large-projects.md` decision 3.
+//! so they and the copy's jobs stay in one order. See `archive/410-crash-recovery.md`
+//! and `archive/420-large-projects.md` decision 3.
 //!
 //! [`Storage`]: super::Storage
 
@@ -19,12 +19,12 @@ use crate::core::sequencer::Sequencer;
 use super::SavedProject;
 
 /// How often the project is compared with the copy: at most this much of the
-/// work is lost to a crash (`410-crash-recovery.md` decision 3).
+/// work is lost to a crash (`archive/410-crash-recovery.md` decision 3).
 const CHECK_INTERVAL: Duration = Duration::from_secs(5);
 
 /// Where the copy a crash left stands. Anything but
 /// [`Free`](Self::Free) keeps every job from the copy
-/// (`410-crash-recovery.md` decision 14).
+/// (`archive/410-crash-recovery.md` decision 14).
 enum Hold {
     /// No offer to answer: the check keeps the copy.
     Free,
@@ -53,7 +53,7 @@ pub(crate) struct RecoveryKeeper {
     copied: Option<(u64, Option<ProjectOrigin>)>,
     /// Whether a plugin's state was captured since the last copy was handed
     /// over. Blobs stay out of the fingerprint, so this is how a new preset
-    /// reaches the copy (`410-crash-recovery.md` decision 7).
+    /// reaches the copy (`archive/410-crash-recovery.md` decision 7).
     captured: bool,
     /// Whether a crash's copy keeps the jobs back.
     hold: Hold,
@@ -61,7 +61,7 @@ pub(crate) struct RecoveryKeeper {
 
 impl RecoveryKeeper {
     /// A keeper sending to `jobs`. With no `jobs` another instance has the
-    /// copy, and this keeper does nothing (`410-crash-recovery.md` decision
+    /// copy, and this keeper does nothing (`archive/410-crash-recovery.md` decision
     /// 16). `offer` is the copy a crash left, which holds everything until
     /// the launch dialog is answered.
     pub(crate) fn new(
@@ -186,7 +186,7 @@ impl RecoveryKeeper {
     /// `"storage"` thread can end once the delete is done; the caller waits
     /// for it ([`Storage::finish`](super::Storage::finish)), or a copy left
     /// behind would claim a crash on the next launch
-    /// (`410-crash-recovery.md` decision 13). A copy on hold stays: a quit
+    /// (`archive/410-crash-recovery.md` decision 13). A copy on hold stays: a quit
     /// while Restore loads its plugins sees only the startup project, with no
     /// changes to ask about, so the next launch offers the copy again.
     pub(crate) fn finish(&mut self) {
@@ -505,7 +505,7 @@ mod tests {
     }
 
     /// A new preset reaches the copy: blobs stay out of the fingerprint, so
-    /// the capture itself has to count, once (`410-crash-recovery.md`
+    /// the capture itself has to count, once (`archive/410-crash-recovery.md`
     /// decision 7).
     #[test]
     fn a_captured_state_rewrites_the_copy() {
@@ -852,7 +852,7 @@ mod tests {
 
     /// Without the lock this instance has nowhere to send a job, so nothing
     /// is recorded as copied and its saves leave the other instance's copy
-    /// alone (`410-crash-recovery.md` decision 16).
+    /// alone (`archive/410-crash-recovery.md` decision 16).
     #[test]
     fn an_instance_without_the_lock_stays_out() {
         let h = harness();

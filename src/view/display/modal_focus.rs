@@ -140,7 +140,7 @@ impl PortSide {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum SettingsTab {
     /// The output device, sample rate and buffer size, and what runs
-    /// (`settings/audio_tab.rs`, `480-audio-settings.md`) — the tab after
+    /// (`settings/audio_tab.rs`, `archive/480-audio-settings.md`) — the tab after
     /// launch.
     #[default]
     Audio,

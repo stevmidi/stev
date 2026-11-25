@@ -62,7 +62,7 @@ pub(crate) struct InstrumentRef {
     pub(crate) display_name: String,
     /// Last-persisted CLAP `state` blob; empty = none captured yet. Shared,
     /// so a snapshot or a command carries the blob without copying it
-    /// (`420-large-projects.md` decision 7).
+    /// (`archive/420-large-projects.md` decision 7).
     pub(crate) state: Arc<[u8]>,
 }
 
@@ -242,10 +242,10 @@ pub(crate) struct Track {
     /// Per knob, whether the hand holds it — a drag, or its parameter's
     /// control turned in the plugin's editor: the hand wins, and playback
     /// drops the parameter's moves until the turn ends
-    /// (`400-parameter-knobs.md` decision 6). Never saved.
+    /// (`archive/400-parameter-knobs.md` decision 6). Never saved.
     held_knobs: [bool; KNOB_COUNT],
     /// Where the hand last put each knob, as a normalized parameter value:
-    /// what the unsaved check compares (`400-parameter-knobs.md` decision 9),
+    /// what the unsaved check compares (`archive/400-parameter-knobs.md` decision 9),
     /// never saved. `None` until the hand turns it after a load, so a knob
     /// moved only by playback or the plugin itself never asks to be saved.
     knobs_by_hand: [Option<f64>; KNOB_COUNT],
@@ -2018,7 +2018,7 @@ mod tests {
     /// A CC — an older project's CC knob, a pasted or imported one, the
     /// sostenuto pedal — plays as it comes, is never chased by a seek and
     /// never reset by a stop: only the wheels and the sustain pedal are
-    /// (`400-parameter-knobs.md` decision 13).
+    /// (`archive/400-parameter-knobs.md` decision 13).
     #[test]
     fn a_cc_plays_as_it_comes_and_is_neither_chased_nor_reset() {
         let mut clip = clip_with_ccs(0, &[(150, 14, 90), (150, 66, 127)]);
@@ -2055,7 +2055,7 @@ mod tests {
     }
 
     /// A clip ending with the pedal down lifts it where playback leaves it
-    /// for a gap, and a stop lifts it too (`530-sustain-capture.md`).
+    /// for a gap, and a stop lifts it too (`archive/530-sustain-capture.md`).
     #[test]
     fn a_clip_ending_pedalled_lifts_the_pedal_when_playback_leaves_it() {
         let mut track = Track::new(TrackOutput::MidiOut { channel: 0 }, 0, 0);

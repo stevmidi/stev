@@ -43,7 +43,7 @@ pub(crate) enum Action {
     /// (`SequencerCommand::Commit`).
     Commit,
     /// Step the clip the last running `/` made back a pass
-    /// (`SequencerCommand::StepPass`, `540-earlier-pass.md`).
+    /// (`SequencerCommand::StepPass`, `archive/540-earlier-pass.md`).
     EarlierPass,
     /// Step it forward a pass again.
     LaterPass,
@@ -129,8 +129,8 @@ pub(crate) enum Action {
     StretchClipShorter,
     /// Show the next lane under the piano roll: velocity, pitch bend, the
     /// mod wheel, the sustain pedal, back to velocity (clip view,
-    /// `380-wheel-lane.md`, `530-sustain-capture.md` decision 7; a knob's
-    /// lane is a click on the knob, `400-parameter-knobs.md` decision 14).
+    /// `380-wheel-lane.md`, `archive/530-sustain-capture.md` decision 7; a knob's
+    /// lane is a click on the knob, `archive/400-parameter-knobs.md` decision 14).
     CycleClipLane,
 }
 
@@ -920,7 +920,7 @@ impl Action {
 
     /// Whether this action, pressed while the knob panel has the keyboard,
     /// takes it back to the pane and acts there
-    /// (`Display::handle_knob_panel_key`, `400-parameter-knobs.md` decision
+    /// (`Display::handle_knob_panel_key`, `archive/400-parameter-knobs.md` decision
     /// 14). The panel takes the keyboard in either pane, so every pane
     /// command does, Select all notes among them (the panel has nothing to
     /// mark), but the Deletes, which the panel reads as removing the

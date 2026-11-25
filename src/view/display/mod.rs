@@ -282,7 +282,7 @@ pub(crate) struct Display {
     /// The arranger's selected track. Not project state despite the
     /// original grouping — it is read broadly (rendering, input, the CLAP
     /// host), so it stays flat on `Display`. `None` while the performance
-    /// lane is the selected row (`450-performance-lane-selection.md`): no
+    /// lane is the selected row (`archive/450-performance-lane-selection.md`): no
     /// reader falls back to a track then.
     selected_track_idx: Option<usize>,
     /// Which view-local surface has the keyboard: the focused pane, the
@@ -617,7 +617,7 @@ impl Display {
 
     /// Whether playback loops at the region end: looping is on and the
     /// performance lane isn't selected, where playback never wraps
-    /// (`520-performance-capture.md` decision 5).
+    /// (`archive/520-performance-capture.md` decision 5).
     fn is_loop_enabled(&self) -> bool {
         self.loop_enabled.load(Ordering::Relaxed) && !self.performance_lane_selected()
     }

@@ -14,7 +14,7 @@
 //! a take, committed as a brand-new clip, on a track; `CreateClipsEdit` is
 //! the agent bridge's new clips, a paste that keeps the selection;
 //! `TransposeClipsEdit` moves every note of the clips a marquee covers whole
-//! (`500-marquee-transpose.md`). See
+//! (`archive/500-marquee-transpose.md`). See
 //! `050-undo-redo.md` and `020-views-and-state.md`.
 
 use std::collections::HashSet;

@@ -122,7 +122,7 @@ impl IHostApplicationTrait for Vst3Host {
 /// Either way a copy goes to the knob panel ([`ParameterGesture`]): a turn's
 /// start assigns an armed knob, and a turn of a knob's parameter is a hand
 /// turn, which holds off playback and goes into a take
-/// (`400-parameter-knobs.md` decisions 3, 6, 9 and 10).
+/// (`archive/400-parameter-knobs.md` decisions 3, 6, 9 and 10).
 pub(super) struct ComponentHandler {
     /// Carries parameter changes to the audio thread.
     pub(super) params: ParamSender,

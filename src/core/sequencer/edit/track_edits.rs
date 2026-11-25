@@ -315,7 +315,7 @@ impl Sequencer {
 /// (`EditResult::TrackOutputChanged`). A change of plugin — another one, or
 /// none — takes the knobs' assignments and every parameter move in the
 /// track's clips with it, since a parameter ID only means something to the
-/// plugin it came from (`400-parameter-knobs.md` decision 8): undo brings
+/// plugin it came from (`archive/400-parameter-knobs.md` decision 8): undo brings
 /// them back. See `050-undo-redo.md` § Track output.
 pub(crate) struct SetTrackOutputEdit {
     /// The track's position.
@@ -409,7 +409,7 @@ type ClipSnapshots = Vec<(Uuid, Arc<Vec<Event>>)>;
 
 /// A knob assigned to a parameter of the track's plugin — the control the
 /// user turned in the plugin's editor while the knob was armed — or
-/// unassigned (`400-parameter-knobs.md` decision 3). The knob owns its data:
+/// unassigned (`archive/400-parameter-knobs.md` decision 3). The knob owns its data:
 /// its recorded moves follow it to the new parameter, or go with the mapping
 /// (decisions 7 and 14), in all of the track's clips.
 pub(crate) struct SetKnobParamEdit {
@@ -1056,7 +1056,7 @@ mod tests {
     }
 
     /// A knob assigned by its editor turn, undone and redone, as one step
-    /// each (`400-parameter-knobs.md` decision 3); unassigning is an edit
+    /// each (`archive/400-parameter-knobs.md` decision 3); unassigning is an edit
     /// too.
     #[test]
     fn an_assignment_is_undone_and_redone() {

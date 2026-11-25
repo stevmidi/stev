@@ -19,6 +19,6 @@ pub(crate) struct StagedProject {
     pub(crate) file: Option<(Option<String>, String)>,
     /// The footer line of a project restored from the crash recovery copy;
     /// `None` for any other. Set, it takes no baseline to compare against
-    /// (`410-crash-recovery.md` decision 11).
+    /// (`archive/410-crash-recovery.md` decision 11).
     pub(crate) recovered: Option<String>,
 }

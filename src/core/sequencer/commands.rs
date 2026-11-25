@@ -48,7 +48,7 @@ pub(crate) enum SequencerCommand {
     /// detected phrase while stopped. See `sequencer_handler.rs` and
     /// `220-capture-without-pending-view.md`. An arranger marquee with a tick
     /// range frames a new clip instead of the loop, and it or the clip view's
-    /// span punches in a running insert (`470-marquee-capture.md`,
+    /// span punches in a running insert (`archive/470-marquee-capture.md`,
     /// [`Sequencer::capture_framing`](super::Sequencer::capture_framing)).
     Commit {
         /// The focused pane's time selection, if any.
@@ -56,7 +56,7 @@ pub(crate) enum SequencerCommand {
     },
     /// `,`/`.`: step the clip the last running `/` made to the pass before
     /// or after the one it shows, amending that commit's undo step
-    /// (`540-earlier-pass.md`). Refused with a footer line unless that
+    /// (`archive/540-earlier-pass.md`). Refused with a footer line unless that
     /// commit is the newest undo step.
     StepPass(PassStep),
     /// Place the clip cursor at an absolute tick — the clip-view equivalent of
@@ -228,7 +228,7 @@ pub(crate) enum SequencerCommand {
     /// (`TransposeClipsEdit::from_marquee`, undoable). Refused with a footer
     /// line when the marquee cuts through a clip, covers no clip with
     /// notes, or a note would leave MIDI's range
-    /// (`500-marquee-transpose.md`).
+    /// (`archive/500-marquee-transpose.md`).
     TransposeClips {
         /// The marquee selection.
         rect: TimeSelectionRect,
@@ -371,7 +371,7 @@ pub(crate) enum SequencerCommand {
         /// The whole drag so far, from the press.
         drag: NoteDrag,
         /// ⌥ is held on a move: copies of the notes stay where they were
-        /// (`460-copy-drag.md` § Phase 2).
+        /// (`archive/460-copy-drag.md` § Phase 2).
         copy: bool,
         /// Identifies the gesture so its steps merge into one undo step.
         drag_id: u64,
@@ -439,7 +439,7 @@ pub(crate) enum SequencerCommand {
     /// Stores a fresh plugin-state blob on the instrument of the track in
     /// engine slot `slot` so the next project save persists it. No-op if no
     /// track holds the slot or it is not routed to an instrument. A blob that
-    /// differs rewrites the crash recovery copy (`410-crash-recovery.md`
+    /// differs rewrites the crash recovery copy (`archive/410-crash-recovery.md`
     /// decision 7). See `130-plugin-host.md`.
     SetTrackInstrumentState {
         /// The track's engine slot (`Track::slot`).
@@ -483,7 +483,7 @@ pub(crate) enum SequencerCommand {
     },
     /// The hand took hold of knob `knob` of `track_idx`: playback lets go of
     /// its parameter until [`ReleaseKnob`](Self::ReleaseKnob)
-    /// (`400-parameter-knobs.md` decision 6), and where it stood goes ahead
+    /// (`archive/400-parameter-knobs.md` decision 6), and where it stood goes ahead
     /// of the turn in the capture buffer (decision 10).
     HoldKnob {
         /// The knob's track.
@@ -505,7 +505,7 @@ pub(crate) enum SequencerCommand {
     /// The hand turned knob `knob` of `track_idx` to `value` — a drag in the
     /// knob panel, or the parameter's control in the plugin's editor; the
     /// view has set the parameter already. Not undoable, like volume and
-    /// pan, but a change for the unsaved prompt (`400-parameter-knobs.md`
+    /// pan, but a change for the unsaved prompt (`archive/400-parameter-knobs.md`
     /// decision 9), and in a turn, a move for the capture buffer (decision
     /// 10).
     SetKnobValue {
@@ -620,7 +620,7 @@ pub(crate) enum SequencerCommand {
     /// Arranger band drag released with ⌥ held: copy everything inside
     /// `rect` to `delta_ticks` / `delta_tracks` away, leaving the source,
     /// carving out what the copy lands on (`PasteClipsEdit::copying`, undoable,
-    /// `460-copy-drag.md`). A whole-clip drag sends the clip's own span and
+    /// `archive/460-copy-drag.md`). A whole-clip drag sends the clip's own span and
     /// track as the rect. The selection follows the copy.
     CopyRange {
         /// The grabbed block, frozen at press time.
@@ -647,7 +647,7 @@ pub(crate) enum SequencerCommand {
     /// (`InputEvent::ApplyStagedProject`).
     ApplyStagedProject,
     /// The launch dialog's answer (`InputEvent::AnswerRecovery`): stage the
-    /// crash recovery copy, or delete it. See `410-crash-recovery.md`.
+    /// crash recovery copy, or delete it. See `archive/410-crash-recovery.md`.
     AnswerRecovery {
         /// Restore, not Discard.
         restore: bool,
@@ -659,7 +659,7 @@ pub(crate) enum SequencerCommand {
     LibraryChanged(LibraryChange),
     /// Hand the current project to the `"storage"` thread to be written to
     /// `folder/filename.stev`; its outcome comes back as
-    /// [`ProjectWritten`](Self::ProjectWritten). See `420-large-projects.md`.
+    /// [`ProjectWritten`](Self::ProjectWritten). See `archive/420-large-projects.md`.
     SaveProject {
         /// Project file name, without extension.
         filename: String,
@@ -678,7 +678,7 @@ pub(crate) enum SequencerCommand {
     /// From the `"storage"` thread: how a save or a template went. Says so in
     /// the footer; a project saved counts as saved as it was when handed
     /// over, and the project actions held behind the save then run
-    /// (`420-large-projects.md` decisions 5 and 6). Goes ahead of every hold,
+    /// (`archive/420-large-projects.md` decisions 5 and 6). Goes ahead of every hold,
     /// as it is done on disk already.
     ProjectWritten(SaveOutcome),
     /// Write the lead clip to a `.mid` in `folder`, named after the project
@@ -750,7 +750,7 @@ pub(crate) enum SequencerCommand {
     },
     /// The performance lane's gutter: how far each lane key jumps, from the
     /// next key pressed. Saved with the project, not an undo step
-    /// (`510-performance-lane-keyboard.md` § Step 1b).
+    /// (`archive/510-performance-lane-keyboard.md` § Step 1b).
     SetPerformanceLaneKeyLength(KeyLength),
     /// The settings modal picked the keyboard's size: the lane's hand is
     /// placed afresh for it (`570-lane-octave-buttons.md` § 2). Settings,

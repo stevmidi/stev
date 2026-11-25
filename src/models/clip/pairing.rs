@@ -175,7 +175,7 @@ impl Clip {
     /// Drops every note whose `NoteOn` falls in `window`, its `NoteOff` with
     /// it, still held or not. A pass of a running take framed on its own
     /// drops the notes just before its end that anticipate the next pass's
-    /// downbeat (`540-earlier-pass.md` decision 7).
+    /// downbeat (`archive/540-earlier-pass.md` decision 7).
     pub(crate) fn drop_notes_starting_in(&mut self, window: Range<i32>) {
         let starts_in_window = |event: &Event| {
             event.event_type() == Some(EventType::NoteOn) && window.contains(&event.tick())

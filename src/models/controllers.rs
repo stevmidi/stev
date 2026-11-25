@@ -14,8 +14,8 @@
 //! [`take_resets`](ControllerTracker::take_resets) them there. A jump lifts
 //! the pedal at once ([`jump`](ControllerTracker::jump)), so the notes it
 //! releases stop ringing even where the pedal is down on both sides of it
-//! (`530-sustain-capture.md` decision 4). A
-//! parameter has none (`400-parameter-knobs.md` decision 9): it is chased
+//! (`archive/530-sustain-capture.md` decision 4). A
+//! parameter has none (`archive/400-parameter-knobs.md` decision 9): it is chased
 //! where a clip has data for it and otherwise left where it was, a stop
 //! included. Values are `f64`: a MIDI controller's in its own units, a
 //! parameter's normalized. Pure data, unit-tested at the bottom of the file.
@@ -351,7 +351,7 @@ mod tests {
 
     /// A parameter has no rest: a stop leaves it, a chase with no data for
     /// it leaves it, and one with data moves it
-    /// (`400-parameter-knobs.md` decision 9).
+    /// (`archive/400-parameter-knobs.md` decision 9).
     #[test]
     fn a_parameter_is_never_reset_and_only_chased_to_data() {
         let mut tracker = ControllerTracker::default();
@@ -437,7 +437,7 @@ mod tests {
         assert!(tracker.next_due().is_none());
     }
 
-    // --- The sustain pedal (`530-sustain-capture.md`) ---
+    // --- The sustain pedal (`archive/530-sustain-capture.md`) ---
 
     /// The pedal is chased like the mod wheel: down where a clip holds it
     /// down, back up in a gap, and up on a stop.

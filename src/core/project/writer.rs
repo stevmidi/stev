@@ -2,8 +2,8 @@
 //! saves, templates, and the crash recovery copy's writes and deletes, in the
 //! order the `"sequencer"` thread sent them. Everything slow about a save —
 //! encoding the plugin state, the JSON, the disk — happens here, off the
-//! thread that plays. See `420-large-projects.md` decisions 3 and 4 and
-//! `410-crash-recovery.md` decision 5.
+//! thread that plays. See `archive/420-large-projects.md` decisions 3 and 4 and
+//! `archive/410-crash-recovery.md` decision 5.
 
 use std::io;
 use std::iter;
@@ -33,7 +33,7 @@ pub(crate) enum StorageJob {
     /// Delete the recovery copy, if there is one.
     DeleteCopy,
     /// Write the project to `target`, then report how it went. Never
-    /// dropped (`420-large-projects.md` decision 4).
+    /// dropped (`archive/420-large-projects.md` decision 4).
     Save {
         /// The project as it was at the handover; encoded by the job.
         snapshot: ProjectSnapshot,

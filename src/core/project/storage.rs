@@ -270,7 +270,7 @@ pub(super) fn write_project_in(dir: &Path, data: &ProjectData, name: &str) -> io
 /// left behind has no project extension, so the browser never lists it, and
 /// the next save replaces it. Nothing is synced to disk: a full sync took
 /// 20-25 ms on an SSD, when a project still saved on the `"sequencer"`
-/// thread. It now saves on the `"storage"` thread (`420-large-projects.md`).
+/// thread. It now saves on the `"storage"` thread (`archive/420-large-projects.md`).
 pub(crate) fn replace_file(path: &Path, contents: &str) -> io::Result<()> {
     write_through_temp(
         path,
@@ -489,7 +489,7 @@ pub(crate) fn rename_project(folder: Option<&str>, old: &str, new: &str) -> io::
 /// byte for byte as Finder would, and returns the name the copy took: its
 /// own, or with `_2`, `_3`, … after it while that is taken in `to_folder` —
 /// in any case, where the volume doesn't tell them apart. So a copy into its
-/// own folder is a duplicate. The browser's paste (`430-browser-clipboard.md`).
+/// own folder is a duplicate. The browser's paste (`archive/430-browser-clipboard.md`).
 pub(crate) fn copy_project(from: &ProjectOrigin, to_folder: Option<&str>) -> io::Result<String> {
     copy_project_between(
         &resolve_dir(from.folder.as_deref()),
@@ -517,7 +517,7 @@ fn copy_project_between(from: &Path, name: &str, to: &Path) -> io::Result<String
 /// and returns the name it took there, by [`copy_project`]'s rule. A rename
 /// across folders: the projects root and its folders are on one volume, so
 /// the move is atomic, and it never replaces another file. A move into its
-/// own folder moves nothing (`430-browser-clipboard.md`).
+/// own folder moves nothing (`archive/430-browser-clipboard.md`).
 pub(crate) fn move_project(from: &ProjectOrigin, to_folder: Option<&str>) -> io::Result<String> {
     move_project_between(
         &resolve_dir(from.folder.as_deref()),

@@ -54,7 +54,7 @@ pub(crate) fn bars_text(start: i32, end: i32, meter: Meter) -> String {
 }
 
 /// The span `[start, end)` as the footer names a marquee-framed capture
-/// (`470-marquee-capture.md` decision 7): [`bars_text`] when both edges sit
+/// (`archive/470-marquee-capture.md` decision 7): [`bars_text`] when both edges sit
 /// on bar lines, otherwise the two edges as the ruler counts positions
 /// (`3+2–5`).
 pub(crate) fn span_label(start: i32, end: i32, meter: Meter) -> String {
@@ -72,7 +72,7 @@ pub(crate) fn span_label(start: i32, end: i32, meter: Meter) -> String {
 
 /// A length as the footer names it, in whole bars and beats of `meter`:
 /// `6 bars`, `1 bar 2 beats`, `3 beats`; `under a beat` for less. What a
-/// performance-lane capture says it kept (`520-performance-capture.md`).
+/// performance-lane capture says it kept (`archive/520-performance-capture.md`).
 pub(crate) fn length_label(ticks: i32, meter: Meter) -> String {
     let bars = (ticks / meter.bar_ticks()).max(0) as usize;
     let beats = (ticks % meter.bar_ticks() / meter.beat_ticks()).max(0) as usize;

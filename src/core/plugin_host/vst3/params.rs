@@ -16,7 +16,7 @@
 //!
 //! The same [`HostParameterChanges`] carries **MIDI CCs**, which VST3 has no
 //! other way to express — see [`events`](super::events) — and a clip's
-//! recorded knob turns (`400-parameter-knobs.md`). Those are pushed straight
+//! recorded knob turns (`archive/400-parameter-knobs.md`). Those are pushed straight
 //! in on the audio thread rather than crossing the ring, placed on their
 //! sample as clip events are.
 //!

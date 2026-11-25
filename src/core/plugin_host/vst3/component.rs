@@ -270,7 +270,7 @@ unsafe fn activate(
 
 /// Activates `component` again for `activation`, in place: stop processing,
 /// deactivate, `setupProcessing` with the new rate and mode, activate
-/// (`480-audio-settings.md` decision 8; `archive/490-offline-export.md` decision 6
+/// (`archive/480-audio-settings.md` decision 8; `archive/490-offline-export.md` decision 6
 /// for the mode, `kOffline` for an audio export's render). The instance, its controller and
 /// its state are untouched. Returns the plugin's tail at the new rate
 /// (`getTailSamples` counts samples) and the activation it was set up for

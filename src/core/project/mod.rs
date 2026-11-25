@@ -6,8 +6,8 @@
 //! change (`fingerprint`), the crash recovery copy on disk (`recovery`), and
 //! the `"storage"` thread's jobs, saves and the copy's (`writer`). Test-only:
 //! the recovery timing (`recovery_timing`) and the stress project (`stress`).
-//! See `060-persistence.md`, `410-crash-recovery.md` and
-//! `420-large-projects.md`.
+//! See `060-persistence.md`, `archive/410-crash-recovery.md` and
+//! `archive/420-large-projects.md`.
 
 mod action;
 mod dto;

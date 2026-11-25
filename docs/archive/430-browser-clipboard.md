@@ -1,6 +1,6 @@
 # Browser Copy, Cut and Paste
 
-**Status: design agreed 2026-11-10; phase 1 (copy and paste) and phase 2 (cut and move) built 2026-11-10. Complete. Issue: #25.** The browser panel copies, cuts and pastes projects with ⌘C, ⌘X and ⌘V, and moves them Finder's way with ⌥⌘V. It is how a project moves to another folder, or gets duplicated, without leaving Stev.
+**Archived 2026-11-25. Status: design agreed 2026-11-10; phase 1 (copy and paste) and phase 2 (cut and move) built 2026-11-10. Complete. Issue: #25.** The browser panel copies, cuts and pastes projects with ⌘C, ⌘X and ⌘V, and moves them Finder's way with ⌥⌘V. It is how a project moves to another folder, or gets duplicated, without leaving Stev.
 
 ## Background
 

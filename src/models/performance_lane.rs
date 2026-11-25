@@ -5,11 +5,11 @@
 //! the **run**: the presses since playback started, each with where it
 //! jumped, on a clock of its own that counts only the ticks playback
 //! advances, which `/` renders into clips at the arranger cursor
-//! (`520-performance-capture.md` decisions 1 and 2): [`PerformanceLane::take_run`]
+//! (`archive/520-performance-capture.md` decisions 1 and 2): [`PerformanceLane::take_run`]
 //! gives it as a [`Take`], the stretches of the arrangement it played.
 //! The lane's keys run on along the timeline from bar 1, a keyboard of
 //! them, key 0 a C ([`key_pitch_class`], which the arranger draws them
-//! from, `510-performance-lane-keyboard.md`; unnamed,
+//! from, `archive/510-performance-lane-keyboard.md`; unnamed,
 //! `570-lane-octave-buttons.md` § 4). [`Hand`] is the player's hand on
 //! the lane: the notes a keyboard of a [`KeybedSize`] from settings sends
 //! at its home octave, laid along the timeline by whole octaves around the
@@ -33,7 +33,7 @@ pub(crate) struct PerformanceLane {
     stop_pending: bool,
 }
 
-/// One run of presses (`520-performance-capture.md` decision 2): from the
+/// One run of presses (`archive/520-performance-capture.md` decision 2): from the
 /// press that started it, each press stamped with the run's own clock.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Run {
@@ -56,7 +56,7 @@ struct Run {
     expected_tick: i32,
 }
 
-/// What a run played, for its render (`520-performance-capture.md`
+/// What a run played, for its render (`archive/520-performance-capture.md`
 /// decision 1): its stretches of the arrangement, in order, and its length.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Take {
@@ -381,7 +381,7 @@ impl Hand {
 
 /// How far each of the lane's keys jumps: a bar, half a bar or a beat of
 /// the project's meter, picked from the lane's gutter and saved with the
-/// project (`510-performance-lane-keyboard.md` § Step 1b). The stored choice;
+/// project (`archive/510-performance-lane-keyboard.md` § Step 1b). The stored choice;
 /// what plays is [`in_meter`](Self::in_meter) of it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub(crate) enum KeyLength {

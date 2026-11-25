@@ -1,5 +1,5 @@
 //! The knob panel's link to the selected track's plugin
-//! (`400-parameter-knobs.md`): the hint shown instead of knobs where they
+//! (`archive/400-parameter-knobs.md`): the hint shown instead of knobs where they
 //! can't drive anything, a parameter's name, default and value, setting it,
 //! what the plugin's own editor reports — a turn's start, which assigns an
 //! armed knob, and a turn of a knob's parameter, the hand's as a drag is —
@@ -89,7 +89,7 @@ impl Display {
 
     /// Per frame: tells each plugin's editor where playback put its knobs'
     /// parameters, so the plugin and the knob show the value in force
-    /// (`400-parameter-knobs.md` decision 6). The processor heard each move
+    /// (`archive/400-parameter-knobs.md` decision 6). The processor heard each move
     /// on its sample already.
     pub(super) fn follow_played_knobs(&mut self) {
         for track_idx in 0..self.tracks.len() {
@@ -131,7 +131,7 @@ impl Display {
 
     /// One gesture from the editor of the plugin in engine slot `slot`. A
     /// turn's start assigns the armed knob, when that plugin is its track's
-    /// (`400-parameter-knobs.md` decision 3). A turn of a parameter one of
+    /// (`archive/400-parameter-knobs.md` decision 3). A turn of a parameter one of
     /// that track's knobs holds is the hand's, as a drag is: its start and
     /// end hold the knob against playback (decision 6), and its moves are
     /// counted by the unsaved prompt and captured (decisions 9 and 10). A
@@ -140,7 +140,7 @@ impl Display {
     /// marking its state dirty, are its word that something changed, and
     /// the unsaved prompt counts them. Every one of these sends the plugin's
     /// state to the crash recovery copy once the plugin is quiet
-    /// (`410-crash-recovery.md` decision 6).
+    /// (`archive/410-crash-recovery.md` decision 6).
     fn handle_parameter_gesture(&mut self, slot: usize, gesture: ParameterGesture) {
         let Some(track_idx) = self.tracks.iter().position(|lane| lane.slot == slot) else {
             return;

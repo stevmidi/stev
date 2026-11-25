@@ -1,4 +1,4 @@
-//! The knob panel's sequencer side (`400-parameter-knobs.md`): what each
+//! The knob panel's sequencer side (`archive/400-parameter-knobs.md`): what each
 //! track's knobs drive, set by a project load, and the hand turning them.
 //! Turning a knob is not undoable, like volume and pan; assigning one is
 //! (`SetKnobParamEdit`). The parameter itself is set by the view, straight on
@@ -58,7 +58,7 @@ impl Sequencer {
     /// (normalized, clamped to `0.0..=1.0`) at `tick`, its `clock_tick` — a
     /// drag in the knob panel, or the parameter's control turned in the
     /// plugin's editor. Counts toward the unsaved prompt
-    /// (`400-parameter-knobs.md` decision 9), and a held knob's turn goes
+    /// (`archive/400-parameter-knobs.md` decision 9), and a held knob's turn goes
     /// into the capture buffer (decision 10): a move outside a turn is the
     /// plugin's own doing, a preset it loaded. Out-of-range indices are
     /// ignored.

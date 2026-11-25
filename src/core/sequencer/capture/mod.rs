@@ -7,7 +7,7 @@
 //! into an existing clip, from either pane. The
 //! window that gets frozen is derived from the loop region, or from the
 //! arranger marquee when one frames a new clip — see
-//! `100-running-capture.md` for the invariants and `470-marquee-capture.md`.
+//! `100-running-capture.md` for the invariants and `archive/470-marquee-capture.md`.
 //!
 //! ## Module split
 //!
@@ -21,7 +21,7 @@
 //!   framing the notes to insert, heard in place (`archive/290-framing-a-take.md`).
 //! - `passes.rs` — the pass grid of a looping take, and one pass framed
 //!   into a new clip (the running `/`, and `,`/`.` after it,
-//!   `540-earlier-pass.md`).
+//!   `archive/540-earlier-pass.md`).
 //! - `window.rs` — the pure `calculate_*` helpers that derive bar-aligned
 //!   capture / phrase windows (`100-running-capture.md`, `040-phrase-detection.md`).
 //! - `phrase_tokens.rs` — phrase-token detection: where the last phrase starts.
@@ -102,7 +102,7 @@ pub(crate) enum TakePlace {
 }
 
 /// Why a marquee-framed `/` was refused
-/// ([`Sequencer::capture_framing`], `470-marquee-capture.md`).
+/// ([`Sequencer::capture_framing`], `archive/470-marquee-capture.md`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum MarqueeRefusal {
     /// Running and looping, the marquee isn't inside the loop region, so it
@@ -138,7 +138,7 @@ impl MarqueeRefusal {
     }
 }
 
-/// What frames a `/` ([`Sequencer::capture_framing`], `470-marquee-capture.md`).
+/// What frames a `/` ([`Sequencer::capture_framing`], `archive/470-marquee-capture.md`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CaptureFraming {
     /// Nothing: the loop frames a new clip, a running insert lands the
@@ -191,7 +191,7 @@ impl Sequencer {
     /// and clears the buffer.
     ///
     /// `marquee` is the arranger marquee's tick span `[start, end)`, when it
-    /// frames the capture (`470-marquee-capture.md` decision 3): the take is
+    /// frames the capture (`archive/470-marquee-capture.md` decision 3): the take is
     /// kept exactly as without it, but the region is the marquee's span —
     /// its phases of the last pass when looping, its stretch of arrangement
     /// time when linear — placed at its start, never clamped to the room
@@ -200,7 +200,7 @@ impl Sequencer {
     ///
     /// The pass grid is the one the clip was framed on, when `,`/`.` can
     /// step it through the earlier passes: while looping, with a marquee or
-    /// without (`540-earlier-pass.md` decision 9).
+    /// without (`archive/540-earlier-pass.md` decision 9).
     ///
     /// [`CommitClipEdit`]: crate::core::sequencer::edit::CommitClipEdit
     pub(crate) fn build_committed_capture(
@@ -279,7 +279,7 @@ impl Sequencer {
     }
 
     /// What the view's `frame` does to a `/` now, or why it is refused
-    /// (`470-marquee-capture.md`):
+    /// (`archive/470-marquee-capture.md`):
     ///
     /// - Without a lead clip, the arranger's marquee with a tick range frames
     ///   a new clip ([`new_clip_refusal`](Self::new_clip_refusal)).
@@ -543,14 +543,14 @@ impl Sequencer {
     /// latch to the window's end. Either way never past the clip's end.
     ///
     /// `punch_in` is a span of arrangement ticks inside the clip
-    /// ([`CaptureFraming::PunchIn`]) when a marquee frames the `/` (`470-marquee-capture.md` decision 9): the window is
+    /// ([`CaptureFraming::PunchIn`]) when a marquee frames the `/` (`archive/470-marquee-capture.md` decision 9): the window is
     /// chosen as without it, then only what was played inside the span
     /// lands ([`Clip::punch_in`]), and the wheels latch to its end at the
     /// latest.
     ///
     /// The landing is frozen in the [`InsertGrid`] returned with the events,
     /// so `,`/`.` can land the earlier passes the same way
-    /// (`540-earlier-pass.md` phase 2).
+    /// (`archive/540-earlier-pass.md` phase 2).
     ///
     /// [`InsertCaptureEdit`]: crate::core::sequencer::edit::InsertCaptureEdit
     pub(crate) fn build_running_capture_insert(
@@ -2446,7 +2446,7 @@ mod tests {
         assert!(take_after_wheel(&[[0xB0, 14, 64]]).is_empty());
     }
 
-    // --- Parameter knobs (`400-parameter-knobs.md` decision 10) ---
+    // --- Parameter knobs (`archive/400-parameter-knobs.md` decision 10) ---
 
     /// The parameter on knob 0 of the selected track.
     const CUTOFF: u32 = 714;
@@ -3264,7 +3264,7 @@ mod tests {
 
     /// The sustain pedal held down into the take starts it on the cursor,
     /// as a wheel does; one lifted adds nothing; half-pedalling is carried
-    /// at its value (`530-sustain-capture.md` decisions 1–2).
+    /// at its value (`archive/530-sustain-capture.md` decisions 1–2).
     #[test]
     fn a_pedal_held_down_is_carried_into_the_take() {
         assert_eq!(
@@ -3280,7 +3280,7 @@ mod tests {
 
     /// Running with a lead clip, riding the pedal alone replaces the clip's
     /// pedal from the first press to the window's end and leaves its mod
-    /// wheel; ⌘Z brings the old pedal back (`530-sustain-capture.md`
+    /// wheel; ⌘Z brings the old pedal back (`archive/530-sustain-capture.md`
     /// decision 3).
     #[test]
     fn a_running_take_of_the_pedal_alone_lands_in_the_lead_clip() {
@@ -3451,7 +3451,7 @@ mod tests {
         assert!(seq.kick_live_meter(&[0x90, 60, 100]));
     }
 
-    // --- The marquee frames the capture (`470-marquee-capture.md`) ---
+    // --- The marquee frames the capture (`archive/470-marquee-capture.md`) ---
 
     /// One note-on a bar, 100 ticks in, for bars `0..bars`.
     fn note_each_bar(seq: &mut Sequencer, bars: i32) {
@@ -3622,7 +3622,7 @@ mod tests {
         assert!(seq.build_committed_capture(Some((0, bar))).is_none());
     }
 
-    // --- The punch-in overdub (`470-marquee-capture.md` decision 9) ---
+    // --- The punch-in overdub (`archive/470-marquee-capture.md` decision 9) ---
 
     /// A note of `pitch` from `on` to `off`.
     fn pitched_note(pitch: u8, on: i32, off: i32) -> [Event; 2] {

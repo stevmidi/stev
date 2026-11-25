@@ -83,7 +83,7 @@ pub(crate) struct Clip {
     /// between the clip's copies (undo, the clipboard, a project snapshot,
     /// the fingerprint's cache) and written only through
     /// [`events_mut`](Self::events_mut), so contents that are shared are
-    /// never edited in place (`420-large-projects.md` decision 8).
+    /// never edited in place (`archive/420-large-projects.md` decision 8).
     events: Arc<Vec<Event>>,
     /// Position of the clip on the *arrangement* timeline — a position.
     start_tick: i32,
@@ -196,7 +196,7 @@ impl Clip {
     /// The clip's events as shared: a pointer to the same allocation means
     /// the same events, since shared events are never edited in place. What
     /// a project snapshot and the fingerprint's cache hold
-    /// (`420-large-projects.md` decision 8).
+    /// (`archive/420-large-projects.md` decision 8).
     pub(crate) fn shared_events(&self) -> &Arc<Vec<Event>> {
         &self.events
     }

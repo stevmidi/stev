@@ -70,7 +70,7 @@ impl EventHandlers {
     }
 
     /// Selects the performance lane, the arranger's other kind of selected
-    /// row (`450-performance-lane-selection.md` decision 1): the lead clip,
+    /// row (`archive/450-performance-lane-selection.md` decision 1): the lead clip,
     /// the track selection and the marquee go, and the armed lane maps the
     /// physical MIDI keyboard to bar-jump triggers instead of note capture.
     pub(super) fn select_performance_lane_workflow(&self, sequencer: &mut Sequencer) {
@@ -302,9 +302,9 @@ impl EventHandlers {
     /// changed, then the marquee, sent last so the view re-latches the
     /// cursor and track it is anchored to (`020-views-and-state.md`). The
     /// focus, the layout, the loop and playback are untouched
-    /// (`440-undo-view-state.md` decision 6); the performance lane is left
+    /// (`archive/440-undo-view-state.md` decision 6); the performance lane is left
     /// by a track put back and never armed
-    /// (`450-performance-lane-selection.md` decision 4).
+    /// (`archive/450-performance-lane-selection.md` decision 4).
     pub(super) fn restore_view_workflow(&self, sequencer: &mut Sequencer, view: ViewSnapshot) {
         // The cursor first, so a lead clip put back takes it as its own
         // (`change_lead_clip`). A lead that stays keeps its clip cursor
@@ -333,12 +333,12 @@ impl EventHandlers {
     /// its track span always named. The sequencer's mirror of the marquee
     /// (`Sequencer::marquee`) is set in the same step, so an undo step's
     /// `after` sees it at once rather than a frame later, when the view
-    /// would echo it back (`440-undo-view-state.md` decision 4). Sent after
+    /// would echo it back (`archive/440-undo-view-state.md` decision 4). Sent after
     /// any cursor or track move of the same workflow: the view re-latches
     /// the cursor and track the marquee is anchored to when it arrives
     /// (`020-views-and-state.md` § Arranger Time Selection). Refused while
     /// the performance lane is armed, when no marquee exists
-    /// (`450-performance-lane-selection.md` decision 3): the view's is
+    /// (`archive/450-performance-lane-selection.md` decision 3): the view's is
     /// dropped instead.
     pub(super) fn set_marquee_workflow(&self, sequencer: &mut Sequencer, rect: TimeSelectionRect) {
         if sequencer.is_performance_lane_armed() {

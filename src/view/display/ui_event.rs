@@ -118,7 +118,7 @@ pub(crate) enum UiEvent {
         retime: EventSpaceRetime,
     },
     /// A knob's mapping went (`SetKnobParamEdit` to none): the footer says
-    /// what went (`400-parameter-knobs.md` decision 14).
+    /// what went (`archive/400-parameter-knobs.md` decision 14).
     KnobMappingRemoved {
         /// The knob's track.
         track_idx: usize,
@@ -231,7 +231,7 @@ pub(crate) enum UiEvent {
     /// Quitting was asked for and nothing is left unsaved (or the prompt said
     /// Don't Save): close the window.
     QuitApproved,
-    /// The audio engine restarted (`480-audio-settings.md` decision 5) —
+    /// The audio engine restarted (`archive/480-audio-settings.md` decision 5) —
     /// and at launch, the first open: what it runs now, for the Audio tab.
     AudioRunning {
         /// The running stream; `None` with no device open.
@@ -300,7 +300,7 @@ pub(crate) enum UiEvent {
     },
     /// Set the Arranger time selection to `rect`, its track span always
     /// named: the sequencer resolves any fallback itself, so its mirror of
-    /// the marquee and the view can't disagree (`440-undo-view-state.md`
+    /// the marquee and the view can't disagree (`archive/440-undo-view-state.md`
     /// decision 4). Pushed by both Duplicate workflows so the selection
     /// advances onto the fresh copy and repeated `⌘/Ctrl+D`/`Shift+⌘/Ctrl+D`
     /// chains down the timeline, by the clip band press

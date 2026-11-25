@@ -31,7 +31,7 @@ impl Display {
     /// anchor track resolves via `track_idx_at`. A press on the
     /// performance-lane row anchors nothing: it selects the lane, and no
     /// marquee exists while the lane is selected
-    /// (`450-performance-lane-selection.md` decision 3). Arranger only.
+    /// (`archive/450-performance-lane-selection.md` decision 3). Arranger only.
     pub(super) fn begin_time_selection(&mut self, tick_x: i32, y: f32) {
         if self.active_pane() != Pane::Arranger {
             return;
@@ -527,7 +527,7 @@ impl Display {
     }
 
     /// Takes ⌥'s state for a live note drag, once a frame before the input
-    /// is handled (`460-copy-drag.md` § Phase 2): pressing or releasing ⌥
+    /// is handled (`archive/460-copy-drag.md` § Phase 2): pressing or releasing ⌥
     /// with the pointer still sends no `MouseMoved`, and the drag is applied
     /// live, so a change on a move away from its press sends a step of its
     /// own — the copies appear or go at once.
@@ -1042,7 +1042,7 @@ impl Display {
     }
 
     /// Takes ⌥'s state for a live mouse band drag, once a frame before the
-    /// input is handled (`460-copy-drag.md`): pressing or releasing ⌥ with
+    /// input is handled (`archive/460-copy-drag.md`): pressing or releasing ⌥ with
     /// the pointer still sends no `MouseMoved`, so the drag can't take it
     /// from the motion alone. A keyboard nudge never copies.
     pub(in crate::view::display) fn sync_clip_move_copy(&mut self, alt: bool) {
@@ -1232,7 +1232,7 @@ impl Display {
     /// recorded included (its live end is a real edge). No clips ⇒ no-op,
     /// selection kept — there is nothing to select. Nothing either while the
     /// performance lane is selected, when no marquee exists
-    /// (`450-performance-lane-selection.md` decision 3).
+    /// (`archive/450-performance-lane-selection.md` decision 3).
     pub(super) fn select_all_clips(&mut self) {
         if self.performance_lane_selected() {
             return;
@@ -1617,7 +1617,7 @@ fn clip_hull_selection(
 /// The event a band drag's release sends, `None` when the ghost never left
 /// the block's own position (a click, or a drag returned home). With ⌥ held
 /// (`ClipMoveDrag::copy`) it is a copy of the grabbed block, the clip's own
-/// span and track for a whole-clip drag (`460-copy-drag.md` decision 5);
+/// span and track for a whole-clip drag (`archive/460-copy-drag.md` decision 5);
 /// otherwise a move, by id for a whole clip.
 fn release_event(drag: &ClipMoveDrag) -> Option<InputEvent> {
     if !(drag.dragging && drag.has_moved()) {

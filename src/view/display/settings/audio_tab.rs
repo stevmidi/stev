@@ -1,4 +1,4 @@
-//! The settings modal's Audio tab state (`480-audio-settings.md` decision 1):
+//! The settings modal's Audio tab state (`archive/480-audio-settings.md` decision 1):
 //! the output-device list (System default first, then every device), the
 //! sample rates and buffer sizes the running device offers, the user's
 //! choice, which section has the focus with a cursor in each, and what the

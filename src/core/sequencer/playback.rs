@@ -319,7 +319,7 @@ impl Sequencer {
     /// player moved last on the armed track is left where it is
     /// (`Track::hand_controller_to_player`), and a knob's parameter has no
     /// rest: it stays where it was
-    /// (`400-parameter-knobs.md` decision 9).
+    /// (`archive/400-parameter-knobs.md` decision 9).
     pub(crate) fn reset_controllers(&mut self) {
         for track_idx in 0..self.tracks.len() {
             self.send_controller_resets(track_idx);
@@ -364,7 +364,7 @@ impl Sequencer {
     /// ringing, and makes every track's next seek resend the controller
     /// values it sent — the jump drops the `"midiout"` delay queue the last
     /// of them may still have sat in ([`Track::jump_controllers`],
-    /// `530-sustain-capture.md` decision 4). Called before the seek, whose
+    /// `archive/530-sustain-capture.md` decision 4). Called before the seek, whose
     /// chase presses the pedal again where playback lands down. On MIDI Out
     /// the lift and the jump's note-offs (the `NoteLogger`'s `ReleaseNotes`,
     /// on another channel) reach the `"midiout"` thread in either order;
@@ -925,7 +925,7 @@ mod tests {
 
     /// A plugin track gets the pedal's lift on a jump and its reset on a
     /// stop on its slot, now; the chase presses it again on the clip's
-    /// instant (`530-sustain-capture.md` decision 4). The player's own pedal
+    /// instant (`archive/530-sustain-capture.md` decision 4). The player's own pedal
     /// is left down by both.
     #[test]
     fn a_plugin_tracks_pedal_lifts_on_a_jump_and_a_stop() {

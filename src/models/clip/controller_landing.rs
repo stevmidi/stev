@@ -1,6 +1,6 @@
 //! Landing a captured take's controller moves in a clip — pitch bend, the
 //! mod wheel, the sustain pedal and the knobs' parameters — by the latch rule of
-//! `370-wheel-capture.md` § Decisions 5–7, which `400-parameter-knobs.md`
+//! `370-wheel-capture.md` § Decisions 5–7, which `archive/400-parameter-knobs.md`
 //! decision 10 applies per parameter.
 //!
 //! A take's notes are added to the clip, same-pitch overlaps resolved as the
@@ -16,7 +16,7 @@
 //! just ahead of the turn's first move (`Sequencer::hold_knob`) — is written
 //! at the window's start, so a loop wrap chases it as it chases a wheel's
 //! rest ([`hold_start_values`](Clip::hold_start_values),
-//! `400-parameter-knobs.md` decision 10).
+//! `archive/400-parameter-knobs.md` decision 10).
 //!
 //! A lane's `Delete` is built on the same rule: a span of a wheel returned
 //! to rest, a span of a parameter held at the value before it
@@ -357,7 +357,7 @@ impl Clip {
 
     /// Rewrites every move of a parameter `matches` accepts, muted ones
     /// too: onto parameter `to`, or gone with `None`
-    /// (`400-parameter-knobs.md` decisions 7, 8 and 14).
+    /// (`archive/400-parameter-knobs.md` decisions 7, 8 and 14).
     pub(crate) fn rewrite_param_moves(
         &mut self,
         matches: impl Fn(PluginParam) -> bool,
@@ -492,7 +492,7 @@ mod tests {
 
     /// Clearing a span with nothing in it, or rewriting moves of a parameter
     /// the clip doesn't hold, writes nothing, so shared events stay shared
-    /// (`420-large-projects.md` decision 8).
+    /// (`archive/420-large-projects.md` decision 8).
     #[test]
     fn a_rewrite_with_nothing_to_do_keeps_the_events_shared() {
         let mut clip = clip_with(vec![param(0, 714, 0.25), param(BAR, 714, 0.75)]);
@@ -957,7 +957,7 @@ mod tests {
 
     /// The `SUS` lane's `Delete` returns the pedal to up over the span: the
     /// presses inside go, a lift goes in at the start, and the pedal held
-    /// down at the end is pressed again there (`530-sustain-capture.md`
+    /// down at the end is pressed again there (`archive/530-sustain-capture.md`
     /// decision 7).
     #[test]
     fn clearing_a_pedal_span_lifts_the_pedal() {

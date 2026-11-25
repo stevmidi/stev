@@ -66,7 +66,7 @@ pub(crate) struct SettingsData {
     /// absent before the bridge existed: off.
     #[serde(default)]
     pub(crate) agent_bridge: bool,
-    /// The Audio tab's output device (`480-audio-settings.md` decision 4):
+    /// The Audio tab's output device (`archive/480-audio-settings.md` decision 4):
     /// its persistent ID and its name, for the list while it isn't
     /// connected. `None`, and absent before the tab existed: System default.
     #[serde(default)]

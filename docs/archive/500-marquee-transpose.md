@@ -1,6 +1,6 @@
 # Transposing Clips from the Arranger
 
-**Status: design agreed 2026-11-16; built 2026-11-16 (issue #36).** With an arranger marquee that covers whole clips, `⌥↑`/`⌥↓` move every note in those clips up or down a semitone, across all the marquee's tracks at once; `⇧⌥↑`/`⇧⌥↓` move them an octave. A marquee that cuts through a clip is refused. One undo step per press. Nothing detects a key: you press, listen in the loop, and press again until the idea sits with the others.
+**Archived 2026-11-25. Status: design agreed 2026-11-16; built 2026-11-16 (issue #36).** With an arranger marquee that covers whole clips, `⌥↑`/`⌥↓` move every note in those clips up or down a semitone, across all the marquee's tracks at once; `⇧⌥↑`/`⇧⌥↓` move them an octave. A marquee that cuts through a clip is refused. One undo step per press. Nothing detects a key: you press, listen in the loop, and press again until the idea sits with the others.
 
 ## Background
 

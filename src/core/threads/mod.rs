@@ -16,8 +16,8 @@
 //! - `sequencer_pump.rs` — the `"sequencer"` thread, the hub: the tick pump
 //!   plus every command dispatch (`150-clock-position-sync.md`).
 //! - `storage.rs` — the `"storage"` thread, the project's one writer: saves,
-//!   templates and the crash recovery copy (`420-large-projects.md`,
-//!   `410-crash-recovery.md`).
+//!   templates and the crash recovery copy (`archive/420-large-projects.md`,
+//!   `archive/410-crash-recovery.md`).
 //! - `controller.rs` — the parked MIDI-CC controller route, `#[allow(dead_code)]`
 //!   and never called; kept on purpose (`000-architecture.md`).
 //! - `agent_bridge.rs` (Unix) — the `"agent-bridge"` thread, the app's end of

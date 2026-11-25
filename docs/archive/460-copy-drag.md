@@ -1,6 +1,6 @@
 # ⌥-Drag Copies Clips
 
-**Status: design agreed 2026-11-12; built 2026-11-13 (issue #28). Phase 2, the piano roll's notes, built 2026-11-13 (§ Phase 2).** In the arranger, holding ⌥ while dragging a clip by its header band, or a marquee block, drops a copy and leaves the source where it was: the Finder, Logic and Ableton gesture. It is the band move drag (`020` § Clip Band Press & Move Drag) with a different commit, and the mouse twin of `⌘/Ctrl+D` with a destination the hand picks.
+**Archived 2026-11-25. Status: design agreed 2026-11-12; built 2026-11-13 (issue #28). Phase 2, the piano roll's notes, built 2026-11-13 (§ Phase 2).** In the arranger, holding ⌥ while dragging a clip by its header band, or a marquee block, drops a copy and leaves the source where it was: the Finder, Logic and Ableton gesture. It is the band move drag (`020` § Clip Band Press & Move Drag) with a different commit, and the mouse twin of `⌘/Ctrl+D` with a destination the hand picks.
 
 ## Background
 

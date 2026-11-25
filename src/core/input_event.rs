@@ -129,7 +129,7 @@ impl TimeSelectionRect {
 }
 
 /// The time selection a `/` carries, from whichever pane has the keyboard
-/// (`470-marquee-capture.md`); focusing one pane drops the other's, so there
+/// (`archive/470-marquee-capture.md`); focusing one pane drops the other's, so there
 /// is only ever one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CaptureFrame {
@@ -199,7 +199,7 @@ pub(crate) enum InputEvent {
     },
     /// Secondary-button press at `(x, y)` in screen space — a right-click,
     /// or a two-finger tap on a trackpad. View-local: on a knob it arms the
-    /// knob (`400-parameter-knobs.md` decision 3); it never reaches
+    /// knob (`archive/400-parameter-knobs.md` decision 3); it never reaches
     /// `EventHandlers`.
     MouseRightClicked {
         /// Pointer x in screen space.
@@ -375,7 +375,7 @@ pub(crate) enum InputEvent {
         rect: TimeSelectionRect,
     },
     /// `/`, the capture action, with the view's time selection stamped on
-    /// (`470-marquee-capture.md`). Forwarded to `SequencerCommand::Commit`.
+    /// (`archive/470-marquee-capture.md`). Forwarded to `SequencerCommand::Commit`.
     Commit {
         /// The focused pane's time selection, if any.
         frame: Option<CaptureFrame>,
@@ -411,7 +411,7 @@ pub(crate) enum InputEvent {
     /// `⌥↑`/`⌥↓` in the Arranger (`⇧` for an octave): transpose every note
     /// in the clips the marquee covers whole. The view sends this only with
     /// a marquee that has a tick range. Forwarded to
-    /// `SequencerCommand::TransposeClips` (`500-marquee-transpose.md`).
+    /// `SequencerCommand::TransposeClips` (`archive/500-marquee-transpose.md`).
     TransposeClipsInSelection {
         /// The marquee selection.
         rect: TimeSelectionRect,
@@ -585,7 +585,7 @@ pub(crate) enum InputEvent {
         /// The whole drag so far, from the press.
         drag: NoteDrag,
         /// ⌥ is held on a move: copies of the notes stay where they were
-        /// (`460-copy-drag.md` § Phase 2).
+        /// (`archive/460-copy-drag.md` § Phase 2).
         copy: bool,
         /// Identifies the gesture so its steps merge into one undo step.
         drag_id: u64,
@@ -729,7 +729,7 @@ pub(crate) enum InputEvent {
     },
     /// Arranger band drag — whole-clip or marquee — released with ⌥ held:
     /// copy the grabbed block there and leave the source
-    /// (`460-copy-drag.md`, `PasteClipsEdit::copying`, undoable). A whole-clip drag
+    /// (`archive/460-copy-drag.md`, `PasteClipsEdit::copying`, undoable). A whole-clip drag
     /// names the clip's own span and track as `rect`. ⌥ is read live
     /// through the drag and decided at release.
     CopyRange {
@@ -861,7 +861,7 @@ pub(crate) enum InputEvent {
     /// before it was staged. See `130-plugin-host.md` § Project persistence.
     ApplyStagedProject,
     /// The launch dialog's answer: restore the crash recovery copy, or discard
-    /// it. See `410-crash-recovery.md`.
+    /// it. See `archive/410-crash-recovery.md`.
     AnswerRecovery {
         /// Restore, not Discard.
         restore: bool,
@@ -926,7 +926,7 @@ pub(crate) enum InputEvent {
     /// persists the current preset. Sent by the macOS plugin host from the ⌘S
     /// handler, just before `ConfirmFilename`, and for the crash recovery copy
     /// when the plugin loads a preset or its editor closes
-    /// (`410-crash-recovery.md` decision 6).
+    /// (`archive/410-crash-recovery.md` decision 6).
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     CaptureTrackInstrumentState {
         /// The plugin's engine slot (`Track::slot`).
@@ -1037,7 +1037,7 @@ pub(crate) enum InputEvent {
     /// for every `egui::Event::Paste` regardless of clipboard contents; the
     /// Arranger pastes the clip clipboard and the clip view the note
     /// clipboard (any modifiers), the browser a copied project (plain ⌘V
-    /// only, `430-browser-clipboard.md`).
+    /// only, `archive/430-browser-clipboard.md`).
     Paste {
         /// Shift held at the moment of the chord.
         shift: bool,

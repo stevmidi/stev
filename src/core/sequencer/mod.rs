@@ -27,7 +27,7 @@
 //!   them.
 //! - `mix.rs` — the not-undoable per-track mixer writers.
 //! - `knobs.rs` — what the knobs drive, set by a load, and the hand's turns
-//!   for the unsaved check (`400-parameter-knobs.md`).
+//!   for the unsaved check (`archive/400-parameter-knobs.md`).
 //! - `export.rs` — the MIDI clip export: which clip, and its `.mid` bytes.
 //! - `audio_export.rs` — the audio export's plan (which tracks get a stem,
 //!   their file names, the span) and the run's start/end marks

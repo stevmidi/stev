@@ -73,7 +73,7 @@ impl Clip {
     /// outside its window and muted ones too — moving each `NoteOn` with its
     /// paired `NoteOff`: exactly `⌘A` then `↑`/`↓` in the clip view, without
     /// touching the selection. The arranger's marquee transpose
-    /// (`500-marquee-transpose.md` decision 3), which checks
+    /// (`archive/500-marquee-transpose.md` decision 3), which checks
     /// [`notes_fit_transposed`](Self::notes_fit_transposed) first so nothing
     /// is clamped.
     pub(crate) fn transpose_all_notes(&mut self, semitones: i32) {
@@ -94,7 +94,7 @@ impl Clip {
     }
 
     /// Whether every note in the clip stays inside MIDI's 0–127 when moved
-    /// by `semitones` (`500-marquee-transpose.md` decision 6).
+    /// by `semitones` (`archive/500-marquee-transpose.md` decision 6).
     pub(crate) fn notes_fit_transposed(&self, semitones: i32) -> bool {
         self.events
             .iter()

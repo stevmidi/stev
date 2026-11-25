@@ -7,7 +7,7 @@
 //! flag is shared with `MidiInputForwarder` (a different thread) so it can
 //! suppress MIDI thru for trigger keys, and with `Transport`, which doesn't
 //! wrap at the loop end while it is set — see `110-performance-lane.md` and
-//! `520-performance-capture.md`.
+//! `archive/520-performance-capture.md`.
 
 use std::sync::atomic::Ordering;
 

@@ -131,7 +131,7 @@ impl EventHandlers {
             | SequencerCommand::ExportAudio { .. }
             | SequencerCommand::ImportMidiClip { .. }
             // A knob's reassignment rewrites its data in the take's clip
-            // too (`400-parameter-knobs.md` decision 7).
+            // too (`archive/400-parameter-knobs.md` decision 7).
             | SequencerCommand::SetKnobParam { .. } => {
                 self.send_status_ui_event(FINISH_TAKE_FIRST.to_string());
             }

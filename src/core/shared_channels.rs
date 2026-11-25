@@ -131,7 +131,7 @@ pub(crate) struct SharedChannels {
     pub(crate) export_step_rx: Receiver<ExportStep>,
     /// `"sequencer"` thread's `RecoveryKeeper` → `"storage"` thread: every
     /// save, and every write and delete of the crash recovery copy, in order
-    /// (`420-large-projects.md` decision 3, `410-crash-recovery.md`
+    /// (`archive/420-large-projects.md` decision 3, `archive/410-crash-recovery.md`
     /// decision 5).
     pub(crate) storage_job_tx: Sender<StorageJob>,
     /// Receiving half of the pair documented above.

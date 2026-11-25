@@ -26,7 +26,7 @@ const MAX_INPUT_INTERP_NANOS: u64 = 2_000_000;
 
 /// The clock's atomics in one handle, for whatever stamps input with the
 /// `clock_tick` it landed on: the MIDI input, and the view a hand turn
-/// (`400-parameter-knobs.md` decision 10).
+/// (`archive/400-parameter-knobs.md` decision 10).
 #[derive(Clone)]
 pub(crate) struct InputClock {
     /// The free-running musical tick counter.

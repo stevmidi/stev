@@ -51,7 +51,7 @@ pub(crate) enum NoteSource {
 pub(crate) enum VoiceMessage {
     /// A MIDI message, and who played it.
     Midi(Midi3, NoteSource),
-    /// A plugin parameter's move (`400-parameter-knobs.md`).
+    /// A plugin parameter's move (`archive/400-parameter-knobs.md`).
     Param(ParamMove),
 }
 

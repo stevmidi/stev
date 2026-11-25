@@ -74,7 +74,7 @@ impl Sequencer {
     /// engine slot `slot` so the next project save persists the active preset.
     /// No-op if no track holds the slot or it is not routed to an instrument.
     /// Returns whether the stored blob changed, for the crash recovery copy
-    /// (`410-crash-recovery.md` decision 7). macOS plugin host — see
+    /// (`archive/410-crash-recovery.md` decision 7). macOS plugin host — see
     /// `130-plugin-host.md`.
     pub(crate) fn set_slot_instrument_state(&mut self, slot: usize, state: &Arc<[u8]>) -> bool {
         match self
@@ -323,7 +323,7 @@ mod tests {
 
     /// A captured blob is stored as the same `Arc`, and the answer says
     /// whether it changed anything: the crash recovery copy is rewritten on it
-    /// (`410-crash-recovery.md` decision 7). A slot no track holds, or a
+    /// (`archive/410-crash-recovery.md` decision 7). A slot no track holds, or a
     /// track with no plugin, takes nothing.
     #[test]
     fn set_slot_instrument_state_says_whether_the_blob_changed_and_shares_it() {

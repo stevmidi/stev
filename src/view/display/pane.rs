@@ -33,7 +33,7 @@ pub(super) enum KeyFocus {
     WheelLane,
     /// The knob panel, with the selected knob (a click or right-click on
     /// it), so `Delete` removes that knob's mapping. Only effective while
-    /// the panel shows knobs, clip open or not (`400-parameter-knobs.md`
+    /// the panel shows knobs, clip open or not (`archive/400-parameter-knobs.md`
     /// decision 14).
     KnobPanel(usize),
 }

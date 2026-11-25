@@ -2,7 +2,7 @@
 //! the crash recovery copy, in the order the `"sequencer"` thread sent them.
 //! Everything slow about them — encoding the plugin state, the JSON, the
 //! disk — happens here, off the thread that plays. See
-//! `420-large-projects.md` decision 3 and `410-crash-recovery.md` decision 5.
+//! `archive/420-large-projects.md` decision 3 and `archive/410-crash-recovery.md` decision 5.
 
 use std::fs::File;
 use std::path::PathBuf;

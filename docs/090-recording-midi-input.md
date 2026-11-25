@@ -13,7 +13,7 @@ capture covers it. Key files: `src/core/midi/input.rs`,
   `message::is_recorded` says so: a note edge or a move of a controller with a rest
   (`parse_note`, `parse_resting`), from a port or the computer keyboard alike (which has no
   pedal). The pedal is recorded as sent, 0–127, with no threshold at 64, so a continuous
-  pedal's half-pedalling is kept (`530-sustain-capture.md` decision 1). Everything else on the
+  pedal's half-pedalling is kept (`archive/530-sustain-capture.md` decision 1). Everything else on the
   input — the sostenuto and soft pedals, a hardware controller's other CCs, aftertouch,
   program change — is played live (thru and the plugin tap) and never recorded. While the
   performance lane is armed its octave buttons (CC28/CC29) go to the sequencer too, for the
@@ -23,7 +23,7 @@ capture covers it. Key files: `src/core/midi/input.rs`,
   notes: `Controller` (`core/midi/message.rs`), pitch bend, a CC by number or a plugin
   parameter by ID; only the two wheels and the pedal have a rest (`Controller::rest`,
   listed in `Controller::RESTING`): bend centred, the mod wheel and the pedal at 0.
-- **A knob's parameter, turned by hand** (`400-parameter-knobs.md` decision 10). A turn is
+- **A knob's parameter, turned by hand** (`archive/400-parameter-knobs.md` decision 10). A turn is
   not MIDI, so it doesn't come through the router: `Display` sends `HoldKnob` at the
   turn's start, `SetKnobValue` per move and `ReleaseKnob` at its end, whether the turn is
   a drag on Stev's knob or the control in the plugin's editor (`knob_panel.rs`,
@@ -43,7 +43,7 @@ capture covers it. Key files: `src/core/midi/input.rs`,
   released; a knob's parameter has no rest and stays where it was (`050-undo-redo.md`
   § Invariants). The pedal has one rule of its own: a jump or a loop wrap lifts it at once,
   so the notes the jump releases stop ringing, and the chase presses it again where
-  playback lands down (`530-sustain-capture.md` decision 4). A clip's other CCs (imported,
+  playback lands down (`archive/530-sustain-capture.md` decision 4). A clip's other CCs (imported,
   pasted) play as they come and are never chased.
 - **Shown in the piano roll's controller lanes** (`380-wheel-lane.md`, `archive/390-knob-panel.md`):
   the lane under the notes switches to pitch bend, the mod wheel or a knob's parameter and draws

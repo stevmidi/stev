@@ -1,6 +1,6 @@
 //! Undoable marquee transpose (`⌥↑`/`⌥↓`, `⇧` for an octave): every note in
 //! the clips an arranger marquee covers whole, moved together across its
-//! tracks. See `500-marquee-transpose.md`.
+//! tracks. See `archive/500-marquee-transpose.md`.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -19,7 +19,7 @@ use super::{in_tracks, interior_clip_ids, metadata_for};
 // ---------------------------------------------------------------------------
 
 /// Why a marquee transpose was refused: nothing moves and no undo step is
-/// recorded, and the footer says why (`500-marquee-transpose.md` decision 7).
+/// recorded, and the footer says why (`archive/500-marquee-transpose.md` decision 7).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TransposeRefusal {
     /// A clip on the marquee's tracks overlaps its tick range without lying

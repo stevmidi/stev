@@ -1,4 +1,4 @@
-//! The knob panel (`400-parameter-knobs.md`, the panel itself from
+//! The knob panel (`archive/400-parameter-knobs.md`, the panel itself from
 //! `archive/390-knob-panel.md`): eight virtual knobs in a column of their own left
 //! of the clip view, under the track headers, each driving one parameter of
 //! the selected track's plugin. Mouse only — a turn never takes the
@@ -22,7 +22,7 @@
 //! the keyboard, `Delete`
 //! removing the knob's mapping, and with a clip open its lane shows under
 //! the piano roll (`ClipLane::Knob`; `Display::select_knob`,
-//! `input/knob_focus.rs`). See `400-parameter-knobs.md` decisions 3 and 14
+//! `input/knob_focus.rs`). See `archive/400-parameter-knobs.md` decisions 3 and 14
 //! for the whole grammar. A track whose knobs
 //! can't drive anything (no plugin, or one with no parameters) shows a one-line
 //! hint instead of knobs. A scroll anywhere else on the panel does nothing.
@@ -479,7 +479,7 @@ pub(super) struct KnobPanel {
     wheel_turn: Option<WheelTurn>,
     /// The knob a right-click armed — its track and which —
     /// waiting for a control turned in the plugin's editor
-    /// (`400-parameter-knobs.md` decision 3).
+    /// (`archive/400-parameter-knobs.md` decision 3).
     armed: Option<(usize, usize)>,
 }
 
@@ -520,7 +520,7 @@ impl Display {
     }
 
     /// The line the panel shows instead of knobs, when the selected track's
-    /// knobs can't drive anything (`400-parameter-knobs.md` decision 2).
+    /// knobs can't drive anything (`archive/400-parameter-knobs.md` decision 2).
     pub(super) fn knob_hint(&self) -> Option<&'static str> {
         self.knob_panel_hint(self.knobs_track()?)
     }
@@ -593,7 +593,7 @@ impl Display {
     }
 
     /// A press in the knob panel selects the knob there on the press
-    /// (`400-parameter-knobs.md` decision 14), the panel taking the
+    /// (`archive/400-parameter-knobs.md` decision 14), the panel taking the
     /// keyboard, and on the dial starts its drag too; with ⌘/Ctrl a dial
     /// instead goes back to its parameter's default, selecting nothing and
     /// starting no drag — the track header bars' reset gesture.
@@ -742,7 +742,7 @@ impl Display {
     /// Tells the sequencer the hand took hold of knob `knob` of `track_idx`
     /// at `at_ns`, where it stood at `start` — from the panel or the plugin's
     /// own editor: playback lets go of it until
-    /// [`release_knob`](Self::release_knob) (`400-parameter-knobs.md`
+    /// [`release_knob`](Self::release_knob) (`archive/400-parameter-knobs.md`
     /// decision 6).
     pub(super) fn hold_knob(&self, track_idx: usize, knob: usize, start: Option<f64>, at_ns: u64) {
         self.input_event_tx
@@ -758,7 +758,7 @@ impl Display {
     /// Tells the sequencer the hand let go of knob `knob` of `track_idx`.
     /// The plugin's state then goes to the crash recovery copy: a sound
     /// shaped with the knobs alone, the editor never opened, would otherwise
-    /// never reach it (`410-crash-recovery.md` decision 6).
+    /// never reach it (`archive/410-crash-recovery.md` decision 6).
     pub(super) fn release_knob(&mut self, track_idx: usize, knob: usize) {
         self.input_event_tx
             .send(InputEvent::ReleaseKnob { track_idx, knob })
@@ -771,7 +771,7 @@ impl Display {
 
     /// Tells the sequencer the hand turned knob `knob` of `track_idx` to
     /// `value` at `at_ns` — from the panel or the plugin's own editor — for
-    /// the unsaved prompt and a take (`400-parameter-knobs.md` decisions 9
+    /// the unsaved prompt and a take (`archive/400-parameter-knobs.md` decisions 9
     /// and 10).
     pub(super) fn count_knob_turn(&self, track_idx: usize, knob: usize, value: f64, at_ns: u64) {
         self.input_event_tx
@@ -877,7 +877,7 @@ impl Display {
 
     /// A right-click in the knob panel: on a dial or a label, arms its knob
     /// for the next control turned in the plugin's editor and selects it
-    /// (`400-parameter-knobs.md` decision 3), so a `Delete` then removes the
+    /// (`archive/400-parameter-knobs.md` decision 3), so a `Delete` then removes the
     /// mapping instead. An assigned knob re-arms, to be reassigned. Not
     /// during a drag.
     pub(super) fn handle_knob_panel_right_click(&mut self, x: f32, y: f32) {

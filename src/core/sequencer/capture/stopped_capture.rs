@@ -30,7 +30,7 @@ impl Sequencer {
     /// no selected track, or no room at the cursor.
     ///
     /// `marquee` is the arranger marquee's tick span `[start, end)`, when it
-    /// frames the capture (`470-marquee-capture.md` decision 4): a length
+    /// frames the capture (`archive/470-marquee-capture.md` decision 4): a length
     /// and a place only. Detection still finds the start, over the
     /// marquee's length back from the last note-on instead of the loop's;
     /// the window is then exactly the marquee's length — no tail, floor or
@@ -151,7 +151,7 @@ impl Sequencer {
     }
 
     /// The phrase a marquee of `length` ticks frames, placed at `start_tick`
-    /// (`470-marquee-capture.md` decision 4): the detected start over a raw
+    /// (`archive/470-marquee-capture.md` decision 4): the detected start over a raw
     /// window `length` back from the last note-on, the end exactly `length`
     /// after it. Like [`build_detected_phrase_clip`](Self::build_detected_phrase_clip),
     /// every event of the capture source stays in the clip.
@@ -718,7 +718,7 @@ mod tests {
         assert_eq!(rest, vec![(0x80, 62)]);
     }
 
-    // --- The marquee frames the capture (`470-marquee-capture.md`) ---
+    // --- The marquee frames the capture (`archive/470-marquee-capture.md`) ---
 
     /// `count` quarter notes from `start`, each an eighth long.
     fn quarters(seq: &mut Sequencer, start: i32, count: i32) {

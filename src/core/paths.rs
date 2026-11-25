@@ -26,12 +26,12 @@ pub(crate) const TEMPLATES_DIR_NAME: &str = "Templates";
 pub(crate) const SETTINGS_FILE_NAME: &str = "settings.json";
 
 /// File name of the crash recovery copy, in the config directory
-/// (`410-crash-recovery.md` decision 2). Not a `.stev`: it is no project the
+/// (`archive/410-crash-recovery.md` decision 2). Not a `.stev`: it is no project the
 /// browser could list, and only ever read back at launch.
 pub(crate) const RECOVERY_FILE_NAME: &str = "recovery.json";
 
 /// File name of the lock beside the recovery copy, which only the instance
-/// that may keep the copy holds (`410-crash-recovery.md` decision 16).
+/// that may keep the copy holds (`archive/410-crash-recovery.md` decision 16).
 pub(crate) const RECOVERY_LOCK_FILE_NAME: &str = "recovery.lock";
 
 /// File name of the agent bridge's socket, in the config directory

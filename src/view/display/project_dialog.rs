@@ -41,7 +41,7 @@
 //!   recovery copy ([`offer_recovery`](Display::offer_recovery)). ←/→ move the
 //!   selection between Discard and Restore (Restore to start with) and Enter
 //!   presses the selected one. It has no Cancel, so Esc does nothing: the
-//!   question has to be answered (`410-crash-recovery.md` decision 9). A
+//!   question has to be answered (`archive/410-crash-recovery.md` decision 9). A
 //!   file opened from Finder at launch waits behind it: Discard opens it,
 //!   and Restore drops it, so the restored project opens with no prompt.
 //!
@@ -706,7 +706,7 @@ impl Display {
     /// the first frame, and replaces the empty startup project. It waits
     /// behind the recovery question too: Discard lets it through, and Restore
     /// drops it, so it never opens over the restored project
-    /// (`410-crash-recovery.md` decision 9).
+    /// (`archive/410-crash-recovery.md` decision 9).
     #[cfg(target_os = "macos")]
     pub(super) fn sync_open_document(&mut self) {
         if self.keyboard_taken() && self.overlay != Some(Overlay::Settings) {
@@ -785,7 +785,7 @@ impl Display {
     /// Opens the recovery question about the project `name` (`None`: one
     /// never saved). For startup, ahead of the first frame: a file opened
     /// from Finder at launch would replace the startup project on it
-    /// (`410-crash-recovery.md` decision 9).
+    /// (`archive/410-crash-recovery.md` decision 9).
     pub(crate) fn offer_recovery(&mut self, name: Option<String>) {
         self.project_dialog = Some(ProjectDialog::Recovery {
             name,

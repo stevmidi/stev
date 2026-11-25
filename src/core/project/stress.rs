@@ -1,5 +1,5 @@
 //! The stress project: synthetic projects of any size, built in tests to
-//! time what grows with a project (`420-large-projects.md`). The recovery
+//! time what grows with a project (`archive/420-large-projects.md`). The recovery
 //! timing (`recovery_timing`) and the command sweep (`command_timing` in
 //! `event_handlers`) build theirs here, and an ignored test writes the
 //! design's target, [`STRESS_EVENTS`] events and [`STRESS_BLOB_BYTES`] of
@@ -22,7 +22,7 @@ use super::dto::ProjectData;
 use super::storage::save_project;
 
 /// Events in the design's target project, across all its clips
-/// (`420-large-projects.md` decision 1).
+/// (`archive/420-large-projects.md` decision 1).
 pub(crate) const STRESS_EVENTS: usize = 100_000;
 
 /// Bytes of plugin state in the design's target project, split evenly over

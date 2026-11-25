@@ -235,7 +235,7 @@ impl EventHandlers {
 
     /// The launch dialog's answer: Restore stages the recovery copy like any
     /// project read from disk, and the copy stays until the project is saved
-    /// (`410-crash-recovery.md` decision 13); Discard deletes it.
+    /// (`archive/410-crash-recovery.md` decision 13); Discard deletes it.
     pub(super) fn answer_recovery_workflow(
         &self,
         sequencer: &mut Sequencer,
@@ -254,7 +254,7 @@ impl EventHandlers {
 
     /// Runs `action` — unless a save is on its way, which holds it in
     /// `open.held` until the outcome is in (`project_written_workflow`,
-    /// `420-large-projects.md` decision 6), or it is Finder opening the
+    /// `archive/420-large-projects.md` decision 6), or it is Finder opening the
     /// project already open
     /// with unsaved changes, which does nothing, or `discard_changes` is false and the project
     /// changed since `saved`: then the view is asked to prompt
@@ -415,7 +415,7 @@ pub(crate) struct OpenProject {
     /// The way to the `"storage"` thread, for saves.
     pub(super) storage: Storage,
     /// Saves handed to the `"storage"` thread, a template's too, their
-    /// outcomes still to come, oldest first (`420-large-projects.md`
+    /// outcomes still to come, oldest first (`archive/420-large-projects.md`
     /// decision 5).
     pub(super) saving: VecDeque<PendingSave>,
     /// Project actions that came while a save was on its way, with their
@@ -459,7 +459,7 @@ impl OpenProject {
 
     /// A clean quit: the recovery copy deleted, and the `"storage"` thread
     /// waited for until it has run what it has and ended
-    /// (`410-crash-recovery.md` decision 13).
+    /// (`archive/410-crash-recovery.md` decision 13).
     pub(super) fn finish(&mut self) {
         self.recovery.finish();
         self.storage.finish();
@@ -508,7 +508,7 @@ impl SavedProject {
     /// it counts as changed until it is saved, so the quit prompt asks.
     /// Comparing with the file on disk wouldn't do: a copy that differs only
     /// in a plugin blob has the same fingerprint, and the next check would
-    /// delete it (`410-crash-recovery.md` decision 11).
+    /// delete it (`archive/410-crash-recovery.md` decision 11).
     fn clear_baseline(&mut self) {
         self.fingerprint = None;
     }

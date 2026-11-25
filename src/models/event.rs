@@ -2,7 +2,7 @@
 //!
 //! An `Event` is the atom the piano roll draws and the edit operations move,
 //! transpose and delete. It carries its payload — raw MIDI bytes, or a
-//! [`ParamMove`] (`400-parameter-knobs.md` decision 11) — plus the timeline
+//! [`ParamMove`] (`archive/400-parameter-knobs.md` decision 11) — plus the timeline
 //! bookkeeping the sequencer needs: an absolute `tick` (a position, in the
 //! clip's event-tick space), a `delta_ticks` gap from the previous event (kept
 //! so playback can step the list without re-scanning), and a `length` giving a
@@ -31,7 +31,7 @@ pub(crate) enum EventType {
 }
 
 /// A plugin parameter moved to a value: what a knob records
-/// (`400-parameter-knobs.md` decision 11).
+/// (`archive/400-parameter-knobs.md` decision 11).
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub(crate) struct ParamMove {
     /// The parameter, with the plugin it was recorded on.

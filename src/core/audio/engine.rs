@@ -1,6 +1,6 @@
 //! Device discovery, the single `cpal` output stream, and the `"audio-engine"`
 //! thread that owns it — and rebuilds it whenever the device changes under it
-//! or the user picks another in the Audio tab (`480-audio-settings.md`
+//! or the user picks another in the Audio tab (`archive/480-audio-settings.md`
 //! decision 5).
 //!
 //! The thread waits on a channel of commands. Each restart drops the stream,
@@ -116,7 +116,7 @@ impl EngineHandle {
 }
 
 /// The Audio tab's line to the engine thread: a choice there restarts the
-/// stream on it (`480-audio-settings.md` decision 2).
+/// stream on it (`archive/480-audio-settings.md` decision 2).
 #[derive(Clone)]
 pub(crate) struct AudioControl {
     /// The engine thread's command channel.
@@ -168,7 +168,7 @@ impl AudioEngine {
     /// With no device the app starts silent, and the engine opens one when it
     /// appears. `notify` gets every [`EngineNews`]: after each restart (once
     /// [`EngineHandle::status`] has the new rate), with the line for the
-    /// footer when an outside change caused it (`480-audio-settings.md`
+    /// footer when an outside change caused it (`archive/480-audio-settings.md`
     /// decision 11), and whenever the device list changes. The caller wakes
     /// the UI each time: that is what has it reactivate the plugins at a new
     /// rate.
@@ -291,7 +291,7 @@ impl RestartCause {
 /// in front of the user; the run has a line of its own), or for a retry that
 /// still found no device. A rate changed from outside
 /// that Stev set back to the one picked in the tab says so
-/// (`480-audio-settings.md` decision 3). Pure, unit-tested.
+/// (`archive/480-audio-settings.md` decision 3). Pure, unit-tested.
 fn restart_message(
     cause: RestartCause,
     previous: Option<&RunningAudio>,
@@ -827,7 +827,7 @@ impl EngineThread {
 /// cpal's default-following unit. That unit re-routes on its own and leaves
 /// the workers in the old device's workgroup; a stream on the device itself
 /// reports its rate changing and its going away, and the engine follows the
-/// default by polling (`480-audio-settings.md` § Things to check).
+/// default by polling (`archive/480-audio-settings.md` § Things to check).
 /// Returns it with its persistent ID, if it has one.
 fn default_device(host: &Host) -> Option<(Device, Option<DeviceId>)> {
     let default = host.default_output_device()?;
@@ -849,7 +849,7 @@ fn device_name(device: &Device) -> String {
 /// stops the AudioUnit, uninitializes it, then frees the callback) — or with a
 /// stream that failed to build, and either way it sends the mixer home to the
 /// engine thread, so the sources outlive their stream
-/// (`480-audio-settings.md` decision 6).
+/// (`archive/480-audio-settings.md` decision 6).
 struct Returning {
     /// The mixer; taken only by the drop.
     mixer: Option<Mixer>,

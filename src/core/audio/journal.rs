@@ -94,7 +94,7 @@ pub(crate) struct OverrunRecord {
     /// like `workers`.
     pub(crate) workers_joined: usize,
     /// Which of the app's streams the block ran in: every engine restart
-    /// starts a new one (`480-audio-settings.md` decision 12), and the
+    /// starts a new one (`archive/480-audio-settings.md` decision 12), and the
     /// journal a new session header with it.
     pub(crate) session: u32,
 }

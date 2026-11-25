@@ -21,7 +21,7 @@
 //! variant carries `selected_track_idx`/`selected_clip_id` when the operation
 //! might have removed the selected clip. No undo variant carries a selection
 //! or a marquee: what an undo or redo puts back of the view is kept with the
-//! step itself ([`UndoStep`], `440-undo-view-state.md`).
+//! step itself ([`UndoStep`], `archive/440-undo-view-state.md`).
 
 use std::sync::atomic::Ordering;
 
@@ -88,7 +88,7 @@ pub(crate) enum PasteLead {
     /// The pasted block selected the way a moved one is
     /// (`move_range_workflow`): the cursor on the rect's start, its first
     /// track selected, the pasted clip under the cursor there as lead, the
-    /// marquee on the rect (the ⌥-drag copy, `460-copy-drag.md` decision 4,
+    /// marquee on the rect (the ⌥-drag copy, `archive/460-copy-drag.md` decision 4,
     /// so drags chain).
     Range(TimeSelectionRect),
     /// Leave the lead clip as it was (the agent bridge's writes,
@@ -423,7 +423,7 @@ pub(crate) enum EditResult {
     },
     /// Undo of a clip commit: the clip has been lifted off its track. The
     /// handler drops it as the lead if it was; the clip view stays where it
-    /// is, on no clip if it showed this one (`440-undo-view-state.md`
+    /// is, on no clip if it showed this one (`archive/440-undo-view-state.md`
     /// decision 6).
     ClipUncommitted {
         /// The clip that was removed.
@@ -706,7 +706,7 @@ macro_rules! sequencer_edit_dispatch {
                     return undo::Merged::Yes;
                 }
                 // `,`/`.` amend the running commit or insert they step
-                // (`540-earlier-pass.md` decision 4); any other step on top
+                // (`archive/540-earlier-pass.md` decision 4); any other step on top
                 // of it ends the steps, and its kept buffer goes (decision 6).
                 // This relies on `undo` offering every new edit to the top
                 // step's merge, which it skips while the record is marked

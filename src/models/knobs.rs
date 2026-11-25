@@ -1,6 +1,6 @@
 //! A track's eight knobs: the knob panel's virtual controllers, each
 //! driving one parameter of the track's plugin, by the parameter's ID
-//! (`400-parameter-knobs.md`). A knob is assigned by turning the control in
+//! (`archive/400-parameter-knobs.md`). A knob is assigned by turning the control in
 //! the plugin's own editor; until then it drives nothing. Only the
 //! assignment is the track's: where a parameter stands is the plugin's, in
 //! its own state. Pure data, unit-tested at the bottom of the file.
@@ -19,7 +19,7 @@ pub(crate) type PluginTag = u32;
 /// One plugin's parameter. A [`ParamId`] means something only to its own
 /// plugin, and a clip can travel to a track with another one: the plugin goes
 /// with the ID, so a move only ever matches the knob of the plugin it was
-/// recorded on (`400-parameter-knobs.md` decision 8).
+/// recorded on (`archive/400-parameter-knobs.md` decision 8).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub(crate) struct PluginParam {
     /// Its plugin.
@@ -48,7 +48,7 @@ pub(crate) const UNASSIGNED_KNOBS: KnobParams = [None; KNOB_COUNT];
 
 /// The other knob of `knobs` that holds parameter `id` already, if any —
 /// knob `knob` can't take it then: both would claim the same data
-/// (`400-parameter-knobs.md` decision 4). A knob's own parameter is no
+/// (`archive/400-parameter-knobs.md` decision 4). A knob's own parameter is no
 /// refusal.
 pub(crate) fn param_taken_by(knobs: &KnobParams, knob: usize, id: ParamId) -> Option<usize> {
     knob_with_id(knobs, id).filter(|&other| other != knob)
@@ -95,7 +95,7 @@ pub(crate) fn knobs_from_saved(saved: &[Option<ParamId>], plugin: PluginTag) -> 
 /// can stand, each position holding an equal share of the range as VST3 lays
 /// them out; `value` itself for a parameter with none (`steps` 0). A turned
 /// knob goes where the plugin will, so a take holds no value between two
-/// (`400-parameter-knobs.md` decision 12).
+/// (`archive/400-parameter-knobs.md` decision 12).
 pub(crate) fn snap_to_steps(value: f64, steps: u32) -> f64 {
     if steps == 0 {
         return value;

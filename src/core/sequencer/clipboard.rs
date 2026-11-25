@@ -17,7 +17,7 @@
 //! `/` on the performance lane renders its run here too
 //! ([`render_performance`](Sequencer::render_performance)), into a throwaway
 //! clipboard that `DuplicateTimeEdit::capturing` inserts at the cursor, so
-//! the real clipboard is never touched (`520-performance-capture.md`
+//! the real clipboard is never touched (`archive/520-performance-capture.md`
 //! decision 1).
 
 use crate::core::input_event::TimeSelectionRect;
@@ -77,7 +77,7 @@ impl ClipClipboard {
     /// throwaway ones). `None` for a track-anchored clipboard with no
     /// selected track: the copy aims at the selected track, and never falls
     /// back to the tracks it came from
-    /// (`450-performance-lane-selection.md` decision 8).
+    /// (`archive/450-performance-lane-selection.md` decision 8).
     pub(crate) fn target_track(
         &self,
         piece: &ClipboardClip,
@@ -215,7 +215,7 @@ impl Sequencer {
 
     /// What the lane's run played (`take`, `PerformanceLane::take_run`),
     /// rendered from the arrangement as it is now, as an all-track time copy
-    /// (`520-performance-capture.md` decision 1): each stretch it played
+    /// (`archive/520-performance-capture.md` decision 1): each stretch it played
     /// copied from every track, its pieces' windows trimmed to the stretch,
     /// laid end to end from 0 in the run's time, with no track anchor, so
     /// each piece lands on the track it came from. Its span is the run's

@@ -2,7 +2,7 @@
 //! the user was looking at just before it and just after it
 //! ([`ViewSnapshot`]), so an undo puts back the view before the edit and a
 //! redo the view after it, whatever the user did in between. See
-//! `050-undo-redo.md` § Undo and the view, `440-undo-view-state.md`.
+//! `050-undo-redo.md` § Undo and the view, `archive/440-undo-view-state.md`.
 
 use std::cell::Cell;
 

@@ -291,12 +291,12 @@ fn main() {
     );
 
     // Here on the app's own startup path, so a `stev --mcp` never takes the
-    // lock (`410-crash-recovery.md` decision 16). Without it this instance
+    // lock (`archive/410-crash-recovery.md` decision 16). Without it this instance
     // keeps no copy, but still saves through the `"storage"` thread.
     let write_failed = shared_atomics.recovery_write_failed.clone();
     let lock = take_recovery_lock();
     // With the lock held, a copy here means a crash. The offer has to be up by
-    // the first frame (`410-crash-recovery.md` decision 9); a copy that won't
+    // the first frame (`archive/410-crash-recovery.md` decision 9); a copy that won't
     // load stays for the next clean quit to delete (decision 15).
     let offer = lock.as_ref().and_then(|_| {
         read_recovery_copy(&recovery_path()).unwrap_or_else(|e| {

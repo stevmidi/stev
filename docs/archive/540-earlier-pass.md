@@ -1,6 +1,6 @@
 # Earlier Pass
 
-**Status: design agreed 2026-11-20; both phases built 2026-11-20.** After a running `/`, `,` swaps the take it just landed (a new clip, or an insert into the lead clip) for the pass played before it, and `.` steps forward again, so a great pass followed by a fumbled one is not lost. `/` itself is unchanged. Each step changes the same clip in place; there is no mode, no view and no confirm, and one ⌘Z still removes the take. Read `100` (running capture, *What a new clip retains*), `050` (undo) and `440` (undo view state) first.
+**Archived 2026-11-25. Status: design agreed 2026-11-20; both phases built 2026-11-20.** After a running `/`, `,` swaps the take it just landed (a new clip, or an insert into the lead clip) for the pass played before it, and `.` steps forward again, so a great pass followed by a fumbled one is not lost. `/` itself is unchanged. Each step changes the same clip in place; there is no mode, no view and no confirm, and one ⌘Z still removes the take. Read `100` (running capture, *What a new clip retains*), `050` (undo) and `440` (undo view state) first.
 
 ## Background
 

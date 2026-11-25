@@ -297,7 +297,7 @@ on Apple Silicon.
 
 **A device change re-joins.** The engine rebuilds its stream on a device
 change, a rate change or the system default moving
-(`480-audio-settings.md`), and rebuilds the `WorkerPool` with it: the old
+(`archive/480-audio-settings.md`), and rebuilds the `WorkerPool` with it: the old
 workers leave their group as their threads exit, and the new ones join the
 new device's workgroup. So the workers are never left in a workgroup
 CoreAudio cancelled, or in another device's.
@@ -455,7 +455,7 @@ from falling off a cliff during its release tail.
 Parallelism redistributes; it does not reduce total work. The floor is the
 **single most expensive voice** — one plugin that alone exceeds the block
 deadline is still a dropout with any number of cores. The levers for that are
-elsewhere: a larger buffer (the Audio tab, `480-audio-settings.md`) and
+elsewhere: a larger buffer (the Audio tab, `archive/480-audio-settings.md`) and
 look-ahead processing for non-armed tracks (*Considered, deferred* above).
 Freeze / bounce-in-place is ruled out (2026-11-14): it needs audio tracks, and
 Stev is a MIDI sequencer at heart (`280` § Not planned). A track *disable* was

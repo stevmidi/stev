@@ -94,7 +94,7 @@ impl ProcessMode {
 /// What a plugin was activated for: the sample rate and the mode. A voice
 /// only renders blocks of its own activation; the mixer holds it silent in
 /// any other, until the UI has it back and reactivates it
-/// (`480-audio-settings.md` decision 8, `archive/490-offline-export.md` decision 6).
+/// (`archive/480-audio-settings.md` decision 8, `archive/490-offline-export.md` decision 6).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Activation {
     /// The sample rate, Hz.
@@ -135,7 +135,7 @@ pub(crate) trait InstrumentVoice: Send {
 
     /// Queues a move of parameter `id` to `value` (normalized) at sample
     /// `time` within the next processed block — a clip's recorded knob turn
-    /// (`400-parameter-knobs.md`). Must clear [`VoiceMix::sleeping`], as
+    /// (`archive/400-parameter-knobs.md`). Must clear [`VoiceMix::sleeping`], as
     /// [`queue_midi`](Self::queue_midi) does.
     fn queue_param(&mut self, id: ParamId, value: f64, time: u32);
 
