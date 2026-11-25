@@ -115,7 +115,7 @@ use self::pane::{
     KeyFocus, Pane, PaneRects, PanelSize, clip_event_tick_at, clip_pane_frame_value,
     clip_span_in_arrangement, pane_rects,
 };
-use self::project_dialog::ProjectDialog;
+use self::project_dialog::{DialogButton, ProjectDialog};
 use self::project_state::ProjectViewState;
 use self::render_state::RenderState;
 use self::settings::SettingsModal;
@@ -303,6 +303,10 @@ pub(crate) struct Display {
     /// The open Save As field or unsaved-changes prompt, if any — it has the
     /// keyboard while open. See `project_dialog.rs`.
     project_dialog: Option<ProjectDialog>,
+    /// The prompt button the mouse went down on, if it is still down: the
+    /// release acts only over this same button (`clicked_button`, #45), and
+    /// the button looks pressed while the pointer is on it.
+    dialog_press: Option<DialogButton>,
     /// Whether a project dialog was open last frame, so its opening and
     /// closing are seen once (`sync_project_dialog_window`).
     project_dialog_shown: bool,
@@ -513,6 +517,7 @@ impl Display {
             meter_chip: MeterChip::default(),
             knob_panel: KnobPanel::default(),
             project_dialog: None,
+            dialog_press: None,
             project_dialog_shown: false,
             raise_main_window: false,
             quit_approved: false,

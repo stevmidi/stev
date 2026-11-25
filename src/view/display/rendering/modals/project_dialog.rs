@@ -243,6 +243,13 @@ impl Display {
     /// Shows the open project dialog, if any, over the canvas `rect`, in
     /// the canvas `ui`.
     pub(in crate::view::display) fn show_project_dialog(&mut self, ui: &mut Ui, rect: Rect) {
+        // The button held down looks pressed only while the pointer is on
+        // it, so moving off shows the click is taken back.
+        let pressed = self.dialog_press.filter(|&button| {
+            self.modal_pointer()
+                .and_then(|pos| self.dialog_button_at(pos))
+                == Some(button)
+        });
         let Some(dialog) = &mut self.project_dialog else {
             return;
         };
@@ -271,6 +278,7 @@ impl Display {
                 question,
                 dialog.buttons(),
                 selected,
+                pressed,
             );
         }
     }
@@ -513,6 +521,7 @@ impl Display {
         question: String,
         row: &[DialogButton],
         selected: DialogButton,
+        pressed: Option<DialogButton>,
     ) {
         let layout = Self::dialog_layout(rect, true);
         Self::draw_modal_frame(
@@ -523,7 +532,7 @@ impl Display {
             title,
         );
         Self::draw_dialog_question(painter, &layout, question);
-        Self::draw_dialog_buttons(painter, &layout, row, selected);
+        Self::draw_dialog_buttons(painter, &layout, row, selected, pressed);
     }
 
     /// The unsaved-changes prompt's question; `name` is the open project's,
@@ -555,15 +564,24 @@ impl Display {
         }
     }
 
-    /// The button `row`, the `selected` one (Enter's) in the accent colour.
+    /// The button `row`, the `selected` one (Enter's) in the accent colour,
+    /// the `pressed` one (held down with the pointer on it) filled darker.
     fn draw_dialog_buttons(
         painter: &Painter,
         layout: &DialogLayout,
         row: &[DialogButton],
         selected: DialogButton,
+        pressed: Option<DialogButton>,
     ) {
         for (&button, &rect) in row.iter().zip(layout.row_rects(row)) {
             let is_selected = button == selected;
+            if pressed == Some(button) {
+                painter.rect_filled(
+                    rect,
+                    CornerRadius::same(3),
+                    theme::fg_dim().gamma_multiply(0.2),
+                );
+            }
             let color = accent_if(is_selected, theme::fg());
             Self::draw_modal_button(painter, rect, button.label(), is_selected, color);
         }

@@ -638,6 +638,17 @@ impl DialogButton {
     }
 }
 
+/// The button a click on a prompt presses: the one the mouse went down on,
+/// and only if it comes up on that same button. Moving off before letting go
+/// takes the click back, as with any desktop button; a press outside every
+/// button presses nothing wherever it ends.
+fn clicked_button(
+    pressed: Option<DialogButton>,
+    released: Option<DialogButton>,
+) -> Option<DialogButton> {
+    pressed.filter(|&button| released == Some(button))
+}
+
 /// The keymap of a dialog with the button `row`, `selected` the selected one:
 /// ←/→ select the one beside it, Enter presses it, Esc cancels where the row
 /// has a Cancel; nothing else does anything.
@@ -723,6 +734,7 @@ impl Display {
         }
         self.project_dialog_shown = open;
         self.raise_main_window = open;
+        self.dialog_press = None;
         ctx.request_repaint();
     }
 
@@ -831,10 +843,12 @@ impl Display {
 
     /// While a project dialog is open it gets first look at every event: it
     /// takes every key and the clipboard chords (Save As's text field reads
-    /// them on its own), every press — on a prompt button, that button's
-    /// work — and the rest of the pointer: moves, releases, the wheel (Save
-    /// As's open folder list scrolls) and file drags, so the view under it
-    /// never reacts. Returns whether the event was consumed.
+    /// them on its own), every press and release — a prompt button acts on a
+    /// click, down and up on the same button ([`clicked_button`]), so moving
+    /// off it before letting go takes the click back — and the rest of the
+    /// pointer: moves, the wheel (Save As's open folder list scrolls) and file
+    /// drags, so the view under it never reacts. A key drops a button held
+    /// down. Returns whether the event was consumed.
     pub(super) fn handle_project_dialog_input_event(&mut self, event: &InputEvent) -> bool {
         let Some(dialog) = &self.project_dialog else {
             return false;
@@ -849,16 +863,28 @@ impl Display {
                 save_as_key(key, modifiers, action == Some(Action::NewProjectFolder))
             }
             (&InputEvent::KeyPressed { key, .. }, _) => {
+                self.dialog_press = None;
                 dialog.selected().map_or(DialogKey::Swallow, |selected| {
                     button_key(key, selected, dialog.buttons())
                 })
             }
             (&InputEvent::MouseClicked { x, y, .. }, ProjectDialog::SaveAs(_)) => {
+                self.dialog_press = None;
                 DialogKey::Click(pos2(x, y))
             }
-            (&InputEvent::MouseClicked { x, y, .. }, _) => self
-                .dialog_button_at(pos2(x, y))
-                .map_or(DialogKey::Swallow, DialogButton::key),
+            (&InputEvent::MouseClicked { x, y, .. }, _) => {
+                self.dialog_press = self.dialog_button_at(pos2(x, y));
+                DialogKey::Swallow
+            }
+            // `MouseReleased` carries no position: the pointer's last one is
+            // where it came up (the poller's `MouseMoved` went first).
+            (InputEvent::MouseReleased, _) => {
+                let released = self
+                    .modal_pointer()
+                    .and_then(|pos| self.dialog_button_at(pos));
+                clicked_button(self.dialog_press.take(), released)
+                    .map_or(DialogKey::Swallow, DialogButton::key)
+            }
             (&InputEvent::TimelineScroll { delta_y, .. }, ProjectDialog::SaveAs(_)) => {
                 DialogKey::Scroll(delta_y)
             }
@@ -871,7 +897,6 @@ impl Display {
                 | InputEvent::MouseDoubleClicked { .. }
                 | InputEvent::MouseMoved { .. }
                 | InputEvent::PointerMotion { .. }
-                | InputEvent::MouseReleased
                 | InputEvent::TimelineScroll { .. }
                 | InputEvent::TimelineZoom { .. }
                 | InputEvent::FileDragEntered { .. }
@@ -1016,7 +1041,7 @@ mod tests {
 
     use super::{
         DialogButton, DialogKey, LIST_MAX_ROWS, SaveAs, SaveAsFocus, SaveAsHit, button_key,
-        field_key, save_as_key,
+        clicked_button, field_key, save_as_key,
     };
 
     /// The prompt's keymap.
@@ -1027,6 +1052,24 @@ mod tests {
     /// The recovery question's keymap.
     fn recovery_key(key: Key, selected: DialogButton) -> DialogKey {
         button_key(key, selected, DialogButton::RECOVERY)
+    }
+
+    /// A button acts only when the mouse goes down and comes up on it:
+    /// moving off before letting go, onto another button or onto nothing,
+    /// takes the click back, and a press outside every button presses
+    /// nothing even if it comes up on one (#45).
+    #[test]
+    fn a_button_acts_on_release_over_the_one_pressed() {
+        use DialogButton::{Cancel, DontSave, Save};
+        assert_eq!(
+            clicked_button(Some(DontSave), Some(DontSave)),
+            Some(DontSave)
+        );
+        assert_eq!(clicked_button(Some(DontSave), None), None);
+        assert_eq!(clicked_button(Some(DontSave), Some(Save)), None);
+        assert_eq!(clicked_button(Some(Cancel), Some(DontSave)), None);
+        assert_eq!(clicked_button(None, Some(Save)), None);
+        assert_eq!(clicked_button(None, None), None);
     }
 
     /// ←/→ pick a side and stay there, Enter presses the selected button,
