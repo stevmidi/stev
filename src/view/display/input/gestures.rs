@@ -757,13 +757,18 @@ impl Display {
     /// the hand. A body press sends nothing until the pointer leaves the
     /// press point by `DRAG_THRESHOLD_PX`.
     pub(super) fn extend_region_drag(&mut self, x: f32, y: f32) {
-        let pointer_tick = self.screen_x_to_tick(x);
-        let grid = self.cursor_grid_ticks();
-        let Some(drag) = &mut self.gesture.region_drag else {
+        let Some(origin) = self.gesture.region_drag.map(|drag| drag.origin) else {
             return;
         };
-        let past_threshold = past_drag_threshold(drag.origin, (x, y), Self::DRAG_THRESHOLD_PX);
-        if let Some((start, end)) = drag.extend(pointer_tick, grid, past_threshold) {
+        let pointer_tick = self.screen_x_to_tick(x);
+        let grid = self.cursor_grid_ticks();
+        let past_threshold = past_drag_threshold(origin, (x, y), Self::DRAG_THRESHOLD_PX);
+        let step = self
+            .gesture
+            .region_drag
+            .as_mut()
+            .and_then(|drag| drag.extend(pointer_tick, grid, past_threshold));
+        if let Some((start, end)) = step {
             self.input_event_tx
                 .send(InputEvent::SetLoopRegion { start, end })
                 .ok();

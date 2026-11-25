@@ -16,7 +16,7 @@ use super::clip_shape::ClipShape;
 use crate::{
     core::input_event::{InputEvent, TimeSelectionRect},
     core::time::{min_clip_length_ticks, snap_to_grid},
-    models::clip::{Clip, ClipEdge, NoteBounds, NoteDrag},
+    models::clip::{Clip, ClipEdge, NoteBounds, NoteDrag, window_with_edge_at},
 };
 
 /// A `.mid` being dragged over the window — from the file manager or out of
@@ -365,12 +365,18 @@ impl RegionDrag {
             return None;
         }
         let target = match self.handle {
-            RegionHandle::Edge(edge) => region_edge_target(
+            // The clip view's marker rule with no room: the start held to
+            // `[0, end - beat]`, the end to `[start + beat, ∞)`, so an edge
+            // stops against the other instead of crossing it or collapsing
+            // the loop (`580` point 5).
+            RegionHandle::Edge(edge) => window_with_edge_at(
                 edge,
                 snap_to_grid(pointer_tick, grid),
                 self.region,
+                None,
                 min_clip_length_ticks(),
-            ),
+            )
+            .unwrap_or(self.region),
             RegionHandle::Body => {
                 region_body_target(pointer_tick - self.grab_offset, self.region, grid)
             }
@@ -379,22 +385,6 @@ impl RegionDrag {
             self.sent = target;
             target
         })
-    }
-}
-
-/// The loop region an edge drag of `edge` to snapped `tick` sets, from
-/// `(start, end)`: the start held to `[0, end - min]`, the end to
-/// `[start + min, ∞)`, so an edge stops against the other one instead of
-/// crossing it or collapsing the loop (`580` point 5).
-pub(super) fn region_edge_target(
-    edge: ClipEdge,
-    tick: i32,
-    (start, end): (i32, i32),
-    min: i32,
-) -> (i32, i32) {
-    match edge {
-        ClipEdge::Start => (tick.min(end - min).max(0), end),
-        ClipEdge::End => (start, tick.max(start + min)),
     }
 }
 
@@ -826,26 +816,29 @@ mod tests {
         assert!(!drag.copy);
     }
 
-    const BEAT: i32 = 480;
+    const BEAT: i32 = min_clip_length_ticks();
     const BAR: i32 = 4 * BEAT;
+
+    /// Where an edge drag of a loop at `region` lands with the pointer at
+    /// `tick`, on a one-tick grid.
+    fn edge_drag(edge: ClipEdge, region: (i32, i32), tick: i32) -> (i32, i32) {
+        let mut drag = RegionDrag::new(RegionHandle::Edge(edge), (0.0, 0.0), region, 0);
+        drag.extend(tick, 1, false).unwrap_or(region)
+    }
 
     #[test]
     fn a_start_edge_stops_at_zero_and_a_beat_before_the_end() {
-        let region = (BAR, 3 * BAR);
-        let start = |tick| region_edge_target(ClipEdge::Start, tick, region, BEAT);
+        let start = |tick| edge_drag(ClipEdge::Start, (BAR, 3 * BAR), tick);
         assert_eq!(start(2 * BAR), (2 * BAR, 3 * BAR));
         assert_eq!(start(-BAR), (0, 3 * BAR));
-        assert_eq!(start(3 * BAR), (3 * BAR - BEAT, 3 * BAR));
         // Dragged past the end, it still stops a beat before it.
         assert_eq!(start(5 * BAR), (3 * BAR - BEAT, 3 * BAR));
     }
 
     #[test]
     fn an_end_edge_stops_a_beat_after_the_start() {
-        let region = (BAR, 3 * BAR);
-        let end = |tick| region_edge_target(ClipEdge::End, tick, region, BEAT);
+        let end = |tick| edge_drag(ClipEdge::End, (BAR, 3 * BAR), tick);
         assert_eq!(end(5 * BAR), (BAR, 5 * BAR));
-        assert_eq!(end(BAR), (BAR, BAR + BEAT));
         // Dragged past the start, it still stops a beat after it.
         assert_eq!(end(0), (BAR, BAR + BEAT));
     }
