@@ -42,10 +42,11 @@ use uuid::Uuid;
 
 use crate::{
     core::{
+        agent::span_label,
         config,
         input_event::CaptureFrame,
         midi::message::{is_lane_octave_button, midi3, parse_controller},
-        time,
+        time::{self, Meter},
     },
     models::{
         clip::Clip,
@@ -105,8 +106,15 @@ pub(crate) enum TakePlace {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum MarqueeRefusal {
     /// Running and looping, the marquee isn't inside the loop region, so it
-    /// can't line up with a pass (decision 3).
-    OutsideLoop,
+    /// can't line up with a pass (decision 3). Both spans ride along so the
+    /// footer can name them: a marquee left over from earlier, or one a few
+    /// ticks past the loop, is otherwise hard to spot.
+    OutsideLoop {
+        /// The marquee's `[start, end)`.
+        marquee: (i32, i32),
+        /// The loop region's `[start, end)`.
+        region: (i32, i32),
+    },
     /// The clip would overlap a clip on the selected track (decision 8).
     OverlapsClip,
     /// Running into the lead clip, the marquee misses the clip, so the
@@ -115,12 +123,17 @@ pub(crate) enum MarqueeRefusal {
 }
 
 impl MarqueeRefusal {
-    /// The footer line saying why nothing was captured.
-    pub(crate) fn message(self) -> &'static str {
+    /// The footer line saying why nothing was captured, spans named in
+    /// `meter`'s bars as the ruler counts them.
+    pub(crate) fn message(self, meter: Meter) -> String {
         match self {
-            Self::OutsideLoop => "While looping, the marquee must be inside the loop",
-            Self::OverlapsClip => "The marquee overlaps a clip",
-            Self::OutsideClip => "The marquee is outside the clip",
+            Self::OutsideLoop { marquee, region } => format!(
+                "While looping, the marquee ({}) must be inside the loop ({})",
+                span_label(marquee.0, marquee.1, meter),
+                span_label(region.0, region.1, meter),
+            ),
+            Self::OverlapsClip => "The marquee overlaps a clip".to_owned(),
+            Self::OutsideClip => "The marquee is outside the clip".to_owned(),
         }
     }
 }
@@ -342,7 +355,10 @@ impl Sequencer {
             && self.playback_is_looping()
             && (start < self.region_start() || end > self.region_end())
         {
-            return Some(MarqueeRefusal::OutsideLoop);
+            return Some(MarqueeRefusal::OutsideLoop {
+                marquee,
+                region: (self.region_start(), self.region_end()),
+            });
         }
         let track = self.tracks.get(self.selected_track_index()?)?;
         (!track.find_clip_ids_in(start, end).is_empty()).then_some(MarqueeRefusal::OverlapsClip)
@@ -3506,9 +3522,29 @@ mod tests {
 
         assert_eq!(
             marquee_refusal(&seq, marquee),
-            Some(MarqueeRefusal::OutsideLoop)
+            Some(MarqueeRefusal::OutsideLoop {
+                marquee,
+                region: (0, bar * 2),
+            })
         );
         assert_eq!(marquee_refusal(&seq, (0, bar)), None);
+    }
+
+    /// The refusal's footer line names both spans, off the bar lines as the
+    /// ruler counts positions, so a marquee a little past the loop shows
+    /// where it is.
+    #[test]
+    fn the_outside_loop_refusal_names_both_spans() {
+        let meter = Meter::FOUR_FOUR;
+        let (bar, beat) = (meter.bar_ticks(), meter.beat_ticks());
+        let refusal = MarqueeRefusal::OutsideLoop {
+            marquee: (bar * 164 + beat * 2, bar * 168),
+            region: (bar * 164 + beat * 3, bar * 168),
+        };
+        assert_eq!(
+            refusal.message(meter),
+            "While looping, the marquee (165+2–169) must be inside the loop (165+3–169)"
+        );
     }
 
     /// Linear, the region is the marquee's stretch of arrangement time: each

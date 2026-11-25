@@ -37,7 +37,7 @@ impl EventHandlers {
         let framing = match sequencer.capture_framing(frame) {
             Ok(framing) => framing,
             Err(refusal) => {
-                self.send_status_ui_event(refusal.message().to_owned());
+                self.send_status_ui_event(refusal.message(sequencer.meter()));
                 return;
             }
         };
@@ -236,7 +236,7 @@ mod tests {
         assert!(spans(&h.sequencer, 0).is_empty());
         assert_eq!(
             statuses(&h),
-            vec!["While looping, the marquee must be inside the loop"]
+            vec!["While looping, the marquee (bars 2–3) must be inside the loop (bars 1–2)"]
         );
     }
 

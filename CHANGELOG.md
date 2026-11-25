@@ -27,6 +27,7 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ### Changed
 
+- When a running `/` with a marquee is refused because the marquee isn't inside the loop, the footer now names both: where the marquee is and where the loop is, so a leftover marquee, or one a little past the loop's edge, shows up at once.
 - The performance lane reaches the whole song. Its keys used to stop at bar 18 at a beat a key (bar 68 at a bar); now they run on along the timeline, and your keyboard's keys sit around the arranger cursor, so a click in the lane puts your hand there. Only moving the cursor moves it; playing never does.
 - The performance lane's keys are no longer named. Which note plays a key now depends on where your hand is, so a fixed name would often be wrong; the black keys show where the C's are, as on your keyboard.
 - A press on the performance lane keeps the beat. While playing, a key now jumps to its bar or beat plus however far your press was from the nearest beat: press a little late and you cut in a little way into the bar, press a little early and the bar starts right on the beat you were aiming for. Before, each press restarted the beat wherever it fell, so the metronome jumped with every press and a captured performance drifted off the grid. Now the click stays steady to play against, and a capture's bar lines line up with the arrangement's. The press that starts playback still starts its key exactly.
