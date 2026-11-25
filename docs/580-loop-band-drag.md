@@ -1,0 +1,60 @@
+# Dragging the Loop Band
+
+**Status: drafted 2026-11-25, not yet agreed, not built. Issue: #47.** The arranger's loop region band becomes draggable: press on either edge of the band in the timeline strip and drag to move that loop boundary, or press inside the band and drag to move the whole loop, keeping its length, both snapped to the arranger grid. Today the region is set only by `⌘/Ctrl+L` over a marquee, by the first stopped `/`, or by the sole-clip rule, so adjusting a loop by a bar means making a marquee first. Dragging the band as a whole is what a DAW user expects of it (decided with the user 2026-11-25, which widened the issue's first scope of the edges alone).
+
+## Background
+
+The loop region (`Region`, two atomics, `models/region.rs`) is drawn in the arranger's strip as the **region band**: the bottom `REGION_BAND_H` (10px) of the `TIMELINE_H` strip, a translucent fill with a 1px line at each bound (`draw_region` → `draw_strip_band`, `030` § Strip band budget). The clip view has a twin, the window band, whose edge lines *are* handles: `window_edge_at` hit-tests them (`window_edge_hit`, `CLIP_EDGE_HIT_PX` either side), a press starts `gesture.window_edge_drag`, the release commits one `SetClipWindowEdge` (`020` § Clip Edge Drag-Resize, `archive/290-framing-a-take.md`). The arranger's band has the same shape and no handles.
+
+What a press in the arranger's strip does today: it plays from the click and touches nothing else (`play_from_x`, `input/mod.rs`; Ableton's scrub area). A press on the band is a scrub that happens to land on the loop, so the one existing meaning to protect is the scrub (point 3 keeps it for a press that doesn't drag).
+
+How the region changes today, all through the transport thread, none of it an undo step:
+
+- `TransportCommand::SetRegion { start, end }` (each `Option`, `None` keeps that bound): `Region::set_region` clamps negatives to 0 and resolves an inverted pair toward the bound the caller pinned, then `align_clock_with_playback_if_running` (`150`). Its callers: the sole-clip rule (`loop_sole_clip_workflow`) and the sequencer's edits.
+- `SetRegionOrToggleLoop` and `LoopOver`: set the region *and* turn looping on (`⌘L` with a marquee; the first stopped `/`).
+- The region is saved in the project (`060`), looping on or off is not part of this.
+
+## The design
+
+**1. The handles are the band's two edge lines and its body, in the band's own 10px.** `Display::region_handle_at(x, y) -> Option<RegionHandle>` (`Start`, `End` or `Body`) mirrors `window_edge_at`: arranger pane only, the pointer inside the `REGION_BAND_H` strip at the bottom of the timeline strip. An edge that is on screen, within `CLIP_EDGE_HIT_PX`, is an edge handle; otherwise a pointer between the two bounds is the body. Edges win over the body, so a band narrower than twice the reach is all edges and can be widened but not moved by its body (zoom in, or drag an edge). The distance test is the pure `window_edge_hit` (the nearer edge when both are in reach, the end on a tie), reused as it stands, which only wants a more general name. The vertical gate is the band, not the whole strip as the window band's is: above the band are the bar numbers and the range markers, and a press there is still the scrub. A press that misses the band's 10px keeps playing from the click.
+
+**2. A press on a handle is a gesture of its own, decided at press time.** Like the window band's: it comes before the strip's play-from-click, places no cursor, selects nothing, moves no playhead and leaves the marquee alone. `gesture.region_hover` drives the pointer, set once per frame in `update()` beside the other cursors: `CursorIcon::ResizeHorizontal` over an edge, `Grab` over the body and `Grabbing` while it is held, as the clip band's (the strip and the lanes are different places, so no precedence question with the clip band's own cursors). `ProjectLoaded`, `ClipEntered` and the other view changes clear the hover and the drag with the rest (`clear_window_edge_drag`'s siblings).
+
+**3. The body drag moves the loop whole, and a press that never drags is still the scrub.** The press records the pointer's offset from the region's start (the clip move's `grab_offset`, so the band stays under the hand instead of jumping its start to the pointer) and the length. Each move sets the start to `snap_to_grid(pointer_tick - grab_offset)` with the length kept, held to `start >= 0` by moving the end with it (never shortening the loop against the left wall), and sends one `SetRegion { start: Some, end: Some }` so both atomics change in one command (the view's re-read of the pair, `region_bounds_snapshot`, already covers a frame between the two stores). Nothing is sent, and nothing happens, until the pointer is `DRAG_THRESHOLD_PX` off the press point (the clip band's latch). A press released without crossing it is a click, and does what the strip does today: `play_from_x` at the press, run at the release instead of the press, so the scrub works across the band as well as over the numbers above it. An edge press has no threshold (a grab by a few pixels is deliberate and an edge snaps by itself).
+
+**4. The drag is live, not a preview.** Each move sends `TransportCommand::SetRegion` for the grabbed bound (both, for the body), so the band, the loop you hear and the wrap all follow the pointer. The window band previews and commits at release only because every pointer move would otherwise have been an *edit* to the clip (a clip changing under the drag, an undo step each); the region is not an edit, it is one atomic store and a clock phase sync, and the point of moving a loop is to hear where it now wraps. A command is sent only when the snapped tick changes, not per pointer move, so a drag across one grid step is one command. No release step: the last command already is the result. The view never holds a local copy of the region (the band reads the atomics, `region_bounds_for_render`), so there is no preview state, no "hold until the sequencer applied it" (`WindowEdgeCommit`) and nothing to go stale.
+
+**5. Snap and clamp.** The pointer goes through `snap_to_grid` + `cursor_grid_ticks()`, the zoom-adaptive arranger snap that cursor placement and the clip edge drag use (`020`), so a drag zoomed out lands on bars and zoomed in on finer steps, with whatever modifier the clip edge drag already gives. The grabbed bound is held to `[0, other_bound - min]` for the start and `[other_bound + min, ∞)` for the end, `min` being `time::min_clip_length_ticks()` (a beat): the edge stops against the other one instead of crossing it or collapsing the loop to nothing (`Region::set_region` would allow a zero-length region, and a zero-length loop wraps every tick). The clamp is a small pure function, `region_edge_target(edge, tick, (start, end), min)`, unit-tested; `set_region` stays as it is.
+
+**6. Not undoable, like every other region change.** `⌘L`, the sole-clip rule and the first `/` do not make undo steps (the loop is "transport state you set", not content), so a drag would be the odd one out if it did, and one `⌘Z` per drag would also step over the clip edits underneath it. This needs a line in `050` § Undo scope next to the other things that are not undoable.
+
+**7. It does not touch whether looping is on** (decided with the user 2026-11-25). A drag, of an edge or the body, moves bounds and nothing else: with looping off the band stays dimmed (`draw_region`'s `loop_dim`) and the drag changes where it would loop, turned on later with `⌘L`. This differs from `⌘L` over a marquee, which re-enables looping, deliberately: that command is "loop *this*", a drag is "adjust the loop I have".
+
+**8. The sole-clip rule still wins on the next clip edit.** While the project has one clip the loop *is* that clip and follows its edges (`loop_sole_clip_workflow`, `220`). A drag detaches it, and the next edit of that clip's edges snaps the loop back onto the clip. That is the rule as written ("edits to the only clip move the loop") and keeping it means no state remembering "the user moved this loop". With two or more clips the loop never follows anything, so a dragged loop stays put.
+
+**9. While playing.** The drag works running or stopped. A body drag lands the whole loop somewhere else under the playhead: the playhead keeps running, and if it is now outside the loop it runs on until it meets a loop boundary (the same as an end dragged behind it). An end dragged in behind the playhead leaves it running on past the end until it next passes a loop boundary or is stopped, as for `[`/`]` and the clip edge drag (`220` § Playback during edits); a start dragged past the playhead is the same case mirrored. `SetRegion`'s clock phase sync (`150`) is the one that runs on every change today, which is fine at the rate of one per grid step. While the performance lane is selected the loop does not wrap (`110`) and the band is dimmed; it can still be dragged, and it takes effect when the lane is deselected. While an audio export runs the transport belongs to it (`audio_export_transport_command`): a drag is dropped there like every transport command.
+
+## What it does not do
+
+- **No drawing a new loop** by dragging in empty strip: a press outside the band stays the scrub. `⌘L` over a marquee stays the way to set a loop from scratch.
+- **No ⌥-drag copy** of the band: there is one loop.
+- **No keyboard twin.** The region has no key of its own on purpose (`020` § Plain `+/-`...: only `⌘L` mutates it); `[`/`]` are the clip's edges.
+- **No snap to clip edges or the cursor**, only the grid.
+- **No autoscroll** while dragging off the edge of the view, as with the other edge drags.
+- **No change to the clip view's window band**, which stays a preview-and-commit gesture on a clip edit.
+
+## Open questions
+
+1. Whether the vertical reach should be the whole strip, as the window band's is, rather than the band's 10px (point 1). The band's own height is safer for the scrub; a taller reach is easier to hit. Hand-test decides.
+2. Whether a body drag past the left wall should stop the whole loop at 0 (as written) or shorten it. Stopping keeps the length, which is what a move means.
+
+## Docs and tests the build owes
+
+- `020` § Clip Edge Drag-Resize gets a short bullet beside the window band's (the arranger's twin, live not preview, the body drag, not undoable); `030` § Strip band budget names the band's edges as handles; `050` lists the drag among the changes that are not undo steps; `010` and `FIXED` in `view/display/settings/keyboard_tab.rs` get the mouse row; `CHANGELOG.md` `[Unreleased]` an Added line.
+- Tests: `region_edge_target` (clamps at 0, against the other edge by a beat, the end past the start, an inverted drag), `region_body_target` (the grab offset kept, the length kept, held at 0, snapped), the handle hit test (a press in the bar numbers is not a hit; in the band it is an edge near a bound, the body between, an edge winning in a narrow band), a click that never crosses the threshold sending the scrub and no `SetRegion`, and the existing `window_edge_hit` cases still pass under its new name. `Region::set_region` is untouched.
+- To check by hand: the drag zoomed out and in; running, with the playhead inside, behind and ahead of the dragged edge; looping off; one clip (then an edge edit) and two clips; the scrub still scrubs over the numbers, in empty strip and on a click of the band body; a drag over the performance lane selected.
+- To check in the code before building: that dragging marks the project unsaved (the fingerprint must include the region, `060` § Unsaved, or a loop change would be lost at quit without the prompt).
+
+## Phases
+
+One phase: the hit test, the hover cursors, the edge and body drags, the clamps, the docs and the tests.
