@@ -601,7 +601,7 @@ impl DragNotesEdit {
 // refuses a span that would change nothing, so no empty step enters the record.
 // ---------------------------------------------------------------------------
 
-/// A controller lane's `Delete` (`380-wheel-lane.md` decision 18,
+/// A controller lane's `Delete` (`archive/380-wheel-lane.md` decision 18,
 /// `archive/390-knob-panel.md` decision 13): `controller` cleared over the
 /// event-tick span `start..end` of the lead clip — a wheel back to rest, a
 /// knob's parameter held at the value before the span

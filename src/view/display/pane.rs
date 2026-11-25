@@ -29,7 +29,7 @@ pub(super) enum KeyFocus {
     /// The piano roll's pitch-bend or mod-wheel lane (a press in it), so
     /// `Delete` returns its span to rest rather than deleting notes. Only
     /// effective in the clip view with a wheel lane shown
-    /// (`380-wheel-lane.md` decision 14).
+    /// (`archive/380-wheel-lane.md` decision 14).
     WheelLane,
     /// The knob panel, with the selected knob (a click or right-click on
     /// it), so `Delete` removes that knob's mapping. Only effective while

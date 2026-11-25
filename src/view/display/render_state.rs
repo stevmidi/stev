@@ -32,11 +32,11 @@ pub(super) struct RenderState {
     /// event shapes, from the same snapshot.
     pub(super) controller_moves: ControllerMoves,
     /// The lead clip's whole extent in event ticks, from the same snapshot:
-    /// what `⌘A` marks in a controller lane (`380-wheel-lane.md` decision 17).
+    /// what `⌘A` marks in a controller lane (`archive/380-wheel-lane.md` decision 17).
     pub(super) lead_clip_extent: (i32, i32),
     /// The lane the piano roll shows under its notes. View state: not saved,
     /// kept when the lead clip changes, switched only by the gutter labels,
-    /// the knob labels and `Action::CycleClipLane` (`380-wheel-lane.md`,
+    /// the knob labels and `Action::CycleClipLane` (`archive/380-wheel-lane.md`,
     /// `archive/390-knob-panel.md` decision 11).
     pub(super) clip_lane: ClipLane,
     /// Arranger horizontal scroll offset, in pixels. Written only by the

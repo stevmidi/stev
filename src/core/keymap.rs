@@ -129,7 +129,7 @@ pub(crate) enum Action {
     StretchClipShorter,
     /// Show the next lane under the piano roll: velocity, pitch bend, the
     /// mod wheel, the sustain pedal, back to velocity (clip view,
-    /// `380-wheel-lane.md`, `archive/530-sustain-capture.md` decision 7; a knob's
+    /// `archive/380-wheel-lane.md`, `archive/530-sustain-capture.md` decision 7; a knob's
     /// lane is a click on the knob, `archive/400-parameter-knobs.md` decision 14).
     CycleClipLane,
 }
@@ -904,7 +904,7 @@ impl Action {
     /// Whether this action, pressed while a wheel lane has the keyboard,
     /// takes it back to the notes and acts there, so the Delete after it
     /// acts on what it changed (`Display::handle_wheel_lane_key`,
-    /// `380-wheel-lane.md` decision 19) — the track headers' rule
+    /// `archive/380-wheel-lane.md` decision 19) — the track headers' rule
     /// ([`leaves_track_headers`](Self::leaves_track_headers)) for the clip
     /// view. Every clip-view command does, so a new one does too, but the
     /// lane's own: Delete notes and Select all notes, which the lane reads

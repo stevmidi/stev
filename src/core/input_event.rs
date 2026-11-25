@@ -547,7 +547,7 @@ pub(crate) enum InputEvent {
         drag_id: u64,
     },
     /// A click selecting a knob (`archive/390-knob-panel.md` decision 14) or a press
-    /// in a controller lane (`380-wheel-lane.md` decision 16) drops the note
+    /// in a controller lane (`archive/380-wheel-lane.md` decision 16) drops the note
     /// selection, so the `Delete` that follows can't be mistaken for one on
     /// the notes. Maps 1:1 to
     /// `SequencerCommand::ClearEventSelection`; the view never sends it in a

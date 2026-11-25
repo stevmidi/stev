@@ -177,7 +177,7 @@ impl CaptureFraming {
 }
 
 /// Whether `capture` is a take a running insert lands: a note, or wheel moves
-/// alone (`370-wheel-capture.md` § Decisions 3). A new clip needs a note.
+/// alone (`archive/370-wheel-capture.md` § Decisions 3). A new clip needs a note.
 fn insert_lands(capture: &Clip) -> bool {
     capture.has_notes() || capture.has_controller_moves()
 }
@@ -517,7 +517,7 @@ impl Sequencer {
     /// buffer with neither notes nor wheel moves, or nothing that lands in
     /// the clip, so a no-op insert never enters the undo record. A take of
     /// wheel moves alone lands too, framed by the pass holding its last move
-    /// (`370-wheel-capture.md` § Decisions 3–4).
+    /// (`archive/370-wheel-capture.md` § Decisions 3–4).
     ///
     /// An overdub: everything lands where it was heard, wherever the cursors
     /// are. Anchored on the first arrangement tick of the clip that playback
@@ -539,7 +539,7 @@ impl Sequencer {
     /// The wheels latch to the end of the loop pass the window starts in,
     /// not the window's: a one-bar loop over a four-bar clip hands back to
     /// the clip's own curve at the loop's end, and a wheel move after it
-    /// belongs to another pass (`370-wheel-capture.md`). Not looping, they
+    /// belongs to another pass (`archive/370-wheel-capture.md`). Not looping, they
     /// latch to the window's end. Either way never past the clip's end.
     ///
     /// `punch_in` is a span of arrangement ticks inside the clip
@@ -678,7 +678,7 @@ impl Sequencer {
     /// Both carry the wheels off their rest where the kept span
     /// starts onto its start ([`Clip::carry_resting_onto`]): a wheel set in an
     /// earlier pass, or before the transport started, and held, is part of
-    /// the take (`370-wheel-capture.md` § Decisions 7). A new clip also holds
+    /// the take (`archive/370-wheel-capture.md` § Decisions 7). A new clip also holds
     /// each knob's start value there ([`Clip::hold_start_values`]), so the
     /// stretch before a turn plays where the knob stood; an insert leaves
     /// that to [`Clip::land_take`], which knows the clip's own data.
@@ -2202,7 +2202,7 @@ mod tests {
     /// A one-bar loop over a four-bar clip: the wheel latches to the loop's
     /// end, where the clip's old curve resumes, not to the clip's end; a
     /// move after the wrap belongs to another pass and stays out
-    /// (`370-wheel-capture.md` § Open question).
+    /// (`archive/370-wheel-capture.md` § Open question).
     #[test]
     fn a_short_loop_latches_the_wheel_to_the_pass_end() {
         let bar = Meter::FOUR_FOUR.bar_ticks();
@@ -2259,7 +2259,7 @@ mod tests {
 
     /// Without a lead clip a take is its notes: a wheel wiggled with nothing
     /// played commits no clip, running or stopped, and stopped it opens no
-    /// take session into a lead clip either (`370-wheel-capture.md`
+    /// take session into a lead clip either (`archive/370-wheel-capture.md`
     /// § Decisions 2–3).
     #[test]
     fn a_capture_of_wheel_moves_alone_commits_no_clip() {

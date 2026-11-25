@@ -1,6 +1,6 @@
 //! Landing a captured take's controller moves in a clip — pitch bend, the
 //! mod wheel, the sustain pedal and the knobs' parameters — by the latch rule of
-//! `370-wheel-capture.md` § Decisions 5–7, which `archive/400-parameter-knobs.md`
+//! `archive/370-wheel-capture.md` § Decisions 5–7, which `archive/400-parameter-knobs.md`
 //! decision 10 applies per parameter.
 //!
 //! A take's notes are added to the clip, same-pitch overlaps resolved as the
@@ -21,7 +21,7 @@
 //! A lane's `Delete` is built on the same rule: a span of a wheel returned
 //! to rest, a span of a parameter held at the value before it
 //! ([`clear_controller_span`](Clip::clear_controller_span),
-//! `380-wheel-lane.md` decision 18, `archive/390-knob-panel.md` decision 13).
+//! `archive/380-wheel-lane.md` decision 18, `archive/390-knob-panel.md` decision 13).
 
 use std::collections::HashSet;
 use std::ops::Range;
@@ -224,7 +224,7 @@ impl Clip {
     }
 
     /// Clears `controller` over event ticks `start..end` — a lane's `Delete`
-    /// (`380-wheel-lane.md` decision 18, `archive/390-knob-panel.md` decision 13).
+    /// (`archive/380-wheel-lane.md` decision 18, `archive/390-knob-panel.md` decision 13).
     /// Every move of `controller` inside the span goes, muted ones too. A
     /// wheel is returned to rest there, the same result as riding it at rest
     /// across the span under the landing rule: a rest move goes in at `start`
@@ -315,7 +315,7 @@ impl Clip {
     /// The clip's whole extent in event ticks, `(start, end)`: from tick 0,
     /// or an earlier event, to the window's end or one past the last event,
     /// whichever is later — material outside the window included. The span
-    /// `⌘A` marks in a wheel lane (`380-wheel-lane.md` decision 17). Not
+    /// `⌘A` marks in a wheel lane (`archive/380-wheel-lane.md` decision 17). Not
     /// [`reach`](Self::reach), which frames the notes with headroom: this
     /// covers every event, wheel moves included, and nothing more. The
     /// events are kept in tick order, so the ends are the first and last.

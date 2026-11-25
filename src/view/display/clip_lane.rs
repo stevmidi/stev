@@ -2,7 +2,7 @@
 //! velocity bars, one of the resting controllers' recorded curves (the two
 //! wheels and the sustain pedal), or one of the knobs' lanes. View state
 //! only (`RenderState::clip_lane`): never saved, never switched by anything
-//! but the user. See `380-wheel-lane.md`, `archive/400-parameter-knobs.md` decision
+//! but the user. See `archive/380-wheel-lane.md`, `archive/400-parameter-knobs.md` decision
 //! 12 and `archive/530-sustain-capture.md` decision 7.
 
 use crate::core::midi::message::Controller;

@@ -45,7 +45,7 @@ capture covers it. Key files: `src/core/midi/input.rs`,
   so the notes the jump releases stop ringing, and the chase presses it again where
   playback lands down (`archive/530-sustain-capture.md` decision 4). A clip's other CCs (imported,
   pasted) play as they come and are never chased.
-- **Shown in the piano roll's controller lanes** (`380-wheel-lane.md`, `archive/390-knob-panel.md`):
+- **Shown in the piano roll's controller lanes** (`archive/380-wheel-lane.md`, `archive/390-knob-panel.md`):
   the lane under the notes switches to pitch bend, the mod wheel or a knob's parameter and draws
   the lead clip's moves as a line (move to move as a DAW draws it, a held value and its jump stepped). The one edit there clears
   a span (a wheel back to rest, a parameter held at the value before it), or with `⌘A` the whole
@@ -59,7 +59,7 @@ capture covers it. Key files: `src/core/midi/input.rs`,
   spread as they were pressed (`100` § Notes held into a take). A knob has no rest to be
   off, so where it stands is never carried in.
 - **A take into a clip replaces that clip's controller data over the span played**
-  (`370-wheel-capture.md`, `Clip::land_take`): its notes are added (same-pitch overlaps
+  (`archive/370-wheel-capture.md`, `Clip::land_take`): its notes are added (same-pitch overlaps
   trimmed as the piano roll trims them, `Clip::insert_notes`), but for each controller
   the take moved — a wheel or a knob's parameter — the clip's own moves of it go from the
   take's first move to the end of the take's window, the take's come in, and the old

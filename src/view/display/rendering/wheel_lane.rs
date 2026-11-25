@@ -8,7 +8,7 @@
 //! the span `Delete` would clear. The moves are folded per pixel column
 //! ([`fold_wheel_columns`]) so what is drawn follows the lane's width, not
 //! the event count. The knob lanes switch from the knobs' labels
-//! (`rendering/knob_panel.rs`). See `380-wheel-lane.md`,
+//! (`rendering/knob_panel.rs`). See `archive/380-wheel-lane.md`,
 //! `archive/530-sustain-capture.md` decision 7, `archive/390-knob-panel.md`
 //! decisions 11–13.
 
@@ -117,7 +117,7 @@ impl Display {
     }
 
     /// Whether the lead clip has moves of `controller` — a lane label's
-    /// data marker (`380-wheel-lane.md` decision 6).
+    /// data marker (`archive/380-wheel-lane.md` decision 6).
     pub(super) fn lead_clip_moves(&self, controller: Controller) -> bool {
         !self.render.controller_moves.of(controller).is_empty()
     }

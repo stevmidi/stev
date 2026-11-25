@@ -102,7 +102,7 @@ pub(super) struct GestureState {
     /// selection. Never empty.
     pub(super) duplicate_span: Option<(i32, i32)>,
     /// The wheel lane's span, `(start, end)` in event ticks snapped like the
-    /// cursor — what `Delete` returns to rest (`380-wheel-lane.md` decision
+    /// cursor — what `Delete` returns to rest (`archive/380-wheel-lane.md` decision
     /// 16). Marked by a drag in a controller lane or `⌘A` there; dropped with
     /// the lane's keyboard focus, on a lead-clip change or a switch of
     /// wheel, by `Esc`, and by the `Delete` that uses it. Never empty. View

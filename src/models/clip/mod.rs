@@ -34,7 +34,7 @@
 //! - `selection.rs` — the per-clip event [`Selection`].
 //! - `controller_landing.rs` — landing a captured take: notes added,
 //!   controller moves (the wheels, the knobs' parameters) replacing the clip's own
-//!   over the span played (`370-wheel-capture.md`).
+//!   over the span played (`archive/370-wheel-capture.md`).
 //!
 //! Pure data, unit-tested per file.
 

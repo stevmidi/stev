@@ -38,7 +38,7 @@ impl Display {
     /// Height of the lower lane at the bottom of the piano roll — the
     /// velocity panel or a wheel's curve (`ClipLane`), one fixed height for
     /// all three, so switching never moves the note grid
-    /// (`380-wheel-lane.md`).
+    /// (`archive/380-wheel-lane.md`).
     const LOWER_LANE_H: f32 = 80.0;
     /// Opacity of the `accent` fill over a piano-roll selection: the note
     /// marquee, and the wheel lane's span.

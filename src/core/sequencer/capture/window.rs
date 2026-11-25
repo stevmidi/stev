@@ -78,7 +78,7 @@ impl Sequencer {
     /// inserted note-on, or with no note its most recently inserted
     /// controller move, a wheel's or a knob's — the notes frame a take whenever it has them, so a bend easing
     /// back after a wrap can't pull the window off them
-    /// (`370-wheel-capture.md` § Decisions 4). `0` with neither.
+    /// (`archive/370-wheel-capture.md` § Decisions 4). `0` with neither.
     pub(super) fn take_framing_tick(clip: &Clip) -> i32 {
         let newest_first = || clip.events().iter().rev();
         newest_first()
@@ -287,7 +287,7 @@ mod tests {
     }
 
     /// A take with no note is framed by the pass holding its last wheel
-    /// move (`370-wheel-capture.md` § Decisions 4).
+    /// move (`archive/370-wheel-capture.md` § Decisions 4).
     #[test]
     fn calculate_running_region_wheel_only_take_starts_at_the_pass_holding_the_last_move() {
         let bar = Meter::FOUR_FOUR.bar_ticks();

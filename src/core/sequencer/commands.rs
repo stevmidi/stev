@@ -302,7 +302,7 @@ pub(crate) enum SequencerCommand {
     /// `Delete` in a controller lane: clears `controller` over the event-tick
     /// span `start..end` of the lead clip — a wheel back to rest, a knob's parameter
     /// held at the value before the span (`ClearControllerSpanEdit`, undoable
-    /// — see `380-wheel-lane.md` decision 18, `archive/390-knob-panel.md` decision
+    /// — see `archive/380-wheel-lane.md` decision 18, `archive/390-knob-panel.md` decision
     /// 13). Nothing is recorded when the span would change nothing.
     ClearControllerSpan {
         /// The controller the lane shows.

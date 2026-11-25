@@ -271,7 +271,7 @@ take session's Enter have no passes.
   controller move (pitch bend, mod wheel, a knob's parameter — `090`) in it, the one after the last note-off included — a
   bend easing back to centre must come along or the clip is left bent
   (`Clip::cloned_events_in_range`). The notes are added; the wheels **replace** the
-  clip's own over the span played (`Clip::land_take`, `370-wheel-capture.md`): per wheel
+  clip's own over the span played (`Clip::land_take`, `archive/370-wheel-capture.md`): per wheel
   the take moved, from its first move to the **wheel end**, where the old curve's value
   is written back. A wheel off its rest at the window start counts as a move there
   (`carry_resting_onto`, in `normalize_running_capture` and `InsertGrid::frame` alike)

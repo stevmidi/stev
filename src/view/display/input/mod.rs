@@ -364,14 +364,14 @@ impl Display {
         }
 
         // The gutter left of the lower lane: `ClipLane::GUTTER`'s labels pick the
-        // lane it shows (`380-wheel-lane.md`).
+        // lane it shows (`archive/380-wheel-lane.md`).
         if is_clip_events_view && let Some(lane) = self.clip_lane_label_at(x, y) {
             self.set_clip_lane(lane);
             return true;
         }
         // A press in a controller lane places the clip cursor, as anywhere
         // in the pane, drops the note selection, gives the lane the keyboard
-        // and starts a span drag (`380-wheel-lane.md` decisions 14–16). Only
+        // and starts a span drag (`archive/380-wheel-lane.md` decisions 14–16). Only
         // the cursor in a take session, whose clip is framed, never edited.
         // A knob's lane has nothing to mark yet.
         if is_clip_events_view
@@ -833,7 +833,7 @@ impl Display {
                 self.toggle_clip_panel_size();
                 true
             }
-            // `W` — the next lane under the piano roll (`380-wheel-lane.md`).
+            // `W` — the next lane under the piano roll (`archive/380-wheel-lane.md`).
             // View-local, like the gutter labels a click picks one from.
             InputEvent::Action(Action::CycleClipLane) => {
                 self.set_clip_lane(self.shown_clip_lane().next());

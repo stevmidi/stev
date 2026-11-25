@@ -122,7 +122,7 @@ impl TakeFraming {
     }
 
     /// Where the take's wheel span ends, in take ticks, for a take whose
-    /// notes end at `last_off` (`370-wheel-capture.md` § Decisions 10): a
+    /// notes end at `last_off` (`archive/370-wheel-capture.md` § Decisions 10): a
     /// bend easing back during the release belongs to the phrase, so the
     /// span runs on to the take's next note-on after `last_off`; with none,
     /// just past its last wheel move from `last_off` on; with none of those

@@ -6,7 +6,7 @@
 //! (the pedal up), a knob's parameter held at the value before it
 //! (`InputEvent::ClearControllerSpan`) — `Esc` drops the span and then the focus. A note command takes the
 //! keyboard back to the notes and acts there
-//! ([`Action::leaves_wheel_lane`]). See `380-wheel-lane.md` decisions 14–19
+//! ([`Action::leaves_wheel_lane`]). See `archive/380-wheel-lane.md` decisions 14–19
 //! and `archive/390-knob-panel.md` decisions 11 and 13.
 
 use egui::Key;
@@ -83,7 +83,7 @@ impl Display {
     /// — since a lane belongs to a parameter (`archive/400-parameter-knobs.md`
     /// decision 14). Drawn so, not stored: back on a track whose knob there
     /// has one, its lane shows again, the choice never switched by itself
-    /// (`380-wheel-lane.md` decision 7).
+    /// (`archive/380-wheel-lane.md` decision 7).
     pub(in crate::view::display) fn shown_clip_lane(&self) -> ClipLane {
         match self.render.clip_lane {
             ClipLane::Knob(knob) if self.knob_param(knob).is_none() => ClipLane::Velocity,
