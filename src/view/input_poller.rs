@@ -262,9 +262,7 @@ impl InputPoller {
         }
     }
 
-    /// Drops the next frame's raw motion, button down or up: the pointer has
-    /// just been moved by the app, and the first mouse event after that
-    /// carries the warp's distance in its delta on macOS
+    /// Drops the next frame's raw motion, button down or up
     /// (`skip_motion_after_warp`).
     pub(super) fn skip_next_motion(&mut self) {
         self.skip_motion_after_warp = true;
@@ -379,9 +377,8 @@ impl InputPoller {
             if let Some(motion) = i.pointer.motion()
                 && motion != Vec2::ZERO
             {
-                if self.skip_motion_after_warp {
-                    self.skip_motion_after_warp = false;
-                } else if left_down {
+                let after_warp = std::mem::take(&mut self.skip_motion_after_warp);
+                if left_down && !after_warp {
                     self.input_events.push(InputEvent::PointerMotion {
                         dx: motion.x,
                         dy: motion.y,

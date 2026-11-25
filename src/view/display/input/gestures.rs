@@ -836,13 +836,12 @@ impl Display {
     /// turning around at bar 1 or the song's end acts at once. A pan carries
     /// the anchor by what the view actually moved.
     pub(super) fn extend_overview_drag(&mut self, dx: f32, dy: f32) {
-        let Some(drag) = self.gesture.overview_drag.as_mut() else {
+        let Some(mut drag) = self.gesture.overview_drag else {
             return;
         };
         let (dx, dy) = drag.axes.filter(dx, dy);
-        let anchor_tick = drag.anchor_tick;
         if dy != 0.0 {
-            self.zoom_arranger_about(overview_zoom_factor(dy), anchor_tick);
+            self.zoom_arranger_about(overview_zoom_factor(dy), drag.anchor_tick);
             // A zoom out near the strip's end would carry the view past it.
             let (view_start, _) = self.arranger_view_ticks();
             self.scroll_overview_view_to(view_start);
@@ -851,11 +850,9 @@ impl Display {
             let (before, _) = self.arranger_view_ticks();
             let step = self.overview_map().ticks_for_px(dx);
             self.scroll_overview_view_to(before + step);
-            let (after, _) = self.arranger_view_ticks();
-            if let Some(drag) = self.gesture.overview_drag.as_mut() {
-                drag.anchor_tick += after - before;
-            }
+            drag.anchor_tick += self.arranger_view_ticks().0 - before;
         }
+        self.gesture.overview_drag = Some(drag);
     }
 
     /// Ends an overview drag on release. The pointer, held still where it was
@@ -879,11 +876,12 @@ impl Display {
     /// ends of the strip.
     fn scroll_overview_view_to(&mut self, start: f32) {
         let (view_start, view_end) = self.arranger_view_ticks();
-        let span_end = self.overview_map().span_end();
-        let start = overview_clamped_start(start, view_end - view_start, span_end);
-        if start != view_start {
-            self.scroll_arranger_to_tick(start);
-        }
+        let span_end = self.arranger_zoom_out_view_ticks();
+        self.scroll_arranger_to_tick(overview_clamped_start(
+            start,
+            view_end - view_start,
+            span_end,
+        ));
     }
 
     /// Updates whether the pointer is over the overview's content, for the

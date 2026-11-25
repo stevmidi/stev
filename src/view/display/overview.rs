@@ -70,11 +70,6 @@ impl OverviewMap {
         (x - self.left) / self.width * self.span_end
     }
 
-    /// The tick at the right edge.
-    pub(super) fn span_end(&self) -> f32 {
-        self.span_end
-    }
-
     /// How many ticks `dx` points along the strip cover: a sideways drag
     /// moves the view by this.
     pub(super) fn ticks_for_px(&self, dx: f32) -> f32 {
@@ -82,15 +77,20 @@ impl OverviewMap {
     }
 
     /// The view box's x span for the view `view_start ..= view_end` (ticks),
-    /// widened about its centre to `OVERVIEW_MIN_BOX_PX` when narrower.
+    /// widened about its centre to `OVERVIEW_MIN_BOX_PX` when narrower, and
+    /// held inside the strip: a wheel can scroll the view past the strip's
+    /// end (its left edge may reach the last content tick), and the box then
+    /// stays at the end. Drawing and the press's hit test both use it.
     pub(super) fn view_box(&self, view_start: f32, view_end: f32) -> (f32, f32) {
-        let (left, right) = (self.x_of(view_start), self.x_of(view_end));
-        if right - left >= OVERVIEW_MIN_BOX_PX {
-            return (left, right);
+        let (mut left, mut right) = (self.x_of(view_start), self.x_of(view_end));
+        if right - left < OVERVIEW_MIN_BOX_PX {
+            let centre = (left + right) * 0.5;
+            let half = OVERVIEW_MIN_BOX_PX * 0.5;
+            (left, right) = (centre - half, centre + half);
         }
-        let centre = (left + right) * 0.5;
-        let half = OVERVIEW_MIN_BOX_PX * 0.5;
-        (centre - half, centre + half)
+        let strip_right = self.left + self.width;
+        let left = left.max(self.left).min(strip_right - OVERVIEW_MIN_BOX_PX);
+        (left, right.min(strip_right).max(left + OVERVIEW_MIN_BOX_PX))
     }
 }
 
@@ -219,6 +219,13 @@ mod tests {
     fn view_box_is_the_views_ticks() {
         let map = OverviewMap::new(0.0, 1000.0, 10_000.0);
         assert_eq!(map.view_box(2000.0, 4000.0), (200.0, 400.0));
+    }
+
+    #[test]
+    fn view_box_stays_inside_the_strip() {
+        let map = OverviewMap::new(0.0, 1000.0, 10_000.0);
+        assert_eq!(map.view_box(9500.0, 12_000.0), (950.0, 1000.0));
+        assert_eq!(map.view_box(20_000.0, 22_000.0), (994.0, 1000.0));
     }
 
     #[test]

@@ -118,9 +118,6 @@ pub(super) fn draw_plus(painter: &Painter, centre: Pos2, half: f32, stroke: Stro
 /// scrolls vertically once they no longer fit (`ARRANGER_MIN_LANE_H`);
 /// `tracks_top()` has the scroll applied, so it can lie above `lanes_top`.
 pub(super) struct ArrangerLayout {
-    /// Top y of the overview strip: the arranger pane's top
-    /// (`590-arranger-overview.md`). The timeline strip is under it.
-    pub(super) overview_top: f32,
     /// Top y of the performance-lane row.
     pub(super) performance_lane_top: f32,
     /// Height of the performance-lane row.
@@ -741,9 +738,8 @@ impl Display {
     /// The arranger's vertical geometry ([`ArrangerLayout`]) for this frame —
     /// shared by drawing and hit-testing so they can't drift.
     pub(super) fn arranger_layout(&self) -> ArrangerLayout {
-        let overview_top = self.track_area_top();
         let area_h = self.track_area_h();
-        let performance_lane_top = overview_top + OVERVIEW_H + Self::TIMELINE_H;
+        let performance_lane_top = self.timeline_top() + Self::TIMELINE_H;
         let performance_lane_h = Self::PERFORMANCE_LANE_H;
         let lanes_top = performance_lane_top + performance_lane_h;
         let viewport_h = (area_h - OVERVIEW_H - Self::TIMELINE_H - performance_lane_h).max(0.0);
@@ -752,7 +748,6 @@ impl Display {
         let lane_h = arranger_lane_h(viewport_h, track_count, add_row_h);
         let max_scroll_y = arranger_max_scroll_y(viewport_h, lane_h, track_count, add_row_h);
         ArrangerLayout {
-            overview_top,
             performance_lane_top,
             performance_lane_h,
             lanes_top,
@@ -1302,13 +1297,21 @@ impl Display {
         };
         ctx.send_viewport_cmd(ViewportCommand::CursorGrab(grab));
         // A drag that moved what it holds puts the pointer back on it rather
-        // than where it was pressed (the overview's box). Window space: the
-        // canvas starts right of the browser panel.
+        // than where it was pressed (the overview's box).
         if !dragging && let Some(pos) = self.gesture.pointer_release_at.take() {
-            let window_pos = pos + vec2(self.browser_width(), 0.0);
-            ctx.send_viewport_cmd(ViewportCommand::CursorPosition(window_pos));
-            self.input_poller.skip_next_motion();
+            self.warp_pointer(ctx, pos);
         }
+    }
+
+    /// Moves the pointer to canvas-space `pos`, and drops the next raw
+    /// motion, which carries the warp's distance on macOS
+    /// (`InputPoller::skip_next_motion`). Every warp goes through here, so
+    /// none can forget the skip. Window space: the canvas starts right of
+    /// the browser panel.
+    fn warp_pointer(&mut self, ctx: &egui::Context, pos: Pos2) {
+        let window_pos = pos + vec2(self.browser_width(), 0.0);
+        ctx.send_viewport_cmd(ViewportCommand::CursorPosition(window_pos));
+        self.input_poller.skip_next_motion();
     }
 
     /// How far screen `y` lies past the note area's edge — positive above,
@@ -1963,7 +1966,6 @@ mod tests {
     #[test]
     fn lane_viewport_overshoot_points_the_way_to_scroll() {
         let layout = ArrangerLayout {
-            overview_top: 0.0,
             performance_lane_top: 20.0,
             performance_lane_h: 30.0,
             lanes_top: 50.0,

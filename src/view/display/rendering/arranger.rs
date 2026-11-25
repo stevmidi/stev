@@ -45,7 +45,7 @@ impl Display {
         // of ruler colour. The
         // performance-lane / per-track gutter overlays drawn below sit on top
         // of this and land at the same brightness as before.
-        let column_top = rect.min.y + layout.overview_top;
+        let column_top = rect.min.y + self.track_area_top();
         // The lanes always fill the viewport (`arranger_lane_h`), so the
         // column runs to its bottom whatever the scroll.
         let column_h = OVERVIEW_H + Self::TIMELINE_H + performance_lane_h + layout.viewport_h;

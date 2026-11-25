@@ -214,11 +214,11 @@ impl Display {
         let (span, color, dim) = if self.active_pane() == Pane::Clip {
             (self.clip_window_for_render(), self.lead_clip_color(), 1.0)
         } else {
-            // When looping is disabled, or the performance lane is selected,
-            // the region still marks the playback bounds but no longer wraps
-            // playback, so everything dims to signal that.
-            let loop_dim = if self.is_loop_enabled() { 1.0 } else { 0.4 };
-            (self.region_bounds_for_render(), theme::region(), loop_dim)
+            (
+                self.region_bounds_for_render(),
+                theme::region(),
+                self.loop_dim(),
+            )
         };
         self.draw_strip_band(
             painter,
@@ -227,6 +227,14 @@ impl Display {
             color.gamma_multiply(Self::STRIP_BAND_FILL_ALPHA * dim),
             color.gamma_multiply(Self::STRIP_BAND_EDGE_ALPHA * dim),
         );
+    }
+
+    /// How much the loop region is dimmed: fully shown while it loops, faded
+    /// when looping is off or the performance lane is selected, where the
+    /// region still marks the playback bounds but no longer wraps playback.
+    /// Shared by the timeline's loop band and the overview's.
+    pub(super) fn loop_dim(&self) -> f32 {
+        if self.is_loop_enabled() { 1.0 } else { 0.4 }
     }
 
     /// Opacity of a strip band's body (`draw_strip_band`).

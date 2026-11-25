@@ -198,10 +198,7 @@ impl Display {
         if !self.is_pane_visible(Pane::Arranger) || delta_x == 0.0 {
             return;
         }
-        self.render.arranger_follow_suspended = true;
-        let max_scroll_x = self.arranger_scroll_limit(self.pixels_per_tick());
-        self.render.arranger_scroll_x =
-            scrolled_offset(self.render.arranger_scroll_x, delta_x, max_scroll_x);
+        self.set_arranger_scroll_x(self.render.arranger_scroll_x - delta_x);
     }
 
     /// Scrolls the arranger so its view starts at (fractional) `tick`, held
@@ -211,19 +208,26 @@ impl Display {
         if !self.is_pane_visible(Pane::Arranger) || !tick.is_finite() {
             return;
         }
+        self.set_arranger_scroll_x(tick * self.pixels_per_tick());
+    }
+
+    /// Sets the arranger's scroll to `scroll_x` points, clamped
+    /// (`arranger_scroll_limit`), and suspends cursor-follow: the one body of
+    /// a user scroll, the wheel's and the overview's.
+    fn set_arranger_scroll_x(&mut self, scroll_x: f32) {
         self.render.arranger_follow_suspended = true;
-        let ppt = self.pixels_per_tick();
-        let max_scroll_x = self.arranger_scroll_limit(ppt);
-        self.render.arranger_scroll_x = (tick * ppt).clamp(0.0, max_scroll_x);
+        let max_scroll_x = self.arranger_scroll_limit(self.pixels_per_tick());
+        self.render.arranger_scroll_x = scrolled_offset(scroll_x, 0.0, max_scroll_x);
     }
 
     /// The arranger's scroll clamp at scale `ppt` (`arranger_max_scroll_x`):
     /// the last content tick at the left edge, or the overview's end at the
     /// right edge, whichever is further.
     pub(in crate::view::display) fn arranger_scroll_limit(&self, ppt: f32) -> f32 {
+        let last_content_tick = self.arranger_last_content_tick();
         arranger_max_scroll_x(
-            self.arranger_last_content_tick(),
-            self.arranger_zoom_out_view_ticks(),
+            last_content_tick,
+            self.arranger_zoom_out_view_ticks_for(last_content_tick),
             self.content_w(),
             ppt,
         )

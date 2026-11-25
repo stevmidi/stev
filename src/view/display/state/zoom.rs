@@ -65,8 +65,17 @@ impl Display {
     /// with its headroom, never under the default 32-bar view). The span the
     /// overview maps (`590-arranger-overview.md`).
     pub(in crate::view::display) fn arranger_zoom_out_view_ticks(&self) -> f32 {
+        self.arranger_zoom_out_view_ticks_for(self.arranger_last_content_tick())
+    }
+
+    /// `arranger_zoom_out_view_ticks` for an already-read last content tick,
+    /// so a caller that needs both scans the clips once.
+    pub(in crate::view::display) fn arranger_zoom_out_view_ticks_for(
+        &self,
+        last_content_tick: i32,
+    ) -> f32 {
         let content_w = self.content_w();
-        let floor = min_arranger_px_per_beat(content_w, self.arranger_last_content_tick());
+        let floor = min_arranger_px_per_beat(content_w, last_content_tick);
         content_w / floor * beats_to_ticks(1.0) as f32
     }
 

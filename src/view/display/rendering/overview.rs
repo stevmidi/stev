@@ -6,7 +6,7 @@
 
 use egui::{CornerRadius, Painter, Rect, Stroke, StrokeKind, pos2};
 
-use crate::view::display::overview::{OVERVIEW_MIN_BOX_PX, overview_row};
+use crate::view::display::overview::overview_row;
 
 use super::*;
 
@@ -51,9 +51,8 @@ impl Display {
         let top = rect.min.y + self.track_area_top();
         let bottom = top + OVERVIEW_H;
         let left = self.content_origin_x();
-        let right = self.content_right_x();
         let map = self.overview_map();
-        let strip = Rect::from_min_max(pos2(left, top), pos2(rect.min.x + rect.width(), bottom));
+        let strip = Rect::from_min_max(pos2(left, top), pos2(rect.max.x, bottom));
         let painter = painter.with_clip_rect(strip.intersect(painter.clip_rect()));
         painter.rect_filled(strip, CornerRadius::ZERO, theme::bg_timeline());
 
@@ -84,14 +83,13 @@ impl Display {
         // The loop band over the strip's height, dimmed as the timeline's is.
         let (region_start, region_end) = self.region_bounds_for_render();
         if region_end > region_start {
-            let loop_dim = if self.is_loop_enabled() { 1.0 } else { 0.4 };
             painter.rect_filled(
                 Rect::from_min_max(
                     pos2(map.x_of(region_start as f32), top),
                     pos2(map.x_of(region_end as f32), bottom),
                 ),
                 CornerRadius::ZERO,
-                theme::region().gamma_multiply(LOOP_ALPHA * loop_dim),
+                theme::region().gamma_multiply(LOOP_ALPHA * self.loop_dim()),
             );
         }
 
@@ -117,10 +115,6 @@ impl Display {
         // otherwise paint over the box's bottom edge.
         let (view_start, view_end) = self.arranger_view_ticks();
         let (box_left, box_right) = map.view_box(view_start, view_end);
-        // A wheel can scroll the view past the strip's end (its left edge
-        // may reach the last content tick): the box then stays at the end.
-        let box_left = box_left.max(left).min(right - OVERVIEW_MIN_BOX_PX);
-        let box_right = box_right.min(right).max(box_left + OVERVIEW_MIN_BOX_PX);
         let view_box = Rect::from_min_max(
             pos2(box_left.round(), top),
             pos2(box_right.round(), bottom - GROOVE_W),
