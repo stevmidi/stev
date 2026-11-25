@@ -9,6 +9,11 @@ use egui::Pos2;
 
 use crate::core::audio::mix::{db_from_fader_pos, fader_pos_from_db};
 use crate::models::clip::{ClipEdge, NoteBounds, NoteDrag};
+use crate::view::display::overview::{
+    OverviewDrag, overview_clamped_start, overview_grab_frac, overview_view_start,
+    overview_zoom_factor,
+};
+use crate::view::display::pointer_state::AxisFilter;
 
 use super::*;
 
@@ -796,6 +801,101 @@ impl Display {
         self.gesture.region_hover = self.region_handle_at(x, y);
     }
 
+    /// Begins a drag on the arranger's overview strip at `(x, y)`
+    /// (`590-arranger-overview.md`). A press in the view box holds the view
+    /// by the place it grabbed; a press outside it centres the view on the
+    /// pointer at once, so a click there shows that part of the song and a
+    /// drag scrubs on from it. Moves the view only: no cursor, no selection,
+    /// no playback. The drag holds the (hidden) pointer
+    /// (`pointer_held_drag`).
+    pub(super) fn begin_overview_drag(&mut self, x: f32, y: f32) {
+        let map = self.overview_map();
+        let view = self.arranger_view_ticks();
+        let (box_left, box_right) = map.view_box(view.0, view.1);
+        let in_box = (box_left..=box_right).contains(&x);
+        let grab_frac = overview_grab_frac(map.tick_at(x), view, in_box);
+        self.gesture.hover_cursor = None;
+        self.gesture.overview_hover = false;
+        if !in_box {
+            let start = overview_view_start(map.tick_at(x), grab_frac, view.1 - view.0);
+            self.scroll_overview_view_to(start);
+        }
+        let (view_start, view_end) = self.arranger_view_ticks();
+        self.gesture.overview_drag = Some(OverviewDrag {
+            anchor_tick: view_start + grab_frac * (view_end - view_start),
+            axes: AxisFilter::one_axis(),
+            press_y: y,
+        });
+    }
+
+    /// Extends an overview drag by a raw pointer motion `(dx, dy)`
+    /// (`InputEvent::PointerMotion`, which keeps arriving past the window
+    /// edge), one axis at a time (`AxisFilter::one_axis`): `dy` zooms (down
+    /// in, up out) about the drag's fixed anchor tick, `dx` moves the view
+    /// by the ticks those strip pixels cover, from the view as it is now, so
+    /// turning around at bar 1 or the song's end acts at once. A pan carries
+    /// the anchor by what the view actually moved.
+    pub(super) fn extend_overview_drag(&mut self, dx: f32, dy: f32) {
+        let Some(drag) = self.gesture.overview_drag.as_mut() else {
+            return;
+        };
+        let (dx, dy) = drag.axes.filter(dx, dy);
+        let anchor_tick = drag.anchor_tick;
+        if dy != 0.0 {
+            self.zoom_arranger_about(overview_zoom_factor(dy), anchor_tick);
+            // A zoom out near the strip's end would carry the view past it.
+            let (view_start, _) = self.arranger_view_ticks();
+            self.scroll_overview_view_to(view_start);
+        }
+        if dx != 0.0 {
+            let (before, _) = self.arranger_view_ticks();
+            let step = self.overview_map().ticks_for_px(dx);
+            self.scroll_overview_view_to(before + step);
+            let (after, _) = self.arranger_view_ticks();
+            if let Some(drag) = self.gesture.overview_drag.as_mut() {
+                drag.anchor_tick += after - before;
+            }
+        }
+    }
+
+    /// Ends an overview drag on release. The pointer, held still where it was
+    /// pressed while the box moved away, comes back on the box instead: at
+    /// the drag's anchor tick on the strip, at the press's height, as
+    /// Ableton's does (`pointer_release_at`, put there by
+    /// `sync_pointer_grab`). Otherwise the hand jumps away from the box.
+    pub(super) fn finish_overview_drag(&mut self) {
+        let Some(drag) = self.gesture.overview_drag.take() else {
+            return;
+        };
+        let x = self
+            .overview_map()
+            .x_of(drag.anchor_tick)
+            .clamp(self.content_origin_x(), self.content_right_x());
+        self.gesture.pointer_release_at = Some(Pos2::new(x, drag.press_y));
+    }
+
+    /// Scrolls the arranger so its view starts at `start`, held inside the
+    /// overview's span (`overview_clamped_start`), so the box stops at both
+    /// ends of the strip.
+    fn scroll_overview_view_to(&mut self, start: f32) {
+        let (view_start, view_end) = self.arranger_view_ticks();
+        let span_end = self.overview_map().span_end();
+        let start = overview_clamped_start(start, view_end - view_start, span_end);
+        if start != view_start {
+            self.scroll_arranger_to_tick(start);
+        }
+    }
+
+    /// Updates whether the pointer is over the overview's content, for the
+    /// open hand. A no-op while it is being dragged.
+    pub(super) fn update_overview_hover(&mut self, x: f32, y: f32) {
+        if self.gesture.overview_drag.is_some() {
+            return;
+        }
+        self.gesture.overview_hover =
+            self.is_mouse_on_overview(x, y) && self.content_x_on_screen(x);
+    }
+
     /// Begins a clip band gesture, decided at press time by `clip_band_at`
     /// (after `clip_edge_at` has had first refusal). What the gesture drags
     /// is decided here too, by [`marquee_under_press`]: a press landing
@@ -1367,10 +1467,12 @@ impl Display {
             || self.gesture.event_marquee_anchor.is_some()
             || self.gesture.window_edge_drag.is_some()
             || self.gesture.region_drag.is_some()
+            || self.gesture.overview_drag.is_some()
         {
             return;
         }
         self.gesture.hover_cursor = (self.is_mouse_inside_pane(x, y)
+            && !self.is_mouse_on_overview(x, y)
             && self.content_x_on_screen(x))
         .then(|| self.pointer_tick_at(x, y))
         .map(|tick| (tick, self.active_pane()));

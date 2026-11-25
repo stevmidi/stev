@@ -28,7 +28,6 @@ impl Display {
     /// by `draw_arranger_view`.
     pub(super) fn draw_arranger_backgrounds(&self, painter: &Painter, rect: Rect) {
         let layout = self.arranger_layout();
-        let performance_lane_top = rect.min.y + layout.performance_lane_top;
         let performance_lane_h = layout.performance_lane_h;
         let lane_h = layout.lane_h;
 
@@ -38,17 +37,18 @@ impl Display {
         let sw = rect.width();
 
         // Track-column panel — one continuous fill from the top of the
-        // timeline strip, through the reserved performance-lane row, down every
-        // track lane. The whole left column then reads as one panel: the
+        // overview strip, through the timeline strip and the reserved
+        // performance-lane row, down every track lane. The whole left column then reads as one panel: the
         // timeline's `bg_timeline` fill is confined to the content area
-        // (`draw_timeline` starts it at `content_x`), and the corner above the
-        // performance lane is column, not a stray patch of ruler colour. The
+        // (`draw_timeline` starts it at `content_x`, `draw_overview` too), and
+        // the corner above the performance lane is column, not a stray patch
+        // of ruler colour. The
         // performance-lane / per-track gutter overlays drawn below sit on top
         // of this and land at the same brightness as before.
-        let column_top = performance_lane_top - Self::TIMELINE_H;
+        let column_top = rect.min.y + layout.overview_top;
         // The lanes always fill the viewport (`arranger_lane_h`), so the
         // column runs to its bottom whatever the scroll.
-        let column_h = Self::TIMELINE_H + performance_lane_h + layout.viewport_h;
+        let column_h = OVERVIEW_H + Self::TIMELINE_H + performance_lane_h + layout.viewport_h;
         painter.rect_filled(
             Rect::from_min_size(pos2(rect.min.x, column_top), vec2(labels_right, column_h)),
             CornerRadius::ZERO,

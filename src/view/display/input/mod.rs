@@ -115,7 +115,17 @@ impl Display {
     /// Whether `(x, y)` is inside the active pane's clip-lane content area
     /// (below its timeline strip).
     fn is_mouse_inside_clip_content(&self, x: f32, y: f32) -> bool {
-        self.is_mouse_inside_pane(x, y) && y >= self.pane_rect().min.y + Self::TIMELINE_H
+        self.is_mouse_inside_pane(x, y) && y >= self.timeline_top() + Self::TIMELINE_H
+    }
+
+    /// Whether `(x, y)` is on the arranger's overview strip, above its
+    /// timeline strip (`590-arranger-overview.md`), across the whole pane
+    /// width (the track column's corner is the strip's too, so a press
+    /// there can't fall through to the lanes). Always `false` in the clip view.
+    pub(super) fn is_mouse_on_overview(&self, x: f32, y: f32) -> bool {
+        self.active_pane() == Pane::Arranger
+            && self.is_mouse_inside_pane(x, y)
+            && y < self.timeline_top()
     }
 
     /// Whether `(x, y)` is where the active pane's clicks act on time: its
@@ -129,7 +139,9 @@ impl Display {
 
     /// Whether `(x, y)` is on the active pane's timeline strip.
     pub(super) fn is_mouse_on_timeline_strip(&self, x: f32, y: f32) -> bool {
-        self.is_mouse_inside_pane(x, y) && !self.is_mouse_inside_clip_content(x, y)
+        self.is_mouse_inside_pane(x, y)
+            && y >= self.timeline_top()
+            && !self.is_mouse_inside_clip_content(x, y)
     }
 
     /// Sends the event `make` builds from the arranger marquee, if there is
@@ -204,6 +216,16 @@ impl Display {
         // (`archive/290-framing-a-take.md`).
         if let Some(edge) = self.window_edge_at(x, y) {
             self.begin_window_edge_drag(edge);
+            return true;
+        }
+
+        // The arranger's overview strip: scrolls and zooms the view, and
+        // nothing else (`590-arranger-overview.md`). Its corner over the
+        // track column does nothing.
+        if self.is_mouse_on_overview(x, y) {
+            if self.content_x_on_screen(x) {
+                self.begin_overview_drag(x, y);
+            }
             return true;
         }
 
@@ -444,6 +466,7 @@ impl Display {
             display.update_clip_resize_hover(x, y);
             display.update_window_edge_hover(x, y);
             display.update_region_hover(x, y);
+            display.update_overview_hover(x, y);
             display.update_clip_move_hover(x, y);
             display.update_track_mix_hover(x, y);
             display.update_track_button_hover(x, y);
@@ -935,7 +958,7 @@ impl Display {
             // the button held, the one the press landed in, so a drag never
             // changes pane mid-gesture.
             InputEvent::MouseMoved { x, y, modifiers } => {
-                // The octave-legend zoom drag and the BPM chip drag own the
+                // The pointer-holding drags (`pointer_held_drag`) own the
                 // pointer: no cursor line, hover or other gesture follows it.
                 // They run on `PointerMotion`, not positions, which stop at
                 // the window edge.
@@ -1006,11 +1029,14 @@ impl Display {
                 self.finish_midi_drag();
                 true
             }
-            // Raw motion with the button held: the octave-legend zoom drag
-            // and the BPM chip drag, which keep going past the window edge.
-            // Consumed in every view.
+            // Raw motion with the button held: the octave-legend zoom drag,
+            // the overview drag and the BPM chip drag, which keep going past
+            // the window edge. Consumed in every view.
             InputEvent::PointerMotion { dx, dy } => {
                 self.in_pane(Pane::Clip, |display| display.extend_key_zoom_drag(dx, dy));
+                self.in_pane(Pane::Arranger, |display| {
+                    display.extend_overview_drag(dx, dy)
+                });
                 let fine = ctx.input(|i| i.modifiers.shift);
                 if self.tempo_chip.dragging() {
                     self.extend_tempo_drag(dy, fine);
@@ -1149,6 +1175,7 @@ impl Display {
                 // over the grid off macOS, the cursor line) waits for a move.
                 let pointer_was_held = self.pointer_held_drag();
                 self.gesture.key_zoom_drag = None;
+                self.in_pane(Pane::Arranger, Self::finish_overview_drag);
                 self.finish_tempo_drag();
                 self.finish_knob_drag();
                 if pointer_was_held && let Some(pos) = self.canvas_pointer() {

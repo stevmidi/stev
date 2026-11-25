@@ -60,6 +60,16 @@ impl Display {
         }
     }
 
+    /// The arranger's view width at full zoom-out, in ticks: the content
+    /// width at the zoom-out floor (`min_arranger_px_per_beat` — the song
+    /// with its headroom, never under the default 32-bar view). The span the
+    /// overview maps (`590-arranger-overview.md`).
+    pub(in crate::view::display) fn arranger_zoom_out_view_ticks(&self) -> f32 {
+        let content_w = self.content_w();
+        let floor = min_arranger_px_per_beat(content_w, self.arranger_last_content_tick());
+        content_w / floor * beats_to_ticks(1.0) as f32
+    }
+
     /// Multiplies the arranger scale by `factor` (> 1 zooms in), keeping the
     /// anchor tick on the same screen pixel: the tick under `pointer_x` when
     /// that is over the content area (wheel / pinch), else the cursor if it
@@ -73,6 +83,16 @@ impl Display {
         factor: f32,
         pointer_x: Option<f32>,
     ) {
+        let old_ppt = px_per_beat_to_ppt(self.arranger_px_per_beat());
+        let anchor_tick = self.zoom_anchor(pointer_x, self.render.arranger_scroll_x, old_ppt);
+        self.zoom_arranger_about(factor, anchor_tick);
+    }
+
+    /// `zoom_arranger_by` about a given (fractional) `anchor_tick`, kept on
+    /// its screen pixel — the overview's vertical drag, whose anchor is the
+    /// tick it holds the view by (`590-arranger-overview.md`), not a pointer
+    /// over the lanes.
+    pub(in crate::view::display) fn zoom_arranger_about(&mut self, factor: f32, anchor_tick: f32) {
         if !self.is_pane_visible(Pane::Arranger) || !factor.is_finite() || factor <= 0.0 {
             return;
         }
@@ -85,7 +105,6 @@ impl Display {
         }
         let old_ppt = px_per_beat_to_ppt(old_px_per_beat);
         let new_ppt = px_per_beat_to_ppt(new_px_per_beat);
-        let anchor_tick = self.zoom_anchor(pointer_x, self.render.arranger_scroll_x, old_ppt);
 
         self.render.arranger_px_per_beat = Some(new_px_per_beat);
         self.render.arranger_follow_suspended = true;
@@ -94,7 +113,7 @@ impl Display {
         // zoom-out jump *in* to a stale pre-`Z` framing — with no way back,
         // since nothing records the manual framing.
         self.render.arranger_zoom_history.clear();
-        let max_scroll_x = arranger_max_scroll_x(last_content_tick, new_ppt);
+        let max_scroll_x = self.arranger_scroll_limit(new_ppt);
         self.render.arranger_scroll_x =
             zoomed_scroll_x(self.render.arranger_scroll_x, anchor_tick, old_ppt, new_ppt)
                 .clamp(0.0, max_scroll_x);
@@ -121,6 +140,7 @@ impl Display {
             end,
             self.content_w(),
             self.arranger_last_content_tick(),
+            self.arranger_zoom_out_view_ticks(),
         );
         let current = self.arranger_framing();
         if target == current {
@@ -143,7 +163,7 @@ impl Display {
             return;
         };
         let ppt = px_per_beat_to_ppt(framing.px_per_beat);
-        let max_scroll_x = arranger_max_scroll_x(self.arranger_last_content_tick(), ppt);
+        let max_scroll_x = self.arranger_scroll_limit(ppt);
         self.apply_arranger_framing(Framing {
             px_per_beat: framing.px_per_beat,
             scroll_x: framing.scroll_x.clamp(0.0, max_scroll_x),
@@ -440,11 +460,19 @@ fn zoom_to_fit_range(time_selection: Option<TimeSelectionRect>) -> Option<(i32, 
 /// before bar 1 would centre it, and was tried — but it let every scroll
 /// and zoom park the view in an empty gutter, which wasn't worth it for
 /// that one edge case.
-fn fit_framing(start: i32, end: i32, content_w: f32, last_content_tick: i32) -> Framing {
+fn fit_framing(
+    start: i32,
+    end: i32,
+    content_w: f32,
+    last_content_tick: i32,
+    reach_tick: f32,
+) -> Framing {
     let px_per_beat = fit_px_per_beat(end - start, content_w, ARRANGER_MIN_PX_PER_BEAT);
     let ppt = px_per_beat_to_ppt(px_per_beat);
-    let scroll_x = centred_scroll_x(start, end, ppt, content_w)
-        .clamp(0.0, arranger_max_scroll_x(last_content_tick, ppt));
+    let scroll_x = centred_scroll_x(start, end, ppt, content_w).clamp(
+        0.0,
+        arranger_max_scroll_x(last_content_tick, reach_tick, content_w, ppt),
+    );
     Framing {
         px_per_beat,
         scroll_x,
@@ -837,7 +865,7 @@ mod tests {
             // The selection counts toward the content extent, as in
             // `arranger_last_content_tick`.
             let last_content_tick = clips_end.max(end);
-            let framing = fit_framing(start, end, content_w, last_content_tick);
+            let framing = fit_framing(start, end, content_w, last_content_tick, 0.0);
             let (left, right) = margins(start, end, content_w, framing);
             let width = content_w - left - right;
             assert!(

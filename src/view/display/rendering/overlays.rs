@@ -386,7 +386,7 @@ impl Display {
         if !self.content_x_on_screen(x) {
             return;
         }
-        let y_top = rect.min.y + self.track_area_top() + Self::TIMELINE_H;
+        let y_top = rect.min.y + self.timeline_top() + Self::TIMELINE_H;
         let y_bottom = rect.min.y + self.track_area_bottom();
         painter.vline(x, y_top..=y_bottom, stroke);
     }
@@ -476,17 +476,23 @@ impl Display {
             return;
         }
 
-        let color = if self.focused_pane() == Pane::Arranger {
-            theme::fg_dim()
-        } else {
-            unfocused_tone(theme::fg_dim(), theme::bg())
-        };
         painter.vline(
             x,
             (row_top + SELECTED_TRACK_CURSOR_MARGIN_Y)
                 ..=(row_bottom - SELECTED_TRACK_CURSOR_MARGIN_Y),
-            Stroke::new(SELECTED_TRACK_CURSOR_W, color),
+            Stroke::new(SELECTED_TRACK_CURSOR_W, self.arranger_cursor_color()),
         );
+    }
+
+    /// The arranger cursor's colour: `fg_dim`, toned down while the
+    /// arranger doesn't have the keyboard. Shared by the lane accent and
+    /// the overview's cursor line, so the two always match.
+    pub(super) fn arranger_cursor_color(&self) -> Color32 {
+        if self.focused_pane() == Pane::Arranger {
+            theme::fg_dim()
+        } else {
+            unfocused_tone(theme::fg_dim(), theme::bg())
+        }
     }
 
     /// The footer band: a framed bottom edge across the whole window, under

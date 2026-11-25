@@ -11,11 +11,13 @@
 //! themselves live in [`pointer_state`](super::pointer_state) — this struct
 //! holds fields *of* those types. See `020-views-and-state.md`.
 
+use egui::Pos2;
 use uuid::Uuid;
 
 use crate::core::{input_event::TimeSelectionRect, view_state::Pane};
 use crate::models::clip::ClipEdge;
 
+use super::overview::OverviewDrag;
 use super::pointer_state::{
     ClipMoveDrag, ClipResizeDrag, KeyZoomDrag, MarqueeAnchor, MidiDrag, NoteMouseDrag, NotePart,
     PluginDrag, RegionDrag, RegionHandle, TrackButton, TrackMixDrag, TrackMixParam, VelocityDrag,
@@ -139,6 +141,10 @@ pub(super) struct GestureState {
     /// Whether the pointer is currently held for the zoom drag — the grab
     /// last sent to the window, so `sync_pointer_grab` acts only on an edge.
     pub(super) pointer_grabbed: bool,
+    /// Where (canvas space) to put the pointer when a held drag lets it go,
+    /// instead of where it was pressed: the overview drag's grab on the
+    /// moved box (`590-arranger-overview.md`). Taken by `sync_pointer_grab`.
+    pub(super) pointer_release_at: Option<Pos2>,
     /// `(length, velocity)` of the last note created or resized — what the
     /// next double-click draws. `None` until set: a beat at the default
     /// velocity. View-local, not persisted, and kept across view visits.
@@ -182,6 +188,13 @@ pub(super) struct GestureState {
     /// Hover-only counterpart of `region_drag`: which part of the loop band
     /// is under the pointer with no button held, for the cursor icon.
     pub(super) region_hover: Option<RegionHandle>,
+    /// In-progress drag on the arranger's overview strip: scrolls and zooms
+    /// the view, never the cursor. `Some` from the press to the release —
+    /// `590-arranger-overview.md`.
+    pub(super) overview_drag: Option<OverviewDrag>,
+    /// Whether the pointer is over the overview's content with no button
+    /// held, for the open hand.
+    pub(super) overview_hover: bool,
     /// In-progress clip band drag (move). `Some` only while the primary
     /// button is held after a press landed on a clip's header band off its
     /// edges — doubles as the drag-active flag. View-local ghost only; the

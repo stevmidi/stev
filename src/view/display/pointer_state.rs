@@ -568,6 +568,8 @@ pub(super) struct AxisFilter {
     y: f32,
     /// Motion held back until it reaches `START_PX`; `None` once released.
     pending: Option<(f32, f32)>,
+    /// Only ever the dominant axis, never both (`one_axis`).
+    one_axis: bool,
 }
 
 impl AxisFilter {
@@ -586,6 +588,18 @@ impl AxisFilter {
             x: 0.0,
             y: 0.0,
             pending: Some((0.0, 0.0)),
+            one_axis: false,
+        }
+    }
+
+    /// A filter that passes only the dominant axis, never a diagonal: the
+    /// arranger overview's drag, where a pan leaking into a zoom (or the
+    /// reverse) shifts the whole view (`590-arranger-overview.md`). Turning
+    /// to the other axis still hands over, once its speed leads.
+    pub(super) fn one_axis() -> Self {
+        Self {
+            one_axis: true,
+            ..Self::new()
         }
     }
 
@@ -610,6 +624,13 @@ impl AxisFilter {
 
     /// `(dx, dy)` with an axis zeroed when the smoothed speeds call it drift.
     fn keep_dominant(&self, dx: f32, dy: f32) -> (f32, f32) {
+        if self.one_axis {
+            return if self.x >= self.y {
+                (dx, 0.0)
+            } else {
+                (0.0, dy)
+            };
+        }
         let keep_x = self.x > self.y * Self::MINOR_AXIS_RATIO;
         let keep_y = self.y > self.x * Self::MINOR_AXIS_RATIO;
         (if keep_x { dx } else { 0.0 }, if keep_y { dy } else { 0.0 })
@@ -734,6 +755,22 @@ mod tests {
         let (sx, sy) = run(&mut filter, &[(3.0, 3.0); 20]);
         assert_eq!((sx, sy), (60.0, 60.0));
         // Nothing is lost to the opening hold-back.
+    }
+
+    #[test]
+    fn one_axis_drops_a_diagonal_to_its_leading_axis() {
+        let mut filter = AxisFilter::one_axis();
+        let (sx, sy) = run(&mut filter, &[(2.0, 3.0); 20]);
+        assert_eq!((sx, sy), (0.0, 60.0));
+    }
+
+    #[test]
+    fn one_axis_still_hands_over_on_a_turn() {
+        let mut filter = AxisFilter::one_axis();
+        run(&mut filter, &[(0.0, 4.0); 20]);
+        let (sx, _) = run(&mut filter, &[(4.0, 0.0); 20]);
+        assert!(sx > 0.0);
+        assert_eq!(filter.filter(4.0, 1.0), (4.0, 0.0));
     }
 
     #[test]

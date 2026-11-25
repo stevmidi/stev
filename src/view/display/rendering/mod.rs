@@ -15,6 +15,7 @@ mod knob_panel;
 mod modals;
 mod output_menu;
 mod overlays;
+mod overview;
 mod performance_lane;
 mod piano_keys;
 mod timeline;
@@ -117,6 +118,9 @@ pub(super) fn draw_plus(painter: &Painter, centre: Pos2, half: f32, stroke: Stro
 /// scrolls vertically once they no longer fit (`ARRANGER_MIN_LANE_H`);
 /// `tracks_top()` has the scroll applied, so it can lie above `lanes_top`.
 pub(super) struct ArrangerLayout {
+    /// Top y of the overview strip: the arranger pane's top
+    /// (`590-arranger-overview.md`). The timeline strip is under it.
+    pub(super) overview_top: f32,
     /// Top y of the performance-lane row.
     pub(super) performance_lane_top: f32,
     /// Height of the performance-lane row.
@@ -737,17 +741,18 @@ impl Display {
     /// The arranger's vertical geometry ([`ArrangerLayout`]) for this frame —
     /// shared by drawing and hit-testing so they can't drift.
     pub(super) fn arranger_layout(&self) -> ArrangerLayout {
-        let area_top = self.track_area_top();
+        let overview_top = self.track_area_top();
         let area_h = self.track_area_h();
-        let performance_lane_top = area_top + Self::TIMELINE_H;
+        let performance_lane_top = overview_top + OVERVIEW_H + Self::TIMELINE_H;
         let performance_lane_h = Self::PERFORMANCE_LANE_H;
         let lanes_top = performance_lane_top + performance_lane_h;
-        let viewport_h = (area_h - Self::TIMELINE_H - performance_lane_h).max(0.0);
+        let viewport_h = (area_h - OVERVIEW_H - Self::TIMELINE_H - performance_lane_h).max(0.0);
         let track_count = self.track_count();
         let add_row_h = arranger_add_row_h(track_count);
         let lane_h = arranger_lane_h(viewport_h, track_count, add_row_h);
         let max_scroll_y = arranger_max_scroll_y(viewport_h, lane_h, track_count, add_row_h);
         ArrangerLayout {
+            overview_top,
             performance_lane_top,
             performance_lane_h,
             lanes_top,
@@ -843,6 +848,8 @@ impl Display {
             self.draw_playhead(painter, rect);
             return;
         }
+
+        self.draw_overview(painter, rect);
 
         // What is drawn in the track lanes is clipped to their viewport, so
         // a lane scrolled up never paints over the performance lane or the
@@ -1266,20 +1273,22 @@ impl Display {
         CursorGrab::Confined
     };
 
-    /// Whether a drag owns the pointer: the octave-legend zoom drag or the
-    /// BPM chip drag. The pointer is held and hidden (`sync_pointer_grab`),
+    /// Whether a drag owns the pointer: the octave-legend zoom drag, the
+    /// arranger overview drag, the BPM chip drag or a knob drag. The pointer is held and hidden (`sync_pointer_grab`),
     /// the drag runs on `PointerMotion`, and no hover follows it — the one
     /// test every site of that rule asks.
     pub(super) fn pointer_held_drag(&self) -> bool {
         self.gesture.key_zoom_drag.is_some()
+            || self.gesture.overview_drag.is_some()
             || self.tempo_chip.dragging()
             || self.knob_panel.dragging()
     }
 
     /// Holds the (hidden) pointer while a [pointer-holding
     /// drag](Self::pointer_held_drag) runs (Ableton / Bitwig) and lets it go,
-    /// where it was pressed, on release — on the edges only, so the viewport
-    /// command goes out once.
+    /// where it was pressed, on release — or where the drag asked
+    /// (`pointer_release_at`) — on the edges only, so the viewport command
+    /// goes out once.
     fn sync_pointer_grab(&mut self, ctx: &egui::Context) {
         let dragging = self.pointer_held_drag();
         if dragging == self.gesture.pointer_grabbed {
@@ -1292,6 +1301,14 @@ impl Display {
             CursorGrab::None
         };
         ctx.send_viewport_cmd(ViewportCommand::CursorGrab(grab));
+        // A drag that moved what it holds puts the pointer back on it rather
+        // than where it was pressed (the overview's box). Window space: the
+        // canvas starts right of the browser panel.
+        if !dragging && let Some(pos) = self.gesture.pointer_release_at.take() {
+            let window_pos = pos + vec2(self.browser_width(), 0.0);
+            ctx.send_viewport_cmd(ViewportCommand::CursorPosition(window_pos));
+            self.input_poller.skip_next_motion();
+        }
     }
 
     /// How far screen `y` lies past the note area's edge — positive above,
@@ -1472,6 +1489,13 @@ impl eframe::App for Display {
             }
             Some(RegionHandle::Body) => ctx.set_cursor_icon(CursorIcon::Grab),
             None => {}
+        }
+        // The overview strip (`590-arranger-overview.md`): the open hand
+        // over it, the closed one while it is held.
+        if self.gesture.overview_drag.is_some() {
+            ctx.set_cursor_icon(CursorIcon::Grabbing);
+        } else if self.gesture.overview_hover {
+            ctx.set_cursor_icon(CursorIcon::Grab);
         }
         // A `.mid` or a plugin dragged from the browser is in hand, from the
         // moment it moves off its row's press point. (Over a drag from the
@@ -1939,6 +1963,7 @@ mod tests {
     #[test]
     fn lane_viewport_overshoot_points_the_way_to_scroll() {
         let layout = ArrangerLayout {
+            overview_top: 0.0,
             performance_lane_top: 20.0,
             performance_lane_h: 30.0,
             lanes_top: 50.0,

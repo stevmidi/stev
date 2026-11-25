@@ -24,7 +24,7 @@ impl Display {
         let scroll_x = self.render_scroll_x();
 
         let sw = rect.width();
-        let area_top = rect.min.y + self.track_area_top();
+        let area_top = rect.min.y + self.timeline_top();
         let area_bottom = rect.min.y + self.track_area_bottom();
         let strip_bottom = area_top + Self::TIMELINE_H;
         let content_x = self.content_origin_x();
@@ -246,7 +246,7 @@ impl Display {
         fill: Color32,
         edge: Color32,
     ) {
-        let area_top = rect.min.y + self.track_area_top();
+        let area_top = rect.min.y + self.timeline_top();
         let ry = area_top + Self::TIMELINE_H; // strip bottom — sits on the groove seam
         let band_top = ry - REGION_BAND_H;
         let content_x = self.content_origin_x();
@@ -324,7 +324,7 @@ impl Display {
         if self.active_pane() != Pane::Arranger
             || !self.is_mouse_on_timeline_strip(x, y)
             || !self.content_x_on_screen(x)
-            || !is_in_strip_band(y, self.pane_rect().min.y + Self::TIMELINE_H)
+            || !is_in_strip_band(y, self.timeline_top() + Self::TIMELINE_H)
         {
             return None;
         }
@@ -371,7 +371,7 @@ impl Display {
         // Bottom-anchored flush on the strip-bottom groove seam, where the
         // in-lane playhead line descends from and the region band's bottom
         // edge sits — every marker below shares this baseline.
-        let base = rect.min.y + self.track_area_top() + Self::TIMELINE_H;
+        let base = rect.min.y + self.timeline_top() + Self::TIMELINE_H;
         let top = base - MARKER_H;
         let mid_y = base - MARKER_H * 0.5;
         let accent = theme::accent();

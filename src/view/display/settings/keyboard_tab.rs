@@ -475,6 +475,7 @@ const FIXED: &[FixedGroup] = &[
                 "Loop band drag",
                 "Arranger: move the loop, or an edge of it",
             ),
+            ("Overview drag", "Arranger: scroll sideways, zoom up / down"),
         ],
     ),
     (

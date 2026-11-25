@@ -110,7 +110,7 @@ impl Display {
     /// dragged past the last clip is still something the user is looking at —
     /// without it, `Z` on such a selection was clamped off-centre). Drives the
     /// right-hand scroll clamp and the content-relative zoom-out floor.
-    pub(super) fn arranger_last_content_tick(&self) -> i32 {
+    pub(in crate::view::display) fn arranger_last_content_tick(&self) -> i32 {
         let (_, region_end) = self.region_bounds_snapshot();
         let last_clip_end = self
             .render
@@ -199,10 +199,42 @@ impl Display {
             return;
         }
         self.render.arranger_follow_suspended = true;
-        let max_scroll_x =
-            arranger_max_scroll_x(self.arranger_last_content_tick(), self.pixels_per_tick());
+        let max_scroll_x = self.arranger_scroll_limit(self.pixels_per_tick());
         self.render.arranger_scroll_x =
             scrolled_offset(self.render.arranger_scroll_x, delta_x, max_scroll_x);
+    }
+
+    /// Scrolls the arranger so its view starts at (fractional) `tick`, held
+    /// by the scroll clamp — the overview drag (`590-arranger-overview.md`).
+    /// Suspends cursor-follow like every scroll.
+    pub(in crate::view::display) fn scroll_arranger_to_tick(&mut self, tick: f32) {
+        if !self.is_pane_visible(Pane::Arranger) || !tick.is_finite() {
+            return;
+        }
+        self.render.arranger_follow_suspended = true;
+        let ppt = self.pixels_per_tick();
+        let max_scroll_x = self.arranger_scroll_limit(ppt);
+        self.render.arranger_scroll_x = (tick * ppt).clamp(0.0, max_scroll_x);
+    }
+
+    /// The arranger's scroll clamp at scale `ppt` (`arranger_max_scroll_x`):
+    /// the last content tick at the left edge, or the overview's end at the
+    /// right edge, whichever is further.
+    pub(in crate::view::display) fn arranger_scroll_limit(&self, ppt: f32) -> f32 {
+        arranger_max_scroll_x(
+            self.arranger_last_content_tick(),
+            self.arranger_zoom_out_view_ticks(),
+            self.content_w(),
+            ppt,
+        )
+    }
+
+    /// The arranger's view as (fractional) ticks: its left edge and its
+    /// right edge, from the scroll and the scale.
+    pub(in crate::view::display) fn arranger_view_ticks(&self) -> (f32, f32) {
+        let ppt = self.pixels_per_tick();
+        let start = self.render.arranger_scroll_x / ppt;
+        (start, start + self.content_w() / ppt)
     }
 
     /// Keeps the arranger view offset in step with the transport cursor: pages
@@ -229,7 +261,7 @@ impl Display {
         }
 
         let ppt = self.pixels_per_tick();
-        let max_scroll_x = arranger_max_scroll_x(self.arranger_last_content_tick(), ppt);
+        let max_scroll_x = self.arranger_scroll_limit(ppt);
 
         self.render.arranger_scroll_x = if self.render.arranger_follow_suspended {
             self.render.arranger_scroll_x.clamp(0.0, max_scroll_x)
@@ -334,9 +366,22 @@ fn is_drag_own_move(
 
 /// Upper bound for arranger `scroll_x`, in pixels: `last_content_tick` (the
 /// furthest-right of the last clip end, cursor, and region end) placed at the
-/// left content edge, i.e. one viewport of empty space past the arrangement.
-pub(super) fn arranger_max_scroll_x(last_content_tick: i32, ppt: f32) -> f32 {
-    (last_content_tick.max(0) as f32 * ppt).max(0.0)
+/// left content edge, i.e. one viewport of empty space past the arrangement —
+/// or, when further, the view's right edge at `reach_tick`, the end of the
+/// fully zoomed-out view the overview maps (`590-arranger-overview.md`), so
+/// every part of the overview can be scrolled to and zoomed into. Without
+/// it, in a project whose end is near the cursor a zoom toward a later bar
+/// was dragged back to the cursor at each step. `content_w` is the view's
+/// width in pixels.
+pub(super) fn arranger_max_scroll_x(
+    last_content_tick: i32,
+    reach_tick: f32,
+    content_w: f32,
+    ppt: f32,
+) -> f32 {
+    (last_content_tick.max(0) as f32 * ppt)
+        .max(reach_tick * ppt - content_w)
+        .max(0.0)
 }
 
 /// Pure core of a trackpad/wheel scroll gesture on either axis: apply
@@ -446,8 +491,17 @@ mod tests {
 
     #[test]
     fn max_scroll_x_picks_largest_tick_and_never_negative() {
-        assert_eq!(arranger_max_scroll_x(400, 2.0), 800.0);
-        assert_eq!(arranger_max_scroll_x(-100, 2.0), 0.0);
+        assert_eq!(arranger_max_scroll_x(400, 0.0, 100.0, 2.0), 800.0);
+        assert_eq!(arranger_max_scroll_x(-100, 0.0, 100.0, 2.0), 0.0);
+    }
+
+    #[test]
+    fn max_scroll_x_reaches_the_overviews_end() {
+        // Content ends at tick 400, the overview at 4000: zoomed in to a
+        // 100px view at 2px a tick (50 ticks), the view can reach 3950.
+        assert_eq!(arranger_max_scroll_x(400, 4000.0, 100.0, 2.0), 7900.0);
+        // Zoomed out so the whole overview fits, the content rule wins.
+        assert_eq!(arranger_max_scroll_x(400, 4000.0, 10_000.0, 2.0), 800.0);
     }
 
     #[test]

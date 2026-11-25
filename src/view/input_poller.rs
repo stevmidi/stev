@@ -206,6 +206,12 @@ pub(super) struct InputPoller {
     /// Whether files from the file manager hovered last frame, to detect the
     /// `FileDragEntered` / `FileDragLeft` edges.
     files_hovering: bool,
+    /// The pointer was moved by the app (`ViewportCommand::CursorPosition`):
+    /// the next raw motion is dropped, because macOS folds the warp's
+    /// distance into the first mouse event after it, which would otherwise
+    /// arrive as one large step at the start of the next held drag (the
+    /// arranger overview's, `590-arranger-overview.md`).
+    skip_motion_after_warp: bool,
 }
 
 /// The file a file-manager drag is about: the first MIDI file among `paths`,
@@ -252,7 +258,16 @@ impl InputPoller {
             key_repeat: [const { None }; REPEATABLE_KEYS.len()],
             move_modifier_down: false,
             files_hovering: false,
+            skip_motion_after_warp: false,
         }
+    }
+
+    /// Drops the next frame's raw motion, button down or up: the pointer has
+    /// just been moved by the app, and the first mouse event after that
+    /// carries the warp's distance in its delta on macOS
+    /// (`skip_motion_after_warp`).
+    pub(super) fn skip_next_motion(&mut self) {
+        self.skip_motion_after_warp = true;
     }
 
     /// Takes this frame's events, leaving the list empty until the next
@@ -358,15 +373,20 @@ impl InputPoller {
             self.right_mouse_down = right_down;
 
             // Raw motion with the button held, which (unlike the position
-            // above) keeps coming past the window and screen edges.
-            if left_down
-                && let Some(motion) = i.pointer.motion()
+            // above) keeps coming past the window and screen edges. The
+            // first motion after the app moved the pointer is dropped,
+            // whatever the button: it carries the warp's distance.
+            if let Some(motion) = i.pointer.motion()
                 && motion != Vec2::ZERO
             {
-                self.input_events.push(InputEvent::PointerMotion {
-                    dx: motion.x,
-                    dy: motion.y,
-                });
+                if self.skip_motion_after_warp {
+                    self.skip_motion_after_warp = false;
+                } else if left_down {
+                    self.input_events.push(InputEvent::PointerMotion {
+                        dx: motion.x,
+                        dy: motion.y,
+                    });
+                }
             }
 
             // ⌘/Ctrl release edge — the commit trigger for the `⌘/Ctrl+←`/`→`

@@ -86,6 +86,7 @@ mod knob_panel;
 mod knob_params;
 mod modal_focus;
 mod output_menu;
+mod overview;
 mod pane;
 mod pointer_state;
 mod project_dialog;
@@ -111,6 +112,7 @@ use self::input::DragPointer;
 use self::instrument::InstrumentHost;
 use self::knob_panel::KnobPanel;
 use self::output_menu::OutputMenuHit;
+use self::overview::{OVERVIEW_H, OverviewMap, overview_h};
 use self::pane::{
     KeyFocus, Pane, PaneRects, PanelSize, clip_event_tick_at, clip_pane_frame_value,
     clip_span_in_arrangement, pane_rects,
@@ -966,6 +968,8 @@ impl Display {
         self.clear_clip_resize();
         self.clear_window_edge_drag();
         self.clear_region_drag();
+        self.gesture.overview_drag = None;
+        self.gesture.overview_hover = false;
         self.clear_clip_move_drag();
         self.clear_track_mix_drag();
     }
@@ -1272,6 +1276,13 @@ impl Display {
     /// Top y of the active pane (its timeline strip's top edge).
     fn track_area_top(&self) -> f32 {
         self.pane_rect().min.y
+    }
+
+    /// Top y of the active pane's timeline strip: the pane's top, under the
+    /// overview strip in the arranger (`overview_h`). Every y measured from
+    /// the timeline goes through this, so the two panes can't drift.
+    fn timeline_top(&self) -> f32 {
+        self.track_area_top() + overview_h(self.active_pane())
     }
 
     /// Bottom y of the active pane.
