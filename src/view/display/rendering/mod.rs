@@ -1269,9 +1269,10 @@ impl Display {
     };
 
     /// Whether a drag owns the pointer: the octave-legend zoom drag, the
-    /// arranger overview drag, the BPM chip drag or a knob drag. The pointer is held and hidden (`sync_pointer_grab`),
-    /// the drag runs on `PointerMotion`, and no hover follows it — the one
-    /// test every site of that rule asks.
+    /// arranger overview drag, the BPM chip drag or a knob drag. The pointer
+    /// is held and hidden (`sync_pointer_grab`), the drag runs on
+    /// `PointerMotion`, and no hover follows it — the one test every site of
+    /// that rule asks.
     pub(super) fn pointer_held_drag(&self) -> bool {
         self.gesture.key_zoom_drag.is_some()
             || self.gesture.overview_drag.is_some()
@@ -1287,6 +1288,13 @@ impl Display {
     fn sync_pointer_grab(&mut self, ctx: &egui::Context) {
         let dragging = self.pointer_held_drag();
         if dragging == self.gesture.pointer_grabbed {
+            // A drag pressed and released within one frame (a tap) never
+            // held the pointer, so it never moved and needs no warp: drop the
+            // place it asked for, or the next held drag's release would warp
+            // there.
+            if !dragging {
+                self.gesture.pointer_release_at = None;
+            }
             return;
         }
         self.gesture.pointer_grabbed = dragging;
@@ -1308,7 +1316,18 @@ impl Display {
     /// (`InputPoller::skip_next_motion`). Every warp goes through here, so
     /// none can forget the skip. Window space: the canvas starts right of
     /// the browser panel.
+    /// A warp onto the pointer's own place (within `MIN_WARP_PX`, as after a
+    /// click inside the overview's box) is skipped: macOS sends no motion
+    /// for it, so the skip would eat a real step of the next drag.
     fn warp_pointer(&mut self, ctx: &egui::Context, pos: Pos2) {
+        /// Below this distance a warp is not made.
+        const MIN_WARP_PX: f32 = 1.0;
+        if self
+            .canvas_pointer()
+            .is_some_and(|pointer| pointer.distance(pos) < MIN_WARP_PX)
+        {
+            return;
+        }
         let window_pos = pos + vec2(self.browser_width(), 0.0);
         ctx.send_viewport_cmd(ViewportCommand::CursorPosition(window_pos));
         self.input_poller.skip_next_motion();

@@ -896,6 +896,23 @@ mod tests {
     }
 
     #[test]
+    fn the_overviews_reach_never_moves_zs_framing() {
+        // The scroll clamp also reaches the overview's end (`reach_tick`,
+        // `590-arranger-overview.md`). `Z` centres a selection that counts
+        // toward the content extent, so its scroll never needs that reach:
+        // a huge one frames every selection exactly as none does.
+        let content_w = 1700.0;
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        let clips_end = 16 * bar;
+        for (start, end) in [(0, 4 * bar), (8 * bar, 12 * bar), (20 * bar, 28 * bar)] {
+            let last_content_tick = clips_end.max(end);
+            let without = fit_framing(start, end, content_w, last_content_tick, 0.0);
+            let with = fit_framing(start, end, content_w, last_content_tick, 1e7);
+            assert_eq!(with, without, "[{start}, {end})");
+        }
+    }
+
+    #[test]
     fn clip_zoom_in_leaves_home_and_is_capped() {
         let home = 40.0;
         assert_eq!(zoomed_clip_state(home, 1.25, home), Some(50.0));

@@ -38,11 +38,11 @@ impl Display {
 
         // Track-column panel — one continuous fill from the top of the
         // overview strip, through the timeline strip and the reserved
-        // performance-lane row, down every track lane. The whole left column then reads as one panel: the
-        // timeline's `bg_timeline` fill is confined to the content area
-        // (`draw_timeline` starts it at `content_x`, `draw_overview` too), and
-        // the corner above the performance lane is column, not a stray patch
-        // of ruler colour. The
+        // performance-lane row, down every track lane. The whole left column
+        // then reads as one panel: the timeline's `bg_timeline` fill is
+        // confined to the content area (`draw_timeline` starts it at
+        // `content_x`, `draw_overview` too), and the corner above the
+        // performance lane is column, not a stray patch of ruler colour. The
         // performance-lane / per-track gutter overlays drawn below sit on top
         // of this and land at the same brightness as before.
         let column_top = rect.min.y + self.track_area_top();
