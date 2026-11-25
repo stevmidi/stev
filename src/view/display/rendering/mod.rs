@@ -1592,9 +1592,13 @@ impl eframe::App for Display {
                 for pane in [Pane::Arranger, Pane::Clip] {
                     if let Some(pane_rect) = panes.get(pane) {
                         // Each pane paints only inside its own rect, so the
-                        // docked panes can't bleed into each other.
-                        let clipped =
-                            painter.with_clip_rect(pane_rect.translate(rect.min.to_vec2()));
+                        // docked panes can't bleed into each other, and
+                        // stops at `content_right_x()`: the `RIGHT_PADDING_X`
+                        // to the window edge stays bare canvas, the twin of
+                        // the gap left of the grid (`030` § Timeline strip).
+                        let mut clip = pane_rect.translate(rect.min.to_vec2());
+                        clip.max.x = clip.max.x.min(self.content_right_x());
+                        let clipped = painter.with_clip_rect(clip);
                         self.in_pane(pane, |display| display.draw_pane(&clipped, rect));
                     }
                 }

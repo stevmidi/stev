@@ -187,7 +187,7 @@ impl Display {
 
         // Seam below the row, matching the track-lane separators.
         painter.hline(
-            rect.min.x..=self.content_right_x(),
+            rect.x_range(),
             bottom_seam_y,
             Stroke::new(ARRANGER_LANE_SEAM_W, grid_seam_color()),
         );

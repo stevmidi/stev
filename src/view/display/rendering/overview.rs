@@ -52,7 +52,7 @@ impl Display {
         let bottom = top + OVERVIEW_H;
         let left = self.content_origin_x();
         let map = self.overview_map();
-        let strip = Rect::from_min_max(pos2(left, top), pos2(self.content_right_x(), bottom));
+        let strip = Rect::from_min_max(pos2(left, top), pos2(rect.max.x, bottom));
         let painter = painter.with_clip_rect(strip.intersect(painter.clip_rect()));
         painter.rect_filled(strip, CornerRadius::ZERO, theme::bg_timeline());
 
