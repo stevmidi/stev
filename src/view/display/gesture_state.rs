@@ -18,8 +18,8 @@ use crate::models::clip::ClipEdge;
 
 use super::pointer_state::{
     ClipMoveDrag, ClipResizeDrag, KeyZoomDrag, MarqueeAnchor, MidiDrag, NoteMouseDrag, NotePart,
-    PluginDrag, TrackButton, TrackMixDrag, TrackMixParam, VelocityDrag, WindowEdgeCommit,
-    WindowEdgeDrag,
+    PluginDrag, RegionDrag, RegionHandle, TrackButton, TrackMixDrag, TrackMixParam, VelocityDrag,
+    WindowEdgeCommit, WindowEdgeDrag,
 };
 
 /// The selection / gesture state, grouped out of [`Display`](super::Display).
@@ -175,6 +175,13 @@ pub(super) struct GestureState {
     /// handle (if any) is under the pointer with no button held, for the
     /// resize cursor icon. Clip pane only.
     pub(super) window_edge_hover: Option<ClipEdge>,
+    /// In-progress drag of the arranger's loop band. `Some` only while the
+    /// primary button is held after a press landed on it
+    /// (`region_handle_at`). Arranger only — `580-loop-band-drag.md`.
+    pub(super) region_drag: Option<RegionDrag>,
+    /// Hover-only counterpart of `region_drag`: which part of the loop band
+    /// is under the pointer with no button held, for the cursor icon.
+    pub(super) region_hover: Option<RegionHandle>,
     /// In-progress clip band drag (move). `Some` only while the primary
     /// button is held after a press landed on a clip's header band off its
     /// edges — doubles as the drag-active flag. View-local ghost only; the

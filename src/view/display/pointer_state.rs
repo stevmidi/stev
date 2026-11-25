@@ -15,6 +15,7 @@ use super::browser::BrowserPlugin;
 use super::clip_shape::ClipShape;
 use crate::{
     core::input_event::{InputEvent, TimeSelectionRect},
+    core::time::{min_clip_length_ticks, snap_to_grid},
     models::clip::{Clip, ClipEdge, NoteBounds, NoteDrag},
 };
 
@@ -289,6 +290,125 @@ pub(super) struct WindowEdgeCommit {
     pub(super) before: (i32, i32),
     /// The window the release commits — the drag's last preview.
     pub(super) after: (i32, i32),
+}
+
+/// The part of the arranger's loop band a press grabs
+/// (`Display::region_handle_at`, `580-loop-band-drag.md`): an edge line, which
+/// moves that loop bound, or the body between them, which moves the loop
+/// whole.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum RegionHandle {
+    /// The edge line on that loop bound.
+    Edge(ClipEdge),
+    /// The band between the bounds.
+    Body,
+}
+
+/// In-progress drag of the arranger's loop band — see
+/// `Display::region_handle_at`, `begin_region_drag` / `extend_region_drag` /
+/// `finish_region_drag`, `580-loop-band-drag.md`. Live, not a preview: each
+/// grid step the drag lands on is sent as it happens, and the band reads the
+/// region back from the transport, so the drag holds no copy of it to draw.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct RegionDrag {
+    /// What the press grabbed.
+    pub(super) handle: RegionHandle,
+    /// The press point: a body press released without leaving it is a click,
+    /// the strip's scrub from here.
+    pub(super) origin: (f32, f32),
+    /// The loop region `(start, end)` at the press, in ticks: an edge is held
+    /// against the other bound as it was, a body drag keeps its length.
+    region: (i32, i32),
+    /// The press's tick less the region's start: a body drag keeps the band
+    /// under the hand instead of jumping its start to the pointer.
+    grab_offset: i32,
+    /// Latched once the pointer has left the press point by
+    /// `DRAG_THRESHOLD_PX` — from the press for an edge, which has no
+    /// threshold (`580` point 3).
+    pub(super) dragging: bool,
+    /// The bounds last sent, the press's region before the first: a step is
+    /// sent only when it changes them.
+    sent: (i32, i32),
+}
+
+impl RegionDrag {
+    /// A press on `handle` at `origin` (pointer tick `press_tick`, unsnapped)
+    /// with the loop region at `region`.
+    pub(super) fn new(
+        handle: RegionHandle,
+        origin: (f32, f32),
+        region: (i32, i32),
+        press_tick: i32,
+    ) -> Self {
+        Self {
+            handle,
+            origin,
+            region,
+            grab_offset: press_tick - region.0,
+            dragging: handle != RegionHandle::Body,
+            sent: region,
+        }
+    }
+
+    /// The region a pointer at unsnapped tick `pointer_tick` drags to,
+    /// snapped to `grid`, or `None` when there is nothing to send: still a
+    /// click (`past_threshold` latches the drag), or the same bounds as the
+    /// last step.
+    pub(super) fn extend(
+        &mut self,
+        pointer_tick: i32,
+        grid: i32,
+        past_threshold: bool,
+    ) -> Option<(i32, i32)> {
+        self.dragging |= past_threshold;
+        if !self.dragging {
+            return None;
+        }
+        let target = match self.handle {
+            RegionHandle::Edge(edge) => region_edge_target(
+                edge,
+                snap_to_grid(pointer_tick, grid),
+                self.region,
+                min_clip_length_ticks(),
+            ),
+            RegionHandle::Body => {
+                region_body_target(pointer_tick - self.grab_offset, self.region, grid)
+            }
+        };
+        (target != self.sent).then(|| {
+            self.sent = target;
+            target
+        })
+    }
+}
+
+/// The loop region an edge drag of `edge` to snapped `tick` sets, from
+/// `(start, end)`: the start held to `[0, end - min]`, the end to
+/// `[start + min, ∞)`, so an edge stops against the other one instead of
+/// crossing it or collapsing the loop (`580` point 5).
+pub(super) fn region_edge_target(
+    edge: ClipEdge,
+    tick: i32,
+    (start, end): (i32, i32),
+    min: i32,
+) -> (i32, i32) {
+    match edge {
+        ClipEdge::Start => (tick.min(end - min).max(0), end),
+        ClipEdge::End => (start, tick.max(start + min)),
+    }
+}
+
+/// The loop region a body drag putting its start at unsnapped `start_tick`
+/// sets: the start snapped to `grid` and held at 0, the length of
+/// `(start, end)` kept (`580` point 3: the left wall stops the loop, it never
+/// shortens it).
+pub(super) fn region_body_target(
+    start_tick: i32,
+    (start, end): (i32, i32),
+    grid: i32,
+) -> (i32, i32) {
+    let new_start = snap_to_grid(start_tick, grid).max(0);
+    (new_start, new_start + (end - start))
 }
 
 /// What an arranger band drag moves — decided at press time by
@@ -704,5 +824,77 @@ mod tests {
         let mut drag = note_drag(NoteDrag::ResizeEnd { delta_ticks: 240 }, true);
         assert!(!drag.set_copy(true));
         assert!(!drag.copy);
+    }
+
+    const BEAT: i32 = 480;
+    const BAR: i32 = 4 * BEAT;
+
+    #[test]
+    fn a_start_edge_stops_at_zero_and_a_beat_before_the_end() {
+        let region = (BAR, 3 * BAR);
+        let start = |tick| region_edge_target(ClipEdge::Start, tick, region, BEAT);
+        assert_eq!(start(2 * BAR), (2 * BAR, 3 * BAR));
+        assert_eq!(start(-BAR), (0, 3 * BAR));
+        assert_eq!(start(3 * BAR), (3 * BAR - BEAT, 3 * BAR));
+        // Dragged past the end, it still stops a beat before it.
+        assert_eq!(start(5 * BAR), (3 * BAR - BEAT, 3 * BAR));
+    }
+
+    #[test]
+    fn an_end_edge_stops_a_beat_after_the_start() {
+        let region = (BAR, 3 * BAR);
+        let end = |tick| region_edge_target(ClipEdge::End, tick, region, BEAT);
+        assert_eq!(end(5 * BAR), (BAR, 5 * BAR));
+        assert_eq!(end(BAR), (BAR, BAR + BEAT));
+        // Dragged past the start, it still stops a beat after it.
+        assert_eq!(end(0), (BAR, BAR + BEAT));
+    }
+
+    #[test]
+    fn a_body_drag_keeps_the_length_and_stops_at_zero() {
+        let region = (BAR, 3 * BAR);
+        assert_eq!(region_body_target(2 * BAR, region, BAR), (2 * BAR, 4 * BAR));
+        // Snapped to the grid.
+        assert_eq!(
+            region_body_target(2 * BAR + 100, region, BAR),
+            (2 * BAR, 4 * BAR)
+        );
+        // The left wall stops the whole loop, length kept.
+        assert_eq!(region_body_target(-3 * BAR, region, BAR), (0, 2 * BAR));
+    }
+
+    #[test]
+    fn a_body_drag_keeps_the_grab_offset() {
+        // Pressed a beat into a loop at bar 2, then moved a bar right.
+        let mut drag = RegionDrag::new(RegionHandle::Body, (0.0, 0.0), (BAR, 3 * BAR), BAR + BEAT);
+        assert_eq!(
+            drag.extend(2 * BAR + BEAT, BAR, true),
+            Some((2 * BAR, 4 * BAR))
+        );
+    }
+
+    #[test]
+    fn a_body_press_sends_nothing_until_past_the_threshold() {
+        let mut drag = RegionDrag::new(RegionHandle::Body, (0.0, 0.0), (BAR, 3 * BAR), BAR);
+        assert_eq!(drag.extend(2 * BAR, BAR, false), None);
+        assert!(!drag.dragging, "still a click: the release scrubs");
+        assert_eq!(drag.extend(2 * BAR, BAR, true), Some((2 * BAR, 4 * BAR)));
+        // Latched: back inside the threshold still drags.
+        assert_eq!(drag.extend(BAR, BAR, false), Some((BAR, 3 * BAR)));
+    }
+
+    #[test]
+    fn an_edge_press_drags_at_once_and_sends_only_changes() {
+        let mut drag = RegionDrag::new(
+            RegionHandle::Edge(ClipEdge::End),
+            (0.0, 0.0),
+            (0, 2 * BAR),
+            2 * BAR,
+        );
+        assert!(drag.dragging);
+        // Within the grid step the end already sits on: nothing to send.
+        assert_eq!(drag.extend(2 * BAR + 100, BAR, false), None);
+        assert_eq!(drag.extend(3 * BAR - 100, BAR, false), Some((0, 3 * BAR)));
+        assert_eq!(drag.extend(3 * BAR + 100, BAR, false), None);
     }
 }

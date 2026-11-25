@@ -207,6 +207,14 @@ impl Display {
             return true;
         }
 
+        // The arranger's loop band: an edge drags that loop bound, the body
+        // the whole loop; a body click still plays from it, on the release
+        // (`580-loop-band-drag.md`).
+        if let Some(handle) = self.region_handle_at(x, y) {
+            self.begin_region_drag(handle, x, y);
+            return true;
+        }
+
         // The arranger's timeline strip plays from the click and touches
         // nothing else: the cursor, and so the marquee, stays (Ableton's
         // scrub area). The clip view's places its cursor and nothing else:
@@ -435,6 +443,7 @@ impl Display {
             display.update_key_zoom_hover(x, y);
             display.update_clip_resize_hover(x, y);
             display.update_window_edge_hover(x, y);
+            display.update_region_hover(x, y);
             display.update_clip_move_hover(x, y);
             display.update_track_mix_hover(x, y);
             display.update_track_button_hover(x, y);
@@ -950,6 +959,7 @@ impl Display {
                     display.extend_note_drag(x, y);
                     display.extend_clip_resize_drag(x);
                     display.extend_window_edge_drag(x);
+                    display.extend_region_drag(x, y);
                     display.extend_wheel_span(x);
                     display.extend_clip_move_drag(x, y);
                     display.extend_track_mix_drag(y, modifiers.shift);
@@ -1117,6 +1127,9 @@ impl Display {
                 self.gesture.wheel_span_anchor = None;
                 if self.gesture.window_edge_drag.is_some() {
                     self.in_pane(Pane::Clip, Self::finish_window_edge_drag);
+                }
+                if self.gesture.region_drag.is_some() {
+                    self.in_pane(Pane::Arranger, Self::finish_region_drag);
                 }
                 // A keyboard-armed nudge is committed by `MoveModifierReleased`
                 // only — the mirror of that arm's `via_keyboard` guard, so a

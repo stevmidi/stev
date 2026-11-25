@@ -674,6 +674,14 @@ impl EventHandlers {
                 self.send_transport(TransportCommand::PlayFromTick { tick: *tick });
             }
 
+            // A loop band drag's step: both bounds in one command.
+            InputEvent::SetLoopRegion { start, end } => {
+                self.send_transport(TransportCommand::SetRegion {
+                    start: Some(*start),
+                    end: Some(*end),
+                });
+            }
+
             InputEvent::SelectClipSpan { track_idx, clip_id } => {
                 self.send_sequencer(SequencerCommand::SelectClipSpan {
                     track_idx: *track_idx,
@@ -1009,6 +1017,24 @@ mod tests {
         assert!(matches!(
             h.transport_commands.try_recv(),
             Ok(TransportCommand::PlayFromTick { tick: 1920 })
+        ));
+        assert!(h.transport_commands.try_recv().is_err());
+    }
+
+    /// A loop band drag's step sets both bounds in one `SetRegion`.
+    #[test]
+    fn a_loop_band_drag_step_sets_both_bounds() {
+        let h = harness();
+        h.handlers.handle_input_event(&InputEvent::SetLoopRegion {
+            start: 1920,
+            end: 5760,
+        });
+        assert!(matches!(
+            h.transport_commands.try_recv(),
+            Ok(TransportCommand::SetRegion {
+                start: Some(1920),
+                end: Some(5760)
+            })
         ));
         assert!(h.transport_commands.try_recv().is_err());
     }

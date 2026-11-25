@@ -732,6 +732,65 @@ impl Display {
         self.gesture.window_edge_hover = self.window_edge_at(x, y);
     }
 
+    /// Begins a drag of the arranger's loop band at `(x, y)`, on the part
+    /// `region_handle_at` found there (`580-loop-band-drag.md`). A distinct
+    /// gesture like the window band's: the press places no cursor, selects
+    /// nothing and plays nothing yet (a body press released where it was is
+    /// the strip's scrub, `finish_region_drag`), and hides the cursor line,
+    /// which would read as the cursor moving with the band.
+    pub(super) fn begin_region_drag(&mut self, handle: RegionHandle, x: f32, y: f32) {
+        let region = self.region_bounds_for_render();
+        self.gesture.hover_cursor = None;
+        self.gesture.region_hover = None;
+        self.gesture.region_drag = Some(RegionDrag::new(
+            handle,
+            (x, y),
+            region,
+            self.screen_x_to_tick(x),
+        ));
+    }
+
+    /// Extends a loop band drag to the pointer at `(x, y)`: the grabbed bound,
+    /// or the whole loop, on the zoom-adaptive arranger grid
+    /// (`cursor_grid_ticks`), sent at once whenever that lands on a new step
+    /// (`SetLoopRegion`) — live, so the band and the loop you hear follow
+    /// the hand. A body press sends nothing until the pointer leaves the
+    /// press point by `DRAG_THRESHOLD_PX`.
+    pub(super) fn extend_region_drag(&mut self, x: f32, y: f32) {
+        let pointer_tick = self.screen_x_to_tick(x);
+        let grid = self.cursor_grid_ticks();
+        let Some(drag) = &mut self.gesture.region_drag else {
+            return;
+        };
+        let past_threshold = past_drag_threshold(drag.origin, (x, y), Self::DRAG_THRESHOLD_PX);
+        if let Some((start, end)) = drag.extend(pointer_tick, grid, past_threshold) {
+            self.input_event_tx
+                .send(InputEvent::SetLoopRegion { start, end })
+                .ok();
+        }
+    }
+
+    /// Ends a loop band drag on release. A drag has nothing left to send: its
+    /// last step already is the loop. A body press that never became a drag
+    /// is a click, and does what a press anywhere else on the strip does:
+    /// plays from it (`play_from_x`).
+    pub(super) fn finish_region_drag(&mut self) {
+        if let Some(drag) = self.gesture.region_drag.take()
+            && !drag.dragging
+        {
+            self.play_from_x(drag.origin.0);
+        }
+    }
+
+    /// Updates which part of the loop band (if any) is under the pointer, for
+    /// the cursor icon. A no-op while it is being dragged.
+    pub(super) fn update_region_hover(&mut self, x: f32, y: f32) {
+        if self.gesture.region_drag.is_some() {
+            return;
+        }
+        self.gesture.region_hover = self.region_handle_at(x, y);
+    }
+
     /// Begins a clip band gesture, decided at press time by `clip_band_at`
     /// (after `clip_edge_at` has had first refusal). What the gesture drags
     /// is decided here too, by [`marquee_under_press`]: a press landing
@@ -1302,6 +1361,7 @@ impl Display {
         if self.gesture.time_selection_anchor.is_some()
             || self.gesture.event_marquee_anchor.is_some()
             || self.gesture.window_edge_drag.is_some()
+            || self.gesture.region_drag.is_some()
         {
             return;
         }

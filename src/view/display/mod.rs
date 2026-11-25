@@ -126,8 +126,9 @@ pub(crate) use modal_focus::{
 };
 use pointer_state::{
     AxisFilter, ClipMoveDrag, ClipMoveKind, ClipResizeDrag, ClipResizeEdge, KeyZoomDrag,
-    LoadedMidi, MarqueeAnchor, MidiDrag, NoteMouseDrag, NotePart, PluginDrag, TrackButton,
-    TrackMixDrag, TrackMixParam, VelocityDrag, WindowEdgeCommit, WindowEdgeDrag, tied_clips,
+    LoadedMidi, MarqueeAnchor, MidiDrag, NoteMouseDrag, NotePart, PluginDrag, RegionDrag,
+    RegionHandle, TrackButton, TrackMixDrag, TrackMixParam, VelocityDrag, WindowEdgeCommit,
+    WindowEdgeDrag, tied_clips,
 };
 pub(crate) use ui_event::{TrackLane, TrackRoute, UiEvent};
 
@@ -964,6 +965,7 @@ impl Display {
         self.clear_note_drag();
         self.clear_clip_resize();
         self.clear_window_edge_drag();
+        self.clear_region_drag();
         self.clear_clip_move_drag();
         self.clear_track_mix_drag();
     }
@@ -1033,6 +1035,13 @@ impl Display {
         self.gesture.window_edge_drag = None;
         self.gesture.window_edge_commit = None;
         self.gesture.window_edge_hover = None;
+    }
+
+    /// Drops any in-progress loop band drag and its hover state. The bounds
+    /// a drag already sent stay: they are the loop now.
+    fn clear_region_drag(&mut self) {
+        self.gesture.region_drag = None;
+        self.gesture.region_hover = None;
     }
 
     /// Drops a released window band drag's held preview once the clip's

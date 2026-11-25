@@ -1460,6 +1460,18 @@ impl eframe::App for Display {
         } else if self.gesture.clip_move_hover.is_some() {
             ctx.set_cursor_icon(CursorIcon::Grab);
         }
+        // The loop band (`580-loop-band-drag.md`): the resize arrows on an
+        // edge, the open hand on the body and the closed one from its press,
+        // as the clip band's.
+        match self.gesture.region_drag.map(|drag| drag.handle) {
+            Some(RegionHandle::Edge(_)) => ctx.set_cursor_icon(CursorIcon::ResizeHorizontal),
+            Some(RegionHandle::Body) => ctx.set_cursor_icon(CursorIcon::Grabbing),
+            None => match self.gesture.region_hover {
+                Some(RegionHandle::Edge(_)) => ctx.set_cursor_icon(CursorIcon::ResizeHorizontal),
+                Some(RegionHandle::Body) => ctx.set_cursor_icon(CursorIcon::Grab),
+                None => {}
+            },
+        }
         // A `.mid` or a plugin dragged from the browser is in hand, from the
         // moment it moves off its row's press point. (Over a drag from the
         // file manager the OS draws its own pointer.)

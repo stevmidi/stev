@@ -22,6 +22,7 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ### Added
 
+- The loop in the arranger can be dragged. Grab either end of the loop band at the bottom of the ruler to move that end, or grab the band in the middle to move the whole loop, keeping its length. It snaps to the grid, you hear the new loop as you drag, and it doesn't turn looping on or off. A click on the band without dragging still plays from there.
 - The performance lane lights the keys your hand is on. Set your keyboard's size (25, 37, 49, 61 or 88 keys) in Settings → MIDI, and while the lane is armed the stretch of the lane your keyboard covers is tinted, and every key you press lands inside it. Leave your keyboard at its home octave: the tinted hand sits around the arranger cursor, within half an octave of its middle, and moves when you move the cursor. A key you hold lights once, in your hand's stretch, instead of on every copy of it on screen.
 - With the performance lane selected, your keyboard's previous/next buttons (CC28 and CC29, `⇧` + octave down/up on an Arturia MicroLab) move your hand an octave down or up along the lane at once, before you play a note. The next cursor move puts it back around the cursor. With the lane not selected the buttons pass on to your plugin as before, and they are never recorded.
 

@@ -674,6 +674,18 @@ pub(crate) enum InputEvent {
         /// Absolute (arrangement) tick to start from.
         tick: i32,
     },
+    /// A step of a drag of the arranger's loop band: set the loop region to
+    /// `start..end` (`TransportCommand::SetRegion`, both bounds in one
+    /// command), leaving looping on or off as it is. Live — sent each time
+    /// the drag lands on a new grid step — and not undoable, like every
+    /// region change. The view resolves the bounds (the grid and the clamps,
+    /// `Display::extend_region_drag`). See `580-loop-band-drag.md`.
+    SetLoopRegion {
+        /// New region start tick.
+        start: i32,
+        /// New region end tick.
+        end: i32,
+    },
     /// Plain `←`/`→` in the Arranger or `Clip`: step the cursor one
     /// *visible* grid line. The view resolves the step
     /// (`Display::cursor_grid_ticks` — the zoom-adaptive snap, `grid.rs`)

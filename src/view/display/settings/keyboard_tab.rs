@@ -471,6 +471,10 @@ const FIXED: &[FixedGroup] = &[
             ("Band drag", "Arranger: move the clip or the marquee"),
             ("⌥ band drag", "Arranger: copy the clip or the marquee"),
             ("Ruler click", "Arranger: play from there, the marquee kept"),
+            (
+                "Loop band drag",
+                "Arranger: move the loop, or an edge of it",
+            ),
         ],
     ),
     (

@@ -1,12 +1,13 @@
 //! Painting the timeline strip above the lanes: the bar-number ruler, the
-//! loop-region band (the clip view's window band in its place there, with
-//! its handle hit-test), and the arranger time-selection markers. The `REGION_BAND_H`
+//! loop-region band (the clip view's window band in its place there) with
+//! both bands' handle hit-tests, and the arranger time-selection markers. The `REGION_BAND_H`
 //! constant is shared with the piano roll. See `030-ui-design.md`.
 
 use egui::{Align2, Color32, CornerRadius, FontId, Painter, Rect, Shape, Stroke, pos2, vec2};
 
 use crate::models::clip::ClipEdge;
 use crate::view::display::grid::GridRole;
+use crate::view::display::pointer_state::RegionHandle;
 
 use super::*;
 
@@ -292,7 +293,7 @@ impl Display {
 
     /// The window band handle a press at `(x, y)` grabs: in the clip view's
     /// timeline strip, within `CLIP_EDGE_HIT_PX` of an on-screen edge of the
-    /// lead clip's window (`window_edge_hit`). `None` anywhere else, with no
+    /// lead clip's window (`band_edge_hit`). `None` anywhere else, with no
     /// lead clip, and in the arranger.
     pub(in crate::view::display) fn window_edge_at(&self, x: f32, y: f32) -> Option<ClipEdge> {
         if self.active_pane() != Pane::Clip
@@ -306,7 +307,36 @@ impl Display {
             let edge_x = self.tick_to_screen_x(tick);
             self.content_x_on_screen(edge_x).then_some(edge_x)
         };
-        window_edge_hit(x, on_screen(start), on_screen(end), Self::CLIP_EDGE_HIT_PX)
+        band_edge_hit(x, on_screen(start), on_screen(end), Self::CLIP_EDGE_HIT_PX)
+    }
+
+    /// The loop band handle a press at `(x, y)` grabs
+    /// (`580-loop-band-drag.md` point 1): in the arranger, inside the band's
+    /// own `REGION_BAND_H` at the bottom of the timeline strip (above it are
+    /// the bar numbers, whose press stays the scrub), an on-screen edge
+    /// within `CLIP_EDGE_HIT_PX`, else the body between the bounds
+    /// (`region_handle_hit`). `None` anywhere else, and in the clip view.
+    pub(in crate::view::display) fn region_handle_at(
+        &self,
+        x: f32,
+        y: f32,
+    ) -> Option<RegionHandle> {
+        if self.active_pane() != Pane::Arranger
+            || !self.is_mouse_on_timeline_strip(x, y)
+            || !self.content_x_on_screen(x)
+            || !is_in_strip_band(y, self.pane_rect().min.y + Self::TIMELINE_H)
+        {
+            return None;
+        }
+        let (start, end) = self.region_bounds_for_render();
+        let span = (self.tick_to_screen_x(start), self.tick_to_screen_x(end));
+        let on_screen = |edge_x: f32| self.content_x_on_screen(edge_x).then_some(edge_x);
+        region_handle_hit(
+            x,
+            span,
+            (on_screen(span.0), on_screen(span.1)),
+            Self::CLIP_EDGE_HIT_PX,
+        )
     }
 
     /// Draws the time-position markers in the timeline strip.
@@ -443,11 +473,12 @@ fn grid_line_x(step: i32, ticks_per_step: i32, ppt: f32, content_x: f32, scroll_
     region_bound_x(step * ticks_per_step, ppt, content_x, scroll_x)
 }
 
-/// Which window band handle a press at screen `x` grabs, given the window's
-/// start and end edge x (`None` while scrolled off screen): the edge within
-/// `hit_px`, or the nearer one when both are — the end on a tie, so a window
+/// Which edge handle of a strip band (the clip view's window band, the
+/// arranger's loop band) a press at screen `x` grabs, given the band's start
+/// and end edge x (`None` while scrolled off screen): the edge within
+/// `hit_px`, or the nearer one when both are — the end on a tie, so a band
 /// squeezed to a few pixels can still be pulled open.
-fn window_edge_hit(
+fn band_edge_hit(
     x: f32,
     start_x: Option<f32>,
     end_x: Option<f32>,
@@ -464,6 +495,28 @@ fn window_edge_hit(
         (Some(_), None) => Some(ClipEdge::Start),
         (None, None) => None,
     }
+}
+
+/// Which loop band handle a press at screen `x` grabs, given the region's
+/// bound x `span` and its on-screen `edges` (`None` while scrolled off): an
+/// edge within `hit_px` (`band_edge_hit`), which wins over the body, else
+/// the body when `x` is between the bounds — so a band narrower than twice
+/// the reach is all edges.
+fn region_handle_hit(
+    x: f32,
+    (start_x, end_x): (f32, f32),
+    (start_edge, end_edge): (Option<f32>, Option<f32>),
+    hit_px: f32,
+) -> Option<RegionHandle> {
+    band_edge_hit(x, start_edge, end_edge, hit_px)
+        .map(RegionHandle::Edge)
+        .or_else(|| (start_x < x && x < end_x).then_some(RegionHandle::Body))
+}
+
+/// Whether screen `y` is in the `REGION_BAND_H` band along the bottom of a
+/// timeline strip ending at `strip_bottom`.
+fn is_in_strip_band(y: f32, strip_bottom: f32) -> bool {
+    (strip_bottom - REGION_BAND_H..=strip_bottom).contains(&y)
 }
 
 /// Screen-x `[x0, x1]` the region band should paint, clamped to the content
@@ -488,11 +541,12 @@ fn region_band_span(
 #[cfg(test)]
 mod tests {
     use super::{
-        grid_line_x, region_band_span, region_bound_x, ruler_bar_number, timeline_step_span,
-        window_edge_hit,
+        band_edge_hit, grid_line_x, is_in_strip_band, region_band_span, region_bound_x,
+        region_handle_hit, ruler_bar_number, timeline_step_span,
     };
     use crate::core::time::{self, Meter};
     use crate::models::clip::ClipEdge;
+    use crate::view::display::pointer_state::RegionHandle;
 
     const CONTENT_X: f32 = 118.0;
 
@@ -653,7 +707,7 @@ mod tests {
 
     #[test]
     fn a_press_near_a_window_edge_grabs_its_handle() {
-        let hit = |x| window_edge_hit(x, Some(200.0), Some(400.0), 5.0);
+        let hit = |x| band_edge_hit(x, Some(200.0), Some(400.0), 5.0);
         assert_eq!(hit(196.0), Some(ClipEdge::Start));
         assert_eq!(hit(205.0), Some(ClipEdge::Start));
         assert_eq!(hit(398.0), Some(ClipEdge::End));
@@ -665,7 +719,7 @@ mod tests {
 
     #[test]
     fn a_narrow_window_grabs_the_nearer_handle_and_the_end_on_a_tie() {
-        let hit = |x| window_edge_hit(x, Some(200.0), Some(204.0), 5.0);
+        let hit = |x| band_edge_hit(x, Some(200.0), Some(204.0), 5.0);
         assert_eq!(hit(199.0), Some(ClipEdge::Start));
         assert_eq!(hit(201.0), Some(ClipEdge::Start));
         assert_eq!(hit(202.0), Some(ClipEdge::End));
@@ -675,14 +729,49 @@ mod tests {
     #[test]
     fn an_edge_scrolled_off_screen_has_no_handle() {
         assert_eq!(
-            window_edge_hit(200.0, None, Some(202.0), 5.0),
+            band_edge_hit(200.0, None, Some(202.0), 5.0),
             Some(ClipEdge::End)
         );
         assert_eq!(
-            window_edge_hit(202.0, Some(200.0), None, 5.0),
+            band_edge_hit(202.0, Some(200.0), None, 5.0),
             Some(ClipEdge::Start)
         );
-        assert_eq!(window_edge_hit(200.0, None, None, 5.0), None);
+        assert_eq!(band_edge_hit(200.0, None, None, 5.0), None);
+    }
+
+    #[test]
+    fn a_loop_band_press_grabs_an_edge_else_the_body() {
+        let edges = (Some(200.0), Some(400.0));
+        let hit = |x| region_handle_hit(x, (200.0, 400.0), edges, 5.0);
+        assert_eq!(hit(203.0), Some(RegionHandle::Edge(ClipEdge::Start)));
+        assert_eq!(hit(398.0), Some(RegionHandle::Edge(ClipEdge::End)));
+        assert_eq!(hit(300.0), Some(RegionHandle::Body));
+        assert_eq!(hit(194.0), None);
+        assert_eq!(hit(406.0), None);
+    }
+
+    #[test]
+    fn a_narrow_loop_band_is_all_edges() {
+        let hit = |x| region_handle_hit(x, (200.0, 206.0), (Some(200.0), Some(206.0)), 5.0);
+        for x in [201.0, 202.0, 203.0, 204.0, 205.0] {
+            assert!(matches!(hit(x), Some(RegionHandle::Edge(_))), "x = {x}");
+        }
+    }
+
+    #[test]
+    fn a_loop_band_scrolled_past_both_edges_is_all_body() {
+        let hit = |x| region_handle_hit(x, (-500.0, 2000.0), (None, None), 5.0);
+        assert_eq!(hit(300.0), Some(RegionHandle::Body));
+        assert_eq!(hit(2100.0), None);
+    }
+
+    #[test]
+    fn only_the_band_at_the_strip_bottom_is_the_loop_band() {
+        // A 30px strip ending at 130: the bar numbers above, the band below.
+        assert!(is_in_strip_band(125.0, 130.0));
+        assert!(is_in_strip_band(120.0, 130.0));
+        assert!(!is_in_strip_band(110.0, 130.0), "the bar numbers");
+        assert!(!is_in_strip_band(131.0, 130.0), "the lanes");
     }
 
     #[test]
