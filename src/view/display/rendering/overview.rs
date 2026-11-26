@@ -1,8 +1,9 @@
 //! The arranger's overview strip (`590-arranger-overview.md`): the whole
 //! arrangement in miniature above the timeline — every clip in its track
-//! colour, the playhead — and a box around the part on screen. No loop
-//! band: the timeline's own is right under it. The geometry is the pure `overview` module's; the drag that moves
-//! the view is in `input/gestures.rs`.
+//! colour, the cursor, the playhead — with the strip outside the part on
+//! screen shaded. No loop band: the timeline's own is right under it. The
+//! geometry is the pure `overview` module's; the drag that moves the view is
+//! in `input/gestures.rs`.
 
 use egui::{CornerRadius, Painter, Rect, Stroke, pos2};
 
@@ -41,10 +42,9 @@ impl Display {
     }
 
     /// Paints the overview strip into the top `OVERVIEW_H` of the arranger
-    /// pane, back to front: the background, the clips, the
-    /// shade outside the view box, the cursor, the playhead, and the groove
-    /// to the timeline strip under it. The track column's corner to its left
-    /// is the column's
+    /// pane, back to front: the background, the clips, the shade outside the
+    /// view box, the cursor, the playhead, and the groove to the timeline
+    /// strip under it. The track column's corner to its left is the column's
     /// (`draw_arranger_backgrounds` fills it).
     pub(super) fn draw_overview(&self, painter: &Painter, rect: Rect) {
         let top = rect.min.y + self.track_area_top();
@@ -84,16 +84,12 @@ impl Display {
         // the strip. Under the cursor and the playhead, which stay crisp.
         let (view_start, view_end) = self.arranger_view_ticks();
         let (box_left, box_right) = map.view_box(view_start, view_end);
-        let shade = theme::bg().gamma_multiply(OUTSIDE_SHADE_ALPHA);
-        for (x0, x1) in [(left, box_left.round()), (box_right.round(), strip.max.x)] {
-            if x1 > x0 {
-                painter.rect_filled(
-                    Rect::from_min_max(pos2(x0, top), pos2(x1, bottom)),
-                    CornerRadius::ZERO,
-                    shade,
-                );
-            }
-        }
+        shade_outside(
+            &painter,
+            strip,
+            (box_left.round(), box_right.round()),
+            OUTSIDE_SHADE_ALPHA,
+        );
 
         // The cursor (where playback starts), in the lanes' cursor colour,
         // so you can find your way back to it. It and the playhead span the

@@ -184,6 +184,7 @@ impl Display {
                     // A loaded project is adopted (its folder the default,
                     // first in Recent); a new one is untitled, and Save As
                     // starts it in the default folder.
+                    let origin_known = origin.is_some();
                     match origin {
                         Some(origin) => {
                             self.adopt_project(origin);
@@ -191,21 +192,14 @@ impl Display {
                                 self.reload_browser();
                             }
                         }
-                        // A new project (⌘N, a template) also starts at the
-                        // launch zoom: re-latched from the default on the next
-                        // arranger frame.
                         None => {
                             self.project.follow_file(None);
-                            self.render.arranger_px_per_beat = None;
                         }
                     }
                     self.render.clip_shapes.clear();
                     self.clear_lead_clip_shapes();
-                    self.render.arranger_scroll_x = 0.;
+                    self.reset_arranger_view(origin_known);
                     self.render.clip_scroll_x = 0.;
-                    // A loaded project keeps the zoom (a preference), but `X`
-                    // must not step back to framings of the previous project.
-                    self.render.arranger_zoom_history.clear();
                     self.rearm_arranger_follow();
                     self.reset_clip_zoom();
                     self.lead_clip_time = None;

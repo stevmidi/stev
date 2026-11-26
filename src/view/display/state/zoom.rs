@@ -261,6 +261,19 @@ impl Display {
         );
     }
 
+    /// The arranger view for a new or loaded project: scrolled to bar 1, the
+    /// `X` history dropped (the previous project's framings mean nothing
+    /// here). A loaded project keeps the zoom (`keep_zoom`, a preference); a
+    /// new one (⌘N, a template) starts at the launch zoom, latched afresh from
+    /// the default on the next arranger frame.
+    pub(in crate::view::display) fn reset_arranger_view(&mut self, keep_zoom: bool) {
+        self.render.arranger_scroll_x = 0.;
+        self.render.arranger_zoom_history.clear();
+        if !keep_zoom {
+            self.render.arranger_px_per_beat = None;
+        }
+    }
+
     /// Back home, with the frozen home framing and the `Z` history dropped: on
     /// every clip entry and exit, lead-clip change and project load (home is
     /// the piano roll's starting framing, not a preference, and another

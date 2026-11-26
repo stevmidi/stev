@@ -241,16 +241,12 @@ impl Display {
         let origin_x = content_x - self.render.clip_scroll_x;
         let window_start_x = region_start as f32 * ppt + origin_x;
         let window_end_x = region_end as f32 * ppt + origin_x;
-        let shade = theme::bg().gamma_multiply(Self::OUTSIDE_WINDOW_SHADE_ALPHA);
-        for (left, right) in [(content_x, window_start_x), (window_end_x, content_right)] {
-            if right > left {
-                event_painter.rect_filled(
-                    Rect::from_min_max(pos2(left, geom.top), pos2(right, geom.top + geom.h)),
-                    CornerRadius::ZERO,
-                    shade,
-                );
-            }
-        }
+        shade_outside(
+            &event_painter,
+            note_area_rect,
+            (window_start_x, window_end_x),
+            Self::OUTSIDE_WINDOW_SHADE_ALPHA,
+        );
 
         // A marquee's duplicate span (the strip's arrows mark both ends).
         if let Some((span_start, span_end)) = self.gesture.duplicate_span {

@@ -232,8 +232,7 @@ impl Display {
     /// How much the loop region is dimmed: fully shown while it loops, faded
     /// when looping is off or the performance lane is selected, where the
     /// region still marks the playback bounds but no longer wraps playback.
-    /// Shared by the timeline's loop band and the overview's.
-    pub(super) fn loop_dim(&self) -> f32 {
+    fn loop_dim(&self) -> f32 {
         if self.is_loop_enabled() { 1.0 } else { 0.4 }
     }
 

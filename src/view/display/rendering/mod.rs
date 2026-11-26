@@ -100,6 +100,23 @@ pub(super) fn control_edge(focused: bool) -> Stroke {
     }
 }
 
+/// Shades `rect` outside the span `inside_x` (screen x, left to right) in
+/// the window's darkest background at `alpha`, so what lies outside a window
+/// sinks back: the clip view's grid outside the clip window, the overview
+/// outside the view. Either side is skipped when empty.
+pub(super) fn shade_outside(painter: &Painter, rect: Rect, inside_x: (f32, f32), alpha: f32) {
+    let shade = theme::bg().gamma_multiply(alpha);
+    for (left, right) in [(rect.min.x, inside_x.0), (inside_x.1, rect.max.x)] {
+        if right > left {
+            painter.rect_filled(
+                Rect::from_min_max(pos2(left, rect.min.y), pos2(right, rect.max.y)),
+                CornerRadius::ZERO,
+                shade,
+            );
+        }
+    }
+}
+
 /// A `+` of two `half`-long strokes about `centre` — the browser's and Save
 /// As's new-folder buttons — on whole points, so the lines land on whole
 /// pixels on Retina.
