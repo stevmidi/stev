@@ -63,7 +63,8 @@ pub(super) struct RenderState {
     /// Arranger horizontal zoom, in pixels per beat. `None` until the first
     /// arranger frame latches the default (`BARS_IN_VIEWPORT` across the
     /// content width); fixed under window resize from then on. View-local
-    /// like `arranger_scroll_x`, kept across project loads and clip visits. See
+    /// like `arranger_scroll_x`, kept across project loads and clip visits;
+    /// back to `None` for a new project, so it starts at the launch zoom. See
     /// `archive/190-arranger-zoom.md`.
     pub(super) arranger_px_per_beat: Option<f32>,
     /// Arranger framings `Z` (zoom to fit) replaced, newest last, for `X` to

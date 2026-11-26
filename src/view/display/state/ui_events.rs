@@ -191,16 +191,20 @@ impl Display {
                                 self.reload_browser();
                             }
                         }
+                        // A new project (⌘N, a template) also starts at the
+                        // launch zoom: re-latched from the default on the next
+                        // arranger frame.
                         None => {
                             self.project.follow_file(None);
+                            self.render.arranger_px_per_beat = None;
                         }
                     }
                     self.render.clip_shapes.clear();
                     self.clear_lead_clip_shapes();
                     self.render.arranger_scroll_x = 0.;
                     self.render.clip_scroll_x = 0.;
-                    // The zoom itself is kept (a preference), but `X` must not
-                    // step back to framings of the previous project.
+                    // A loaded project keeps the zoom (a preference), but `X`
+                    // must not step back to framings of the previous project.
                     self.render.arranger_zoom_history.clear();
                     self.rearm_arranger_follow();
                     self.reset_clip_zoom();
