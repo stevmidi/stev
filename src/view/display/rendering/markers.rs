@@ -76,28 +76,16 @@ impl Display {
     }
 
     /// Draws the marker strip's background, from `draw_arranger_backgrounds`
-    /// (the strip's slot in `arranger_layout`): the `Marker` label in the
-    /// track column, the strip's fill over the content area, and the groove
+    /// (the strip's slot in `arranger_layout`):
+    /// the strip's fill over the content area, and the groove
     /// seam closing it off from the performance lane. No seam above it: it
     /// runs on from the timeline strip in the same `bg_timeline`, and
     /// `draw_timeline` draws the lanes' grid lines through it. The flags go
     /// over those lines (`draw_marker_flags`).
     pub(super) fn draw_marker_strip(&self, painter: &Painter, rect: Rect) {
         let (top, bottom) = self.marker_strip_span(rect);
-        let font = FontId::proportional(theme::FONT_SIZE_TL);
-
-        painter.text(
-            pos2(
-                rect.min.x + Self::TRACK_HEADER_INNER_PAD_X,
-                (top + bottom) * 0.5,
-            ),
-            Align2::LEFT_CENTER,
-            "Marker",
-            font.clone(),
-            theme::fg_dim(),
-        );
-
         let strip = Rect::from_x_y_ranges(self.content_origin_x()..=rect.max.x, top..=bottom);
+
         painter.rect_filled(strip, CornerRadius::ZERO, theme::bg_timeline());
 
         painter.hline(
