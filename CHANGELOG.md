@@ -31,6 +31,7 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ### Changed
 
+- In the ruler, each numbered bar's line now runs up beside its number, so the number sits right against its bar line instead of floating beside a short tick. Bars left without a number when zoomed out keep the short tick.
 - A new project (`⌘N`, or one from a template) starts at the zoom Stev opens with, instead of keeping the zoom of the project before it. Opening a saved project still keeps your zoom.
 - The arranger and the clip view now leave a narrow strip of bare background at their right edge, matching the gap left of the arranger's grid: the ruler, the overview, the lanes and the lines between them all stop where the grid stops, rather than running on past it to the window edge.
 - The buttons of the unsaved-changes prompt, the replace prompt and the crash-recovery question now act when you let go of the mouse, not when you press it. Move off the button before letting go and nothing happens, so a slip on **Don't Save** no longer throws away your changes. The button looks pressed while you hold it.

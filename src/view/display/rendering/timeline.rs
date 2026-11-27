@@ -9,6 +9,7 @@ use crate::models::clip::ClipEdge;
 use crate::view::display::grid::GridRole;
 use crate::view::display::pointer_state::RegionHandle;
 
+use super::markers::ink_span;
 use super::*;
 
 /// Height of the region band along the bottom of the timeline strip. Also the
@@ -115,6 +116,19 @@ impl Display {
         };
 
         let tl_font = FontId::proportional(theme::FONT_SIZE_TL);
+        // A numbered bar's tick runs up beside its number to the top of the
+        // digits, so the line and its number read as one mark (`|12`); a bar
+        // left unnumbered zoomed out keeps the band-high tick, so a long
+        // tick means "this bar has a number". The labels sit on the band's
+        // top edge (`LEFT_BOTTOM`), so one digit's ink places them all.
+        let label_baseline = strip_bottom - REGION_BAND_H;
+        let digit = painter.layout_no_wrap("1".to_owned(), tl_font.clone(), theme::fg_dim());
+        let labelled_tick_top = labelled_tick_top(
+            label_baseline,
+            digit.size().y,
+            ink_span(&digit).0,
+            painter.pixels_per_point(),
+        );
         let ticks_per_bar = self.meter().bar_ticks();
         // Where the ruler counts bar 1 from: the arrangement's start in the
         // arranger, the lead clip's window start in the clip view, so a clip
@@ -157,6 +171,8 @@ impl Display {
             for &(top, bottom) in line_spans {
                 painter.vline(x, top..=bottom, line);
             }
+            let bar_num = ruler_bar_number(tick, label_origin, ticks_per_bar)
+                .filter(|_| role == GridRole::Bar && tiers.is_labelled(tick));
             // The ruler is a readout, not the snap grid: fine snap lines keep
             // their in-lane groove but only every `ruler_ticks` gets a tick.
             // In the arranger the tick is the in-lane line's own groove: the
@@ -170,18 +186,20 @@ impl Display {
                 } else {
                     Stroke::new(BAR_STROKE_W, tick_color)
                 };
-                painter.vline(x, (strip_bottom - tick_h)..=strip_bottom, tick_stroke);
+                let tick_top = if bar_num.is_some() {
+                    labelled_tick_top
+                } else {
+                    strip_bottom - tick_h
+                };
+                painter.vline(x, tick_top..=strip_bottom, tick_stroke);
             }
 
             // Bar number label — baseline sits on the region band's top edge
             // (shared `REGION_BAND_H`) so the two never overlap. Thinned to
             // `label_ticks` so numbers never collide zoomed out.
-            let bar_num = ruler_bar_number(tick, label_origin, ticks_per_bar);
-            if let Some(bar_num) =
-                bar_num.filter(|_| role == GridRole::Bar && tiers.is_labelled(tick))
-            {
+            if let Some(bar_num) = bar_num {
                 painter.text(
-                    pos2(x + 3.0, strip_bottom - REGION_BAND_H),
+                    pos2(x + 3.0, label_baseline),
                     Align2::LEFT_BOTTOM,
                     bar_num,
                     tl_font.clone(),
@@ -458,6 +476,15 @@ fn timeline_step_span(
     (first, count)
 }
 
+/// The top of a numbered bar's ruler tick: the top of the digits' ink, for a
+/// label `galley_h` tall standing on `baseline` with its ink starting
+/// `ink_top` below the galley's top, floored to a whole physical pixel (`ppp`
+/// per point) so the tick is crisp and reaches the digits rather than
+/// stopping a fraction short of them.
+fn labelled_tick_top(baseline: f32, galley_h: f32, ink_top: f32, ppp: f32) -> f32 {
+    ((baseline - galley_h + ink_top) * ppp).floor() / ppp
+}
+
 /// The ruler's number for the bar line at `tick`: bar 1 is the bar holding
 /// `origin` (its bar line at or before it), so a window starting between bar
 /// lines numbers the bar it starts in as 1. Bars before it count down from 0.
@@ -554,8 +581,8 @@ fn region_band_span(
 #[cfg(test)]
 mod tests {
     use super::{
-        band_edge_hit, grid_line_x, is_in_strip_band, region_band_span, region_bound_x,
-        region_handle_hit, ruler_bar_number, timeline_step_span,
+        band_edge_hit, grid_line_x, is_in_strip_band, labelled_tick_top, region_band_span,
+        region_bound_x, region_handle_hit, ruler_bar_number, timeline_step_span,
     };
     use crate::core::time::{self, Meter};
     use crate::models::clip::ClipEdge;
@@ -824,5 +851,16 @@ mod tests {
         let start = 10 * bar;
         assert_eq!(ruler_bar_number(12 * bar, start, bar), Some(3));
         assert_eq!(ruler_bar_number(start + bar - 1, start, bar), Some(1));
+    }
+
+    #[test]
+    fn labelled_tick_reaches_the_digit_top_on_a_whole_pixel() {
+        // A 16pt galley on a baseline at 30 with its ink 5.3pt below the top:
+        // the ink starts at 19.3, so the tick starts at or above it.
+        assert_eq!(labelled_tick_top(30.0, 16.0, 5.3, 1.0), 19.0);
+        assert_eq!(labelled_tick_top(30.0, 16.0, 5.3, 2.0), 19.0);
+        assert_eq!(labelled_tick_top(30.0, 16.0, 5.6, 2.0), 19.5);
+        // Already on a pixel: unchanged.
+        assert_eq!(labelled_tick_top(30.0, 16.0, 5.0, 1.0), 19.0);
     }
 }

@@ -229,9 +229,10 @@ impl Display {
 }
 
 /// Where the ink of `galley`'s first glyph starts and ends, below the
-/// galley's top: a marker label's number. The whole galley when it has no
+/// galley's top: a marker label's number, and the ruler's bar number (whose
+/// tick runs up to its top, `draw_timeline`). The whole galley when it has no
 /// glyph.
-fn ink_span(galley: &Galley) -> (f32, f32) {
+pub(super) fn ink_span(galley: &Galley) -> (f32, f32) {
     galley
         .rows
         .first()
