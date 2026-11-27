@@ -186,9 +186,12 @@ impl Display {
     /// `←`/`→`, an undo), and drops the markers gone. So a flag raised by a
     /// selection stays on top of the ones it overlaps after the strip gives
     /// the keyboard back, rather than falling back under a later one.
+    /// The strip's deleted markers (`markers_deleted`) are dropped here too
+    /// once no marker is selected: the strip has given the keyboard back.
     pub(in crate::view::display) fn sync_marker_stack(&mut self) {
-        if let Some(number) = self.selected_marker() {
-            put_on_top(&mut self.marker_stack, number);
+        match self.selected_marker() {
+            Some(number) => put_on_top(&mut self.marker_stack, number),
+            None => self.markers_deleted.clear(),
         }
         let markers = &self.markers;
         self.marker_stack

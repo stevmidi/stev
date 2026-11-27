@@ -184,14 +184,13 @@ impl Display {
         match answer_kind(&mut self.markers_in_flight) {
             MarkersAnswer::Stale => return,
             MarkersAnswer::Own => {}
-            MarkersAnswer::Other => match self.key_focus {
-                KeyFocus::Markers(selected) => {
+            MarkersAnswer::Other => {
+                if let KeyFocus::Markers(selected) = self.key_focus {
                     let next =
                         follow_selection(selected, &self.markers, &markers, &self.markers_deleted);
                     self.key_focus = next.map_or(KeyFocus::Pane, KeyFocus::Markers);
                 }
-                _ => self.markers_deleted.clear(),
-            },
+            }
         }
         self.markers = markers;
     }
@@ -220,6 +219,12 @@ impl Display {
             return false;
         };
         let action = self.pressed_action(key, modifiers);
+        // `⌘n` sets marker `n` afresh: when it comes back it is new, not an
+        // undo of the strip's `Delete`, so it doesn't take the selection
+        // (`follow_selection`). The key goes on to the pane as usual.
+        if let Some(Action::SetMarker(set)) = action {
+            self.markers_deleted.retain(|&deleted| deleted != set);
+        }
         let dragging = self.gesture.marker_drag.is_some();
         match marker_strip_key(key, modifiers, action, dragging) {
             Some(MarkerStripKey::CancelDrag) => {
@@ -234,7 +239,9 @@ impl Display {
                 {
                     self.gesture.marker_drag = None;
                 }
-                self.markers_deleted.push(number);
+                if !self.markers_deleted.contains(&number) {
+                    self.markers_deleted.push(number);
+                }
                 self.key_focus = match self.markers.selected_after_removing(number) {
                     Some(next) => KeyFocus::Markers(next),
                     None => KeyFocus::Pane,
