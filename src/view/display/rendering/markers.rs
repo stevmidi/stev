@@ -90,7 +90,7 @@ impl Display {
                 (top + bottom) * 0.5,
             ),
             Align2::LEFT_CENTER,
-            "MARKERS",
+            "Marker",
             font.clone(),
             theme::fg_dim(),
         );
