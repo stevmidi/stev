@@ -1,7 +1,8 @@
 //! Painting the Arranger: the bar grid, the clip rectangles with their note
 //! thumbnails, and the left track-header column (per-track colour swatch, the
 //! track's name, S/M buttons and the output chip, volume/pan bars for
-//! instrument tracks). The performance-lane row is `performance_lane.rs`.
+//! instrument tracks). The performance-lane row is `performance_lane.rs`,
+//! the marker strip above it `markers.rs`.
 //! See `030-ui-design.md`.
 
 use egui::text::{LayoutJob, TextFormat};
@@ -37,8 +38,8 @@ impl Display {
         let sw = rect.width();
 
         // Track-column panel — one continuous fill from the top of the
-        // overview strip, through the timeline strip and the reserved
-        // performance-lane row, down every track lane. The whole left column
+        // overview strip, through the timeline strip, the marker strip and
+        // the reserved performance-lane row, down every track lane. The whole left column
         // then reads as one panel: the timeline's `bg_timeline` fill is
         // confined to the content area (`draw_timeline` starts it at
         // `content_x`, `draw_overview` too), and the corner above the
@@ -48,7 +49,11 @@ impl Display {
         let column_top = rect.min.y + self.track_area_top();
         // The lanes always fill the viewport (`arranger_lane_h`), so the
         // column runs to its bottom whatever the scroll.
-        let column_h = OVERVIEW_H + Self::TIMELINE_H + performance_lane_h + layout.viewport_h;
+        let column_h = OVERVIEW_H
+            + Self::TIMELINE_H
+            + layout.markers_h
+            + performance_lane_h
+            + layout.viewport_h;
         painter.rect_filled(
             Rect::from_min_size(pos2(rect.min.x, column_top), vec2(labels_right, column_h)),
             CornerRadius::ZERO,
@@ -68,6 +73,7 @@ impl Display {
             Stroke::new(1.0_f32, grid_seam_color()),
         );
 
+        self.draw_marker_strip(painter, rect);
         self.draw_performance_lane_row(painter, rect);
 
         let painter = &layout.lanes_painter(painter, rect);

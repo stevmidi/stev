@@ -476,6 +476,7 @@ const FIXED: &[FixedGroup] = &[
                 "Arranger: move the loop, or an edge of it",
             ),
             ("Overview drag", "Arranger: scroll sideways, zoom up / down"),
+            ("Marker click", "Arranger: go to the marker, as its digit"),
         ],
     ),
     (

@@ -5,13 +5,15 @@
 //! `overlays.rs` (cursor line, playhead), `modals/` (the settings
 //! modal, the plugin-restore overlay and the project dialogs), `browser.rs`
 //! (the browser side panel), `knob_panel.rs` (the knob panel beside the clip
-//! view), `output_menu.rs` (a track header's output chip and its menu). This file owns `render` — the per-frame entry — and the
+//! view), `output_menu.rs` (a track header's output chip and its menu),
+//! `markers.rs` (the arranger's marker strip). This file owns `render` — the per-frame entry — and the
 //! shared layout maths. See `030-ui-design.md`.
 
 mod arranger;
 mod browser;
 mod clip_view;
 mod knob_panel;
+mod markers;
 mod modals;
 mod output_menu;
 mod overlays;
@@ -126,8 +128,8 @@ pub(super) fn draw_plus(painter: &Painter, centre: Pos2, half: f32, stroke: Stro
     painter.line_segment([c - vec2(0.0, half), c + vec2(0.0, half)], stroke);
 }
 
-/// Vertical geometry of the arranger's reserved performance-lane row and
-/// the track lanes below it, computed once and shared by drawing
+/// Vertical geometry of the arranger's marker strip, its reserved
+/// performance-lane row and the track lanes below them, computed once and shared by drawing
 /// (`draw_arranger_backgrounds` / `draw_arranger_view`) and hit-testing
 /// (`track_idx_at`/`performance_lane_hit_at`) so they can never drift apart.
 ///
@@ -135,7 +137,12 @@ pub(super) fn draw_plus(painter: &Painter, centre: Pos2, half: f32, stroke: Stro
 /// scrolls vertically once they no longer fit (`ARRANGER_MIN_LANE_H`);
 /// `tracks_top()` has the scroll applied, so it can lie above `lanes_top`.
 pub(super) struct ArrangerLayout {
-    /// Top y of the performance-lane row.
+    /// Top y of the marker strip, right under the timeline strip
+    /// (`600-markers.md` decision 2).
+    pub(super) markers_top: f32,
+    /// Height of the marker strip.
+    pub(super) markers_h: f32,
+    /// Top y of the performance-lane row, right under the marker strip.
     pub(super) performance_lane_top: f32,
     /// Height of the performance-lane row.
     pub(super) performance_lane_h: f32,
@@ -756,15 +763,20 @@ impl Display {
     /// shared by drawing and hit-testing so they can't drift.
     pub(super) fn arranger_layout(&self) -> ArrangerLayout {
         let area_h = self.track_area_h();
-        let performance_lane_top = self.timeline_top() + Self::TIMELINE_H;
+        let markers_top = self.timeline_top() + Self::TIMELINE_H;
+        let markers_h = Self::MARKER_STRIP_H;
+        let performance_lane_top = markers_top + markers_h;
         let performance_lane_h = Self::PERFORMANCE_LANE_H;
         let lanes_top = performance_lane_top + performance_lane_h;
-        let viewport_h = (area_h - OVERVIEW_H - Self::TIMELINE_H - performance_lane_h).max(0.0);
+        let viewport_h =
+            (area_h - OVERVIEW_H - Self::TIMELINE_H - markers_h - performance_lane_h).max(0.0);
         let track_count = self.track_count();
         let add_row_h = arranger_add_row_h(track_count);
         let lane_h = arranger_lane_h(viewport_h, track_count, add_row_h);
         let max_scroll_y = arranger_max_scroll_y(viewport_h, lane_h, track_count, add_row_h);
         ArrangerLayout {
+            markers_top,
+            markers_h,
             performance_lane_top,
             performance_lane_h,
             lanes_top,
@@ -2006,6 +2018,8 @@ mod tests {
     #[test]
     fn lane_viewport_overshoot_points_the_way_to_scroll() {
         let layout = ArrangerLayout {
+            markers_top: 4.0,
+            markers_h: 16.0,
             performance_lane_top: 20.0,
             performance_lane_h: 30.0,
             lanes_top: 50.0,

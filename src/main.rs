@@ -48,12 +48,13 @@ use crate::view::theme;
 use crate::view::theme::fonts::font_definitions;
 
 /// Pure data — `Clip`, `Event`, `Track`, `Region`, `PerformanceLane`,
-/// `Selection`, `ControllerTracker`, `Knob`. No I/O.
+/// `Selection`, `ControllerTracker`, `Knob`, `Markers`. No I/O.
 mod models {
     pub mod clip;
     pub mod controllers;
     pub mod event;
     pub mod knobs;
+    pub mod markers;
     pub mod performance_lane;
     pub mod pitch;
     pub mod region;

@@ -1,6 +1,6 @@
 # Markers
 
-**Status: agreed 2026-11-26, not built.** Up to nine numbered markers in the arrangement, each recalled by its digit: `⌘1`–`⌘9` sets marker *n* at the cursor, `1`–`9` recalls it. Stopped, a recall moves the cursor there; running, it moves the playhead and leaves the cursor where it is. The markers sit as flags in a strip of their own under the arranger's ruler, where a click recalls one, a drag moves it, and with the strip focused `Delete` removes it and `⌘R` names it. They are arrangement data: saved in the project, undoable, carried along by the edits that insert or delete time.
+**Status: agreed 2026-11-26; phase 1 built 2026-11-27, phase 2 not built. Issue: #49.** Up to nine numbered markers in the arrangement, each recalled by its digit: `⌘1`–`⌘9` sets marker *n* at the cursor, `1`–`9` recalls it. Stopped, a recall moves the cursor there; running, it moves the playhead and leaves the cursor where it is. The markers sit as flags in a strip of their own under the arranger's ruler, where a click recalls one, a drag moves it, and with the strip focused `Delete` removes it and `⌘R` names it. They are arrangement data: saved in the project, undoable, carried along by the edits that insert or delete time.
 
 ## Background
 
@@ -63,6 +63,14 @@ What the design leans on:
 
 - `010`: the digits, `⌘`+digits, the strip's keys and the mouse (and `FIXED` in `settings/keyboard_tab.rs` for the strip's non-command keys and the mouse). `020`: `KeyFocus::Markers` beside the track header focus, the flag drag in § Clip Edge Drag-Resize's family. `030`: the strip in the layout and its drawing. `050`: the marker edit and how time edits carry markers. `060`: `MarkerData` and the template rule. `110` or `550`: a line saying a marker recall uses the phase jump. `CHANGELOG.md` `[Unreleased]`: Added.
 - Tests: the marker list model (set into an empty slot, moving an existing number, replacing a marker on the same tick, delete, rename keeping the tick), the time-edit shifts (insert before/at/after a marker, delete time removing the inside ones and shifting the later ones, duplicate time shifting and not copying), undo of each, the save round trip and an old project without the field, the template dropping them, the recall's stopped/running split, the flag hit test and the drag latch.
+
+## As built (phase 1)
+
+- **The model** is `models/markers.rs`: `Marker { number, tick, name }` and `Markers` (sorted by tick, one per number and per tick; `set`, `rename`, `insert_time`, `delete_time`, `from_saved`). The sequencer holds it (`Sequencer::markers`) and the view mirrors it (`UiEvent::MarkersChanged`, `Display::markers`).
+- **The commands**: `Action::SetMarker(n)` / `Action::RecallMarker(n)` (one variant each with the number, not nine; ids `marker.set_n` / `marker.recall_n`, the Keyboard tab's *Markers* group, both `Scope::Global`), sending `SequencerCommand::SetMarker` (→ `SetMarkerEdit::at_cursor`) and `TransportCommand::RecallMarker` (→ `recall_marker_workflow`, `event_handlers/markers.rs`, where the transport is at hand). A flag click sends the same `InputEvent::Action`.
+- **Decision 5's check**: `Transport::tick` wraps only from inside the loop region (`current >= start && current < end`), so a jump past the region's end plays on, and one before its start plays into it and then loops.
+- **Duplicate Time** gets its marker shift through the `InsertSilenceEdit` it composes: the markers at or after the insertion point move (the clips' rule), none is copied.
+- **The strip** is `MARKER_STRIP_H` (16px), drawn by `draw_marker_strip` (`rendering/markers.rs`), hit-tested by `marker_flag_at` / `is_mouse_on_marker_strip`. Flags are a fixed 14px wide, the number only; names, the selection and the drag are phase 2.
 
 ## Phases
 

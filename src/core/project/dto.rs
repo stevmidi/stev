@@ -24,6 +24,7 @@ use crate::{
         clip::Clip,
         event::{Event, ParamMove},
         knobs::{ParamId, PluginParam, PluginTag, knobs_from_saved},
+        markers::{Marker, Markers},
         performance_lane::KeyLength,
         track::{InstrumentRef, Track, TrackOutput, track_name_from_input},
     },
@@ -388,6 +389,43 @@ impl KeyLengthData {
     }
 }
 
+/// One of the arrangement's markers, on disk (`600-markers.md` decision 10).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub(crate) struct MarkerData {
+    /// Its slot, `1..=MAX_MARKER`; a marker with any other is dropped on load.
+    pub(crate) number: u8,
+    /// Where it sits, in arrangement ticks.
+    pub(crate) tick: i32,
+    /// Its name, absent for a marker shown by its number alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) name: Option<String>,
+}
+
+impl MarkerData {
+    /// Every marker in `markers`, as saved.
+    fn list_for(markers: &Markers) -> Vec<MarkerData> {
+        markers
+            .as_slice()
+            .iter()
+            .map(|marker| MarkerData {
+                number: marker.number,
+                tick: marker.tick,
+                name: marker.name.clone(),
+            })
+            .collect()
+    }
+
+    /// The markers a saved list means, held to their rules
+    /// (`Markers::from_saved`).
+    fn markers_of(list: Vec<MarkerData>) -> Markers {
+        Markers::from_saved(list.into_iter().map(|data| Marker {
+            number: data.number,
+            tick: data.tick,
+            name: data.name,
+        }))
+    }
+}
+
 /// A whole project, on disk — the root of the `.stev` JSON.
 #[derive(Serialize, Deserialize, Clone)]
 pub(crate) struct ProjectData {
@@ -407,6 +445,10 @@ pub(crate) struct ProjectData {
     pub(crate) region_end: i32,
     /// The tracks, `1..=MAX_TRACKS` of them (`apply_to_sequencer` clamps).
     pub(crate) tracks: Vec<TrackData>,
+    /// The arrangement's markers (`600-markers.md`). Absent with none, and
+    /// in projects saved before markers, which load with none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) markers: Vec<MarkerData>,
 }
 
 impl Default for ProjectData {
@@ -435,6 +477,7 @@ impl Default for ProjectData {
                     clips: Vec::new(),
                 })
                 .collect(),
+            markers: Vec::new(),
         }
     }
 }
@@ -508,6 +551,7 @@ impl ProjectSnapshot {
                 region_start: sequencer.region_start(),
                 region_end: sequencer.region_end(),
                 tracks,
+                markers: MarkerData::list_for(sequencer.markers()),
             },
             raw,
         }
@@ -530,8 +574,9 @@ impl ProjectData {
     /// This project as a template: what describes the instruments kept (each
     /// track's output and plugin state, name, colour, volume and pan; the
     /// track count, meter and tempo), what describes a performance or a
-    /// passing state reset — no clips, no track muted, the default loop
-    /// region, the performance lane at a beat a key (it belongs to the piece,
+    /// passing state reset — no clips, no markers (`600-markers.md` decision
+    /// 10), no track muted, the default loop region, the performance lane at
+    /// a beat a key (it belongs to the piece,
     /// `archive/510-performance-lane-keyboard.md` § Step 1b decision 5). Applied when a template opens, so one holding clips (a project
     /// copied into the folder by hand) still opens empty, and when one is
     /// saved. See `archive/340-templates.md` decisions 5 and 6.
@@ -539,6 +584,7 @@ impl ProjectData {
         self.region_start = 0;
         self.region_end = config::REGION_LENGTH_DEFAULT;
         self.performance_lane_key_length = KeyLengthData::Bar;
+        self.markers.clear();
         for track in &mut self.tracks {
             track.muted = false;
             track.clips.clear();
@@ -583,6 +629,7 @@ impl ProjectData {
         sequencer
             .set_performance_lane_key_length(self.performance_lane_key_length.into_key_length());
         sequencer.set_global_region(self.region_start, self.region_end);
+        sequencer.set_markers(MarkerData::markers_of(self.markers));
 
         let mut all_metadata = Vec::new();
 
@@ -631,7 +678,8 @@ mod tests {
     }
 
     /// A template keeps the instruments and their mix, and drops the
-    /// performance: clips, mutes, the loop region and the lane's key length.
+    /// performance: clips, markers, mutes, the loop region and the lane's
+    /// key length.
     #[test]
     fn a_template_keeps_the_setup_and_drops_the_performance() {
         let mut data = ProjectData {
@@ -662,7 +710,13 @@ mod tests {
             swing_pct: 50,
             events: Vec::new(),
         });
+        data.markers.push(MarkerData {
+            number: 2,
+            tick: 3840,
+            name: Some("Chorus".to_owned()),
+        });
         let mut expected = data.clone();
+        expected.markers.clear();
         expected.region_start = 0;
         expected.region_end = config::REGION_LENGTH_DEFAULT;
         expected.performance_lane_key_length = KeyLengthData::Bar;
@@ -898,6 +952,45 @@ mod tests {
         data.apply_to_sequencer(&mut sequencer);
 
         assert_eq!(sequencer.meter(), seven_eight);
+    }
+
+    /// Markers, a name and all, survive a save and load; none is written
+    /// with none set.
+    #[test]
+    fn markers_survive_a_save_and_load() {
+        let mut sequencer = test_sequencer();
+        assert!(
+            !serde_json::to_string(&ProjectData::from_sequencer(&sequencer))
+                .unwrap()
+                .contains("markers"),
+            "no markers, no key"
+        );
+        let mut markers = Markers::default();
+        markers.set(1, 0);
+        markers.set(2, 3840);
+        markers.rename(2, Some("Chorus"));
+        sequencer.set_markers(markers.clone());
+        let json = serde_json::to_string(&ProjectData::from_sequencer(&sequencer)).unwrap();
+
+        sequencer.new_project();
+        assert!(sequencer.markers().is_empty(), "a new project has none");
+        let data: ProjectData = serde_json::from_str(&json).unwrap();
+        data.apply_to_sequencer(&mut sequencer);
+        assert_eq!(*sequencer.markers(), markers);
+    }
+
+    /// A project saved before markers has no `markers` key: it loads with
+    /// none, even over a session that had some.
+    #[test]
+    fn a_project_without_markers_loads_with_none() {
+        let json = serde_json::to_value(ProjectData::default()).unwrap();
+        assert!(json.get("markers").is_none());
+        let data: ProjectData = serde_json::from_value(json).unwrap();
+
+        let mut sequencer = test_sequencer();
+        sequencer.markers_mut().set(3, 960);
+        data.apply_to_sequencer(&mut sequencer);
+        assert!(sequencer.markers().is_empty());
     }
 
     /// A project saved before time signatures has no `meter` key: it loads

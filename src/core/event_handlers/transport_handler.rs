@@ -142,6 +142,9 @@ impl EventHandlers {
             TransportCommand::PlayFromTick { tick } => {
                 play_from_tick(*tick, transport, sequencer);
             }
+            TransportCommand::RecallMarker { number } => {
+                self.recall_marker_workflow(*number, transport, sequencer);
+            }
             TransportCommand::StartExport { tick } => {
                 transport.set_loop_enabled(false);
                 play_from_tick(*tick, transport, sequencer);

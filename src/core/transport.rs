@@ -129,6 +129,15 @@ pub(crate) enum TransportCommand {
         /// Absolute (arrangement) tick to start from.
         tick: i32,
     },
+    /// `1`–`9`: recall marker `number` (`600-markers.md` decision 4).
+    /// Stopped, the cursor moves to it as any cursor move does; running,
+    /// playback jumps to it by the lane's phase jump (`550`), the cursor
+    /// left where it is, the loop ignored. An unset marker leaves both and
+    /// says so in the footer.
+    RecallMarker {
+        /// The marker's slot, `1..=MAX_MARKER`.
+        number: u8,
+    },
     /// Stop playback.
     Stop,
     /// Start if stopped, stop if playing.

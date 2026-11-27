@@ -49,6 +49,9 @@ use super::paste::PasteClipsEdit;
 /// remove the silence). Everything is frozen at construction — never re-read
 /// from the (view-local) time selection or the cursor on redo.
 ///
+/// The markers at or after the anchor move on with the clips, through the
+/// `InsertSilenceEdit`; none is copied (`600-markers.md` decision 9).
+///
 /// The loop region is *moved* (not resized) if it starts at or after
 /// `region_from` — the duplicated span's start, or the cursor for a paste:
 /// it slides right by the width so it keeps the same position relative to
@@ -339,6 +342,35 @@ mod tests {
         };
         assert_eq!(spans(&sequencer, 0), vec![(0, 100), (200, 300)]);
         assert_eq!(spans(&sequencer, 1), vec![(0, 100)]);
+    }
+
+    /// Duplicate Time moves the markers at or after the insertion point
+    /// on by the copy's length and copies none from the source span: a
+    /// number is one slot (`600-markers.md` decision 9). The undo puts them
+    /// back.
+    #[test]
+    fn later_markers_move_on_and_none_is_copied() {
+        let mut sequencer = test_sequencer();
+        sequencer.tracks_mut()[0].add_clip(&clip_at(0, 100));
+        select(&mut sequencer, 0, None);
+        sequencer.markers_mut().set(1, 0);
+        sequencer.markers_mut().set(2, 100);
+        sequencer.markers_mut().set(3, 250);
+        let placed = |sequencer: &Sequencer| -> Vec<(u8, i32)> {
+            sequencer
+                .markers()
+                .as_slice()
+                .iter()
+                .map(|marker| (marker.number, marker.tick))
+                .collect()
+        };
+
+        let mut edit = DuplicateTimeEdit::from_time_range(&sequencer, 0, 100).unwrap();
+        edit.edit(&mut sequencer);
+        assert_eq!(placed(&sequencer), vec![(1, 0), (2, 200), (3, 350)]);
+
+        edit.undo(&mut sequencer);
+        assert_eq!(placed(&sequencer), vec![(1, 0), (2, 100), (3, 250)]);
     }
 
     #[test]

@@ -64,6 +64,7 @@ impl EventHandlers {
             })
             .ok();
         self.emit_tracks(sequencer, None);
+        self.emit_markers(sequencer);
 
         self.set_view_state(ViewState::Arranger);
 

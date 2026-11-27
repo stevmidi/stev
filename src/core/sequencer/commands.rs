@@ -748,6 +748,13 @@ pub(crate) enum SequencerCommand {
         /// The new meter.
         meter: Meter,
     },
+    /// `⌘1`–`⌘9`: set marker `number` at the arranger cursor, moving it
+    /// there if it is set elsewhere (`SetMarkerEdit`, undoable;
+    /// `600-markers.md` decision 3). Nothing when it is there already.
+    SetMarker {
+        /// The marker's slot, `1..=MAX_MARKER`.
+        number: u8,
+    },
     /// The performance lane's gutter: how far each lane key jumps, from the
     /// next key pressed. Saved with the project, not an undo step
     /// (`archive/510-performance-lane-keyboard.md` § Step 1b).

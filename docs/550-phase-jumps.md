@@ -32,6 +32,8 @@ jump to T + offset
 
 It is how the lane plays, not a correction: what is heard is the jump, made at the press, and the capture records exactly that (`520` § Principle). Nothing is snapped afterwards.
 
+**A marker recall jumps the same way** (`600-markers.md` decision 4): `1`–`9` while running lands at the marker plus the press's offset (`recall_marker_workflow`, `event_handlers/markers.rs`, the same `phase_offset` and `Transport::jump_and_chase`), so a marker sounds on a beat of the grid playback was on, and the sustain lift, the clock alignment and the capture follow from the same path. It is no lane press: it adds nothing to the lane's run, and a run it interrupts ends as a ruler click ends it.
+
 ## Decisions
 
 1. **Every press while running is a phase jump.** There is no setting, no gutter label and nothing saved; the lane's only saved field stays the key length.

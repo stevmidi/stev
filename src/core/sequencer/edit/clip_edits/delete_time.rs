@@ -2,10 +2,14 @@
 //! `[start, end)` gap across all tracks, carving that span out non-rippling
 //! (reusing [`DeleteInRangeEdit`] verbatim) and then rippling everything at
 //! or after `end` back left by the gap width to remove the gap it left behind.
+//! The markers go the same way: those inside are removed, the later ones
+//! pulled back (`600-markers.md` decision 9).
 
 use std::collections::HashSet;
 
 use uuid::Uuid;
+
+use crate::models::markers::Markers;
 
 use super::super::super::Sequencer;
 use super::super::EditResult;
@@ -22,7 +26,9 @@ use super::partition_metadata;
 /// `DeleteInRangeEdit` — reused verbatim rather than reimplementing the carve
 /// — so nothing survives inside `[start, end)`. Every clip (pre-existing or
 /// freshly split) with `start_tick() >= end` is then shifted *back* by
-/// `end - start`, closing the gap left by the carve.
+/// `end - start`, closing the gap left by the carve. A marker inside
+/// `[start, end)` is removed, and every one at or after `end` shifts back
+/// with the clips (`600-markers.md` decision 9).
 ///
 /// Shifting is a raw `Clip::set_start_tick` mutation, not a
 /// `remove_clip_by_id`/`add_clip` round-trip — same reasoning as
@@ -45,12 +51,16 @@ pub(crate) struct DeleteTimeEdit {
     /// first call so redo replays the exact same set rather than
     /// rescanning — same pattern as `InsertSilenceEdit`.
     shift_targets: Option<Vec<(usize, Uuid)>>,
+    /// The markers as `edit()` found them, which `undo()` puts back. `None`
+    /// before the first `edit()`.
+    markers_before: Option<Markers>,
 }
 
 impl DeleteTimeEdit {
     /// Builds the edit from the Arranger's time selection bounds. `None` if
     /// the range is empty/backwards, or if there is truly nothing to do (no
-    /// clip overlaps `[start, end)` and no clip starts at or after `end`).
+    /// clip overlaps `[start, end)`, no clip starts at or after `end`, and no
+    /// marker sits at or after `start`).
     pub(crate) fn from_time_range(sequencer: &Sequencer, start: i32, end: i32) -> Option<Self> {
         if end <= start {
             return None;
@@ -58,8 +68,9 @@ impl DeleteTimeEdit {
 
         let delete = DeleteInRangeEdit::from_time_range(sequencer, start, end);
 
-        let has_shift_target =
-            delete.is_some() || !sequencer.clips_starting_at_or_after(end).is_empty();
+        let has_shift_target = delete.is_some()
+            || !sequencer.clips_starting_at_or_after(end).is_empty()
+            || sequencer.markers().any_at_or_after(start);
 
         if !has_shift_target {
             return None;
@@ -70,11 +81,13 @@ impl DeleteTimeEdit {
             end,
             delete,
             shift_targets: None,
+            markers_before: None,
         })
     }
 
     /// Carves `[start, end)` out, then shifts every clip at or after `end`
-    /// left by the gap width. Returns [`EditResult::TimeDeleted`].
+    /// left by the gap width; the markers likewise. Returns
+    /// [`EditResult::TimeDeleted`].
     pub(in crate::core::sequencer::edit) fn edit(
         &mut self,
         sequencer: &mut Sequencer,
@@ -105,10 +118,16 @@ impl DeleteTimeEdit {
 
         let (carve_added, shifted) = partition_metadata(sequencer, targets, &carve_added_ids);
 
+        let markers_before = sequencer.markers().clone();
+        sequencer.markers_mut().delete_time(self.start, end);
+        let markers_moved = *sequencer.markers() != markers_before;
+        self.markers_before = Some(markers_before);
+
         if shifted.is_empty()
             && carve_added.is_empty()
             && carve_updated.is_empty()
             && carve_removed.is_empty()
+            && !markers_moved
         {
             return EditResult::NoOp;
         }
@@ -123,8 +142,8 @@ impl DeleteTimeEdit {
         }
     }
 
-    /// Shifts the moved clips back right, then un-carves. Returns
-    /// [`EditResult::TimeUndeleted`].
+    /// Puts the markers back, shifts the moved clips back right, then
+    /// un-carves. Returns [`EditResult::TimeUndeleted`].
     pub(in crate::core::sequencer::edit) fn undo(
         &mut self,
         sequencer: &mut Sequencer,
@@ -132,6 +151,9 @@ impl DeleteTimeEdit {
         let Some(targets) = self.shift_targets.as_ref() else {
             return EditResult::NoOp;
         };
+        if let Some(markers) = self.markers_before.clone() {
+            sequencer.set_markers(markers);
+        }
 
         // Shift back right first — same ordering rationale as
         // `InsertSilenceEdit::undo`: this must happen before `delete.undo()`
@@ -407,5 +429,52 @@ mod tests {
 
         // The stranded note gets a real note-off.
         assert_eq!(drain(&mut plugin_rx), vec![[0x80, 60, 0]]);
+    }
+
+    /// The `(number, tick)` of each marker, in order.
+    fn markers(sequencer: &Sequencer) -> Vec<(u8, i32)> {
+        sequencer
+            .markers()
+            .as_slice()
+            .iter()
+            .map(|marker| (marker.number, marker.tick))
+            .collect()
+    }
+
+    /// The markers inside the deleted span go, the later ones move back by
+    /// its length, and the undo puts every one back (`600-markers.md`
+    /// decision 9).
+    #[test]
+    fn markers_inside_go_and_later_ones_move_back_until_undone() {
+        let mut sequencer = test_sequencer();
+        sequencer.tracks_mut()[0].add_clip(&clip_at(0, 3840));
+        for (number, tick) in [(1, 0), (2, 960), (3, 1440), (4, 3840)] {
+            sequencer.markers_mut().set(number, tick);
+        }
+
+        let mut edit = DeleteTimeEdit::from_time_range(&sequencer, 960, 1440).unwrap();
+        edit.edit(&mut sequencer);
+        assert_eq!(markers(&sequencer), vec![(1, 0), (3, 960), (4, 3360)]);
+
+        edit.undo(&mut sequencer);
+        assert_eq!(
+            markers(&sequencer),
+            vec![(1, 0), (2, 960), (3, 1440), (4, 3840)]
+        );
+    }
+
+    /// With no clip in or after the span, a marker in it is still something
+    /// to delete.
+    #[test]
+    fn a_marker_alone_in_the_span_is_enough_to_delete_time() {
+        let mut sequencer = test_sequencer();
+        sequencer.markers_mut().set(5, 1000);
+
+        let mut edit = DeleteTimeEdit::from_time_range(&sequencer, 960, 1440).unwrap();
+        assert!(matches!(
+            edit.edit(&mut sequencer),
+            EditResult::TimeDeleted { .. }
+        ));
+        assert!(sequencer.markers().is_empty());
     }
 }

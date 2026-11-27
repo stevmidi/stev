@@ -139,6 +139,15 @@ impl EventHandlers {
                 self.send_sequencer(SequencerCommand::SelectAllEvents);
             }
 
+            // `⌘1`–`⌘9` set a marker at the arranger cursor, `1`–`9` recall
+            // it, from either pane (`600-markers.md` decisions 3 and 4).
+            InputEvent::Action(Action::SetMarker(number)) => {
+                self.send_sequencer(SequencerCommand::SetMarker { number: *number });
+            }
+            InputEvent::Action(Action::RecallMarker(number)) => {
+                self.send_transport(TransportCommand::RecallMarker { number: *number });
+            }
+
             InputEvent::Action(Action::Undo) => self.send_sequencer(SequencerCommand::Undo),
             InputEvent::Action(Action::Redo) => self.send_sequencer(SequencerCommand::Redo),
 

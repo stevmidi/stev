@@ -8,7 +8,7 @@
 //! match every input and command; anything that grows past a line or is shared between
 //! arms is extracted to a per-concern file here — `selection.rs`,
 //! `clip_edges.rs`, `clip_lifecycle.rs`, `clip_range_edits.rs`, `clip_view.rs`,
-//! `project.rs`, `save.rs`, `recovery.rs`, `tracks.rs`,
+//! `project.rs`, `save.rs`, `recovery.rs`, `tracks.rs`, `markers.rs`,
 //! `command_helpers.rs`, `edit_result_handler.rs`, … There is no single
 //! `workflows.rs`; this per-concern split *is* the DRY mechanism.
 //!
@@ -49,6 +49,7 @@ mod edit_result_handler;
 mod input_handler;
 #[cfg(test)]
 mod long_take_timing;
+mod markers;
 mod performance_lane_handler;
 mod project;
 mod recovery;

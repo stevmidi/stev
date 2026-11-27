@@ -25,6 +25,7 @@ impl Display {
                 // The lane is the selected row, so no track is: the change
                 // collapses the marquee like any other track change
                 // (`sync_time_selection_to_cursor`).
+                UiEvent::MarkersChanged { markers } => self.markers = markers,
                 UiEvent::PerformanceLaneSelected => {
                     self.selected_track_idx = None;
                 }

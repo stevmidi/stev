@@ -132,6 +132,12 @@ pub(crate) enum Action {
     /// `archive/380-wheel-lane.md`, `archive/530-sustain-capture.md` decision 7; a knob's
     /// lane is a click on the knob, `archive/400-parameter-knobs.md` decision 14).
     CycleClipLane,
+    /// Set marker *n* (`1..=MAX_MARKER`) at the arranger cursor
+    /// (`SequencerCommand::SetMarker`, `600-markers.md` decision 3).
+    SetMarker(u8),
+    /// Recall marker *n*: the cursor moves there stopped, playback jumps
+    /// there running (`TransportCommand::RecallMarker`, decision 4).
+    RecallMarker(u8),
 }
 
 /// Which pane must have the keyboard for an action's chord to trigger it.
@@ -456,6 +462,8 @@ const PROJECT: &str = "Project & app";
 const ARRANGER: &str = "Arranger";
 /// The Keyboard tab's group for the clip view's commands.
 const CLIP: &str = "Clip";
+/// The Keyboard tab's group for the markers' commands.
+const MARKERS: &str = "Markers";
 
 /// Shorthand for an [`ACTIONS`] row.
 const fn row(
@@ -853,6 +861,152 @@ pub(crate) const ACTIONS: &[ActionInfo] = &[
         CLIP,
         Scope::Clip,
         &[Chord::plain(Key::W)],
+    ),
+    // --- Markers (`600-markers.md`): global, so the digits recall from the
+    // clip view too (decision 4) ---
+    row(
+        Action::SetMarker(1),
+        "marker.set_1",
+        "Set marker 1 at the cursor",
+        MARKERS,
+        Scope::Global,
+        &[Chord::cmd(Key::Num1)],
+    ),
+    row(
+        Action::SetMarker(2),
+        "marker.set_2",
+        "Set marker 2 at the cursor",
+        MARKERS,
+        Scope::Global,
+        &[Chord::cmd(Key::Num2)],
+    ),
+    row(
+        Action::SetMarker(3),
+        "marker.set_3",
+        "Set marker 3 at the cursor",
+        MARKERS,
+        Scope::Global,
+        &[Chord::cmd(Key::Num3)],
+    ),
+    row(
+        Action::SetMarker(4),
+        "marker.set_4",
+        "Set marker 4 at the cursor",
+        MARKERS,
+        Scope::Global,
+        &[Chord::cmd(Key::Num4)],
+    ),
+    row(
+        Action::SetMarker(5),
+        "marker.set_5",
+        "Set marker 5 at the cursor",
+        MARKERS,
+        Scope::Global,
+        &[Chord::cmd(Key::Num5)],
+    ),
+    row(
+        Action::SetMarker(6),
+        "marker.set_6",
+        "Set marker 6 at the cursor",
+        MARKERS,
+        Scope::Global,
+        &[Chord::cmd(Key::Num6)],
+    ),
+    row(
+        Action::SetMarker(7),
+        "marker.set_7",
+        "Set marker 7 at the cursor",
+        MARKERS,
+        Scope::Global,
+        &[Chord::cmd(Key::Num7)],
+    ),
+    row(
+        Action::SetMarker(8),
+        "marker.set_8",
+        "Set marker 8 at the cursor",
+        MARKERS,
+        Scope::Global,
+        &[Chord::cmd(Key::Num8)],
+    ),
+    row(
+        Action::SetMarker(9),
+        "marker.set_9",
+        "Set marker 9 at the cursor",
+        MARKERS,
+        Scope::Global,
+        &[Chord::cmd(Key::Num9)],
+    ),
+    row(
+        Action::RecallMarker(1),
+        "marker.recall_1",
+        "Go to marker 1",
+        MARKERS,
+        Scope::Global,
+        &[Chord::plain(Key::Num1)],
+    ),
+    row(
+        Action::RecallMarker(2),
+        "marker.recall_2",
+        "Go to marker 2",
+        MARKERS,
+        Scope::Global,
+        &[Chord::plain(Key::Num2)],
+    ),
+    row(
+        Action::RecallMarker(3),
+        "marker.recall_3",
+        "Go to marker 3",
+        MARKERS,
+        Scope::Global,
+        &[Chord::plain(Key::Num3)],
+    ),
+    row(
+        Action::RecallMarker(4),
+        "marker.recall_4",
+        "Go to marker 4",
+        MARKERS,
+        Scope::Global,
+        &[Chord::plain(Key::Num4)],
+    ),
+    row(
+        Action::RecallMarker(5),
+        "marker.recall_5",
+        "Go to marker 5",
+        MARKERS,
+        Scope::Global,
+        &[Chord::plain(Key::Num5)],
+    ),
+    row(
+        Action::RecallMarker(6),
+        "marker.recall_6",
+        "Go to marker 6",
+        MARKERS,
+        Scope::Global,
+        &[Chord::plain(Key::Num6)],
+    ),
+    row(
+        Action::RecallMarker(7),
+        "marker.recall_7",
+        "Go to marker 7",
+        MARKERS,
+        Scope::Global,
+        &[Chord::plain(Key::Num7)],
+    ),
+    row(
+        Action::RecallMarker(8),
+        "marker.recall_8",
+        "Go to marker 8",
+        MARKERS,
+        Scope::Global,
+        &[Chord::plain(Key::Num8)],
+    ),
+    row(
+        Action::RecallMarker(9),
+        "marker.recall_9",
+        "Go to marker 9",
+        MARKERS,
+        Scope::Global,
+        &[Chord::plain(Key::Num9)],
     ),
 ];
 

@@ -39,6 +39,7 @@ use crate::{
     models::{
         clip::{Clip, CopiedNote},
         knobs::UNASSIGNED_KNOBS,
+        markers::Markers,
         performance_lane::{KeyLength, PerformanceLane},
         track::{Track, TrackOutput},
     },
@@ -185,6 +186,12 @@ pub(crate) struct Sequencer {
     /// Written only here; not saved (`570-lane-octave-buttons.md` § 4).
     pub(super) performance_lane_hand: Arc<AtomicU32>,
 
+    // --- Markers ---
+    /// The arrangement's numbered markers (`600-markers.md`): saved with the
+    /// project, changed only by undoable edits (`SetMarkerEdit`, the time
+    /// edits), mirrored to the view (`UiEvent::MarkersChanged`).
+    pub(super) markers: Markers,
+
     // --- Agent bridge ---
     /// The view's arranger marquee, mirrored here on every change
     /// (`SequencerCommand::SetMarquee`): what the agent bridge's reads
@@ -261,6 +268,7 @@ impl Sequencer {
             performance_lane_armed,
             performance_lane_key_length,
             performance_lane_hand,
+            markers: Markers::default(),
             marquee: None,
             modal_open: false,
         }
@@ -280,6 +288,22 @@ impl Sequencer {
     /// Mirrors the view's marquee.
     pub(crate) fn set_marquee(&mut self, marquee: Option<TimeSelectionRect>) {
         self.marquee = marquee;
+    }
+
+    /// The arrangement's markers.
+    pub(crate) fn markers(&self) -> &Markers {
+        &self.markers
+    }
+
+    /// Replaces the arrangement's markers: only the marker edits, the time
+    /// edits that carry them and a project load call this.
+    pub(crate) fn set_markers(&mut self, markers: Markers) {
+        self.markers = markers;
+    }
+
+    /// The arrangement's markers, for the time edits that carry them along.
+    pub(crate) fn markers_mut(&mut self) -> &mut Markers {
+        &mut self.markers
     }
 
     /// Whether the view has a modal up, as last mirrored (see the field).
@@ -496,6 +520,7 @@ impl Sequencer {
         self.set_meter(Meter::FOUR_FOUR);
         self.set_performance_lane_key_length(KeyLength::default());
         self.set_performance_lane_armed(false);
+        self.markers = Markers::default();
         self.clip_clipboard = None;
         self.note_clipboard.clear();
         self.reset_track_mix();

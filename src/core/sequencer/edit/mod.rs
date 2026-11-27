@@ -3,7 +3,8 @@
 //!
 //! Every data mutation the user can undo is an `impl undo::Edit` type in
 //! `clip_edits/` (whole clips), `event_edits.rs` (the events inside one clip),
-//! `track_edits.rs` (the track list), `tempo_edit.rs` or `meter_edit.rs`; the
+//! `track_edits.rs` (the track list), `tempo_edit.rs`, `meter_edit.rs` or
+//! `marker_edit.rs`; the
 //! undo record's entry is `undo_step.rs`. Each is wrapped in a
 //! `SequencerEdit` variant by the `sequencer_edit_dispatch!` macro here. `edit()` and `undo()` both return
 //! an `EditResult`; `event_handlers/edit_result_handler.rs` turns that into
@@ -36,6 +37,7 @@ use super::Sequencer;
 
 mod clip_edits;
 mod event_edits;
+mod marker_edit;
 mod meter_edit;
 mod pass_steps;
 mod tempo_edit;
@@ -54,6 +56,7 @@ pub(crate) use event_edits::{
     NudgeSelectedEventsLengthEdit, QuantizeEventsEdit, ReplaceClipNotesEdit,
     TransposeSelectedEventsEdit,
 };
+pub(crate) use marker_edit::SetMarkerEdit;
 pub(crate) use meter_edit::SetMeterEdit;
 pub(crate) use pass_steps::{PassRefusal, PassStep, PassStepEdit};
 pub(crate) use tempo_edit::{SetTempoEdit, TempoGesture};
@@ -521,6 +524,11 @@ pub(crate) enum EditResult {
     /// The project's meter changed (`SetMeterEdit`'s edit and undo). The
     /// view reads the meter from its atomic, so the handler only wakes it.
     MeterChanged,
+    /// The arrangement's markers changed (`SetMarkerEdit`'s edit and undo).
+    /// The handler re-sends the view the list (`UiEvent::MarkersChanged`).
+    /// The time edits that carry markers along report their own variants
+    /// and re-send it too.
+    MarkersChanged,
     /// The edit turned out to be a no-op — nothing for the handler to do.
     NoOp,
 }
@@ -767,12 +775,14 @@ sequencer_edit_dispatch!(
     SetKnobParam(SetKnobParamEdit),
     SetTempo(SetTempoEdit),
     SetMeter(SetMeterEdit),
+    SetMarker(SetMarkerEdit),
 );
 
 impl SequencerEdit {
     /// Whether an undo or redo of this edit puts back the view around it
     /// ([`UndoStep`]): every edit that changes clips or notes does, as in
-    /// Ableton; the tempo, the meter, a track's name, its output and a
+    /// Ableton, and so does a marker edit (`600-markers.md` decision 10);
+    /// the tempo, the meter, a track's name, its output and a
     /// knob's mapping undo with the view as it is, and a track add or remove
     /// keeps its own selection rule (`050-undo-redo.md` § Track add /
     /// remove). Exhaustive, so a new edit has to be placed.
@@ -805,7 +815,8 @@ impl SequencerEdit {
             | SequencerEdit::InsertCapture(_)
             | SequencerEdit::InsertNotes(_)
             | SequencerEdit::ReplaceClipNotes(_)
-            | SequencerEdit::DragNotes(_) => true,
+            | SequencerEdit::DragNotes(_)
+            | SequencerEdit::SetMarker(_) => true,
             SequencerEdit::AddTrack(_)
             | SequencerEdit::RemoveTrack(_)
             | SequencerEdit::RenameTrack(_)

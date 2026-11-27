@@ -20,6 +20,7 @@ use crate::{
     metadata::clip_view::ClipView,
     models::clip::EventSpaceRetime,
     models::knobs::{KnobParams, ParamId, UNASSIGNED_KNOBS},
+    models::markers::Markers,
     models::track::{InstrumentRef, TrackShift},
 };
 
@@ -284,6 +285,13 @@ pub(crate) enum UiEvent {
         /// Its plugin, state blob included — `None` for a MIDI-Out track or
         /// one that left the arrangement.
         instrument: Option<InstrumentRef>,
+    },
+    /// The arrangement's markers as they now are (`600-markers.md`): after
+    /// a marker edit, a time edit that carried them, their undos and a
+    /// project load. The view draws the marker strip from them.
+    MarkersChanged {
+        /// Every marker, in tick order.
+        markers: Markers,
     },
     /// The arranger performance lane was armed (selected) — mutually
     /// exclusive with `TrackSelected`, which implicitly deselects it.

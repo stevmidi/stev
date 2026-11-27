@@ -1,9 +1,13 @@
 //! Undoable "Insert Silence" — open a gap of `amount` ticks at `insert_tick`
-//! across all tracks, splitting any straddling clip. Reuses [`SplitClipsEdit`].
+//! across all tracks, splitting any straddling clip, and carry the markers
+//! at or after it along (`600-markers.md` decision 9). Reuses
+//! [`SplitClipsEdit`].
 
 use std::collections::HashSet;
 
 use uuid::Uuid;
+
+use crate::models::markers::Markers;
 
 use super::super::super::Sequencer;
 use super::super::EditResult;
@@ -20,7 +24,8 @@ use super::split::SplitClipsEdit;
 /// verbatim rather than reimplementing split logic — so its right-hand half
 /// starts exactly at `insert_tick` and moves along with everything else.
 /// Every clip (pre-existing or freshly split) with `start_tick() >=
-/// insert_tick` is then shifted forward by `amount`.
+/// insert_tick` is then shifted forward by `amount`, and so is every marker
+/// at or after it (`600-markers.md` decision 9).
 ///
 /// Shifting is a raw `Clip::set_start_tick` mutation, not a
 /// `remove_clip_by_id`/`add_clip` round-trip: a uniform forward shift of an
@@ -44,12 +49,16 @@ pub(crate) struct InsertSilenceEdit {
     /// the exact same set rather than rescanning — same pattern as
     /// `SplitClipsEdit`/`PasteClipsEdit`.
     shift_targets: Option<Vec<(usize, Uuid)>>,
+    /// The markers as `edit()` found them, which `undo()` puts back. `None`
+    /// before the first `edit()`.
+    markers_before: Option<Markers>,
 }
 
 impl InsertSilenceEdit {
     /// Builds the edit from the Arranger's time selection bounds. `None` if
     /// the range is empty/backwards, or if there is truly nothing to do (no
-    /// clip straddles `start` and no clip starts at or after it).
+    /// clip straddles `start`, and no clip starts and no marker sits at or
+    /// after it).
     pub(crate) fn from_time_range(sequencer: &Sequencer, start: i32, end: i32) -> Option<Self> {
         if end <= start {
             return None;
@@ -57,8 +66,9 @@ impl InsertSilenceEdit {
 
         let split = SplitClipsEdit::from_time_range(sequencer, start, end, start);
 
-        let has_shift_target =
-            split.is_some() || !sequencer.clips_starting_at_or_after(start).is_empty();
+        let has_shift_target = split.is_some()
+            || !sequencer.clips_starting_at_or_after(start).is_empty()
+            || sequencer.markers().any_at_or_after(start);
 
         if !has_shift_target {
             return None;
@@ -69,11 +79,13 @@ impl InsertSilenceEdit {
             amount: end - start,
             split,
             shift_targets: None,
+            markers_before: None,
         })
     }
 
-    /// Splits any straddling clip, then shifts every clip at or after
-    /// `insert_tick` right by `amount`. Returns [`EditResult::SilenceInserted`].
+    /// Splits any straddling clip, then shifts every clip and marker at or
+    /// after `insert_tick` right by `amount`. Returns
+    /// [`EditResult::SilenceInserted`].
     pub(in crate::core::sequencer::edit) fn edit(
         &mut self,
         sequencer: &mut Sequencer,
@@ -94,7 +106,18 @@ impl InsertSilenceEdit {
 
         let (split_added, shifted) = partition_metadata(sequencer, targets, &split_added_ids);
 
-        if shifted.is_empty() && split_added.is_empty() && split_updated.is_empty() {
+        let markers_before = sequencer.markers().clone();
+        sequencer
+            .markers_mut()
+            .insert_time(insert_tick, self.amount);
+        let markers_moved = *sequencer.markers() != markers_before;
+        self.markers_before = Some(markers_before);
+
+        if shifted.is_empty()
+            && split_added.is_empty()
+            && split_updated.is_empty()
+            && !markers_moved
+        {
             return EditResult::NoOp;
         }
 
@@ -105,8 +128,8 @@ impl InsertSilenceEdit {
         }
     }
 
-    /// Shifts the moved clips back left, then un-splits. Returns
-    /// [`EditResult::SilenceRemoved`].
+    /// Puts the markers back, shifts the moved clips back left, then
+    /// un-splits. Returns [`EditResult::SilenceRemoved`].
     pub(in crate::core::sequencer::edit) fn undo(
         &mut self,
         sequencer: &mut Sequencer,
@@ -114,6 +137,9 @@ impl InsertSilenceEdit {
         let Some(targets) = self.shift_targets.as_ref() else {
             return EditResult::NoOp;
         };
+        if let Some(markers) = self.markers_before.clone() {
+            sequencer.set_markers(markers);
+        }
         sequencer.shift_clips(targets, -self.amount);
 
         let (split_updated, split_removed) = match self.split.as_mut().map(|s| s.undo(sequencer)) {
@@ -334,5 +360,59 @@ mod tests {
 
         // The stranded note gets a real note-off.
         assert_eq!(drain(&mut plugin_rx), vec![[0x80, 60, 0]]);
+    }
+
+    /// The `(number, tick)` of each marker, in order.
+    fn markers(sequencer: &Sequencer) -> Vec<(u8, i32)> {
+        sequencer
+            .markers()
+            .as_slice()
+            .iter()
+            .map(|marker| (marker.number, marker.tick))
+            .collect()
+    }
+
+    /// Markers before, at and after the insertion point: the ones at or
+    /// after it move along with the clips, and the undo puts them back
+    /// (`600-markers.md` decision 9).
+    #[test]
+    fn markers_at_or_after_the_point_move_and_undo_puts_them_back() {
+        let mut sequencer = test_sequencer();
+        sequencer.tracks_mut()[0].add_clip(&clip_at(960, 480));
+        for (number, tick) in [(1, 0), (2, 960), (3, 1920)] {
+            sequencer.markers_mut().set(number, tick);
+        }
+
+        let mut edit = InsertSilenceEdit::from_time_range(&sequencer, 960, 1440).unwrap();
+        edit.edit(&mut sequencer);
+        assert_eq!(markers(&sequencer), vec![(1, 0), (2, 1440), (3, 2400)]);
+
+        edit.undo(&mut sequencer);
+        assert_eq!(markers(&sequencer), vec![(1, 0), (2, 960), (3, 1920)]);
+
+        edit.edit(&mut sequencer);
+        assert_eq!(markers(&sequencer), vec![(1, 0), (2, 1440), (3, 2400)]);
+    }
+
+    /// With no clip after the point, a marker after it is still something
+    /// to move: the insert is made, and reported.
+    #[test]
+    fn a_marker_alone_after_the_point_is_enough_to_insert() {
+        let mut sequencer = test_sequencer();
+        sequencer.markers_mut().set(4, 1920);
+
+        let mut edit = InsertSilenceEdit::from_time_range(&sequencer, 960, 1440).unwrap();
+        assert!(matches!(
+            edit.edit(&mut sequencer),
+            EditResult::SilenceInserted { .. }
+        ));
+        assert_eq!(markers(&sequencer), vec![(4, 2400)]);
+    }
+
+    #[test]
+    fn a_marker_before_the_point_alone_is_nothing_to_insert() {
+        let mut sequencer = test_sequencer();
+        sequencer.markers_mut().set(1, 480);
+        assert!(InsertSilenceEdit::from_time_range(&sequencer, 960, 1440).is_none());
     }
 }

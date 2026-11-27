@@ -109,6 +109,7 @@ fn hash_project(
         sequencer.performance_lane_key_length(),
         sequencer.region_start(),
         sequencer.region_end(),
+        sequencer.markers(),
         sequencer.tracks().len(),
     )
         .hash(&mut hasher);
@@ -172,8 +173,8 @@ fn hash_events(events: &[Event]) -> u64 {
 #[cfg(test)]
 mod tests {
     use crate::core::project::dto::{
-        ClipData, EventData, KnobData, MeterData, ParamMoveData, ProjectData, TrackData,
-        TrackOutputData,
+        ClipData, EventData, KnobData, MarkerData, MeterData, ParamMoveData, ProjectData,
+        TrackData, TrackOutputData,
     };
     use crate::core::sequencer::test_support::{
         clip_at, note_off, note_on, param_at, stub_instrument, test_sequencer,
@@ -268,6 +269,7 @@ mod tests {
         }),
         ("region start", |s| s.set_global_region(480, s.region_end())),
         ("region end", |s| s.set_global_region(0, 1920)),
+        ("a marker", |s| s.markers_mut().set(1, 960)),
         ("track count", |s| s.set_track_count(5)),
         ("channel", |s| {
             s.tracks_mut()[0].set_output(TrackOutput::MidiOut { channel: 9 });
@@ -459,7 +461,14 @@ mod tests {
             region_start: _,
             region_end: _,
             tracks,
+            markers,
         } = data;
+        for MarkerData {
+            number: _,
+            tick: _,
+            name: _,
+        } in markers
+        {}
         let [
             MeterData {
                 bar_index: _,

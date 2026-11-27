@@ -128,6 +128,17 @@ impl Display {
             && y < self.timeline_top()
     }
 
+    /// Whether `(x, y)` is on the arranger's marker strip, under its
+    /// timeline strip (`600-markers.md` decision 2), across the whole pane
+    /// width (the track column's corner beside it too, so a press there
+    /// can't fall through to the lanes). Always `false` in the clip view.
+    pub(super) fn is_mouse_on_marker_strip(&self, x: f32, y: f32) -> bool {
+        let layout = self.arranger_layout();
+        self.active_pane() == Pane::Arranger
+            && self.is_mouse_inside_pane(x, y)
+            && (layout.markers_top..layout.markers_top + layout.markers_h).contains(&y)
+    }
+
     /// Whether `(x, y)` is where the active pane's clicks act on time: its
     /// content area, and not over the track headers / piano key column or
     /// the right padding (`content_x_on_screen`) — a tick there is scrolled
@@ -191,7 +202,8 @@ impl Display {
     /// `in_pane`): on the timeline strip, playback from there in the arranger
     /// (`PlayFromTick`) and cursor placement alone in the clip view
     /// (`SetCursorTick`), and in a controller lane the same with the lane's
-    /// focus and span; in the lanes, the arranger's header buttons, mix bars, Shift+click extend,
+    /// focus and span; on the arranger's marker strip, a flag's recall; in
+    /// the lanes, the arranger's header buttons, mix bars, Shift+click extend,
     /// clip edge / band drags; the clip view's ⌘-click velocity drag;
     /// then, in either, cursor placement plus the time-selection or event
     /// marquee anchor, sent on as `MouseClickedTicks`.
@@ -203,8 +215,10 @@ impl Display {
         // buttons, bars, the `+` row) takes the keyboard back from the
         // headers: a click in the lanes or the timeline strip, or in the
         // clip pane.
-        let in_header_column =
-            arranger && self.is_mouse_inside_clip_content(x, y) && x < self.content_origin_x();
+        let in_header_column = arranger
+            && self.is_mouse_inside_clip_content(x, y)
+            && x < self.content_origin_x()
+            && !self.is_mouse_on_marker_strip(x, y);
         // The gutter's lane switch keeps a controller lane's focus from one
         // controller to another (`set_clip_lane` decides).
         let on_lane_switch = is_clip_events_view && self.clip_lane_label_at(x, y).is_some();
@@ -246,6 +260,18 @@ impl Display {
                 self.play_from_x(x);
             } else {
                 self.place_cursor_at(x);
+            }
+            return true;
+        }
+
+        // The arranger's marker strip: a flag recalls its marker exactly as
+        // its digit does, and a press anywhere else in the strip (its
+        // gutter beside it too) does nothing (`600-markers.md` decision 6).
+        if self.is_mouse_on_marker_strip(x, y) {
+            if let Some(number) = self.marker_flag_at(x, y) {
+                self.input_event_tx
+                    .send(InputEvent::Action(Action::RecallMarker(number)))
+                    .ok();
             }
             return true;
         }

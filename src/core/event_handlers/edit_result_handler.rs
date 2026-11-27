@@ -40,6 +40,7 @@ impl EventHandlers {
                 split_added,
             } => {
                 self.insert_silence_workflow(sequencer, &shifted, &split_updated, &split_added);
+                self.emit_markers(sequencer);
             }
             EditResult::SilenceRemoved {
                 shifted,
@@ -47,6 +48,7 @@ impl EventHandlers {
                 split_removed,
             } => {
                 self.remove_silence_workflow(sequencer, &shifted, &split_updated, &split_removed);
+                self.emit_markers(sequencer);
             }
             EditResult::TimeDeleted {
                 shifted,
@@ -66,6 +68,7 @@ impl EventHandlers {
                 // The deleted span is gone, so the marquee no longer refers
                 // to any real content — collapse it back to the cursor.
                 self.clear_marquee_workflow(sequencer);
+                self.emit_markers(sequencer);
             }
             EditResult::TimeUndeleted {
                 shifted,
@@ -78,6 +81,7 @@ impl EventHandlers {
                     &shifted,
                     CarveResult::new(&carve_updated, &carve_added, &carve_removed),
                 );
+                self.emit_markers(sequencer);
             }
             EditResult::RangeDeleted {
                 updated,
@@ -250,6 +254,7 @@ impl EventHandlers {
                 if let Some(rect) = new_selection {
                     self.set_marquee_workflow(sequencer, rect);
                 }
+                self.emit_markers(sequencer);
             }
             EditResult::TimeUnduplicated {
                 unpasted,
@@ -259,6 +264,7 @@ impl EventHandlers {
             } => {
                 self.unpaste_clips_workflow(sequencer, CarveResult::EMPTY, &unpasted);
                 self.remove_silence_workflow(sequencer, &shifted, &split_updated, &split_removed);
+                self.emit_markers(sequencer);
             }
             EditResult::ClipResized { clip, retime } => {
                 self.clip_resized_workflow(sequencer, clip, retime);
@@ -357,6 +363,7 @@ impl EventHandlers {
                 self.send_slot_instrument(slot, track_id, instrument);
             }
             EditResult::TempoChanged | EditResult::MeterChanged => self.request_repaint(),
+            EditResult::MarkersChanged => self.emit_markers(sequencer),
             EditResult::NoOp => {}
         }
     }

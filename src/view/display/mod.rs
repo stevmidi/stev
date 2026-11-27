@@ -153,6 +153,7 @@ use crate::core::plugin_host::PluginAudioHandle;
 use crate::core::plugin_host::catalog::PluginCatalogEntry;
 use crate::core::time::{Meter, pixels_to_ticks, px_per_beat_to_ppt, snap_to_grid};
 use crate::models::clip::{min_window_length, window_with_edge_at};
+use crate::models::markers::Markers;
 use crate::models::performance_lane::{Hand, KeyLength};
 #[cfg(target_os = "macos")]
 use crate::view::appkit::MainGlContext;
@@ -333,6 +334,9 @@ pub(crate) struct Display {
     /// One per track, so its length is the view's track count
     /// ([`track_count`](Self::track_count)).
     tracks: Vec<TrackLane>,
+    /// The arrangement's markers, mirrored from the sequencer
+    /// (`UiEvent::MarkersChanged`), for the marker strip (`600-markers.md`).
+    markers: Markers,
 
     // --- Modal overlay state ---
     /// The modal overlay that is up, if any — the one switch every "does an
@@ -449,8 +453,11 @@ impl Display {
     /// ~1px it costs each of the 8 lanes is unnoticeable.
     const TIMELINE_H: f32 = 30.0;
     /// Height of the reserved arranger performance lane row, drawn between
-    /// the timeline strip and track 1.
+    /// the marker strip and track 1.
     const PERFORMANCE_LANE_H: f32 = 24.0;
+    /// Height of the arranger's marker strip, right under the timeline strip
+    /// (`600-markers.md` decision 2). Tune by eye.
+    const MARKER_STRIP_H: f32 = 16.0;
 
     // --- Constructor ---
     #[allow(clippy::too_many_arguments)]
@@ -536,6 +543,7 @@ impl Display {
                 keybed_size,
             )),
             tracks: TrackLane::defaults(),
+            markers: Markers::default(),
             gesture: GestureState::default(),
             input_poller: InputPoller::new(),
             keymap,

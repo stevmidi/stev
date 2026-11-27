@@ -14,7 +14,7 @@ use crate::core::sequencer::{
     DragNotesEdit, DuplicateClipsEdit, DuplicateTimeEdit, InsertNotesEdit, InsertSilenceEdit,
     MoveClipEdit, MoveRangeEdit, MuteInRangeEdit, MuteSelectedEventsEdit, NudgeSelectedEventsEdit,
     NudgeSelectedEventsLengthEdit, PasteClipsEdit, QuantizeEventsEdit, RenameTrackEdit,
-    SetMeterEdit, SetTempoEdit, SetTrackOutputEdit, SplitClipsEdit, TempoGesture,
+    SetMarkerEdit, SetMeterEdit, SetTempoEdit, SetTrackOutputEdit, SplitClipsEdit, TempoGesture,
     TransposeSelectedEventsEdit, UndoStep, top_step,
 };
 use crate::core::time::TapTempo;
@@ -627,6 +627,10 @@ impl EventHandlers {
 
             SequencerCommand::SetMeter { meter } => {
                 let edit = SetMeterEdit::new(sequencer, *meter);
+                self.record_edit(sequencer, undo_record, edit);
+            }
+            SequencerCommand::SetMarker { number } => {
+                let edit = SetMarkerEdit::at_cursor(sequencer, *number);
                 self.record_edit(sequencer, undo_record, edit);
             }
 
