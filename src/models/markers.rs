@@ -6,6 +6,8 @@
 //! and the time edits, which carry them along with [`Markers::insert_time`]
 //! and [`Markers::delete_time`]).
 
+use crate::core::config::MARKER_NAME_MAX_CHARS;
+
 /// A change to one marker from the marker strip (`600-markers.md`
 /// decisions 7 and 8), applied by [`Markers::change`]: what the strip's
 /// drag, rename field and `Delete` send, each one undo step.
@@ -112,12 +114,23 @@ impl Markers {
         self.list.insert(at, Marker { number, tick, name });
     }
 
-    /// Names marker `number` `name`, trimmed; a blank or `None` name clears
-    /// it, leaving the number. Its tick stays. Nothing when it isn't set.
+    /// Names marker `number` `name`, trimmed and cut to
+    /// `MARKER_NAME_MAX_CHARS` (a saved project's name too, which comes
+    /// through here: a flag is as wide as its name); a blank or `None` name
+    /// clears it, leaving the number. Its tick stays. Nothing when it isn't
+    /// set.
     pub(crate) fn rename(&mut self, number: u8, name: Option<&str>) {
-        let name = name.map(str::trim).filter(|name| !name.is_empty());
+        let name = name
+            .map(|name| {
+                name.trim()
+                    .chars()
+                    .take(MARKER_NAME_MAX_CHARS)
+                    .collect::<String>()
+            })
+            .map(|name| name.trim_end().to_owned())
+            .filter(|name| !name.is_empty());
         if let Some(marker) = self.list.iter_mut().find(|marker| marker.number == number) {
-            marker.name = name.map(str::to_owned);
+            marker.name = name;
         }
     }
 
@@ -262,6 +275,23 @@ mod tests {
         assert_eq!(markers.get(4).unwrap().tick, 1920);
         markers.rename(4, Some("   "));
         assert_eq!(markers.get(4).unwrap().name, None);
+    }
+
+    /// A name longer than the field takes, from a project file say, is cut
+    /// to it: a flag is as wide as its name.
+    #[test]
+    fn a_long_name_is_cut_to_the_limit() {
+        let mut markers = Markers::from_placed(&[(1, 0)]);
+        markers.rename(1, Some(&"x".repeat(500)));
+        let name = markers.get(1).unwrap().name.clone().unwrap();
+        assert_eq!(name.chars().count(), MARKER_NAME_MAX_CHARS);
+        let saved = Markers::from_saved([Marker {
+            number: 2,
+            tick: 0,
+            name: Some("y".repeat(500)),
+        }]);
+        let name = saved.get(2).unwrap().name.clone().unwrap();
+        assert_eq!(name.chars().count(), MARKER_NAME_MAX_CHARS);
     }
 
     #[test]

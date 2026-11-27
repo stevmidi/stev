@@ -1171,7 +1171,10 @@ impl Display {
                     self.in_pane(Pane::Arranger, |display| display.marker_flag_at(x, y))
                 {
                     // Its first press already selected the marker and gave
-                    // the strip the keyboard; its release recalled it.
+                    // the strip the keyboard; its release recalled it. The
+                    // second press's hold is dropped, so its release doesn't
+                    // recall again (a second jump while playing).
+                    self.gesture.marker_drag = None;
                     self.open_marker_rename(number);
                 } else if let Some(track_idx) =
                     self.in_pane(Pane::Arranger, |display| display.track_name_at(x, y))

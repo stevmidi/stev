@@ -1621,6 +1621,7 @@ impl eframe::App for Display {
                 let painter = &ui.painter().clone();
 
                 let rect = self.render.canvas_rect;
+                self.sync_marker_stack();
                 self.measure_marker_flags(painter);
                 self.draw_header(painter, rect);
                 let panes = self.pane_rects();

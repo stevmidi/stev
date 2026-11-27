@@ -161,9 +161,11 @@ impl Display {
     }
 
     /// Each of `markers`' flags on screen, in drawing order: by tick, so a
-    /// later flag covers an earlier one it overlaps, then the selected one
-    /// (the one dragged too) over them all (`raise`). Those scrolled wholly
-    /// out of the content area are left out.
+    /// later flag covers an earlier one it overlaps, then those raised by a
+    /// selection over them in the order they were (`stack`, from
+    /// `marker_stack`), then the selected one (the one dragged too) over
+    /// them all (`raise`, so a press is on top before the next frame stacks
+    /// it). Those scrolled wholly out of the content area are left out.
     fn marker_flags(&self, markers: &Markers) -> Vec<Flag> {
         let (left, right) = (self.content_origin_x(), self.content_right_x());
         let flags = markers
@@ -176,7 +178,21 @@ impl Display {
             })
             .filter(|flag| flag.left + flag.width > left && flag.left < right)
             .collect();
-        raise(flags, self.selected_marker())
+        raise(stack(flags, &self.marker_stack), self.selected_marker())
+    }
+
+    /// Once a frame, before the strip is drawn: puts the selected marker on
+    /// top of `marker_stack`, however it was selected (a press, a drag,
+    /// `←`/`→`, an undo), and drops the markers gone. So a flag raised by a
+    /// selection stays on top of the ones it overlaps after the strip gives
+    /// the keyboard back, rather than falling back under a later one.
+    pub(in crate::view::display) fn sync_marker_stack(&mut self) {
+        if let Some(number) = self.selected_marker() {
+            put_on_top(&mut self.marker_stack, number);
+        }
+        let markers = &self.markers;
+        self.marker_stack
+            .retain(|&number| markers.get(number).is_some());
     }
 
     /// The number of the marker whose flag holds `(x, y)`, if any: the one
@@ -232,6 +248,22 @@ fn flag_span(free: (f32, f32), ink_h: f32, ppp: f32) -> (f32, f32) {
     let (free_top, free_bottom) = ((free.0 * ppp).round(), (free.1 * ppp).round());
     let top = free_top + ((free_bottom - free_top - height) / 2.0).floor();
     (top / ppp, (top + height) / ppp)
+}
+
+/// `order` with `number` moved (or added) to its end: on top.
+fn put_on_top(order: &mut Vec<u8>, number: u8) {
+    if order.last() != Some(&number) {
+        order.retain(|&raised| raised != number);
+        order.push(number);
+    }
+}
+
+/// `flags` (in tick order) with those in `order` moved to the end in that
+/// order, the last in it drawn last and so on top; the rest keep tick
+/// order under them.
+fn stack(mut flags: Vec<Flag>, order: &[u8]) -> Vec<Flag> {
+    flags.sort_by_key(|flag| order.iter().position(|&number| number == flag.number));
+    flags
 }
 
 /// `flags` with marker `number`'s moved to the end, drawn last and so on
@@ -314,6 +346,23 @@ mod tests {
         assert_eq!(flag_at(&raised, 108.0), Some(2));
         assert_eq!(raise(flags.clone(), None), flags);
         assert_eq!(raise(flags.clone(), Some(9)), flags);
+    }
+
+    /// A flag raised once stays over the flags it overlaps with nothing
+    /// selected; the last raised is on top, the rest keep tick order.
+    #[test]
+    fn raised_flags_stay_on_top_in_the_order_raised() {
+        let flags = flags(&[(2, 100.0), (5, 106.0), (7, 112.0), (9, 300.0)]);
+        let mut order = Vec::new();
+        put_on_top(&mut order, 7);
+        put_on_top(&mut order, 2);
+        put_on_top(&mut order, 7);
+        assert_eq!(order, vec![2, 7]);
+        let stacked = stack(flags, &order);
+        let numbers: Vec<u8> = stacked.iter().map(|flag| flag.number).collect();
+        assert_eq!(numbers, vec![5, 9, 2, 7]);
+        assert_eq!(flag_at(&stacked, 108.0), Some(2), "2 over 5");
+        assert_eq!(flag_at(&stacked, 113.0), Some(7));
     }
 
     /// A named flag is as wide as its label, so its whole name takes the

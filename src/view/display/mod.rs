@@ -344,6 +344,20 @@ pub(crate) struct Display {
     marker_label_w: [f32; MAX_MARKER as usize],
     /// The open marker rename field, if any (`600-markers.md` decision 7).
     marker_rename: Option<MarkerRename>,
+    /// The markers raised by a selection, in the order they were, the last
+    /// on top: the flags' stacking where they overlap, kept after the strip
+    /// gives the keyboard back (`sync_marker_stack`). View state, not saved.
+    marker_stack: Vec<u8>,
+    /// The markers the strip's `Delete` removed while it has had the
+    /// keyboard, kept through undo and redo: the only ones an undo bringing
+    /// one back selects
+    /// (`follow_selection`), so a new one from `⌘n` leaves the selection.
+    /// Cleared once the strip loses the keyboard.
+    markers_deleted: Vec<u8>,
+    /// The strip's changes (`change_marker`) the sequencer hasn't answered
+    /// yet: its lists for them are older than the mirror, which holds them
+    /// already (`answer_kind`).
+    markers_in_flight: usize,
 
     // --- Modal overlay state ---
     /// The modal overlay that is up, if any — the one switch every "does an
@@ -553,6 +567,9 @@ impl Display {
             markers: Markers::default(),
             marker_label_w: [0.0; MAX_MARKER as usize],
             marker_rename: None,
+            marker_stack: Vec::new(),
+            markers_deleted: Vec::new(),
+            markers_in_flight: 0,
             gesture: GestureState::default(),
             input_poller: InputPoller::new(),
             keymap,

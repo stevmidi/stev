@@ -140,6 +140,11 @@ impl Display {
         let Some(drag) = self.gesture.marker_drag.take() else {
             return;
         };
+        // Removed while held (`Delete` takes the press with it, but a
+        // marker can go by other ways too): nothing to move or recall.
+        if self.markers.get(drag.number).is_none() {
+            return;
+        }
         match drag.drop_tick() {
             Some(tick) => self.change_marker(drag.number, MarkerChange::Move(tick)),
             None if drag.dragging => {}
@@ -159,6 +164,9 @@ impl Display {
     /// same `Markers::change`, so the two agree.
     pub(in crate::view::display) fn change_marker(&mut self, number: u8, change: MarkerChange) {
         self.markers.change(number, &change);
+        // The sequencer answers each with exactly one list, in order
+        // (`follow_markers`).
+        self.markers_in_flight += 1;
         self.input_event_tx
             .send(InputEvent::ChangeMarker { number, change })
             .ok();
@@ -168,11 +176,22 @@ impl Display {
     /// the strip's selection with them while it has the keyboard
     /// ([`follow_selection`]): an undo of a `Delete` selects the marker it
     /// brings back, so it is on top again where it overlaps, and a redo
-    /// moves the selection on as the `Delete` did.
+    /// moves the selection on as the `Delete` did. The answers to the
+    /// strip's own changes, which the mirror already holds, move nothing
+    /// ([`answer_kind`]): one older than the mirror would read as a marker
+    /// coming back.
     pub(in crate::view::display) fn follow_markers(&mut self, markers: Markers) {
-        if let KeyFocus::Markers(selected) = self.key_focus {
-            let next = follow_selection(selected, &self.markers, &markers);
-            self.key_focus = next.map_or(KeyFocus::Pane, KeyFocus::Markers);
+        match answer_kind(&mut self.markers_in_flight) {
+            MarkersAnswer::Stale => return,
+            MarkersAnswer::Own => {}
+            MarkersAnswer::Other => match self.key_focus {
+                KeyFocus::Markers(selected) => {
+                    let next =
+                        follow_selection(selected, &self.markers, &markers, &self.markers_deleted);
+                    self.key_focus = next.map_or(KeyFocus::Pane, KeyFocus::Markers);
+                }
+                _ => self.markers_deleted.clear(),
+            },
         }
         self.markers = markers;
     }
@@ -208,6 +227,14 @@ impl Display {
                 true
             }
             Some(MarkerStripKey::Remove) => {
+                if self
+                    .gesture
+                    .marker_drag
+                    .is_some_and(|drag| drag.number == number)
+                {
+                    self.gesture.marker_drag = None;
+                }
+                self.markers_deleted.push(number);
                 self.key_focus = match self.markers.selected_after_removing(number) {
                     Some(next) => KeyFocus::Markers(next),
                     None => KeyFocus::Pane,
@@ -234,19 +261,54 @@ impl Display {
     }
 }
 
-/// The selected marker after the markers go from `old` to `new`, derived
-/// from the change alone: the one marker that came back, if exactly one
-/// did (an undo of a `Delete`); else, when the selected marker is gone (a
-/// redo of a `Delete`, an undo of a set), the one before it, else after, as
-/// `Delete` picks; else the same one. `None` when nothing is left to
-/// select.
-fn follow_selection(selected: u8, old: &Markers, new: &Markers) -> Option<u8> {
+/// What a list from the sequencer is to the view's mirror
+/// ([`answer_kind`]).
+#[derive(Debug, PartialEq, Eq)]
+enum MarkersAnswer {
+    /// The answer to one of the strip's changes, with more of them still to
+    /// answer: older than the mirror, which already holds those. Dropped.
+    Stale,
+    /// The answer to the strip's last change: what the mirror holds.
+    Own,
+    /// Anything else: an undo, a redo, a set, a time edit, a load.
+    Other,
+}
+
+/// Which answer the next list is, given the strip's changes not yet
+/// answered (`in_flight`), counting it off. The sequencer answers each
+/// change with exactly one list, in order. A list it sent on its own just
+/// before a change can be taken for that change's answer; the next one then
+/// reads as `Other`, which is only a selection follow on a list the mirror
+/// already holds.
+fn answer_kind(in_flight: &mut usize) -> MarkersAnswer {
+    match *in_flight {
+        0 => MarkersAnswer::Other,
+        1 => {
+            *in_flight = 0;
+            MarkersAnswer::Own
+        }
+        _ => {
+            *in_flight -= 1;
+            MarkersAnswer::Stale
+        }
+    }
+}
+
+/// The selected marker after the markers go from `old` to `new`: a marker
+/// the strip deleted (`deleted`) back, if exactly one marker came back (an
+/// undo of a `Delete`; a new one from `⌘n` is not selected); else, when the
+/// selected marker is gone (a redo of a `Delete`, an undo of a set), the
+/// one before it, else after, as `Delete` picks; else the same one. `None`
+/// when nothing is left to select.
+fn follow_selection(selected: u8, old: &Markers, new: &Markers, deleted: &[u8]) -> Option<u8> {
     let mut back = new
         .as_slice()
         .iter()
         .map(|marker| marker.number)
         .filter(|&number| old.get(number).is_none());
-    if let (Some(number), None) = (back.next(), back.next()) {
+    if let (Some(number), None) = (back.next(), back.next())
+        && deleted.contains(&number)
+    {
         return Some(number);
     }
     if new.get(selected).is_some() {
@@ -260,7 +322,7 @@ fn follow_selection(selected: u8, old: &Markers, new: &Markers) -> Option<u8> {
 mod tests {
     use egui::Key;
 
-    use super::{MarkerStripKey, follow_selection, marker_strip_key};
+    use super::{MarkerStripKey, MarkersAnswer, answer_kind, follow_selection, marker_strip_key};
     use crate::core::input_event::KeyModifiers;
     use crate::core::keymap::Action;
     use crate::models::markers::Markers;
@@ -349,8 +411,11 @@ mod tests {
     fn undo_and_redo_of_a_delete_carry_the_selection() {
         let both = Markers::from_placed(&[(1, 0), (2, 100)]);
         let one = Markers::from_placed(&[(1, 0)]);
-        assert_eq!(follow_selection(1, &one, &both), Some(2));
-        assert_eq!(follow_selection(2, &both, &one), Some(1));
+        // The deleted set keeps 2 through the undo, so the redo and the
+        // undo after it go on following it.
+        assert_eq!(follow_selection(1, &one, &both, &[2]), Some(2));
+        assert_eq!(follow_selection(2, &both, &one, &[2]), Some(1));
+        assert_eq!(follow_selection(1, &one, &both, &[2]), Some(2));
     }
 
     /// Two deletes undone come back in turn, each selected as it returns.
@@ -359,8 +424,8 @@ mod tests {
         let all = Markers::from_placed(&[(1, 0), (2, 100), (3, 200)]);
         let two = Markers::from_placed(&[(1, 0), (2, 100)]);
         let one = Markers::from_placed(&[(1, 0)]);
-        assert_eq!(follow_selection(1, &one, &two), Some(2));
-        assert_eq!(follow_selection(2, &two, &all), Some(3));
+        assert_eq!(follow_selection(1, &one, &two, &[3, 2]), Some(2));
+        assert_eq!(follow_selection(2, &two, &all, &[3]), Some(3));
     }
 
     /// A change that leaves the selected marker and brings nothing back
@@ -370,8 +435,30 @@ mod tests {
     fn otherwise_the_selection_stays_or_goes() {
         let both = Markers::from_placed(&[(1, 0), (2, 100)]);
         let moved = Markers::from_placed(&[(1, 0), (2, 400)]);
-        assert_eq!(follow_selection(2, &both, &moved), Some(2));
-        assert_eq!(follow_selection(2, &both, &both), Some(2));
-        assert_eq!(follow_selection(2, &both, &Markers::default()), None);
+        assert_eq!(follow_selection(2, &both, &moved, &[]), Some(2));
+        assert_eq!(follow_selection(2, &both, &both, &[]), Some(2));
+        assert_eq!(follow_selection(2, &both, &Markers::default(), &[]), None);
+    }
+
+    /// A marker `⌘n` makes is new, not one the strip deleted: the
+    /// selection stays where it was.
+    #[test]
+    fn a_new_marker_leaves_the_selection() {
+        let one = Markers::from_placed(&[(2, 0)]);
+        let set = Markers::from_placed(&[(2, 0), (5, 960)]);
+        assert_eq!(follow_selection(2, &one, &set, &[]), Some(2));
+        assert_eq!(follow_selection(2, &one, &set, &[7]), Some(2));
+    }
+
+    /// Two quick changes: the first answer is older than the mirror and is
+    /// dropped, the second is the mirror's own; after that, lists are the
+    /// sequencer's own news.
+    #[test]
+    fn answers_to_quick_changes_count_off() {
+        let mut in_flight = 2;
+        assert_eq!(answer_kind(&mut in_flight), MarkersAnswer::Stale);
+        assert_eq!(answer_kind(&mut in_flight), MarkersAnswer::Own);
+        assert_eq!(answer_kind(&mut in_flight), MarkersAnswer::Other);
+        assert_eq!(in_flight, 0);
     }
 }
