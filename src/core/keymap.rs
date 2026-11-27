@@ -1057,6 +1057,30 @@ impl Action {
             )
     }
 
+    /// Whether this action, pressed while the marker strip has the keyboard,
+    /// takes it back to the pane first and acts there
+    /// (`Display::handle_marker_strip_key`, `600-markers.md` decision 7) —
+    /// the track headers' rule for the strip: every pane command but the
+    /// strip's own (setting a marker, the digits' twin, and `⌘R`, which
+    /// names the selected marker there), the zoom, which only moves the
+    /// view the flags are found in, and undo / redo, which with the strip
+    /// focused take back its own changes and leave the marker selected, on
+    /// top of the flags it overlaps. Delete is caught before this asks.
+    pub(crate) fn leaves_marker_strip(self) -> bool {
+        self.acts_on_pane()
+            && !matches!(
+                self,
+                Action::SetMarker(_)
+                    | Action::RenameTrack
+                    | Action::ZoomIn
+                    | Action::ZoomOut
+                    | Action::ZoomToFit
+                    | Action::ZoomBack
+                    | Action::Undo
+                    | Action::Redo
+            )
+    }
+
     /// Whether this action, pressed while a wheel lane has the keyboard,
     /// takes it back to the notes and acts there, so the Delete after it
     /// acts on what it changed (`Display::handle_wheel_lane_key`,
@@ -1581,6 +1605,27 @@ mod tests {
             Action::ShowProjects,
         ] {
             assert!(!action.leaves_track_headers(), "{action:?}");
+        }
+    }
+
+    /// A pane command takes the keyboard back from the marker strip; the
+    /// marker keys, `⌘R`, the zoom, undo and the transport stay with it.
+    #[test]
+    fn pane_commands_leave_the_marker_strip() {
+        for action in [Action::SelectAllClips, Action::DeleteTime, Action::Split] {
+            assert!(action.leaves_marker_strip(), "{action:?}");
+        }
+        for action in [
+            Action::SetMarker(3),
+            Action::RecallMarker(3),
+            Action::RenameTrack,
+            Action::ZoomIn,
+            Action::ZoomToFit,
+            Action::Undo,
+            Action::Redo,
+            Action::TogglePlayback,
+        ] {
+            assert!(!action.leaves_marker_strip(), "{action:?}");
         }
     }
 

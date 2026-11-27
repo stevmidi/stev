@@ -319,6 +319,12 @@ impl EventHandlers {
                 });
             }
 
+            InputEvent::ChangeMarker { number, change } => {
+                self.send_sequencer(SequencerCommand::ChangeMarker {
+                    number: *number,
+                    change: change.clone(),
+                });
+            }
             InputEvent::RenameTrack { track_idx, name } => {
                 self.send_sequencer(SequencerCommand::RenameTrack {
                     track_idx: *track_idx,

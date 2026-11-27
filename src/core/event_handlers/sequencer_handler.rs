@@ -633,6 +633,16 @@ impl EventHandlers {
                 let edit = SetMarkerEdit::at_cursor(sequencer, *number);
                 self.record_edit(sequencer, undo_record, edit);
             }
+            // The view made the change in its mirror already
+            // (`Display::change_marker`): one that makes no edit here (the
+            // mirror was behind) still sends the list back, so the two agree.
+            SequencerCommand::ChangeMarker { number, change } => {
+                let edit = SetMarkerEdit::changed(sequencer, *number, change);
+                if edit.is_none() {
+                    self.emit_markers(sequencer);
+                }
+                self.record_edit(sequencer, undo_record, edit);
+            }
 
             // A setting of how the lane plays, not an edit: no undo step,
             // but the fingerprint takes it in, so it counts as unsaved.

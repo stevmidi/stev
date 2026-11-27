@@ -1465,6 +1465,7 @@ impl Display {
             || self.gesture.event_marquee_anchor.is_some()
             || self.gesture.window_edge_drag.is_some()
             || self.gesture.region_drag.is_some()
+            || self.gesture.marker_drag.is_some()
             || self.gesture.overview_drag.is_some()
         {
             return;

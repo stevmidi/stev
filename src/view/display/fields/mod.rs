@@ -12,12 +12,14 @@
 //! The fields themselves are the submodules: the header chips (what the two
 //! share in `header_chip.rs`, the BPM chip's drag and field in
 //! `tempo_field.rs`, the meter's in `meter_field.rs`), and the inline renames
-//! of a track (`track_rename.rs`) and a browser row (`browser_rename.rs`).
+//! of a track (`track_rename.rs`), a marker (`marker_rename.rs`) and a
+//! browser row (`browser_rename.rs`).
 //! Save As's name and the Keyboard tab's search are a bare [`TextField`]
 //! held by their own modal.
 
 pub(super) mod browser_rename;
 pub(super) mod header_chip;
+pub(super) mod marker_rename;
 pub(super) mod meter_field;
 pub(super) mod tempo_field;
 pub(super) mod track_rename;

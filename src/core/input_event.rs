@@ -39,6 +39,7 @@ use crate::{
     models::{
         clip::{Clip, ClipEdge, NoteDrag},
         knobs::ParamId,
+        markers::MarkerChange,
         performance_lane::{KeyLength, KeybedSize},
         track::TrackOutput,
     },
@@ -953,6 +954,15 @@ pub(crate) enum InputEvent {
         track_idx: usize,
         /// Its new name, already through `track_name_from_input`.
         name: Option<String>,
+    },
+    /// The marker strip changed marker `number`: a drag's drop, its rename
+    /// field's commit, `Delete` with it selected (`600-markers.md`
+    /// decisions 7 and 8).
+    ChangeMarker {
+        /// The marker's slot.
+        number: u8,
+        /// What to do to it.
+        change: MarkerChange,
     },
     /// An armed knob's assignment: knob `knob` of `track_idx` drives the
     /// plugin parameter the user turned in the plugin's editor, or none

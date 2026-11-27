@@ -1541,6 +1541,11 @@ impl eframe::App for Display {
             Some(RegionHandle::Body) => ctx.set_cursor_icon(CursorIcon::Grab),
             None => {}
         }
+        // A marker's flag dragged past the latch (`600-markers.md` decision
+        // 8): the closed hand. A click on it never flashes it.
+        if self.gesture.marker_drag.is_some_and(|drag| drag.dragging) {
+            ctx.set_cursor_icon(CursorIcon::Grabbing);
+        }
         // The overview strip (`590-arranger-overview.md`): the open hand
         // over it, the closed one while it is held.
         if self.gesture.overview_drag.is_some() {
@@ -1616,6 +1621,7 @@ impl eframe::App for Display {
                 let painter = &ui.painter().clone();
 
                 let rect = self.render.canvas_rect;
+                self.measure_marker_flags(painter);
                 self.draw_header(painter, rect);
                 let panes = self.pane_rects();
                 for pane in [Pane::Arranger, Pane::Clip] {
@@ -1639,6 +1645,7 @@ impl eframe::App for Display {
                 let hint = self.footer_hint();
                 self.draw_status_bar(painter, hint.as_deref());
                 self.show_track_rename(ui);
+                self.show_marker_rename(ui);
                 self.show_tempo_field(ui, Self::header_value_font());
                 self.show_meter_field(ui, Self::header_value_font());
                 self.draw_output_menu(painter);

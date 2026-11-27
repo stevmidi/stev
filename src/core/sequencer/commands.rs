@@ -16,6 +16,7 @@ use crate::core::time::Meter;
 use crate::core::view_state::Pane;
 use crate::models::clip::{Clip, ClipEdge, NoteDrag};
 use crate::models::knobs::ParamId;
+use crate::models::markers::MarkerChange;
 use crate::models::performance_lane::{KeyLength, KeybedSize};
 use crate::models::track::TrackOutput;
 
@@ -754,6 +755,15 @@ pub(crate) enum SequencerCommand {
     SetMarker {
         /// The marker's slot, `1..=MAX_MARKER`.
         number: u8,
+    },
+    /// The marker strip: a drag's drop, a rename or a `Delete` on marker
+    /// `number` (`SetMarkerEdit`, undoable; `600-markers.md` decisions 7
+    /// and 8). Nothing when it changes nothing.
+    ChangeMarker {
+        /// The marker's slot.
+        number: u8,
+        /// What to do to it.
+        change: MarkerChange,
     },
     /// The performance lane's gutter: how far each lane key jumps, from the
     /// next key pressed. Saved with the project, not an undo step

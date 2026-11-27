@@ -19,9 +19,9 @@ use crate::models::clip::ClipEdge;
 
 use super::overview::OverviewDrag;
 use super::pointer_state::{
-    ClipMoveDrag, ClipResizeDrag, KeyZoomDrag, MarqueeAnchor, MidiDrag, NoteMouseDrag, NotePart,
-    PluginDrag, RegionDrag, RegionHandle, TrackButton, TrackMixDrag, TrackMixParam, VelocityDrag,
-    WindowEdgeCommit, WindowEdgeDrag,
+    ClipMoveDrag, ClipResizeDrag, KeyZoomDrag, MarkerDrag, MarqueeAnchor, MidiDrag, NoteMouseDrag,
+    NotePart, PluginDrag, RegionDrag, RegionHandle, TrackButton, TrackMixDrag, TrackMixParam,
+    VelocityDrag, WindowEdgeCommit, WindowEdgeDrag,
 };
 
 /// The selection / gesture state, grouped out of [`Display`](super::Display).
@@ -188,6 +188,10 @@ pub(super) struct GestureState {
     /// Hover-only counterpart of `region_drag`: which part of the loop band
     /// is under the pointer with no button held, for the cursor icon.
     pub(super) region_hover: Option<RegionHandle>,
+    /// A press on a marker's flag, held: a drag that moves it once past the
+    /// drag latch, else a click that recalls it on release. `Some` from the
+    /// press to the release or `Esc` — `600-markers.md` decisions 6 and 8.
+    pub(super) marker_drag: Option<MarkerDrag>,
     /// In-progress drag on the arranger's overview strip: scrolls and zooms
     /// the view, never the cursor. `Some` from the press to the release —
     /// `590-arranger-overview.md`.

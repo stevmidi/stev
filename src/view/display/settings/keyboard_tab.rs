@@ -476,7 +476,6 @@ const FIXED: &[FixedGroup] = &[
                 "Arranger: move the loop, or an edge of it",
             ),
             ("Overview drag", "Arranger: scroll sideways, zoom up / down"),
-            ("Marker click", "Arranger: go to the marker, as its digit"),
         ],
     ),
     (
@@ -511,6 +510,21 @@ const FIXED: &[FixedGroup] = &[
             ),
             ("⌫", "Remove the selected knob's mapping"),
             ("Esc", "Stop assigning, or give back the keyboard"),
+        ],
+    ),
+    (
+        "Marker strip",
+        &[
+            (
+                "Click",
+                "On a flag: go to the marker, as its digit, and select it",
+            ),
+            ("Drag", "Move the marker, on the grid"),
+            ("Double-click", "Name the marker"),
+            ("⌘R", "Name the selected marker"),
+            ("⌫", "Remove the selected marker"),
+            ("←  →", "Select the previous / next marker"),
+            ("Esc", "Cancel the drag, or give back the keyboard"),
         ],
     ),
     (

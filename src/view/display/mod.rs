@@ -102,6 +102,7 @@ use self::browser::{BrowserItem, BrowserPanel, BrowserPlugin, clamp_browser_widt
 use self::clip_lane::ClipLane;
 use self::clip_shape::ClipShape;
 use self::event_shape::EventShape;
+use self::fields::marker_rename::MarkerRename;
 use self::fields::meter_field::MeterChip;
 use self::fields::tempo_field::TempoChip;
 use self::fields::track_rename::TrackRename;
@@ -128,9 +129,9 @@ pub(crate) use modal_focus::{
 };
 use pointer_state::{
     AxisFilter, ClipMoveDrag, ClipMoveKind, ClipResizeDrag, ClipResizeEdge, KeyZoomDrag,
-    LoadedMidi, MarqueeAnchor, MidiDrag, NoteMouseDrag, NotePart, PluginDrag, RegionDrag,
-    RegionHandle, TrackButton, TrackMixDrag, TrackMixParam, VelocityDrag, WindowEdgeCommit,
-    WindowEdgeDrag, tied_clips,
+    LoadedMidi, MarkerDrag, MarqueeAnchor, MidiDrag, NoteMouseDrag, NotePart, PluginDrag,
+    RegionDrag, RegionHandle, TrackButton, TrackMixDrag, TrackMixParam, VelocityDrag,
+    WindowEdgeCommit, WindowEdgeDrag, tied_clips,
 };
 pub(crate) use ui_event::{TrackLane, TrackRoute, UiEvent};
 
@@ -153,7 +154,7 @@ use crate::core::plugin_host::PluginAudioHandle;
 use crate::core::plugin_host::catalog::PluginCatalogEntry;
 use crate::core::time::{Meter, pixels_to_ticks, px_per_beat_to_ppt, snap_to_grid};
 use crate::models::clip::{min_window_length, window_with_edge_at};
-use crate::models::markers::Markers;
+use crate::models::markers::{MAX_MARKER, Markers};
 use crate::models::performance_lane::{Hand, KeyLength};
 #[cfg(target_os = "macos")]
 use crate::view::appkit::MainGlContext;
@@ -337,6 +338,16 @@ pub(crate) struct Display {
     /// The arrangement's markers, mirrored from the sequencer
     /// (`UiEvent::MarkersChanged`), for the marker strip (`600-markers.md`).
     markers: Markers,
+    /// Each marker's label width on its flag (`2 Chorus`), by number less
+    /// one, measured as the strip is drawn (`measure_marker_flags`) and read
+    /// by its hit test, which has no fonts at hand.
+    marker_label_w: [f32; MAX_MARKER as usize],
+    /// The open marker rename field, if any (`600-markers.md` decision 7).
+    marker_rename: Option<MarkerRename>,
+    /// The strip's deletions, oldest first, each `(removed, selected
+    /// after)`: what lets an undo select the marker it brings back
+    /// (`follow_markers`). Dropped once the strip loses the keyboard.
+    marker_removals: Vec<(u8, u8)>,
 
     // --- Modal overlay state ---
     /// The modal overlay that is up, if any — the one switch every "does an
@@ -457,7 +468,7 @@ impl Display {
     const PERFORMANCE_LANE_H: f32 = 24.0;
     /// Height of the arranger's marker strip, right under the timeline strip
     /// (`600-markers.md` decision 2). Tune by eye.
-    const MARKER_STRIP_H: f32 = 16.0;
+    const MARKER_STRIP_H: f32 = 20.0;
 
     // --- Constructor ---
     #[allow(clippy::too_many_arguments)]
@@ -544,6 +555,9 @@ impl Display {
             )),
             tracks: TrackLane::defaults(),
             markers: Markers::default(),
+            marker_label_w: [0.0; MAX_MARKER as usize],
+            marker_rename: None,
+            marker_removals: Vec::new(),
             gesture: GestureState::default(),
             input_poller: InputPoller::new(),
             keymap,
@@ -717,6 +731,12 @@ impl Display {
                 KeyFocus::Pane
             }
             KeyFocus::KnobPanel(_) if self.knob_rects().is_none() => KeyFocus::Pane,
+            KeyFocus::Markers(number)
+                if self.view_state() != ViewState::Arranger
+                    || self.markers.get(number).is_none() =>
+            {
+                KeyFocus::Pane
+            }
             focus => focus,
         }
     }
@@ -726,6 +746,15 @@ impl Display {
     fn selected_knob(&self) -> Option<usize> {
         match self.key_owner() {
             KeyFocus::KnobPanel(knob) => Some(knob),
+            _ => None,
+        }
+    }
+
+    /// The selected marker, while the marker strip has the keyboard: the one
+    /// last pressed or stepped to, still set.
+    fn selected_marker(&self) -> Option<u8> {
+        match self.key_owner() {
+            KeyFocus::Markers(number) => Some(number),
             _ => None,
         }
     }
@@ -976,6 +1005,7 @@ impl Display {
         self.clear_clip_resize();
         self.clear_window_edge_drag();
         self.clear_region_drag();
+        self.gesture.marker_drag = None;
         self.gesture.overview_drag = None;
         self.gesture.overview_hover = false;
         self.clear_clip_move_drag();

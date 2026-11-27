@@ -25,6 +25,7 @@ use crate::view::computer_keyboard::is_note_key_press;
 
 mod gestures;
 mod knob_focus;
+mod marker_focus;
 mod midi_drag;
 mod modal;
 mod plugin_drag;
@@ -202,7 +203,8 @@ impl Display {
     /// `in_pane`): on the timeline strip, playback from there in the arranger
     /// (`PlayFromTick`) and cursor placement alone in the clip view
     /// (`SetCursorTick`), and in a controller lane the same with the lane's
-    /// focus and span; on the arranger's marker strip, a flag's recall; in
+    /// focus and span; on the arranger's marker strip, a flag's selection
+    /// and its drag or recall; in
     /// the lanes, the arranger's header buttons, mix bars, Shift+click extend,
     /// clip edge / band drags; the clip view's ⌘-click velocity drag;
     /// then, in either, cursor placement plus the time-selection or event
@@ -222,7 +224,11 @@ impl Display {
         // The gutter's lane switch keeps a controller lane's focus from one
         // controller to another (`set_clip_lane` decides).
         let on_lane_switch = is_clip_events_view && self.clip_lane_label_at(x, y).is_some();
-        if !in_header_column && !on_lane_switch {
+        // The marker strip decides its own focus: the press is hit-tested
+        // with the selected flag still on top (`raise`), so a press on it
+        // where it covers another takes the flag that shows.
+        let on_marker_strip = self.is_mouse_on_marker_strip(x, y);
+        if !in_header_column && !on_lane_switch && !on_marker_strip {
             self.key_focus = KeyFocus::Pane;
         }
 
@@ -264,15 +270,12 @@ impl Display {
             return true;
         }
 
-        // The arranger's marker strip: a flag recalls its marker exactly as
-        // its digit does, and a press anywhere else in the strip (its
-        // gutter beside it too) does nothing (`600-markers.md` decision 6).
+        // The arranger's marker strip: a flag selects its marker and is
+        // held for a drag, or a click that recalls it on release; the
+        // `MARKERS` label gives the strip the keyboard; a press anywhere
+        // else in it does nothing (`600-markers.md` decisions 6–8).
         if self.is_mouse_on_marker_strip(x, y) {
-            if let Some(number) = self.marker_flag_at(x, y) {
-                self.input_event_tx
-                    .send(InputEvent::Action(Action::RecallMarker(number)))
-                    .ok();
-            }
+            self.handle_marker_strip_press(x, y);
             return true;
         }
 
@@ -567,8 +570,14 @@ impl Display {
         let in_clip_view = self.view_state().is_clip_view();
         let left_arranger = in_clip_view && !self.input_was_clip_view;
         self.drop_stale_track_rename(left_arranger);
+        self.drop_stale_marker_rename(left_arranger);
         self.drop_stale_browser_rename();
-        if left_arranger && self.key_focus == KeyFocus::TrackHeaders {
+        if left_arranger
+            && matches!(
+                self.key_focus,
+                KeyFocus::TrackHeaders | KeyFocus::Markers(_)
+            )
+        {
             self.key_focus = KeyFocus::Pane;
         }
         // Leaving the clip view takes the keyboard from the wheel lane, and
@@ -597,6 +606,7 @@ impl Display {
         for event in events.drain(..) {
             let ok = self.handle_project_dialog_input_event(&event)
                 || self.handle_track_rename_input_event(&event)
+                || self.handle_marker_rename_input_event(&event)
                 || self.handle_browser_rename_input_event(&event)
                 || self.handle_tempo_field_input_event(&event)
                 || self.handle_meter_field_input_event(&event)
@@ -615,6 +625,10 @@ impl Display {
                     }
                     KeyFocus::KnobPanel(_) => match self.selected_knob() {
                         Some(knob) => self.handle_knob_panel_key(knob, &event),
+                        None => false,
+                    },
+                    KeyFocus::Markers(_) => match self.selected_marker() {
+                        Some(number) => self.handle_marker_strip_key(number, &event),
                         None => false,
                     },
                     _ => false,
@@ -638,6 +652,7 @@ impl Display {
     pub(super) fn keyboard_taken(&self) -> bool {
         self.project_dialog.is_some()
             || self.track_rename.is_some()
+            || self.marker_rename.is_some()
             || self.browser.rename.is_some()
             || self.tempo_chip.editing()
             || self.meter_chip.editing()
@@ -1009,6 +1024,7 @@ impl Display {
                     display.extend_clip_resize_drag(x);
                     display.extend_window_edge_drag(x);
                     display.extend_region_drag(x, y);
+                    display.extend_marker_drag(x, y);
                     display.extend_wheel_span(x);
                     display.extend_clip_move_drag(x, y);
                     display.extend_track_mix_drag(y, modifiers.shift);
@@ -1151,6 +1167,12 @@ impl Display {
                     self.handle_browser_click(x, y, true);
                 } else if self.pane_at(x, y) == Some(Pane::Clip) {
                     self.in_pane(Pane::Clip, |display| display.handle_double_click(x, y));
+                } else if let Some(number) =
+                    self.in_pane(Pane::Arranger, |display| display.marker_flag_at(x, y))
+                {
+                    // Its first press already selected the marker and gave
+                    // the strip the keyboard; its release recalled it.
+                    self.open_marker_rename(number);
                 } else if let Some(track_idx) =
                     self.in_pane(Pane::Arranger, |display| display.track_name_at(x, y))
                 {
@@ -1183,6 +1205,7 @@ impl Display {
                 if self.gesture.region_drag.is_some() {
                     self.in_pane(Pane::Arranger, Self::finish_region_drag);
                 }
+                self.finish_marker_drag();
                 // A keyboard-armed nudge is committed by `MoveModifierReleased`
                 // only — the mirror of that arm's `via_keyboard` guard, so a
                 // click while ⌘/Ctrl is held can't commit (or discard) it.

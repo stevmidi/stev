@@ -1,6 +1,6 @@
 # Markers
 
-**Status: agreed 2026-11-26; phase 1 built 2026-11-27, phase 2 not built. Issue: #49.** Up to nine numbered markers in the arrangement, each recalled by its digit: `⌘1`–`⌘9` sets marker *n* at the cursor, `1`–`9` recalls it. Stopped, a recall moves the cursor there; running, it moves the playhead and leaves the cursor where it is. The markers sit as flags in a strip of their own under the arranger's ruler, where a click recalls one, a drag moves it, and with the strip focused `Delete` removes it and `⌘R` names it. They are arrangement data: saved in the project, undoable, carried along by the edits that insert or delete time.
+**Status: agreed 2026-11-26; both phases built 2026-11-27. Issue: #49.** Up to nine numbered markers in the arrangement, each recalled by its digit: `⌘1`–`⌘9` sets marker *n* at the cursor, `1`–`9` recalls it. Stopped, a recall moves the cursor there; running, it moves the playhead and leaves the cursor where it is. The markers sit as flags in a strip of their own under the arranger's ruler, where a click recalls one, a drag moves it, and with the strip focused `Delete` removes it and `⌘R` names it. They are arrangement data: saved in the project, undoable, carried along by the edits that insert or delete time.
 
 ## Background
 
@@ -70,7 +70,16 @@ What the design leans on:
 - **The commands**: `Action::SetMarker(n)` / `Action::RecallMarker(n)` (one variant each with the number, not nine; ids `marker.set_n` / `marker.recall_n`, the Keyboard tab's *Markers* group, both `Scope::Global`), sending `SequencerCommand::SetMarker` (→ `SetMarkerEdit::at_cursor`) and `TransportCommand::RecallMarker` (→ `recall_marker_workflow`, `event_handlers/markers.rs`, where the transport is at hand). A flag click sends the same `InputEvent::Action`.
 - **Decision 5's check**: `Transport::tick` wraps only from inside the loop region (`current >= start && current < end`), so a jump past the region's end plays on, and one before its start plays into it and then loops.
 - **Duplicate Time** gets its marker shift through the `InsertSilenceEdit` it composes: the markers at or after the insertion point move (the clips' rule), none is copied.
-- **The strip** is `MARKER_STRIP_H` (16px), drawn by `draw_marker_strip` (`rendering/markers.rs`), hit-tested by `marker_flag_at` / `is_mouse_on_marker_strip`. Flags are a fixed 14px wide, the number only; names, the selection and the drag are phase 2.
+- **The strip** is `MARKER_STRIP_H` (20px after phase 2's hand test; 16 at first), drawn by `draw_marker_strip` (`rendering/markers.rs`), hit-tested by `marker_flag_at` / `is_mouse_on_marker_strip`.
+
+## As built (phase 2)
+
+- **The changes** are one `MarkerChange` (`Move`, `Rename`, `Remove`, `Markers::change`), sent as `InputEvent::ChangeMarker` → `SequencerCommand::ChangeMarker` → `SetMarkerEdit::changed`: the same before/after swap as the set, one undo step, none when nothing changes.
+- **The focus** is `KeyFocus::Markers(n)`, the selected marker by number; its keys are `input/marker_focus.rs` (`marker_strip_key`). The pane commands that hand the keyboard back are `Action::leaves_marker_strip`: the track headers' rule, less setting a marker, `⌘R`, the zoom and undo / redo, so finding a flag by zooming keeps it selected, and an undo of a drag leaves the dragged marker selected and on top of the flag it overlaps (hand-tested: handing the keyboard back on `⌘Z` dropped the selection, and the flag it had covered came back on top). An undo of a `Delete` selects the marker it brings back, and a redo moves the selection on again (`follow_selection`), for the same reason: otherwise the neighbour the `Delete` selected stayed on top of the returned marker.
+- **The label click** selects the marker at or before the cursor (else the first), not the first: the one most likely meant. With no markers it does nothing, and the keyboard stays with the pane.
+- **The click recalls on its release**, not its press, so a drag never recalls on the way.
+- **The drag** is `MarkerDrag` (`pointer_state.rs`), keeping where the flag was grabbed; its preview applies the drop's own rule to a copy of the list (`shown_markers`), so a marker it would replace disappears while it hovers there.
+- **Names** are `MARKER_NAME_MAX_CHARS` (24) at most; a flag is as wide as its label, measured once a frame for the hit test (`measure_marker_flags`). The rename field is `fields/marker_rename.rs`, at least 120pt wide over the flag.
 
 ## Phases
 

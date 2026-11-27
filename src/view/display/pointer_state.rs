@@ -304,6 +304,61 @@ pub(super) enum RegionHandle {
     Body,
 }
 
+/// A press held on a marker's flag in the arranger's marker strip — see
+/// `Display::begin_marker_drag` / `extend_marker_drag` /
+/// `finish_marker_drag`, `600-markers.md` decision 8. A preview: the strip
+/// draws the marker at [`target`](Self::target) while the button is held,
+/// and the release commits it as one undo step. Released without passing
+/// the drag latch, it is a click: the marker's recall.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct MarkerDrag {
+    /// The marker's number.
+    pub(super) number: u8,
+    /// The press point, for the drag latch.
+    pub(super) origin: (f32, f32),
+    /// The marker's tick at the press.
+    pub(super) from: i32,
+    /// The press's tick less the marker's: the flag stays under the hand
+    /// instead of jumping its tick to the pointer.
+    grab_offset: i32,
+    /// Latched once the pointer has left the press point by
+    /// `DRAG_THRESHOLD_PX`.
+    pub(super) dragging: bool,
+    /// Where the marker would land now: `from` until the drag latches.
+    pub(super) target: i32,
+}
+
+impl MarkerDrag {
+    /// A press at `origin` (pointer tick `press_tick`, unsnapped) on marker
+    /// `number`, at tick `from`.
+    pub(super) fn new(number: u8, origin: (f32, f32), from: i32, press_tick: i32) -> Self {
+        Self {
+            number,
+            origin,
+            from,
+            grab_offset: press_tick - from,
+            dragging: false,
+            target: from,
+        }
+    }
+
+    /// Follows a pointer at unsnapped tick `pointer_tick`: once
+    /// `past_threshold` has latched the drag, the target is the marker's
+    /// grabbed place snapped to `grid` and held to `>= 0`.
+    pub(super) fn extend(&mut self, pointer_tick: i32, grid: i32, past_threshold: bool) {
+        self.dragging |= past_threshold;
+        if self.dragging {
+            self.target = snap_to_grid(pointer_tick - self.grab_offset, grid).max(0);
+        }
+    }
+
+    /// Where the release moves the marker: `None` for a click, or a drag
+    /// that came back where it started.
+    pub(super) fn drop_tick(&self) -> Option<i32> {
+        (self.dragging && self.target != self.from).then_some(self.target)
+    }
+}
+
 /// In-progress drag of the arranger's loop band — see
 /// `Display::region_handle_at`, `begin_region_drag` / `extend_region_drag` /
 /// `finish_region_drag`, `580-loop-band-drag.md`. Live, not a preview: each
@@ -926,5 +981,28 @@ mod tests {
         assert_eq!(drag.extend(2 * BAR + 100, BAR, false), None);
         assert_eq!(drag.extend(3 * BAR - 100, BAR, false), Some((0, 3 * BAR)));
         assert_eq!(drag.extend(3 * BAR + 100, BAR, false), None);
+    }
+
+    /// A marker press that never passes the latch is a click: no drop.
+    #[test]
+    fn a_marker_press_without_a_drag_drops_nothing() {
+        let mut drag = MarkerDrag::new(2, (0.0, 0.0), 1920, 1925);
+        drag.extend(4000, 240, false);
+        assert_eq!(drag.target, 1920);
+        assert_eq!(drag.drop_tick(), None);
+    }
+
+    /// Past the latch the flag follows the hand, keeping where it was
+    /// grabbed, snapped to the grid and held at 0.
+    #[test]
+    fn a_marker_drag_snaps_keeps_its_grab_and_stops_at_zero() {
+        let mut drag = MarkerDrag::new(2, (0.0, 0.0), 1920, 2000);
+        drag.extend(2000 + 970, 480, true);
+        assert_eq!(drag.drop_tick(), Some(2880));
+        // Latched: a move back inside the threshold still drags.
+        drag.extend(2000 - 5000, 480, false);
+        assert_eq!(drag.drop_tick(), Some(0));
+        drag.extend(2000, 480, false);
+        assert_eq!(drag.drop_tick(), None, "back where it started");
     }
 }

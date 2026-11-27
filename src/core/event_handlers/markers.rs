@@ -62,6 +62,8 @@ mod tests {
     use crate::core::sequencer::{SequencerCommand, UndoStep};
     use crate::core::time::Meter;
     use crate::core::transport::{Transport, TransportCommand};
+    use crate::models::markers::MarkerChange;
+    use crate::view::display::UiEvent;
 
     /// Runs `RecallMarker { number }` through the handlers.
     fn recall(h: &mut Harness, transport: &mut Transport, number: u8) {
@@ -141,6 +143,33 @@ mod tests {
         assert!(h.sequencer.markers().is_empty());
         run_command(&mut h, &mut record, SequencerCommand::Redo);
         assert_eq!(h.sequencer.markers().get(3).map(|m| m.tick), Some(1920));
+    }
+
+    /// A strip change the view already made in its mirror, which makes no
+    /// edit here (the mirror was behind), still sends the list back, so the
+    /// view's copy can't be left wrong; one that edits sends it too.
+    #[test]
+    fn a_strip_change_always_sends_the_markers_back() {
+        let mut h = harness();
+        let mut record: Record<UndoStep> = Record::new();
+        h.sequencer.markers_mut().set(1, 960);
+        for (change, steps) in [(MarkerChange::Move(960), 0), (MarkerChange::Move(1920), 1)] {
+            run_command(
+                &mut h,
+                &mut record,
+                SequencerCommand::ChangeMarker { number: 1, change },
+            );
+            assert_eq!(record.len(), steps);
+            let sent: Vec<_> = h
+                .ui_events
+                .try_iter()
+                .filter_map(|event| match event {
+                    UiEvent::MarkersChanged { markers } => Some(markers.placed()),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(sent.last(), Some(&h.sequencer.markers().placed()));
+        }
     }
 
     /// A recall in the middle of a running take is a jump like a lane

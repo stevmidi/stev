@@ -123,6 +123,9 @@ pub const TRACK_COLOR_COUNT: usize = 16;
 /// field). Far past what the header column shows — the header cuts a long
 /// name with an ellipsis — but keeps a pasted paragraph out of the project.
 pub const TRACK_NAME_MAX_CHARS: usize = 40;
+/// Longest marker name, in characters (the marker strip's rename field,
+/// `600-markers.md` decision 7): a section's name, not a note.
+pub const MARKER_NAME_MAX_CHARS: usize = 24;
 /// Longest project name, in characters (`project_name_from_input`, the Save
 /// As field) — the file name the project is saved under.
 pub const PROJECT_NAME_MAX_CHARS: usize = 64;

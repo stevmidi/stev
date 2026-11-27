@@ -2,7 +2,7 @@
 //! (`600-markers.md` decision 10). It replaces the whole list, before and
 //! after: at nine entries there is nothing to gain from anything finer.
 
-use crate::models::markers::Markers;
+use crate::models::markers::{MarkerChange, Markers};
 
 use super::{EditResult, Sequencer};
 
@@ -20,9 +20,26 @@ impl SetMarkerEdit {
     /// that tick. `None` when that changes nothing (it is already there, or
     /// `number` names no slot): no undo step for it.
     pub(crate) fn at_cursor(sequencer: &Sequencer, number: u8) -> Option<Self> {
+        let tick = sequencer.cursor_tick();
+        Self::changing(sequencer, |markers| markers.set(number, tick))
+    }
+
+    /// `change` to marker `number`, from the marker strip: a drag's drop, a
+    /// rename, a `Delete` (decisions 7 and 8). `None` when that changes
+    /// nothing (dropped where it was, the same name, no such marker).
+    pub(crate) fn changed(
+        sequencer: &Sequencer,
+        number: u8,
+        change: &MarkerChange,
+    ) -> Option<Self> {
+        Self::changing(sequencer, |markers| markers.change(number, change))
+    }
+
+    /// The edit `apply` makes to the markers, `None` when it makes none.
+    fn changing(sequencer: &Sequencer, apply: impl FnOnce(&mut Markers)) -> Option<Self> {
         let before = sequencer.markers().clone();
         let mut after = before.clone();
-        after.set(number, sequencer.cursor_tick());
+        apply(&mut after);
         (before != after).then_some(SetMarkerEdit { before, after })
     }
 
@@ -75,6 +92,35 @@ mod tests {
         assert_eq!(sequencer.markers().placed(), vec![(1, 3840)]);
         record.undo(&mut sequencer);
         assert_eq!(sequencer.markers().placed(), vec![(1, 0)]);
+    }
+
+    #[test]
+    fn a_drag_rename_and_delete_each_undo_back() {
+        let mut sequencer = test_sequencer();
+        let mut record: Record<SequencerEdit> = Record::new();
+        sequencer.markers_mut().set(1, 0);
+        sequencer.markers_mut().set(2, 960);
+        let start = sequencer.markers().clone();
+        for change in [
+            MarkerChange::Move(960),
+            MarkerChange::Rename(Some("Chorus".to_owned())),
+            MarkerChange::Remove,
+        ] {
+            let edit = SetMarkerEdit::changed(&sequencer, 1, &change).unwrap();
+            record.edit(&mut sequencer, edit.into());
+            assert_ne!(*sequencer.markers(), start);
+            record.undo(&mut sequencer);
+            assert_eq!(*sequencer.markers(), start);
+        }
+    }
+
+    #[test]
+    fn a_change_that_changes_nothing_makes_no_step() {
+        let mut sequencer = test_sequencer();
+        sequencer.markers_mut().set(1, 960);
+        assert!(SetMarkerEdit::changed(&sequencer, 1, &MarkerChange::Move(960)).is_none());
+        assert!(SetMarkerEdit::changed(&sequencer, 1, &MarkerChange::Rename(None)).is_none());
+        assert!(SetMarkerEdit::changed(&sequencer, 4, &MarkerChange::Remove).is_none());
     }
 
     #[test]

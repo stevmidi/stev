@@ -6,6 +6,19 @@
 //! and the time edits, which carry them along with [`Markers::insert_time`]
 //! and [`Markers::delete_time`]).
 
+/// A change to one marker from the marker strip (`600-markers.md`
+/// decisions 7 and 8), applied by [`Markers::change`]: what the strip's
+/// drag, rename field and `Delete` send, each one undo step.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum MarkerChange {
+    /// Move it to this tick (a drag), replacing any marker already there.
+    Move(i32),
+    /// Name it this, `None` (or blank) to show its number alone.
+    Rename(Option<String>),
+    /// Remove it.
+    Remove,
+}
+
 /// The highest marker number; numbers run `1..=MAX_MARKER`, one key each.
 pub(crate) const MAX_MARKER: u8 = 9;
 
@@ -96,6 +109,56 @@ impl Markers {
         if let Some(marker) = self.list.iter_mut().find(|marker| marker.number == number) {
             marker.name = name.map(str::to_owned);
         }
+    }
+
+    /// Removes marker `number`; nothing when it isn't set.
+    pub(crate) fn remove(&mut self, number: u8) {
+        self.list.retain(|marker| marker.number != number);
+    }
+
+    /// Applies `change` to marker `number`. Nothing when it isn't set: a
+    /// move never creates one.
+    pub(crate) fn change(&mut self, number: u8, change: &MarkerChange) {
+        if self.get(number).is_none() {
+            return;
+        }
+        match change {
+            MarkerChange::Move(tick) => self.set(number, *tick),
+            MarkerChange::Rename(name) => self.rename(number, name.as_deref()),
+            MarkerChange::Remove => self.remove(number),
+        }
+    }
+
+    /// The marker before marker `number` in tick order (`before`), or the
+    /// one after it: what `←`/`→` select in the strip. `None` at either end,
+    /// or when `number` isn't set.
+    pub(crate) fn neighbour(&self, number: u8, before: bool) -> Option<u8> {
+        let at = self
+            .list
+            .iter()
+            .position(|marker| marker.number == number)?;
+        let at = if before { at.checked_sub(1)? } else { at + 1 };
+        self.list.get(at).map(|marker| marker.number)
+    }
+
+    /// The marker to select once marker `number` is removed: the one before
+    /// it, else the one after it, so `Delete` presses chain leftward
+    /// (`600-markers.md` decision 7). `None` when it is the only one.
+    pub(crate) fn selected_after_removing(&self, number: u8) -> Option<u8> {
+        self.neighbour(number, true)
+            .or_else(|| self.neighbour(number, false))
+    }
+
+    /// The last marker at or before `tick`, else the first: the one a click
+    /// on the strip's `MARKERS` label selects (the cursor's tick). `None`
+    /// when there are none.
+    pub(crate) fn at_or_before(&self, tick: i32) -> Option<u8> {
+        self.list
+            .iter()
+            .rev()
+            .find(|marker| marker.tick <= tick)
+            .or_else(|| self.list.first())
+            .map(|marker| marker.number)
     }
 
     /// Insert time: every marker at or after `at` moves `amount` later,
@@ -241,6 +304,62 @@ mod tests {
         let markers = Markers::from_saved(saved);
         assert_eq!(markers.placed(), vec![(3, 0), (2, 960)]);
         assert_eq!(markers.get(2).unwrap().name.as_deref(), Some("Chorus"));
+    }
+
+    #[test]
+    fn remove_takes_only_that_marker() {
+        let mut markers = markers(&[(1, 0), (2, 960)]);
+        markers.remove(1);
+        markers.remove(7);
+        assert_eq!(markers.placed(), vec![(2, 960)]);
+    }
+
+    #[test]
+    fn a_change_moves_renames_or_removes() {
+        let mut markers = markers(&[(1, 0), (2, 960)]);
+        markers.change(1, &MarkerChange::Rename(Some("Intro".to_owned())));
+        markers.change(1, &MarkerChange::Move(960));
+        assert_eq!(markers.placed(), vec![(1, 960)], "the drop replaced 2");
+        assert_eq!(markers.get(1).unwrap().name.as_deref(), Some("Intro"));
+        markers.change(1, &MarkerChange::Remove);
+        assert!(markers.is_empty());
+    }
+
+    #[test]
+    fn a_change_to_an_unset_marker_creates_nothing() {
+        let mut markers = markers(&[(1, 0)]);
+        markers.change(5, &MarkerChange::Move(960));
+        markers.change(5, &MarkerChange::Rename(Some("Outro".to_owned())));
+        assert_eq!(markers.placed(), vec![(1, 0)]);
+    }
+
+    #[test]
+    fn neighbours_go_by_tick_not_number() {
+        let markers = markers(&[(3, 0), (1, 960), (2, 1920)]);
+        assert_eq!(markers.neighbour(1, true), Some(3));
+        assert_eq!(markers.neighbour(1, false), Some(2));
+        assert_eq!(markers.neighbour(3, true), None);
+        assert_eq!(markers.neighbour(2, false), None);
+        assert_eq!(markers.neighbour(9, false), None);
+    }
+
+    #[test]
+    fn removing_selects_the_one_before_else_after() {
+        let markers = markers(&[(3, 0), (1, 960), (2, 1920)]);
+        assert_eq!(markers.selected_after_removing(1), Some(3));
+        assert_eq!(markers.selected_after_removing(3), Some(1));
+        let only = self::markers(&[(4, 0)]);
+        assert_eq!(only.selected_after_removing(4), None);
+        assert_eq!(Markers::default().selected_after_removing(1), None);
+    }
+
+    #[test]
+    fn at_or_before_falls_back_to_the_first() {
+        let markers = markers(&[(3, 960), (1, 1920)]);
+        assert_eq!(markers.at_or_before(1920), Some(1));
+        assert_eq!(markers.at_or_before(1500), Some(3));
+        assert_eq!(markers.at_or_before(0), Some(3));
+        assert_eq!(Markers::default().at_or_before(0), None);
     }
 
     #[test]

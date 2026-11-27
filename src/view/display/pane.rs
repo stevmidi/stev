@@ -36,6 +36,12 @@ pub(super) enum KeyFocus {
     /// the panel shows knobs, clip open or not (`archive/400-parameter-knobs.md`
     /// decision 14).
     KnobPanel(usize),
+    /// The arranger's marker strip, with the selected marker by number (a
+    /// press on its flag or on the strip's `MARKERS` label), so `Delete`
+    /// removes it, `⌘R` names it and `←`/`→` select its neighbours
+    /// (`600-markers.md` decision 7). Only effective in `Arranger` while
+    /// that marker is set.
+    Markers(u8),
 }
 
 /// The clip panel's height: the whole lane area, or a band docked below the
