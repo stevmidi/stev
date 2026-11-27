@@ -90,13 +90,17 @@ impl Display {
         // under the performance lane, whose keys mark the beats there
         // (`draw_performance_lane_row`); in the clip view, everything under
         // the strip.
-        let line_spans = if crosses_track_seams {
-            vec![
+        let arranger_spans;
+        let clip_spans;
+        let line_spans: &[(f32, f32)] = if crosses_track_seams {
+            arranger_spans = [
                 self.marker_strip_span(rect),
                 (rect.min.y + self.arranger_layout().lanes_top, area_bottom),
-            ]
+            ];
+            &arranger_spans
         } else {
-            vec![(strip_bottom, area_bottom)]
+            clip_spans = [(strip_bottom, area_bottom)];
+            &clip_spans
         };
         let line_color =
             |role: GridRole| groove.gamma_multiply(tiers.line_strength(role, crosses_track_seams));
@@ -150,7 +154,7 @@ impl Display {
                 GridRole::Snap => (1.0_f32, REGION_BAND_H * 0.35, theme::grid_major()),
             };
             let line = Stroke::new(lane_w, line_color(role));
-            for &(top, bottom) in &line_spans {
+            for &(top, bottom) in line_spans {
                 painter.vline(x, top..=bottom, line);
             }
             // The ruler is a readout, not the snap grid: fine snap lines keep

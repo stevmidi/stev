@@ -122,10 +122,11 @@ impl Display {
         let ppp = painter.pixels_per_point();
         // Every label starts with its number, so one digit's ink sets every
         // flag's height: the ink and `LABEL_PAD_Y` above and below it, in
-        // whole pixels, centred between the timeline's seam (the strip's
-        // top edge) and the strip's own.
+        // whole pixels, centred between the strip's top (no seam: it runs
+        // on from the ruler) and its own seam's top edge.
         let ink = ink_span(&painter.layout_no_wrap("1".to_owned(), font.clone(), theme::fg()));
-        let free = seam_inset_band(top, bottom, ARRANGER_LANE_SEAM_W / 2.0, ppp);
+        let (_, free_bottom) = seam_inset_band(top, bottom, ARRANGER_LANE_SEAM_W / 2.0, ppp);
+        let free = ((top * ppp).round() / ppp, free_bottom);
         let (flag_top, flag_bottom) = flag_span(free, ink.1 - ink.0, ppp);
         let label_y = flag_top + (LABEL_PAD_Y * ppp).round() / ppp - ink.0;
         let content = Rect::from_x_y_ranges(

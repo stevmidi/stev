@@ -464,10 +464,8 @@ impl Display {
     const HEADER_TIMELINE_GAP_Y: f32 = 4.0;
     /// Gap below the lane area, above the status bar.
     const VIEW_BOTTOM_MARGIN_Y: f32 = 8.0;
-    /// Height of the dedicated timeline/region strip above the clip lanes.
-    /// At 22 the three stacked bands (time-selection markers ~top, bar
-    /// numbers ~middle, region band at the bottom) overlapped vertically — the
-    /// The region band (`REGION_BAND_H`, 10px) and the 12px bar numbers
+    /// Height of the dedicated timeline/region strip above the clip lanes:
+    /// the region band (`REGION_BAND_H`, 10px) and the 12px bar numbers
     /// riding on it, with a few points above the digits. Every time marker
     /// (the cursor triangle, the range arrows) is bottom-anchored in the
     /// band, so nothing needs the top; 30 kept an empty top band for range
