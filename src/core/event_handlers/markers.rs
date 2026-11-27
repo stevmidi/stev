@@ -57,7 +57,7 @@ mod tests {
     use undo::Record;
 
     use crate::core::event_handlers::test_harness::{
-        Harness, harness, muted_metronome, run_command, statuses, transport,
+        Harness, harness, muted_metronome, run_command, statuses, transport, transport_with_events,
     };
     use crate::core::sequencer::{SequencerCommand, UndoStep};
     use crate::core::time::Meter;
@@ -141,5 +141,42 @@ mod tests {
         assert!(h.sequencer.markers().is_empty());
         run_command(&mut h, &mut record, SequencerCommand::Redo);
         assert_eq!(h.sequencer.markers().get(3).map(|m| m.tick), Some(1920));
+    }
+
+    /// A recall in the middle of a running take is a jump like a lane
+    /// press: the take survives it, and the `/` after it still lands the
+    /// notes as one clip, one undo step.
+    #[test]
+    fn a_recall_mid_take_leaves_the_take_to_commit() {
+        let mut h = harness();
+        let (mut transport, events) = transport_with_events(&h);
+        let bar = Meter::FOUR_FOUR.bar_ticks();
+        h.region.0.store(0, Ordering::Relaxed);
+        h.region.1.store(bar * 2, Ordering::Relaxed);
+        h.sequencer.markers_mut().set(1, bar);
+        transport.start();
+        for i in 0..4 {
+            let t = 300 + i * 960;
+            h.sequencer.handle_midi_input(&[0x90, 60, 100], t);
+            h.sequencer.handle_midi_input(&[0x80, 60, 0], t + 480);
+        }
+        h.playback_tick.store(3900, Ordering::Relaxed);
+
+        recall(&mut h, &mut transport, 1);
+        for event in events.try_iter() {
+            h.handlers
+                .handle_transport_event(&event, &mut h.sequencer, &transport);
+        }
+        let mut record: Record<UndoStep> = Record::new();
+        run_command(
+            &mut h,
+            &mut record,
+            SequencerCommand::Commit { frame: None },
+        );
+
+        assert_eq!(record.len(), 1);
+        let clips = h.sequencer.tracks()[0].clips();
+        assert_eq!(clips.len(), 1);
+        assert_eq!(clips[0].events().len(), 8, "four notes, on and off");
     }
 }

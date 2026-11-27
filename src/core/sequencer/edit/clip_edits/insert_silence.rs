@@ -128,6 +128,8 @@ impl InsertSilenceEdit {
         let Some(targets) = self.shift_targets.as_ref() else {
             return EditResult::NoOp;
         };
+        // Exact: undo runs in stack order, so the markers are as `edit()`
+        // left them, and nothing sits inside the gap it opened.
         sequencer
             .markers_mut()
             .delete_time(self.insert_tick, self.insert_tick + self.amount);

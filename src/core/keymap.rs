@@ -1022,7 +1022,8 @@ impl Action {
     /// `/` fits the take's tempo rather than reopening the selected row.
     /// Every action does but a short list that leaves the project's content
     /// alone: the transport, the tempo tap, the metronome, the computer
-    /// keyboard and the browser's own commands. Not the scope: a global
+    /// keyboard, the browser's own commands and a marker's recall (it moves
+    /// the cursor or the playhead, as the transport does). Not the scope: a global
     /// action (`/`, ⌘Z, the zoom) still acts on a pane, and a new one takes
     /// the keyboard unless it is added here.
     pub(crate) fn acts_on_pane(self) -> bool {
@@ -1038,6 +1039,7 @@ impl Action {
                 | Action::ToggleBrowser
                 | Action::NewProjectFolder
                 | Action::SaveAsTemplate
+                | Action::RecallMarker(_)
         )
     }
 
@@ -1552,6 +1554,7 @@ mod tests {
             Action::TapTempo,
             Action::ShowProjects,
             Action::SaveAsTemplate,
+            Action::RecallMarker(3),
         ] {
             assert!(!action.acts_on_pane(), "{action:?}");
         }
