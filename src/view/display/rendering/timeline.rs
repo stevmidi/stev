@@ -79,16 +79,24 @@ impl Display {
         // the 16ths came out the brightest lines on screen. Translucency also
         // lets a line blend with whatever it crosses — the selected-track
         // accent tint, the piano roll's key rows. The ruler ticks hanging off
-        // the strip are a separate surface and keep the crisp `bar_color` /
-        // `grid_major`, graduated by height rather than colour.
+        // the strip are graduated by height rather than colour: in the clip
+        // view a separate surface in the crisp `bar_color` / `grid_major`, in
+        // the arranger the groove of the line they lead into.
         let groove = grid_seam_color();
         let crosses_track_seams = self.active_pane() == Pane::Arranger;
         // In the arranger the in-lane lines start under the performance lane,
-        // whose keys mark the beats there (`draw_performance_lane_row`).
-        let lines_top = if crosses_track_seams {
-            rect.min.y + self.arranger_layout().lanes_top
+        // whose keys mark the beats there (`draw_performance_lane_row`), and
+        // also cross the marker strip above it, so the flags sit on the grid
+        // and the ruler's ticks run on into it (`draw_marker_strip`).
+        let (lines_top, marker_lines) = if crosses_track_seams {
+            let layout = self.arranger_layout();
+            let markers_top = rect.min.y + layout.markers_top;
+            (
+                rect.min.y + layout.lanes_top,
+                Some(markers_top..=markers_top + layout.markers_h),
+            )
         } else {
-            strip_bottom
+            (strip_bottom, None)
         };
         let line_color =
             |role: GridRole| groove.gamma_multiply(tiers.line_strength(role, crosses_track_seams));
@@ -146,14 +154,23 @@ impl Display {
                 lines_top..=area_bottom,
                 Stroke::new(lane_w, line_color(role)),
             );
+            if let Some(span) = marker_lines.clone() {
+                painter.vline(x, span, Stroke::new(lane_w, line_color(role)));
+            }
             // The ruler is a readout, not the snap grid: fine snap lines keep
             // their in-lane groove but only every `ruler_ticks` gets a tick.
+            // In the arranger the tick is the in-lane line's own groove: the
+            // marker strip under the ruler has no seam between them and
+            // carries the lines (`marker_lines`), so a tick in the ruler's
+            // crisp colour changed tone where it met its line. The clip view's
+            // ruler sits on its seam, a readout of its own, and keeps it.
             if tiers.has_ruler_tick(tick) {
-                painter.vline(
-                    x,
-                    (strip_bottom - tick_h)..=strip_bottom,
-                    Stroke::new(BAR_STROKE_W, tick_color),
-                );
+                let tick_stroke = if marker_lines.is_some() {
+                    Stroke::new(lane_w, line_color(role))
+                } else {
+                    Stroke::new(BAR_STROKE_W, tick_color)
+                };
+                painter.vline(x, (strip_bottom - tick_h)..=strip_bottom, tick_stroke);
             }
 
             // Bar number label — baseline sits on the region band's top edge
@@ -173,30 +190,19 @@ impl Display {
             }
         }
 
-        // Seam between the timeline strip and what's below it — `grid_seam_color()`
-        // groove tone like every other horizontal divider, and the same width
-        // as the performance-lane and track-to-track seams: in the arranger
-        // this line is the performance lane's top edge, and a thinner one left
-        // that row with a lighter top border than its bottom and than every
-        // track. `ARRANGER_LANE_SEAM_W` in the arranger; 2px in the clip views,
-        // matching their 2px octave dividers.
-        let (strip_seam_y, strip_seam_w) = if self.active_pane() == Pane::Clip {
-            (strip_bottom, 2.0_f32)
-        } else {
-            (
-                seam_y(
-                    strip_bottom,
-                    ARRANGER_LANE_SEAM_W,
-                    painter.pixels_per_point(),
-                ),
-                ARRANGER_LANE_SEAM_W,
-            )
-        };
-        painter.hline(
-            rect.min.x..=(rect.min.x + sw),
-            strip_seam_y,
-            Stroke::new(strip_seam_w, grid_seam_color()),
-        );
+        // Seam between the timeline strip and the piano roll below it in the
+        // clip view — `grid_seam_color()` groove tone like every other
+        // horizontal divider, 2px, matching its octave dividers. None in the
+        // arranger: the marker strip under the ruler is the same
+        // `bg_timeline`, so the two read as one header block, and the
+        // marker strip's own seam closes it off from the performance lane.
+        if self.active_pane() == Pane::Clip {
+            painter.hline(
+                rect.min.x..=(rect.min.x + sw),
+                strip_bottom,
+                Stroke::new(2.0_f32, grid_seam_color()),
+            );
+        }
     }
 
     /// Paints the band along the bottom of the timeline strip: the loop

@@ -1,13 +1,15 @@
 //! Painting the arranger's marker strip (`600-markers.md` decision 2): a
 //! band of its own right under the timeline strip, in the ruler's
-//! `bg_timeline` and closed off underneath by the same groove seam, with a
-//! quiet `MARKERS` label in the track column beside it. Each marker is a
-//! small flag at its tick, its left edge on the tick as the cursor
-//! triangle's is, showing its number and its name if it has one
-//! (`2 Chorus`); the marker selected while the strip has the keyboard is
-//! drawn in `accent`, and one held in a drag where it would land. Nothing
-//! is drawn down through the lanes. The flag hit test the strip's presses
-//! go through is here too, beside the geometry it shares with the drawing.
+//! `bg_timeline` with no seam between them, closed off underneath by the
+//! lanes' groove seam, with a quiet `Marker` label in the track column
+//! beside it. Each marker is a small flag at its tick, its left edge on the
+//! tick as the cursor triangle's is, showing its number and its name if it
+//! has one (`2 Chorus`); the marker selected while the strip has the
+//! keyboard is drawn in `accent`, and one held in a drag where it would
+//! land. The lanes' grid lines run through the strip under the flags;
+//! nothing of the strip is drawn down through the lanes. The flag hit test
+//! the strip's presses go through is here too, beside the geometry it
+//! shares with the drawing.
 
 use egui::{Align2, CornerRadius, FontId, Galley, Painter, Rect, Stroke, pos2};
 
@@ -73,15 +75,15 @@ impl Display {
         self.marker_label_w = widths;
     }
 
-    /// Draws the marker strip, from `draw_arranger_backgrounds` (the strip's
-    /// slot in `arranger_layout`): the `MARKERS` label in the track column,
-    /// the strip's fill over the content area, the flags, and the groove
-    /// seam closing it off from the performance lane. The timeline strip's
-    /// own seam is its top edge.
+    /// Draws the marker strip's background, from `draw_arranger_backgrounds`
+    /// (the strip's slot in `arranger_layout`): the `Marker` label in the
+    /// track column, the strip's fill over the content area, and the groove
+    /// seam closing it off from the performance lane. No seam above it: it
+    /// runs on from the timeline strip in the same `bg_timeline`, and
+    /// `draw_timeline` draws the lanes' grid lines through it. The flags go
+    /// over those lines (`draw_marker_flags`).
     pub(super) fn draw_marker_strip(&self, painter: &Painter, rect: Rect) {
-        let layout = self.arranger_layout();
-        let top = rect.min.y + layout.markers_top;
-        let bottom = top + layout.markers_h;
+        let (top, bottom) = self.marker_strip_span(rect);
         let font = FontId::proportional(theme::FONT_SIZE_TL);
 
         painter.text(
@@ -98,8 +100,26 @@ impl Display {
         let strip = Rect::from_x_y_ranges(self.content_origin_x()..=rect.max.x, top..=bottom);
         painter.rect_filled(strip, CornerRadius::ZERO, theme::bg_timeline());
 
+        painter.hline(
+            rect.min.x..=rect.max.x,
+            seam_y(bottom, ARRANGER_LANE_SEAM_W, painter.pixels_per_point()),
+            Stroke::new(ARRANGER_LANE_SEAM_W, grid_seam_color()),
+        );
+    }
+
+    /// The marker strip's top and bottom on screen.
+    fn marker_strip_span(&self, rect: Rect) -> (f32, f32) {
+        let layout = self.arranger_layout();
+        let top = rect.min.y + layout.markers_top;
+        (top, top + layout.markers_h)
+    }
+
+    /// Draws the marker strip's flags, from `draw_pane` after `draw_timeline`
+    /// so they sit over the grid lines it draws through the strip.
+    pub(super) fn draw_marker_flags(&self, painter: &Painter, rect: Rect) {
+        let (top, bottom) = self.marker_strip_span(rect);
+        let font = FontId::proportional(theme::FONT_SIZE_TL);
         let ppp = painter.pixels_per_point();
-        let seam_y = seam_y(bottom, ARRANGER_LANE_SEAM_W, ppp);
         // Every label starts with its number, so one digit's ink sets every
         // flag's height: the ink and `LABEL_PAD_Y` above and below it, in
         // whole pixels, centred between the timeline's seam (the strip's
@@ -152,12 +172,6 @@ impl Display {
             };
             flags.galley(pos2(x, label_y), label, theme::fg());
         }
-
-        painter.hline(
-            rect.min.x..=rect.max.x,
-            seam_y,
-            Stroke::new(ARRANGER_LANE_SEAM_W, grid_seam_color()),
-        );
     }
 
     /// Each of `markers`' flags on screen, in drawing order: by tick, so a

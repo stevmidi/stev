@@ -17,7 +17,7 @@ What the design leans on:
 
 1. **Every marker has a number, 1 to 9, and there are at most nine.** A number is a slot: one marker per number. No unnumbered markers: a marker the keyboard can't reach is only a click target, the ruler click and the overview already cover getting around by mouse, and leaving them out removes the question of mapping a number to a marker. If nine turns out to be tight in use, unnumbered markers can be added later without changing anything here.
 
-2. **The marker strip sits right under the arranger's ruler.** About 14–16px (tuned when built), arranger only, between the timeline strip and the performance lane, the `bg_timeline` family so it reads as part of the ruler group, closed off by the same groove seam. Each marker is a small flag at its tick, its edge on the tick like the cursor triangle's, showing its number and its name if it has one (`2 Chorus`). Nothing is drawn down through the lanes. The left gutter beside the strip shows a quiet `MARKERS` label in `fg_dim`. The overview (`590`) shows no markers for now.
+2. **The marker strip sits right under the arranger's ruler.** About 14–16px (tuned when built), arranger only, between the timeline strip and the performance lane, the `bg_timeline` family so it reads as part of the ruler group, closed off by the same groove seam. Each marker is a small flag at its tick, its edge on the tick like the cursor triangle's, showing its number and its name if it has one (`2 Chorus`). Nothing is drawn down through the lanes. The left gutter beside the strip shows a quiet `Marker` label in `fg_dim`. (Changed after use, 2026-11-27: the lanes' grid lines run through the strip and the seam between it and the ruler is gone, so the two read as one header block; `030` § Marker strip.) The overview (`590`) shows no markers for now.
 
 3. **`⌘1`–`⌘9` sets marker *n* at the arranger cursor.** If marker *n* exists elsewhere, it moves to the cursor, keeping its name. If another marker already sits on that tick, it is replaced (one marker per tick). Running or stopped, it is always the cursor, never the playhead: edits act at the cursor. Commands (`Action::SetMarker1`…`9`), rebindable, rows in the keymap table.
 
@@ -31,7 +31,7 @@ What the design leans on:
 
 6. **A click on a flag recalls it**, exactly as its digit would, and gives the strip the keyboard with that marker selected (decision 7). A press in the strip away from any flag does nothing.
 
-7. **The strip takes the keyboard like the track headers do.** A click on a flag or on the gutter's `MARKERS` label gives it the keyboard (a new `KeyFocus::Markers`); the selected marker is drawn in `accent`. With it focused:
+7. **The strip takes the keyboard like the track headers do.** A click on a flag or on the gutter's `Marker` label gives it the keyboard (a new `KeyFocus::Markers`); the selected marker is drawn in `accent`. With it focused:
    - `Delete`/`Backspace` removes the selected marker (one undo step), and the selection moves to the nearest marker left (else right), so presses chain. Nothing left: the keyboard goes back to the pane.
    - `⌘R` renames the selected marker with an inline field over its flag, the same kind of field as the track's: `Enter` commits, `Esc` cancels. A double-click on a flag does the same. An empty name clears it, leaving the number.
    - `←`/`→` select the previous/next marker (selecting only; recall stays on the digits and the click).
@@ -70,7 +70,7 @@ What the design leans on:
 - **The commands**: `Action::SetMarker(n)` / `Action::RecallMarker(n)` (one variant each with the number, not nine; ids `marker.set_n` / `marker.recall_n`, the Keyboard tab's *Markers* group, both `Scope::Global`), sending `SequencerCommand::SetMarker` (→ `SetMarkerEdit::at_cursor`) and `TransportCommand::RecallMarker` (→ `recall_marker_workflow`, `event_handlers/markers.rs`, where the transport is at hand). A flag click sends the same `InputEvent::Action`.
 - **Decision 5's check**: `Transport::tick` wraps only from inside the loop region (`current >= start && current < end`), so a jump past the region's end plays on, and one before its start plays into it and then loops.
 - **Duplicate Time** gets its marker shift through the `InsertSilenceEdit` it composes: the markers at or after the insertion point move (the clips' rule), none is copied.
-- **The strip** is `MARKER_STRIP_H` (20px after phase 2's hand test; 16 at first), drawn by `draw_marker_strip` (`rendering/markers.rs`), hit-tested by `marker_flag_at` / `is_mouse_on_marker_strip`.
+- **The strip** is `MARKER_STRIP_H` (18px since 2026-11-27, when the seam above it went; 20 after phase 2's hand test; 16 at first), drawn by `draw_marker_strip` (`rendering/markers.rs`), hit-tested by `marker_flag_at` / `is_mouse_on_marker_strip`.
 
 ## As built (phase 2)
 

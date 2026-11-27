@@ -9,8 +9,10 @@
 use super::pointer_state::AxisFilter;
 use crate::core::view_state::Pane;
 
-/// Height of the arranger's overview strip, above its timeline strip.
-pub(super) const OVERVIEW_H: f32 = 18.0;
+/// Height of the arranger's overview strip, above its timeline strip. 18
+/// at first; 24 since 2026-11-27, from the ruler's and the marker strip's
+/// slack, so a project of nine tracks gets over 2px a row.
+pub(super) const OVERVIEW_H: f32 = 24.0;
 
 /// Pixels of vertical drag on the overview that double the zoom (down) or
 /// halve it (up). Tuned by hand.

@@ -467,18 +467,20 @@ impl Display {
     /// Height of the dedicated timeline/region strip above the clip lanes.
     /// At 22 the three stacked bands (time-selection markers ~top, bar
     /// numbers ~middle, region band at the bottom) overlapped vertically — the
-    /// 12px bar-number glyphs, bottom-anchored above the region band, reached
-    /// to within 2px of the strip top where the markers live. 30 gives the
-    /// marker band and the number band real clearance now that the region
-    /// band is `REGION_BAND_H` (10px) and the numbers ride on top of it; the
-    /// ~1px it costs each of the 8 lanes is unnoticeable.
-    const TIMELINE_H: f32 = 30.0;
+    /// The region band (`REGION_BAND_H`, 10px) and the 12px bar numbers
+    /// riding on it, with a few points above the digits. Every time marker
+    /// (the cursor triangle, the range arrows) is bottom-anchored in the
+    /// band, so nothing needs the top; 30 kept an empty top band for range
+    /// markers that had moved down, and 26 gave the 4px to the overview
+    /// (2026-11-27).
+    const TIMELINE_H: f32 = 26.0;
     /// Height of the reserved arranger performance lane row, drawn between
     /// the marker strip and track 1.
     const PERFORMANCE_LANE_H: f32 = 24.0;
     /// Height of the arranger's marker strip, right under the timeline strip
-    /// (`600-markers.md` decision 2). Tune by eye.
-    const MARKER_STRIP_H: f32 = 20.0;
+    /// (`600-markers.md` decision 2). 20 while a seam closed it off from the
+    /// ruler above too; 18 once that went (2026-11-27). Tune by eye.
+    const MARKER_STRIP_H: f32 = 18.0;
 
     // --- Constructor ---
     #[allow(clippy::too_many_arguments)]

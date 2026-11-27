@@ -873,6 +873,7 @@ impl Display {
             return;
         }
 
+        self.draw_marker_flags(painter, rect);
         self.draw_overview(painter, rect);
 
         // What is drawn in the track lanes is clipped to their viewport, so
