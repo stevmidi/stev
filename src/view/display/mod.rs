@@ -344,10 +344,6 @@ pub(crate) struct Display {
     marker_label_w: [f32; MAX_MARKER as usize],
     /// The open marker rename field, if any (`600-markers.md` decision 7).
     marker_rename: Option<MarkerRename>,
-    /// The strip's deletions, oldest first, each `(removed, selected
-    /// after)`: what lets an undo select the marker it brings back
-    /// (`follow_markers`). Dropped once the strip loses the keyboard.
-    marker_removals: Vec<(u8, u8)>,
 
     // --- Modal overlay state ---
     /// The modal overlay that is up, if any — the one switch every "does an
@@ -557,7 +553,6 @@ impl Display {
             markers: Markers::default(),
             marker_label_w: [0.0; MAX_MARKER as usize],
             marker_rename: None,
-            marker_removals: Vec::new(),
             gesture: GestureState::default(),
             input_poller: InputPoller::new(),
             keymap,

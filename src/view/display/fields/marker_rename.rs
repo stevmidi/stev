@@ -53,6 +53,11 @@ impl Display {
         });
     }
 
+    /// The marker the rename field is open on, if any.
+    fn renaming_marker(&self) -> Option<u8> {
+        self.marker_rename.as_ref().map(|rename| rename.number)
+    }
+
     /// Where the field over marker `number`'s flag goes: the flag, widened
     /// to [`MIN_FIELD_W`] and grown to fit its caret ([`field_rect`]).
     /// `None` when the flag isn't on screen (no such marker, scrolled away,
@@ -73,7 +78,7 @@ impl Display {
     /// when its flag is gone or off screen or the arranger lost the keyboard
     /// this frame (`left_arranger`).
     pub(in crate::view::display) fn drop_stale_marker_rename(&mut self, left_arranger: bool) {
-        if let Some(number) = self.marker_rename.as_ref().map(|rename| rename.number)
+        if let Some(number) = self.renaming_marker()
             && (left_arranger || self.marker_rename_rect(number).is_none())
         {
             self.close_marker_rename();
@@ -96,7 +101,7 @@ impl Display {
         &mut self,
         event: &InputEvent,
     ) -> bool {
-        let Some(number) = self.marker_rename.as_ref().map(|rename| rename.number) else {
+        let Some(number) = self.renaming_marker() else {
             return false;
         };
         let action = field_event(event, self.marker_rename_rect(number));
@@ -118,7 +123,7 @@ impl Display {
 
     /// Shows the open field over its marker's flag, in the canvas `ui`.
     pub(in crate::view::display) fn show_marker_rename(&mut self, ui: &mut Ui) {
-        let Some(number) = self.marker_rename.as_ref().map(|rename| rename.number) else {
+        let Some(number) = self.renaming_marker() else {
             return;
         };
         let Some(rect) = self.marker_rename_rect(number) else {

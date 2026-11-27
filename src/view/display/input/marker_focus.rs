@@ -170,13 +170,9 @@ impl Display {
     /// brings back, so it is on top again where it overlaps, and a redo
     /// moves the selection on as the `Delete` did.
     pub(in crate::view::display) fn follow_markers(&mut self, markers: Markers) {
-        match self.key_focus {
-            KeyFocus::Markers(selected) => {
-                let next =
-                    follow_selection(selected, &self.markers, &markers, &mut self.marker_removals);
-                self.key_focus = next.map_or(KeyFocus::Pane, KeyFocus::Markers);
-            }
-            _ => self.marker_removals.clear(),
+        if let KeyFocus::Markers(selected) = self.key_focus {
+            let next = follow_selection(selected, &self.markers, &markers);
+            self.key_focus = next.map_or(KeyFocus::Pane, KeyFocus::Markers);
         }
         self.markers = markers;
     }
@@ -213,10 +209,7 @@ impl Display {
             }
             Some(MarkerStripKey::Remove) => {
                 self.key_focus = match self.markers.selected_after_removing(number) {
-                    Some(next) => {
-                        self.marker_removals.push((number, next));
-                        KeyFocus::Markers(next)
-                    }
+                    Some(next) => KeyFocus::Markers(next),
                     None => KeyFocus::Pane,
                 };
                 self.change_marker(number, MarkerChange::Remove);
@@ -241,34 +234,26 @@ impl Display {
     }
 }
 
-/// The selected marker after the markers go from `old` to `new`, with the
-/// strip's deletions so far (`removals`, `(removed, selected after)`,
-/// oldest first): the marker the last deletion removed when it is back and
-/// its stand-in still selected (an undo), popping it; else, when the
-/// selected marker is gone (a redo of a `Delete`, an undo of a set), the one
-/// before it, else after, as `Delete` picks, pushing that; else the same
-/// one. `None` when nothing is left to select.
-fn follow_selection(
-    selected: u8,
-    old: &Markers,
-    new: &Markers,
-    removals: &mut Vec<(u8, u8)>,
-) -> Option<u8> {
-    if let Some(&(removed, after)) = removals.last()
-        && after == selected
-        && new.get(removed).is_some()
-    {
-        removals.pop();
-        return Some(removed);
+/// The selected marker after the markers go from `old` to `new`, derived
+/// from the change alone: the one marker that came back, if exactly one
+/// did (an undo of a `Delete`); else, when the selected marker is gone (a
+/// redo of a `Delete`, an undo of a set), the one before it, else after, as
+/// `Delete` picks; else the same one. `None` when nothing is left to
+/// select.
+fn follow_selection(selected: u8, old: &Markers, new: &Markers) -> Option<u8> {
+    let mut back = new
+        .as_slice()
+        .iter()
+        .map(|marker| marker.number)
+        .filter(|&number| old.get(number).is_none());
+    if let (Some(number), None) = (back.next(), back.next()) {
+        return Some(number);
     }
     if new.get(selected).is_some() {
         return Some(selected);
     }
-    let next = old
-        .selected_after_removing(selected)
-        .filter(|&number| new.get(number).is_some())?;
-    removals.push((selected, next));
-    Some(next)
+    old.selected_after_removing(selected)
+        .filter(|&number| new.get(number).is_some())
 }
 
 #[cfg(test)]
@@ -280,21 +265,14 @@ mod tests {
     use crate::core::keymap::Action;
     use crate::models::markers::Markers;
 
-    const NONE: KeyModifiers = KeyModifiers {
-        shift: false,
-        command: false,
-        alt: false,
-        ctrl: false,
-    };
-
     #[test]
     fn esc_cancels_a_drag_before_it_leaves() {
         assert_eq!(
-            marker_strip_key(Key::Escape, NONE, None, true),
+            marker_strip_key(Key::Escape, KeyModifiers::default(), None, true),
             Some(MarkerStripKey::CancelDrag)
         );
         assert_eq!(
-            marker_strip_key(Key::Escape, NONE, None, false),
+            marker_strip_key(Key::Escape, KeyModifiers::default(), None, false),
             Some(MarkerStripKey::Leave { consumed: true })
         );
     }
@@ -304,13 +282,13 @@ mod tests {
     fn delete_removes_and_rename_names() {
         for action in [Action::DeleteSelection, Action::DeleteNotes] {
             assert_eq!(
-                marker_strip_key(Key::Backspace, NONE, Some(action), false),
+                marker_strip_key(Key::Backspace, KeyModifiers::default(), Some(action), false),
                 Some(MarkerStripKey::Remove)
             );
         }
         let command = KeyModifiers {
             command: true,
-            ..NONE
+            ..KeyModifiers::default()
         };
         assert_eq!(
             marker_strip_key(Key::R, command, Some(Action::RenameTrack), false),
@@ -322,14 +300,17 @@ mod tests {
     #[test]
     fn plain_arrows_select_the_neighbours() {
         assert_eq!(
-            marker_strip_key(Key::ArrowLeft, NONE, None, false),
+            marker_strip_key(Key::ArrowLeft, KeyModifiers::default(), None, false),
             Some(MarkerStripKey::Select { before: true })
         );
         assert_eq!(
-            marker_strip_key(Key::ArrowRight, NONE, None, false),
+            marker_strip_key(Key::ArrowRight, KeyModifiers::default(), None, false),
             Some(MarkerStripKey::Select { before: false })
         );
-        let alt = KeyModifiers { alt: true, ..NONE };
+        let alt = KeyModifiers {
+            alt: true,
+            ..KeyModifiers::default()
+        };
         assert_eq!(marker_strip_key(Key::ArrowLeft, alt, None, false), None);
     }
 
@@ -338,11 +319,16 @@ mod tests {
     #[test]
     fn tab_and_pane_commands_hand_back() {
         assert_eq!(
-            marker_strip_key(Key::Tab, NONE, None, false),
+            marker_strip_key(Key::Tab, KeyModifiers::default(), None, false),
             Some(MarkerStripKey::Leave { consumed: false })
         );
         assert_eq!(
-            marker_strip_key(Key::A, NONE, Some(Action::SelectAllClips), false),
+            marker_strip_key(
+                Key::A,
+                KeyModifiers::default(),
+                Some(Action::SelectAllClips),
+                false
+            ),
             Some(MarkerStripKey::Leave { consumed: false })
         );
         for action in [
@@ -350,55 +336,42 @@ mod tests {
             Action::SetMarker(2),
             Action::TogglePlayback,
         ] {
-            assert_eq!(marker_strip_key(Key::Num2, NONE, Some(action), false), None);
+            assert_eq!(
+                marker_strip_key(Key::Num2, KeyModifiers::default(), Some(action), false),
+                None
+            );
         }
-    }
-
-    /// Markers `(number, tick)`.
-    fn placed(list: &[(u8, i32)]) -> Markers {
-        let mut markers = Markers::default();
-        for &(number, tick) in list {
-            markers.set(number, tick);
-        }
-        markers
     }
 
     /// Delete 2 (selecting 1), undo, redo, undo: the selection follows the
     /// marker that comes and goes, so it is the one on top each time.
     #[test]
     fn undo_and_redo_of_a_delete_carry_the_selection() {
-        let both = placed(&[(1, 0), (2, 100)]);
-        let one = placed(&[(1, 0)]);
-        // What the strip's `Delete` recorded.
-        let mut removals = vec![(2, 1)];
-        assert_eq!(follow_selection(1, &one, &both, &mut removals), Some(2));
-        assert!(removals.is_empty());
-        assert_eq!(follow_selection(2, &both, &one, &mut removals), Some(1));
-        assert_eq!(removals, vec![(2, 1)]);
-        assert_eq!(follow_selection(1, &one, &both, &mut removals), Some(2));
+        let both = Markers::from_placed(&[(1, 0), (2, 100)]);
+        let one = Markers::from_placed(&[(1, 0)]);
+        assert_eq!(follow_selection(1, &one, &both), Some(2));
+        assert_eq!(follow_selection(2, &both, &one), Some(1));
     }
 
     /// Two deletes undone come back in turn, each selected as it returns.
     #[test]
     fn chained_deletes_unwind_in_order() {
-        let all = placed(&[(1, 0), (2, 100), (3, 200)]);
-        let two = placed(&[(1, 0), (2, 100)]);
-        let one = placed(&[(1, 0)]);
-        let mut removals = vec![(3, 2), (2, 1)];
-        assert_eq!(follow_selection(1, &one, &two, &mut removals), Some(2));
-        assert_eq!(follow_selection(2, &two, &all, &mut removals), Some(3));
-        assert!(removals.is_empty());
+        let all = Markers::from_placed(&[(1, 0), (2, 100), (3, 200)]);
+        let two = Markers::from_placed(&[(1, 0), (2, 100)]);
+        let one = Markers::from_placed(&[(1, 0)]);
+        assert_eq!(follow_selection(1, &one, &two), Some(2));
+        assert_eq!(follow_selection(2, &two, &all), Some(3));
     }
 
     /// A change that leaves the selected marker and brings nothing back
-    /// keeps the selection; one that leaves nothing selects nothing.
+    /// keeps the selection (the echo of the strip's own change too); one
+    /// that leaves nothing selects nothing.
     #[test]
     fn otherwise_the_selection_stays_or_goes() {
-        let both = placed(&[(1, 0), (2, 100)]);
-        let moved = placed(&[(1, 0), (2, 400)]);
-        let mut removals = Vec::new();
-        assert_eq!(follow_selection(2, &both, &moved, &mut removals), Some(2));
-        let none = Markers::default();
-        assert_eq!(follow_selection(2, &both, &none, &mut removals), None);
+        let both = Markers::from_placed(&[(1, 0), (2, 100)]);
+        let moved = Markers::from_placed(&[(1, 0), (2, 400)]);
+        assert_eq!(follow_selection(2, &both, &moved), Some(2));
+        assert_eq!(follow_selection(2, &both, &both), Some(2));
+        assert_eq!(follow_selection(2, &both, &Markers::default()), None);
     }
 }

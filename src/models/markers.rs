@@ -75,6 +75,16 @@ impl Markers {
             .collect()
     }
 
+    /// Markers `(number, tick)` set in that order: what a test builds.
+    #[cfg(test)]
+    pub(crate) fn from_placed(list: &[(u8, i32)]) -> Self {
+        let mut markers = Markers::default();
+        for &(number, tick) in list {
+            markers.set(number, tick);
+        }
+        markers
+    }
+
     /// Whether there are none.
     #[cfg(test)]
     pub(crate) fn is_empty(&self) -> bool {
@@ -199,24 +209,15 @@ impl Markers {
 mod tests {
     use super::*;
 
-    /// Markers `(number, tick)` set in that order.
-    fn markers(list: &[(u8, i32)]) -> Markers {
-        let mut markers = Markers::default();
-        for &(number, tick) in list {
-            markers.set(number, tick);
-        }
-        markers
-    }
-
     #[test]
     fn setting_an_empty_slot_adds_it_in_tick_order() {
-        let markers = markers(&[(2, 1920), (1, 0), (5, 960)]);
+        let markers = Markers::from_placed(&[(2, 1920), (1, 0), (5, 960)]);
         assert_eq!(markers.placed(), vec![(1, 0), (5, 960), (2, 1920)]);
     }
 
     #[test]
     fn setting_a_number_already_set_moves_it_and_keeps_its_name() {
-        let mut markers = markers(&[(1, 0), (2, 960)]);
+        let mut markers = Markers::from_placed(&[(1, 0), (2, 960)]);
         markers.rename(1, Some("Verse"));
         markers.set(1, 3840);
         assert_eq!(markers.placed(), vec![(2, 960), (1, 3840)]);
@@ -225,7 +226,7 @@ mod tests {
 
     #[test]
     fn setting_on_another_markers_tick_replaces_it() {
-        let mut markers = markers(&[(1, 0), (2, 960)]);
+        let mut markers = Markers::from_placed(&[(1, 0), (2, 960)]);
         markers.set(3, 960);
         assert_eq!(markers.placed(), vec![(1, 0), (3, 960)]);
         assert!(markers.get(2).is_none());
@@ -233,7 +234,7 @@ mod tests {
 
     #[test]
     fn setting_a_number_where_it_already_is_changes_nothing() {
-        let mut markers = markers(&[(1, 0), (2, 960)]);
+        let mut markers = Markers::from_placed(&[(1, 0), (2, 960)]);
         markers.rename(2, Some("Chorus"));
         let before = markers.clone();
         markers.set(2, 960);
@@ -250,12 +251,12 @@ mod tests {
 
     #[test]
     fn a_marker_before_the_start_is_held_at_zero() {
-        assert_eq!(markers(&[(1, -50)]).placed(), vec![(1, 0)]);
+        assert_eq!(Markers::from_placed(&[(1, -50)]).placed(), vec![(1, 0)]);
     }
 
     #[test]
     fn rename_keeps_the_tick_and_a_blank_name_clears_it() {
-        let mut markers = markers(&[(4, 1920)]);
+        let mut markers = Markers::from_placed(&[(4, 1920)]);
         markers.rename(4, Some("  Bridge "));
         assert_eq!(markers.get(4).unwrap().name.as_deref(), Some("Bridge"));
         assert_eq!(markers.get(4).unwrap().tick, 1920);
@@ -265,14 +266,15 @@ mod tests {
 
     #[test]
     fn insert_time_moves_the_markers_at_or_after_the_point() {
-        let mut markers = markers(&[(1, 0), (2, 960), (3, 1920)]);
+        let mut markers = Markers::from_placed(&[(1, 0), (2, 960), (3, 1920)]);
         markers.insert_time(960, 480);
         assert_eq!(markers.placed(), vec![(1, 0), (2, 1440), (3, 2400)]);
     }
 
     #[test]
     fn delete_time_removes_the_inside_and_pulls_the_later_back() {
-        let mut markers = markers(&[(1, 0), (2, 960), (3, 1439), (4, 1440), (5, 3840)]);
+        let mut markers =
+            Markers::from_placed(&[(1, 0), (2, 960), (3, 1439), (4, 1440), (5, 3840)]);
         markers.delete_time(960, 1440);
         assert_eq!(markers.placed(), vec![(1, 0), (4, 960), (5, 3360)]);
     }
@@ -308,7 +310,7 @@ mod tests {
 
     #[test]
     fn remove_takes_only_that_marker() {
-        let mut markers = markers(&[(1, 0), (2, 960)]);
+        let mut markers = Markers::from_placed(&[(1, 0), (2, 960)]);
         markers.remove(1);
         markers.remove(7);
         assert_eq!(markers.placed(), vec![(2, 960)]);
@@ -316,7 +318,7 @@ mod tests {
 
     #[test]
     fn a_change_moves_renames_or_removes() {
-        let mut markers = markers(&[(1, 0), (2, 960)]);
+        let mut markers = Markers::from_placed(&[(1, 0), (2, 960)]);
         markers.change(1, &MarkerChange::Rename(Some("Intro".to_owned())));
         markers.change(1, &MarkerChange::Move(960));
         assert_eq!(markers.placed(), vec![(1, 960)], "the drop replaced 2");
@@ -327,7 +329,7 @@ mod tests {
 
     #[test]
     fn a_change_to_an_unset_marker_creates_nothing() {
-        let mut markers = markers(&[(1, 0)]);
+        let mut markers = Markers::from_placed(&[(1, 0)]);
         markers.change(5, &MarkerChange::Move(960));
         markers.change(5, &MarkerChange::Rename(Some("Outro".to_owned())));
         assert_eq!(markers.placed(), vec![(1, 0)]);
@@ -335,7 +337,7 @@ mod tests {
 
     #[test]
     fn neighbours_go_by_tick_not_number() {
-        let markers = markers(&[(3, 0), (1, 960), (2, 1920)]);
+        let markers = Markers::from_placed(&[(3, 0), (1, 960), (2, 1920)]);
         assert_eq!(markers.neighbour(1, true), Some(3));
         assert_eq!(markers.neighbour(1, false), Some(2));
         assert_eq!(markers.neighbour(3, true), None);
@@ -345,17 +347,17 @@ mod tests {
 
     #[test]
     fn removing_selects_the_one_before_else_after() {
-        let markers = markers(&[(3, 0), (1, 960), (2, 1920)]);
+        let markers = Markers::from_placed(&[(3, 0), (1, 960), (2, 1920)]);
         assert_eq!(markers.selected_after_removing(1), Some(3));
         assert_eq!(markers.selected_after_removing(3), Some(1));
-        let only = self::markers(&[(4, 0)]);
+        let only = Markers::from_placed(&[(4, 0)]);
         assert_eq!(only.selected_after_removing(4), None);
         assert_eq!(Markers::default().selected_after_removing(1), None);
     }
 
     #[test]
     fn at_or_before_falls_back_to_the_first() {
-        let markers = markers(&[(3, 960), (1, 1920)]);
+        let markers = Markers::from_placed(&[(3, 960), (1, 1920)]);
         assert_eq!(markers.at_or_before(1920), Some(1));
         assert_eq!(markers.at_or_before(1500), Some(3));
         assert_eq!(markers.at_or_before(0), Some(3));
@@ -364,7 +366,7 @@ mod tests {
 
     #[test]
     fn any_at_or_after_counts_a_marker_on_the_tick() {
-        let markers = markers(&[(1, 960)]);
+        let markers = Markers::from_placed(&[(1, 960)]);
         assert!(markers.any_at_or_after(960));
         assert!(!markers.any_at_or_after(961));
     }
