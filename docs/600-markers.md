@@ -1,6 +1,6 @@
 # Markers
 
-**Status: agreed 2026-11-26; both phases built 2026-11-27. Issue: #49.** Up to nine numbered markers in the arrangement, each recalled by its digit: `⌘1`–`⌘9` sets marker *n* at the cursor, `1`–`9` recalls it. Stopped, a recall moves the cursor there; running, it moves the playhead and leaves the cursor where it is. The markers sit as flags in a strip of their own under the arranger's ruler, where a click recalls one, a drag moves it, and with the strip focused `Delete` removes it and `⌘R` names it. They are arrangement data: saved in the project, undoable, carried along by the edits that insert or delete time.
+**Status: agreed 2026-11-26; both phases built 2026-11-27; revised 2026-11-27 (the ruler and the strip one place to click, decision 6). Issue: #49.** Up to nine numbered markers in the arrangement, each recalled by its digit: `⌘1`–`⌘9` sets marker *n* at the cursor, `1`–`9` recalls it. Stopped, a recall moves the cursor there; running, it moves the playhead and leaves the cursor where it is. The markers sit as flags in a strip of their own under the arranger's ruler, where a click recalls one, a drag moves it, a click away from the flags plays from there as the ruler does, and with the strip focused `Delete` removes it and `⌘R` names it. They are arrangement data: saved in the project, undoable, carried along by the edits that insert or delete time.
 
 ## Background
 
@@ -29,7 +29,7 @@ What the design leans on:
 
 5. **A recall ignores the loop.** Running with looping on, the playhead jumps to the marker and plays on from there, and wraps only if it reaches the loop region's end. Looping is not turned off. What the transport does when a jump lands past the region's end is checked when building, so that it plays on rather than wrapping at once.
 
-6. **A click on a flag recalls it**, exactly as its digit would, and gives the strip the keyboard with that marker selected (decision 7). A press in the strip away from any flag does nothing.
+6. **A click on a flag recalls it**, exactly as its digit would, and gives the strip the keyboard with that marker selected (decision 7). A press in the strip away from any flag plays from there, exactly as the ruler above does (`020` § Timeline click), and gives the keyboard back to the pane. (Revised after use, 2026-11-27: at first it did nothing, which left two rails over the same span with different rules, the strip mostly dead. Now the ruler and the strip are one place to click: the loop band first, then a flag, then playback from the click. The cursor triangle and the range arrows stay in the ruler's region band, beside the loop band they match in height; down in the strip they would cover the flag a marker set at the cursor puts there.)
 
 7. **The strip takes the keyboard like the track headers do.** A click on a flag or on the gutter's `Marker` label gives it the keyboard (a new `KeyFocus::Markers`); the selected marker is drawn in `accent`. With it focused:
    - `Delete`/`Backspace` removes the selected marker (one undo step), and the selection moves to the nearest marker left (else right), so presses chain. Nothing left: the keyboard goes back to the pane.

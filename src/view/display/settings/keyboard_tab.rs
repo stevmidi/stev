@@ -519,6 +519,7 @@ const FIXED: &[FixedGroup] = &[
                 "Click",
                 "On a flag: go to the marker, as its digit, and select it",
             ),
+            ("Click", "Off a flag: play from there, as on the ruler"),
             ("Drag", "Move the marker, on the grid"),
             ("Double-click", "Name the marker"),
             ("⌘R", "Name the selected marker"),

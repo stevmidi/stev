@@ -85,8 +85,10 @@ impl Display {
     /// on a flag, selects its marker and holds it for a drag or a click
     /// (`begin_marker_drag`); on the `MARKERS` label beside the strip,
     /// selects the marker at or before the cursor (else the first) without
-    /// moving anything. Anywhere else in the strip, nothing, and the
-    /// keyboard goes back to the pane (`600-markers.md` decisions 6 and 7).
+    /// moving anything. Anywhere else in the strip, the ruler's click:
+    /// playback from there (`play_from_x`), the keyboard back to the pane,
+    /// so the ruler and the strip are one place to click
+    /// (`600-markers.md` decisions 6 and 7).
     /// Hit-tested before the focus changes, with the selected flag still on
     /// top, so a press where it covers another takes it, the one that shows.
     pub(super) fn handle_marker_strip_press(&mut self, x: f32, y: f32) {
@@ -99,6 +101,7 @@ impl Display {
             self.select_marker(number);
         } else {
             self.key_focus = KeyFocus::Pane;
+            self.play_from_x(x);
         }
     }
 

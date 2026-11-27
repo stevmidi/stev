@@ -204,7 +204,7 @@ impl Display {
     /// (`PlayFromTick`) and cursor placement alone in the clip view
     /// (`SetCursorTick`), and in a controller lane the same with the lane's
     /// focus and span; on the arranger's marker strip, a flag's selection
-    /// and its drag or recall; in
+    /// and its drag or recall, else the ruler's playback; in
     /// the lanes, the arranger's header buttons, mix bars, Shift+click extend,
     /// clip edge / band drags; the clip view's ⌘-click velocity drag;
     /// then, in either, cursor placement plus the time-selection or event
@@ -273,7 +273,8 @@ impl Display {
         // The arranger's marker strip: a flag selects its marker and is
         // held for a drag, or a click that recalls it on release; the
         // `MARKERS` label gives the strip the keyboard; a press anywhere
-        // else in it does nothing (`600-markers.md` decisions 6–8).
+        // else in it plays from there, as the ruler above does
+        // (`600-markers.md` decisions 6–8).
         if self.is_mouse_on_marker_strip(x, y) {
             self.handle_marker_strip_press(x, y);
             return true;
