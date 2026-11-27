@@ -11,10 +11,13 @@ use crate::view::display::overview::overview_row;
 
 use super::*;
 
-/// Opacity of a clip's fill in the overview.
-const CLIP_ALPHA: f32 = 0.8;
-/// Opacity of a muted clip's fill, dimmer as in the lanes.
-const MUTED_CLIP_ALPHA: f32 = 0.3;
+/// Opacity of a clip's fill in the overview: the lanes' clip header strength
+/// (`draw_clip_body`), so the miniature reads as the arranger from afar and
+/// no louder (0.8 until 2026-11-27, when a full project turned the strip into
+/// the brightest band on the screen).
+const CLIP_ALPHA: f32 = 0.45;
+/// Opacity of a muted clip's fill, the lanes' muted header strength.
+const MUTED_CLIP_ALPHA: f32 = 0.2;
 /// Opacity of the shade over the strip outside the view box: the
 /// window's darkest background (`bg`), so the off-screen part sinks back.
 const OUTSIDE_SHADE_ALPHA: f32 = 0.6;
@@ -55,7 +58,10 @@ impl Display {
         let painter = painter.with_clip_rect(strip.intersect(painter.clip_rect()));
         painter.rect_filled(strip, CornerRadius::ZERO, theme::bg_timeline());
 
-        // Clips, one row per track, never under a pixel wide.
+        // Clips, one row per track, their edges on whole pixels so rows and
+        // neighbouring clips don't smear together, never under a pixel wide.
+        let ppp = painter.pixels_per_point();
+        let snap = |x: f32| (x * ppp).round() / ppp;
         let track_count = self.track_count();
         let rows_top = top + ROWS_INSET_Y;
         let rows_h = OVERVIEW_H - 2.0 * ROWS_INSET_Y;
@@ -64,9 +70,9 @@ impl Display {
             if track_idx >= track_count {
                 continue;
             }
-            let (row_top, row_bottom) = overview_row(track_idx, track_count, rows_top, rows_h);
-            let x0 = map.x_of(shape.start_tick() as f32);
-            let x1 = map.x_of(shape.end_tick() as f32).max(x0 + 1.0);
+            let (row_top, row_bottom) = overview_row(track_idx, track_count, rows_top, rows_h, ppp);
+            let x0 = snap(map.x_of(shape.start_tick() as f32));
+            let x1 = snap(map.x_of(shape.end_tick() as f32)).max(x0 + 1.0 / ppp);
             let alpha = if shape.is_muted() {
                 MUTED_CLIP_ALPHA
             } else {

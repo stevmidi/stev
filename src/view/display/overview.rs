@@ -97,12 +97,23 @@ impl OverviewMap {
 }
 
 /// The y span of `track_idx`'s row when the strip from `top`, `h` tall, is
-/// split evenly between `track_count` tracks: never under a pixel, so with
-/// many tracks rows touch or share one rather than vanish.
-pub(super) fn overview_row(track_idx: usize, track_count: usize, top: f32, h: f32) -> (f32, f32) {
+/// split evenly between `track_count` tracks, its edges on whole physical
+/// pixels (`ppp` per point) so neighbouring rows never smear into each other
+/// through an anti-aliased edge (nine rows in 20px are 2.2px each; some get
+/// two pixels, some three). Never under a pixel, so with many tracks rows
+/// touch or share one rather than vanish.
+pub(super) fn overview_row(
+    track_idx: usize,
+    track_count: usize,
+    top: f32,
+    h: f32,
+    ppp: f32,
+) -> (f32, f32) {
     let row_h = h / track_count.max(1) as f32;
-    let row_top = top + track_idx as f32 * row_h;
-    (row_top, row_top + row_h.max(1.0))
+    let snap = |y: f32| (y * ppp).round() / ppp;
+    let row_top = snap(top + track_idx as f32 * row_h);
+    let row_bottom = snap(top + (track_idx + 1) as f32 * row_h);
+    (row_top, row_bottom.max(row_top + 1.0 / ppp))
 }
 
 /// The zoom factor for a vertical drag of `dy` points: down (positive) zooms
@@ -240,15 +251,33 @@ mod tests {
 
     #[test]
     fn rows_split_the_strip_evenly() {
-        assert_eq!(overview_row(0, 2, 10.0, 18.0), (10.0, 19.0));
-        assert_eq!(overview_row(1, 2, 10.0, 18.0), (19.0, 28.0));
+        assert_eq!(overview_row(0, 2, 10.0, 18.0, 1.0), (10.0, 19.0));
+        assert_eq!(overview_row(1, 2, 10.0, 18.0, 1.0), (19.0, 28.0));
+    }
+
+    #[test]
+    fn rows_land_on_whole_pixels_and_tile_the_strip() {
+        // Nine tracks in 20pt: 2.2pt a row, snapped to pixels at 1x and 2x.
+        for ppp in [1.0, 2.0] {
+            let mut prev_bottom = 2.0;
+            for idx in 0..9 {
+                let (top, bottom) = overview_row(idx, 9, 2.0, 20.0, ppp);
+                assert_eq!(top * ppp, (top * ppp).round());
+                assert_eq!(bottom * ppp, (bottom * ppp).round());
+                assert_eq!(top, prev_bottom, "rows neither gap nor overlap");
+                prev_bottom = bottom;
+            }
+            assert_eq!(prev_bottom, 22.0);
+        }
     }
 
     #[test]
     fn rows_are_never_under_a_pixel() {
-        let (top, bottom) = overview_row(40, 64, 0.0, 18.0);
+        let (top, bottom) = overview_row(40, 64, 0.0, 18.0, 1.0);
         assert!(bottom - top >= 1.0);
-        assert_eq!(overview_row(0, 0, 0.0, 18.0), (0.0, 18.0));
+        let (top, bottom) = overview_row(40, 64, 0.0, 18.0, 2.0);
+        assert!(bottom - top >= 0.5);
+        assert_eq!(overview_row(0, 0, 0.0, 18.0, 1.0), (0.0, 18.0));
     }
 
     #[test]

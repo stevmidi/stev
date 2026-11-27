@@ -11,7 +11,7 @@
 //! the strip's presses go through is here too, beside the geometry it
 //! shares with the drawing.
 
-use egui::{Align2, CornerRadius, FontId, Galley, Painter, Rect, Stroke, pos2};
+use egui::{CornerRadius, FontId, Galley, Painter, Rect, Stroke, pos2};
 
 use crate::models::markers::{MAX_MARKER, Markers};
 
