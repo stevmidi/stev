@@ -152,7 +152,7 @@ impl DeleteTimeEdit {
             return EditResult::NoOp;
         };
         if let Some(markers) = self.markers_before.clone() {
-            sequencer.set_markers(markers);
+            *sequencer.markers_mut() = markers;
         }
 
         // Shift back right first — same ordering rationale as
@@ -431,16 +431,6 @@ mod tests {
         assert_eq!(drain(&mut plugin_rx), vec![[0x80, 60, 0]]);
     }
 
-    /// The `(number, tick)` of each marker, in order.
-    fn markers(sequencer: &Sequencer) -> Vec<(u8, i32)> {
-        sequencer
-            .markers()
-            .as_slice()
-            .iter()
-            .map(|marker| (marker.number, marker.tick))
-            .collect()
-    }
-
     /// The markers inside the deleted span go, the later ones move back by
     /// its length, and the undo puts every one back (`600-markers.md`
     /// decision 9).
@@ -454,11 +444,14 @@ mod tests {
 
         let mut edit = DeleteTimeEdit::from_time_range(&sequencer, 960, 1440).unwrap();
         edit.edit(&mut sequencer);
-        assert_eq!(markers(&sequencer), vec![(1, 0), (3, 960), (4, 3360)]);
+        assert_eq!(
+            sequencer.markers().placed(),
+            vec![(1, 0), (3, 960), (4, 3360)]
+        );
 
         edit.undo(&mut sequencer);
         assert_eq!(
-            markers(&sequencer),
+            sequencer.markers().placed(),
             vec![(1, 0), (2, 960), (3, 1440), (4, 3840)]
         );
     }

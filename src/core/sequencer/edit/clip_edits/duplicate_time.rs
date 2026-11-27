@@ -356,21 +356,19 @@ mod tests {
         sequencer.markers_mut().set(1, 0);
         sequencer.markers_mut().set(2, 100);
         sequencer.markers_mut().set(3, 250);
-        let placed = |sequencer: &Sequencer| -> Vec<(u8, i32)> {
-            sequencer
-                .markers()
-                .as_slice()
-                .iter()
-                .map(|marker| (marker.number, marker.tick))
-                .collect()
-        };
 
         let mut edit = DuplicateTimeEdit::from_time_range(&sequencer, 0, 100).unwrap();
         edit.edit(&mut sequencer);
-        assert_eq!(placed(&sequencer), vec![(1, 0), (2, 200), (3, 350)]);
+        assert_eq!(
+            sequencer.markers().placed(),
+            vec![(1, 0), (2, 200), (3, 350)]
+        );
 
         edit.undo(&mut sequencer);
-        assert_eq!(placed(&sequencer), vec![(1, 0), (2, 100), (3, 250)]);
+        assert_eq!(
+            sequencer.markers().placed(),
+            vec![(1, 0), (2, 100), (3, 250)]
+        );
     }
 
     #[test]

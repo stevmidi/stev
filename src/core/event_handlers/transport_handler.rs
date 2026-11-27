@@ -134,10 +134,7 @@ impl EventHandlers {
                 self.sync_clip_selection_to_cursor_workflow(sequencer);
             }
             TransportCommand::SetCursorAndSelectClip { tick } => {
-                transport.set_cursor_tick(*tick);
-                // A cursor move places the lane's hand (`570` § 2).
-                sequencer.place_performance_lane_hand();
-                self.sync_clip_selection_to_cursor_workflow(sequencer);
+                self.set_cursor_workflow(*tick, transport, sequencer);
             }
             TransportCommand::PlayFromTick { tick } => {
                 play_from_tick(*tick, transport, sequencer);
@@ -177,6 +174,22 @@ impl EventHandlers {
                 metronome.toggle_mute();
             }
         }
+    }
+}
+
+impl EventHandlers {
+    /// Places the arranger cursor at `tick`, as a click in the lanes or a
+    /// stopped marker recall does: the lane's hand is placed around it
+    /// (`570` § 2) and the lead clip follows it.
+    pub(super) fn set_cursor_workflow(
+        &self,
+        tick: i32,
+        transport: &mut Transport,
+        sequencer: &mut Sequencer,
+    ) {
+        transport.set_cursor_tick(tick);
+        sequencer.place_performance_lane_hand();
+        self.sync_clip_selection_to_cursor_workflow(sequencer);
     }
 }
 

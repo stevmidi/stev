@@ -20,26 +20,21 @@ impl SetMarkerEdit {
     /// that tick. `None` when that changes nothing (it is already there, or
     /// `number` names no slot): no undo step for it.
     pub(crate) fn at_cursor(sequencer: &Sequencer, number: u8) -> Option<Self> {
-        let mut after = sequencer.markers().clone();
-        after.set(number, sequencer.cursor_tick());
-        Self::to(sequencer, after)
-    }
-
-    /// The list replaced by `after`; `None` when it is the list already.
-    fn to(sequencer: &Sequencer, after: Markers) -> Option<Self> {
         let before = sequencer.markers().clone();
+        let mut after = before.clone();
+        after.set(number, sequencer.cursor_tick());
         (before != after).then_some(SetMarkerEdit { before, after })
     }
 
     /// Puts the new list in.
     pub(crate) fn edit(&mut self, sequencer: &mut Sequencer) -> EditResult {
-        sequencer.set_markers(self.after.clone());
+        *sequencer.markers_mut() = self.after.clone();
         EditResult::MarkersChanged
     }
 
     /// Puts the old one back.
     pub(crate) fn undo(&mut self, sequencer: &mut Sequencer) -> EditResult {
-        sequencer.set_markers(self.before.clone());
+        *sequencer.markers_mut() = self.before.clone();
         EditResult::MarkersChanged
     }
 }
@@ -53,16 +48,6 @@ mod tests {
 
     use super::*;
 
-    /// The `(number, tick)` of each marker, in order.
-    fn placed(sequencer: &Sequencer) -> Vec<(u8, i32)> {
-        sequencer
-            .markers()
-            .as_slice()
-            .iter()
-            .map(|marker| (marker.number, marker.tick))
-            .collect()
-    }
-
     #[test]
     fn a_marker_set_at_the_cursor_is_one_undo_step() {
         let mut sequencer = test_sequencer();
@@ -71,11 +56,11 @@ mod tests {
 
         let edit = SetMarkerEdit::at_cursor(&sequencer, 2).unwrap();
         record.edit(&mut sequencer, edit.into());
-        assert_eq!(placed(&sequencer), vec![(2, 1920)]);
+        assert_eq!(sequencer.markers().placed(), vec![(2, 1920)]);
         record.undo(&mut sequencer);
-        assert_eq!(placed(&sequencer), vec![]);
+        assert_eq!(sequencer.markers().placed(), vec![]);
         record.redo(&mut sequencer);
-        assert_eq!(placed(&sequencer), vec![(2, 1920)]);
+        assert_eq!(sequencer.markers().placed(), vec![(2, 1920)]);
     }
 
     #[test]
@@ -87,9 +72,9 @@ mod tests {
             let edit = SetMarkerEdit::at_cursor(&sequencer, 1).unwrap();
             record.edit(&mut sequencer, edit.into());
         }
-        assert_eq!(placed(&sequencer), vec![(1, 3840)]);
+        assert_eq!(sequencer.markers().placed(), vec![(1, 3840)]);
         record.undo(&mut sequencer);
-        assert_eq!(placed(&sequencer), vec![(1, 0)]);
+        assert_eq!(sequencer.markers().placed(), vec![(1, 0)]);
     }
 
     #[test]

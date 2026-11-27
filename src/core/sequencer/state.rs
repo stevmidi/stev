@@ -295,13 +295,8 @@ impl Sequencer {
         &self.markers
     }
 
-    /// Replaces the arrangement's markers: only the marker edits, the time
-    /// edits that carry them and a project load call this.
-    pub(crate) fn set_markers(&mut self, markers: Markers) {
-        self.markers = markers;
-    }
-
-    /// The arrangement's markers, for the time edits that carry them along.
+    /// The arrangement's markers, for the edits that change them (the marker
+    /// edits, the time edits that carry them) and a project load.
     pub(crate) fn markers_mut(&mut self) -> &mut Markers {
         &mut self.markers
     }

@@ -629,7 +629,7 @@ impl ProjectData {
         sequencer
             .set_performance_lane_key_length(self.performance_lane_key_length.into_key_length());
         sequencer.set_global_region(self.region_start, self.region_end);
-        sequencer.set_markers(MarkerData::markers_of(self.markers));
+        *sequencer.markers_mut() = MarkerData::markers_of(self.markers);
 
         let mut all_metadata = Vec::new();
 
@@ -969,7 +969,7 @@ mod tests {
         markers.set(1, 0);
         markers.set(2, 3840);
         markers.rename(2, Some("Chorus"));
-        sequencer.set_markers(markers.clone());
+        *sequencer.markers_mut() = markers.clone();
         let json = serde_json::to_string(&ProjectData::from_sequencer(&sequencer)).unwrap();
 
         sequencer.new_project();

@@ -10,7 +10,7 @@
 pub(crate) const MAX_MARKER: u8 = 9;
 
 /// Whether `number` names a marker slot (`1..=MAX_MARKER`).
-pub(crate) fn is_marker_number(number: u8) -> bool {
+fn is_marker_number(number: u8) -> bool {
     (1..=MAX_MARKER).contains(&number)
 }
 
@@ -41,9 +41,6 @@ impl Markers {
     pub(crate) fn from_saved(list: impl IntoIterator<Item = Marker>) -> Self {
         let mut markers = Markers::default();
         for marker in list {
-            if !is_marker_number(marker.number) {
-                continue;
-            }
             markers.set(marker.number, marker.tick);
             markers.rename(marker.number, marker.name.as_deref());
         }
@@ -53,6 +50,16 @@ impl Markers {
     /// The markers in tick order.
     pub(crate) fn as_slice(&self) -> &[Marker] {
         &self.list
+    }
+
+    /// The `(number, tick)` of each marker, in tick order: what a test
+    /// compares.
+    #[cfg(test)]
+    pub(crate) fn placed(&self) -> Vec<(u8, i32)> {
+        self.list
+            .iter()
+            .map(|marker| (marker.number, marker.tick))
+            .collect()
     }
 
     /// Whether there are none.
@@ -92,13 +99,18 @@ impl Markers {
     }
 
     /// Insert time: every marker at or after `at` moves `amount` later,
-    /// as the clips there do (`600-markers.md` decision 9).
-    pub(crate) fn insert_time(&mut self, at: i32, amount: i32) {
+    /// as the clips there do (`600-markers.md` decision 9). Returns whether
+    /// any moved. `delete_time(at, at + amount)` undoes it exactly: nothing
+    /// is left inside the gap.
+    pub(crate) fn insert_time(&mut self, at: i32, amount: i32) -> bool {
+        let mut moved = false;
         for marker in &mut self.list {
             if marker.tick >= at {
                 marker.tick += amount;
+                moved = true;
             }
         }
+        moved
     }
 
     /// Delete time over `[start, end)`: the markers inside go, and every
@@ -124,15 +136,6 @@ impl Markers {
 mod tests {
     use super::*;
 
-    /// The `(number, tick)` of each marker, in order.
-    fn placed(markers: &Markers) -> Vec<(u8, i32)> {
-        markers
-            .as_slice()
-            .iter()
-            .map(|marker| (marker.number, marker.tick))
-            .collect()
-    }
-
     /// Markers `(number, tick)` set in that order.
     fn markers(list: &[(u8, i32)]) -> Markers {
         let mut markers = Markers::default();
@@ -145,7 +148,7 @@ mod tests {
     #[test]
     fn setting_an_empty_slot_adds_it_in_tick_order() {
         let markers = markers(&[(2, 1920), (1, 0), (5, 960)]);
-        assert_eq!(placed(&markers), vec![(1, 0), (5, 960), (2, 1920)]);
+        assert_eq!(markers.placed(), vec![(1, 0), (5, 960), (2, 1920)]);
     }
 
     #[test]
@@ -153,7 +156,7 @@ mod tests {
         let mut markers = markers(&[(1, 0), (2, 960)]);
         markers.rename(1, Some("Verse"));
         markers.set(1, 3840);
-        assert_eq!(placed(&markers), vec![(2, 960), (1, 3840)]);
+        assert_eq!(markers.placed(), vec![(2, 960), (1, 3840)]);
         assert_eq!(markers.get(1).unwrap().name.as_deref(), Some("Verse"));
     }
 
@@ -161,7 +164,7 @@ mod tests {
     fn setting_on_another_markers_tick_replaces_it() {
         let mut markers = markers(&[(1, 0), (2, 960)]);
         markers.set(3, 960);
-        assert_eq!(placed(&markers), vec![(1, 0), (3, 960)]);
+        assert_eq!(markers.placed(), vec![(1, 0), (3, 960)]);
         assert!(markers.get(2).is_none());
     }
 
@@ -184,7 +187,7 @@ mod tests {
 
     #[test]
     fn a_marker_before_the_start_is_held_at_zero() {
-        assert_eq!(placed(&markers(&[(1, -50)])), vec![(1, 0)]);
+        assert_eq!(markers(&[(1, -50)]).placed(), vec![(1, 0)]);
     }
 
     #[test]
@@ -201,14 +204,14 @@ mod tests {
     fn insert_time_moves_the_markers_at_or_after_the_point() {
         let mut markers = markers(&[(1, 0), (2, 960), (3, 1920)]);
         markers.insert_time(960, 480);
-        assert_eq!(placed(&markers), vec![(1, 0), (2, 1440), (3, 2400)]);
+        assert_eq!(markers.placed(), vec![(1, 0), (2, 1440), (3, 2400)]);
     }
 
     #[test]
     fn delete_time_removes_the_inside_and_pulls_the_later_back() {
         let mut markers = markers(&[(1, 0), (2, 960), (3, 1439), (4, 1440), (5, 3840)]);
         markers.delete_time(960, 1440);
-        assert_eq!(placed(&markers), vec![(1, 0), (4, 960), (5, 3360)]);
+        assert_eq!(markers.placed(), vec![(1, 0), (4, 960), (5, 3360)]);
     }
 
     #[test]
@@ -236,7 +239,7 @@ mod tests {
             },
         ];
         let markers = Markers::from_saved(saved);
-        assert_eq!(placed(&markers), vec![(3, 0), (2, 960)]);
+        assert_eq!(markers.placed(), vec![(3, 0), (2, 960)]);
         assert_eq!(markers.get(2).unwrap().name.as_deref(), Some("Chorus"));
     }
 

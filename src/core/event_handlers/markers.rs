@@ -44,10 +44,7 @@ impl EventHandlers {
             let offset = phase_offset(sequencer.meter(), sequencer.playback_tick());
             transport.jump_and_chase(tick + offset);
         } else {
-            transport.set_cursor_tick(tick);
-            // A cursor move places the lane's hand (`570` § 2).
-            sequencer.place_performance_lane_hand();
-            self.sync_clip_selection_to_cursor_workflow(sequencer);
+            self.set_cursor_workflow(tick, transport, sequencer);
         }
         self.request_repaint();
     }
