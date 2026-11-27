@@ -108,7 +108,7 @@ impl Display {
     }
 
     /// The marker strip's top and bottom on screen.
-    fn marker_strip_span(&self, rect: Rect) -> (f32, f32) {
+    pub(super) fn marker_strip_span(&self, rect: Rect) -> (f32, f32) {
         let layout = self.arranger_layout();
         let top = rect.min.y + layout.markers_top;
         (top, top + layout.markers_h)

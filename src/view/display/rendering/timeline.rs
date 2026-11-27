@@ -84,19 +84,19 @@ impl Display {
         // the arranger the groove of the line they lead into.
         let groove = grid_seam_color();
         let crosses_track_seams = self.active_pane() == Pane::Arranger;
-        // In the arranger the in-lane lines start under the performance lane,
-        // whose keys mark the beats there (`draw_performance_lane_row`), and
-        // also cross the marker strip above it, so the flags sit on the grid
-        // and the ruler's ticks run on into it (`draw_marker_strip`).
-        let (lines_top, marker_lines) = if crosses_track_seams {
-            let layout = self.arranger_layout();
-            let markers_top = rect.min.y + layout.markers_top;
-            (
-                rect.min.y + layout.lanes_top,
-                Some(markers_top..=markers_top + layout.markers_h),
-            )
+        // The spans each in-lane line covers. In the arranger, the marker
+        // strip under the ruler, so the flags sit on the grid and the ruler's
+        // ticks run on into it (`draw_marker_strip`), and the lanes from
+        // under the performance lane, whose keys mark the beats there
+        // (`draw_performance_lane_row`); in the clip view, everything under
+        // the strip.
+        let line_spans = if crosses_track_seams {
+            vec![
+                self.marker_strip_span(rect),
+                (rect.min.y + self.arranger_layout().lanes_top, area_bottom),
+            ]
         } else {
-            (strip_bottom, None)
+            vec![(strip_bottom, area_bottom)]
         };
         let line_color =
             |role: GridRole| groove.gamma_multiply(tiers.line_strength(role, crosses_track_seams));
@@ -149,24 +149,20 @@ impl Display {
                 GridRole::Beat => (1.0_f32, REGION_BAND_H * 0.5, theme::grid_major()),
                 GridRole::Snap => (1.0_f32, REGION_BAND_H * 0.35, theme::grid_major()),
             };
-            painter.vline(
-                x,
-                lines_top..=area_bottom,
-                Stroke::new(lane_w, line_color(role)),
-            );
-            if let Some(span) = marker_lines.clone() {
-                painter.vline(x, span, Stroke::new(lane_w, line_color(role)));
+            let line = Stroke::new(lane_w, line_color(role));
+            for &(top, bottom) in &line_spans {
+                painter.vline(x, top..=bottom, line);
             }
             // The ruler is a readout, not the snap grid: fine snap lines keep
             // their in-lane groove but only every `ruler_ticks` gets a tick.
             // In the arranger the tick is the in-lane line's own groove: the
             // marker strip under the ruler has no seam between them and
-            // carries the lines (`marker_lines`), so a tick in the ruler's
-            // crisp colour changed tone where it met its line. The clip view's
-            // ruler sits on its seam, a readout of its own, and keeps it.
+            // carries the lines on, so a tick in the ruler's crisp colour
+            // changed tone where it met its line. The clip view's ruler sits
+            // on its seam, a readout of its own, and keeps it.
             if tiers.has_ruler_tick(tick) {
-                let tick_stroke = if marker_lines.is_some() {
-                    Stroke::new(lane_w, line_color(role))
+                let tick_stroke = if crosses_track_seams {
+                    line
                 } else {
                     Stroke::new(BAR_STROKE_W, tick_color)
                 };
@@ -196,7 +192,7 @@ impl Display {
         // arranger: the marker strip under the ruler is the same
         // `bg_timeline`, so the two read as one header block, and the
         // marker strip's own seam closes it off from the performance lane.
-        if self.active_pane() == Pane::Clip {
+        if !crosses_track_seams {
             painter.hline(
                 rect.min.x..=(rect.min.x + sw),
                 strip_bottom,
