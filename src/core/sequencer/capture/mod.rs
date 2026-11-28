@@ -432,9 +432,9 @@ impl Sequencer {
     /// ([`place_held_notes`](Self::place_held_notes)). See
     /// `100-running-capture.md` § Notes held into a take.
     pub(crate) fn begin_running_take(&mut self, start_tick: i32) {
-        // Playback starts again: a stop left waiting for the beat when it
-        // last stopped (`550-phase-jumps.md` § The stop on the beat) is over.
-        self.performance_lane_mut().cancel_stop();
+        // Playback starts again from somewhere else: a jump or a stop left
+        // waiting for the beat (`610-launch-quantize.md` decision 5) is over.
+        self.performance_lane_mut().cancel_waiting();
         let held = self.capture_clip.open_note_ons();
         let first_on = held.iter().map(Event::tick).min().unwrap_or(0);
 

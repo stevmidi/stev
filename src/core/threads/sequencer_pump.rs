@@ -83,20 +83,19 @@ pub(crate) fn start_sequencer_thread(
                             if sequencer.is_exporting_audio() {
                                 continue;
                             }
-                            // The click counts from playback while running —
-                            // read before the advance, so the start tick and
-                            // a wrap's region start are each counted once —
-                            // and from the free-running clock while stopped
-                            // (`Metronome`'s module docs).
+                            // The click counts from the tick playback plays
+                            // while running — read before the advance, so the
+                            // start tick and a wrap's region start are each
+                            // counted once, and after a jump waiting for the
+                            // beat lands, so the strong click follows the
+                            // music — and from the free-running clock while
+                            // stopped (`Metronome`'s module docs).
                             let running = transport.is_running();
                             let click_tick = if running {
-                                sequencer.playback_tick()
+                                event_handlers.play_tick(tick.at, &mut sequencer, &mut transport)
                             } else {
                                 tick.tick
                             };
-                            if running {
-                                event_handlers.play_tick(tick.at, &mut sequencer, &mut transport);
-                            }
                             if sequencer.take_playback_retimed() {
                                 metronome.playback_retimed();
                             }

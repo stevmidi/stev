@@ -16,21 +16,36 @@
 //! arranger cursor and moved an octave by the keyboard's previous/next
 //! buttons (`570-lane-octave-buttons.md`); it maps a pressed note to its key.
 //! [`key_tick`] is where a key starts (one [`KeyLength`] of the project's
-//! meter per key: a bar, half a bar or a beat), and [`phase_offset`] how far
-//! into it a press while running lands, so the beat never breaks
-//! (`550-phase-jumps.md`).
+//! meter per key: a bar, half a bar or a beat). A press while running off a
+//! beat waits for the next one ([`is_on_beat`]) and lands on its key's start,
+//! so a key always starts from the same place and the beat never breaks
+//! (`610-launch-quantize.md`).
 
 use crate::core::time::{Meter, snap_to_grid};
 
-/// The lane's live state: the run its presses make, and a stop waiting for
-/// the next beat. Not saved, not an undo step. See the module docs.
+/// The lane's live state: the run its presses make, and a jump or a stop
+/// waiting for the next beat. Not saved, not an undo step. See the module
+/// docs.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct PerformanceLane {
     /// The presses since the run began, `None` with no run.
     run: Option<Run>,
+    /// A lane press or a marker recall while running, off a beat: it jumps
+    /// on playback's next beat (`610-launch-quantize.md`). The latest wins.
+    waiting: Option<WaitingJump>,
     /// `Space` while armed, off a beat: playback runs on to the next beat
-    /// and stops there (`550-phase-jumps.md` § The stop on the beat).
+    /// and stops there (`archive/550-phase-jumps.md` § The stop on the beat).
     stop_pending: bool,
+}
+
+/// A jump waiting for playback's next beat (`610-launch-quantize.md`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct WaitingJump {
+    /// Where it jumps: a key's start, or a marker.
+    target: i32,
+    /// A lane press, which joins the run when it lands; a marker recall
+    /// doesn't (`610` decision 8).
+    press: bool,
 }
 
 /// One run of presses (`archive/520-performance-capture.md` decision 2): from the
@@ -45,10 +60,6 @@ struct Run {
     /// jumped. The target is kept as it was, so a key length or meter
     /// changed in the middle of a run renders what was heard.
     presses: Vec<(i32, i32)>,
-    /// The first press's phase offset ([`phase_offset`]): how far past its
-    /// key's start it jumped. `take_run` shifts the take by it, so the first
-    /// key's start lands at 0 (`550-phase-jumps.md` decision 5).
-    lead: i32,
     /// Where playback is when the lane alone has moved it: the last press's
     /// key plus the ticks since. Playback anywhere else means something else
     /// moved it (a ruler click, `Space` from the cursor), so what follows is
@@ -84,37 +95,80 @@ impl PerformanceLane {
         PerformanceLane::default()
     }
 
-    /// Ends the run: the lane was disarmed, or a project replaced.
+    /// Ends the run and drops a waiting jump: the lane was disarmed, or a
+    /// project replaced. A waiting stop still lands on the beat
+    /// (`archive/550-phase-jumps.md` § The stop on the beat).
     pub(crate) fn clear(&mut self) {
         self.run = None;
+        self.waiting = None;
     }
 
-    /// A press jumped playback to `target_tick`, `offset` past its key's
-    /// start ([`phase_offset`], 0 for a press that starts the transport). It
-    /// starts a run when there is none, or when `started` (it started the
+    /// A press jumped playback to its key's start, `target_tick`. It starts
+    /// a run when there is none, or when `started` (it started the
     /// transport: the run is "from the press that started the transport"),
-    /// and is added to it. A
-    /// press on the same tick as the one before replaces it, as live the
-    /// latest press wins.
-    pub(crate) fn press(&mut self, target_tick: i32, offset: i32, started: bool) {
+    /// and is added to it. A press on the same tick as the one before
+    /// replaces it, as live the latest press wins. A jump still waiting is
+    /// dropped: this one went first.
+    pub(crate) fn press(&mut self, target_tick: i32, started: bool) {
         self.stop_pending = false;
+        self.waiting = None;
         if started {
             self.run = None;
         }
         let run = self.run.get_or_insert_with(|| Run {
             elapsed: 0,
             presses: Vec::new(),
-            lead: 0,
             expected_tick: target_tick,
         });
         if run.presses.last().is_some_and(|&(at, _)| at == run.elapsed) {
             run.presses.pop();
         }
-        if run.presses.is_empty() {
-            run.lead = offset;
-        }
         run.presses.push((run.elapsed, target_tick));
         run.expected_tick = target_tick;
+    }
+
+    /// A lane press while running, off a beat: it waits to jump to its key's
+    /// start, `target_tick`, on playback's next beat, replacing a jump that
+    /// was waiting. Playing on means the performance isn't over, so a
+    /// waiting stop is dropped (`610-launch-quantize.md` decisions 4 and 5).
+    pub(crate) fn wait_to_press(&mut self, target_tick: i32) {
+        self.stop_pending = false;
+        self.waiting = Some(WaitingJump {
+            target: target_tick,
+            press: true,
+        });
+    }
+
+    /// A marker recall while running, off a beat: it waits to jump to the
+    /// marker, `target_tick`, on playback's next beat, replacing a jump that
+    /// was waiting. It isn't a press, so it joins no run
+    /// (`610-launch-quantize.md` decision 8).
+    pub(crate) fn wait_to_recall(&mut self, target_tick: i32) {
+        self.waiting = Some(WaitingJump {
+            target: target_tick,
+            press: false,
+        });
+    }
+
+    /// A recall jumped at once, on a beat: a jump still waiting is dropped,
+    /// as the latest wins.
+    pub(crate) fn drop_waiting_jump(&mut self) {
+        self.waiting = None;
+    }
+
+    /// The waiting jump's target if it is due, with playback about to play
+    /// `playback_tick`: that tick is on a beat of `meter`. A lane press
+    /// joins the run as it lands ([`press`](Self::press)), so the run holds
+    /// it from the tick it was heard. A jump that is due is used up.
+    pub(crate) fn land_due_jump(&mut self, meter: Meter, playback_tick: i32) -> Option<i32> {
+        if !is_on_beat(meter, playback_tick) {
+            return None;
+        }
+        let jump = self.waiting.take()?;
+        if jump.press {
+            self.press(jump.target, false);
+        }
+        Some(jump.target)
     }
 
     /// Playback is about to advance one tick from `playback_tick`: the run's
@@ -137,18 +191,21 @@ impl PerformanceLane {
     /// of presses going) with playback off a beat of `meter`, the stop waits
     /// for the next beat instead
     /// ([`take_due_stop`](Self::take_due_stop)); a second press while it
-    /// waits stops at once (`550-phase-jumps.md` § The stop on the beat).
+    /// waits stops at once (`archive/550-phase-jumps.md` § The stop on the
+    /// beat). A waiting jump is dropped either way: the stop ends the
+    /// performance (`610-launch-quantize.md` decision 5).
     pub(crate) fn stop_now(&mut self, meter: Meter, playback_tick: i32, armed: bool) -> bool {
-        let wait = armed
-            && self.run.is_some()
-            && !self.stop_pending
-            && phase_offset(meter, playback_tick) != 0;
+        self.waiting = None;
+        let wait =
+            armed && self.run.is_some() && !self.stop_pending && !is_on_beat(meter, playback_tick);
         self.stop_pending = wait;
         !wait
     }
 
-    /// Drops a stop waiting for the next beat: playback is starting again.
-    pub(crate) fn cancel_stop(&mut self) {
+    /// Drops a jump or a stop waiting for the next beat: playback is
+    /// starting again from somewhere else.
+    pub(crate) fn cancel_waiting(&mut self) {
+        self.waiting = None;
         self.stop_pending = false;
     }
 
@@ -156,7 +213,7 @@ impl PerformanceLane {
     /// `playback_tick`: it is on a beat of `meter`. A stop that is due is
     /// used up.
     pub(crate) fn take_due_stop(&mut self, meter: Meter, playback_tick: i32) -> bool {
-        let due = self.stop_pending && phase_offset(meter, playback_tick) == 0;
+        let due = self.stop_pending && is_on_beat(meter, playback_tick);
         if due {
             self.stop_pending = false;
         }
@@ -170,11 +227,9 @@ impl PerformanceLane {
     /// capture. The run is used up, so the next press starts the next one.
     /// `None` with no run, or nothing in it that lasts a tick.
     ///
-    /// The take is placed so the first press's key starts at 0
-    /// (`550-phase-jumps.md` decision 5): a first press that jumped late
-    /// leaves a silence of its offset before the first stretch, one that
-    /// jumped early drops the lead-in it played before its key. Every later
-    /// stretch then sits on the grid it was heard on.
+    /// Every press landed on its key's start (`610-launch-quantize.md`
+    /// decision 7), so the first key starts at 0 and every stretch sits on
+    /// the grid it was heard on.
     pub(crate) fn take_run(&mut self) -> Option<Take> {
         let run = self.run.take()?;
         let ends = run.presses.iter().skip(1).map(|&(at, _)| at);
@@ -183,19 +238,13 @@ impl PerformanceLane {
             .iter()
             .zip(ends.chain([run.elapsed]))
             .filter_map(|(&(at, from), until)| {
-                let at = at + run.lead;
-                let cut = (-at).max(0);
-                let len = until + run.lead - at - cut;
-                (len > 0).then_some(Segment {
-                    at: at + cut,
-                    len,
-                    from: from + cut,
-                })
+                let len = until - at;
+                (len > 0).then_some(Segment { at, len, from })
             })
             .collect();
         (!segments.is_empty()).then_some(Take {
             segments,
-            length: run.elapsed + run.lead,
+            length: run.elapsed,
         })
     }
 }
@@ -459,17 +508,13 @@ pub(crate) fn key_tick(meter: Meter, length: KeyLength, key_index: i32) -> i32 {
     length.ticks(meter) * key_index
 }
 
-/// How far past its key's start a press while running jumps, when playback
-/// is about to play `playback_tick`: its distance from the nearest beat of
-/// `meter` ([`snap_to_grid`]), in `-beat/2 .. beat/2` (exactly half a beat
-/// counts as early, for the next beat).
-///
-/// The press jumps to its key plus this, so the key's start sounds on a beat
-/// of the grid playback was on and the beat never breaks: a late press skips
-/// the start of its key, an early one plays the end of what comes before it
-/// (`550-phase-jumps.md`).
-pub(crate) fn phase_offset(meter: Meter, playback_tick: i32) -> i32 {
-    playback_tick - snap_to_grid(playback_tick, meter.beat_ticks())
+/// Whether `playback_tick` is on a beat of `meter` (a quarter in x/4, an
+/// eighth in x/8), before bar 1 too. A lane press or a marker recall while
+/// running jumps at once on a beat and waits for the next one off it, so a
+/// key's start always sounds on a beat of the grid playback was on
+/// (`610-launch-quantize.md`); a stop on the armed lane waits the same way.
+pub(crate) fn is_on_beat(meter: Meter, playback_tick: i32) -> bool {
+    playback_tick.rem_euclid(meter.beat_ticks()) == 0
 }
 
 #[cfg(test)]
@@ -502,9 +547,9 @@ mod tests {
     #[test]
     fn each_press_lasts_until_the_next_and_the_last_until_the_capture() {
         let mut lane = PerformanceLane::new();
-        lane.press(3840, 0, true);
+        lane.press(3840, true);
         play(&mut lane, 3840, 1000);
-        lane.press(0, 0, false);
+        lane.press(0, false);
         play(&mut lane, 0, 500);
 
         assert_eq!(
@@ -517,7 +562,7 @@ mod tests {
     #[test]
     fn a_stopped_capture_ends_where_playback_stopped() {
         let mut lane = PerformanceLane::new();
-        lane.press(0, 0, true);
+        lane.press(0, true);
         play(&mut lane, 0, 700);
         // Stopped: no ticks reach the lane.
         assert_eq!(taken(&mut lane), Some((vec![(0, 700, 0)], 700)));
@@ -526,13 +571,13 @@ mod tests {
     #[test]
     fn the_next_run_starts_at_the_first_press_after_a_capture() {
         let mut lane = PerformanceLane::new();
-        lane.press(0, 0, true);
+        lane.press(0, true);
         play(&mut lane, 0, 100);
         assert!(lane.take_run().is_some());
         play(&mut lane, 100, 50);
         assert!(lane.take_run().is_none(), "nothing pressed since");
 
-        lane.press(960, 0, false);
+        lane.press(960, false);
         play(&mut lane, 960, 30);
         assert_eq!(taken(&mut lane), Some((vec![(0, 30, 960)], 30)));
     }
@@ -540,9 +585,9 @@ mod tests {
     #[test]
     fn a_press_that_starts_the_transport_starts_a_new_run() {
         let mut lane = PerformanceLane::new();
-        lane.press(0, 0, true);
+        lane.press(0, true);
         play(&mut lane, 0, 100);
-        lane.press(1920, 0, true);
+        lane.press(1920, true);
         play(&mut lane, 1920, 10);
         assert_eq!(taken(&mut lane), Some((vec![(0, 10, 1920)], 10)));
     }
@@ -550,7 +595,7 @@ mod tests {
     #[test]
     fn playback_moved_by_anything_but_a_press_ends_the_run() {
         let mut lane = PerformanceLane::new();
-        lane.press(0, 0, true);
+        lane.press(0, true);
         play(&mut lane, 0, 100);
         // A ruler click took playback to bar 5.
         play(&mut lane, 3840, 1);
@@ -560,8 +605,8 @@ mod tests {
     #[test]
     fn presses_on_one_tick_keep_the_latest() {
         let mut lane = PerformanceLane::new();
-        lane.press(0, 0, true);
-        lane.press(480, 0, false);
+        lane.press(0, true);
+        lane.press(480, false);
         play(&mut lane, 480, 10);
         assert_eq!(taken(&mut lane), Some((vec![(0, 10, 480)], 10)));
     }
@@ -569,7 +614,7 @@ mod tests {
     #[test]
     fn a_run_with_nothing_lasting_a_tick_captures_nothing() {
         let mut lane = PerformanceLane::new();
-        lane.press(0, 0, true);
+        lane.press(0, true);
         assert!(lane.take_run().is_none());
         assert!(PerformanceLane::new().take_run().is_none());
     }
@@ -577,75 +622,80 @@ mod tests {
     #[test]
     fn clearing_the_lane_ends_the_run() {
         let mut lane = PerformanceLane::new();
-        lane.press(0, 0, true);
+        lane.press(0, true);
         play(&mut lane, 0, 10);
         lane.clear();
         assert!(lane.take_run().is_none());
     }
 
-    /// A first press that jumped late leaves its offset as silence before
-    /// the first stretch; the later stretches stay on the grid they were
-    /// heard on, and the take is that much longer.
+    /// A waiting press joins the run when it lands on the beat, not when it
+    /// was pressed: the run holds what was heard.
     #[test]
-    fn a_late_first_press_starts_its_key_at_zero() {
+    fn a_waiting_press_joins_the_run_where_it_lands() {
+        let meter = Meter::FOUR_FOUR;
         let mut lane = PerformanceLane::new();
-        lane.press(3840 + 100, 100, false);
-        play(&mut lane, 3840 + 100, 860);
-        lane.press(960, 0, false);
-        play(&mut lane, 960, 960);
+        lane.press(3840, true);
+        play(&mut lane, 3840, 300);
+        lane.wait_to_press(960);
+        assert_eq!(lane.land_due_jump(meter, 3840 + 300), None, "off a beat");
+        play(&mut lane, 3840 + 300, PPQN - 300);
+        assert_eq!(lane.land_due_jump(meter, 3840 + PPQN), Some(960));
+        assert_eq!(lane.land_due_jump(meter, 960), None, "used up");
+        play(&mut lane, 960, 100);
         assert_eq!(
             taken(&mut lane),
-            Some((vec![(100, 860, 3940), (960, 960, 960)], 1920))
+            Some((vec![(0, PPQN, 3840), (PPQN, 100, 960)], PPQN + 100))
         );
     }
 
-    /// A first press that jumped early drops the lead-in it played before
-    /// its key, so the key's start is at 0 and the take that much shorter.
+    /// A run whose first press came while running starts on its key.
     #[test]
-    fn an_early_first_press_drops_its_lead_in() {
+    fn a_first_press_while_running_starts_the_take_at_zero() {
+        let meter = Meter::FOUR_FOUR;
         let mut lane = PerformanceLane::new();
-        lane.press(3840 - 100, -100, false);
-        play(&mut lane, 3840 - 100, 1060);
-        lane.press(0, 0, false);
-        play(&mut lane, 0, 500);
-        assert_eq!(
-            taken(&mut lane),
-            Some((vec![(0, 960, 3840), (960, 500, 0)], 1460))
-        );
+        lane.wait_to_press(1920);
+        assert_eq!(lane.land_due_jump(meter, 5 * PPQN), Some(1920));
+        play(&mut lane, 1920, 200);
+        assert_eq!(taken(&mut lane), Some((vec![(0, 200, 1920)], 200)));
     }
 
-    /// A lead-in longer than the first stretch drops it whole and cuts into
-    /// the next.
     #[test]
-    fn a_lead_in_past_the_first_stretch_cuts_into_the_next() {
+    fn the_latest_waiting_jump_wins() {
+        let meter = Meter::FOUR_FOUR;
         let mut lane = PerformanceLane::new();
-        lane.press(3840 - 300, -300, false);
-        play(&mut lane, 3840 - 300, 200);
-        lane.press(960, 0, false);
-        play(&mut lane, 960, 500);
-        assert_eq!(taken(&mut lane), Some((vec![(0, 400, 1060)], 400)));
+        lane.wait_to_press(960);
+        lane.wait_to_recall(5000);
+        assert_eq!(lane.land_due_jump(meter, PPQN), Some(5000));
+        assert!(lane.take_run().is_none(), "a recall joins no run");
+        lane.wait_to_recall(5000);
+        lane.wait_to_press(1920);
+        assert_eq!(lane.land_due_jump(meter, PPQN), Some(1920));
+        assert!(lane.take_run().is_none(), "nothing played since it landed");
     }
 
-    /// Only the run's first press sets the shift, and a press replacing it on
-    /// the same tick replaces its offset too.
     #[test]
-    fn the_shift_is_the_first_press_that_lasted() {
-        let mut lane = PerformanceLane::new();
-        lane.press(3840 + 50, 50, false);
-        lane.press(960 + 20, 20, false);
-        play(&mut lane, 980, 100);
-        lane.press(1920 + 30, 30, false);
-        play(&mut lane, 1950, 100);
-        assert_eq!(
-            taken(&mut lane),
-            Some((vec![(20, 100, 980), (120, 100, 1950)], 220))
-        );
+    fn a_waiting_jump_is_dropped_by_a_stop_a_restart_a_clear_or_a_press() {
+        let meter = Meter::FOUR_FOUR;
+        let drops: [fn(&mut PerformanceLane); 4] = [
+            |lane| {
+                lane.stop_now(Meter::FOUR_FOUR, 300, true);
+            },
+            PerformanceLane::cancel_waiting,
+            PerformanceLane::clear,
+            |lane| lane.press(0, true),
+        ];
+        for drop in drops {
+            let mut lane = PerformanceLane::new();
+            lane.wait_to_press(960);
+            drop(&mut lane);
+            assert_eq!(lane.land_due_jump(meter, PPQN), None);
+        }
     }
 
     /// A lane with a run going, as a performance leaves it.
     fn performing() -> PerformanceLane {
         let mut lane = PerformanceLane::new();
-        lane.press(0, 0, true);
+        lane.press(0, true);
         lane
     }
 
@@ -684,38 +734,42 @@ mod tests {
     fn a_press_cancels_a_waiting_stop() {
         let mut lane = performing();
         assert!(!lane.stop_now(Meter::FOUR_FOUR, 300, true));
-        lane.press(960, 0, false);
-        assert!(!lane.take_due_stop(Meter::FOUR_FOUR, 960));
+        lane.wait_to_press(960);
+        assert!(!lane.take_due_stop(Meter::FOUR_FOUR, PPQN));
     }
 
-    /// Where a press jumps relative to its key, by where playback is: on a
-    /// beat at it, late past it, early ahead of it, half a beat counting as
-    /// early for the next beat, before bar 1 alike.
+    /// Disarming drops the run but not a waiting stop: it was asked for.
     #[test]
-    fn a_press_lands_its_offset_from_the_nearest_beat() {
-        for (tick, offset) in [
-            (0, 0),
-            (7 * PPQN, 0),
-            (2 * PPQN + 300, 300),
-            (PPQN + 1, 1),
-            (2 * PPQN - 200, -200),
-            (PPQN - 1, -1),
-            (PPQN / 2 - 1, PPQN / 2 - 1),
-            (PPQN / 2, -(PPQN / 2)),
-            (-100, -100),
-            (-PPQN + 100, 100),
+    fn clearing_keeps_a_waiting_stop() {
+        let mut lane = performing();
+        assert!(!lane.stop_now(Meter::FOUR_FOUR, 300, true));
+        lane.clear();
+        assert!(lane.take_due_stop(Meter::FOUR_FOUR, PPQN));
+    }
+
+    /// A beat is a quarter in x/4, before bar 1 too.
+    #[test]
+    fn a_tick_is_on_a_beat_at_every_quarter() {
+        for (tick, on) in [
+            (0, true),
+            (7 * PPQN, true),
+            (PPQN + 1, false),
+            (PPQN - 1, false),
+            (PPQN / 2, false),
+            (-PPQN, true),
+            (-100, false),
         ] {
-            assert_eq!(phase_offset(Meter::FOUR_FOUR, tick), offset, "tick {tick}");
+            assert_eq!(is_on_beat(Meter::FOUR_FOUR, tick), on, "tick {tick}");
         }
     }
 
     #[test]
-    fn x_8_measures_to_the_eighth() {
+    fn x_8_counts_the_eighth() {
         let six_eight = meter(6, 8);
         let eighth = six_eight.beat_ticks();
         assert_eq!(eighth, PPQN / 2);
-        assert_eq!(phase_offset(six_eight, 3 * eighth + 100), 100);
-        assert_eq!(phase_offset(six_eight, 3 * eighth - 100), -100);
+        assert!(is_on_beat(six_eight, 3 * eighth));
+        assert!(!is_on_beat(six_eight, 3 * eighth + 100));
     }
 
     #[test]

@@ -66,8 +66,8 @@ else. Key files:
   when the lane is selected; the playhead never moves it, so a performance
   keeps its mapping while the cursor stays put. Not saved. A note outside
   the home notes jumps too (`Hand::key_index`, past the lit hand's edge), a
-  key before bar 1 doing nothing. The phase offset (`550`) is added to the
-  key's start. `key_tick(meter, length,
+  key before bar 1 doing nothing. Running, the jump waits for the next beat
+  (`610`). `key_tick(meter, length,
   key)` is where a key jumps, one **key length** (`KeyLength`) per key: a
   bar, half a bar or a beat (`KeyLength::ticks`: `bar_ticks`, half of it,
   `beat_ticks`, the counted beat, a quarter in x/4, an eighth in x/8), so
@@ -144,26 +144,38 @@ else. Key files:
   called directly from the sequencer thread's `midi_in_rx` arm
   (`threads/sequencer_pump.rs`) instead of `Sequencer::handle_midi_input`, because
   it needs `&mut Transport`, which `Sequencer` doesn't own.
-- **NoteOn**: joins the run (`PerformanceLane::press`, a new run when it
-  starts the transport), starts the transport if not already running, and
-  `jump_and_chase(target_tick)` to the key (`key_tick`, at the length the
-  sequencer holds). **A phase jump** (`550-phase-jumps.md`): while running, the
-  target is the key's start plus `phase_offset`, the distance of playback's
-  next tick from the nearest beat of the meter (−½…+½ beat, half counting as
-  early, `snap_to_grid`), so the key's start sounds on a beat of the grid playback was on: a
-  late press skips the start of its key, an early one plays the end of what
-  comes before it (below 0 for an early press onto bar 1), and the beat never
-  breaks, so the metronome, counting from playback, stays steady through
-  presses. The press that starts the transport jumps to the key's start
-  exactly. The run keeps its first press's offset, and `take_run` shifts the
-  take by it so the first key's start lands at 0, the cursor: a capture's bar
-  lines stay on the grid (`550` decision 5).
-- **`Space` during a performance stops on the next beat** (`550` § The stop
-  on the beat), with a run going (no key pressed: at once): off a beat `PerformanceLane::stop_now` leaves the stop waiting, and
-  `play_tick` stops the transport once playback's next tick is a beat
-  (`take_due_stop`), so a run stopped with `Space` is whole beats. A second
-  `Space` stops at once; a press cancels the wait, and a start
-  (`begin_running_take`) drops one left over.
+- **NoteOn**: jumps to its key's start (`key_tick`, at the length the
+  sequencer holds) and joins the run (`PerformanceLane::press`, a new run when
+  it starts the transport). Stopped, or running with playback's next tick on
+  a beat (`is_on_beat`), it jumps at once: `jump_and_chase(target_tick)`,
+  starting the transport if stopped. **Launch quantize**
+  (`610-launch-quantize.md`): running off a beat, the press waits
+  (`PerformanceLane::wait_to_press`), and the tick pump lands it when
+  playback is about to play the next beat (`play_tick` → `land_due_jump`,
+  synchronously, as a loop wrap re-anchors, through `Transport::land_jump`
+  and `reanchor_playback` plus the note chase): that tick plays the key's
+  start. So a key always starts from the same place, the key's start sounds
+  on a beat of the grid playback was on, and the metronome, counting from
+  the tick played, stays steady through presses. The press joins the run as
+  it lands, so the take's first key starts at 0, the cursor, and a capture's
+  bar lines stay on the grid. The latest press wins (a release cancels
+  nothing); `Space`, a start from elsewhere (`begin_running_take`:
+  `cancel_waiting`), disarming and a new project (`clear`) drop a waiting
+  press; a cursor move, the key length and the octave buttons don't (its
+  target was set at the press). Nothing shows a press waiting: the held key
+  already lights. A marker recall while running waits the same way, through
+  the same waiting jump (`wait_to_recall`), joining no run (`600` decision 4).
+  Before `610` a press while running was a phase jump (`archive/550-phase-jumps.md`):
+  the key plus the press's offset from the nearest beat, so the same key
+  started early or late by the press's timing.
+- **`Space` during a performance stops on the next beat**
+  (`archive/550-phase-jumps.md` § The stop on the beat), with a run going (no
+  key pressed: at once): off a beat `PerformanceLane::stop_now` leaves the
+  stop waiting, and `play_tick` stops the transport once playback's next tick
+  is a beat (`take_due_stop`), so a run stopped with `Space` is whole beats.
+  A second `Space` stops at once; a press cancels the wait, and a start
+  (`begin_running_take`) drops one left over. A press waiting for the beat is
+  dropped by the stop.
 - **The octave buttons** (`message::lane_octave`, CC28/CC29 on any channel):
   a press (any value above 0) moves the hand an octave
   (`Sequencer::move_performance_lane_hand`) and wakes the UI, since a CC isn't

@@ -303,11 +303,11 @@ mod tests {
     }
 
     /// The steps (one per clock tick) on which a click sounds, playing from
-    /// 0 to `press`, then from `jump` on, `after` ticks: a lane press on the
-    /// tick about to play `press`, landing at `jump`.
-    fn click_steps(press: i32, jump: i32, after: i32) -> Vec<i32> {
+    /// 0 to `land`, then from `jump` on, `after` ticks: a lane press's jump
+    /// landing at `jump` in place of the tick `land`.
+    fn click_steps(land: i32, jump: i32, after: i32) -> Vec<i32> {
         let (mut m, mut rx) = make(false);
-        let positions = (0..press).chain(jump..jump + after);
+        let positions = (0..land).chain(jump..jump + after);
         positions
             .enumerate()
             .filter_map(|(step, tick)| {
@@ -318,18 +318,19 @@ mod tests {
             .collect()
     }
 
-    /// Regression (`550-phase-jumps.md` decision 6): a lane press lands at
-    /// its key plus its offset from the nearest beat, so the click keeps one
-    /// beat between clicks across it, pressed late, early or on the beat. A
-    /// jump to the key's start restarted the click wherever the press fell.
+    /// Regression (`610-launch-quantize.md` decision 9): a lane press
+    /// waits for the next beat and that beat's tick plays its key's start,
+    /// so the click keeps one beat between clicks across the jump, and the
+    /// key's start clicks once. A jump at the press restarted the click
+    /// wherever the press fell.
     #[test]
-    fn a_phase_jump_keeps_the_click_a_beat_apart() {
+    fn a_quantized_jump_keeps_the_click_a_beat_apart() {
         let bar_5 = 4 * 4 * PPQN;
         let every_beat: Vec<i32> = (0..6).map(|beat| beat * PPQN).collect();
-        for offset in [300, -200, 0, 1, -1, PPQN / 2] {
-            let press = 2 * PPQN + offset;
-            let steps = click_steps(press, bar_5 + offset, 6 * PPQN - press);
-            assert_eq!(steps, every_beat, "offset {offset}");
+        for beat in 1..4 {
+            let land = beat * PPQN;
+            let steps = click_steps(land, bar_5, 6 * PPQN - land);
+            assert_eq!(steps, every_beat, "landing on beat {beat}");
         }
     }
 

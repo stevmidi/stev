@@ -131,8 +131,8 @@ pub(crate) enum TransportCommand {
     },
     /// `1`–`9`: recall marker `number` (`600-markers.md` decision 4).
     /// Stopped, the cursor moves to it as any cursor move does; running,
-    /// playback jumps to it by the lane's phase jump (`550`), the cursor
-    /// left where it is, the loop ignored. An unset marker leaves both and
+    /// playback jumps to it as a lane press does, on a beat (`610`), the
+    /// cursor left where it is, the loop ignored. An unset marker leaves both and
     /// says so in the footer.
     RecallMarker {
         /// The marker's slot, `1..=MAX_MARKER`.
@@ -273,6 +273,15 @@ impl Transport {
         self.transport_event_tx
             .send(TransportEvent::PlaybackTickResetWithChase(tick))
             .ok();
+    }
+
+    /// Moves playback to `tick` with no [`TransportEvent`]: for a jump the
+    /// tick pump lands itself and re-anchors synchronously, as a loop wrap
+    /// is (`EventHandlers::land_due_jump`, `610-launch-quantize.md`). The
+    /// event would re-anchor a second time, after the target's first tick
+    /// had played.
+    pub(crate) fn land_jump(&mut self, tick: i32) {
+        self.playback_tick.store(tick, Ordering::Relaxed);
     }
 
     /// Hands the `"clock"` thread what it needs to realign its free-running

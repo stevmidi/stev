@@ -55,7 +55,7 @@ bar  61        70   73        76               82
 - **Never split.** The hand is always one unbroken stretch, and every press lands where it is lit.
 - **The default octave isn't bar 1.** A keyboard at its home octave reaches bars 10–22 from a cursor at bar 1; bar 1 is a few octaves down. Accepted.
 - **Before bar 1.** A hand whose stretch would put low notes before bar 1 (only near the very start, with a high hand) sits a cycle on, whole: a copy before bar 1 is never chosen, and the hand stays unbroken. (First built folding only the notes before bar 1 a cycle on, which split the hand there; changed in the `/simplify` pass.)
-- **The phase jump stays** (`550`): the offset from the nearest beat is added to the chosen key's tick as it is to `key_tick` today.
+- **The phase jump stays** (`550`): the offset from the nearest beat is added to the chosen key's tick as it is to `key_tick` today. (Replaced by `610`'s wait for the beat, 2026-11-28.)
 
 ### 3. The keybed size
 

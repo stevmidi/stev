@@ -4,7 +4,7 @@
 //! in `handle_sequencer_command`); the time edits that carry them re-send
 //! the mirror from their `handle_edit_result` arms.
 
-use crate::models::performance_lane::phase_offset;
+use crate::models::performance_lane::is_on_beat;
 
 use super::*;
 
@@ -23,10 +23,10 @@ impl EventHandlers {
     /// `1`–`9`, or a click on a flag: recalls marker `number`
     /// (`600-markers.md` decision 4). Stopped, the arranger cursor moves to
     /// it, as any cursor move: the lane's hand and the lead clip follow, and
-    /// the view follows the cursor. Running, playback jumps to it by the
-    /// lane's phase jump (`550-phase-jumps.md`): the marker plus playback's
-    /// offset from the nearest beat, through the same transport path as a
-    /// lane press, so the beat never breaks; the cursor stays. The loop is
+    /// the view follows the cursor. Running, playback jumps to it as a lane
+    /// press does (`610-launch-quantize.md` decision 8): at once on a beat,
+    /// else on the next one (`land_due_jump`), so the marker sounds from its
+    /// start and the beat never breaks; the cursor stays. The loop is
     /// not consulted: a jump past its end plays on (`Transport::tick` wraps
     /// only from inside the region, decision 5). An unset marker moves
     /// nothing and says so.
@@ -41,8 +41,14 @@ impl EventHandlers {
             return;
         };
         if transport.is_running() {
-            let offset = phase_offset(sequencer.meter(), sequencer.playback_tick());
-            transport.jump_and_chase(tick + offset);
+            let on_beat = is_on_beat(sequencer.meter(), sequencer.playback_tick());
+            let lane = sequencer.performance_lane_mut();
+            if on_beat {
+                lane.drop_waiting_jump();
+                transport.jump_and_chase(tick);
+            } else {
+                lane.wait_to_recall(tick);
+            }
         } else {
             self.set_cursor_workflow(tick, transport, sequencer);
         }
@@ -53,6 +59,7 @@ impl EventHandlers {
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::Ordering;
+    use std::time::Instant;
 
     use undo::Record;
 
@@ -95,8 +102,9 @@ mod tests {
         assert!(!transport.is_running());
     }
 
-    /// Running, a recall jumps playback to the marker plus its offset from
-    /// the nearest beat, and the cursor stays where it was.
+    /// Running, a recall off a beat waits for the next one, which plays the
+    /// marker from its start (`610-launch-quantize.md` decision 8); on a
+    /// beat it jumps at once. The cursor stays where it was.
     #[test]
     fn a_recall_while_running_jumps_playback_on_the_beat() {
         let mut h = harness();
@@ -105,13 +113,23 @@ mod tests {
         h.sequencer.set_cursor_tick(960);
         transport.start();
         let beat = Meter::FOUR_FOUR.beat_ticks();
+        let playback = |h: &Harness| h.playback_tick.load(Ordering::Relaxed);
         // 10 ticks past beat 2.
         h.playback_tick.store(beat + 10, Ordering::Relaxed);
 
         recall(&mut h, &mut transport, 1);
-        assert_eq!(h.playback_tick.load(Ordering::Relaxed), 7680 + 10);
+        assert_eq!(playback(&h), beat + 10, "waits for the beat");
+        for _ in 0..=beat - 10 {
+            h.handlers
+                .play_tick(Instant::now(), &mut h.sequencer, &mut transport);
+        }
+        assert_eq!(playback(&h), 7680 + 1, "the beat played the marker");
         assert_eq!(h.sequencer.cursor_tick(), 960);
         assert!(transport.is_running());
+
+        h.playback_tick.store(3 * beat, Ordering::Relaxed);
+        recall(&mut h, &mut transport, 1);
+        assert_eq!(playback(&h), 7680, "on a beat: at once");
     }
 
     #[test]

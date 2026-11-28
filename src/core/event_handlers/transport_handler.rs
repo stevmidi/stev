@@ -149,7 +149,9 @@ impl EventHandlers {
             TransportCommand::TogglePlayback => {
                 if transport.is_running() {
                     // On the armed lane, off a beat, the stop waits for the
-                    // next one (`550-phase-jumps.md` § The stop on the beat).
+                    // next one (`archive/550-phase-jumps.md` § The stop on
+                    // the beat). A jump waiting for the beat is dropped
+                    // (`610-launch-quantize.md` decision 5).
                     let (meter, tick) = (sequencer.meter(), sequencer.playback_tick());
                     let armed = sequencer.is_performance_lane_armed();
                     if sequencer

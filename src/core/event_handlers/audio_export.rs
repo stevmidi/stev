@@ -122,12 +122,17 @@ impl EventHandlers {
     /// handled in one wakeup plays past the region end into the next clip
     /// (the stuck-note bug, `150-clock-position-sync.md`). The one tick
     /// path, for the clock's ticks and an audio export's steps alike.
+    ///
+    /// A jump waiting for the beat lands first (`land_due_jump`), so the
+    /// beat's tick plays its target. Returns the tick played, which the
+    /// click counts from.
     pub(crate) fn play_tick(
         &self,
         at: Instant,
         sequencer: &mut Sequencer,
         transport: &mut Transport,
-    ) {
+    ) -> i32 {
+        self.land_due_jump(sequencer, transport);
         // The lane's run counts the ticks playback advances
         // (`archive/520-performance-capture.md` decision 2), from where it is now.
         let playback_tick = sequencer.playback_tick();
@@ -137,12 +142,13 @@ impl EventHandlers {
         }
         sequencer.tick(at);
         // `Space` on the armed lane waits for the next beat
-        // (`550-phase-jumps.md` § The stop on the beat): stop once playback
-        // has reached it, so the run ends on a whole beat.
+        // (`archive/550-phase-jumps.md` § The stop on the beat): stop once
+        // playback has reached it, so the run ends on a whole beat.
         let (meter, tick) = (sequencer.meter(), sequencer.playback_tick());
         if sequencer.performance_lane_mut().take_due_stop(meter, tick) {
             transport.stop();
         }
+        playback_tick
     }
 
     /// The offline render asks for the run's ticks due before `until`, a

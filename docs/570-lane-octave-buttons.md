@@ -24,7 +24,7 @@ The keyboard's octave isn't shifted. Stev assumes it sends its home octave: the 
 
 ### 2. A cursor move places the hand
 
-The hand is the home notes laid unbroken along the timeline from a C, as `560` § 2 lays them; a press jumps to its note's key in the hand (`Hand::key_index`), then the phase offset (`550`) as today.
+The hand is the home notes laid unbroken along the timeline from a C, as `560` § 2 lays them; a press jumps to its note's key in the hand (`Hand::key_index`), then the phase offset (`550`) as today (since `610`, running off a beat it waits for the next beat instead).
 
 - **Any cursor move places it** (a click in the lane, `←`/`→`, anything that moves the arranger cursor), and so does selecting the lane: the hand moves, in whole octaves, to where its middle key is nearest the cursor. This is `560`'s rule at an octave's step instead of a 120-key cycle's, so the cursor is always under the hand, within half an octave of its middle. A click in the lane is the "put my hand here" gesture.
 - **So does anything that moves the cursor's key** without moving the cursor: the key length (`510` step 1b), the meter, the keybed size.
