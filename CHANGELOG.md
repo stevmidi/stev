@@ -20,6 +20,8 @@ Breaking entries are marked **Breaking** and say what to do about them.
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-11-28
+
 ### Added
 
 - Markers: up to nine numbered places in the song. `⌘1`–`⌘9` sets marker 1–9 at the arranger cursor (or moves it there), and `1`–`9` takes you back: stopped, the cursor moves to the marker; playing, playback jumps there on the beat, like a performance-lane key, and the cursor stays put. The markers show as numbered flags in a strip under the arranger's ruler, joined to it as one header with the bar and beat lines running through, and a click on one goes there too. A click in the strip away from the flags plays from there, as a click on the ruler does, so the two are one place to click. They are saved with the project, undoable, and move with Insert, Delete and Duplicate Time (a marker inside deleted time goes with it). Templates don't keep them.
