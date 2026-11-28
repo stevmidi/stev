@@ -25,10 +25,7 @@ impl EventHandlers {
             }
 
             TransportEvent::PlaybackTickResetWithChase(new_tick) => {
-                self.reanchor_playback(*new_tick, sequencer, transport);
-                if sequencer.is_running() {
-                    sequencer.chase_notes(*new_tick);
-                }
+                self.reanchor_and_chase(*new_tick, sequencer, transport);
             }
 
             TransportEvent::Stopped => {
@@ -74,6 +71,22 @@ impl EventHandlers {
         sequencer.reset_to_tick(new_tick);
         transport.align_clock_with_playback();
         self.release_all_notes(sequencer);
+    }
+
+    /// [`reanchor_playback`](Self::reanchor_playback), then, running, the
+    /// notes `new_tick` falls inside chased: a jump into the middle of the
+    /// music (`Transport::jump_and_chase`'s event, and a jump the tick pump
+    /// lands itself, `land_due_jump`).
+    pub(crate) fn reanchor_and_chase(
+        &self,
+        new_tick: i32,
+        sequencer: &mut Sequencer,
+        transport: &Transport,
+    ) {
+        self.reanchor_playback(new_tick, sequencer, transport);
+        if sequencer.is_running() {
+            sequencer.chase_notes(new_tick);
+        }
     }
 
     /// Applies one [`TransportCommand`]

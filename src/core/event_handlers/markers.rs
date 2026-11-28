@@ -4,8 +4,6 @@
 //! in `handle_sequencer_command`); the time edits that carry them re-send
 //! the mirror from their `handle_edit_result` arms.
 
-use crate::models::performance_lane::is_on_beat;
-
 use super::*;
 
 impl EventHandlers {
@@ -41,13 +39,12 @@ impl EventHandlers {
             return;
         };
         if transport.is_running() {
-            let on_beat = is_on_beat(sequencer.meter(), sequencer.playback_tick());
-            let lane = sequencer.performance_lane_mut();
-            if on_beat {
-                lane.drop_waiting_jump();
+            let (meter, playback_tick) = (sequencer.meter(), sequencer.playback_tick());
+            if sequencer
+                .performance_lane_mut()
+                .jump_now(meter, playback_tick, tick, false)
+            {
                 transport.jump_and_chase(tick);
-            } else {
-                lane.wait_to_recall(tick);
             }
         } else {
             self.set_cursor_workflow(tick, transport, sequencer);

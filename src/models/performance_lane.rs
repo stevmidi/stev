@@ -127,33 +127,33 @@ impl PerformanceLane {
         run.expected_tick = target_tick;
     }
 
-    /// A lane press while running, off a beat: it waits to jump to its key's
-    /// start, `target_tick`, on playback's next beat, replacing a jump that
-    /// was waiting. Playing on means the performance isn't over, so a
-    /// waiting stop is dropped (`610-launch-quantize.md` decisions 4 and 5).
-    pub(crate) fn wait_to_press(&mut self, target_tick: i32) {
-        self.stop_pending = false;
+    /// A lane press (`press`) or a marker recall while running, to
+    /// `target_tick`, with playback about to play `playback_tick`: whether to
+    /// jump now. On a beat of `meter` it jumps now, dropping a jump that was
+    /// waiting, as the latest wins; off one it waits for the next beat
+    /// ([`land_due_jump`](Self::land_due_jump)), replacing a waiting one
+    /// (`610-launch-quantize.md` decisions 4 and 8). A press means the
+    /// performance isn't over, so it drops a waiting stop either way (the
+    /// jump now does so in [`press`](Self::press)); a recall joins no run.
+    pub(crate) fn jump_now(
+        &mut self,
+        meter: Meter,
+        playback_tick: i32,
+        target_tick: i32,
+        press: bool,
+    ) -> bool {
+        if is_on_beat(meter, playback_tick) {
+            self.waiting = None;
+            return true;
+        }
+        if press {
+            self.stop_pending = false;
+        }
         self.waiting = Some(WaitingJump {
             target: target_tick,
-            press: true,
+            press,
         });
-    }
-
-    /// A marker recall while running, off a beat: it waits to jump to the
-    /// marker, `target_tick`, on playback's next beat, replacing a jump that
-    /// was waiting. It isn't a press, so it joins no run
-    /// (`610-launch-quantize.md` decision 8).
-    pub(crate) fn wait_to_recall(&mut self, target_tick: i32) {
-        self.waiting = Some(WaitingJump {
-            target: target_tick,
-            press: false,
-        });
-    }
-
-    /// A recall jumped at once, on a beat: a jump still waiting is dropped,
-    /// as the latest wins.
-    pub(crate) fn drop_waiting_jump(&mut self) {
-        self.waiting = None;
+        false
     }
 
     /// The waiting jump's target if it is due, with playback about to play
@@ -161,6 +161,8 @@ impl PerformanceLane {
     /// joins the run as it lands ([`press`](Self::press)), so the run holds
     /// it from the tick it was heard. A jump that is due is used up.
     pub(crate) fn land_due_jump(&mut self, meter: Meter, playback_tick: i32) -> Option<i32> {
+        // Nothing waits on almost every tick: no beat test then.
+        self.waiting?;
         if !is_on_beat(meter, playback_tick) {
             return None;
         }
@@ -628,6 +630,20 @@ mod tests {
         assert!(lane.take_run().is_none());
     }
 
+    /// A press (`press`) or a recall to `target` off a beat: it waits.
+    fn wait(lane: &mut PerformanceLane, target: i32, press: bool) {
+        assert!(!lane.jump_now(Meter::FOUR_FOUR, PPQN + 1, target, press));
+    }
+
+    /// On a beat a jump goes now, and drops one that was waiting.
+    #[test]
+    fn a_jump_on_a_beat_goes_now_and_drops_a_waiting_one() {
+        let mut lane = PerformanceLane::new();
+        wait(&mut lane, 960, true);
+        assert!(lane.jump_now(Meter::FOUR_FOUR, 2 * PPQN, 5000, false));
+        assert_eq!(lane.land_due_jump(Meter::FOUR_FOUR, 3 * PPQN), None);
+    }
+
     /// A waiting press joins the run when it lands on the beat, not when it
     /// was pressed: the run holds what was heard.
     #[test]
@@ -636,7 +652,7 @@ mod tests {
         let mut lane = PerformanceLane::new();
         lane.press(3840, true);
         play(&mut lane, 3840, 300);
-        lane.wait_to_press(960);
+        wait(&mut lane, 960, true);
         assert_eq!(lane.land_due_jump(meter, 3840 + 300), None, "off a beat");
         play(&mut lane, 3840 + 300, PPQN - 300);
         assert_eq!(lane.land_due_jump(meter, 3840 + PPQN), Some(960));
@@ -653,7 +669,7 @@ mod tests {
     fn a_first_press_while_running_starts_the_take_at_zero() {
         let meter = Meter::FOUR_FOUR;
         let mut lane = PerformanceLane::new();
-        lane.wait_to_press(1920);
+        wait(&mut lane, 1920, true);
         assert_eq!(lane.land_due_jump(meter, 5 * PPQN), Some(1920));
         play(&mut lane, 1920, 200);
         assert_eq!(taken(&mut lane), Some((vec![(0, 200, 1920)], 200)));
@@ -663,12 +679,12 @@ mod tests {
     fn the_latest_waiting_jump_wins() {
         let meter = Meter::FOUR_FOUR;
         let mut lane = PerformanceLane::new();
-        lane.wait_to_press(960);
-        lane.wait_to_recall(5000);
+        wait(&mut lane, 960, true);
+        wait(&mut lane, 5000, false);
         assert_eq!(lane.land_due_jump(meter, PPQN), Some(5000));
         assert!(lane.take_run().is_none(), "a recall joins no run");
-        lane.wait_to_recall(5000);
-        lane.wait_to_press(1920);
+        wait(&mut lane, 5000, false);
+        wait(&mut lane, 1920, true);
         assert_eq!(lane.land_due_jump(meter, PPQN), Some(1920));
         assert!(lane.take_run().is_none(), "nothing played since it landed");
     }
@@ -686,7 +702,7 @@ mod tests {
         ];
         for drop in drops {
             let mut lane = PerformanceLane::new();
-            lane.wait_to_press(960);
+            wait(&mut lane, 960, true);
             drop(&mut lane);
             assert_eq!(lane.land_due_jump(meter, PPQN), None);
         }
@@ -734,7 +750,7 @@ mod tests {
     fn a_press_cancels_a_waiting_stop() {
         let mut lane = performing();
         assert!(!lane.stop_now(Meter::FOUR_FOUR, 300, true));
-        lane.wait_to_press(960);
+        wait(&mut lane, 960, true);
         assert!(!lane.take_due_stop(Meter::FOUR_FOUR, PPQN));
     }
 

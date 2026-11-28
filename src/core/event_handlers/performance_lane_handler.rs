@@ -22,7 +22,7 @@ use crate::core::midi::message::lane_octave;
 use crate::core::sequencer::{DuplicateTimeEdit, UndoStep};
 use crate::models::{
     event::{Event, EventType},
-    performance_lane::{is_on_beat, key_tick},
+    performance_lane::key_tick,
 };
 
 use super::*;
@@ -77,8 +77,9 @@ impl EventHandlers {
         // Running off a beat, the press waits for the next one, which the
         // tick pump plays as the key's start (`land_due_jump`). On a beat it
         // jumps now, and stopped there is no beat to keep.
-        if !started && !is_on_beat(meter, sequencer.playback_tick()) {
-            sequencer.performance_lane_mut().wait_to_press(target_tick);
+        let playback_tick = sequencer.playback_tick();
+        let lane = sequencer.performance_lane_mut();
+        if !started && !lane.jump_now(meter, playback_tick, target_tick, true) {
             return;
         }
         sequencer.performance_lane_mut().press(target_tick, started);
@@ -105,10 +106,7 @@ impl EventHandlers {
             return;
         };
         transport.land_jump(target);
-        self.reanchor_playback(target, sequencer, transport);
-        if sequencer.is_running() {
-            sequencer.chase_notes(target);
-        }
+        self.reanchor_and_chase(target, sequencer, transport);
     }
 
     /// `/` on the armed lane (`archive/520-performance-capture.md` decision 1): the
@@ -388,16 +386,6 @@ mod tests {
         );
     }
 
-    /// Where playback is after pressing key `key_index` (a beat a key) with
-    /// playback about to play `at`, running.
-    fn jump_while_running(at: i32, key_index: u8) -> i32 {
-        let (mut h, mut transport, _record) = armed();
-        transport.start();
-        h.playback_tick.store(at, Ordering::Relaxed);
-        press(&mut h, &mut transport, i32::from(key_index));
-        h.playback_tick.load(Ordering::Relaxed)
-    }
-
     /// `610-launch-quantize.md`: running, a press on a beat jumps at once
     /// to its key's start; off one it waits, and the next beat's tick plays
     /// the key's start, so the key always starts from the same place and the
@@ -405,13 +393,22 @@ mod tests {
     #[test]
     fn a_press_while_running_waits_for_the_next_beat() {
         let beat = Meter::FOUR_FOUR.beat_ticks();
-        assert_eq!(jump_while_running(2 * beat, 4), 4 * beat, "on the beat");
-        for at in [2 * beat + 300, 2 * beat - 200, beat - 100, beat + 1] {
+        let playback = |h: &Harness| h.playback_tick.load(Ordering::Relaxed);
+        for at in [
+            2 * beat,
+            2 * beat + 300,
+            2 * beat - 200,
+            beat - 100,
+            beat + 1,
+        ] {
             let (mut h, mut transport, _record) = armed();
             transport.start();
             h.playback_tick.store(at, Ordering::Relaxed);
             press(&mut h, &mut transport, 4);
-            let playback = |h: &Harness| h.playback_tick.load(Ordering::Relaxed);
+            if at % beat == 0 {
+                assert_eq!(playback(&h), 4 * beat, "on the beat: at once");
+                continue;
+            }
             assert_eq!(playback(&h), at, "{at}: waits");
             let to_beat = beat - at.rem_euclid(beat);
             play(&mut h, &mut transport, to_beat);

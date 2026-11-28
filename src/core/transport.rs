@@ -269,7 +269,7 @@ impl Transport {
     /// reading `cursor_tick`. Used by the arranger performance lane to jump
     /// to a bar position on a NoteOn trigger.
     pub(crate) fn jump_and_chase(&mut self, tick: i32) {
-        self.playback_tick.store(tick, Ordering::Relaxed);
+        self.land_jump(tick);
         self.transport_event_tx
             .send(TransportEvent::PlaybackTickResetWithChase(tick))
             .ok();

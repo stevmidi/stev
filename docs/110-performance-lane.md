@@ -150,7 +150,7 @@ else. Key files:
   a beat (`is_on_beat`), it jumps at once: `jump_and_chase(target_tick)`,
   starting the transport if stopped. **Launch quantize**
   (`610-launch-quantize.md`): running off a beat, the press waits
-  (`PerformanceLane::wait_to_press`), and the tick pump lands it when
+  (`PerformanceLane::jump_now` says whether to jump now or wait), and the tick pump lands it when
   playback is about to play the next beat (`play_tick` → `land_due_jump`,
   synchronously, as a loop wrap re-anchors, through `Transport::land_jump`
   and `reanchor_playback` plus the note chase): that tick plays the key's
@@ -164,7 +164,7 @@ else. Key files:
   press; a cursor move, the key length and the octave buttons don't (its
   target was set at the press). Nothing shows a press waiting: the held key
   already lights. A marker recall while running waits the same way, through
-  the same waiting jump (`wait_to_recall`), joining no run (`600` decision 4).
+  the same waiting jump (`jump_now` with no press), joining no run (`600` decision 4).
   Before `610` a press while running was a phase jump (`archive/550-phase-jumps.md`):
   the key plus the press's offset from the nearest beat, so the same key
   started early or late by the press's timing.
