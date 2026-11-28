@@ -181,6 +181,9 @@ impl EventHandlers {
                 }
             }
             TransportCommand::Stop => {
+                // A jump or a stop left waiting for the beat
+                // (`610-launch-quantize.md` decision 5) goes with playback.
+                sequencer.performance_lane_mut().cancel_waiting();
                 sequencer.reset_capture();
                 transport.stop();
                 transport.reset_playback_to_cursor();

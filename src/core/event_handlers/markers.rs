@@ -129,6 +129,31 @@ mod tests {
         assert_eq!(playback(&h), 7680, "on a beat: at once");
     }
 
+    /// Regression (code review 2026-11-28): a marker off a beat (set at a
+    /// cursor a 16th past one) landed on a beat, shifting the beat by its
+    /// offset. It waits until playback is as far into a beat, so the click
+    /// keeps its place and the marker plays from its exact tick.
+    #[test]
+    fn a_marker_off_a_beat_lands_as_far_into_a_beat() {
+        let mut h = harness();
+        let mut transport = transport(&h);
+        h.sequencer.markers_mut().set(1, 7680 + 240);
+        transport.start();
+        let beat = Meter::FOUR_FOUR.beat_ticks();
+        let playback = |h: &Harness| h.playback_tick.load(Ordering::Relaxed);
+        h.playback_tick.store(beat + 10, Ordering::Relaxed);
+
+        recall(&mut h, &mut transport, 1);
+        for _ in 0..230 {
+            h.handlers
+                .play_tick(Instant::now(), &mut h.sequencer, &mut transport);
+        }
+        assert_eq!(playback(&h), beat + 240, "about to play a 16th past beat 2");
+        h.handlers
+            .play_tick(Instant::now(), &mut h.sequencer, &mut transport);
+        assert_eq!(playback(&h), 7680 + 240 + 1, "that tick played the marker");
+    }
+
     #[test]
     fn recalling_an_unset_marker_moves_nothing_and_says_so() {
         let mut h = harness();

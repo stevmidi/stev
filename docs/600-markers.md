@@ -23,7 +23,7 @@ What the design leans on:
 
 4. **`1`–`9` recalls marker *n*.** A slot with no marker does nothing, with a footer hint (`No marker 4`).
    - **Stopped**: the arranger cursor moves to the marker, like any cursor move: the view follows it, and the marquee collapses as it does for any cursor move.
-   - **Running**: the playhead jumps and the cursor stays put. The jump is the performance lane's (`610-launch-quantize.md` decision 8; it was `archive/550`'s phase jump until 2026-11-28): on a beat at once, off one on the next beat, landing on the marker exactly, so the beat never breaks. It goes through the same transport path as a lane press, so the sustain lift (`archive/530`), the clock alignment (`150`) and the capture's view of the jump all follow from it. A recall and a lane press share the one waiting jump: the latest wins.
+   - **Running**: the playhead jumps and the cursor stays put. The jump is the performance lane's (`610-launch-quantize.md` decision 8; it was `archive/550`'s phase jump until 2026-11-28): when playback is as far into a beat as the marker (on a beat for a marker on one) at once, otherwise as soon as it is, landing on the marker exactly, so the beat never breaks, a marker off a beat too. It goes through the same transport path as a lane press, so the sustain lift (`archive/530`), the clock alignment (`150`) and the capture's view of the jump all follow from it. A recall and a lane press share the one waiting jump: the latest wins.
    - **From the clip view**: the digits recall too (the arranger's cursor or playhead moves); markers are arrangement state, and a digit means nothing else there.
    - Commands (`Action::RecallMarker1`…`9`), rebindable.
 

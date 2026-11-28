@@ -142,7 +142,7 @@ impl PerformanceLane {
         target_tick: i32,
         press: bool,
     ) -> bool {
-        if is_on_beat(meter, playback_tick) {
+        if in_beat_phase(meter, playback_tick, target_tick) {
             self.waiting = None;
             return true;
         }
@@ -157,16 +157,16 @@ impl PerformanceLane {
     }
 
     /// The waiting jump's target if it is due, with playback about to play
-    /// `playback_tick`: that tick is on a beat of `meter`. A lane press
-    /// joins the run as it lands ([`press`](Self::press)), so the run holds
-    /// it from the tick it was heard. A jump that is due is used up.
+    /// `playback_tick`: that tick is as far into a beat of `meter` as the
+    /// target ([`in_beat_phase`]: on a beat for a key). A lane press joins
+    /// the run as it lands ([`press`](Self::press)), so the run holds it
+    /// from the tick it was heard. A jump that is due is used up.
     pub(crate) fn land_due_jump(&mut self, meter: Meter, playback_tick: i32) -> Option<i32> {
-        // Nothing waits on almost every tick: no beat test then.
-        self.waiting?;
-        if !is_on_beat(meter, playback_tick) {
+        let jump = self.waiting?;
+        if !in_beat_phase(meter, playback_tick, jump.target) {
             return None;
         }
-        let jump = self.waiting.take()?;
+        self.waiting = None;
         if jump.press {
             self.press(jump.target, false);
         }
@@ -511,12 +511,20 @@ pub(crate) fn key_tick(meter: Meter, length: KeyLength, key_index: i32) -> i32 {
 }
 
 /// Whether `playback_tick` is on a beat of `meter` (a quarter in x/4, an
-/// eighth in x/8), before bar 1 too. A lane press or a marker recall while
-/// running jumps at once on a beat and waits for the next one off it, so a
-/// key's start always sounds on a beat of the grid playback was on
-/// (`610-launch-quantize.md`); a stop on the armed lane waits the same way.
+/// eighth in x/8), before bar 1 too: where a stop on the armed lane waits
+/// for (`archive/550-phase-jumps.md` § The stop on the beat).
 pub(crate) fn is_on_beat(meter: Meter, playback_tick: i32) -> bool {
-    playback_tick.rem_euclid(meter.beat_ticks()) == 0
+    in_beat_phase(meter, playback_tick, 0)
+}
+
+/// Whether `playback_tick` is as far into a beat of `meter` as `target`.
+/// A lane press or a marker recall while running jumps to `target` when
+/// playback is, and waits until it is, so the target plays from its exact
+/// tick and the beat never breaks (`610-launch-quantize.md` decision 8): a
+/// key starts on a beat, so it lands on one; a marker a 16th past a beat
+/// lands a 16th past one.
+pub(crate) fn in_beat_phase(meter: Meter, playback_tick: i32, target: i32) -> bool {
+    (playback_tick - target).rem_euclid(meter.beat_ticks()) == 0
 }
 
 #[cfg(test)]
@@ -640,7 +648,7 @@ mod tests {
     fn a_jump_on_a_beat_goes_now_and_drops_a_waiting_one() {
         let mut lane = PerformanceLane::new();
         wait(&mut lane, 960, true);
-        assert!(lane.jump_now(Meter::FOUR_FOUR, 2 * PPQN, 5000, false));
+        assert!(lane.jump_now(Meter::FOUR_FOUR, 2 * PPQN, 4800, false));
         assert_eq!(lane.land_due_jump(Meter::FOUR_FOUR, 3 * PPQN), None);
     }
 
@@ -680,10 +688,10 @@ mod tests {
         let meter = Meter::FOUR_FOUR;
         let mut lane = PerformanceLane::new();
         wait(&mut lane, 960, true);
-        wait(&mut lane, 5000, false);
-        assert_eq!(lane.land_due_jump(meter, PPQN), Some(5000));
+        wait(&mut lane, 4800, false);
+        assert_eq!(lane.land_due_jump(meter, PPQN), Some(4800));
         assert!(lane.take_run().is_none(), "a recall joins no run");
-        wait(&mut lane, 5000, false);
+        wait(&mut lane, 4800, false);
         wait(&mut lane, 1920, true);
         assert_eq!(lane.land_due_jump(meter, PPQN), Some(1920));
         assert!(lane.take_run().is_none(), "nothing played since it landed");
@@ -761,6 +769,25 @@ mod tests {
         assert!(!lane.stop_now(Meter::FOUR_FOUR, 300, true));
         lane.clear();
         assert!(lane.take_due_stop(Meter::FOUR_FOUR, PPQN));
+    }
+
+    /// A target off a beat waits for playback to be as far into a beat,
+    /// and jumps at once when it already is.
+    #[test]
+    fn a_target_off_a_beat_lands_at_its_own_point_in_the_beat() {
+        let meter = Meter::FOUR_FOUR;
+        let marker = 7680 + 240;
+        let mut lane = PerformanceLane::new();
+        assert!(!lane.jump_now(meter, 1000, marker, false));
+        assert_eq!(
+            lane.land_due_jump(meter, 2 * PPQN),
+            None,
+            "on a beat: not yet"
+        );
+        assert_eq!(lane.land_due_jump(meter, 2 * PPQN + 240), Some(marker));
+        assert!(lane.jump_now(meter, 3 * PPQN + 240, marker, false));
+        assert!(in_beat_phase(meter, -PPQN + 240, 240));
+        assert!(!in_beat_phase(meter, PPQN, 240));
     }
 
     /// A beat is a quarter in x/4, before bar 1 too.

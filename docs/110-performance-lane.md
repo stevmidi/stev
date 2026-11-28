@@ -164,7 +164,7 @@ else. Key files:
   press; a cursor move, the key length and the octave buttons don't (its
   target was set at the press). Nothing shows a press waiting: the held key
   already lights. A marker recall while running waits the same way, through
-  the same waiting jump (`jump_now` with no press), joining no run (`600` decision 4).
+  the same waiting jump (`jump_now` with no press), landing when playback is as far into a beat as the marker (`in_beat_phase`), so an off-beat marker keeps the beat too, joining no run (`600` decision 4).
   Before `610` a press while running was a phase jump (`archive/550-phase-jumps.md`):
   the key plus the press's offset from the nearest beat, so the same key
   started early or late by the press's timing.
