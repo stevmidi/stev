@@ -1,6 +1,6 @@
 # Launch Quantize on the Performance Lane
 
-**Status: drafted, agreed and built 2026-11-28; the § Tuning values stay open to change in use. No issue yet (`080` § Design Docs and Issues).** A press on the armed lane while running waits for the next beat, then jumps to its key's start exactly. The same key from the same spot then starts from the same place every time, and the beat still never breaks. This replaces `550`'s phase jump, which isn't kept as an option. A marker recall while running waits the same way. Read `110` (the lane), `archive/550-phase-jumps.md` (what this replaces) and `archive/520-performance-capture.md` (the run and its render) first. `550` was archived when this was built, and its stop on the beat lives on in `110`.
+**Status: drafted, agreed and built 2026-11-28; the § Tuning values stay open to change in use. No issue: it was built the day it was designed (`080` § Design Docs and Issues).** A press on the armed lane while running waits for the next beat, then jumps to its key's start exactly. The same key from the same spot then starts from the same place every time, and the beat still never breaks. This replaces `550`'s phase jump, which isn't kept as an option. A marker recall while running waits the same way. Read `110` (the lane), `archive/550-phase-jumps.md` (what this replaces) and `archive/520-performance-capture.md` (the run and its render) first. `550` was archived when this was built, and its stop on the beat lives on in `110`.
 
 ## Background
 
